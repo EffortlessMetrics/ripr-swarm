@@ -13,6 +13,7 @@ INFO ./src/lib.rs:23
 Changed
   before: Unit::Fortnight => 1_296_000,
   after:  Unit::Fortnight =>
+          (arm head only; open the arm at ./src/lib.rs:23 to read its new body)
 
 Probe
   family: match_arm

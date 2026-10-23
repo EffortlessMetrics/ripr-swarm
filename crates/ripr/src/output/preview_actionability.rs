@@ -101,9 +101,16 @@ pub(crate) fn preview_actionability_for(finding: &Finding) -> Option<PreviewActi
             }
         }
     } else {
-        evidence_value(finding, "why_not_actionable: ")
-            .unwrap_or("TypeScript preview lacks a complete repair packet contract")
-            .to_string()
+        let specific = evidence_value(finding, "why_not_actionable: ");
+        // #5531: a repo-scoped finding projects no packet because the
+        // capability registry has no repo-mode repair_routing cell; lead with
+        // that and keep the specific per-finding reason.
+        match scope_qualified_why(finding, specific) {
+            Some(why) => why,
+            None => specific
+                .unwrap_or("TypeScript preview lacks a complete repair packet contract")
+                .to_string(),
+        }
     };
 
     // §1.3 / RIPR-SPEC-0088 §PR8: flip gap_state + actionability_category when
@@ -151,6 +158,27 @@ pub(crate) fn preview_actionability_for(finding: &Finding) -> Option<PreviewActi
         unlock_condition,
         evidence_needed_to_promote: resolved_evidence_needed,
         raw_evidence_refs,
+    })
+}
+
+/// Typed-scope reason for a repo-scoped finding with no repair route (#5531).
+/// Reads `Finding::analysis_mode()`, never the evidence line.
+pub(crate) fn repo_scope_no_repair_reason(finding: &Finding) -> Option<String> {
+    use crate::domain::language_capability::{AnalysisMode, repo_mode_no_repair_routing_reason};
+    if finding.analysis_mode() != Some(AnalysisMode::Repo) {
+        return None;
+    }
+    repo_mode_no_repair_routing_reason(finding.language?)
+}
+
+/// `"{scope reason}; {specific}"` (or the scope reason alone) for a repo-scoped
+/// finding, `None` otherwise (#5531). Shared by every surface that prints the
+/// raw `why_not_actionable:` evidence line so they cannot disagree.
+pub(crate) fn scope_qualified_why(finding: &Finding, specific: Option<&str>) -> Option<String> {
+    let scope = repo_scope_no_repair_reason(finding)?;
+    Some(match specific.filter(|s| !s.trim().is_empty()) {
+        Some(specific) => format!("{scope}; {specific}"),
+        None => scope,
     })
 }
 

@@ -25,6 +25,11 @@ Start here:
     configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain
     unknown
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator not established
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: Related tests appear to reach via_map_or_else: map_or_else_boundary_stays_unresolved
     - infection unknown: The only literals ripr reads in related tests are char literals ['x'], which ripr does not compare with the changed numeric boundary [1]; activation/infection…
     - 7 more detail line(s) in --format human-full

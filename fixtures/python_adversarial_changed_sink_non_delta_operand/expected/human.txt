@@ -21,6 +21,11 @@ Start here:
   Changed behavior: return max(0, self._balance)
   Analyzer limit: Static limit `decorator_indirection`: owner `Account.balance` is decorated with `property`; syntax-first preview evidence does not resolve decorator-modified call behavior
   Evidence: reach no · infection unknown · propagation unknown · observation no · discriminator no
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach no: 0 related Python test(s) found for owner `balance`
     - infection unknown: Static limit `decorator_indirection` prevents a safe Python infection claim
     - 7 more detail line(s) in --format human-full

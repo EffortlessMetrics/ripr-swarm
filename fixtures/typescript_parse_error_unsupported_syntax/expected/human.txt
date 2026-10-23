@@ -25,6 +25,11 @@ Start here:
     isolate the unsupported syntax before relying on repair guidance; no actionable repair packet is
     emitted
   Evidence: reach unknown · infection unknown · propagation unknown · observation unknown · discriminator unknown
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach unknown: TypeScript preview parser could not build syntax facts for `src/broken.ts`: 1 parser error(s): Unexpected token
     - infection unknown: TypeScript preview parser could not build syntax facts for `src/broken.ts`: 1 parser error(s): Unexpected token
     - 6 more detail line(s) in --format human-full
