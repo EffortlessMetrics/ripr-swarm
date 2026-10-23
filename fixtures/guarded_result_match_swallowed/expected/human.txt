@@ -22,6 +22,11 @@ Start here:
     executed path, and that it resolves to the intended standard macro, then check the changed
     returned value
   Evidence: reach yes · infection yes · propagation yes · observation no · discriminator no
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: Related tests appear to reach expect_ready: logs_failures_without_discriminating, wildcard_panic_without_variant_pin
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 12 more detail line(s) in --format human-full
@@ -29,7 +34,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/guarded_result_match_swallowed/input --diff <cwd>/fixtures/guarded_result_match_swallowed/diff.patch --mode fast probe:src_lib.rs:error_path:94d13aee
   ripr context --root <cwd>/fixtures/guarded_result_match_swallowed/input --diff <cwd>/fixtures/guarded_result_match_swallowed/diff.patch --mode fast --at probe:src_lib.rs:error_path:94d13aee
-  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:error_path:94d13aee --root <cwd>/fixtures/guarded_result_match_swallowed/input` for the full gate's answer
+  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: error_variant); run `ripr repair probe:src_lib.rs:error_path:94d13aee --root <cwd>/fixtures/guarded_result_match_swallowed/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/guarded_result_match_swallowed/input --at src/lib.rs:9 --kind error_path
 

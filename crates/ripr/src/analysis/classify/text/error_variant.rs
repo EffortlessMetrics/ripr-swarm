@@ -10,7 +10,7 @@ pub(in crate::analysis) fn exact_error_variant(text: &str) -> Option<String> {
         None => turbofish_err_open(text)?,
     };
     let inner = delimited_contents_at(text, open)?;
-    let inner = inner.trim();
+    let inner = unboxed_error_expression(inner.trim());
     let outer_expression = inner
         .char_indices()
         .find(|(_, ch)| matches!(ch, '(' | '{' | '['))
@@ -18,6 +18,32 @@ pub(in crate::analysis) fn exact_error_variant(text: &str) -> Option<String> {
         .trim();
     let values = enum_variant_values(outer_expression);
     (values.len() == 1).then(|| values[0].clone())
+}
+
+/// The expression a `Box::new(..)` wrapper boxes, or `expression` itself.
+///
+/// `Err(Box::new(E::V))` is how a `Box<dyn Error>` owner returns `E::V`:
+/// boxing erases the static type, not the variant, and a test pins it by
+/// downcasting back to `E` (RIPR-SPEC-0175). Only a wrapper that spans the
+/// whole expression unwraps (`Box::new(a).into()` stays opaque), and only
+/// `Box::new`: `.into()` and `From` conversions may map the variant to
+/// another type's, so they keep their wrapper-seam reading.
+pub(in crate::analysis) fn unboxed_error_expression(expression: &str) -> &str {
+    let expression = expression.trim();
+    for prefix in [
+        "Box::new(",
+        "std::boxed::Box::new(",
+        "alloc::boxed::Box::new(",
+    ] {
+        if let Some(rest) = expression.strip_prefix(prefix)
+            && let Some(boxed) = rest.strip_suffix(')')
+            && delimited_contents_at(expression, prefix.len() - 1)
+                .is_some_and(|contents| contents.trim() == boxed.trim())
+        {
+            return unboxed_error_expression(boxed);
+        }
+    }
+    expression
 }
 
 /// The exact error variant a changed line produces: an
@@ -369,6 +395,42 @@ mod tests {
             Some("E::Bad")
         );
         assert_eq!(exact_error_variant("let x = Err::<u8, E>;"), None);
+    }
+
+    #[test]
+    fn exact_error_variant_reads_through_a_box_new_wrapper() {
+        for text in [
+            "return Err(Box::new(ParseError::InvalidData));",
+            "return Err(std::boxed::Box::new(ParseError::InvalidData));",
+            "return Err(Box::new(Box::new(ParseError::InvalidData)));",
+            "return Err(Box::new(ParseError::InvalidData { reason }));",
+        ] {
+            assert_eq!(
+                exact_error_variant(text).as_deref(),
+                Some("ParseError::InvalidData"),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn exact_error_variant_keeps_other_wrappers_opaque() {
+        // `.into()` and `From` may map the variant to another type's, and a
+        // box that does not span the whole payload is not a plain box.
+        for text in [
+            "return Err(ParseError::InvalidData.into());",
+            "return Err(Box::new(ParseError::InvalidData).into());",
+            "return Err(Box::new(ParseError::InvalidData) as Box<dyn Error>);",
+            "return Err(Wrapper::new(ParseError::InvalidData));",
+        ] {
+            let variant = exact_error_variant(text);
+            assert_ne!(variant.as_deref(), Some("Wrapper::new"), "{text}");
+        }
+        assert_eq!(
+            unboxed_error_expression("Box::new(a).into()"),
+            "Box::new(a).into()"
+        );
+        assert_eq!(unboxed_error_expression("Box::new(a)"), "a");
     }
 
     #[test]

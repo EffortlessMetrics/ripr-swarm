@@ -15,7 +15,7 @@
 //! stays a typed limitation; the tool must not guess it or create a
 //! misleading attempt.
 
-use super::gaps::GapItem;
+use super::gaps::{GapItem, RepairFixSite};
 use super::workspace::{
     AttemptFailure, CODE_ITEM_NOT_FOUND, RECOVERY_REPAIR_TOO_LARGE, WorkspaceSession,
     bounded_document,
@@ -83,15 +83,19 @@ pub(crate) struct RepairTransaction {
 }
 
 /// Extract the attempt id from a `ripr://repair-attempt/{attempt_id}` URI.
+/// One trailing slash is normalized away (#9895, `trim_one_trailing_slash`).
 pub(crate) fn repair_attempt_resource_id(uri: &str) -> Option<&str> {
     uri.strip_prefix("ripr://repair-attempt/")
+        .map(super::gaps::trim_one_trailing_slash)
         .filter(|id| !id.is_empty() && !id.contains('/'))
 }
 
 /// Extract the receipt id from a `ripr://receipt/{receipt_id}` URI. Receipt
 /// ids are attempt-bound: one retained receipt per durable attempt identity.
+/// One trailing slash is normalized away (#9895, `trim_one_trailing_slash`).
 pub(crate) fn receipt_resource_id(uri: &str) -> Option<&str> {
     uri.strip_prefix("ripr://receipt/")
+        .map(super::gaps::trim_one_trailing_slash)
         .filter(|id| !id.is_empty() && !id.contains('/'))
 }
 
@@ -741,13 +745,15 @@ impl WorkspaceSession {
                 "line": fix_site.line,
                 "oracle": fix_site.oracle,
                 "oracle_kind": fix_site.oracle_kind,
-                "established_by": "the strongest directly-related producer test grip (strong oracle, high-confidence direct relation) on a shared test-surface path",
+                "established_by": if fix_site.inline_test_module.is_some() {
+                    "the strongest directly-related producer test grip (strong oracle, high-confidence direct relation), inside the seam's own governed inline test module that the shared repair gate admitted"
+                } else {
+                    "the strongest directly-related producer test grip (strong oracle, high-confidence direct relation) on a shared test-surface path"
+                },
             },
             "allowed_edit_surface": [fix_site_file(item)],
-            "must_not_change": [
-                crate::output::agent_seam_packets::EDIT_CAGE_PRODUCTION_STATEMENT,
-                crate::output::agent_seam_packets::EDIT_CAGE_TERMINALITY_WARNING,
-            ],
+            "inline_test_module": inline_test_module_boundary(&fix_site),
+            "must_not_change": must_not_change(&fix_site),
             "stop_conditions": [
                 "stop if the focused test edit requires changing any file outside allowed_edit_surface",
                 "stop if the repository moves away from the prepared snapshot; re-run ripr_refresh and prepare a fresh transaction",
@@ -935,6 +941,35 @@ impl WorkspaceSession {
             RECOVERY_REPAIR_TOO_LARGE,
         )
     }
+}
+
+/// The module confinement of an inline-test fix site (#5516), or null for a
+/// test-surface fix site. New test functions go inside the governed module
+/// only; the CLI before phase captures the same module and the after phase
+/// rejects any other change to the file.
+fn inline_test_module_boundary(fix_site: &RepairFixSite) -> Value {
+    match &fix_site.inline_test_module {
+        Some(module) => json!({
+            "file": fix_site.file,
+            "module": module,
+            "boundary": "add new test functions inside this inline test module only; production code, the module declaration and existing tests stay unchanged",
+        }),
+        None => Value::Null,
+    }
+}
+
+fn must_not_change(fix_site: &RepairFixSite) -> Vec<String> {
+    let production = match &fix_site.inline_test_module {
+        Some(module) => crate::output::agent_seam_packets::inline_test_module_edit_statement(
+            &fix_site.file,
+            module,
+        ),
+        None => crate::output::agent_seam_packets::EDIT_CAGE_PRODUCTION_STATEMENT.to_string(),
+    };
+    vec![
+        production,
+        crate::output::agent_seam_packets::EDIT_CAGE_TERMINALITY_WARNING.to_string(),
+    ]
 }
 
 /// The allowed edit surface file of one ready item; the readiness gate
@@ -2688,6 +2723,32 @@ mod tests {
         ] {
             assert_eq!(repair_attempt_resource_id(other), None, "{other}");
             assert_eq!(receipt_resource_id(other), None, "{other}");
+        }
+    }
+
+    /// #9895: the attempt and receipt routes tolerate exactly one trailing
+    /// slash; a second slash or a slash leaving the id empty still misses.
+    #[test]
+    fn resource_id_routes_tolerate_one_trailing_slash() {
+        for (uri, expected) in [
+            (
+                "ripr://repair-attempt/repair-attempt-abc/",
+                Some("repair-attempt-abc"),
+            ),
+            ("ripr://repair-attempt/repair-attempt-abc//", None),
+            ("ripr://repair-attempt//", None),
+        ] {
+            assert_eq!(repair_attempt_resource_id(uri), expected, "{uri}");
+        }
+        for (uri, expected) in [
+            (
+                "ripr://receipt/repair-attempt-abc/",
+                Some("repair-attempt-abc"),
+            ),
+            ("ripr://receipt/repair-attempt-abc//", None),
+            ("ripr://receipt//", None),
+        ] {
+            assert_eq!(receipt_resource_id(uri), expected, "{uri}");
         }
     }
 }

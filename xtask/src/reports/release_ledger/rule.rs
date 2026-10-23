@@ -13,8 +13,10 @@
 //! 2. `present_but_superseded` is `included_superseded_by_later_fix`.
 //! 3. `history_reachable_no_final_blob_effect` is
 //!    `included_historical_reachable_only`.
-//! 4. A subject naming the owner issue of a packet claim resolved
-//!    `accepted_defer_with_non_claim` is `included_with_release_nonclaim`.
+//! 4. A non-product commit whose subject names the owner issue of a packet
+//!    claim resolved `accepted_defer_with_non_claim` is
+//!    `included_with_release_nonclaim`. A product-class commit that names the
+//!    same issue landed behavior, so it falls through to rule 5.
 //! 5. Otherwise the strongest path class wins:
 //!    product > unclassified (blocking) > control > automation > evidence > docs.
 //!
@@ -155,8 +157,17 @@ pub(super) fn classify_path(path: &str) -> PathClass {
     PathClass::Other
 }
 
-pub(super) fn strongest_class(paths: &[String]) -> Option<PathClass> {
-    paths.iter().map(|path| classify_path(path)).max()
+/// The strongest class of a commit's paths, counting a product path the commit
+/// edited only inside `#[cfg(test)]` items as evidence.
+fn commit_class(commit: &CommitFacts) -> Option<PathClass> {
+    commit
+        .paths
+        .iter()
+        .map(|path| match classify_path(path) {
+            PathClass::Product if commit.inline_test_paths.contains(path) => PathClass::Evidence,
+            class => class,
+        })
+        .max()
 }
 
 struct Decision {
@@ -194,7 +205,7 @@ fn decide(commit: &CommitFacts, packet: &SelectionPacket) -> Decision {
     if commit.paths.is_empty() {
         return blocked("empty", "empty diff: needs an override", limitations);
     }
-    let class = strongest_class(&commit.paths).unwrap_or(PathClass::Other);
+    let class = commit_class(commit).unwrap_or(PathClass::Other);
     // Rule 0 looks at every path, not the strongest class: an unclassified path
     // beside a product path must not be hidden by the product class.
     if first_parent
@@ -238,11 +249,12 @@ fn decide(commit: &CommitFacts, packet: &SelectionPacket) -> Decision {
         .chain(&commit.issue_refs)
         .copied()
         .collect();
-    if let Some(claim) = packet.claims.iter().find(|claim| {
+    let nonclaim = packet.claims.iter().find(|claim| {
         claim.resolution == "accepted_defer_with_non_claim"
             && claim.owner_issue != 0
             && mentioned.contains(&claim.owner_issue)
-    }) {
+    });
+    if let Some(claim) = nonclaim.filter(|_| class != PathClass::Product) {
         return decided(
             "included_with_release_nonclaim",
             class,

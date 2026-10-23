@@ -13,6 +13,8 @@ Linked issues:
 - #4486
 - #6297
 - #7063
+- #7794
+- #7820
 - #7966
 
 Linked PRs:
@@ -307,6 +309,43 @@ Proof: `mutating_collection_a_while_asserting_b_stays_unverified`,
 `direct_collection_state_write_requires_complete_witness`,
 `cache_insert_call_deletion_keeps_legacy_syntax_propagation`, and
 `direct_collection_mutation_discriminates_actual_observer_not_sibling_collection`.
+
+## Sibling effect oracle provenance (#7794)
+
+When an actual related test reaches the owner, a SideEffect or CallDeletion
+oracle related only by file/module proximity cannot confirm observation from
+its kind alone. Its matched rows remain visible with
+`observation_unconfirmed` when no other confirmation applies. A whole-object
+equality on a sibling parser result cannot observe an aggregation effect just
+because it has the right oracle kind.
+
+This rule narrows only the existing kind-based effect confirmation branch;
+collection/field and token confirmation retain their authority. Proximity
+without an actual owner caller and opaque macro invocation retain their prior
+reading. Direct and helper effect observers retain credit. Indexed implicit
+trait dispatch retains the established effect-observer reading (#7820): owners
+reachable from known trait methods such as `Iterator::next` and `Add::add`
+are distinct from unknown standard calls and lexical containers. Free and
+inherent methods with those names do not gain this allowance, even beside
+a same-name trait declaration. Direct dispatch is bound to the actual owner;
+a reverse name path requires a unique indexed trait declaration. The current
+observer test must also contain a dispatch witness on a receiver bound to that
+impl: a loop, recognized operator, `for_each` or explicit method call. Merely
+indexing or constructing the implementor cannot authorize a parser equality.
+A refused parser row retains `observation_unconfirmed` even beside another
+confirmed observer. Both effect families have paired direct/reverse positives
+and unused/wrong-receiver/free/inherent/ambiguous negatives. Unknown standard
+method dispatch does not itself establish that an equality observes the changed
+effect; this slice neither rules out that dispatch nor resolves value flow.
+This is separate from #7778's predicate/string-literal guard and preserves
+#3161's broader propagation limits.
+
+Proof: `sibling_effect_oracle` public API metamorphic and direct-effect controls,
+loop/operator preservation and free/inherent-name refusal controls,
+the exact consumer fixture `rust_sibling_effect_oracle`, the compiling review
+counterexample `rust_unused_trait_effect_oracle`, and their independent
+honesty-corpus invariant. Native removal experiments are separate runtime
+evidence rather than a static mutation claim.
 
 ## Part D: a whole-object effect observer must be able to carry the effect
 
@@ -609,3 +648,30 @@ verdict-corpus rows.
   discriminate summary.
 
 No tier change required. Honesty narrowing within the existing `usable alpha` Rust exposure loop.
+
+### Assertion-local implicit effect authority (#7794)
+
+A known typed trait dispatch is not a test-wide observation receipt. Kind-only
+credit requires the particular assertion to observe the dispatched literal
+receiver's shared sink after dispatch. The bounded form supports one uniquely named same-file receiver type, one local
+standard Rc/Cell or Rc/RefCell/Vec handle, a record literal sharing its clone,
+an ordered empty loop/for_each/explicit-next loop or Add operation, and a
+one-field derived PartialEq wrapper compared against a fresh literal expected
+handle. Direct changed-field writes and one-argument direct reverse transfers
+are supported only with a single written-field use in dispatch and a single
+owner-parameter use, excluding shadowing and whole-self transfers. Competing
+production writes cannot stand in for the changed effect. Unknown aliases, intervening handle uses, shadowing, custom
+equality, inequality, deferred code, production macro calls/definitions, any
+indexed workspace Drop implementation, receiver-type attributes and longer reverse transfers refuse this
+exception. Reach, token/collection identity, opaque-macro authority and
+direct/helper recorder admission remain separate. A refused assertion keeps
+its own visible miss; an admitted assertion cannot lend it confirmation.
+
+Receiver-independent expansion safety is scanned lazily once per immutable
+classification run, borrowing indexed source bytes. The run memo stores the
+workspace veto and receiver exclusion names; probes and candidate assertions
+reuse those facts. Parse failures, unknown macros/attributes and Drop across
+indexed files conservatively withhold the bounded exception, including when
+they occur outside the receiver file. This is a workspace-wide unknown, not
+general expansion or alias support. Token confirmation retains its independent
+identity gates even when this kind-only exception refuses an assertion.

@@ -7,7 +7,7 @@ use super::owners_tests::{
 use super::source_utils::{
     SourceText, is_test_file, line_for_range_end, line_for_range_start, text_for_range,
 };
-use super::{PythonOwner, PythonTest, expr_full_name};
+use super::{PythonFramework, PythonOwner, PythonTest, expr_full_name};
 use crate::domain::{LanguageId as DomainLanguageId, StaticLimitKind};
 use rustpython_parser::{
     Mode,
@@ -29,6 +29,8 @@ pub(super) struct PythonSourceFacts {
     pub(super) tests: Vec<PythonTest>,
     /// Module-level `@pytest.fixture` functions (#4563).
     pub(super) fixtures: Vec<super::PythonFixtureDef>,
+    /// Single-assert helper defs of the module (#9419).
+    pub(super) helper_module: super::helper_assertions::PythonHelperModule,
     /// The file is a `conftest.py` that installs implicit setup around the
     /// tests in its scope (#6657). A conftest that failed to parse is not
     /// flagged here; the workspace pass treats any limitation as unreadable.
@@ -139,7 +141,7 @@ pub(super) struct PythonSourceLimitation {
 /// first when both are present so primary-of-set consumers stay pytest-first.
 /// Fail-closed: empty when no marker matches — callers must report
 /// "not detected", never guess.
-pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
+pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<PythonFramework> {
     let mut saw_pytest = root.join("pytest.ini").exists()
         || root.join("conftest.py").exists()
         // A bare pyproject.toml is PEP 517 packaging, not pytest evidence
@@ -210,10 +212,10 @@ pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
     }
     let mut frameworks = Vec::new();
     if saw_pytest {
-        frameworks.push("pytest");
+        frameworks.push(PythonFramework::Pytest);
     }
     if saw_unittest {
-        frameworks.push("unittest");
+        frameworks.push(PythonFramework::Unittest);
     }
     frameworks
 }
@@ -255,7 +257,7 @@ fn python_framework_scan_dirs(root: &Path) -> Vec<PathBuf> {
 /// Primary detected Python test framework: the first entry of
 /// [`detect_python_test_frameworks`] (pytest before unittest). Adapter
 /// repo-input still stores a single `Option`; doctor prints the full set.
-pub(crate) fn detect_python_test_framework(root: &Path) -> Option<&'static str> {
+pub(crate) fn detect_python_test_framework(root: &Path) -> Option<PythonFramework> {
     detect_python_test_frameworks(root).into_iter().next()
 }
 
@@ -618,6 +620,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         owners: Vec::new(),
         tests: Vec::new(),
         fixtures: Vec::new(),
+        helper_module: super::helper_assertions::PythonHelperModule::default(),
         conftest_implicit_setup: false,
         facts: Vec::new(),
         limitations: Vec::new(),
@@ -686,6 +689,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
             body: &imports,
             definition: &[],
             standard_unittest_list: false,
+            subclassed: false,
             admission: &PythonAdmissionContext::of_module(
                 &module.body,
                 &imports,
@@ -695,10 +699,13 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         &mut snapshot.tests,
     );
     snapshot.fixtures = super::fixtures::collect_fixture_defs(file, source, &module.body, &imports);
+    snapshot.helper_module =
+        super::helper_assertions::collect_helper_module(file, source, &module.body);
     snapshot.conftest_implicit_setup = file.file_name().and_then(|name| name.to_str())
         == Some("conftest.py")
         && super::admission::conftest_installs_implicit_setup(&module.body);
     with_module_rebinding(source, &module.body, &mut snapshot.tests);
+    super::test_activation::apply_module_controls(&module.body, &imports, &mut snapshot.tests);
     super::oracles::unittest_list::withhold_modified_oracles(&mut snapshot.tests);
     collect_source_facts_from_statements(
         file,

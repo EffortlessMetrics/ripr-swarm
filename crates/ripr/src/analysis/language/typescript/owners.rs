@@ -29,6 +29,7 @@ pub(crate) fn extract_owners(file: &Path, source: &str) -> Vec<TypeScriptOwner> 
         }
         let mut owners = without_reassigned_commonjs_exports(owners);
         mark_default_exported_bindings(&ret.program.body, &mut owners);
+        mark_commonjs_default_binding(&ret.program, &mut owners);
         mark_default_object_members(&ret.program.body, &mut owners);
         // #7507: a `let`/function owner rebound before its `export default`
         // carries dead code at the declaration site — drop it so no finding
@@ -45,6 +46,7 @@ pub(crate) fn extract_owners(file: &Path, source: &str) -> Vec<TypeScriptOwner> 
                 owner.module_entries = owner_entries.clone();
             }
         }
+        assign_class_entries(&mut owners, &class_instance_field_names(&ret.program));
         owners
     }) else {
         return Vec::new();
@@ -161,6 +163,8 @@ fn owners_from_commonjs_export(
             )
             .map(|mut owner| {
                 owner.exported_as_default = true;
+                owner.commonjs_default_export = true;
+                owner.commonjs_whole_function = true;
                 vec![owner]
             })
             .unwrap_or_default()
@@ -175,6 +179,8 @@ fn owners_from_commonjs_export(
         )
         .map(|mut owner| {
             owner.exported_as_default = true;
+            owner.commonjs_default_export = true;
+            owner.commonjs_whole_function = true;
             vec![owner]
         })
         .unwrap_or_default(),
@@ -551,6 +557,234 @@ fn mark_default_exported_bindings(body: &[Statement<'_>], owners: &mut [TypeScri
     }
 }
 
+/// Mark a top-level function declaration as the module's CommonJS default
+/// export when a separate statement assigns its binding to `module.exports`
+/// (`module.exports = stringify;`), the CommonJS twin of `export default
+/// stringify;` (RIPR-SPEC-0243 rule 19). Only a plain reference qualifies, and
+/// only while the binding is unambiguous: exactly one assignment to
+/// `module.exports` appears in the whole file, the name is declared by exactly
+/// one top-level function declaration and the file never writes it, so the
+/// value `require()` hands back is that declaration. An opaque file
+/// (`eval`, `with`) marks nothing.
+fn mark_commonjs_default_binding(
+    program: &oxc_ast::ast::Program<'_>,
+    owners: &mut [TypeScriptOwner],
+) {
+    let mut target: Option<&str> = None;
+    for stmt in &program.body {
+        let Statement::ExpressionStatement(expression) = stmt else {
+            continue;
+        };
+        let Expression::AssignmentExpression(assign) = &expression.expression else {
+            continue;
+        };
+        if assign.operator != AssignmentOperator::Assign {
+            continue;
+        }
+        let AssignmentTarget::StaticMemberExpression(member) = &assign.left else {
+            continue;
+        };
+        if !is_module_exports(member) {
+            continue;
+        }
+        if let Expression::Identifier(ident) = &assign.right {
+            target = Some(ident.name.as_str());
+        }
+    }
+    let declarations = target.map_or(0, |name| {
+        program
+            .body
+            .iter()
+            .filter(|stmt| {
+                matches!(stmt, Statement::FunctionDeclaration(function)
+                    if function.id.as_ref().is_some_and(|id| id.name == name))
+            })
+            .count()
+    });
+    // `module.exports = name;` of one declared function makes the whole export
+    // that function whether or not the gate below holds; a named import or
+    // member of it is then a property of the function, never the owner.
+    let declared = target.filter(|_| declarations == 1);
+    for owner in owners.iter_mut() {
+        if declared.is_some_and(|name| {
+            owner.class_name.is_none()
+                && owner.owner_kind == OwnerKind::Function
+                && owner.name == name
+        }) {
+            owner.commonjs_whole_function = true;
+        }
+    }
+    // One file-level gate for the inline (`module.exports = function ...`)
+    // and the declared (`module.exports = name;`) forms. It must hold on the
+    // regex-aware mask, the division-only mask, and the comment-only text, so
+    // a `/` misread (`t! / 2`) or a backtick inside a regex cannot hide code.
+    let source = program.source_text;
+    let comments: Vec<std::ops::Range<usize>> = program
+        .comments
+        .iter()
+        .map(|comment| comment.span.start as usize..comment.span.end as usize)
+        .collect();
+    let visible = super::tests_extract::blank_ranges(source, &comments);
+    let both = super::tests_extract::byte_preserving_code_mask(source)
+        .filter(|code| commonjs_default_gate(code))
+        .zip(
+            super::tests_extract::byte_preserving_division_mask(source)
+                .filter(|code| commonjs_default_gate(code)),
+        )
+        .filter(|_| commonjs_visible_text_gate(&visible))
+        .filter(|_| !names_the_module_object_in_text(source));
+    let Some((code, division_code)) = both else {
+        // Only the inline owners this pass flagged lose their default
+        // export; every other file (ESM, no `module.exports`) fails the gate.
+        for owner in owners.iter_mut().filter(|o| o.commonjs_default_export) {
+            owner.commonjs_default_export = false;
+            owner.exported_as_default = false;
+        }
+        return;
+    };
+    let Some(name) = declared else {
+        return;
+    };
+    // Annex B: a block-level `function name` re-binds the top-level function.
+    let spellings = |text: &str| {
+        super::tests_extract::function_declaration_names(text)
+            .iter()
+            .filter(|(declared, _)| declared == name)
+            .count()
+    };
+    if spellings(&code) != 1
+        || spellings(&division_code) != 1
+        || super::tests_extract::identifier_written_strictly(&code, name)
+        || super::tests_extract::identifier_written_strictly(&division_code, name)
+    {
+        return;
+    }
+    for owner in owners.iter_mut() {
+        if owner.class_name.is_none()
+            && owner.owner_kind == OwnerKind::Function
+            && owner.name == name
+        {
+            owner.exported_as_default = true;
+            owner.commonjs_default_export = true;
+        }
+    }
+}
+
+/// The module-object checks of [`commonjs_default_gate`] on text where only
+/// comments are blanked: strings, templates and regex literals stay visible,
+/// so a mis-lexed delimiter cannot hide a write. `eval` and `with` count
+/// anywhere; `\u` escapes are not read here (they are legal in strings).
+fn commonjs_visible_text_gate(visible: &str) -> bool {
+    let opaque = super::tests_extract::identifier_occurrences(visible, "eval")
+        .next()
+        .is_some()
+        || super::tests_extract::identifier_occurrences(visible, "with")
+            .any(|at| visible[at + "with".len()..].trim_start().starts_with('('));
+    !opaque && commonjs_module_reach_gate(visible)
+}
+
+/// `true` when `needle` occurs as a bare word (not a member name, not part of
+/// a longer word) whose following text `allowed` rejects.
+fn bare_word_use(compact: &str, needle: &str, allowed: impl Fn(&str) -> bool) -> bool {
+    let word = |ch: Option<char>| {
+        ch.is_some_and(|ch| ch == '_' || ch == '$' || ch.is_alphanumeric() || !ch.is_ascii())
+    };
+    compact.match_indices(needle).any(|(at, _)| {
+        let before = compact[..at].chars().next_back();
+        let rest = &compact[at + needle.len()..];
+        !(word(before) || word(rest.chars().next()) || before == Some('.') || allowed(rest))
+    })
+}
+
+/// The module object named in a string, which the masks blank:
+/// `require('module')._cache`, `'node:module'`.
+fn names_the_module_object_in_text(source: &str) -> bool {
+    ["'module'", "\"module\"", "`module`", "node:module"]
+        .iter()
+        .any(|spelling| source.contains(spelling))
+}
+
+/// The file-level refusal corpus for `module.exports` (RIPR-SPEC-0243 rule
+/// 19): a bounded list of module-object routes it can name, not a proof. On masked, whitespace-free text the bare
+/// identifier `module` must occur only as `module.exports=` (exactly once, not
+/// `==`/`=>`) or as the base of a property access `module.exports.name`; any
+/// other use (an alias, `module?.exports`, `module[...]`, compound or update
+/// writes, `Object.assign(module, ...)`, `typeof module` guards) makes the
+/// value unknowable. `eval`, `with` and `\u` escapes refuse the file.
+fn commonjs_default_gate(code: &str) -> bool {
+    !super::tests_extract::file_is_opaque(code) && commonjs_module_reach_gate(code)
+}
+
+/// Every use of the module object in `code` is `module.exports = ...` once or
+/// a property access of it.
+fn commonjs_module_reach_gate(code: &str) -> bool {
+    let word = |ch: Option<char>| {
+        ch.is_some_and(|ch| ch == '_' || ch == '$' || ch.is_alphanumeric() || !ch.is_ascii())
+    };
+    // Drop every JS whitespace run (Unicode spaces, line terminators, BOM)
+    // except one space kept between two word characters, so `delete module`
+    // does not fuse into the word `deletemodule`.
+    let is_space = |ch: char| ch.is_whitespace() || ch == '\u{feff}';
+    let chars: Vec<char> = code.chars().collect();
+    let mut compact = String::with_capacity(code.len());
+    let mut at = 0;
+    while at < chars.len() {
+        if !is_space(chars[at]) {
+            compact.push(chars[at]);
+            at += 1;
+            continue;
+        }
+        let start = at;
+        while at < chars.len() && is_space(chars[at]) {
+            at += 1;
+        }
+        let before = if start == 0 {
+            None
+        } else {
+            Some(chars[start - 1])
+        };
+        if word(before) && word(chars.get(at).copied()) {
+            compact.push(' ');
+        }
+    }
+    // `require.main.exports = x`, `require.cache[...]` and
+    // `process.mainModule` reach the module object without naming `module`.
+    if ["require.main", "require.cache", "mainModule"]
+        .iter()
+        .any(|reach| compact.contains(reach))
+    {
+        return false;
+    }
+    // Other routes to the module object that never name `module`:
+    // `arguments[2]`, `require['main']`, an alias of `require`, and bracket
+    // access on `process`.
+    if bare_word_use(&compact, "arguments", |_| false)
+        || bare_word_use(&compact, "require", |rest| rest.starts_with('('))
+        || compact.contains("process[")
+    {
+        return false;
+    }
+    let mut assignments = 0usize;
+    for (at, _) in compact.match_indices("module") {
+        let before = compact[..at].chars().next_back();
+        let rest = &compact[at + "module".len()..];
+        if word(before) || word(rest.chars().next()) || before == Some('.') {
+            continue;
+        }
+        if let Some(after) = rest.strip_prefix(".exports") {
+            if after.starts_with('.') {
+                continue;
+            }
+            if after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>") {
+                assignments += 1;
+                continue;
+            }
+        }
+        return false;
+    }
+    assignments == 1
+}
+
 /// Mark top-level function (or const arrow) owners held by the module's `export default {
 /// name }` object (RIPR-SPEC-0243 rule 5). Only an object made entirely of
 /// plain same-name entries qualifies: a spread, computed key, method, getter,
@@ -829,6 +1063,8 @@ pub(crate) fn owner_from_variable_declarator(
             method_kind: TypeScriptMethodKind::Ordinary,
             class_default_export: false,
             default_object_member: false,
+            commonjs_default_export: false,
+            commonjs_whole_function: false,
             module_entries: Vec::new(),
             // Non-function initializers carry no resolvable signature facts:
             // no fixed positional signature the boundary witness could
@@ -883,6 +1119,8 @@ pub(crate) fn owner_from_function(
         method_kind: TypeScriptMethodKind::Ordinary,
         class_default_export: false,
         default_object_member: false,
+        commonjs_default_export: false,
+        commonjs_whole_function: false,
         module_entries: Vec::new(),
         params,
         arity,
@@ -913,6 +1151,8 @@ pub(crate) fn owner_from_arrow(
         method_kind: TypeScriptMethodKind::Ordinary,
         class_default_export: false,
         default_object_member: false,
+        commonjs_default_export: false,
+        commonjs_whole_function: false,
         module_entries: Vec::new(),
         params,
         arity,
@@ -984,6 +1224,8 @@ pub(crate) fn owner_from_method(
         },
         class_default_export: false,
         default_object_member: false,
+        commonjs_default_export: false,
+        commonjs_whole_function: false,
         module_entries: Vec::new(),
         params,
         arity,
@@ -1355,6 +1597,65 @@ pub(crate) fn detect_owner_extraction_gap(
         shape,
         snippet: snippet_for_span(source, span.0, span.1),
     })
+}
+
+/// Changed lines that sit inside a runtime enum member (`High = 3,`). The
+/// owner extractor indexes no enum, so such a line has no owner and the
+/// classifier returns nothing for it; without this the edit is silent apart
+/// from the file-level `typescript_owner_extraction_partial` disclosure
+/// (#9436). Ambient `declare enum` is type-only and never listed. A file that
+/// does not parse yields nothing, as its parse-error disclosure owns it.
+pub(crate) fn changed_enum_member_lines(
+    file: &Path,
+    source: &str,
+    changed_lines: &[usize],
+) -> std::collections::BTreeMap<usize, String> {
+    // A file without the keyword has no enum; skip the extra parse.
+    if changed_lines.is_empty() || !source.contains("enum") {
+        return std::collections::BTreeMap::new();
+    }
+    let changed: std::collections::HashSet<usize> = changed_lines.iter().copied().collect();
+    parse_on_worker(file, source, move |file, source, allocator| {
+        let ret = Parser::new(allocator, source, source_type_for(file)).parse();
+        if !ret.errors.is_empty() {
+            return std::collections::BTreeMap::new();
+        }
+        let raw = source;
+        let source = SourceText::new(source);
+        let mut lines = std::collections::BTreeMap::new();
+        let mut collect = |decl: &oxc_ast::ast::TSEnumDeclaration<'_>| {
+            if decl.declare {
+                return;
+            }
+            for member in &decl.body.members {
+                let start = source.line_for_offset(member.span.start as usize);
+                let end = source.line_for_offset(member.span.end as usize);
+                // Enum and member names, not the line, identify the member so
+                // the finding id survives unrelated line shifts.
+                let name = raw
+                    .get(member.id.span().start as usize..member.id.span().end as usize)
+                    .unwrap_or("");
+                let identity = format!("{}::{name}", decl.id.name);
+                for line in (start..=end).filter(|line| changed.contains(line)) {
+                    lines.entry(line).or_insert_with(|| identity.clone());
+                }
+            }
+        };
+        for stmt in &ret.program.body {
+            match stmt {
+                Statement::TSEnumDeclaration(decl) => collect(decl),
+                Statement::ExportNamedDeclaration(export) => {
+                    if let Some(Declaration::TSEnumDeclaration(decl)) = export.declaration.as_ref()
+                    {
+                        collect(decl);
+                    }
+                }
+                _ => {}
+            }
+        }
+        lines
+    })
+    .unwrap_or_default()
 }
 
 /// 1-based inclusive line ranges of top-level ambient declarations

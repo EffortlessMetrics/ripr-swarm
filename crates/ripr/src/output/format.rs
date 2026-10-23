@@ -11,6 +11,10 @@ pub enum OutputFormat {
     HumanFull,
     /// Versioned JSON report for automation.
     Json,
+    /// Unbounded `json` check findings with the producer `artifact` identity
+    /// envelope (ADR 0020 amendment), so a gap-keyed verify can reject a
+    /// fabricated, edited or incomplete snapshot.
+    CheckFindingsJson,
     /// GitHub annotation output suitable for CI logs.
     Github,
     /// SARIF 2.1.0 report for diff-scoped static exposure Findings.
@@ -118,6 +122,13 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
     OutputFormatSpec {
         format: OutputFormat::Json,
         cli_names: &["json"],
+        is_full_repo_analysis: false,
+        is_seam_fact_cache_backed: false,
+        is_repo_seam_inventory: false,
+    },
+    OutputFormatSpec {
+        format: OutputFormat::CheckFindingsJson,
+        cli_names: &["check-findings-json"],
         is_full_repo_analysis: false,
         is_seam_fact_cache_backed: false,
         is_repo_seam_inventory: false,

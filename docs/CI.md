@@ -446,6 +446,7 @@ and single-platform CI was the root cause enabling both.
   `cargo xtask` step, `windows-advisory-summary`, which validates the two run
   logs and their captured exit statuses; it is evidence validation, not a test
   gate, and it fails the job when the evidence is missing or unusable.
+- **`Windows Advisory Shards`** (`windows-advisory-shards.yml`, manual `workflow_dispatch` only) runs the same workspace tests as four `cargo nextest --partition count:N/4` jobs plus a doctest job, each with its own log artifact and failure summary, so a Windows test failure is attributable to a shard without a 75-minute single step (#9272). It is advisory and does not replace the nightly lane.
 - **Logs are redirected, not piped.** Each cargo step writes its log with a
   file redirect and replays it with `cat`. A `| tee` pipe stays open until
   every process holding its write end exits, so one test leaking a child kept
@@ -453,7 +454,7 @@ and single-platform CI was the root cause enabling both.
   the whole lane (#9272, run 39549631529). Each cargo step also carries its
   own `timeout-minutes`, and later steps run under `!cancelled()`; a step that times out leaves
   no status file, which the summarizer reports as missing evidence. The job
-  deadline (150 minutes) exceeds the sum of the cargo step deadlines, so
+  deadline (270 minutes) exceeds the sum of the cargo step deadlines (15+45+15+75+75), so
   those steps alone cannot exhaust it (setup, summary compilation and the
   manual isolation repeats have no separate deadline). The manual nested-alias
   isolation repeats use the same redirect-and-replay form.
@@ -473,7 +474,8 @@ and single-platform CI was the root cause enabling both.
   PR also runs `windows-advisory-subset`, a fast advisory Windows job
   (`lsp::gap_artifacts` and Cargo-home identity lib tests, the #4918 cache-warning smoke,
   the Windows process-ownership (`process_owner::tests`, including argument round-trip and spawn-error
-  controls), verify-execute cancellation containment, xtask timed-capture
+  controls), verify-execute cancellation containment, the VS Code managed-server install lock suite
+  under plain mocha on Node (#9498), xtask timed-capture
   (`capture_output_with`) and LSP poisoned-initialize (#3802) controls, and
   `cargo clippy -p ripr --all-targets`) under the same advisory contract as
   the lane. It does not gate merges; #4337, #4918, and #4921 were each caught
@@ -2293,6 +2295,21 @@ on a `dependabot/` branch without the template claim lines: the claim is this
 dependency policy and the acceptance delta is the update branch. Any other PR
 still has to state its own claim.
 
+A security update that bumps a lockfile inside a blind-journey installed
+fixture (`fixtures/blind_journey_installed_*`) trips the fixture bindings: file
+digests, snapshot commit/tree ids and the scripted corpus's candidate
+identities are all recorded. Check out the update branch and run
+`cargo xtask fixtures refresh-identity <typescript|python>`. It re-derives the
+digests from the bytes, the ids from the manifest's own `construction_recipe`
+(the rebuild `check-fixture-contracts` verifies with), rebinds the same ids in
+`fixtures/blind_journey_execute/corpus.json`, and moves the TypeScript
+`runner_identity` to the vitest version the head lockfile selects. It refuses
+to add or drop a bound file and does not touch prose. It lists the lines that
+still name the old runner version; those, the frozen transcripts and the
+journeys themselves are re-checked by hand under the new runner
+(`cargo xtask check-fixture-contracts`, `cargo xtask blind-journey-execute`)
+before the update lands.
+
 The ordinary size envelope (files and changed lines) counts only what a human
 has to review. Generated files are declared once, with `linguist-generated` in
 `.gitattributes` (dependency lockfiles, blessed `expected/` rows and goldens,
@@ -2322,6 +2339,31 @@ vulnerability reporting are settings, not workflow files. Keep that document
 updated when repository settings change.
 
 Release workflows handle extension publishing and server binary releases.
+
+## Capability Producer Inventory
+
+`cargo xtask check-capability-producers [--registry-json <path>]` compares the
+binary-resident language capability registry (`ripr capabilities --json`, #5531)
+with repository inventory the in-crate tests cannot enumerate. It builds `ripr`
+and fails when:
+
+- a `LanguageId` variant declared in `domain/language.rs` is not exported by the
+  registry (an omitted `LanguageId::ALL` entry);
+- a registered language has no cell, or a cell names an unregistered language;
+- a `lang-*` Cargo feature, a registry `required_feature` and an adapter
+  directory under `analysis/language/` do not name the same producer set;
+- a cell `proof_refs` entry has no `docs/specs/RIPR-SPEC-NNNN-*.md`.
+
+It is separate from `check-capabilities`, which validates
+`metrics/capabilities.toml` against `docs/CAPABILITY_MATRIX.md` and does not read
+the registry. Limits: it does not check cell states, tier ceilings or docs text
+(in-crate tests and `check-support-tiers`), framework-level producers (the
+per-language disposition tests), the registry's relation to
+`metrics/capabilities.toml`, or non-default feature builds. `--registry-json`
+reads a saved registry without building and can be stale; the report says so.
+It is not part of `precommit`, `check-pr` or any required lane (it requires a
+`ripr` build), so it reports failures only when run; hosted wiring is a
+follow-up on #5531.
 
 ## Principles
 
