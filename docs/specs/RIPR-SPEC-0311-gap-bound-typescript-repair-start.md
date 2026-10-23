@@ -69,8 +69,11 @@ existed with no way to begin the attempt.
    and a gap-bound attempt has no after phase yet, so enforcement arrives with
    the gap-bound after slice. The persisted `next_command` is the manual
    by-gap verification route, never a `--phase after` command. A start
-   refused after the workflow artifacts were written (including a dirty
-   tracked non-test file) removes them and leaves no attempt manifest.
+   refused (including a dirty tracked non-test file, or a publication failure
+   after the workflow artifacts were written) leaves no attempt manifest and
+   restores the shared workflow artifacts to the bytes they had before the
+   invocation: prior files survive byte-identical and only files the
+   invocation created are removed.
 5. Status and recovery text for a gap attempt name the gap start and never
    `--seam-id`.
 6. `agent repair --phase after` for a gap-bound attempt is refused naming the

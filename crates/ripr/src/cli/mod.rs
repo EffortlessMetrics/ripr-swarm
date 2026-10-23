@@ -245,6 +245,12 @@ fn drive_before_phase_inner(
         .ok_or_else(|| "before-phase repair attempt is missing its seam identity".to_string())?;
     let identity =
         crate::app::repair_attempt::BeforeRepairAttemptIdentity::prepare(&options.root, seam_id)?;
+    // #9103: remember the shared gap-bound workflow artifacts as this
+    // invocation found them, so a refusal restores exactly that state.
+    let prior_artifacts = options
+        .gap_id
+        .is_some()
+        .then(|| GapWorkflowArtifactBackup::capture(&options.root));
     let published = match commands::run_before_repair_with_identity(options.clone(), &identity) {
         Ok(()) => persist_before_repair_attempt(&options, &identity).map_err(Into::into),
         Err(error) => Err(error),
@@ -252,21 +258,64 @@ fn drive_before_phase_inner(
     let stdout_document = match published {
         Ok(document) => document,
         Err(error) => {
-            // #9103: a refused gap-bound start leaves no workflow snapshot
-            // behind (no attempt owns them); a rerun rewrites them anyway.
-            if options.gap_id.is_some() {
-                for artifact in [
-                    "target/ripr/workflow/before.check-findings.json",
-                    crate::app::gap_bound_repair::GAP_BOUND_PACKET_ARTIFACT,
-                    "target/ripr/workflow/attempt-baseline.json",
-                ] {
-                    let _ = std::fs::remove_file(options.root.join(artifact));
-                }
+            if let Some(prior) = prior_artifacts {
+                prior.restore();
             }
             return Err(error);
         }
     };
     Ok((identity.attempt_id().to_string(), stdout_document))
+}
+
+/// The shared workflow artifacts a gap-bound start may write, as found before
+/// the start (#9103). A refused start restores each to that state: a prior
+/// file keeps its bytes (a refusal before any write touches nothing), and only
+/// a file this invocation created is removed. An earlier gap projection or a
+/// seam workflow baseline therefore survives a stale-gap, not-ready or
+/// dirty-premise refusal and a partial publication failure.
+struct GapWorkflowArtifactBackup {
+    entries: Vec<(std::path::PathBuf, Option<Vec<u8>>)>,
+}
+
+impl GapWorkflowArtifactBackup {
+    const ARTIFACTS: [&'static str; 3] = [
+        "target/ripr/workflow/before.check-findings.json",
+        crate::app::gap_bound_repair::GAP_BOUND_PACKET_ARTIFACT,
+        "target/ripr/workflow/attempt-baseline.json",
+    ];
+
+    fn capture(root: &Path) -> Self {
+        let entries = Self::ARTIFACTS
+            .iter()
+            .filter_map(|artifact| {
+                let path = root.join(artifact);
+                match std::fs::read(&path) {
+                    Ok(bytes) => Some((path, Some(bytes))),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        Some((path, None))
+                    }
+                    // Unreadable or not a regular file: not ours to touch.
+                    Err(_) => None,
+                }
+            })
+            .collect();
+        Self { entries }
+    }
+
+    fn restore(self) {
+        for (path, prior) in self.entries {
+            match prior {
+                Some(bytes) => {
+                    if std::fs::read(&path).ok().as_deref() != Some(bytes.as_slice()) {
+                        let _ = std::fs::write(&path, bytes);
+                    }
+                }
+                None => {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        }
+    }
 }
 
 /// Serialize before-phase execution and attempt publication per repository.
@@ -540,7 +589,7 @@ fn persist_before_repair_attempt(
         // #9103: the edit cage is only consumed by the after phase, which a
         // gap-bound attempt does not have yet, so nothing enforces it here.
         eprintln!(
-            "ripr: before phase complete. Next: add or strengthen one focused test in the packet's test file (leave production code unchanged). The edit cage for this gap-bound attempt is recorded but not enforced yet; enforcement arrives with the gap-bound after phase."
+            "ripr: before phase complete. Next: add or strengthen one focused test in the packet's test file (leave production code unchanged). The edit cage for this gap-bound attempt is recorded but not enforced yet (C2a); enforcement arrives with the gap-bound after phase (C2b)."
         );
     } else if policy.inline_test_module_target {
         // #5210: the cage admits only new test functions inserted into the
@@ -641,6 +690,37 @@ mod tests {
         std::fs::create_dir_all(&root)
             .map_err(|error| format!("create {} failed: {error}", root.display()))?;
         Ok(root)
+    }
+
+    #[test]
+    fn gap_artifact_backup_restores_prior_bytes_and_removes_only_new_files() -> Result<(), String> {
+        let root = test_root("gap-backup")?;
+        let result = (|| -> Result<(), String> {
+            let workflow = root.join("target/ripr/workflow");
+            std::fs::create_dir_all(&workflow).map_err(|e| e.to_string())?;
+            let snapshot = workflow.join("before.check-findings.json");
+            let packet = workflow.join("gap-repair-packet.json");
+            let baseline = workflow.join("attempt-baseline.json");
+            std::fs::write(&snapshot, b"sentinel-snapshot").map_err(|e| e.to_string())?;
+            std::fs::write(&baseline, b"sentinel-baseline").map_err(|e| e.to_string())?;
+            let backup = GapWorkflowArtifactBackup::capture(&root);
+            // A failed start overwrote one prior file and created the other.
+            std::fs::write(&snapshot, b"overwritten").map_err(|e| e.to_string())?;
+            std::fs::write(&packet, b"new").map_err(|e| e.to_string())?;
+            backup.restore();
+            if std::fs::read(&snapshot).map_err(|e| e.to_string())? != b"sentinel-snapshot"
+                || std::fs::read(&baseline).map_err(|e| e.to_string())? != b"sentinel-baseline"
+            {
+                return Err("prior artifact bytes were not preserved".to_string());
+            }
+            if packet.exists() {
+                return Err("a file the failed start created was kept".to_string());
+            }
+            Ok(())
+        })();
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        result
     }
 
     #[test]

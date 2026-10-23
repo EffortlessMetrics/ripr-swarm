@@ -485,6 +485,85 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
     expect_exit(blocked_ok, false, "blocked publication")?;
     no_leftovers("failed publication", &blocked)?;
 
+    // Pre-existing shared workflow artifacts (an earlier gap projection, a
+    // seam workflow baseline) survive every refusal byte-identical: a refused
+    // start removes or rewrites only what it wrote itself.
+    let sentinels = [
+        ("before.check-findings.json", "sentinel-snapshot"),
+        ("gap-repair-packet.json", "sentinel-packet"),
+        ("attempt-baseline.json", "sentinel-baseline"),
+    ];
+    let plant = || -> Result<(), String> {
+        for (name, bytes) in sentinels {
+            std::fs::write(workflow_dir.join(name), bytes)
+                .map_err(|error| format!("plant {name}: {error}"))?;
+        }
+        Ok(())
+    };
+    let sentinels_intact = |what: &str, only: &[&str]| -> Result<(), String> {
+        for (name, bytes) in sentinels {
+            if !only.contains(&name) {
+                continue;
+            }
+            let found = std::fs::read_to_string(workflow_dir.join(name))
+                .map_err(|error| format!("{what}: sentinel {name} lost: {error}"))?;
+            if found != bytes {
+                return Err(format!("{what}: sentinel {name} rewritten to `{found}`"));
+            }
+        }
+        Ok(())
+    };
+    let all_names: Vec<&str> = sentinels.iter().map(|(name, _)| *name).collect();
+    plant()?;
+    let (stale_ok, stale) = ripr(
+        &decoy,
+        &[
+            "agent",
+            "repair",
+            "--gap-id",
+            "gap:typescript:typescript_preview:00000000",
+            "--base",
+            "HEAD~1",
+            "--root",
+            &root_arg,
+            "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(stale_ok, false, "stale gap with sentinels")?;
+    need(&stale, "names no current TypeScript gap", "stale gap")?;
+    sentinels_intact("stale gap refusal", &all_names)?;
+    std::fs::write(&production, format!("{original}\n// dirty\n"))
+        .map_err(|error| format!("dirty production: {error}"))?;
+    let (dirty_ok, dirty) = ripr(&decoy, &gap_start_args)?;
+    std::fs::write(&production, &original)
+        .map_err(|error| format!("restore production: {error}"))?;
+    expect_exit(dirty_ok, false, "dirty premise with sentinels")?;
+    need(
+        &dirty,
+        "outside the allowed test surface already differ from HEAD",
+        "dirty premise",
+    )?;
+    sentinels_intact("dirty premise refusal", &all_names)?;
+    // Accepted gap whose publication fails after the snapshot and packet were
+    // rewritten: their prior bytes return.
+    std::fs::remove_file(&baseline_path).map_err(|error| format!("clear baseline: {error}"))?;
+    std::fs::create_dir_all(&baseline_path).map_err(|error| format!("block baseline: {error}"))?;
+    let (failed_ok, failed) = ripr(&decoy, &gap_start_args)?;
+    std::fs::remove_dir_all(&baseline_path)
+        .map_err(|error| format!("unblock baseline: {error}"))?;
+    expect_exit(failed_ok, false, "blocked publication with sentinels")?;
+    sentinels_intact(
+        "partial publication failure",
+        &["before.check-findings.json", "gap-repair-packet.json"],
+    )?;
+    if attempt_manifests(&root)? != 0 {
+        return Err(format!("failed publication left an attempt:\n{failed}"));
+    }
+    for (name, _) in sentinels {
+        let _ = std::fs::remove_file(workflow_dir.join(name));
+    }
+
     // The printed start is accepted by `agent repair --phase before`: the
     // flags are replayed exactly as the start line names them.
     let (repair_ok, repair) = ripr(
@@ -553,6 +632,37 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
     .map_err(|error| format!("before snapshot: {error}"))?;
     need(&snapshot, "\"kind\":\"check_findings\"", "snapshot kind")?;
     need(&snapshot, &gap, "snapshot carries the gap")?;
+    // A later refused start (unknown gap) leaves the accepted start's shared
+    // snapshot and baseline byte-identical.
+    let accepted_snapshot_path = workflow_dir.join("before.check-findings.json");
+    let accepted_baseline_path = workflow_dir.join("attempt-baseline.json");
+    let accepted_baseline = std::fs::read(&accepted_baseline_path)
+        .map_err(|error| format!("accepted baseline: {error}"))?;
+    let (late_ok, _) = ripr(
+        &decoy,
+        &[
+            "agent",
+            "repair",
+            "--gap-id",
+            "gap:typescript:typescript_preview:00000000",
+            "--base",
+            "HEAD~1",
+            "--root",
+            &root_arg,
+            "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(late_ok, false, "unknown gap after accepted start")?;
+    if std::fs::read_to_string(&accepted_snapshot_path)
+        .ok()
+        .as_deref()
+        != Some(snapshot.as_str())
+        || std::fs::read(&accepted_baseline_path).ok().as_deref()
+            != Some(accepted_baseline.as_slice())
+    {
+        return Err("a refused start changed the accepted start's shared artifacts".to_string());
+    }
     // Status over a gap-bound attempt never names a seam-bound start.
     let (status_ok, status) = ripr(&decoy, &["agent", "status", "--root", &root_arg])?;
     expect_exit(status_ok, true, "agent status over a gap-bound attempt")?;

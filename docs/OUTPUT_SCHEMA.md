@@ -3617,14 +3617,17 @@ For a TypeScript finding whose repair packet is complete, `ripr check` prints
 `ripr agent repair --gap-id <gap> --base <base> --phase before` as the start
 line (RIPR-SPEC-0311, #9103). The command re-runs the diff-scoped check against
 `--base`, requires the same shared packet validator to accept the finding, and
-otherwise refuses with "the repair packet is not ready" and writes nothing. On
+otherwise refuses with "the repair packet is not ready" and writes nothing.
+A refused start restores the shared workflow artifacts to the bytes they had
+before the invocation (removing only files it created). On
 acceptance it writes `before.check-findings.json` (a `check-findings-json`
 artifact) and `gap-repair-packet.json` under the attempt's artifacts and a
 repair-attempt manifest whose `seam_id` is the canonical gap id and which
 carries one additive member, `gap_binding: { "base": "<base>" }`. Seam
 attempts omit `gap_binding`, so their bytes are unchanged. The packet names the
-gap as its `seam_id`; edits are caged to the packet's test file. This slice
-has no `--phase after` for gap attempts: that phase refuses naming the manual
+gap as its `seam_id`; the edit cage is derived from the packet's test file
+and recorded in the attempt baseline, but this slice does not enforce it: only
+the after phase consumes it. This slice has no `--phase after` for gap attempts: that phase refuses naming the manual
 route, `ripr agent verify --before <snapshot> --after <snapshot> --gap-id <gap>`.
 Let-bound, imported and reach-barrier variants stay unrouted. Python keeps its
 terminal reason. The static result is exposure evidence only; it does not
