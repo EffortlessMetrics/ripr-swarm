@@ -336,6 +336,24 @@ pub(crate) fn snapshot_inputs_differ_in(root: &Path, directory: &Path) -> bool {
 /// `None` means "unknown", and the caller keeps the working-tree read it
 /// always did.
 pub(crate) fn tracked_snapshot_files(root: &Path) -> Option<HashSet<String>> {
+    // An inherited repository selector would make `ls-files` answer for
+    // another repository, and a `.git` entry that git does not accept as this
+    // directory's own (a stub, a damaged one) would make it answer for a
+    // parent. Either is "unknown", never "untracked".
+    if ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"]
+        .iter()
+        .any(|name| std::env::var_os(name).is_some())
+    {
+        return None;
+    }
+    let canonical = root.canonicalize().ok()?;
+    if canonical.join(".git").exists()
+        && crate::git::discovered_work_tree_toplevel(&canonical, Duration::from_secs(30))
+            .as_deref()
+            != Some(canonical.as_path())
+    {
+        return None;
+    }
     let listing = git_bytes(root, &["ls-files", "-z", "--", "*.snap"], None).ok()?;
     Some(
         listing
