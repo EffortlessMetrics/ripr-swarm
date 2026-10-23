@@ -178,6 +178,16 @@ pub(crate) struct TypeScriptTest {
     /// after the call hold other statements, not the assertion. `None` for a
     /// test written out in the file.
     pub(crate) factory_call_line: Option<usize>,
+    /// RIPR-SPEC-0246 rule 7: the body source of every synchronous mocha
+    /// `before`/`beforeEach`/`beforeAll` hook in this test's describe chain
+    /// (the file's top level and each enclosing `describe`), outermost first.
+    /// Recorded only for a file with mocha provenance (a `mocha` import or a
+    /// mocha-style assertion import, and no jest/vitest signal) whose hook
+    /// identifier is the runner's global. A hook that is `async`, a
+    /// generator, takes a parameter (`done`), has an expression body, or
+    /// returns is not recorded. Internal: it feeds one abstention and never a
+    /// relation or credit.
+    pub(crate) setup_hook_bodies: Vec<String>,
 }
 
 impl TypeScriptTest {
