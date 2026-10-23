@@ -445,6 +445,10 @@ fn token_run_count(haystack: &str, needle: &str, whole_unit: bool) -> usize {
         .count()
 }
 
+/// Needles longer than this are searched per distinct value instead of hashed
+/// window by window, which would cost `haystack * needle_len`.
+const LONG_NEEDLE_BYTES: usize = 64;
+
 #[derive(Default)]
 struct TokenRunTally {
     /// End of the last raw match, which `match_indices` never overlaps.
@@ -453,9 +457,21 @@ struct TokenRunTally {
     whole: usize,
 }
 
+impl TokenRunTally {
+    fn record(&mut self, haystack: &str, masked: &[u8], start: usize, needle: &str, whole: bool) {
+        if is_token_run(haystack, masked, start, needle) {
+            self.plain += 1;
+            if whole && is_whole_unit(haystack, start, needle) {
+                self.whole += 1;
+            }
+        }
+    }
+}
+
 /// Token-run counts of many needles in one haystack, equal to calling the
-/// per-needle count for each, in work linear in
-/// `haystack.len() * distinct_needle_lengths` after masking once. The
+/// per-needle count for each, in work bounded by
+/// `haystack.len() * 64` per short length, plus one search per distinct long
+/// needle, after masking once. The
 /// per-needle count re-masks and re-scans the whole haystack per needle, which
 /// is quadratic on one long generated line (#9895).
 struct TokenRunCounts<'a> {
@@ -485,29 +501,43 @@ impl<'a> TokenRunCounts<'a> {
         let masked = mask_comments_and_strings(haystack);
         let masked = masked.as_bytes();
         for (needle_len, mut group) in by_len {
-            #[cfg(test)]
-            TOKEN_RUN_WINDOW_BYTES
-                .with(|bytes| bytes.set(bytes.get().saturating_add(haystack.len())));
-            for (start, _) in haystack.char_indices() {
-                let end = start.saturating_add(needle_len);
-                let Some(window) = haystack.get(start..end) else {
-                    if end > haystack.len() {
-                        break;
+            if needle_len > LONG_NEEDLE_BYTES {
+                // A long needle: hashing a `needle_len` window at every position
+                // is quadratic, so search each distinct long value with the
+                // former `match_indices` (work per distinct long value).
+                for (&needle, (whole_unit, tally)) in &mut group {
+                    #[cfg(test)]
+                    TOKEN_RUN_WINDOW_BYTES
+                        .with(|bytes| bytes.set(bytes.get().saturating_add(haystack.len())));
+                    for (start, _) in haystack.match_indices(needle) {
+                        tally.record(haystack, masked, start, needle, *whole_unit);
                     }
-                    continue;
-                };
-                let Some((whole_unit, tally)) = group.get_mut(window) else {
-                    continue;
-                };
-                if start < tally.consumed {
-                    continue;
                 }
-                tally.consumed = end;
-                if is_token_run(haystack, masked, start, window) {
-                    tally.plain += 1;
-                    if *whole_unit && is_whole_unit(haystack, start, window) {
-                        tally.whole += 1;
+            } else {
+                #[cfg(test)]
+                TOKEN_RUN_WINDOW_BYTES.with(|bytes| {
+                    bytes.set(
+                        bytes
+                            .get()
+                            .saturating_add(haystack.len().saturating_mul(needle_len)),
+                    );
+                });
+                for (start, _) in haystack.char_indices() {
+                    let end = start.saturating_add(needle_len);
+                    let Some(window) = haystack.get(start..end) else {
+                        if end > haystack.len() {
+                            break;
+                        }
+                        continue;
+                    };
+                    let Some((whole_unit, tally)) = group.get_mut(window) else {
+                        continue;
+                    };
+                    if start < tally.consumed {
+                        continue;
                     }
+                    tally.consumed = end;
+                    tally.record(haystack, masked, start, window, *whole_unit);
                 }
             }
             tallies.extend(
@@ -577,8 +607,9 @@ impl<'a> ChangedLineRank<'a> {
     }
 }
 
-/// Answer `haystack.contains(needle)` for every needle, in work linear in
-/// `haystack.len() * distinct_needle_lengths` rather than `needles * haystack`.
+/// Answer `haystack.contains(needle)` for every needle, in work bounded by
+/// `haystack.len() * 64` per short length, plus one search per distinct long
+/// needle, rather than `needles * haystack`.
 fn needles_in_haystack<'a>(
     haystack: &'a str,
     by_len: &BTreeMap<usize, HashSet<&'a str>>,
@@ -589,8 +620,26 @@ fn needles_in_haystack<'a>(
         if needle_len == 0 || needle_len > hay_len || needles.is_empty() {
             continue;
         }
+        if needle_len > LONG_NEEDLE_BYTES {
+            // Long needles are searched per distinct value; hashing a long
+            // window at every position is quadratic.
+            for &needle in needles {
+                #[cfg(test)]
+                RANK_WINDOW_BYTES.with(|bytes| bytes.set(bytes.get().saturating_add(hay_len)));
+                if haystack.contains(needle) {
+                    found.insert(needle);
+                }
+            }
+            continue;
+        }
         #[cfg(test)]
-        RANK_WINDOW_BYTES.with(|bytes| bytes.set(bytes.get().saturating_add(hay_len)));
+        RANK_WINDOW_BYTES.with(|bytes| {
+            bytes.set(
+                bytes
+                    .get()
+                    .saturating_add(hay_len.saturating_mul(needle_len)),
+            );
+        });
         let last = hay_len - needle_len;
         let mut start = 0usize;
         let mut remaining = needles.clone();
@@ -1524,6 +1573,10 @@ mod tests {
             "let x = foo(1); // foo(1)\nlet y = \"foo(1)\"; foo(1)",
             "S { flag: foo && bar, flag: foo, flag: foo }",
             "caf\u{e9} = \u{e9}; \u{e9}\u{e9}",
+            "a && b &&& c && d &&&& e",
+            "\u{e9}a\u{e9}a \u{e9}\u{e9}\u{e9}\u{e9} \u{4e2d}\u{6587}\u{4e2d}\u{6587}",
+            "f(xxxxxxxxxxxxxxxxxxxxxxxx); f(xxxxxxxxxxxxxxxxxxxxxxxx) // f(xxxxxxxxxxxxxxxxxxxxxxxx)",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "x ",
             "",
         ];
@@ -1538,7 +1591,34 @@ mod tests {
             "\u{e9}",
             "x",
             "a_aa",
+            "aaa",
+            "&&",
+            "&&&",
+            "&&&&",
+            "a ",
+            "a_",
+            "x ",
+            "\u{e9}a",
+            "\u{e9}\u{e9}",
+            "\u{4e2d}\u{6587}",
+            "f(xxxxxxxxxxxxxxxxxxxxxxxx)",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         ];
+        // The mixed set has more length-2 needles than 2, so it exercises the
+        // hashed window scan; each needle alone exercises the memmem scan.
+        for needle in needles {
+            for haystack in haystacks {
+                for whole_unit in [false, true] {
+                    assert_eq!(
+                        TokenRunCounts::build(haystack, &[(needle, whole_unit)])
+                            .get(needle, whole_unit),
+                        token_run_count(haystack, needle, whole_unit),
+                        "alone {needle:?} (whole_unit={whole_unit}) in {haystack:?}"
+                    );
+                }
+            }
+        }
         for haystack in haystacks {
             let counted = needles
                 .iter()
@@ -1556,6 +1636,211 @@ mod tests {
             }
         }
         assert_eq!(TokenRunCounts::build("a a", &[("", true)]).get("", true), 0);
+    }
+
+    /// The review repro (#9980): one long call shape on a growing line. Hashing
+    /// a window per position made this `haystack * needle_len`.
+    #[test]
+    fn long_needle_work_is_bounded_by_the_haystack_not_its_length() {
+        for n in [4_096usize, 8_192, 16_384, 32_768] {
+            let present = format!("f(\"{}\")", "a".repeat(n));
+            // Same length as `present`, never in either haystack.
+            let absent = format!("f(\"{}\")", "z".repeat(n));
+            let changed = format!("{present}; g(\"{}\");", "b".repeat(n));
+            let removed = changed.replacen('a', "c", 1);
+            for (name, haystack) in [("changed", &changed), ("removed", &removed)] {
+                for needles in [
+                    vec![present.as_str()],
+                    vec![absent.as_str()],
+                    vec![present.as_str(), absent.as_str()],
+                ] {
+                    let requested = needles
+                        .iter()
+                        .flat_map(|needle| [(*needle, false), (*needle, true)])
+                        .collect::<Vec<_>>();
+                    TOKEN_RUN_WINDOW_BYTES.with(|bytes| bytes.set(0));
+                    let counts = TokenRunCounts::build(haystack, &requested);
+                    let work = TOKEN_RUN_WINDOW_BYTES.with(std::cell::Cell::get);
+                    let unique = needles.iter().map(|needle| needle.len()).sum::<usize>();
+                    assert!(
+                        work > 0 && work <= 64 * (haystack.len() + unique),
+                        "n={n} {name}: work {work} vs budget {}",
+                        64 * (haystack.len() + unique)
+                    );
+                    for needle in &needles {
+                        for whole_unit in [false, true] {
+                            assert_eq!(
+                                counts.get(needle, whole_unit),
+                                token_run_count(haystack, needle, whole_unit),
+                                "n={n} {name} whole_unit={whole_unit}"
+                            );
+                        }
+                    }
+                }
+            }
+            // The present needle is a real hit in `changed`, not a vacuous zero.
+            assert_eq!(
+                TokenRunCounts::build(&changed, &[(present.as_str(), false)]).get(&present, false),
+                1
+            );
+            let by_len = BTreeMap::from([(
+                present.len(),
+                HashSet::from([present.as_str(), absent.as_str()]),
+            )]);
+            RANK_WINDOW_BYTES.with(|bytes| bytes.set(0));
+            let found = needles_in_haystack(&changed, &by_len);
+            let rank_work = RANK_WINDOW_BYTES.with(std::cell::Cell::get);
+            assert!(found.contains(present.as_str()) && !found.contains(absent.as_str()));
+            assert!(rank_work > 0 && rank_work <= 64 * (changed.len() + 2 * present.len()));
+        }
+    }
+
+    /// Parser-produced facts for two long calls on one line: the complete
+    /// selection equals the former per-shape selector built from
+    /// `legacy_shape_match_rank` and `token_run_count` (#6731 tie-break,
+    /// standalone call resolution included).
+    #[test]
+    fn parser_produced_two_long_calls_select_like_the_former_selector() -> Result<(), String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|err| err.to_string())?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("ripr-9980-{stamp}"));
+        std::fs::create_dir_all(root.join("src")).map_err(|err| err.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname='t'\nversion='0.1.0'\nedition='2024'\n",
+        )
+        .map_err(|err| err.to_string())?;
+        let n = 2_048;
+        let changed = format!(
+            "pub fn f(_: &str) {{}} pub fn g(_: &str) {{}} pub fn apply() {{ f(\"{}\"); g(\"{}\"); }}",
+            "a".repeat(n),
+            "b".repeat(n)
+        );
+        let removed = changed.replacen('a', "c", 1);
+        let path = PathBuf::from("src/lib.rs");
+        std::fs::write(root.join(&path), &changed).map_err(|err| err.to_string())?;
+        let index = crate::analysis::facts::build_index(&root, std::slice::from_ref(&path))?;
+        let _ = std::fs::remove_dir_all(&root);
+        let facts = file_facts(&index, &path).ok_or("no facts")?;
+        for removed_text in [Some(removed.as_str()), Some(changed.as_str()), None] {
+            let actual = parser_probe_shapes_for_changed_line_against(
+                &index,
+                &path,
+                1,
+                &changed,
+                removed_text,
+            );
+            // Former selector: per shape rank and token-run counts.
+            let mut expected = Vec::<(ParserProbeShape<'_>, Option<(u8, bool, usize)>)>::new();
+            for shape in &facts.probe_shapes {
+                let family = family_for_probe_shape(shape.kind);
+                if shape.kind == ProbeShapeKind::UnsafeBoundary {
+                    continue;
+                }
+                let Some((category, distance)) =
+                    legacy_shape_match_rank(shape.text.as_str(), &changed)
+                else {
+                    continue;
+                };
+                let needle = shape.text.trim();
+                let whole = family == ProbeFamily::FieldConstruction;
+                let unchanged = removed_text.is_some_and(|old| {
+                    let before = token_run_count(old, needle, whole);
+                    before > 0 && before >= token_run_count(&changed, needle, whole)
+                });
+                let key = Some((category, unchanged, distance));
+                let candidate = ParserProbeShape {
+                    family,
+                    start_line: shape.start_line,
+                    start_byte: shape.start_byte,
+                    text: shape.text.as_str(),
+                    standalone_call: true,
+                    unsafe_boundary: false,
+                };
+                if let Some(position) = expected
+                    .iter()
+                    .position(|(current, _)| current.family == candidate.family)
+                {
+                    if key < expected[position].1
+                        || (key == expected[position].1
+                            && candidate.text < expected[position].0.text)
+                    {
+                        expected[position] = (candidate, key);
+                    }
+                } else {
+                    expected.push((candidate, key));
+                }
+            }
+            for (shape, _) in &mut expected {
+                shape.standalone_call = parser_call_shape_is_standalone(facts, shape);
+            }
+            expected.sort_by(|(left, _), (right, _)| {
+                left.family
+                    .as_str()
+                    .cmp(right.family.as_str())
+                    .then(left.start_byte.cmp(&right.start_byte))
+                    .then(left.text.cmp(right.text))
+            });
+            let expected = expected
+                .into_iter()
+                .map(|(shape, _)| shape)
+                .collect::<Vec<_>>();
+            if actual.is_empty() || !actual.iter().any(|shape| shape.text.len() > n) {
+                return Err(format!(
+                    "fixture selected no long shape: {} shapes",
+                    actual.len()
+                ));
+            }
+            let summarize = |shapes: &[ParserProbeShape<'_>]| {
+                shapes
+                    .iter()
+                    .map(|shape| {
+                        (
+                            shape.family.as_str(),
+                            shape.start_line,
+                            shape.start_byte,
+                            shape.text.to_string(),
+                            shape.standalone_call,
+                            shape.unsafe_boundary,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            };
+            if summarize(&actual) != summarize(&expected) {
+                return Err("selection drifted from the former selector".to_string());
+            }
+        }
+        Ok(())
+    }
+
+    /// Fixed-size many-shape control: many distinct same-length needles stay
+    /// one window scan, not one scan per needle.
+    #[test]
+    fn many_same_length_needles_stay_one_window_scan() {
+        let haystack = (0..2_000)
+            .map(|i| format!("v{i:05}: 1,"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let owned = (0..2_000)
+            .map(|i| format!("v{i:05}: 1"))
+            .collect::<Vec<_>>();
+        let needles = owned
+            .iter()
+            .map(|n| (n.as_str(), false))
+            .collect::<Vec<_>>();
+        TOKEN_RUN_WINDOW_BYTES.with(|bytes| bytes.set(0));
+        let counts = TokenRunCounts::build(&haystack, &needles);
+        let bytes = TOKEN_RUN_WINDOW_BYTES.with(std::cell::Cell::get);
+        for needle in &owned {
+            assert_eq!(counts.get(needle, false), 1);
+        }
+        assert!(
+            bytes <= haystack.len() * (owned[0].len() + 1),
+            "{bytes} bytes for {} needles",
+            owned.len()
+        );
     }
 
     #[test]
