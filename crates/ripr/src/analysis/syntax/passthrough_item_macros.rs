@@ -45,7 +45,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::local_test_macros::{
     ExpandedLocalTestMacro, code_tokens, imported_names, in_definition_scope, inner_elements,
-    is_item_position, local_macro_names, text_has_conditional_attribute, text_invokes_local_macro,
+    is_item_position, local_macro_names, local_test_macro_definitions,
+    text_has_conditional_attribute, text_invokes_local_macro,
 };
 use super::nesting::parse_clean_source_file;
 use super::owner_pin::supported_item_context;
@@ -76,7 +77,8 @@ pub(super) fn passthrough_item_expansions(
 /// `assert_eq` as a possible definition; the expansion is scanned as
 /// ordinary source instead.
 pub(super) fn passthrough_invocation_starts(root: &SyntaxNode) -> BTreeSet<TextSize> {
-    let (_, local_macros) = local_macro_names(root);
+    // The same macro-name set expansion uses: one admission result.
+    let (_, local_macros) = local_test_macro_definitions(root);
     identity_invocations(root, &local_macros)
         .into_iter()
         .filter(|(call, _, _)| {
@@ -681,6 +683,16 @@ mod tests {
             expand_local_test_macros(&format!("{SUITE}{harmless}")).len(),
             1
         );
+    }
+
+    #[test]
+    fn a_local_macro_call_in_a_wrapped_test_is_refused_by_expansion_and_binding_scan() {
+        let source = format!(
+            "{SUITE}macro_rules! helper {{ () => {{}}; }}\nsuite! {{ #[test] fn a() {{ helper!(); assert_eq!(gate(10), true); }} }}\n"
+        );
+        assert!(expand_local_test_macros(&source).is_empty());
+        let parse = super::parse_clean_source_file(&source);
+        assert!(parse.is_some_and(|p| passthrough_invocation_starts(&p.syntax_node()).is_empty()));
     }
 
     #[test]

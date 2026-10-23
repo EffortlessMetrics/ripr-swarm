@@ -161,7 +161,7 @@ pub(crate) fn generated_test_pins(
 
 /// Unique same-file definitions whose body mentions a `#[test]` attribute,
 /// and the name of every macro the file defines.
-fn local_test_macro_definitions(
+pub(super) fn local_test_macro_definitions(
     root: &SyntaxNode,
 ) -> (BTreeMap<String, ast::MacroRules>, BTreeSet<String>) {
     let mut counts = BTreeMap::<String, usize>::new();
