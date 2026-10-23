@@ -1,0 +1,38 @@
+[
+  {
+    "file": "base-lang-python.log",
+    "sha256": "cda6724de463ba5674fb241ec12c3af1c46153a851f1aabac5db4baab07b5f5d",
+    "bytes": 178919,
+    "first_error_excerpt": "error: ripr requires the `lang-rust` Cargo feature; build rust-only binaries with `--no-default-features --features lang-rust`.\n   --> crates/ripr/src/lib.rs:99:1\n    |\n 99 | / compile_error!(\n100 | |     \"ripr requires the `lang-rust` Cargo feature; build rust-only binaries with `--no-default-features --features lang-rust`.\"\n101 | | );\n    | |_^\n\nerror[E0433]: cannot find module or crate `ra_ap_syntax` in this scope\n --> crates/ripr/src/edit_cage/inline_test_region/observe.rs:9:5\n  |\n9 | use ra_ap_syntax::ast::{self, HasAttrs, HasName};\n  |     ^^^^^^^^^^^^ use of unresolved module or unlinked crate `ra_ap_syntax`\n  |\n  = help: if you wanted"
+  },
+  {
+    "file": "base-lang-typescript.log",
+    "sha256": "8c9aaffe29c709c11b14ef29b1d5df3b5cdcfd56c91aa3a323a9698828809675",
+    "bytes": 179397,
+    "first_error_excerpt": "error: ripr requires the `lang-rust` Cargo feature; build rust-only binaries with `--no-default-features --features lang-rust`.\n   --> crates/ripr/src/lib.rs:99:1\n    |\n 99 | / compile_error!(\n100 | |     \"ripr requires the `lang-rust` Cargo feature; build rust-only binaries with `--no-default-features --features lang-rust`.\"\n101 | | );\n    | |_^\n\nerror[E0433]: cannot find module or crate `ra_ap_syntax` in this scope\n --> crates/ripr/src/edit_cage/inline_test_region/observe.rs:9:5\n  |\n9 | use ra_ap_syntax::ast::{self, HasAttrs, HasName};\n  |     ^^^^^^^^^^^^ use of unresolved module or unlinked crate `ra_ap_syntax`\n  |\n  = help: if you wanted"
+  },
+  {
+    "file": "head-lang-python.log",
+    "sha256": "73b18775074af8339b3bf0ecf8e53f30eca61a10a9913ed077a16968ce19d2c8",
+    "bytes": 181007,
+    "first_error_excerpt": "error: ripr requires the `lang-rust` Cargo feature; build rust-only binaries with `--no-default-features --features lang-rust`.\n   --> crates/ripr/src/lib.rs:99:1\n    |\n 99 | / compile_error!(\n100 | |     \"ripr requires the `lang-rust` Cargo feature; build rust-only binaries with `--no-default-features --features lang-rust`.\"\n101 | | );\n    | |_^\n\nerror[E0433]: cannot find module or crate `ra_ap_syntax` in this scope\n --> crates/ripr/src/edit_cage/inline_test_region/observe.rs:9:5\n  |\n9 | use ra_ap_syntax::ast::{self, HasAttrs, HasName};\n  |     ^^^^^^^^^^^^ use of unresolved module or unlinked crate `ra_ap_syntax`\n  |\n  = help: if you wanted"
+  },
+  {
+    "file": "head-lang-typescript.log",
+    "sha256": "947713524ac873f604f0aea4bc87a0d3ad68fc43f36779cf662982de3ed5d955",
+    "bytes": 184514,
+    "first_error_excerpt": "error: ripr requires the `lang-rust` Cargo feature; build rust-only binaries with `--no-default-features --features lang-rust`.\n   --> crates/ripr/src/lib.rs:99:1\n    |\n 99 | / compile_error!(\n100 | |     \"ripr requires the `lang-rust` Cargo feature; build rust-only binaries with `--no-default-features --features lang-rust`.\"\n101 | | );\n    | |_^\n\nerror[E0433]: cannot find module or crate `ra_ap_syntax` in this scope\n --> crates/ripr/src/edit_cage/inline_test_region/observe.rs:9:5\n  |\n9 | use ra_ap_syntax::ast::{self, HasAttrs, HasName};\n  |     ^^^^^^^^^^^^ use of unresolved module or unlinked crate `ra_ap_syntax`\n  |\n  = help: if you wanted"
+  },
+  {
+    "file": "main-lang-python.log",
+    "sha256": "dabf498ed59e3c1fd8e77509bee7c44e38857ae9d55d775d23f7373677782665",
+    "bytes": 178919,
+    "first_error_excerpt": "error: ripr requires the `lang-rust` Cargo feature; build rust-only binaries with `--no-default-features --features lang-rust`.\n   --> crates/ripr/src/lib.rs:99:1\n    |\n 99 | / compile_error!(\n100 | |     \"ripr requires the `lang-rust` Cargo feature; build rust-only binaries with `--no-default-features --features lang-rust`.\"\n101 | | );\n    | |_^\n\nerror[E0433]: cannot find module or crate `ra_ap_syntax` in this scope\n --> crates/ripr/src/edit_cage/inline_test_region/observe.rs:9:5\n  |\n9 | use ra_ap_syntax::ast::{self, HasAttrs, HasName};\n  |     ^^^^^^^^^^^^ use of unresolved module or unlinked crate `ra_ap_syntax`\n  |\n  = help: if you wanted"
+  },
+  {
+    "file": "main-lang-typescript.log",
+    "sha256": "4168d8bb16b97afa6ef01af852321f307d064b5cef8d966656ab5da88a5cad03",
+    "bytes": 179397,
+    "first_error_excerpt": "error: ripr requires the `lang-rust` Cargo feature; build rust-only binaries with `--no-default-features --features lang-rust`.\n   --> crates/ripr/src/lib.rs:99:1\n    |\n 99 | / compile_error!(\n100 | |     \"ripr requires the `lang-rust` Cargo feature; build rust-only binaries with `--no-default-features --features lang-rust`.\"\n101 | | );\n    | |_^\n\nerror[E0433]: cannot find module or crate `ra_ap_syntax` in this scope\n --> crates/ripr/src/edit_cage/inline_test_region/observe.rs:9:5\n  |\n9 | use ra_ap_syntax::ast::{self, HasAttrs, HasName};\n  |     ^^^^^^^^^^^^ use of unresolved module or unlinked crate `ra_ap_syntax`\n  |\n  = help: if you wanted"
+  }
+]

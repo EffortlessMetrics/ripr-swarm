@@ -1,0 +1,22 @@
+[
+  "/workspace/.ripr-toolchain/rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/rustc",
+  "--edition",
+  "2024",
+  "-A",
+  "dead_code",
+  "/workspace/9936-a3-review/prepare-fallback.rs",
+  "-L",
+  "dependency=/workspace/ripr-swarm/target/debug/deps",
+  "--extern",
+  "oxc_allocator=/workspace/ripr-swarm/target/debug/deps/liboxc_allocator-63c70161c767fb6e.rlib",
+  "--extern",
+  "oxc_ast=/workspace/ripr-swarm/target/debug/deps/liboxc_ast-8c51c2d567d7d518.rlib",
+  "--extern",
+  "oxc_parser=/workspace/ripr-swarm/target/debug/deps/liboxc_parser-37443d22c8e823bf.rlib",
+  "--extern",
+  "oxc_span=/workspace/ripr-swarm/target/debug/deps/liboxc_span-7ad3a525337da68b.rlib",
+  "--extern",
+  "oxc_ast_visit=/workspace/9936-repair/liboxc_ast_visit.rlib",
+  "-o",
+  "/workspace/9936-a3-review/prepare-fallback"
+]

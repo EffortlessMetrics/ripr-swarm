@@ -1,0 +1,421 @@
+Pinned source: a3b0e245646a41e183d0db6e7ee3e23f9c683c38
+
+crates/ripr/src/analysis/language/typescript/literal_mask.rs
+88: fn parse_plan(text: &str, source_type: SourceType, prefix: &str, suffix: &str) -> Option<Plan> {
+89:     let source = format!("{prefix}{text}{suffix}");
+90:     let allocator = Allocator::default();
+91:     let parsed = Parser::new(&allocator, &source, source_type).parse();
+92:     if !parsed.errors.is_empty() {
+93:         return None;
+94:     }
+95:     let mut plan = Plan {
+96:         blank: vec![false; source.len()],
+97:         operand_ends: BTreeSet::new(),
+98:     };
+99:     plan.visit_program(&parsed.program);
+100:     let start = prefix.len();
+101:     let end = start + text.len();
+102:     Some(Plan {
+103:         blank: plan.blank[start..end].to_vec(),
+104:         operand_ends: plan
+105:             .operand_ends
+106:             .range(start..end)
+107:             .map(|at| at - start)
+108:             .collect(),
+109:     })
+110: }
+111: 
+112: fn plan_for(text: &str, source_type: Option<SourceType>) -> Option<Plan> {
+113:     for (prefix, suffix) in [
+114:         ("", ""),
+115:         ("async function* __ripr_mask_body__() {\n", "\n}"),
+116:         ("class __RiprMaskOwner__ {\n", "\n}"),
+117:     ] {
+118:         if let Some(source_type) = source_type {
+119:             if let Some(plan) = parse_plan(text, source_type, prefix, suffix) {
+120:                 return Some(plan);
+121:             }
+122:         } else {
+123:             match (
+124:                 parse_plan(text, SourceType::ts(), prefix, suffix),
+125:                 parse_plan(text, SourceType::tsx(), prefix, suffix),
+126:             ) {
+127:                 (Some(ts), Some(tsx)) => return (ts == tsx).then_some(ts),
+128:                 (Some(plan), None) | (None, Some(plan)) => return Some(plan),
+129:                 (None, None) => {}
+130:             }
+131:         }
+132:     }
+133:     None
+134: }
+135: 
+136: pub(super) fn prepare(text: &str, source_type: Option<SourceType>) -> Prepared {
+137:     let plan =
+138:         (text.contains('`') || text.contains("</") || text.contains("/>") || text.contains("<>"))
+139:             .then(|| plan_for(text, source_type))
+140:             .flatten();
+141:     let Some(plan) = plan else {
+142:         return Prepared {
+143:             code: text.to_string(),
+144:             operand_ends: BTreeSet::new(),
+145:             regex_known: false,
+146:         };
+147:     };
+148:     let mut prepared = Prepared {
+149:         code: String::with_capacity(text.len()),
+150:         operand_ends: BTreeSet::new(),
+151:         regex_known: true,
+152:     };
+153:     for (at, c) in text.char_indices() {
+154:         if plan.operand_ends.contains(&at) {
+155:             prepared.operand_ends.insert(prepared.code.len());
+156:         }
+157:         prepared.code.push(if plan.blank[at] && !c.is_whitespace() {
+158:             ' '
+159:         } else {
+160:             c
+161:         });
+162:     }
+163:     prepared
+164: }
+
+crates/ripr/src/analysis/language/typescript/classifier.rs
+850: /// expression literals and comments replaced by spaces, so an identifier
+851: /// search sees only code. Template `${...}` interpolations stay code. Quotes,
+852: /// backticks and regex slashes are kept, so a masked literal still separates
+853: /// the identifiers around it. A `/` opens a regex literal where an operand is
+854: /// expected (at the start, or after an operator or opening punctuation);
+855: /// elsewhere it is division.
+856: pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
+857:     let prepared = super::literal_mask::prepare(text, None);
+858:     ts_mask_lexically(
+859:         &prepared.code,
+860:         !prepared.regex_known,
+861:         &prepared.operand_ends,
+862:     )
+863: }
+864: 
+865: /// Preserve the parser's syntax kind: identical bytes can mean JSX code in
+866: /// `.tsx` and a type assertion followed by a regex literal in `.ts`.
+867: pub(crate) fn ts_mask_literals_and_comments_for_source_type(
+868:     text: &str,
+869:     source_type: SourceType,
+870: ) -> String {
+871:     let prepared = super::literal_mask::prepare(text, Some(source_type));
+872:     ts_mask_lexically(
+873:         &prepared.code,
+874:         !prepared.regex_known,
+875:         &prepared.operand_ends,
+876:     )
+877: }
+878: 
+879: /// [`ts_mask_literals_and_comments`] with every `/` read as division, so a
+880: /// regex-versus-division misjudgement cannot hide code from a scan that also
+881: /// runs on this mask. A real regex literal holding a quote can misread the rest
+882: /// of its line here; callers require agreement of both masks.
+883: pub(crate) fn ts_mask_literals_and_comments_division_only(text: &str) -> String {
+884:     ts_mask_lexically(text, false, &std::collections::BTreeSet::new())
+885: }
+
+crates/ripr/src/analysis/language/typescript/classifier.rs
+5810:     });
+5811:     // The owner's parsed source, so a committed-history diff reads the same
+5812:     // bytes the owner was extracted from (not the worktree).
+5813:     let owner_body = reads_mock_payload
+5814:         .then_some(owner.source_text.as_deref())
+5815:         .flatten();
+5816:     let mut mock_facts = MockCallFacts::read(line_text, owner_body, &owner.name, &owner.params);
+5817:     // RIPR-SPEC-0247 rule 4: a spy on an exported module object the changed
+5818:     // line calls. The module and the test files are read as the owner was
+5819:     // (committed history reads HEAD), so the file checks see the same text
+5820:     // as the test bodies.
+5821:     if let (true, Some(root)) = (reads_mock_payload, workspace_root) {
+5822:         let module_source = crate::analysis::committed_source::read_source_bytes(root, &owner.file)
+5823:             .ok()
+5824:             .flatten()
+5825:             .and_then(|bytes| String::from_utf8(bytes).ok());
+5826:         mock_facts.read_module_object_calls(
+5827:             line_text,
+5828:             owner_body,
+5829:             &owner.name,
+5830:             &owner.params,
+5831:             owner.start_line,
+5832:             module_source
+5833:                 .as_deref()
+5834:                 .map(|source| (source, source_type_for(&owner.file))),
+5835:         );
+5836:         mock_facts.admit_spy_files(
+5837:             related_candidates
+
+crates/ripr/src/analysis/language/typescript/admission.rs
+128:         program: &oxc_ast::ast::Program<'_>,
+129:         imports: &[TypeScriptImport],
+130:         file: &Path,
+131:     ) -> Self {
+132:         let statements = program.body.as_slice();
+133:         let block_functions_are_lexical =
+134:             program.source_type.is_module() || program.has_use_strict_directive();
+135:         let esm_imports: Vec<_> = statements
+136:             .iter()
+137:             .filter(|statement| matches!(statement, Statement::ImportDeclaration(_)))
+138:             .flat_map(|statement| extract_imports_from_statements(std::slice::from_ref(statement)))
+139:             .collect();
+140:         let known_require =
+141:             program_require_is_known(statements, &esm_imports, block_functions_are_lexical);
+142:         // Only a non-`const` declaration holding a `require()` needs the scan.
+143:         let scan = statements
+144:             .iter()
+145:             .any(|statement| {
+146:                 matches!(statement, Statement::VariableDeclaration(declaration)
+147:                     if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const
+148:                         && declaration.declarations.iter().any(require_declarator))
+149:             })
+150:             .then(|| BindingScan::of_source(program.source_text, program.source_type))
+151:             .flatten();
+152:         let mut context = Self {
+153:             block_functions_are_lexical,
+
+crates/ripr/src/analysis/language/typescript/admission.rs
+313: /// The writes and function-declaration names of one file, computed once.
+314: /// `None` when the masked source is unreadable (parse-width mismatch,
+315: /// `eval`, `with`, `\u` escapes), so nothing qualifies.
+316: struct BindingScan {
+317:     writes: Vec<(String, usize)>,
+318:     functions: Vec<(String, usize)>,
+319: }
+320: 
+321: impl BindingScan {
+322:     fn of_source(source: &str, source_type: SourceType) -> Option<Self> {
+323:         let code =
+324:             super::tests_extract::byte_preserving_code_mask_for_source_type(source, source_type)
+325:                 .filter(|code| !super::tests_extract::file_is_opaque(code))?;
+326:         Some(Self {
+327:             writes: super::tests_extract::strict_identifier_writes(&code),
+328:             functions: super::tests_extract::function_declaration_names(&code),
+329:         })
+330:     }
+
+crates/ripr/src/analysis/language/typescript/admission.rs
+399: /// A bounded fixture-extension registration: one immutable top-level result
+400: /// of a named Vitest/Playwright test import's `.extend(...)`. Other uses of
+401: /// that imported receiver remain unresolved: they could replace or expose
+402: /// its mutable `extend` member. Arbitrary factory results are never trusted.
+403: fn verified_extended_registrations(
+404:     program: &oxc_ast::ast::Program<'_>,
+405:     imports: &[TypeScriptImport],
+406: ) -> Vec<TypeScriptImport> {
+407:     let Some(code) = super::tests_extract::byte_preserving_code_mask_for_source_type(
+408:         program.source_text,
+409:         program.source_type,
+410:     ) else {
+411:         return Vec::new();
+412:     };
+413:     if super::tests_extract::file_is_opaque(&code) {
+414:         return Vec::new();
+415:     }
+416:     let mut result = Vec::new();
+417:     for import in imports.iter().filter(|import| {
+418:         matches!(import.source.as_str(), "vitest" | "@playwright/test")
+419:             && (import.imported.as_deref() == Some("test")
+
+crates/ripr/src/analysis/language/typescript/tests_extract.rs
+151: /// `expand` is off for the rerun on an already-expanded source, whose
+152: /// factory calls are still present.
+153: fn extract_tests_expanding_suite_factories(file: &Path, source: &str, expand: bool) -> Extraction {
+154:     // Same guard as owner extraction (#4101): a file under the nesting
+155:     // budget can still overflow the caller stack, so the parse must
+156:     // not run on the main thread.
+157:     let Ok(out) = parse_on_worker(file, source, move |file, source, allocator| {
+158:         let ret = Parser::new(allocator, source, source_type_for(file)).parse();
+159:         if !ret.errors.is_empty() {
+160:             return (Vec::new(), None, None);
+161:         }
+162:         if expand
+163:             && let Some(expansion) =
+164:                 super::suite_factory::expand_suite_factories(&ret.program.body, source)
+165:         {
+166:             return (Vec::new(), None, Some(expansion));
+167:         }
+168:         let imports = extract_imports_for_test_file(&ret.program.body);
+169:         let mocks = extract_mocks_from_statements(&ret.program.body, &imports);
+170:         let mut tests = Vec::new();
+171:         let mut scope = TestScope {
+172:             assertion_bindings: TypeScriptAssertionBindings::from_program(
+173:                 &ret.program.body,
+174:                 &imports,
+175:             )
+176:             .with_strict_matchers(strict_equality_matchers(&ret.program.body, source)),
+177:             admission: TypeScriptAdmissionContext::of_program(&ret.program, &imports, file),
+178:             ..TestScope::default()
+179:         };
+180:         // One line index per source; every test and assertion line is a
+
+crates/ripr/src/analysis/language/typescript/tests_extract.rs
+2958:         // gates see the owner call the runner actually executes.
+2959:         body_text: match referenced {
+2960:             Some(function) => format!(
+2961:                 "{}\n{}",
+2962:                 &source[call.span.start as usize..call.span.end as usize],
+2963:                 &source[function.span.start as usize..function.span.end as usize]
+2964:             ),
+2965:             None => source[call.span.start as usize..call.span.end as usize].to_string(),
+2966:         },
+2967:         reach_body_text: unused_function_reach_body(
+2968:             call,
+2969:             referenced,
+2970:             source,
+2971:             source_type_for(file),
+2972:         ),
+2973:         assertions,
+2974:         // Populated by `extract_tests` (the only public extractor) once
+
+crates/ripr/src/analysis/language/typescript/tests_extract.rs
+2990:     })
+2991: }
+2992: 
+2993: /// The shared masker preserves characters, but not byte widths of masked
+2994: /// Unicode literals. Expand only its spaces back to the original byte widths
+2995: /// before comparing identifier offsets with parser spans.
+2996: pub(super) fn byte_preserving_code_mask(source: &str) -> Option<String> {
+2997:     let masked = super::classifier::ts_mask_literals_and_comments(source);
+2998:     preserve_mask_byte_width(source, &masked)
+2999: }
+3000: 
+3001: pub(super) fn byte_preserving_code_mask_for_source_type(
+3002:     source: &str,
+3003:     source_type: SourceType,
+3004: ) -> Option<String> {
+3005:     let masked =
+3006:         super::classifier::ts_mask_literals_and_comments_for_source_type(source, source_type);
+3007:     preserve_mask_byte_width(source, &masked)
+3008: }
+3009: 
+3010: /// [`byte_preserving_code_mask`] over the division-only mask.
+3011: pub(super) fn byte_preserving_division_mask(source: &str) -> Option<String> {
+3012:     let masked = super::classifier::ts_mask_literals_and_comments_division_only(source);
+3013:     preserve_mask_byte_width(source, &masked)
+3014: }
+3015: 
+3016: fn preserve_mask_byte_width(source: &str, masked: &str) -> Option<String> {
+3017:     if source.chars().count() != masked.chars().count() {
+3018:         return None;
+3019:     }
+3020:     let mut code = String::with_capacity(source.len());
+3021:     for (original, masked) in source.chars().zip(masked.chars()) {
+3022:         if original == masked {
+3023:             code.push(original);
+3024:         } else if masked == ' ' {
+3025:             code.extend(std::iter::repeat_n(' ', original.len_utf8()));
+3026:         } else {
+3027:             return None;
+3028:         }
+3029:     }
+3030:     Some(code)
+3031: }
+3032: 
+3033: /// A reach-only view; the original test source remains the evidence surface.
+3034: /// Creating a function value does not execute its body. Refuse only plain
+3035: /// const-bound function values with no reference outside their declaration;
+3036: /// called, aliased, returned or passed values retain the existing relation rules.
+
+crates/ripr/src/analysis/language/typescript/mock_payload_guard.rs
+959: pub(super) fn masked_owner_body(owner_source: &str) -> Option<String> {
+960:     let masked = ts_mask_literals_and_comments(owner_source);
+961:     owner_body_from_mask(&masked)
+962: }
+963: 
+964: pub(super) fn owner_body_from_mask(masked: &str) -> Option<String> {
+965:     let mut parens = 0usize;
+966:     for (index, c) in masked.char_indices() {
+967:         match c {
+968:             '(' => parens += 1,
+969:             ')' => parens = parens.saturating_sub(1),
+970:             '{' if parens == 0 => return Some(masked[index + 1..].to_string()),
+971:             '=' if parens == 0 && masked[index..].starts_with("=>") => {
+972:                 return Some(masked[index + 2..].to_string());
+973:             }
+974:             _ => {}
+975:         }
+976:     }
+977:     None
+978: }
+979: 
+980: /// `true` when the changed line runs at most once per owner call: the
+981: /// owner's body has no loop and no call back into the owner, and either it
+982: /// has no nested function at all (no arrow, `function`, method shorthand or
+983: /// class member), or (RIPR-SPEC-0256 rule 1) the changed
+984: /// line is a whole top-level statement of the body with no function on it,
+985: /// so a nested function elsewhere (`lines.reduce((sum, l) => ...)`) cannot
+986: /// run it.
+987: fn runs_changed_line_once(owner_source: &str, owner_name: &str, line_text: &str) -> bool {
+988:     let Some(body) = masked_owner_body(owner_source) else {
+989:         return false;
+990:     };
+991:     if !["for", "while", "do", owner_name]
+
+crates/ripr/src/analysis/language/typescript/mock_payload_guard/spy.rs
+63: pub(super) fn module_object_calls(
+64:     line_text: &str,
+65:     owner_source: &str,
+66:     owner_name: &str,
+67:     owner_params: &[String],
+68:     owner_start_line: usize,
+69:     module_source: (&str, SourceType),
+70: ) -> Vec<ModuleObjectCall> {
+71:     let (module_source, source_type) = module_source;
+72:     if !runs_changed_line_once(owner_source, owner_name, line_text) {
+73:         return Vec::new();
+74:     }
+75:     let masked_owner = ts_mask_literals_and_comments_for_source_type(owner_source, source_type);
+76:     let Some(body) = owner_body_from_mask(&masked_owner) else {
+77:         return Vec::new();
+78:     };
+79:     let header = &masked_owner[..masked_owner.len().saturating_sub(body.len())];
+80:     // A non-ASCII name is no word the allowlist can read. A tagged
+81:     // template needs a callable tag, which no allowed word holds.
+82:     if !body.is_ascii()
+83:         || calls_in(&body).len() != 1
+84:         || has_default(header)
+85:         || !body_words_are_local(&body, owner_params, line_text)
+86:     {
+87:         return Vec::new();
+88:     }
+89:     let masked_module = ts_mask_literals_and_comments_for_source_type(module_source, source_type);
+90:     // Module code that imports, or that names the object anywhere but its
+91:     // declaration and the owner's call, can leave a mock with calls on the
+
+crates/ripr/src/analysis/language/typescript/mock_payload_guard/spy.rs
+310: pub(super) fn spy_safe_test_file(source: &str, source_type: SourceType) -> bool {
+311:     const RUNS_OR_REPLACES: [&str; 12] = [
+312:         "each",
+313:         "concurrent",
+314:         "retryTimes",
+315:         "mock",
+316:         "doMock",
+317:         "unstable_mockModule",
+318:         "resetModules",
+319:         "isolateModules",
+320:         "isolateModulesAsync",
+321:         "require",
+322:         "requireActual",
+323:         "eval",
+324:     ];
+325:     let masked = ts_mask_literals_and_comments_for_source_type(source, source_type);
+326:     source.matches("spyOn").count() == 1
+327:         && one_test_after_imports(&masked)
+328:         && imports_bind_names(&masked)
+
+crates/ripr/src/analysis/language/typescript/mock_payload_guard/spy.rs
+431: pub(super) fn credits_spy(
+432:     targets: &[SpyTarget],
+433:     owner_name: &str,
+434:     spy: &str,
+435:     test_file: &Path,
+436:     test_body: &str,
+437: ) -> bool {
+438:     let masked_body =
+439:         ts_mask_literals_and_comments_for_source_type(test_body, source_type_for(test_file));
+440:     let Some(range) = callback_scope_range(&masked_body) else {
+441:         return false;
+442:     };
+443:     let scope = &masked_body[range];

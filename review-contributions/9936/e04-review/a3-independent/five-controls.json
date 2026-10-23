@@ -1,0 +1,197 @@
+[
+  {
+    "index": 0,
+    "kind": "ts",
+    "tail_identical_to_prior_validated": true,
+    "native_command": [
+      "node",
+      "/workspace/9936-tools/node_modules/typescript/bin/tsc",
+      "--noEmit",
+      "--target",
+      "ES2022",
+      "--skipLibCheck",
+      "--jsx",
+      "preserve",
+      "/workspace/9936-a3-review/native-0.ts"
+    ],
+    "native_exit": 0,
+    "expected_write_offsets": [
+      214
+    ],
+    "current_write_offsets": [
+      [
+        "test",
+        4
+      ],
+      [
+        "test",
+        214
+      ]
+    ],
+    "bdd0_write_offsets": [
+      [
+        "test",
+        4
+      ]
+    ],
+    "current_raw": "\"var test = require('    ');\\nconst { triple } = require('           ');\\n\\ntest('       ', function (t) {\\n  t.equal(triple(2), 6);\\n  t.end();\\n});\\nconst n = 1, s = ''; const a = <any>s; const q = n</  /.source.length; test = null;\"\n[(\"test\", 4), (\"test\", 214)]\n",
+    "bdd0_raw": "\"var test = require('    ');\\nconst { triple } = require('           ');\\n\\ntest('       ', function (t) {\\n  t.equal(triple(2), 6);\\n  t.end();\\n});\\nconst n = 1, s = ''; const a = <any>s; const q = n</a`                             \"\n[(\"test\", 4)]\n"
+  },
+  {
+    "index": 1,
+    "kind": "ts",
+    "tail_identical_to_prior_validated": true,
+    "native_command": [
+      "node",
+      "/workspace/9936-tools/node_modules/typescript/bin/tsc",
+      "--noEmit",
+      "--target",
+      "ES2022",
+      "--skipLibCheck",
+      "--jsx",
+      "preserve",
+      "/workspace/9936-a3-review/native-1.ts"
+    ],
+    "native_exit": 0,
+    "expected_write_offsets": [
+      202
+    ],
+    "current_write_offsets": [
+      [
+        "test",
+        4
+      ],
+      [
+        "test",
+        202
+      ]
+    ],
+    "bdd0_write_offsets": [
+      [
+        "test",
+        4
+      ]
+    ],
+    "current_raw": "\"var test = require('    ');\\nconst { triple } = require('           ');\\n\\ntest('       ', function (t) {\\n  t.equal(triple(2), 6);\\n  t.end();\\n});\\nconst n = 1, s = ''; 1<<n; const q = n</  /.source.length; test = null;\"\n[(\"test\", 4), (\"test\", 202)]\n",
+    "bdd0_raw": "\"var test = require('    ');\\nconst { triple } = require('           ');\\n\\ntest('       ', function (t) {\\n  t.equal(triple(2), 6);\\n  t.end();\\n});\\nconst n = 1, s = ''; 1<<n; const q = n</a`                             \"\n[(\"test\", 4)]\n"
+  },
+  {
+    "index": 2,
+    "kind": "tsx",
+    "tail_identical_to_prior_validated": true,
+    "native_command": [
+      "node",
+      "/workspace/9936-tools/node_modules/typescript/bin/tsc",
+      "--noEmit",
+      "--target",
+      "ES2022",
+      "--skipLibCheck",
+      "--jsx",
+      "preserve",
+      "/workspace/9936-a3-review/native-2.tsx"
+    ],
+    "native_exit": 0,
+    "expected_write_offsets": [
+      223
+    ],
+    "current_write_offsets": [
+      [
+        "test",
+        4
+      ],
+      [
+        "test",
+        223
+      ]
+    ],
+    "bdd0_write_offsets": [
+      [
+        "test",
+        4
+      ]
+    ],
+    "current_raw": "\"var test = require('    ');\\nconst { triple } = require('           ');\\n\\ntest('       ', function (t) {\\n  t.equal(triple(2), 6);\\n  t.end();\\n});\\nconst n = 1, s = ''; const a =  Foo   {1}   ; const q = n < /  /.source.length; test = null;\"\n[(\"test\", 4), (\"test\", 223)]\n",
+    "bdd0_raw": "\"var test = require('    ');\\nconst { triple } = require('           ');\\n\\ntest('       ', function (t) {\\n  t.equal(triple(2), 6);\\n  t.end();\\n});\\nconst n = 1, s = ''; const a = <Foo a={1} /                 / `                             \"\n[(\"test\", 4)]\n"
+  },
+  {
+    "index": 3,
+    "kind": "tsx",
+    "tail_identical_to_prior_validated": true,
+    "native_command": [
+      "node",
+      "/workspace/9936-tools/node_modules/typescript/bin/tsc",
+      "--noEmit",
+      "--target",
+      "ES2022",
+      "--skipLibCheck",
+      "--jsx",
+      "preserve",
+      "/workspace/9936-a3-review/native-3.tsx"
+    ],
+    "native_exit": 0,
+    "expected_write_offsets": [
+      196,
+      245
+    ],
+    "current_write_offsets": [
+      [
+        "test",
+        4
+      ],
+      [
+        "test",
+        196
+      ],
+      [
+        "test",
+        245
+      ]
+    ],
+    "bdd0_write_offsets": [
+      [
+        "test",
+        4
+      ]
+    ],
+    "current_raw": "\"var test = require('    ');\\nconst { triple } = require('           ');\\n\\ntest('       ', function (t) {\\n  t.equal(triple(2), 6);\\n  t.end();\\n});\\nconst n = 1, s = ''; function f() { return  p    p ; test = null; } const q = n < /  /.source.length; test = null;\"\n[(\"test\", 4), (\"test\", 196), (\"test\", 245)]\n",
+    "bdd0_raw": "\"var test = require('    ');\\nconst { triple } = require('           ');\\n\\ntest('       ', function (t) {\\n  t.equal(triple(2), 6);\\n  t.end();\\n});\\nconst n = 1, s = ''; function f() { return <p>x</                                 / `                             \"\n[(\"test\", 4)]\n"
+  },
+  {
+    "index": 4,
+    "kind": "ts",
+    "tail_identical_to_prior_validated": true,
+    "native_command": [
+      "node",
+      "/workspace/9936-tools/node_modules/typescript/bin/tsc",
+      "--noEmit",
+      "--target",
+      "ES2022",
+      "--skipLibCheck",
+      "--jsx",
+      "preserve",
+      "/workspace/9936-a3-review/native-4.ts"
+    ],
+    "native_exit": 0,
+    "expected_write_offsets": [
+      218
+    ],
+    "current_write_offsets": [
+      [
+        "test",
+        4
+      ],
+      [
+        "test",
+        218
+      ]
+    ],
+    "bdd0_write_offsets": [
+      [
+        "test",
+        4
+      ]
+    ],
+    "current_raw": "\"var test = require('    ');\\nconst { triple } = require('           ');\\n\\ntest('       ', function (t) {\\n  t.equal(triple(2), 6);\\n  t.end();\\n});\\nasync function f() { const s = ''; for await (const x of []) /  /.test(s); test = null; }\"\n[(\"test\", 4), (\"test\", 218)]\n",
+    "bdd0_raw": "\"var test = require('    ');\\nconst { triple } = require('           ');\\n\\ntest('       ', function (t) {\\n  t.equal(triple(2), 6);\\n  t.end();\\n});\\nasync function f() { const s = ''; for await (const x of []) /a`                         \"\n[(\"test\", 4)]\n"
+  }
+]

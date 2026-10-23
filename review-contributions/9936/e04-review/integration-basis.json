@@ -1,0 +1,12 @@
+{
+  "head": "e04f482bb13f559e01f8216294ecd4a9a10acc9c",
+  "main": "5950c9133e7fac1303b0f55616752ef64dcfddba",
+  "source_basis": "f63a722a243bcd9574288ccf28ba1ec63f41d549",
+  "upstream_changed_paths": 247,
+  "candidate_changed_paths": 11,
+  "overlap": [],
+  "merge_tree_exit": 0,
+  "merge_tree_output": "17a962da371d92b379b34411e3d0a65365b4d727\n\n",
+  "remote_subject": "e3c3d7a263c83556068a905afa4eaa7d798f881d 755075c8b9579154e886fad4d563aff324e6279c 6fd671b5f2e917ca427fe6721fce1583c5f0fb51 e04f482bb13f559e01f8216294ecd4a9a10acc9c",
+  "claim": "read-only integration planning only; remote subject uses older base6fd671b5; no full combined-tree qualification claimed"
+}

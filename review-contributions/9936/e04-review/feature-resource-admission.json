@@ -1,0 +1,38 @@
+{
+  "utc": "2026-10-23T20:45:19.208778+00:00",
+  "owner": "review-9936 root",
+  "common_git": "/workspace/ripr-swarm/.git",
+  "candidate": "e04f482bb13f559e01f8216294ecd4a9a10acc9c",
+  "exact_base": "f63a722a243bcd9574288ccf28ba1ec63f41d549",
+  "worktrees": [
+    "/workspace/9936-e04-feature-head",
+    "/workspace/9936-e04-feature-base",
+    "/workspace/9936-e04-feature-main"
+  ],
+  "cargo_target": "/workspace/9936-e04-feature-target",
+  "logs": "/workspace/9936-canonical-e04/feature-checks",
+  "frozen_outputs": "none: check-only metadata; existing original/regression/integrated binaries retained and consumed by unchanged-source controls",
+  "retained_witnesses": [
+    "/workspace/9936-evidence/review-9936-testbin",
+    "/workspace/9936-evidence/repair-testbin",
+    "/workspace/9936-evidence/integrated-testbin"
+  ],
+  "free_bytes": 30378790912,
+  "reserve_bytes": 12884901888,
+  "peak_additional_bytes": 6442450944,
+  "serial": true,
+  "disposition": "retain receipts and exact logs; owned generated feature target reusable until consumers release; worktrees retain source for attribution; no evidence/source deletion",
+  "admitted": true,
+  "next_generation": "review-owned test-only correction of e04, focused product adapter test, debug=0, same serial private target; no extra frozen executable",
+  "unchanged_peak_bytes": 6442450944,
+  "driver_19980_terminal": 0,
+  "budget_still_fits": true,
+  "focused_driver_49499_terminal": 0,
+  "new_frozen_output": "/workspace/9936-evidence/native-angle-testbin",
+  "frozen_current_consumers": "canonical adoption of test-only a3, exact-head review and relocated focused test; retain until adoption reviewed and main outcome reconciled",
+  "frozen_budget_bytes": 289513336,
+  "no_extra_builds_running": true,
+  "existing_6GiB_peak_covers_copy": true,
+  "effective_build_dir": "/workspace/9936-e04-feature-target/debug/build",
+  "cargo_forced_temp_dir": "/workspace/9936-e04-feature-head/target"
+}

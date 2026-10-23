@@ -1,0 +1,10 @@
+{
+  "source": "a3b0e245646a41e183d0db6e7ee3e23f9c683c38",
+  "tree": "03d0ff4e4d6b3c088865d8df258a3a7373e3b279",
+  "prerequisite": "e04f482bb13f559e01f8216294ecd4a9a10acc9c",
+  "bundle_sha256": "62944c98a6b7b8fcc33931cb252840afc815e3fc25de2dd692d2cc3d638d92c7",
+  "bundle_bytes": 1021,
+  "bundle_verify": "The bundle contains this ref:\na3b0e245646a41e183d0db6e7ee3e23f9c683c38 refs/heads/codex/review-9936-native-angle-controls\nThe bundle requires this ref:\ne04f482bb13f559e01f8216294ecd4a9a10acc9c \nThe bundle uses this hash algorithm: sha1\n/workspace/9936-canonical-e04/native-angle-controls.bundle is okay\n",
+  "patch_sha256": "7cf73ec1c43357ba3e4361a50a496afd55b8d18a10aca744668338f330d4164e",
+  "canonical_push": false
+}

@@ -1,0 +1,86 @@
+Independent test-contribution review receipt
+UTC: 2026-10-23T20:56:23.354488+00:00
+Repository: EffortlessMetrics/ripr-swarm; controlling issue #9936, canonical PR #9983.
+Reviewed contribution: a3b0e245646a41e183d0db6e7ee3e23f9c683c38
+Tree: 03d0ff4e4d6b3c088865d8df258a3a7373e3b279
+Parent: e04f482bb13f559e01f8216294ecd4a9a10acc9c
+Disposition: test-only contribution SOURCE ACCEPTED. Candidate/final merge status REVIEW_INCOMPLETE: owner adoption, parent-owned focused product test result, exact adopted-head review and hosted qualification/normal expected-head merge are not established by this receipt.
+
+Observed diff: exactly one path, crates/ripr/src/analysis/language/typescript/tests/var_runner_binding_tests.rs, 4 additions/3 deletions. .ts keeps glued n</a`/ but compares number with .source.length instead of boolean .test(s); .tsx uses n < /a`/.source.length to remain native TSX syntax. For-await tail is unchanged. Test still asserts ExposureClass::NoStaticPath through class_for_file -> TypeScriptAdapter.analyze_diff; that full adapter path was inspected, not executed by this reviewer.
+Production applicability: entire tree delta from e04 is that test path only. Production components below have identical blobs at a3, e04 and previously accepted integration017df. Prior independent41 normal/typed and8 division controls retain source applicability; those suites were not rerun for this test-only revision.
+
+Fresh verification:
+1. rustc fixture-generator.rs compiles terminal0. It uses exact committed tape_test function and exact committed case-assembly statements. All five generated tail strings byte-equal the previously native-valid corrected witnesses; generated full fixture strings include actual var require runner plus tape registration.
+2. Native TypeScript5.9.3 --noEmit --target ES2022 --skipLibCheck --jsx preserve native-i.ts/tsx:5/5 exit0; empty individual native-i.log. Full fixture is unchanged except prepended ambient require/Foo/JSX declarations and export{} needed for standalone typechecking. No native runtime execution was claimed.
+3. Fresh runs of source-hash-bound integration consumer on all five full fixtures: normal masker -> explicit SourceType byte-preserving wrapper -> strict_identifier_writes finds every actual test=null offset. Obsolete bdd0 exact producer/consumer misses them in all five; this establishes sensitivity at the raw consumer layer, not a full adapter result.
+4. Fresh standalone exact literal_mask source harness, using retained exact production extraction and cached OXC0.130 dependencies: terminal compile0 and execution0;8 controls. Direct module, function-body and class-member contexts exercise all three successful parser prefixes. Malformed Unicode+backtick source rejects all three prefixes under TS and TSX. Both typed and unknown prepare return code unchanged, operand_ends empty and regex_known=false; final byte wrapper equals the direct legacy lexical mask and preserves17 input bytes. Identical-byte TS/TSX ambiguity also leaves context-free preparation unchanged; typed routes choose distinct plans. Every harness control asserts byte width. Retained command and raw output below. One initial review-only harness import error was corrected; not a production or Cargo failure.
+
+Automated source-kind/fallback questions, source-backed disposition:
+- Admission BindingScan uses program.source_text and program.source_type (admission.rs150,323); extended registrations uses the same actual Program.source_type (407). Whole-file extractor rejects OXC parse errors before admission (tests_extract.rs158-160), so arbitrary malformed full files are not newly admitted by this path. AST preparation remains conditional on successful parsing and on the existing backtick/</, />, <> trigger; this is not a universal lexer replacement.
+- The module-spy source is read from owner.file itself (classifier.rs5819-5834). Passing source_type_for(owner.file) for the owner snippet and that module therefore uses the actual originating syntax kind. Spy-safe files use test.file; spy callback masks use test_file; unused-function reach masking receives source_type_for(file). Their typed wrapper/consumer paths are retained unchanged.
+- masked_owner_body remains a context-free compatibility caller (mock_payload_guard.rs959-961), including runs_changed_line_once (988). Other owner/snippet callers remain. No blanket all-consumer source-kind guarantee or universal ambiguity resolution is claimed.
+- Exact plan_for semantics (literal_mask.rs112-131): both successful TS/TSX parses require equal plans; exactly one successful parse is accepted; both failing moves to the next prefix; disagreeing successful plans stop with no plan. Failed/ambiguous preparation uses original text, empty operand markers and legacy lexical masking. The fresh fallback harness proves those specified examples; it is not an exhaustive proof of every possible malformed prefix.
+- Earlier token-context private-member, JSX text/attribute, generic JSX and obj.for/await findings concern superseded implementations. Current production bytes are the already reviewed parser-span source. No new material defect is established by the automated questions; universal claims above would be inaccurate and are explicitly excluded.
+- Division-only compatibility route still calls ts_mask_lexically(text,false,emptySet) directly, without AST preparation; existing independent division consensus remains intact.
+
+Parent-owned evidence boundaries:
+Six feature-check receipts classify TS-only/Python-only no-lang-rust profiles as inherited unsupported builds: e04, f63 and main5950 all show the same explicit lib.rs compile_error; no masker source repair required. This reviewer did not execute those Cargo commands.
+Integration planning receipt reports main5950 vs source-basisf63 has247 changed paths, e04 vs f63 has11, overlap empty, merge-tree clean17a962da... . Remote merge ref e3c3d7a uses older base6fd671b5; no current combined-tree qualification is established here.
+Parent driver49499 owns the one focused product adapter test for a3 and was still live when this review completed. No duplicate Cargo/CI launched. No source/review-worktree/canonical branch mutation, publication, merge, denied protection-read retry or evidence deletion by this reviewer. Review worktree remains clean017df. No full product/full-suite/exact hosted CI clearance is claimed.
+Next executable step: consume parent driver's terminal result, publish retained test-only contribution for canonical owner adoption, then bind review/check qualification to the actual adopted successor. Root retains merge ownership and applicable holds.
+
+Source hashes (SHA256 / Git blob):
+cb3f27a96da4ba43d3a1051d5aefc64938728cf7920cad867bc12ddeafeee782 6f39efaa12dc18b1ebee51a48d80c94d0db21317 crates/ripr/src/analysis/language/typescript/classifier.rs
+6c2259f5d7a90b5fce6995a982cddfa2fc71f66df5fc874533b3264186ab5d7e cc6db45550ae7f991632a1fea8843845eac2d2c4 crates/ripr/src/analysis/language/typescript/literal_mask.rs
+f2a21cd9a11a5ed7c4ee3dc97d1a7c401ced65fb1bd47a29d197e7610bfdc95e 2bad8d396fa90d5f7d4a476d118464281b4efb2f crates/ripr/src/analysis/language/typescript/tests_extract.rs
+e000c2a9570eb04c8f9baf5624ade009f5e42c0161aaa441e59060da3c6fccbd d7cde6160215ac6c72f15af1db48c11bce568456 crates/ripr/src/analysis/language/typescript/admission.rs
+cd809c2ecfdfa5f4d708bab443756412a502de62d871a52b01cc1540454e5528 55ad72c84e351357c1b8ff1308c725758dce13a0 crates/ripr/src/analysis/language/typescript/mock_payload_guard.rs
+5069284ffccee92dc9c21a3ef2971730faa626c09f51cd675ac47cbabb1d5842 6266e5c746ec48177adf193f9bbbd159ed54ad13 crates/ripr/src/analysis/language/typescript/mock_payload_guard/spy.rs
+4a74f7a1bbc13c17755db5dca5c0e8e0207c73295be8c67cf9760d0d2e651c69 62791e54d55456c56482d4e322e0ce6624ccc509 crates/ripr/src/analysis/language/typescript/mod.rs
+
+Fresh full-fixture write offsets (input byte offsets):
+case0 ts: expected=[214], current=[['test', 4], ['test', 214]], bdd0=[['test', 4]], native_exit=0
+case1 ts: expected=[202], current=[['test', 4], ['test', 202]], bdd0=[['test', 4]], native_exit=0
+case2 tsx: expected=[223], current=[['test', 4], ['test', 223]], bdd0=[['test', 4]], native_exit=0
+case3 tsx: expected=[196, 245], current=[['test', 4], ['test', 196], ['test', 245]], bdd0=[['test', 4]], native_exit=0
+case4 ts: expected=[218], current=[['test', 4], ['test', 218]], bdd0=[['test', 4]], native_exit=0
+
+Retained artifact hashes (SHA256):
+54ed59d8229b2a03e0ed0767e639dedcb6e4cb481b7fff6ef320966e15e98cc2 commit.txt
+8a8ea7451cff9f14671adf55f3bbc9756cc8cc2f7f2bbc42f2c64542124dce84 committed-diff.patch
+e5ea7a250a748ec7f31c658356d9c3d898d2fe642500f7bb8bbe8d7f7157eaaf five-controls.json
+99114052092af54140ca76f2929175401413af9a1f1d1f7a519ac1e54cacf4a3 fixture-0.ts
+d1daab1d3ade09e68de509e6d159d51812d6d20a39e1cb41494bd42e812243a2 fixture-1.ts
+7c176323264dab176af583df8937244f61db8c349cf4349635fe871296028203 fixture-2.tsx
+0eb79414448aaa60492636b5d0c946ee7a07fb7ff017b4f0c42a076d0a38a2e7 fixture-3.tsx
+9e48e23c52b6fef106163da2fd46641dd9097da8373ec038fc923a0be0b6d952 fixture-4.ts
+e2a935f0489ec05d3be840eafbf77e969c118ee60f945c97df2c528bd59fcf6d fixture-generator
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 fixture-generator-build.log
+c0361080b8b3898e7bc9aa4633a55800d591ce8612ae41f406d96c9e9743ac83 fixture-generator.rs
+bb937a868540c52349343ada8218c53233b63c266b1c4c3534703afb3d9cd983 instrument-initial-error.txt
+6c2259f5d7a90b5fce6995a982cddfa2fc71f66df5fc874533b3264186ab5d7e literal_mask.rs
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 native-0.log
+2c7eb2e9c36986f1678468a6ab1e61b212de23ccb0f13a40e3b6217a8ddb56f0 native-0.ts
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 native-1.log
+dd36f1eae8c2912e5ea5a430e7523c989e199f79842a13c9be186cb98cc9705a native-1.ts
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 native-2.log
+422ac83ad9da530adbfb64a711cbf7cf7b2b9669174cf7bd382f727e21f45cf4 native-2.tsx
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 native-3.log
+72f227c8bb6770618eb54ee7d52e5c274d7751b6a20d5abe772b7193e59faf7f native-3.tsx
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 native-4.log
+7886b9a3c618bb9f9a1da3e364bbf1af99ccd6617c3ef71f9acb5af5c96a9be4 native-4.ts
+b057af519eaa8a9c04e77951b8b2b4f85671f5e4dd73b33a367bf49ea31ce1d0 prepare-fallback
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 prepare-fallback-build.log
+9033c00785803aaed0f4a49ec0dc69d47994f6f70343f66ef092edc67b874fd0 prepare-fallback-command.json
+463f9a7f6b7661f6d4751457dec897cdd2c52104fa15b47c122aec8a59102acf prepare-fallback.log
+5b7fdaf9f2eb1d64ce6f5a4f372dcbd9996d53fa64ade220a866d909bc9d024f prepare-fallback.py
+8f9fa03ec47cbcbbc66cd47286fe509bdb3d14658b9e52165e07564df4e9f661 prepare-fallback.rs
+cf68f4d805fe0f863b01e5776530c0546c74d4b976d75f891b712719d30aa992 retain-receipt.py
+3a21362f652ad67c11030aa8014ddc1e6e5c5cdd659302c24625ea1165ea803c source-identity.json
+b6e941d1c02ece248cd26212bf7e3bcbf764ebbd2033c5ceac183566472a22f6 source-scope.txt
+95c3ffdf6e0f311fae40b1063022659c6340b176f776621819206f67688f9b75 tail-0.ts
+f59fa6c98326f7bcddf2e7635501fcdbc4e79a3b6573a7185c784df2426de1a2 tail-1.ts
+4058d4d465befbaa6e7339de46046c8c45ccdfadc7c8918ee66698393da2be3e tail-2.tsx
+dcf10c92e93f52d58daef648386c8a692d9650b8a5792496fe11688259d2e6fe tail-3.tsx
+32f686b428e7c3aa1da2aa9a81685c6ec51150b65bbaa379c4519e692c6f60a1 tail-4.ts
+e4328b4ace8c0721dac9e73e8b7dd311c82906c6c48daf1f7ce8e88e3cafcc75 verify.py

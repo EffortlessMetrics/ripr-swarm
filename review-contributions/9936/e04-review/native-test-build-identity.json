@@ -1,0 +1,26 @@
+[
+  {
+    "path": "/workspace/9936-e04-feature-target/debug/build/ripr-deaf1b2013ae43e5/output",
+    "lines": [
+      "cargo:rustc-env=RIPR_BUILD_COMMIT=5950c9133e7fac1303b0f55616752ef64dcfddba",
+      "cargo:rustc-env=RIPR_BUILD_COMMIT_DIRTY=false",
+      "cargo:rustc-env=RIPR_BUILD_SOURCE_DIGEST="
+    ]
+  },
+  {
+    "path": "/workspace/9936-e04-feature-target/debug/build/ripr-aca5c9aa268f4f00/output",
+    "lines": [
+      "cargo:rustc-env=RIPR_BUILD_COMMIT=a3b0e245646a41e183d0db6e7ee3e23f9c683c38",
+      "cargo:rustc-env=RIPR_BUILD_COMMIT_DIRTY=false",
+      "cargo:rustc-env=RIPR_BUILD_SOURCE_DIGEST="
+    ]
+  },
+  {
+    "path": "/workspace/9936-e04-feature-target/debug/build/ripr-e9a386e94f378cc8/output",
+    "lines": [
+      "cargo:rustc-env=RIPR_BUILD_COMMIT=5950c9133e7fac1303b0f55616752ef64dcfddba",
+      "cargo:rustc-env=RIPR_BUILD_COMMIT_DIRTY=false",
+      "cargo:rustc-env=RIPR_BUILD_SOURCE_DIGEST="
+    ]
+  }
+]

@@ -1,0 +1,233 @@
+{
+  "utc": "2026-10-23T20:49:31.158179+00:00",
+  "candidate": "e04f482bb13f559e01f8216294ecd4a9a10acc9c",
+  "exact_base": "f63a722a243bcd9574288ccf28ba1ec63f41d549",
+  "current_main": "5950c9133e7fac1303b0f55616752ef64dcfddba",
+  "classification": "inherited unsupported no-lang-rust profiles, not a candidate-introduced masker regression",
+  "root_cause": "All subjects contain identical explicit lib.rs compile_error requiring lang-rust; no-default-features lang-typescript-only and lang-python-only omit it. ra_ap_syntax diagnostics follow the deliberate rejection. No source repair performed.",
+  "actual_results": [
+    {
+      "subject": "head",
+      "sha": "e04f482bb13f559e01f8216294ecd4a9a10acc9c",
+      "feature": "lang-typescript",
+      "command": [
+        "cargo",
+        "check",
+        "--locked",
+        "--offline",
+        "-p",
+        "ripr",
+        "--lib",
+        "--no-default-features",
+        "--features",
+        "lang-typescript"
+      ],
+      "exit": 101,
+      "seconds": 78.3,
+      "log": "/workspace/9936-canonical-e04/feature-checks/head-lang-typescript.log",
+      "errors": [
+        "error: ripr requires the `lang-rust` Cargo feature; build rust-only binaries with `--no-default-features --features lang-rust`.",
+        "error[E0433]: cannot find module or crate `ra_ap_syntax` in this scope",
+        "error[E0432]: unresolved import `ra_ap_syntax`",
+        "error[E0433]: cannot find module or crate `ra_ap_syntax` in this scope",
+        "error[E0432]: unresolved import `ra_ap_syntax`",
+        "error[E0432]: unresolved import `ra_ap_syntax`",
+        "error[E0433]: cannot find module or crate `ra_ap_syntax` in this scope",
+        "error[E0432]: unresolved import `ra_ap_syntax`",
+        "error[E0433]: cannot find module or crate `ra_ap_syntax` in this scope",
+        "error[E0432]: unresolved import `ra_ap_syntax`",
+        "error[E0433]: cannot find module or crate `ra_ap_syntax` in this scope",
+        "error[E0432]: unresolved import `ra_ap_syntax`"
+      ]
+    },
+    {
+      "subject": "head",
+      "sha": "e04f482bb13f559e01f8216294ecd4a9a10acc9c",
+      "feature": "lang-python",
+      "command": [
+        "cargo",
+        "check",
+        "--locked",
+        "--offline",
+        "-p",
+        "ripr",
+        "--lib",
+        "--no-default-features",
+        "--features",
+        "lang-python"
+      ],
+      "exit": 101,
+      "seconds": 48.96,
+      "log": "/workspace/9936-canonical-e04/feature-checks/head-lang-python.log",
+      "errors": [
+        "error: ripr requires the `lang-rust` Cargo feature; build rust-only binaries with `--no-default-features --features lang-rust`.",
+        "error[E0433]: cannot find module or crate `ra_ap_syntax` in this scope",
+        "error[E0432]: unresolved import `ra_ap_syntax`",
+        "error[E0433]: cannot find module or crate `ra_ap_syntax` in this scope",
+        "error[E0432]: unresolved import `ra_ap_syntax`",
+        "error[E0432]: unresolved import `ra_ap_syntax`",
+        "error[E0433]: cannot find module or crate `ra_ap_syntax` in this scope",
+        "error[E0432]: unresolved import `ra_ap_syntax`",
+        "error[E0433]: cannot find module or crate `ra_ap_syntax` in this scope",
+        "error[E0432]: unresolved import `ra_ap_syntax`",
+        "error[E0433]: cannot find module or crate `ra_ap_syntax` in this scope",
+        "error[E0432]: unresolved import `ra_ap_syntax`"
+      ]
+    },
+    {
+      "subject": "base",
+      "sha": "f63a722a243bcd9574288ccf28ba1ec63f41d549",
+      "feature": "lang-typescript",
+      "command": [
+        "cargo",
+        "check",
+        "--locked",
+        "--offline",
+        "-p",
+        "ripr",
+        "--lib",
+        "--no-default-features",
+        "--features",
+        "lang-typescript"
+      ],
+      "exit": 101,
+      "seconds": 17.25,
+      "log": "/workspace/9936-canonical-e04/feature-checks/base-lang-typescript.log",
+      "errors": [
+        "error: ripr requires the `lang-rust` Cargo feature; build rust-only binaries with `--no-default-features --features lang-rust`.",
+        "error[E0433]: cannot find module or crate `ra_ap_syntax` in this scope",
+        "error[E0432]: unresolved import `ra_ap_syntax`",
+        "error[E0433]: cannot find module or crate `ra_ap_syntax` in this scope",
+        "error[E0432]: unresolved import `ra_ap_syntax`",
+        "error[E0432]: unresolved import `ra_ap_syntax`",
+        "error[E0433]: cannot find module or crate `ra_ap_syntax` in this scope",
+        "error[E0432]: unresolved import `ra_ap_syntax`",
+        "error[E0433]: cannot find module or crate `ra_ap_syntax` in this scope",
+        "error[E0432]: unresolved import `ra_ap_syntax`",
+        "error[E0433]: cannot find module or crate `ra_ap_syntax` in this scope",
+        "error[E0432]: unresolved import `ra_ap_syntax`"
+      ]
+    },
+    {
+      "subject": "base",
+      "sha": "f63a722a243bcd9574288ccf28ba1ec63f41d549",
+      "feature": "lang-python",
+      "command": [
+        "cargo",
+        "check",
+        "--locked",
+        "--offline",
+        "-p",
+        "ripr",
+        "--lib",
+        "--no-default-features",
+        "--features",
+        "lang-python"
+      ],
+      "exit": 101,
+      "seconds": 13.42,
+      "log": "/workspace/9936-canonical-e04/feature-checks/base-lang-python.log",
+      "errors": [
+        "error: ripr requires the `lang-rust` Cargo feature; build rust-only binaries with `--no-default-features --features lang-rust`.",
+        "error[E0433]: cannot find module or crate `ra_ap_syntax` in this scope",
+        "error[E0432]: unresolved import `ra_ap_syntax`",
+        "error[E0433]: cannot find module or crate `ra_ap_syntax` in this scope",
+        "error[E0432]: unresolved import `ra_ap_syntax`",
+        "error[E0432]: unresolved import `ra_ap_syntax`",
+        "error[E0433]: cannot find module or crate `ra_ap_syntax` in this scope",
+        "error[E0432]: unresolved import `ra_ap_syntax`",
+        "error[E0433]: cannot find module or crate `ra_ap_syntax` in this scope",
+        "error[E0432]: unresolved import `ra_ap_syntax`",
+        "error[E0433]: cannot find module or crate `ra_ap_syntax` in this scope",
+        "error[E0432]: unresolved import `ra_ap_syntax`"
+      ]
+    },
+    {
+      "subject": "main",
+      "sha": "5950c9133e7fac1303b0f55616752ef64dcfddba",
+      "feature": "lang-typescript",
+      "command": [
+        "cargo",
+        "check",
+        "--locked",
+        "--offline",
+        "-p",
+        "ripr",
+        "--lib",
+        "--no-default-features",
+        "--features",
+        "lang-typescript"
+      ],
+      "exit": 101,
+      "seconds": 18.8,
+      "log": "/workspace/9936-canonical-e04/feature-checks/main-lang-typescript.log",
+      "errors": [
+        "error: ripr requires the `lang-rust` Cargo feature; build rust-only binaries with `--no-default-features --features lang-rust`.",
+        "error[E0433]: cannot find module or crate `ra_ap_syntax` in this scope",
+        "error[E0432]: unresolved import `ra_ap_syntax`",
+        "error[E0433]: cannot find module or crate `ra_ap_syntax` in this scope",
+        "error[E0432]: unresolved import `ra_ap_syntax`",
+        "error[E0432]: unresolved import `ra_ap_syntax`",
+        "error[E0433]: cannot find module or crate `ra_ap_syntax` in this scope",
+        "error[E0432]: unresolved import `ra_ap_syntax`",
+        "error[E0433]: cannot find module or crate `ra_ap_syntax` in this scope",
+        "error[E0432]: unresolved import `ra_ap_syntax`",
+        "error[E0433]: cannot find module or crate `ra_ap_syntax` in this scope",
+        "error[E0432]: unresolved import `ra_ap_syntax`"
+      ]
+    },
+    {
+      "subject": "main",
+      "sha": "5950c9133e7fac1303b0f55616752ef64dcfddba",
+      "feature": "lang-python",
+      "command": [
+        "cargo",
+        "check",
+        "--locked",
+        "--offline",
+        "-p",
+        "ripr",
+        "--lib",
+        "--no-default-features",
+        "--features",
+        "lang-python"
+      ],
+      "exit": 101,
+      "seconds": 14.57,
+      "log": "/workspace/9936-canonical-e04/feature-checks/main-lang-python.log",
+      "errors": [
+        "error: ripr requires the `lang-rust` Cargo feature; build rust-only binaries with `--no-default-features --features lang-rust`.",
+        "error[E0433]: cannot find module or crate `ra_ap_syntax` in this scope",
+        "error[E0432]: unresolved import `ra_ap_syntax`",
+        "error[E0433]: cannot find module or crate `ra_ap_syntax` in this scope",
+        "error[E0432]: unresolved import `ra_ap_syntax`",
+        "error[E0432]: unresolved import `ra_ap_syntax`",
+        "error[E0433]: cannot find module or crate `ra_ap_syntax` in this scope",
+        "error[E0432]: unresolved import `ra_ap_syntax`",
+        "error[E0433]: cannot find module or crate `ra_ap_syntax` in this scope",
+        "error[E0432]: unresolved import `ra_ap_syntax`",
+        "error[E0433]: cannot find module or crate `ra_ap_syntax` in this scope",
+        "error[E0432]: unresolved import `ra_ap_syntax`"
+      ]
+    }
+  ],
+  "driver_terminal": 0,
+  "ownership": "review-9936 root; canonical source untouched",
+  "source_guard_identity": {
+    "head": {
+      "lib_blob": "e691bf7441786b73c7fbc0230d88b27fa696e653",
+      "guard_sha256": "9a9e08fe51e7f978c1b7e2845d67dedd48363da914368b6ab5545473984ac491",
+      "guard": "#[cfg(not(feature = \"lang-rust\"))]\ncompile_error!(\n    \"ripr requires the `lang-rust` Cargo feature; build rust-only binaries with `--no-default-features --features lang-rust`.\"\n);"
+    },
+    "base": {
+      "lib_blob": "e691bf7441786b73c7fbc0230d88b27fa696e653",
+      "guard_sha256": "9a9e08fe51e7f978c1b7e2845d67dedd48363da914368b6ab5545473984ac491",
+      "guard": "#[cfg(not(feature = \"lang-rust\"))]\ncompile_error!(\n    \"ripr requires the `lang-rust` Cargo feature; build rust-only binaries with `--no-default-features --features lang-rust`.\"\n);"
+    },
+    "main": {
+      "lib_blob": "e691bf7441786b73c7fbc0230d88b27fa696e653",
+      "guard_sha256": "9a9e08fe51e7f978c1b7e2845d67dedd48363da914368b6ab5545473984ac491",
+      "guard": "#[cfg(not(feature = \"lang-rust\"))]\ncompile_error!(\n    \"ripr requires the `lang-rust` Cargo feature; build rust-only binaries with `--no-default-features --features lang-rust`.\"\n);"
+    }
+  }
+}

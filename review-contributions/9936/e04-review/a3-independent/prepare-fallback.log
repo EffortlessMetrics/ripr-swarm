@@ -1,0 +1,32 @@
+module: regex_known=true unchanged=false operand_ends={13} byte_width=29 legacy_equal=true mask="const a = /   /; test = null;"
+  prefix=0 TS_errors=0 TSX_errors=0
+  prefix=1 TS_errors=0 TSX_errors=0
+  prefix=2 TS_errors=1 TSX_errors=1
+function-body: regex_known=true unchanged=false operand_ends={10} byte_width=26 legacy_equal=true mask="return /   /; test = null;"
+  prefix=0 TS_errors=1 TSX_errors=1
+  prefix=1 TS_errors=0 TSX_errors=0
+  prefix=2 TS_errors=1 TSX_errors=1
+class-member: regex_known=true unchanged=false operand_ends={18} byte_width=23 legacy_equal=true mask="run() { return /   /; }"
+  prefix=0 TS_errors=1 TSX_errors=1
+  prefix=1 TS_errors=1 TSX_errors=1
+  prefix=2 TS_errors=0 TSX_errors=0
+malformed-typed: regex_known=false unchanged=true operand_ends={} byte_width=17 legacy_equal=true mask="const café = `  "
+  prefix=0 TS_errors=1 TSX_errors=1
+  prefix=1 TS_errors=1 TSX_errors=1
+  prefix=2 TS_errors=2 TSX_errors=2
+malformed-unknown: regex_known=false unchanged=true operand_ends={} byte_width=17 legacy_equal=true mask="const café = `  "
+  prefix=0 TS_errors=1 TSX_errors=1
+  prefix=1 TS_errors=1 TSX_errors=1
+  prefix=2 TS_errors=2 TSX_errors=2
+ambiguous-unknown: regex_known=false unchanged=true operand_ends={} byte_width=52 legacy_equal=true mask="const v = <div>x</                               / ;"
+  prefix=0 TS_errors=0 TSX_errors=0
+  prefix=1 TS_errors=0 TSX_errors=0
+  prefix=2 TS_errors=1 TSX_errors=2
+ambiguous-ts: regex_known=true unchanged=false operand_ends={50} byte_width=52 legacy_equal=true mask="const v = <div>x</                               / ;"
+  prefix=0 TS_errors=0 TSX_errors=0
+  prefix=1 TS_errors=0 TSX_errors=0
+  prefix=2 TS_errors=1 TSX_errors=2
+ambiguous-tsx: regex_known=true unchanged=false operand_ends={21} byte_width=52 legacy_equal=false mask="const v =  div    div ; test = null; const y = a /g;"
+  prefix=0 TS_errors=0 TSX_errors=0
+  prefix=1 TS_errors=0 TSX_errors=0
+  prefix=2 TS_errors=1 TSX_errors=2

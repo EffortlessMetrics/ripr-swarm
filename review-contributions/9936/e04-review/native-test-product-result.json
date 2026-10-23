@@ -1,0 +1,28 @@
+{
+  "sha": "a3b0e245646a41e183d0db6e7ee3e23f9c683c38",
+  "tree": "03d0ff4e4d6b3c088865d8df258a3a7373e3b279",
+  "parent": "e04f482bb13f559e01f8216294ecd4a9a10acc9c",
+  "command": [
+    "cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "ripr",
+    "--lib",
+    "review_9936_comparison_regex_after_angle_shapes_keeps_the_write_visible"
+  ],
+  "exit": 0,
+  "exactly_one_test_passed": true,
+  "seconds": 357.23,
+  "log": "/workspace/9936-canonical-e04/native-test-product.log",
+  "claim": "focused five-case adapter test only; no full product or canonical-head test proof",
+  "artifact": "/workspace/9936-e04-feature-target/debug/deps/ripr-821a705ef8245a1a",
+  "frozen_artifact": "/workspace/9936-evidence/native-angle-testbin",
+  "artifact_sha256": "c532ec0323b03cd6986ca065de9b5b547d84bda959937d1d68bc87ed7f2d7730",
+  "artifact_bytes": 289513336,
+  "relocated_test_exit": 0,
+  "rustfmt_check_exit": 0,
+  "compiler": "rustc1.95.0 59807616e1fa2540724bfbac14d7976d7e4a3860",
+  "scope": "actual selected Cargo test executable; no duplicate expanded copy besides this single freeze"
+}
