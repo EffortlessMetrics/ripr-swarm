@@ -425,10 +425,25 @@ fn a_dispatch_shape_that_differs_keeps_its_class() -> Result<(), String> {
             diff(line, "        self.0 + self.0", "        self.0 * self.0"),
         ))
     };
-    // The test names the type but never calls a method named `area`.
+    // The test names the type but never calls a method named `area`. `Shape` is
+    // declared in this workspace, so nothing reaches `area` unseen (#9169): no
+    // static path, and certainly not the implicit-call limit.
     let lib = dispatch_source("let _square = Square(3);\n        assert_eq!(9, 9);");
     let (line, patch) = edit(&lib)?;
-    kept(&lib, &patch, line, "never calls area")?;
+    let findings = findings_on(&lib, &patch, line)?;
+    if findings.iter().any(limited)
+        || !findings
+            .iter()
+            .any(|f| f.class == ExposureClass::NoStaticPath)
+    {
+        return Err(format!(
+            "never calls area: expected no_static_path without the limit, got {:?}",
+            findings
+                .iter()
+                .map(|f| (f.class.as_str(), f.static_limit_kind))
+                .collect::<Vec<_>>()
+        ));
+    }
     // The test calls `area` but never names `Square`.
     let lib = dispatch_source("let tile = Tile(3);\n        assert_eq!(tile.area(), 9);");
     let (line, patch) = edit(&lib)?;
