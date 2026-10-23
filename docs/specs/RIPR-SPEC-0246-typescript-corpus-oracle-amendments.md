@@ -289,7 +289,8 @@ reason `gap_evidence_unresolved`:
 - the ladder result is the strong-oracle arm whose observation guard fails
   to confirm the changed sink (no candidate witnesses it), the changed line
   is a side effect (`names.push(...)`, a call), and the finding carries no
-  static limit;
+  static limit, and is not the module-entry arm (an owner reached only
+  through a same-module caller keeps its own verdict);
 - a hook registered directly in the file or in a `describe` that encloses an
   oracle-eligible related candidate is `before`, `beforeEach` or
   `beforeAll`, is not `async` or a generator, takes no parameter (`done`),
@@ -304,6 +305,10 @@ reason `gap_evidence_unresolved`:
   `node:test` signal (an import, or a `jest.` / `vi.` member use anywhere in
   the file). The hook identifier must not be declared in scope or imported
   from anything but `mocha`.
+
+The recommended next step then says a mocha setup hook calls the changed
+owner outside every test body, that no new assertion is needed on that
+evidence, and that no repair packet is emitted.
 
 Rule 7 removes an actionable gap and credits nothing. It adds no relation,
 oracle kind, relation reason, class or output field: the hook text is an

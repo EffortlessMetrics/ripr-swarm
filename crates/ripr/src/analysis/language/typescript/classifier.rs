@@ -6109,6 +6109,7 @@ pub(crate) fn classify_change_with_alias_state(
     // RIPR-SPEC-0246 rule 7: a setup hook that calls the owner outside every
     // test body. It reads an actionable gap, never a credit.
     let hook_owner_unknown = !ladder_exposed
+        && !reach_only_through_module_entry
         && static_limit.is_none()
         && strong_oracle_present
         && !observation_confirmed

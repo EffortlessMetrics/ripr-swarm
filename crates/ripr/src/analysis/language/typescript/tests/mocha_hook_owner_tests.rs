@@ -20,20 +20,37 @@ fn hook_bodies(source: &str) -> Vec<Vec<String>> {
 }
 
 fn run_with_head(label: &str, source: &str) -> Result<Finding, String> {
+    run_case(
+        label,
+        REGISTRY,
+        (4, "  names.push(name.trim());", "  names.push(name);"),
+        &[("tests/registry.test.ts", source)],
+    )
+}
+
+/// Analyze one change of `src/registry.ts` against the given test files.
+fn run_case(
+    label: &str,
+    owner_source: &str,
+    (line, removed, added): (usize, &str, &str),
+    files: &[(&str, &str)],
+) -> Result<Finding, String> {
     let root = ts_unique_tempdir(label)?;
-    ts_write_file(&root.join("src/registry.ts"), REGISTRY)?;
-    ts_write_file(&root.join("tests/registry.test.ts"), source)?;
+    ts_write_file(&root.join("src/registry.ts"), owner_source)?;
+    for (path, text) in files {
+        ts_write_file(&root.join(path), text)?;
+    }
     let changed = ChangedFile {
         path: PathBuf::from("src/registry.ts"),
         added_lines: vec![crate::analysis::diff::ChangedLine {
-            line: 4,
-            text: "  names.push(name);".to_string(),
-            new_side_line: 4,
+            line,
+            text: added.to_string(),
+            new_side_line: line,
         }],
         removed_lines: vec![crate::analysis::diff::ChangedLine {
-            line: 4,
-            text: "  names.push(name.trim());".to_string(),
-            new_side_line: 4,
+            line,
+            text: removed.to_string(),
+            new_side_line: line,
         }],
     };
     let result = TypeScriptAdapter.analyze_diff(
@@ -45,9 +62,11 @@ fn run_with_head(label: &str, source: &str) -> Result<Finding, String> {
     result?
         .findings
         .into_iter()
-        .find(|finding| finding.probe.location.line == 4)
+        .find(|finding| finding.probe.location.line == line)
         .ok_or_else(|| format!("{label}: expected a finding on the changed line"))
 }
+
+const HOOK: &str = "  before(() => {\n    register(\"  alpha \");\n  });\n";
 
 /// The registry suite with `hooks` written before the tests.
 fn suite(hooks: &str) -> String {
@@ -260,5 +279,194 @@ fn a_jest_or_vitest_file_is_not_a_mocha_file() -> Result<(), String> {
     // No mocha or chai import at all: nothing says which runner owns `before`.
     let bare = suite(hook).replace("import { expect } from \"chai\";\n", "");
     assert!(hook_bodies(&bare).iter().all(Vec::is_empty));
+    assert_gap_kept("hook-owner-bare", &bare)
+}
+
+/// Each case keeps the hook of the positive test and changes one gate of the
+/// ladder arm the rule reads, so removing that gate flips the case.
+#[test]
+fn a_weak_oracle_keeps_the_gap() -> Result<(), String> {
+    let source = suite(HOOK).replace("to.equal(2)", "to.be.ok");
+    assert!(hook_bodies(&source).iter().all(|hooks| hooks.len() == 1));
+    assert_gap_kept("hook-owner-weak-oracle", &source)
+}
+
+#[test]
+fn a_change_that_is_not_a_side_effect_keeps_the_gap() -> Result<(), String> {
+    // A predicate change reaches the same ladder arm (a strong oracle that
+    // does not witness the changed boundary) but is not a side effect.
+    let owner = "const names: string[] = [];\n\nexport function register(name: string): number {\n  if (name.length >= 3) {\n    names.push(name);\n  }\n  return names.length;\n}\n\nexport function registered(): readonly string[] {\n  return names;\n}\n";
+    let source = suite(HOOK).replace("to.equal(2)", "to.equal(1)");
+    let finding = run_case(
+        "hook-owner-predicate",
+        owner,
+        (4, "  if (name.length >= 3) {", "  if (name.length > 3) {"),
+        &[("tests/registry.test.ts", &source)],
+    )?;
+    assert_ne!(finding.probe.family, ProbeFamily::SideEffect);
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "{:?}",
+        finding.missing
+    );
+    assert!(finding.stop_reasons.is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_static_limit_keeps_the_gap() -> Result<(), String> {
+    let source = suite(HOOK);
+    let finding = run_case(
+        "hook-owner-static-limit",
+        REGISTRY,
+        (
+            4,
+            "  names.push(name.trim());",
+            "  Reflect.apply(names.push, names, [name]);",
+        ),
+        &[("tests/registry.test.ts", &source)],
+    )?;
+    assert!(finding.static_limit_kind.is_some(), "{:?}", finding.missing);
+    assert_ne!(
+        finding.class,
+        ExposureClass::StaticUnknown,
+        "{:?}",
+        finding.missing
+    );
+    assert!(finding.stop_reasons.is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_hook_calling_a_same_named_function_from_another_module_keeps_the_gap() -> Result<(), String> {
+    // The test reaches the owner through a namespace import; the hook's bare
+    // `register` is another module's function.
+    let source = format!(
+        "import {{ expect }} from \"chai\";\nimport * as registry from \"../src/registry\";\nimport {{ register }} from \"../src/elsewhere\";\n\ndescribe(\"registry\", () => {{\n{HOOK}\n  it(\"counts a new registration\", () => {{\n    expect(registry.register(\"beta\")).to.equal(2);\n  }});\n}});\n"
+    );
+    assert!(hook_bodies(&source).iter().all(|hooks| hooks.len() == 1));
+    let finding = run_case(
+        "hook-owner-other-module",
+        REGISTRY,
+        (4, "  names.push(name.trim());", "  names.push(name);"),
+        &[
+            ("tests/registry.test.ts", &source),
+            (
+                "src/elsewhere.ts",
+                "export function register(name: string): number {\n  return name.length;\n}\n",
+            ),
+        ],
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "{:?}",
+        finding.missing
+    );
+    assert!(finding.stop_reasons.is_empty());
+    Ok(())
+}
+
+#[test]
+fn an_aliased_import_of_the_owner_in_the_hook_abstains() -> Result<(), String> {
+    let source = suite("  before(() => {\n    add(\"  alpha \");\n  });\n").replace(
+        "import { register, registered }",
+        "import { register, register as add, registered }",
+    );
+    assert!(hook_bodies(&source).iter().all(|hooks| hooks.len() == 1));
+    assert_abstained("hook-owner-alias", &source)
+}
+
+#[test]
+fn an_alias_shadowed_in_the_hook_keeps_the_gap() -> Result<(), String> {
+    let source = suite(
+        "  before(() => {\n    const add = (name: string) => name;\n    add(\"  alpha \");\n  });\n",
+    )
+    .replace(
+        "import { register, registered }",
+        "import { register, register as add, registered }",
+    );
+    assert_gap_kept("hook-owner-alias-shadowed", &source)
+}
+
+#[test]
+fn a_reexported_owner_in_the_hook_abstains() -> Result<(), String> {
+    let source = suite(HOOK).replace("\"../src/registry\"", "\"../src/index\"");
+    assert!(hook_bodies(&source).iter().all(|hooks| hooks.len() == 1));
+    let finding = run_case(
+        "hook-owner-reexport",
+        REGISTRY,
+        (4, "  names.push(name.trim());", "  names.push(name);"),
+        &[
+            ("tests/registry.test.ts", &source),
+            ("src/index.ts", "export * from \"./registry\";\n"),
+        ],
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::StaticUnknown,
+        "{:?}",
+        finding.missing
+    );
+    assert_eq!(
+        finding.stop_reasons,
+        vec![crate::domain::StopReason::GapEvidenceUnresolved]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_heuristic_only_candidate_does_not_read_its_hook() -> Result<(), String> {
+    // The test beside the hook never calls the owner. The relation step keeps
+    // only oracle-eligible tests once one exists (so the `uses_oracle` filter
+    // in the guard is defense in depth), and the hook-less test above lends
+    // the oracle: the hook beside the unrelated test must not abstain.
+    let source = format!(
+        "{HEAD}\ndescribe(\"other\", () => {{\n  it(\"counts a new registration\", () => {{\n    expect(register(\"beta\")).to.equal(2);\n  }});\n}});\n\ndescribe(\"registry\", () => {{\n{HOOK}\n  it(\"holds the trimmed name\", () => {{\n    void register;\n    expect(registered()).to.deep.equal([\"alpha\"]);\n  }});\n}});\n"
+    );
+    let finding = run_with_head("hook-owner-heuristic-only", &source)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "{:?}",
+        finding.missing
+    );
+    assert!(finding.stop_reasons.is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_module_entry_reach_keeps_its_own_verdict() -> Result<(), String> {
+    // The tests reach the owner only through the exported wrapper `add`, and
+    // assert nothing about its result; the hook calling the owner must not
+    // rewrite the module-entry verdict.
+    let owner = "export function register(name: string): number {\n  names.push(name);\n  return names.length;\n}\n\nconst names: string[] = [];\n\nexport function add(name: string): number {\n  return register(name);\n}\n";
+    let test = format!(
+        "import {{ expect }} from \"chai\";\nimport {{ add, register }} from \"../src/registry\";\n\ndescribe(\"registry\", () => {{\n{HOOK}\n  it(\"adds\", () => {{\n    add(\"beta\");\n    expect(1).to.equal(1);\n  }});\n}});\n"
+    );
+    assert!(hook_bodies(&test).iter().all(|hooks| hooks.len() == 1));
+    let finding = run_case(
+        "hook-owner-module-entry",
+        owner,
+        (2, "  names.push(name.trim());", "  names.push(name);"),
+        &[("tests/registry.test.ts", &test)],
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "{:?}",
+        finding.missing
+    );
+    assert!(finding.stop_reasons.is_empty());
+    assert!(
+        finding
+            .related_tests
+            .iter()
+            .any(|related| related.relation_reason
+                == Some(crate::domain::RelationReason::HelperOwnerCall)),
+        "{:?}",
+        finding.related_tests
+    );
     Ok(())
 }
