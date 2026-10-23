@@ -19,7 +19,7 @@ pub(crate) mod language_outcome;
 pub(crate) mod new_test_target;
 pub(crate) mod path_glob;
 mod pipeline;
-pub(crate) use extract::mask_comments_and_strings;
+pub(crate) use extract::{mask_comments_and_strings, rust_identity_spans};
 pub(crate) use pipeline::NON_TEXT_ONLY_DETAIL;
 mod probes;
 pub(crate) mod repair_route;

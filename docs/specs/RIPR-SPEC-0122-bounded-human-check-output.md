@@ -639,6 +639,11 @@ every other probe family print no note either. The probe fields and every
 machine output are unchanged; the note is static guidance only and claims no
 runtime outcome.
 
+Body presence includes a string or character literal even without a trailing
+comma. Comment-only text, including the producer's `/* old body unread */`
+placeholder, does not establish a body. A complete literal `after:` body is
+not a head-only row and prints no note.
+
 ## Non-Claims
 
 - Bounded human output is not runtime mutation evidence.
@@ -688,6 +693,8 @@ runtime outcome.
 - `crates/ripr/src/output/human.rs::tests::render_finding_adds_no_arm_note_when_the_after_row_is_complete`
 - `crates/ripr/src/output/human.rs::tests::render_finding_arm_note_ignores_arrows_in_literals_and_comments`
 - `crates/ripr/tests/cli_smoke.rs::check_human_full_marks_head_only_match_arm_after_row`
+- `crates/ripr/src/output/human.rs::tests::render_finding_arm_note_preserves_literal_body_presence`
+- `crates/ripr/tests/cli_smoke.rs::check_human_full_keeps_a_final_literal_arm_body_note_without_a_comma`
 - `crates/ripr/src/analysis/classify/decision.rs::tests::infection_unknown_next_step_names_a_concrete_action`
 - `crates/ripr/src/output/human.rs::tests::human_evidence_spells_the_unconfirmed_observation_in_words`
 - `crates/ripr/src/output/human.rs::tests::plain_observation_wording_handles_each_producer_form`

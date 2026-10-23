@@ -24786,6 +24786,81 @@ fn check_human_full_marks_head_only_match_arm_after_row() -> Result<(), String> 
     Ok(())
 }
 
+/// RIPR-SPEC-0122: literal bodies without final commas still need arm guidance.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn check_human_full_keeps_a_final_literal_arm_body_note_without_a_comma() -> Result<(), String> {
+    for (label, ty, before, after) in [
+        ("string", "&'static str", "\"old\"", "\"new\""),
+        ("char", "char", "'a'", "'b'"),
+    ] {
+        let root = unique_temp_workspace(&format!("final-literal-arm-{label}"));
+        std::fs::create_dir_all(root.join("src")).map_err(|err| err.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"final-literal-arm\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|err| err.to_string())?;
+        run_git(&root, &["init", "-q"])?;
+        run_git(&root, &["config", "core.autocrlf", "false"])?;
+        for (revision, body) in [("before", before), ("after", after)] {
+            std::fs::write(
+                root.join("src/lib.rs"),
+                format!("pub fn value(x: bool) -> {ty} {{\n    match x {{\n        true => {before},\n        false => {body}\n    }}\n}}\n"),
+            )
+            .map_err(|err| err.to_string())?;
+            run_git(&root, &["add", "."])?;
+            run_git(
+                &root,
+                &[
+                    "-c",
+                    "user.name=Fixture",
+                    "-c",
+                    "user.email=fixture@example.invalid",
+                    "commit",
+                    "-qm",
+                    revision,
+                ],
+            )?;
+        }
+        let root_arg = root.to_string_lossy().into_owned();
+        let check = |format: &str| -> Result<Vec<u8>, String> {
+            let output = run_command(
+                env!("CARGO_BIN_EXE_ripr"),
+                Some(&root),
+                &[
+                    "check", "--root", &root_arg, "--base", "HEAD~1", "--format", format, "--quiet",
+                ],
+            )
+            .map_err(|err| err.to_string())?;
+            if !output.status.success() {
+                return Err(format!("{label} {format}: {output:?}"));
+            }
+            Ok(output.stdout)
+        };
+        let report: serde_json::Value =
+            serde_json::from_slice(&check("json")?).map_err(|err| err.to_string())?;
+        let arms = report["findings"].as_array().ok_or("missing findings")?;
+        if !arms.iter().any(|finding| {
+            finding["probe"]["family"] == "match_arm" && finding["probe"]["line"] == 4
+        }) {
+            return Err(format!("{label}: missing final-arm subject: {report}"));
+        }
+        let human = String::from_utf8(check("human-full")?).map_err(|err| err.to_string())?;
+        for expected in [
+            format!("  before: false => {before}\n"),
+            "  after:  false =>\n".to_string(),
+            "(arm head only; open the arm at ./src/lib.rs:4 to read its new body)".to_string(),
+        ] {
+            if !human.contains(&expected) {
+                return Err(format!("{label}: missing {expected:?}:\n{human}"));
+            }
+        }
+        ignore_remove_dir_all(&root);
+    }
+    Ok(())
+}
+
 /// RIPR-SPEC-0116: `ripr check --base HEAD --worktree --json` analyzes the
 /// user's uncommitted tracked edit instead of reporting the committed `HEAD`
 /// diff as empty.
