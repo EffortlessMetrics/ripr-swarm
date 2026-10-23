@@ -23,3 +23,16 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_module_test_reader_replacement (3)
+
+Reason:
+RIPR-SPEC-0028 and RIPR-SPEC-0108: require full human output for typed non-promotion honesty assertions; same conservative analyzer result
+
+Command:
+`cargo xtask goldens bless python_module_test_reader_replacement --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

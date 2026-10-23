@@ -23,3 +23,16 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_conditional_foreign_callable_write (3)
+
+Reason:
+RIPR-SPEC-0028 and RIPR-SPEC-0108: require full human output for typed non-promotion honesty assertions; same conservative analyzer result
+
+Command:
+`cargo xtask goldens bless python_conditional_foreign_callable_write --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
