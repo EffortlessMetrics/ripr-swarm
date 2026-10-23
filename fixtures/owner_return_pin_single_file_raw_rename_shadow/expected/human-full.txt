@@ -28,7 +28,7 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Complete propagation witness reaches constructed field: start: self.start
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
   - local flow reaches constructed field: start: self.start (line 17)
   - related test src/lib.rs:36 a_clone_equals_its_original uses strong exact value oracle: assert_eq!(window.clone(), window); misses: no assertion pins `start: self.start`
 

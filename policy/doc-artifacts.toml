@@ -1124,7 +1124,7 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0210-installed-typescript-journey-fixture.md"
 status = "proposed"
 owner = "test-infra"
-standalone_reason = "Issue #4519 records the installed TypeScript journey fixture: fixtures/blind_journey_installed_typescript retains a digest-bound npm/Vitest threshold-boundary repository (committed inclusive equality change, related test missing exactly the boundary, lockfile-backed runner selection, reproducible git identities) plus eight digest-bound negative snapshots (rebindable let, reassignment, shadowing, imported constant, object/namespace write, enum or computed initializer, nonliteral arithmetic, control-flow reach barrier) whose sixteen scripted installed_typescript_* journeys execute through the unchanged RIPR-SPEC-0205 executor â€” positive row from a foreign CWD with decoy naming the owner, equality input and executable vitest run command, second-root portable-identity repeat, and the fail-closed variants / failing-command / skipped-verification / cyclic-route / deleted-artifact / workspace-binary / interrupted-receipt controls each keeping its own derived non-positive terminal â€” while a dedicated check-fixture-contracts validator recomputes snapshot digests and cross-references the corpus; the real candidate-bound run stays residual on the frozen #1609 candidate and the #4510 harness."
+standalone_reason = "Issue #4519 records the installed TypeScript journey fixture: fixtures/blind_journey_installed_typescript retains a digest-bound npm/Vitest threshold-boundary repository (committed inclusive equality change, related test missing exactly the boundary, lockfile-backed runner selection, reproducible git identities) plus eight digest-bound negative snapshots (rebindable let, reassignment, shadowing, imported constant, object/namespace write, enum or computed initializer, nonliteral arithmetic, control-flow reach barrier) whose seventeen scripted installed_typescript_* journeys execute through the unchanged RIPR-SPEC-0205 executor â€” positive row from a foreign CWD with decoy following the gap-bound agent repair --gap-id start, ripr continue after phase and gap-bound receipt (#9103) and naming the owner, equality input and executable vitest run command, a pilot/status route row that resolves to that start, second-root portable-identity repeat, and the fail-closed variants / failing-command / skipped-verification / cyclic-route / deleted-artifact / workspace-binary controls each keeping its own derived non-positive terminal, plus a completed-attempt rerun re-observation row that claims no interruption or lost-receipt recovery â€” while a dedicated check-fixture-contracts validator recomputes snapshot digests and cross-references the corpus; the real candidate-bound run stays residual on the frozen #1609 candidate and the #4510 harness."
 
 [[artifact]]
 id = "RIPR-SPEC-0211"
@@ -1820,6 +1820,14 @@ owner = "product-analysis"
 standalone_reason = "Issue #9103 records the check-findings artifact contract: a producer-identified, unbounded diff-scoped findings snapshot verifies movement by canonical gap id through the same identity and commitment validator as repo-exposure, and an incomplete, edited, unenveloped, duplicate or reversed snapshot is refused."
 
 [[artifact]]
+id = "RIPR-SPEC-0318"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0318-pilot-dirty-target-next-steps.md"
+status = "proposed"
+owner = "product-output"
+standalone_reason = "Issue #3896 and PR #8520 record the pilot next-step contract: when the current change is uncommitted and the repair targets an inline test module the terminal and Markdown summaries say to commit or stash the target before the repair start, and the final step names the continue command that step 1 prints."
+
+[[artifact]]
 id = "RIPR-SPEC-0300"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0300-wrapped-signature-one-probe.md"
@@ -1834,3 +1842,11 @@ path = "docs/specs/RIPR-SPEC-0301-release-ledger-direct-main.md"
 status = "proposed"
 owner = "release-automation"
 standalone_reason = "Issue #2768 records the direct-main release ledger contract: release-ledger validates a captured ledger against its exact first-parent and reachable range, the closed eleven-value disposition vocabulary, a separate final-tree-effect axis, the #2766 packet and shared JSON, Markdown and manifest digests, and never claims per-commit review."
+
+[[artifact]]
+id = "RIPR-SPEC-0311"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0311-gap-bound-typescript-repair-start.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #9103 records the gap-bound start contract: a TypeScript finding with a complete packet gets an agent repair --gap-id start accepted by the before phase, with fail-closed refusal, an additive manifest gap binding, and unrouted variants."

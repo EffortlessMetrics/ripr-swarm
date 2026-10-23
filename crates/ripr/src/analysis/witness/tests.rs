@@ -117,6 +117,7 @@ impl FindingSpec {
 
     fn build(self) -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: self.id.to_string(),
             canonical_gap: self.canonical_id.map(|id| FindingCanonicalGap {
                 id: id.to_string(),

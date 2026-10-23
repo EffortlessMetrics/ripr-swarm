@@ -88,6 +88,8 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
     .with_owner_caller_names(candidate_index.owner_caller_names())
     .with_diff_touched(candidate_index.diff_touched());
     context.propagation_origin = propagation_origin;
+    context.unmounted_build_script =
+        candidate_index.probe_in_unmounted_build_script(probe, owner_fn, index);
     let reveal_expression = parser_expression_for_probe(
         index,
         &probe.location.file,
@@ -354,7 +356,7 @@ fn restore_reveal_misses(
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::analysis::classify::{recommended_next_step, stop_reasons};
     use crate::analysis::facts::{FunctionImplContext, FunctionSourceRole};
@@ -1729,8 +1731,11 @@ mod tests {
                 "tests/score.rs",
                 "score_call_is_broad",
                 "score(1)",
+                // Not an `assert!`: effect families gate that macro on an
+                // established execution context (#8927), which this synthetic
+                // index has no source file to prove.
                 oracle_fact(
-                    "assert!(score(1).is_err());",
+                    "score(1).unwrap_err();",
                     OracleKind::BroadError,
                     OracleStrength::Weak,
                 ),
@@ -1753,7 +1758,7 @@ mod tests {
         let finding = classify_probe(&probe, &index, true, None);
 
         assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Weak);
-        // The broad error assertion "assert!(score(1).is_err())" contains no
+        // The broad error check "score(1).unwrap_err()" contains no
         // token from the CallDeletion probe "client.send(input)" — observation_unverified
         // fires before the broad-error oracle path, reflecting the honesty fix.
         assert!(
@@ -2793,7 +2798,7 @@ fn far_above_threshold_discounts() {
             )
             .as_deref(),
             Some(
-                "Trace the related test input through the local or computed operand, including default/empty cases, to check whether the change matters. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
+                "Open the related test and trace its input through the local or computed operand (including default and empty cases) to see which side of the changed condition it exercises, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
             )
         );
         assert_eq!(
@@ -3577,6 +3582,160 @@ fn far_above_threshold_discounts() {
         }
     }
 
+    /// #9175 end to end: captured-call facts through signal derivation and
+    /// cap packing, then the human renderer. A demoted test that calls the
+    /// owner (receiver type unresolved among same-named owners) must be
+    /// visible within the first five human related-test rows, never primary,
+    /// with its low-confidence disclosure intact.
+    pub(in crate::analysis) fn retention_finding(
+        docs: usize,
+        demoted_call: &str,
+        demoted_asserts: usize,
+    ) -> Finding {
+        let mut source = String::from(
+            "pub struct Bytes { len: usize }\npub struct BytesMut { len: usize }\nimpl Bytes {\n    pub fn truncate(&mut self, len: usize) {\n        if len == 0 {\n            self.len = 0;\n        } else if len < self.len {\n            self.len = len;\n        }\n    }\n}\nimpl BytesMut {\n    pub fn truncate(&mut self, len: usize) {\n        self.len = len;\n    }\n}\n#[cfg(test)]\nmod tests {\n",
+        );
+        for index in 0..docs {
+            source.push_str(&format!(
+                "    #[test]\n    fn doc_{index:02}() {{\n        let len = 0;\n        assert_eq!(len, 0);\n    }}\n"
+            ));
+        }
+        source.push_str("}\n");
+        let mut tests = String::from("use demo::Bytes;\n");
+        tests.push_str(&format!(
+            "#[test]\nfn truncate_to_zero_releases_shared_reference() {{\n    let mut truncated = make().freeze();\n    {demoted_call};\n    let len = 0;\n"
+        ));
+        for index in 0..demoted_asserts {
+            tests.push_str(&format!("    assert_eq!(len, 0 + {index} - {index});\n"));
+        }
+        tests.push_str("}\n");
+        let index = parser_backed_index(&[("src/bytes.rs", &source), ("tests/trunc.rs", &tests)]);
+        let probe = Probe {
+            id: ProbeId("probe:src_bytes_rs:5:predicate".to_string()),
+            location: SourceLocation::new("src/bytes.rs", 5, 1),
+            owner: Some(SymbolId("src/bytes.rs::impl Bytes::truncate".to_string())),
+            family: ProbeFamily::Predicate,
+            delta: DeltaKind::Control,
+            before: Some("len < self.len".to_string()),
+            after: Some("len == 0".to_string()),
+            expression: "len == 0".to_string(),
+            expected_sinks: vec![],
+            required_oracles: vec![],
+        };
+        classify_probe(&probe, &index, true, None)
+    }
+
+    /// The human renderer lists the first five related tests
+    /// (`MAX_RELATED_TESTS_SHOWN`); analysis cannot render output, so the
+    /// window position is asserted here and the rendering in `output::human`.
+    const HUMAN_RELATED_ROWS_SHOWN: usize = 5;
+
+    fn demoted_row_index(finding: &Finding) -> Option<usize> {
+        finding
+            .related_tests
+            .iter()
+            .position(|test| test.name == "truncate_to_zero_releases_shared_reference")
+    }
+
+    #[test]
+    fn given_demoted_owner_calling_test_when_cap_overflows_then_it_is_retained_within_the_first_five_rows()
+     {
+        let finding = retention_finding(9, "truncated.truncate(0)", 1);
+        let retained: Vec<_> = finding
+            .related_tests
+            .iter()
+            .filter(|test| test.name == "truncate_to_zero_releases_shared_reference")
+            .collect();
+        assert_eq!(retained.len(), 1, "{:#?}", finding.related_tests);
+        assert_eq!(finding.related_tests.len(), 8);
+        assert_ne!(
+            finding.related_tests[0].name,
+            "truncate_to_zero_releases_shared_reference"
+        );
+        assert_eq!(
+            retained[0].relation_reason,
+            Some(RelationReason::WeakTokenSubstring)
+        );
+        assert_eq!(
+            retained[0].relation_confidence,
+            Some(RelationConfidence::Low)
+        );
+        assert_eq!(retained[0].miss, Some(RelatedTestMiss::NoCallPath));
+        let index = demoted_row_index(&finding);
+        assert!(
+            index.is_some_and(|index| (1..HUMAN_RELATED_ROWS_SHOWN).contains(&index)),
+            "{index:?} in {:#?}",
+            finding.related_tests
+        );
+    }
+
+    #[test]
+    fn given_repeated_assertions_when_cap_overflows_then_demoted_test_keeps_one_row() {
+        let finding = retention_finding(9, "truncated.truncate(0)", 4);
+        let rows = finding
+            .related_tests
+            .iter()
+            .filter(|test| test.name == "truncate_to_zero_releases_shared_reference")
+            .count();
+        assert_eq!(rows, 1, "{:#?}", finding.related_tests);
+        assert_eq!(finding.related_tests.len(), 8);
+        // Pre-cap count: nine docs plus four distinct demoted assertions.
+        assert_eq!(finding.related_tests_total(), 13);
+    }
+
+    #[test]
+    fn given_demoted_test_already_in_the_window_when_cap_overflows_then_it_moves_within_the_first_five_rows()
+     {
+        let finding = retention_finding(7, "truncated.truncate(0)", 3);
+        assert_eq!(finding.related_tests_total(), 10);
+        assert_eq!(finding.related_tests.len(), 8);
+        let demoted: Vec<_> = finding
+            .related_tests
+            .iter()
+            .filter(|test| test.name == "truncate_to_zero_releases_shared_reference")
+            .collect();
+        assert_eq!(demoted.len(), 1, "{:#?}", finding.related_tests);
+        assert_eq!(
+            demoted[0].relation_reason,
+            Some(RelationReason::WeakTokenSubstring)
+        );
+        assert_ne!(
+            finding.related_tests[0].name,
+            "truncate_to_zero_releases_shared_reference"
+        );
+        let index = demoted_row_index(&finding);
+        assert!(
+            index.is_some_and(|index| (1..HUMAN_RELATED_ROWS_SHOWN).contains(&index)),
+            "{index:?} in {:#?}",
+            finding.related_tests
+        );
+    }
+
+    #[test]
+    fn given_wrong_call_name_when_cap_overflows_then_nothing_is_retained() {
+        let finding = retention_finding(9, "truncated.clear()", 1);
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .all(|test| test.name != "truncate_to_zero_releases_shared_reference"),
+            "{:#?}",
+            finding.related_tests
+        );
+    }
+
+    #[test]
+    fn given_no_overflow_when_demoted_test_calls_owner_then_rows_are_unchanged_by_the_signal() {
+        let finding = retention_finding(2, "truncated.truncate(0)", 1);
+        assert!(finding.related_tests.len() <= 8);
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .any(|test| test.name == "truncate_to_zero_releases_shared_reference")
+        );
+    }
+
     /// Admission-sensitive tests need actual parser facts and exact function /
     /// assertion coordinates; fabricated TestSummary rows cannot establish them.
     fn parser_backed_index(sources: &[(&str, &str)]) -> RustIndex {
@@ -3590,6 +3749,7 @@ fn far_above_threshold_discounts() {
             assert!(!facts.used_lexical_fallback, "{path}");
             index.insert_file(PathBuf::from(path), facts, true);
         }
+        crate::analysis::facts::compose_fixture_source_roles(&mut index, std::path::Path::new(""));
         index
     }
 

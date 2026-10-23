@@ -1620,13 +1620,14 @@ fn committed_typescript_corpus_is_valid_and_its_rows_agree_with_its_labels() -> 
     // through a Playwright `test.step` threshold move, 37 through
     // `ts-grid-boundary-table`, and 38 through an interpolated message
     // pinned by an anchored regex, and 39 through the second `expect.soft` term
-    // of a returned object literal.
+    // of a returned object literal, and 40 to 42 (#9497) through the skipped
+    // and unexercised-return cases.
     let spec = coverage
         .by_spec
         .iter()
         .find(|row| row.spec == "RIPR-SPEC-0243")
         .ok_or("RIPR-SPEC-0243 is not in scope in the typescript ledger")?;
-    assert_eq!(spec.in_scope_examples, 39);
+    assert_eq!(spec.in_scope_examples, 42);
     assert_eq!(spec.uncovered, Vec::<usize>::new());
     assert_eq!(spec.waived, 0);
     let corpus = load_corpus(&dir)?;

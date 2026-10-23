@@ -147,15 +147,14 @@
   },
   "printed_command_templates": {
    "doctor": "ripr doctor --root <selected-root>",
-   "check": "ripr check --root <selected-root>",
+   "check": "ripr check --root <selected-root> --base 'HEAD~1'",
    "pilot": "ripr pilot --root <selected-root>",
    "agent_status": "ripr agent status --root <selected-root>",
-   "repair_before": "ripr agent repair --root <selected-root> --seam-id seam-pricing-threshold-equality --phase before",
-   "repair_after": "ripr agent repair --root <selected-root> --attempt <repair-attempt-id> --phase after",
-   "agent_receipt": "ripr agent receipt --root <selected-root> --attempt <repair-attempt-id> --verify-json target/ripr/workflow/agent-verify.json --seam-id seam-pricing-threshold-equality --json --out target/ripr/reports/agent-receipt.json",
+   "repair_before": "ripr agent repair --root <selected-root> --gap-id gap:typescript:typescript_preview:e1a31a24 --base 'HEAD~1' --phase before",
+   "repair_after": "ripr continue --root <selected-root> --attempt <repair-attempt-id>",
    "verification": "vitest run test/pricing.test.ts"
   },
-  "substitution_contract": "<selected-root> and <repair-attempt-id> are the only placeholders; the product prints concrete values and the scripted transcript records the printed bytes literally, executed from a foreign launch directory against the selected root; the printed vitest command runs in the documented npm environment selected by the retained package.json and package-lock.json of the base and head snapshots."
+  "substitution_contract": "<selected-root> and <repair-attempt-id> are the only placeholders; the product prints concrete values and the eight negative-variant rows record the printed diagnostics verbatim (compared against the real binary) while every other scripted byte is a semantic summary of the printed route, executed from a foreign launch directory against the selected root; the printed vitest command runs in the documented npm environment selected by the retained package.json and package-lock.json of the base and head snapshots."
  },
  "journey_scenario_ids": [
   "installed_typescript_positive_journey_emits_receipt",
@@ -170,6 +169,7 @@
   "installed_typescript_failing_vitest_visible",
   "installed_typescript_verification_skipped_visible",
   "installed_typescript_cyclic_route_discoverability_failure",
+  "installed_typescript_pilot_status_route_resolves_to_gap_start",
   "installed_typescript_deleted_before_artifact_names_recovery",
   "installed_typescript_workspace_binary_rejected",
   "installed_typescript_interrupted_receipt_write_recovers",
@@ -188,6 +188,7 @@
   "installed_typescript_failing_vitest_visible": "head",
   "installed_typescript_verification_skipped_visible": "head",
   "installed_typescript_cyclic_route_discoverability_failure": "head",
+  "installed_typescript_pilot_status_route_resolves_to_gap_start": "head",
   "installed_typescript_deleted_before_artifact_names_recovery": "head",
   "installed_typescript_workspace_binary_rejected": "head",
   "installed_typescript_interrupted_receipt_write_recovers": "head",
@@ -208,16 +209,19 @@
   "failing_printed_vitest_command_stays_visible": "installed_typescript_failing_vitest_visible",
   "skipped_project_verification_stays_not_run": "installed_typescript_verification_skipped_visible",
   "cyclic_route_without_terminal_instruction_fails": "installed_typescript_cyclic_route_discoverability_failure",
+  "pilot_status_route_resolves_to_gap_bound_start": "installed_typescript_pilot_status_route_resolves_to_gap_start",
   "deleted_or_stale_artifact_names_recovery": "installed_typescript_deleted_before_artifact_names_recovery",
   "foreign_cwd_decoy_keeps_selected_root": "installed_typescript_positive_journey_emits_receipt",
   "workspace_or_alternate_binary_substitution_rejected": "installed_typescript_workspace_binary_rejected",
-  "interrupted_artifact_production_yields_no_partial_receipt": "installed_typescript_interrupted_receipt_write_recovers",
+  "completed_attempt_rerun_reobserves_issued_receipt_without_recovery_claim": "installed_typescript_interrupted_receipt_write_recovers",
   "second_temporary_root_repeat_agrees": "installed_typescript_second_root_portable_identity"
  },
  "claims": {
   "limitations": [
    "the scripted rows bind the retained fixture snapshots by content digest and recorded git identity; the frozen-candidate run through the #4510 harness rebinds live process and package identities",
-   "recorded command output bytes are the retained literal observations of the printed route; the real installed run may print equivalent concrete roots and attempt ids",
+   "the eight negative-variant rows retain the verbatim `Safe next action:` line of `ripr check` and the verbatim `agent repair --gap-id` refusal line, compared against the real binary by the installed journey test; every other scripted output byte is a semantic summary of the printed route, not a literal transcript",
+   "the status warning pilot_routed_to_check_no_repair_target still says `ripr check` offers no `ripr agent repair` start even when the subsequent check prints the gap-bound start (agent_status.rs); this inherited messaging limitation stays visible and is not changed by this fixture-only slice",
+   "recorded command output bytes other than the negative-variant diagnostics are semantic summaries of the printed route, not literal observations; the real installed run may print equivalent concrete roots and attempt ids",
    "all ten snapshots (base, head and eight variants) carry the same full npm lockfile (#9104), and the installed node/npm/vitest identities belong to the journey environment recorded in the transcript"
   ],
   "non_claims": [

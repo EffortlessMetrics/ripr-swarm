@@ -89,7 +89,7 @@ falls back to all repo-actionable seams. This scope-widening is disclosed in
 the warnings[] field of the JSON output — check warnings[] to confirm whether
 you received a scoped result or a repo-wide fallback.
 
-This parser is the first implementation seam for RIPR-SPEC-0010. The brief
+This parser is the agent-brief router's first implementation seam. The brief
 router remains advisory and static; it does not run mutation testing, generate
 tests, edit files, change cache behavior, or touch LSP/MCP surfaces.
 "#;
@@ -225,7 +225,7 @@ LSP/MCP surfaces.
 Refusal contract: a typed verify refusal — drifted analysis inputs
 (`analysis input identities differ`) or no repository movement between the
 artifacts — names the cause on stderr, exits `3`, and leaves stdout empty
-(RIPR-SPEC-0134). Other rejections (unreadable or invalid artifacts, lineage
+. Other rejections (unreadable or invalid artifacts, lineage
 or metadata mismatches) exit `2`.
 
 Movement vocabulary (#2648): the JSON output uses two related fields:
@@ -355,6 +355,7 @@ tests, edit files, change cache behavior, or touch LSP/MCP surfaces.
 pub(super) const AGENT_REPAIR_HELP: &str = r#"Run the before/edit/after repair transaction and its verification phase for one named gap.
 
 Usage: ripr agent repair [--root PATH] [--store PATH] --seam-id ID --phase before [--json]
+       ripr agent repair [--root PATH] [--store PATH] --gap-id ID --base REF --phase before [--json]
        ripr agent repair [--root PATH] [--store PATH] (--attempt ID|--seam-id ID) --phase after [--json]
        ripr agent repair [--root PATH] [--store PATH] --attempt ID --phase verify [--json]
            [--verify-authorized --verify-authority ID] [--verify-rollback]
@@ -382,13 +383,28 @@ Options:
                        resolves to that seam. `--phase after` keeps exact seam
                        IDs. An unmapped ID refuses with the `ripr pilot`
                        recovery route.
+  --gap-id ID          Start a repair for one canonical TypeScript preview gap
+                       (`gap:typescript:typescript_preview:...`) printed by
+                       `ripr check`; exclusive with `--seam-id` and requires
+                       `--base`. The before phase re-runs the diff-scoped
+                       check, refuses unless the finding's repair packet is
+                       ready, and records the check-findings snapshot. Run
+                       `--attempt ID --phase after` after committing the
+                       focused test: it re-runs the check against the recorded
+                       base commit, reports the gap closed only when it reads
+                       exposed (otherwise it refuses and the attempt stays
+                       retryable), then enforces the edit cage. It issues no
+                       receipt; the closure rides the verify result. Python
+                       gaps are not repairable here.
+  --base REF           The Git base the diff-scoped check compares against;
+                       required with, and valid only for, `--gap-id`.
   --attempt ID         Select one durable repair attempt; valid for `after`
                        and `verify` (verify accepts only `--attempt`).
   --phase before|after|verify
                        Which phase of the repair loop to run.
   --python-repair-trust-manifest PATH
                        Bind this attempt to an accepted Python repair-trust
-                       selection manifest (RIPR-SPEC-0176); `before` only.
+                       selection manifest; `before` only.
   --python-repair-trust-attempt ID
                        The selection attempt identity to bind; requires the
                        manifest flag.
