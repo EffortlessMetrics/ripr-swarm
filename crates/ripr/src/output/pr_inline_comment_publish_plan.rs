@@ -1445,6 +1445,68 @@ mod tests {
         Ok(())
     }
 
+    /// RIPR-SPEC-0025: verify parsed destinations, not just escaped HTML spelling.
+    #[test]
+    fn given_link_destinations_when_comment_prose_is_rendered_then_link_values_are_preserved()
+    -> Result<(), String> {
+        use pulldown_cmark::{Event, Options, Parser, Tag};
+
+        for field in ["why_this_matters", "repair", "reason"] {
+            for (source, destination, title) in [
+                ("[link](<https://example.test>)", "https://example.test", ""),
+                (
+                    "[**link**](<https://example.test/@owner> \"title <x> @owner\")",
+                    "https://example.test/@owner",
+                    "title <x> @owner",
+                ),
+                (
+                    "[link][ref]\n\n[ref]: <https://example.test/a`b>",
+                    "https://example.test/a`b",
+                    "",
+                ),
+                (
+                    "[**@octocat** <img src=x>](<https://example.test>)",
+                    "https://example.test",
+                    "",
+                ),
+                (
+                    "[`@octocat <img src=x>`](<https://example.test>)",
+                    "https://example.test",
+                    "",
+                ),
+            ] {
+                let body = planned_prose(field, source)?;
+                let mut links = Vec::new();
+                for event in Parser::new_ext(&body, Options::ENABLE_TABLES) {
+                    match event {
+                        Event::Start(Tag::Link {
+                            dest_url, title, ..
+                        }) => {
+                            links.push((dest_url.to_string(), title.to_string()));
+                        }
+                        Event::Html(html) | Event::InlineHtml(html) => {
+                            assert!(html.is_empty(), "raw HTML: {body}");
+                        }
+                        Event::Text(text) => assert!(!text.contains("@octocat"), "{body}"),
+                        _ => {}
+                    }
+                }
+                assert_eq!(
+                    links,
+                    [(destination.to_string(), title.to_string())],
+                    "{body}"
+                );
+                assert_eq!(super::super::markdown::prose(&body), body);
+                if source.contains("**") {
+                    assert!(
+                        Parser::new(&body).any(|event| matches!(event, Event::Start(Tag::Strong)))
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// #4446: an oversized expression from user source is bounded per field,
     /// with an elision marker, cut on a char boundary before the code span.
     #[test]

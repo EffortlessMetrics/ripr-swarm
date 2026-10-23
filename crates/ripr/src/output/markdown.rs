@@ -172,18 +172,64 @@ pub(crate) fn prose(text: &str) -> String {
 }
 
 fn prose_once(text: &str) -> String {
-    use pulldown_cmark::{Event, Options, Parser, Tag};
+    use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
 
-    let mut out = String::with_capacity(text.len());
-    let mut copied = 0;
+    let parser = Parser::new_ext(text, Options::ENABLE_TABLES);
+    let mut protected = Vec::new();
+    // Reference definitions do not emit events. Preserve their destination and
+    // title, but still neutralize the label just like its visible reference.
+    for (_, definition) in parser.reference_definitions().iter() {
+        let source = &text[definition.span.clone()];
+        let mut chars = source.char_indices();
+        while let Some((offset, ch)) = chars.next() {
+            if ch == '\\' {
+                chars.next();
+            } else if ch == ']' && source[offset..].starts_with("]:") {
+                protected.push(definition.span.start + offset + 2..definition.span.end);
+                break;
+            }
+        }
+    }
+
+    let mut label_end = None;
     // Inline spans cannot cross CommonMark block boundaries or GFM table cells.
     // The parser's ranges are UTF-8 byte boundaries in this exact source.
-    for (event, range) in Parser::new_ext(text, Options::ENABLE_TABLES).into_offset_iter() {
-        if matches!(event, Event::Code(_) | Event::Start(Tag::CodeBlock(_))) {
-            out.push_str(&neutralize(&text[copied..range.start], false, false));
-            out.push_str(&text[range.clone()]);
-            copied = range.end;
+    for (event, range) in parser.into_offset_iter() {
+        match event {
+            Event::Start(Tag::Link {
+                link_type: LinkType::Inline,
+                ..
+            }) => label_end = Some(range.start + 1),
+            Event::End(TagEnd::Link) => {
+                if let Some(end) = label_end.take() {
+                    // Child events cover the visible label, including markup.
+                    // Only its trailing destination/title syntax is protected;
+                    // copying the whole link would leave label HTML/mentions live.
+                    protected.push(end..range.end);
+                }
+            }
+            _ => {
+                if let Some(end) = &mut label_end {
+                    *end = (*end).max(range.end);
+                }
+                if matches!(event, Event::Code(_) | Event::Start(Tag::CodeBlock(_))) {
+                    protected.push(range);
+                }
+            }
         }
+    }
+    protected.sort_unstable_by_key(|range| range.start);
+    let mut out = String::with_capacity(text.len());
+    let mut copied = 0;
+    for range in protected {
+        if range.end <= copied {
+            continue;
+        }
+        if range.start > copied {
+            out.push_str(&neutralize(&text[copied..range.start], false, false));
+        }
+        out.push_str(&text[range.start.max(copied)..range.end]);
+        copied = range.end;
     }
     out.push_str(&neutralize(&text[copied..], false, false));
     out
@@ -1338,6 +1384,53 @@ mod tests {
         ] {
             let once = prose(source);
             assert_eq!(prose(&once), once, "{source:?}");
+        }
+    }
+
+    /// RIPR-SPEC-0025: link destinations and titles are syntax, not prose.
+    #[test]
+    fn given_link_destinations_when_prose_is_neutralized_then_values_are_preserved() {
+        for source in [
+            "[link](<https://example.test>)",
+            "[**link**](<https://example.test/@owner>)",
+            "[link](https://example.test/@owner)",
+            "[a\\]](<https://example.test/a`b> \"title <x> @owner\")",
+            "[](<https://example.test>)",
+            "[link][ref]\n\n[ref]: <https://example.test/@owner> \"title <x>\"",
+            "[link][r\\]ef]\n\n[r\\]ef]: <https://example.test>",
+        ] {
+            assert_eq!(prose(source), source, "{source:?}");
+        }
+    }
+
+    /// RIPR-SPEC-0025: preserving destinations must not protect visible labels.
+    #[test]
+    fn given_link_labels_when_prose_is_neutralized_then_only_visible_text_is_escaped() {
+        for (source, expected) in [
+            (
+                "[**@octocat** <img src=x>](<https://example.test/@owner>)",
+                "[**@\u{2060}octocat** &lt;img src=x>](<https://example.test/@owner>)",
+            ),
+            (
+                "[`@octocat <img src=x>`](<https://example.test>)",
+                "[`@octocat <img src=x>`](<https://example.test>)",
+            ),
+            (
+                "[@octocat]\n\n[@octocat]: <https://example.test/@owner>",
+                "[@\u{2060}octocat]\n\n[@\u{2060}octocat]: <https://example.test/@owner>",
+            ),
+            (
+                "<https://example.test/@octocat>",
+                "&lt;https://example.test/@\u{2060}octocat>",
+            ),
+            (
+                "[broken](<@octocat <img src=x>>)",
+                "[broken](&lt;@\u{2060}octocat &lt;img src=x>>)",
+            ),
+        ] {
+            let rendered = prose(source);
+            assert_eq!(rendered, expected, "{source:?}");
+            assert_eq!(prose(&rendered), rendered);
         }
     }
 

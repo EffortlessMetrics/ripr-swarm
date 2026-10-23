@@ -337,8 +337,12 @@ Field contract:
 Comment-card `why_this_matters`, `repair`, and fallback `reason` are Markdown
 prose. Parse the assembled comment body, including the labels that can share a
 paragraph with field text. Preserve emphasis, links, paragraphs, and actual
-code spans or blocks.
-Neutralize raw HTML and mentions outside code. Backtick runs in different
+code spans or blocks. Preserve the destination and title of recognized inline
+and reference links, including angle-bracket destination delimiters; these are
+link syntax, not visible prose. Continue neutralizing raw HTML and mentions in
+visible link labels without removing their emphasis or code formatting.
+Neutralize raw HTML and mentions outside code or link destination/title syntax.
+Backtick runs in different
 CommonMark blocks or GFM table cells do not form one code span; a soft newline
 inside one paragraph may belong to a span. Preserve the bytes of code that
 remains literal in the rendered context, including fenced and indented blocks.
