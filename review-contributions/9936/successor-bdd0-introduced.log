@@ -1,0 +1,35 @@
+introduced_private_if 'class C { #if(x: number) { return x; } f() { return this.#if(8) /(+`${(test = null, 2)}`) / 2; } }'
+base97
+"class C { #if(x: number) { return x; } f() { return this.#if(8) /(+`${(test = null, 2)}`) / 2; } }"
+[("test", 71)]
+
+headbdd0
+"class C { #if(x: number) { return x; } f() { return this.#if(8) /                         / 2; } }"
+[]
+
+introduced_jsx_control_text 'const node = <div>if (n) /a {test = null}</div>;'
+base97
+"const node = <div>if (n) /a {test = null}</     "
+[("test", 29)]
+
+headbdd0
+"const node = <div>if (n) /                /   >;"
+[]
+
+introduced_ts_assertion 'type T = number; const n = 8; const typed = <T>n; const b = n</T>`/.source.length; test = null;'
+base97
+"type T = number; const n = 8; const typed = <T>n; const b = n</   /.source.length; test = null;"
+[("test", 83)]
+
+headbdd0
+"type T = number; const n = 8; const typed = <T>n; const b = n</T>`                             "
+[]
+
+introduced_ts_assertion_no_write 'type T = number; const n = 8; const typed = <T>n; const b = n</T>test = null/.source.length;'
+base97
+"type T = number; const n = 8; const typed = <T>n; const b = n</             /.source.length;"
+[]
+
+headbdd0
+"type T = number; const n = 8; const typed = <T>n; const b = n</T>test = null/.source.length;"
+[("test", 65)]

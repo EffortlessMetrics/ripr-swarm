@@ -1,0 +1,34 @@
+Independent canonical source review
+UTC: 2026-10-23T19:23:31.191087+00:00
+Head: bdd0d8f45aa86901dd2b1f7370463550c050b64c
+Tree: 801c43e562b2cbfc33bc242976691f9995ba7632
+Parents: d6a932f8690e329497ed88217a7f23a42d93594a 97df16cb946c7f5af0b34760d5be69a879139ffd
+Behavior comparison basis: 97df16cb946c7f5af0b34760d5be69a879139ffd (actual second/main parent)
+Disposition: REPAIR_REQUIRED; known introduced source regressions, not eligible merge/source acceptance. Existing acceptance for isolated AST-based contribution does not apply to this changed canonical implementation.
+Observed: exact pinned masker -> pinned byte_preserving_code_mask -> pinned strict_identifier_writes plus helpers extracted into consumer.rs; compared with separately extracted base-consumer.rs. Rust1.95.0 standalone compilation and execution terminal0. No Cargo, product build, CI, publication, canonical mutation or review-worktree mutation.
+41 retained independent controls executed with byte-width assertions;20 behavioral expectation failures. consumer.log records every mask/result. These include inherited misses and introduced defects; count is not20 independently introduced defects.
+Introduced defects compared to actual main parent (introduced.log):
+1. Header classification at classifier.rs1051-1052 treats private this.#if(...) as if control head. Base detects test write byte71; head hides it.
+2. Same header state consumes literal JSX child text `if(n) /a` as executable control/regex context and hides actual {test=null} expression. Base detects byte29; head hides it.
+3. JSX depth at classifier.rs1060-1065 treats TypeScript `<T>n` assertions as open JSX. A subsequent comparison against /T>`/ starts a template state and hides actual test write byte83; paired no-write regex-text control becomes false write at65. Base correctly distinguishes both.
+Native TypeScript5.9.3 --noEmit --target ES2022 --skipLibCheck introduced.ts: terminal0.
+Native TypeScript5.9.3 --noEmit --jsx preserve --target ES2022 --skipLibCheck introduced.tsx: terminal0.
+Other retained controls still fail: generic JSX self-closing and function/nested type args, quotes/backticks/comment-like JSX child text, fake writes in JSX child/attribute text, for-await regex cases and JSX-value division. Not all are head-introduced; retain as claim-limit/repair controls rather than inventing new defect counts.
+Offsets: source byte-width assertions passed; failure is token classification and which writes remain visible, not a demonstrated byte-offset adapter defect.
+Repair direction: use parser-authenticated regex/JSX spans and actual SourceType for strong admission paths; retain the canonical author as writer. Existing independently reviewed portable AST-span contribution remains a separate adoption option, not proof for this head.
+Pending: canonical owner source repair/adoption; exact new-head review, applicable native/product/hosted proof, normal protected integration. Active CI must not be duplicated or treated as source review.
+Immutable source hashes:
+eac6ed2c4ed2f1ae7ae3b814ecf4575c26542f56a69da60d089c4ee639141b22 9b74c15d68df98f2bb027f3471f075e8d0401384 crates/ripr/src/analysis/language/typescript/classifier.rs
+650f63113bac2a9f96aaef794e6c0a719cd9a15c6484e1d3e7c86606874f6e37 f71b4f8d573ee58aa15df77ee3a1ded9b969b0dc crates/ripr/src/analysis/language/typescript/tests_extract.rs
+e50bd508fae7197ae32b18578816dc52215faf432ecff33ac98143766fac76f5 41713d19a68669de4fa8748b1174a173e82a3856 crates/ripr/src/analysis/language/typescript/tests/var_runner_binding_tests.rs
+Retained artifact SHA256s:
+c7e46f1024774e0923bc2bc57b732a674aeb0ba8a32fc605df8b75b44f619304  base-consumer
+70ad817e4f1c2b9bc9fb790f758500484edbc1bdf4a58fca4292b40056b51201  base-consumer.rs
+3f8108a29dd8fd0eb602d35e0a01894e12ed1bb821b259e75a8f19ac0cb62581  consumer
+0ae661862177277a979482c90246016905ac172c911936e65e161af2abd47471  consumer.log
+d39b15c09667cde9839bd9214395158f7c87a84a4b0cae00180f0b99a43ad544  consumer.rs
+5aa12b3bb75fb6789a4b752f592842285e326abf6646709fa28734ae33e0ef5b  introduced.log
+68f2283ceb47bdba14220675301f94b3b492c4d27d16a424c2e9a1656564b1b8  introduced.ts
+c2768befffd5b4de9051719bfe3d74af80de469ee59601fc7823f17ca7cb7714  introduced.tsx
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  native-ts.log
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  native-tsx.log

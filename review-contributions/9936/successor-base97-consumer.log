@@ -1,0 +1,105 @@
+PASS division_interpolation
+PASS division_postfix
+PASS division_later
+PASS division_comment
+PASS division_array
+PASS division_template
+PASS division_literal
+PASS division_literal_plain
+PASS comparison
+PASS comparison_literal
+PASS member_if
+PASS regex_11
+FAIL regex_12 expected=true found=false mask="if ((n)) /a`                       "
+PASS regex_13
+FAIL regex_14 expected=true found=false mask="if ((n)) /[\\`                        "
+FAIL regex_15 expected=false found=true mask="if ((n)) /test = null`          "
+PASS regex_16
+PASS regex_17
+PASS regex_18
+PASS regex_19
+FAIL regex_20 expected=true found=false mask="if               (n) /a`                       "
+PASS regex_21
+FAIL regex_22 expected=true found=false mask="if               (n) /[\\`                        "
+FAIL regex_23 expected=false found=true mask="if               (n) /test = null`          "
+PASS regex_24
+PASS regex_25
+PASS regex_26
+PASS regex_27
+FAIL regex_28 expected=true found=false mask="while (false) /a`                       "
+PASS regex_29
+FAIL regex_30 expected=true found=false mask="while (false) /[\\`                        "
+FAIL regex_31 expected=false found=true mask="while (false) /test = null`          "
+PASS regex_32
+PASS regex_33
+PASS regex_34
+PASS regex_35
+FAIL regex_36 expected=true found=false mask="for (; false;) /a`                       "
+PASS regex_37
+FAIL regex_38 expected=true found=false mask="for (; false;) /[\\`                        "
+FAIL regex_39 expected=false found=true mask="for (; false;) /test = null`          "
+PASS regex_40
+PASS regex_41
+PASS regex_42
+PASS jsx_43
+FAIL jsx_44 expected=true found=false mask="const node = <div>text</                  "
+PASS jsx_45
+FAIL jsx_46 expected=true found=false mask="const node = <div data-x={1 < 2 ? 1 : 0}>text<span /></                  "
+PASS jsx_47
+PASS jsx_48
+PASS jsx_49
+FAIL jsx_50 expected=true found=false mask="const node = <div>{true ? <span>text</           />}</                  "
+PASS ambiguous_ts
+FAIL ambiguous_tsx expected=true found=false mask="const a = 8, g = 2, x: any = 0; type div = any; const v = <div>x</                               / ;"
+PASS jsx_text_53
+FAIL jsx_text_54 expected=true found=false mask="const node = <div>                            "
+FAIL jsx_text_55 expected=true found=false mask="const node = <div>                            "
+FAIL jsx_text_56 expected=true found=false mask="const node = <div>`                         "
+FAIL jsx_text_57 expected=true found=false mask="const node = <div>\"                         "
+FAIL jsx_text_58 expected=true found=false mask="const node = <div>'                         "
+FAIL jsx_fake_write expected=false found=true mask="const node = <div>test = null é</     "
+PASS private_if_True
+PASS private_if_False
+PASS private_else_True
+PASS private_else_False
+PASS for_await_True
+FAIL for_await_False expected=false found=true mask="async function f() { for await (const x of []) /test = null`            "
+PASS statement_66
+FAIL statement_67 expected=false found=true mask="if (false) {} else /test = null`          "
+PASS statement_68
+FAIL statement_69 expected=false found=true mask="do /test = null`                         "
+PASS attribute_70
+FAIL attribute_71 expected=true found=false mask="declare function Component<T>(props: any): any; const node = <Component<number> /               "
+PASS attribute_72
+PASS attribute_73
+FAIL attribute_74 expected=false found=true mask="declare function Component<T>(props: any): any; const node = <div test=\"    \" />;"
+PASS attribute_75
+FAIL attribute_76 expected=false found=true mask="declare function Component<T>(props: any): any; const node = <div test={test} /  "
+PASS attribute_77
+PASS attribute_78
+PASS attribute_79
+FAIL attribute_80 expected=false found=true mask="declare function Component<T>(props: any): any; const node = <div data-x={<span>test = null `              "
+PASS attribute_81
+PASS attribute_82
+PASS attribute_83
+FAIL attribute_84 expected=false found=true mask="declare function Component<T>(props: any): any; const node = <div data-x=<>test = null</  />;"
+PASS attribute_85
+PASS attribute_86
+PASS attribute_87
+FAIL attribute_88 expected=false found=true mask="declare function Component<T>(props: any): any; const node = <div {...{value: <span>test = null</        />;"
+PASS attribute_89
+PASS attribute_90
+PASS attribute_91
+PASS tsx_code_92
+PASS tsx_code_93
+PASS tsx_code_94
+PASS tsx_code_95
+PASS for_member_True
+PASS for_member_False
+failures=31
+
+thread 'main' (63118) panicked at /workspace/9936-successor-review/base-consumer.rs:600:33:
+assertion `left == right` failed
+  left: 31
+ right: 0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
