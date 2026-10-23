@@ -1,0 +1,15 @@
+{
+  "commit": "eb1326dc1522d1051f08cddc35cff6ad7ce9f869",
+  "tree": "5f574b1509155aa8223986167c938974bc649da7",
+  "reviewed_tree": "5f574b1509155aa8223986167c938974bc649da7",
+  "parent": "83442db9d7c8350bdff9abcc3241e034f4589d8d",
+  "canonical_source_base": "b4f04013c237dd034a5009dbfd46d45bef7e4733",
+  "ref": "refs/heads/review/pr9890-closure-attribution-20261023",
+  "reviewed_tree_source": "a12dd179d75458027af0fa50385afe779cf06166",
+  "executed_build_source": "7e4b5b5ddc31d43a0cb5169f07d4e56acb75a8a3",
+  "execution_reuse": "same Rust/test/oracle/generated code; final fixture SPEC BDD/id/wording repair only",
+  "current_main": "cc72500387c0fb152d1dbd6b40784f2bd925b42a",
+  "main_composition_exit": 1,
+  "publication": "ordinary fast-forward push confirmed by ls-remote and GitHub commit/tree/parent readback",
+  "net_patch_sha256": "fb8a0c23ff60008a587b9ecd82ad10cb54aa50b21ba4d72a187a08e41baa0d0d"
+}

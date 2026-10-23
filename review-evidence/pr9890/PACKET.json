@@ -1,0 +1,11 @@
+{
+  "source_contribution": "eb1326dc1522d1051f08cddc35cff6ad7ce9f869",
+  "source_base": "b4f04013c237dd034a5009dbfd46d45bef7e4733",
+  "text_files": 2158,
+  "text_bytes": 11643136,
+  "archive": "text-receipts.tar.gz",
+  "archive_bytes": 1065356,
+  "archive_sha256": "dcf066cf4fd67c35513efa38c52946d7f4bfa660d9d3b23d01a275c6eff40125",
+  "manifest_sha256": "63296302bbbb9078225df7b592bcceb4e92037a852852116a981b6db4d9de315",
+  "archive_readback_verified": true
+}

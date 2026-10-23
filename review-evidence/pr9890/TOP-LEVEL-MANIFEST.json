@@ -1,0 +1,38 @@
+{
+  "PACKET.json": {
+    "bytes": 460,
+    "sha256": "df30cebe442e60e0bccfd347c1f72b6bd014d6c8476bfdb71710593d51a79379"
+  },
+  "README.md": {
+    "bytes": 8253,
+    "sha256": "a66abeb44b96195e97b7ff9b465361d8afad5c7a0daebf8f1207246e14eefc25"
+  },
+  "acceptance-matrix.md": {
+    "bytes": 4393,
+    "sha256": "ef59ae49102b7d1785151f9fa3fcaf0a929a484cf03fc19f608a74c8d3f6dc7a"
+  },
+  "independent-review.md": {
+    "bytes": 7919,
+    "sha256": "25f85b4dd113e088d23883a67b2c2be8018b26278571d54720936a4c86dbe545"
+  },
+  "joined-repair.patch": {
+    "bytes": 243305,
+    "sha256": "fb8a0c23ff60008a587b9ecd82ad10cb54aa50b21ba4d72a187a08e41baa0d0d"
+  },
+  "replay_portable.py": {
+    "bytes": 6457,
+    "sha256": "d70eb9ec76ce4538bce721e3df318b4832d94f11fd892466e4344a1eebabe216"
+  },
+  "source-identity.json": {
+    "bytes": 909,
+    "sha256": "2f1c331642ab698eb899a35949b63287da95f236f9de16416329281eefe867e3"
+  },
+  "text-receipts-manifest.json": {
+    "bytes": 406371,
+    "sha256": "63296302bbbb9078225df7b592bcceb4e92037a852852116a981b6db4d9de315"
+  },
+  "text-receipts.tar.gz": {
+    "bytes": 1065356,
+    "sha256": "dcf066cf4fd67c35513efa38c52946d7f4bfa660d9d3b23d01a275c6eff40125"
+  }
+}
