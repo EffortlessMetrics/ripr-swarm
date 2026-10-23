@@ -18,8 +18,8 @@ import {
   ResolvedServer,
   resolutionFailureRecovery
 } from './serverResolver';
-import { setupFilePath, hasUnsafeShellMetacharacter, redirectTargetMatches, redirectStaysInWorkspace, serverShellArg, normalizePath, sameWorkspaceRoot, rootMatchesWorkspace, objectField, stringField, boundedStringField, arrayLength, numberFieldValue, TEST_RUNNER_VERIFY_COMMAND_PREFIXES, testRunnerCommandLeavesScope } from './packetJson';
-import { riprDocumentSelectorsForWorkspace, extensionVersion, traceFromConfig, currentWorkspaceRootState, workspaceRootStateNoWorkspace, workspaceRootStateLabel, workspaceRootStateDetail, workspaceRootPickItems } from './workspaceHelpers';
+import { setupFilePath, hasUnsafeShellMetacharacter, redirectTargetMatches, redirectStaysInWorkspace, serverShellArg, isWindowsHost, normalizePath, sameWorkspaceRoot, rootMatchesWorkspace, objectField, stringField, boundedStringField, arrayLength, numberFieldValue, TEST_RUNNER_VERIFY_COMMAND_PREFIXES, testRunnerCommandLeavesScope } from './packetJson';
+import { riprDocumentSelectorsForWorkspace, integerSetting, extensionVersion, traceFromConfig, currentWorkspaceRootState, workspaceRootStateNoWorkspace, workspaceRootStateLabel, workspaceRootStateDetail, workspaceRootPickItems } from './workspaceHelpers';
 import type { WorkspaceRootPickItem } from './workspaceHelpers';
 import { statusText, statusSummary, statusBarColors, canProjectFirstUsefulAction, shouldShowMainStatusBar } from './statusRender';
 import type { RiprStatusKind, RiprStatusState, FirstUsefulActionStatus, StatusBarColors } from './statusRender';
@@ -197,8 +197,8 @@ function lspConfigurationForResource(scopeUri: string | undefined): Record<strin
     includeUnchangedTests: config.get<boolean>('includeUnchangedTests'),
     seamDiagnostics: explicitSetting<boolean>(config, 'seamDiagnostics'),
     diagnosticProfile: explicitSetting<string>(config, 'diagnosticProfile'),
-    gitTimeoutMs: config.get<number>('gitTimeoutMs'),
-    refreshDeadlineMs: config.get<number>('refreshDeadlineMs')
+    gitTimeoutMs: integerSetting(config.get<number>('gitTimeoutMs')),
+    refreshDeadlineMs: integerSetting(config.get<number>('refreshDeadlineMs'))
   };
 }
 
@@ -553,6 +553,13 @@ export class RiprClientController {
     this.updateStatus(this.status);
   }
 
+  private pendingServerMessage: Promise<void> = Promise.resolve();
+
+  /** Resolves once the last missing-server popup has been answered and handled. */
+  settleServerMessage(): Promise<void> {
+    return this.pendingServerMessage;
+  }
+
   async start(): Promise<void> {
     // Fast path: server is already up.
     if (this.client) {
@@ -652,7 +659,14 @@ export class RiprClientController {
         detail: server.detail,
         nextStep: `${resolutionFailureGuidance(server, config.autoDownload)} Then run ripr: Restart Server.`
       });
-      await this.showMissingServerMessage(server);
+      // The popup waits on a user who may never answer (headless hosts never
+      // do), so start() must not wait on it: an unanswered popup would keep
+      // startingPromise pending, hang activation and swallow every later
+      // start() or Retry into the same stuck promise (#9526).
+      this.pendingServerMessage = this.showMissingServerMessage(server).catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.output.appendLine(`ripr missing-server message failed: ${message}`);
+      });
       return;
     }
     this.server = server;
@@ -1831,14 +1845,13 @@ export class RiprClientController {
       return;
     }
     if (message.startsWith('ripr analysis refresh failed')) {
-      const baseRefFailure = isUnresolvableBaseRefFailure(message);
+      // The log line is free text; the typed `ripr/analysisStatus` failure
+      // kind that follows it owns the ripr.baseRef next step (#6740).
       this.updateStatus({
         kind: 'analysisFailed',
         summary: 'ripr analysis refresh failed.',
         detail: message,
-        nextStep: baseRefFailure
-          ? 'Set ripr.baseRef to a ref this repository has (for example main), then run ripr: Refresh Diagnostics.'
-          : 'Open ripr: Show Output, fix the reported issue, then run ripr: Refresh Diagnostics.'
+        nextStep: 'Open ripr: Show Output, fix the reported issue, then run ripr: Refresh Diagnostics.'
       });
     }
   }
@@ -1906,7 +1919,7 @@ export class RiprClientController {
           kind: 'analysisFailed',
           summary: 'ripr analysis failed; last-known-good evidence is retained.',
           detail: `${analysisStatusDetail(status)}\n${failureMessage}${retained}`,
-          nextStep: isUnresolvableBaseRefFailure(failureMessage)
+          nextStep: isBaseUnresolvableFailure(failure?.kind, failureMessage)
             ? 'Set ripr.baseRef to a ref this repository has (for example main), then run ripr: Refresh Diagnostics.'
             : `Run ${retry} to retry the saved-workspace analysis.`
         });
@@ -3955,11 +3968,26 @@ function serverLogMessage(params: unknown): string | undefined {
   return typeof message === 'string' ? message : undefined;
 }
 
-// Both the explicit-ref failure and the default-branch failure (an empty
-// ripr.baseRef in a repository without origin/HEAD, main or master) are fixed
-// by setting ripr.baseRef; the server's own wording names CLI flags instead.
-function isUnresolvableBaseRefFailure(message: string): boolean {
-  return /the base `[^`]+` does not resolve to a commit|could not resolve a default base/.test(message);
+// The server names an unresolvable base (explicit ref, empty or option-like
+// ref, or no default branch) with this stable `failure.kind` on the
+// `ripr/analysisStatus` payload (#6740). The extension branches on it rather
+// than on message wording; all of those cases are fixed by ripr.baseRef.
+const BASE_UNRESOLVABLE_FAILURE_KIND = 'base_unresolvable';
+
+// LEGACY: servers that predate the typed kind (still admitted by the server
+// resolver, which only probes LSP compatibility) report these failures as
+// `analysis_error`. For that kind alone, keep recognising the two old
+// wordings so those users still get the ripr.baseRef step. A server that
+// sends any other kind, including `base_unresolvable`, is never reclassified
+// by message text. Remove once the minimum supported server sends the kind.
+function isBaseUnresolvableFailure(kind: unknown, message: string): boolean {
+  if (kind === BASE_UNRESOLVABLE_FAILURE_KIND) {
+    return true;
+  }
+  return (
+    kind === 'analysis_error' &&
+    /the base `[^`]+` does not resolve to a commit|could not resolve a default base/.test(message)
+  );
 }
 
 /**
@@ -5098,14 +5126,17 @@ function firstRawFindingString(packet: Record<string, unknown>, field: string): 
 }
 
 function actionableGapQueueCommandIsSafe(command: string, redirectRoots: readonly string[]): boolean {
-  if (hasUnsafeShellMetacharacter(command)) {
+  const windowsQuoting = isWindowsHost();
+  if (hasUnsafeShellMetacharacter(command, windowsQuoting)) {
     return false;
   }
   const normalized = command.trim().replace(/\s+/g, ' ');
-  // Decode the single-quoted words permitted by the existing passive safety
-  // grammar, including quoted fragments of flags. This is display admission,
-  // not a shell evaluator or command-execution authority.
-  const words = (command.match(/(?:'[^']*'|[^\s'])+/g) ?? []).map(word => word.replace(/'/g, ''));
+  // Decode the quoted words permitted by the existing passive safety grammar
+  // (single quotes, and the server's console double quotes on Windows),
+  // including quoted fragments of flags. This is display admission, not a
+  // shell evaluator or command-execution authority.
+  const words = (command.match(/(?:'[^']*'|"(?:[^"]|"")*"|[^\s'"])+/g) ?? [])
+    .map(word => word.replace(/'/g, '').replace(/""/g, '\0').replace(/"/g, '').replace(/\0/g, '"'));
   const decoded = words.join(' ').replace(/\\/g, '/');
   const broadSnapshot = decoded.includes('ripr agent verify')
     && decoded.includes('--before') && decoded.includes('--after')
@@ -5113,7 +5144,7 @@ function actionableGapQueueCommandIsSafe(command: string, redirectRoots: readonl
   return normalized !== ''
     && !broadSnapshot
     && !testRunnerCommandLeavesScope(normalized)
-    && redirectStaysInWorkspace(normalized, redirectRoots)
+    && redirectStaysInWorkspace(normalized, redirectRoots, windowsQuoting)
     && ACTIONABLE_QUEUE_SAFE_COMMAND_PREFIXES.some((prefix) =>
       normalized === prefix || normalized.startsWith(`${prefix} `)
     );
@@ -5127,7 +5158,7 @@ function actionableGapQueueRelatedVerifyIsBounded(packet: Record<string, unknown
   const file = related ? stringField(related, 'file') : undefined;
   const name = related ? stringField(related, 'name') : undefined;
   const command = packet.verify_command;
-  if (!file || !name || typeof command !== 'string' || hasUnsafeShellMetacharacter(command)) {
+  if (!file || !name || typeof command !== 'string' || hasUnsafeShellMetacharacter(command, isWindowsHost())) {
     return false;
   }
   // RIPR-SPEC-0057's existing typed-target fallback: the projector derives
@@ -5462,7 +5493,7 @@ export function validatedAgentLoopCommand(
       }
       if (
         body === contract.expectedBody(target, commandRoot) &&
-        !hasUnsafeShellMetacharacter(body.replace(`--root ${commandRoot}`, '--root .'))
+        !hasUnsafeShellMetacharacter(body.replace(`--root ${commandRoot}`, '--root .'), isWindowsHost())
       ) {
         return command;
       }
@@ -5478,7 +5509,8 @@ export function validatedAgentLoopCommand(
       !redirectTargetMatches(
         command.slice(redirectAt + ' > '.length),
         contract.targetArtifact,
-        redirectRoots
+        redirectRoots,
+        isWindowsHost()
       )
     ) {
       return undefined;
@@ -5498,7 +5530,7 @@ export function validatedAgentLoopCommand(
     return undefined;
   }
   const portableBody = body.replace(`--root ${rootArg}`, '--root .');
-  if (hasUnsafeShellMetacharacter(portableBody)) {
+  if (hasUnsafeShellMetacharacter(portableBody, isWindowsHost())) {
     return undefined;
   }
   // One redirect only: a `>` here would truncate some other file.

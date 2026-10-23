@@ -68,7 +68,14 @@ pub(crate) fn classify_probe_shape_detail(line_text: &str) -> TypeScriptProbeSha
     if return_predicate_condition(leading).is_some() {
         return TypeScriptProbeShape::new(ProbeFamily::Predicate, DeltaKind::Control);
     }
-    if leading.starts_with("return ") || leading == "return;" || leading.starts_with("return;") {
+    if leading.starts_with("return ")
+        || leading == "return;"
+        || leading.starts_with("return;")
+        || declared_arrow_value_body(leading)
+    {
+        return TypeScriptProbeShape::new(ProbeFamily::ReturnValue, DeltaKind::Value);
+    }
+    if is_module_scalar_constant(line_text) {
         return TypeScriptProbeShape::new(ProbeFamily::ReturnValue, DeltaKind::Value);
     }
     if leading.starts_with("if (")
@@ -436,7 +443,7 @@ fn parameters_close_before_annotation(parameters: &str) -> bool {
 /// declared concise arrow (`export const f = (n) => <expr>`). A callback
 /// arrow nested in a call (`xs.map((x) => x > 1 ? a : b)`) is not a declared
 /// body, and a block body (`=> {`) returns nothing here.
-fn returned_expression(leading: &str) -> Option<&str> {
+pub(super) fn returned_expression(leading: &str) -> Option<&str> {
     if let Some(expression) = leading.strip_prefix("return ") {
         return Some(expression.trim_start());
     }
@@ -472,11 +479,185 @@ fn returned_expression(leading: &str) -> Option<&str> {
     // A block body returns nothing here, and a curried arrow's body is
     // another function, not the conditional.
     let body = body.trim_start();
-    let curried = body
-        .split_once(" ? ")
-        .map_or(body, |(before, _)| before)
-        .contains(" => ");
+    let curried = match body.split_once(" ? ") {
+        Some((before, _)) => before.contains(" => "),
+        // A body that merely calls with a callback (`xs.reduce((a, b) => a + b, 0)`)
+        // is a value; only a body that is itself an arrow head is a function.
+        None => starts_with_arrow_head(body),
+    };
     (!body.starts_with('{') && !curried).then_some(body)
+}
+
+/// A declared concise arrow (`export const f = (n) => n * 2;`) returns its
+/// body, so the changed body is the returned value. A body with a comparison
+/// operator or a type argument (`<`, `>`, outside the `=>` of a callback) may
+/// be a predicate whose boundary an exact value does not witness, so it keeps
+/// the unrecognised-shape fallback.
+pub(crate) fn declared_arrow_value_body(leading: &str) -> bool {
+    returned_expression(leading).is_some_and(|body| {
+        let masked = ts_mask_literals_and_comments(body);
+        !masked.replace("=>", "").contains(['<', '>'])
+    })
+}
+
+/// `true` for a module-level scalar constant declaration at column zero,
+/// `[export ]const NAME[: Type] = <literal>;`, whose initializer is one
+/// string, number, boolean or `null` literal. A test that reads the constant
+/// observes its value the way a call observes a returned value, so the edit
+/// is a value change rather than an unrecognised line. A nested declaration
+/// (indented), a computed initializer, a template with a substitution or a
+/// destructuring head keeps the unrecognised-shape fallback.
+pub(crate) fn is_module_scalar_constant(line_text: &str) -> bool {
+    module_scalar_constant_literal(line_text).is_some()
+}
+
+/// The literal a column-zero module scalar constant declaration assigns.
+pub(crate) fn module_scalar_constant_literal(line_text: &str) -> Option<&str> {
+    let line = line_text.trim_end();
+    if line.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let declaration = line.strip_prefix("export ").unwrap_or(line);
+    let declaration = declaration.strip_prefix("const ")?;
+    let (head, initializer) = declaration.split_once(" = ")?;
+    let name = head
+        .split_once(':')
+        .map_or(head, |(name, _)| name)
+        .trim_end();
+    if name.is_empty()
+        || name.starts_with(|c: char| c.is_ascii_digit())
+        || !name
+            .chars()
+            .all(|c| c == '_' || c == '$' || c.is_alphanumeric())
+        || head.contains(['(', '{', '[', ',', '='])
+    {
+        return None;
+    }
+    let initializer = initializer.trim();
+    let initializer = initializer
+        .strip_suffix(';')
+        .unwrap_or(initializer)
+        .trim_end();
+    is_scalar_literal(initializer).then_some(initializer)
+}
+
+/// A JavaScript numeric literal: decimal with optional fraction and exponent,
+/// a `0x`/`0o`/`0b` integer, `_` separators between digits, optional `n`.
+fn is_numeric_literal(text: &str) -> bool {
+    fn digits(text: &str, radix: u32) -> bool {
+        !text.is_empty()
+            && !text.starts_with('_')
+            && !text.ends_with('_')
+            && !text.contains("__")
+            && text.chars().all(|c| c == '_' || c.is_digit(radix))
+    }
+    let text = text.strip_suffix('n').unwrap_or(text);
+    for (prefix, radix) in [
+        ("0x", 16),
+        ("0X", 16),
+        ("0o", 8),
+        ("0O", 8),
+        ("0b", 2),
+        ("0B", 2),
+    ] {
+        if let Some(rest) = text.strip_prefix(prefix) {
+            return digits(rest, radix);
+        }
+    }
+    let (mantissa, exponent) = match text.split_once(['e', 'E']) {
+        Some((mantissa, exponent)) => (mantissa, Some(exponent)),
+        None => (text, None),
+    };
+    if let Some(exponent) = exponent
+        && !digits(exponent.strip_prefix(['+', '-']).unwrap_or(exponent), 10)
+    {
+        return false;
+    }
+    match mantissa.split_once('.') {
+        Some((whole, fraction)) => {
+            digits(whole, 10) && (fraction.is_empty() || digits(fraction, 10))
+        }
+        None => digits(mantissa, 10),
+    }
+}
+
+fn is_scalar_literal(text: &str) -> bool {
+    if matches!(text, "true" | "false" | "null") {
+        return true;
+    }
+    if is_numeric_literal(text.strip_prefix('-').unwrap_or(text)) {
+        return true;
+    }
+    let mut chars = text.chars();
+    let (Some(open), Some(close)) = (chars.next(), text.chars().next_back()) else {
+        return false;
+    };
+    if text.len() < 2 || open != close || !matches!(open, '"' | '\'' | '`') {
+        return false;
+    }
+    let inner = &text[open.len_utf8()..text.len() - close.len_utf8()];
+    // One literal: the quote does not recur unescaped, and a template has no
+    // substitution.
+    let mut escaped = false;
+    for c in inner.chars() {
+        if escaped {
+            escaped = false;
+        } else if c == '\\' {
+            escaped = true;
+        } else if c == open {
+            return false;
+        }
+    }
+    !(escaped || open == '`' && inner.contains("${"))
+}
+
+/// The name a declared concise arrow line binds (`double` for
+/// `export const double = (n) => n * 2;`), or `None` when the line is not a
+/// declared arrow value. A nested local arrow binds another name than the
+/// owner it sits in.
+pub(crate) fn declared_arrow_value_name(line_text: &str) -> Option<&str> {
+    let trimmed = line_text.trim_start();
+    let leading = trimmed.strip_prefix("} ").unwrap_or(trimmed).trim_start();
+    if leading.starts_with("return ") || !declared_arrow_value_body(leading) {
+        return None;
+    }
+    let declaration = leading.strip_prefix("export ").unwrap_or(leading);
+    let declaration = ["const ", "let ", "var "]
+        .iter()
+        .find_map(|keyword| declaration.strip_prefix(keyword))?;
+    let (head, _) = declaration.split_once(" = ")?;
+    let name = head.split(':').next()?.trim();
+    (!name.is_empty()).then_some(name)
+}
+
+/// `x => ...`, `(a, b) => ...` or `async (a): T => ...` at the start of `text`.
+fn starts_with_arrow_head(text: &str) -> bool {
+    let text = text.strip_prefix("async ").unwrap_or(text).trim_start();
+    if text.starts_with('(') {
+        let mut depth = 0usize;
+        for (idx, ch) in text.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        let rest = text.get(idx + 1..).unwrap_or("").trim_start();
+                        return rest.starts_with("=>")
+                            || (rest.starts_with(':') && rest.contains("=>"));
+                    }
+                }
+                _ => {}
+            }
+        }
+        return false;
+    }
+    let ident_len = text
+        .find(|ch: char| !(ch.is_alphanumeric() || matches!(ch, '_' | '$')))
+        .unwrap_or(text.len());
+    ident_len > 0
+        && text
+            .get(ident_len..)
+            .is_some_and(|rest| rest.trim_start().starts_with("=>"))
 }
 
 pub(crate) fn typescript_return_value_discriminator(line_text: &str) -> Option<String> {
@@ -886,4 +1067,104 @@ pub(crate) fn dedup_typescript_probe_ids(findings: &mut [Finding]) {
             finding.id = suffixed;
         }
     }
+}
+
+/// The one field of a single-line returned object literal whose value
+/// changed (RIPR-SPEC-0243 rule 17).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TypeScriptChangedField {
+    pub(crate) key: String,
+    /// The new value's source text.
+    pub(crate) value: String,
+}
+
+/// The changed field of `return { a: 1, b: 2 }` against the old line: both
+/// lines return a literal of simple `key: value` fields with the same keys
+/// in the same order, and exactly one value differs. A shorthand or spread
+/// member, a computed key, a different key list or two changed values read
+/// `None`, so the caller keeps the first-field reading.
+pub(crate) fn ts_changed_object_field(
+    old_line: Option<&str>,
+    new_line: &str,
+) -> Option<TypeScriptChangedField> {
+    let old = returned_object_fields(old_line?)?;
+    let new = returned_object_fields(new_line)?;
+    if old.len() != new.len() || old.len() < 2 {
+        return None;
+    }
+    let mut changed = None;
+    for ((old_key, old_value), (new_key, new_value)) in old.iter().zip(&new) {
+        if old_key != new_key {
+            return None;
+        }
+        if old_value != new_value {
+            if changed.is_some() {
+                return None;
+            }
+            changed = Some(TypeScriptChangedField {
+                key: new_key.clone(),
+                value: new_value.clone(),
+            });
+        }
+    }
+    changed
+}
+
+/// `(key, value)` per field of the object literal a `return` line returns,
+/// split at top-level commas; `None` when the line is not exactly one
+/// literal of simple `key: value` fields.
+fn returned_object_fields(line: &str) -> Option<Vec<(String, String)>> {
+    let text = line.trim().trim_end_matches(';').trim();
+    let expression = text.strip_prefix("return ")?.trim();
+    let expression = expression
+        .strip_prefix('(')
+        .and_then(|inner| inner.strip_suffix(')'))
+        .unwrap_or(expression)
+        .trim();
+    let body = expression.strip_prefix('{')?.strip_suffix('}')?;
+    let mut fields = Vec::new();
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut start = 0usize;
+    let mut pieces = Vec::new();
+    for (index, ch) in body.char_indices() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.checked_sub(1)?,
+            ',' if depth == 0 => {
+                pieces.push(&body[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    if quote.is_some() || depth != 0 {
+        return None;
+    }
+    pieces.push(&body[start..]);
+    for piece in pieces {
+        let piece = piece.trim();
+        if piece.is_empty() {
+            continue;
+        }
+        let (key, value) = piece.split_once(':')?;
+        let key = key.trim();
+        if !is_simple_typescript_object_key(key) || value.trim().is_empty() {
+            return None;
+        }
+        fields.push((key.to_string(), value.trim().to_string()));
+    }
+    Some(fields)
 }

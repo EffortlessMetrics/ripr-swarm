@@ -1,0 +1,61 @@
+{
+  "subject_id": "authored-idiom-kit",
+  "origin": "authored",
+  "version_label": "authored 2026-10-22 for standard-library test forms (should_panic, Result tests, hand-rolled mocks, seeded loops, tables, helper and macro assertions, doctests, integration tests)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "ff5065e2bbadd52588bc9fdc1387e36fe0063a48d597dfe1b7167bf573e7f81b"
+    },
+    {
+      "path": "src/display.rs",
+      "sha256": "4da3c8c48d68fdc7aed4f77597f13efef9a1e7389ec5878d99464af2141fda70"
+    },
+    {
+      "path": "src/guards.rs",
+      "sha256": "af3ffb0a7213370fd9fc7b53631f214407a1cd3186ac92f0f930c2ee9a9dd5c1"
+    },
+    {
+      "path": "src/helpers.rs",
+      "sha256": "ee0a1a813de82fe0b484e18f4585b2cec99a431362fe0d6b56a68c9730ad2824"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "7405afc3a9d0ce72487696391c6ab4457277c147068e56f11e5dd597b94a33e7"
+    },
+    {
+      "path": "src/mocks.rs",
+      "sha256": "244841162f6ca25e9002d7096e3a2ec1b1a86e257bab9c9a69931bb6081b6495"
+    },
+    {
+      "path": "src/ranges.rs",
+      "sha256": "7025ae3a9a37ecadf1e8b2357e0f37eb4ae009d5e1a3f190bd55056657d08a92"
+    },
+    {
+      "path": "src/ranges/tests.rs",
+      "sha256": "f818def92a58c511d11a62c2a8d4085b8d9bbe81ae52f2a7257d781a68b59e9d"
+    },
+    {
+      "path": "src/results.rs",
+      "sha256": "f57f803d2ca848c04959a0179018b73c20f329e0372123be9cdc53345fbfe1a0"
+    },
+    {
+      "path": "src/seeded.rs",
+      "sha256": "10e6364cfaabcc278bfa016b8ca68c37f844501f1e5e931f3b63b6293bdcaebe"
+    },
+    {
+      "path": "src/tables.rs",
+      "sha256": "801a0c39911013344ed9fea14e26b12a89a75cb0892524fd41ad4b3d4a029d5b"
+    },
+    {
+      "path": "src/unwinding.rs",
+      "sha256": "80e4c1018da5ad35b788680ff3785f09536506840df9e6523ff860ef8922ac6d"
+    },
+    {
+      "path": "tests/api.rs",
+      "sha256": "424ef38cf516027aff29dc34f513de7c6ce0311c19faa482fbc1d58edd2fd745"
+    }
+  ]
+}

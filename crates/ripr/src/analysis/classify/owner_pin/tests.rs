@@ -1,4 +1,5 @@
 mod json_construction;
+mod retention_parity;
 
 use super::*;
 use crate::analysis::facts::{FunctionItemFact, SourceRoleProvenance, SourceRoleProvenanceEdge};
@@ -2756,6 +2757,49 @@ fn the_reveal_side_reads_an_expected_name_only_through_one_readable_let_or_const
 }
 
 #[test]
+fn inert_attributes_keep_the_pin_and_rebound_or_gating_ones_refuse_it() {
+    for attributes in [
+        "#[test]\n#[rustfmt::skip]",
+        "#[rustfmt::skip]\n#[test]",
+        "#[test]\n#[allow(clippy::eq_op)]",
+        "#[allow(clippy::eq_op)]\n#[test]",
+        "#[test]\n#[warn(unused)]\n#[deny(unused_must_use)]",
+        "#[test]\n#[expect(clippy::eq_op)]",
+        "#[test]\n#[doc = \"pins the weight\"]",
+        "#[test]\n#[inline]\n#[must_use]\n#[track_caller]",
+        "#[test]\n#[clippy::cognitive_complexity = \"30\"]",
+        "#[test]\n#[rustfmt::skip]\n#[allow(clippy::eq_op)]\n#[doc = \"stacked\"]",
+        // An import of another name does not rebind a built-in one.
+        "use other::skip;\n#[test]\n#[allow(unused)]",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{attributes}\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert_eq!(weight_admitted(&tests).len(), 1, "{tests}");
+    }
+    for attributes in [
+        // An import or `extern crate .. as` can rebind a bare built-in name
+        // to an attribute macro that rewrites the body.
+        "use my_macros::skip_body as allow;\n#[test]\n#[allow(unused)]",
+        "use my_macros::skip_body as r#doc;\n#[test]\n#[doc = \"x\"]",
+        "extern crate my_macros as inline;\n#[test]\n#[inline]",
+        // Attributes that decide whether or how the test runs stay refused.
+        "#[test]\n#[ignore]",
+        "#[test]\n#[should_panic]",
+        "#[test]\n#[cfg(feature = \"slow\")]",
+        "#[test]\n#[rustfmt::skip]\n#[ignore]",
+        // An unknown path is never read as inert.
+        "#[test]\n#[my_macros::allow]",
+        "#[test]\n#[allow_all]",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{attributes}\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
+}
+
+#[test]
 fn serial_test_locks_keep_the_pin_and_other_attributes_refuse_it() {
     for attributes in [
         "use serial_test::serial;\n#[test]\n#[serial]",
@@ -4570,6 +4614,33 @@ fn a_std_qualified_assertion_is_admitted_unless_its_root_may_be_rebound() -> Res
     assert_eq!(
         generated("std::assert_eq!(weight(4), 12);"),
         opaque("std::assert_eq")
+    );
+    Ok(())
+}
+
+#[test]
+fn owner_pin_refuses_a_test_whose_indexed_body_no_longer_matches_the_parsed_source()
+-> Result<(), String> {
+    let tests = "use demo::weight;\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    let index = index(&[(LIB, WEIGHT_LIB), (TESTS, tests)]);
+    let test = index
+        .tests()
+        .iter()
+        .find(|test| test.file == Path::new(TESTS))
+        .ok_or("fixture has no test")?;
+    let assertion = test.assertions.first().ok_or("fixture has no assertion")?;
+    let syntax = OwnerPinSyntax::default();
+    assert_eq!(syntax.refusal(test, assertion, &index), None);
+    // The same length, one byte different: the stored fingerprint must see it.
+    let mut stale = test.clone();
+    stale.body = stale.body.replacen("12", "13", 1).into();
+    assert_ne!(stale.body, test.body);
+    assert_eq!(
+        OwnerPinSyntax::default().refusal(&stale, assertion, &index),
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::StaleSource
+        )),
+        "a body differing from the parsed source must be refused as stale"
     );
     Ok(())
 }
@@ -11343,6 +11414,70 @@ fn adaptor_tail_pins_only_a_non_empty_literal_sequence() {
     );
 }
 
+/// #9444: a changed tail that walks a slice parameter is not reached by a
+/// call passing only an empty literal there, whatever the adaptor.
+#[test]
+fn walked_parameter_refuses_an_empty_literal_argument() {
+    for walk in ["iter()", "into_iter()", "iter_mut()"] {
+        let tail = format!("xs.{walk}.count()");
+        let lib = adaptor_lib(
+            &tail,
+            &adaptor_test(
+                "        assert_eq!(count_positive(&[]), 0);\n        assert_eq!(count_positive(&[3, 4]), 2);",
+            ),
+        );
+        let index = index(&[(LIB, &lib)]);
+        let pin = establish(&index, "count_positive", &tail);
+        assert!(pin.is_some(), "`{walk}` must establish a pin");
+        let Some(pin) = pin else { return };
+        assert_eq!(
+            admitted_texts(&index, &pin),
+            vec!["assert_eq!(count_positive(&[3, 4]), 2);".to_string()],
+            "{walk}"
+        );
+    }
+}
+
+/// #9444 review: the refusal also reads a call wrapped in a rendered or
+/// indexed comparison, a spaced method call, and leaves a field receiver
+/// or a rebound parameter alone.
+#[test]
+fn walked_parameter_refusal_reads_wrapped_calls_and_only_the_parameter() {
+    for (tail, assertion, admitted) in [
+        (
+            "xs.iter().count()",
+            "assert_eq!(format!(\"{}\", count_positive(&[])), \"0\");",
+            false,
+        ),
+        (
+            "xs.iter().count()",
+            "assert_eq!(vec![count_positive(&[])][0], 0);",
+            false,
+        ),
+        (
+            "xs .iter() .count()",
+            "assert_eq!(count_positive(&[]), 0);",
+            false,
+        ),
+        (
+            "row.xs.iter().count()",
+            "assert_eq!(count_positive(&[]), 0);",
+            true,
+        ),
+    ] {
+        let lib = adaptor_lib(tail, &adaptor_test(&format!("        {assertion}")));
+        let index = index(&[(LIB, &lib)]);
+        let pin = establish(&index, "count_positive", tail);
+        assert!(pin.is_some(), "`{tail}` must establish a pin");
+        let Some(pin) = pin else { return };
+        assert_eq!(
+            !admitted_texts(&index, &pin).is_empty(),
+            admitted,
+            "{tail} {assertion}"
+        );
+    }
+}
+
 /// RIPR-SPEC-0265 rule 2 through a constant-row table: some row must pass a
 /// non-empty sequence.
 #[test]
@@ -12041,6 +12176,10 @@ fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() -> Resu
         "use ::core::arch::x86::*;\n",
         "use core::{simd::*, mem};\n",
         "mod inner {\n    use std::collections::*;\n}\n",
+        // #9676: serde_core's facade. A path in a module resolves only against
+        // that module's own items, so a module named `core` beside the glob
+        // (here, the one holding it) does not shadow the standard root.
+        "mod lib {\n    mod core {\n        #[cfg(not(feature = \"std\"))]\n        pub use core::*;\n        #[cfg(feature = \"std\")]\n        pub use std::*;\n    }\n}\n",
     ] {
         assert_eq!(refusal_beside(sibling), None, "{sibling}");
     }
@@ -12062,6 +12201,16 @@ fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() -> Resu
         "mod core {}\nuse core::simd::prelude::*;\n",
         "extern crate other as std;\nuse std::io::prelude::*;\n",
         "use other as core;\nuse core::simd::prelude::*;\n",
+        // The module-local admission still refuses a binding in the glob's own
+        // module, and an item-position macro that may emit one.
+        "mod lib {\n    mod core {\n        mod std {}\n        pub use std::*;\n    }\n}\n",
+        "mod lib {\n    mod core {\n        use other as std;\n        pub use std::*;\n    }\n}\n",
+        "mod lib {\n    mod core {\n        mod core {}\n        pub use core::*;\n    }\n}\n",
+        "mod lib {\n    mod core {\n        emit!();\n        pub use core::*;\n    }\n}\n",
+        // A plain import that binds the root name, by path or by `{self}`,
+        // takes it over for the module.
+        "use other::std;\nuse std::io::prelude::*;\n",
+        "use other::std::{self};\nuse std::io::prelude::*;\n",
         // `alloc` has no manifest proof, so it stays a foreign glob.
         "use alloc::vec::*;\n",
     ] {
@@ -12130,6 +12279,76 @@ fn the_workspace_macro_scan_runs_in_line_on_a_pool_worker_and_fans_out_elsewhere
         Some(false),
         "a scan on a pool worker must run in line"
     );
+    Ok(())
+}
+
+/// #9211: the first workspace macro-site lookup on a classify worker ran the
+/// whole-corpus scan in line while holding the memo lock, so every sibling
+/// worker slept on it. Priming pays the scan once, fanned out over the pool
+/// it runs on, and the lookups afterwards only read the filled memo.
+#[test]
+fn priming_fans_the_workspace_macro_scan_out_once_and_lookups_only_read_it() -> Result<(), String> {
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(2)
+        .build()
+        .map_err(|e| e.to_string())?;
+    let index = convergence_index();
+    let lookup_all = |syntax: &OwnerPinSyntax| {
+        for name in assertion_context_macros() {
+            for test_root in [None, Some(Path::new(TESTS))] {
+                let _ = syntax.workspace_macro_site(name, test_root, &index);
+            }
+        }
+    };
+
+    // Control: unprimed, the first lookup on a pool worker scans in line.
+    let unprimed = OwnerPinSyntax::default();
+    let in_line = pool.install(|| {
+        LAST_SCAN_FAN_OUT.with(|last| last.set(None));
+        lookup_all(&unprimed);
+        LAST_SCAN_FAN_OUT.with(std::cell::Cell::get)
+    });
+    assert_eq!(in_line, Some(false), "an unprimed worker scans in line");
+
+    let primed = OwnerPinSyntax::default();
+    let fanned_out = pool.install(|| {
+        LAST_SCAN_FAN_OUT.with(|last| last.set(None));
+        primed.prime_workspace_macro_scan(&index);
+        LAST_SCAN_FAN_OUT.with(std::cell::Cell::get)
+    });
+    assert_eq!(fanned_out, Some(true), "priming fans out over its pool");
+    assert!(
+        primed
+            .workspace_site_scan
+            .borrow()
+            .as_ref()
+            .is_some_and(|scan| scan.complete),
+        "priming completes the retained scan"
+    );
+    let passes = primed.workspace_scan_passes();
+    assert_eq!(passes, 2, "the ambiguity pass plus one completion");
+
+    // After priming no worker scans again, and the guard did not leak.
+    let after = pool.install(|| {
+        LAST_SCAN_FAN_OUT.with(|last| last.set(None));
+        lookup_all(&primed);
+        LAST_SCAN_FAN_OUT.with(std::cell::Cell::get)
+    });
+    assert_eq!(after, None, "lookups after priming must not scan");
+    assert_eq!(primed.workspace_scan_passes(), passes);
+    let leaked = pool.install(scan_fans_out);
+    assert!(!leaked, "the priming fan-out must not outlive the prime");
+
+    // Same answers whether or not the scan was primed.
+    for name in assertion_context_macros() {
+        for test_root in [None, Some(Path::new(TESTS))] {
+            assert_eq!(
+                primed.workspace_macro_site(name, test_root, &index),
+                unprimed.workspace_macro_site(name, test_root, &index),
+                "{name} {test_root:?}"
+            );
+        }
+    }
     Ok(())
 }
 

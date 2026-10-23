@@ -219,6 +219,14 @@ fn derive_diff(
     git(
         root,
         &[
+            // Pin path quoting (#3601): ambient `core.quotePath=false` would
+            // emit raw non-UTF-8 path bytes that the lossy decode in `git()`
+            // collapses onto one U+FFFD path.
+            "-c",
+            "core.quotePath=true",
+            // No `--ignore-submodules=none` here: verified that `diff-tree`
+            // ignores `diff.ignoreSubmodules` (a gitlink change stays in its
+            // output under `all`), so the pin would be a no-op.
             "diff-tree",
             "--unified=0",
             "--no-ext-diff",
@@ -786,7 +794,10 @@ mod tests {
             &[crate::analysis::language::LanguageId::Rust],
             &crate::config::RustLanguageConfig::default(),
             &crate::config::LanguagesConfig::default(),
-            None,
+            crate::analysis::DiffIntake {
+                perl_cache_dir: None,
+                scope: &crate::analysis::DiffScopeFilter::default(),
+            },
             crate::analysis::DisclosureProbes::Run,
         )
         .err()
@@ -1095,6 +1106,43 @@ mod tests {
                 "batch materialization must equal the written fixture bytes for {path}"
             );
         }
+        Ok(())
+    }
+
+    /// Ambient `core.quotePath=false` must not let raw non-UTF-8 path bytes
+    /// reach the lossy decode, where distinct files collapse onto U+FFFD.
+    #[cfg(unix)]
+    #[test]
+    fn derive_diff_keeps_non_utf8_paths_distinct_under_hostile_quote_path() -> Result<(), String> {
+        use std::os::unix::ffi::OsStrExt;
+        let root = std::env::temp_dir().join(format!("ripr-quotepath-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+        let guard = RepoGuard(root.clone());
+        let run = |args: &[&str]| -> Result<String, String> {
+            git(&root, args, GIT_DEADLINE).map_err(|e| format!("{e:?}"))
+        };
+        run(&["init", "--initial-branch=main"])?;
+        run(&["config", "user.email", "ripr@example.invalid"])?;
+        run(&["config", "user.name", "ripr test"])?;
+        run(&["config", "core.quotePath", "false"])?;
+        std::fs::write(root.join("keep.rs"), "pub fn keep() {}\n").map_err(|e| e.to_string())?;
+        run(&["add", "."])?;
+        run(&["commit", "-m", "base"])?;
+        let base = run(&["rev-parse", "HEAD"])?;
+        for raw in [b"p_\xffa.rs".as_slice(), b"p_\xfea.rs".as_slice()] {
+            let name = std::ffi::OsStr::from_bytes(raw);
+            std::fs::write(root.join(name), "pub fn f() {}\n").map_err(|e| e.to_string())?;
+        }
+        run(&["add", "."])?;
+        run(&["commit", "-m", "candidate"])?;
+        let candidate = run(&["rev-parse", "HEAD"])?;
+        let diff =
+            derive_diff(&root, &base, &candidate, GIT_DEADLINE).map_err(|e| e.to_string())?;
+        drop(guard);
+        assert!(diff.contains("p_\\377a.rs"), "{diff}");
+        assert!(diff.contains("p_\\376a.rs"), "{diff}");
+        assert!(!diff.contains('\u{fffd}'), "{diff}");
         Ok(())
     }
 }

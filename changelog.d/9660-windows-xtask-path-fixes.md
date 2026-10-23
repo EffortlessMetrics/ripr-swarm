@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- More Windows test fixes from sharded run 39764872026: release candidate custody fixtures canonicalize their roots as production does, and a new test refuses a symlink that escapes its root; the precommit metadata fixture drops the verbatim `\\?\` prefix only in the manifest text Cargo reads; the release-ledger newline file name is staged through Git's index with `core.protectNTFS` off; and the result-policy target keeps its static checks on every host, with only the Bash execution tests Linux-scoped (#9660).

@@ -64,6 +64,15 @@ pub(crate) fn render_check_with_config_and_progress(
                 &output.root,
             ))
         }
+        OutputFormat::CheckFindingsJson => {
+            let context = crate::agent::artifact::RepoExposureArtifactContext::for_check_findings(
+                output.root.clone(),
+                output.mode.as_str().to_string(),
+                output.base.clone(),
+                config,
+            )?;
+            super::check_findings::render_check_findings_json_with_context(output, config, &context)
+        }
         OutputFormat::Github => Ok(github::render_with_config(output, config)),
         OutputFormat::Sarif => {
             let suppressions = load_suppressions(output, config)?;
@@ -158,9 +167,10 @@ pub(crate) fn render_check_with_config_and_progress(
                 let ts_guidance = detect_ts_full_repo_guidance(&output.root, &report.classified);
                 let python_guidance =
                     detect_python_repo_exposure_guidance(&output.root, &report.classified);
-                let generated_skip = repo_exposure::GeneratedRustSkip::from_paths(
+                let generated_skip = repo_exposure::GeneratedRustSkip::from_parts(
                     report.skipped_generated,
                     report.naming_only_skips,
+                    report.declined_rust_files,
                 );
                 let artifact_context =
                     crate::agent::artifact::RepoExposureArtifactContext::for_repo_exposure(
@@ -199,9 +209,10 @@ pub(crate) fn render_check_with_config_and_progress(
                 let ts_guidance = detect_ts_full_repo_guidance(&output.root, &report.classified);
                 let python_guidance =
                     detect_python_repo_exposure_guidance(&output.root, &report.classified);
-                let generated_skip = repo_exposure::GeneratedRustSkip::from_paths(
+                let generated_skip = repo_exposure::GeneratedRustSkip::from_parts(
                     report.skipped_generated,
                     report.naming_only_skips,
+                    report.declined_rust_files,
                 );
                 Ok(repo_exposure::render_repo_exposure_md_with_generated_skip(
                     &report.classified,
@@ -630,7 +641,7 @@ fn ripr_plus_summary_from_disk(
     let report_path = output.root.join(TEST_EFFICIENCY_REPORT_RELATIVE);
     if !report_path.exists() {
         let warning = format!(
-            "missing {}; ripr+ needs test-efficiency JSON and no public ripr command generates it yet (the only shipped producer is this repository's private cargo xtask); hand-author the documented minimum shape from real test measurements in docs/BADGE_ADOPTION.md or wait for the portable producer tracked in issue #7221",
+            "missing {}; ripr+ needs test-efficiency JSON and no public ripr command generates it yet (the only shipped producer is this repository's private cargo xtask); hand-author the documented minimum shape from real test measurements in docs/BADGE_ADOPTION.md or wait for the portable producer (not shipped yet)",
             report_path.display()
         );
         eprintln!(

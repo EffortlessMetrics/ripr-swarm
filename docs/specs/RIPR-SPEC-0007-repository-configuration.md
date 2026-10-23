@@ -153,6 +153,27 @@ Repository configuration evidence should cover:
   validation with a key-named diagnostic that does not echo the path; omitted
   values keep the default and valid paths retain exact spelling and the existing
   user opt-in boundary, without existence or execution probes;
+- `ripr doctor` never executing a Perl exporter PATH hit whose canonical
+  path lies under the analyzed root unless
+  `RIPR_ALLOW_REPO_PERL_EXECUTABLE=1` is set (#5349): the hit is reported as
+  refused (not run) with the canonical resolved path inside the checkout as the reason
+  and the opt-in / move-outside-the-repo next step; a symlink or relative
+  PATH entry pointing into the root is refused by canonicalization, while a
+  relative PATH entry resolving outside the root still probes as before;
+  the refusal is shown on the default (non-verbose) human screen as well
+  as in `--verbose` and as `exporter.state: "refused"` in `--json`, names
+  the canonical path that was judged, and takes precedence over an
+  incompatible hit for the other exporter name; a candidate that cannot
+  be canonicalized is judged by its ancestor-resolved location (the
+  longest existing ancestor is canonicalized and the remaining suffix
+  appended lexically) and is refused when that location lies inside the
+  root, so unresolvable in-checkout candidates fail closed while
+  provably outside candidates still probe; an approved PATH hit is
+  executed through the canonical path that was judged, so swapping the
+  relative or symlink PATH spelling after judgement cannot redirect
+  execution (residual: an actor who can replace the canonical target
+  file itself, outside the checkout, between judgement and spawn can
+  still affect what runs; doctor does not claim to close that race);
 - `ripr doctor` reporting loaded config path, missing-config defaults, and
   malformed config errors without printing config source text;
 - `ripr doctor` separating installed-binary analysis readiness (the default
@@ -244,6 +265,14 @@ and initialization options supply only the keys the pull did not return.
 Given ripr.toml contains an unknown key or invalid value,
 when ripr loads the config,
 then the user-facing error names the config path and parse problem.
+
+Given --candidate-tree selects an immutable tree with malformed ripr.toml,
+when check refuses that config,
+then the human diagnostic explains how to fix or remove the candidate's file
+and rerun with a new candidate-tree identity; editing only the worktree file
+cannot repair that immutable subject. A config-free candidate uses the built-in
+defaults, not a parent or worktree config. The JSON refusal retains its redacted
+first-line message, config_invalid identity and analysis/config-load route.
 ```
 
 ### Duplicate suppression declarations fail closed
@@ -413,6 +442,41 @@ prints each advisory starting with `~ ` and exits with the status of its core
 checks alone; only a failed core check or required runtime probe prints `!`
 and exits 3.
 
+### Doctor cache-writability probe depth (#6707)
+
+Doctor's cache probe checks every directory a production cache writes
+entries into, as listed by the caches' own constructors. For a sharded
+cache it also probes subdirectory creation inside each existing per-key
+directory (`sharded_dir/<key>`), because publication creates a generation
+directory there. The file probe writes and syncs a small payload so a
+volume with free inodes but no free blocks is reported. A probe whose
+cleanup removal fails is reported instead of silently leaving
+`.ripr-doctor-probe-*` residue. When the workspace root is missing,
+doctor does not run the cache probe at all.
+### Doctor refuses a checkout-local Perl exporter on PATH (#5349)
+
+```text
+Given a Perl checkout with `bin/perllsp` on a relative or checkout-local PATH,
+when ripr doctor runs without RIPR_ALLOW_REPO_PERL_EXECUTABLE=1,
+then doctor reports the exporter as refused (not run), states that the
+resolved path is inside the analyzed checkout, and names the opt-in or
+moving the exporter outside the repo as the next step;
+and the exporter is never executed.
+Given the same checkout with RIPR_ALLOW_REPO_PERL_EXECUTABLE=1, or an
+exporter outside the root reached through a relative PATH entry,
+when ripr doctor runs,
+then the exporter is probed as before.
+Given a refused `perl-ripr-facts` and a version-only `perllsp` outside
+the root, when ripr doctor runs, then the report is the refusal, not
+the incompatible hit.
+Given a PATH candidate that cannot be canonicalized but whose
+ancestor-resolved location lies inside the root, when ripr doctor
+runs without the opt-in, then it is refused and never executed.
+Given an approved exporter reached through a symlink, when ripr
+doctor runs, then doctor executes the canonical target it judged,
+not the symlink spelling.
+```
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/diff/path.rs::tests::artifact_root_gitignore_entry_escapes_patterns_separately_from_paths`
@@ -428,6 +492,28 @@ and exits 3.
   (Unix-only literal-star filesystem fixture).
 - `crates/ripr/src/analysis/pipeline.rs::tests::ripr_artifact_disclosure_escapes_gitignore_metacharacters`
   pins the second consumer's emitted literal rule.
+- `crates/ripr/src/cli/commands/doctor.rs::tests::probe_creatable_dir_reports_a_directory_that_denies_creation`
+  pins the directory-creation probe against a directory that denies it.
+- `crates/ripr/src/cli/commands/doctor.rs::tests::cache_unwritable_reason_reports_existing_sharded_dir_denying_subdirectories`
+  pins the probe on an existing sharded entry directory.
+- `crates/ripr/src/cli/commands/doctor.rs::tests::cache_unwritable_reason_reports_key_dir_denying_subdirectories`
+  pins the deepened probe inside an existing per-key directory.
+  These three use a real filesystem deny. On Windows, a host where the
+  `icacls (AD)` deny is not enforced for the test process (hosted runners
+  so far) fails them with a named `NOT_ESTABLISHED` reason and the token's
+  backup/restore privilege state, instead of passing (#9688).
+- `crates/ripr/src/cli/commands/doctor.rs::tests::probe_creatable_dir_names_an_injected_creation_refusal`,
+  `cache_unwritable_reason_routes_an_injected_sharded_dir_refusal` and
+  `cache_unwritable_reason_routes_an_injected_key_dir_refusal` pin the same
+  reason and routes with an injected `create_dir` refusal, so they run on
+  every host, hosted Windows included, without an ACL.
+- `crates/ripr/src/cli/commands/doctor.rs::tests::probe_removal_failure_is_reported_not_left_silent`
+  pins probe-cleanup failures being reported rather than ignored.
+- `crates/ripr/src/cli/commands/doctor.rs::tests::doctor_screen_skips_the_cache_probe_when_the_root_is_missing`
+  pins that a missing workspace root is never cache-probed.
+- `crates/ripr/src/analysis/seam_cache.rs::tests::production_entry_dirs_match_every_production_cache_constructor`
+  pins doctor's probe list to the production cache constructors,
+  including their subdirectory flags.
 
 - `crates/ripr/tests/default_suppression_disclosure.rs` — real CLI explicit
   opt-in, unchanged full stdout, malformed-unused versus explicit refusal,
@@ -455,6 +541,8 @@ Current tests:
 - `crates/ripr/src/config.rs::tests::parse_error_hint_matches_discovery_after_the_broken_file_is_removed`
 - `crates/ripr/src/config.rs::tests::unreadable_config_error_ends_with_a_recovery_line`
 - `crates/ripr/tests/cli_smoke.rs::check_json_malformed_config_emits_redacted_refusal`
+- `crates/ripr/tests/cli_smoke/candidate_config_recovery.rs::malformed_candidate_config_names_recovery_without_changing_json_refusal`
+- `crates/ripr/tests/cli_smoke/candidate_config_recovery.rs::repaired_and_config_free_candidates_ignore_a_broken_worktree_config`
 - `crates/ripr/tests/cli_smoke.rs::doctor_verbose_malformed_config_omits_the_loader_recovery_line`
 - `crates/ripr/src/workspace_status.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults`
 - `crates/ripr/src/app/python_repair_binding.rs::tests::dangling_ripr_toml_symlink_is_subject_config_not_defaults`
@@ -539,6 +627,30 @@ Current tests:
 - `crates/ripr/src/cli/commands/doctor.rs::tests::required_runtime_failure_gets_a_fix_line`
 - `crates/ripr/src/cli/commands/doctor.rs::tests::cargo_toml_failure_suppresses_check`
 - `crates/ripr/src/cli/commands/doctor.rs::tests::compact_discloses_ignored_perl_executable`
+- `crates/ripr/src/cli/commands/doctor.rs::tests::perl_path_exporter_refused_only_inside_root_without_opt_in`
+  pins canonical-inside refusal, the opt-in boundary, and outside-root allowance (#5349).
+- `crates/ripr/src/cli/commands/doctor.rs::tests::perl_path_exporter_refused_follows_symlink_into_root`
+  pins symlink-into-root refusal by canonicalization (#5349, Unix).
+- `crates/ripr/src/cli/commands/doctor.rs::tests::perl_exporter_lines_report_refused_hit_with_next_step`
+  pins the refused report wording and next step (#5349).
+- `crates/ripr/tests/cli_smoke.rs::doctor_refuses_repo_local_perl_exporter_on_relative_path`
+  proves a checkout-local exporter on a relative PATH is not executed (no marker) (#5349).
+- `crates/ripr/tests/cli_smoke.rs::doctor_runs_repo_local_perl_exporter_with_opt_in`
+  proves the opt-in executes the same exporter as before (#5349).
+- `crates/ripr/tests/cli_smoke.rs::doctor_runs_perl_exporter_outside_root_via_relative_path`
+  proves a relative PATH entry outside the root still probes (#5349).
+- `crates/ripr/tests/cli_smoke.rs::doctor_refuses_perl_exporter_symlinked_into_root`
+  proves a PATH symlink into the root is refused and not executed (#5349, Unix).
+- `crates/ripr/src/cli/commands/doctor.rs::tests::compact_screen_discloses_refused_perl_exporter`
+  pins the refused exporter on the default (non-verbose) screen (#5349).
+- `crates/ripr/src/cli/commands/doctor.rs::tests::perl_path_exporter_refused_unresolvable_symlink_ancestor_into_root`
+  pins fail-closed ancestor resolution for an unresolvable candidate (#5349, Unix).
+- `crates/ripr/tests/cli_smoke.rs::doctor_json_refuses_repo_local_perl_exporter`
+  proves the `--json` refusal (state refused) and non-execution end to end (#5349).
+- `crates/ripr/tests/cli_smoke.rs::doctor_refuses_repo_local_perl_exporter_on_default_screen`
+  proves the default human screen surfaces the refusal without `--verbose` (#5349).
+- `crates/ripr/tests/cli_smoke.rs::doctor_refused_perl_exporter_takes_precedence_over_incompatible`
+  proves a refusal is not masked by an incompatible hit (#5349).
 - `crates/ripr/src/cli/commands/doctor.rs::tests::compact_newline_root_stays_one_physical_line_per_entry`
 - `crates/ripr/src/cli/commands/doctor.rs::tests::verbose_invalid_config_keeps_parser_reasons_without_source`
 - `crates/ripr/src/config.rs::tests::config_error_display_keeps_misplaced_mode_hint_without_source`

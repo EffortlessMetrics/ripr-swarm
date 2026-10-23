@@ -1,0 +1,9 @@
+diff --git a/shapes/rates/quote.py b/shapes/rates/quote.py
+--- a/shapes/rates/quote.py
++++ b/shapes/rates/quote.py
+@@ -2,4 +2,4 @@
+ 
+ 
+ def quote(tier, units):
+-    return lookup(tier) * units
++    return lookup(tier) + units

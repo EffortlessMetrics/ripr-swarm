@@ -523,7 +523,7 @@ pub(crate) fn resolve_effective_base_core_with_commit(
             let fetch = missing_ref_repair(root, explicit, "--base", git_timeout);
             Err(CoreError::base_unresolvable(format!(
                 "the base `{explicit}` does not resolve to a commit (the analysis did not \
-                 run). {fetch} or pass `--base <ref>` for a ref this repository has."
+                 run). {fetch}, or pass `--base <ref>` for a ref this repository has."
             )))
         }
         Some(output) => {
@@ -780,13 +780,7 @@ fn unreadable_repository_message(root: &Path, output: &std::process::Output) -> 
         return None;
     }
     let reason = git_reason_line(&output.stderr)?;
-    // These two mean "no repository here", not "a damaged one": the work-tree
-    // message already tells the user to run from, or point `--root` at, one.
-    // Matched as the diagnostic's own prefix: a bad-config line can name a
-    // file whose path happens to contain those words.
-    if reason.starts_with("fatal: not a git repository")
-        || reason.starts_with("fatal: invalid gitfile")
-    {
+    if git_reason_means_no_repository(&reason) {
         return None;
     }
     // The whole stderr, not the displayed line: an `error:` line about a ref
@@ -808,6 +802,24 @@ fn unreadable_repository_message(root: &Path, output: &std::process::Output) -> 
          {repair}",
         crate::terminal_text::terminal_safe(root.display().to_string())
     ))
+}
+
+/// Whether Git's reason line says "no repository here" rather than "a damaged
+/// one": the work-tree message already tells the user to run from, or point
+/// `--root` at, one. Matched as the diagnostic's own prefix: a bad-config line
+/// can name a file whose path happens to contain those words. Newer Git names
+/// a gitfile whose existing target is not a repository with "gitfile does not
+/// point to a valid repository" where older Git said "not a git repository"
+/// (seen on hosted Windows, #9661).
+fn git_reason_means_no_repository(reason: &str) -> bool {
+    [
+        "fatal: not a git repository",
+        "fatal: invalid gitfile",
+        "fatal: no path in gitfile",
+        "fatal: gitfile does not point to a valid repository",
+    ]
+    .iter()
+    .any(|prefix| reason.starts_with(prefix))
 }
 
 fn probe_git_root(root: &Path, git_timeout: Option<Duration>) -> GitRootProbe {
@@ -1340,7 +1352,7 @@ fn verify_head_revision(
             .unwrap_or_else(|| {
                 format!(
                     "the head `{head}` does not resolve to a commit (the analysis did not \
-                     run). {} or pass `--head <ref>` for a ref this repository has.",
+                     run). {}, or pass `--head <ref>` for a ref this repository has.",
                     missing_ref_repair(root, head, "--head", git_timeout)
                 )
             })),
@@ -2066,21 +2078,37 @@ fn run_git_diff_bytes(
         }
     };
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stderr = stderr.trim();
-        let hint = if stderr.contains("no merge base") {
+        let raw_stderr = String::from_utf8_lossy(&output.stderr);
+        let raw_stderr = raw_stderr.trim();
+        let hint = if raw_stderr.contains("no merge base") {
             no_merge_base_hint(root, range, git_timeout)
-        } else if stderr.contains("unknown revision or path not in the working tree") {
+        } else if raw_stderr.contains("unknown revision or path not in the working tree") {
             format!(
                 " The range `{}` names a revision Git cannot resolve: HEAD may be unborn or \
                  point at a missing branch, or the base is absent. Check `git rev-parse HEAD` \
                  and the base ref, then re-run.",
                 crate::terminal_text::terminal_safe(range.to_string())
             )
-        } else if git_stderr_names_object_damage(stderr) {
+        } else if git_stderr_names_object_damage(raw_stderr) {
             format!(" {OBJECT_DAMAGE_REPAIR}")
         } else {
-            String::new()
+            // Unclassified failure: name the manual probe so the reader is not
+            // left with raw git output and no next step (#9604 batch E).
+            format!(
+                ". Re-run `git -C {} diff {range}` to see Git's full error.",
+                crate::terminal_text::terminal_safe(root.display().to_string())
+            )
+        };
+        // Bound and escape the displayed stderr: it is user-visible, and an
+        // unbounded raw dump can flood the terminal (same cap family as
+        // `git_reason_line` below).
+        let escaped = crate::terminal_text::terminal_safe(raw_stderr.to_string());
+        let stderr = if escaped.chars().count() <= GIT_REASON_MAX_CHARS {
+            escaped
+        } else {
+            let mut bounded: String = escaped.chars().take(GIT_REASON_MAX_CHARS).collect();
+            bounded.push('…');
+            bounded
         };
         return Err(format!("git diff failed: {stderr}{hint}").into());
     }
@@ -3475,6 +3503,41 @@ mod tests {
     }
 
     #[test]
+    fn unclassified_git_diff_failure_names_the_manual_probe() -> std::io::Result<()> {
+        // `diff.renames` is validated only when git runs diff, so the failure
+        // classifies no hint branch; the message must stay prefixed and name
+        // the manual probe instead of leaving raw stderr as the only text
+        // (#9604 batch E).
+        let dir = unique_fixture_root("unclassified-diff-tail")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        fs::write(dir.join("src.rs"), "pub fn f() -> bool { 1 > 0 }\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "base"])?;
+        fs::write(dir.join("src.rs"), "pub fn f() -> bool { 1 >= 0 }\n")?;
+        run_git_checked(&dir, &["commit", "-am", "change"])?;
+        run_git_checked(&dir, &["config", "diff.renames", "not-a-boolean"])?;
+
+        let err = load_diff(&dir, Some("HEAD~1"), None, None)
+            .expect_err("a diff-time config failure must surface");
+        assert!(
+            err.starts_with("git diff failed:"),
+            "the consumer-facing prefix must stay intact, got: {err}"
+        );
+        assert!(
+            err.contains("Re-run `git -C ") && err.contains("to see Git's full error"),
+            "an unclassified failure must name the manual probe, got: {err}"
+        );
+        assert!(
+            !err.contains("not-a-boolean") || err.chars().count() < 1200,
+            "the displayed stderr must stay bounded, got {len} chars",
+            len = err.chars().count()
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
     fn explicit_base_is_used_as_is_without_resolution() -> std::io::Result<()> {
         // When an explicit base is given, load_diff does not attempt resolution.
         // A nonexistent explicit base must fail naming the ref the user chose,
@@ -3526,6 +3589,12 @@ mod tests {
             err.contains("the analysis did not run"),
             "expected an explicit did-not-run boundary so an unresolvable base \
              is never read as an empty result, got: {err}"
+        );
+        // #9277: the repair sentence and the alternative join with a comma, not
+        // a bare "or" that fuses onto the previous clause.
+        assert!(
+            err.contains(", or pass `--base <ref>` for a ref this repository has."),
+            "expected the repair and the alternative to be separate clauses, got: {err}"
         );
         assert!(
             err.contains("--base <ref>"),
@@ -4318,6 +4387,30 @@ mod tests {
         assert!(!git_stderr_rejects_environment_config(
             "fatal: bad config line 1 in file /tmp/GIT_CONFIG_dir/.git/config\n"
         ));
+    }
+
+    #[test]
+    fn no_repository_reasons_cover_both_git_spellings_of_a_non_repository_gitdir() {
+        // Older Git (2.43) and newer Git (hosted Windows runners, #9661) name a
+        // gitfile whose existing target is not a repository differently; both
+        // are "no repository here", not repository damage.
+        // `check-local-context` forbids drive-letter path literals.
+        let drive = "F:";
+        for reason in [
+            "fatal: not a git repository: /work/admin".to_string(),
+            "fatal: invalid gitfile format: /work/.git".to_string(),
+            "fatal: no path in gitfile: /work/.git".to_string(),
+            format!("fatal: gitfile does not point to a valid repository: {drive}/work/admin/.git"),
+        ] {
+            assert!(git_reason_means_no_repository(&reason), "{reason}");
+        }
+        // A damaged repository whose path contains the words stays damage.
+        for reason in [
+            "fatal: bad config line 1 in file /work/not a git repository/.git/config",
+            "error: refs/heads/feat does not point to a valid object!",
+        ] {
+            assert!(!git_reason_means_no_repository(reason), "{reason}");
+        }
     }
 
     #[test]

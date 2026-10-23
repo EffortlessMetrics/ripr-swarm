@@ -195,6 +195,13 @@ for a borrowed helper assertion, at the helper's eager calls in the test),
 every run is readable, and at least one run is non-empty. An empty literal,
 or any argument ripr cannot read, refuses the pin.
 
+Rule 2 extends to a changed `return_value` tail outside the admitted
+adaptor shape that walks a slice-like parameter (`P.iter()`,
+`P.into_iter()`, `P.iter_mut()`). A pinned assertion whose call passes only
+an empty literal sequence for `P` is refused: the walk visits nothing, so
+the changed tail cannot show on that input (#9444,
+`shape-const-generic-empty-only`).
+
 ### Rule 3: propagation through the adaptor
 
 The admitted tail is the owner's whole body, so its value is what the

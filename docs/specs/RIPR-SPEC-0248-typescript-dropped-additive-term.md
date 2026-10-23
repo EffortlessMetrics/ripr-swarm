@@ -22,6 +22,8 @@ Linked issues:
 
 - #6654 (TypeScript corpus cases scored false after RIPR-SPEC-0243)
 - #7418 (evaluate a same-module call term)
+- #9515 (TypeScript grid false verdicts: property-test rows)
+- #9437 (false-exposed TypeScript rows: rounding-function swap)
 
 Linked PRs:
 
@@ -127,6 +129,35 @@ A term that names nothing (`+ 0`, `+ ''`, `+ 0x10`) is outside the rule:
 it is the same for every input, so a non-zero literal always changes the
 value and a zero literal is an equivalent edit this rule does not judge.
 
+**Rule 2. A change that only swaps one rounding function for another
+needs a tested input the two functions treat differently.** On the same
+value seam, when the changed line and its removed counterpart differ only
+in one `Math.round`, `Math.floor`, `Math.ceil` or `Math.trunc` name
+replaced by another of the four, an `exposed` ladder result keeps its class
+only when the swap's single operand folds, for some owner call of a related
+test, to a value on which the two functions give different results
+(JavaScript `Math.round` sends halves toward positive infinity, so `-1.5`
+rounds to `-1`). The fold is the one rule 1 uses: owner parameters bind to
+plain, optionally negated numeric literal arguments (or test-scope
+constants) when the owner body never rebinds them. When every owner call of
+every related test folds and none discriminates, the finding reads
+`weakly_exposed`, discrimination `weak`, and its missing line says the
+related tests only pass inputs whose pre-rounding value is whole (or rounds
+the same way under both functions), so the rounding mode is not
+discriminated. Anything the rule cannot read keeps the pre-rule credit
+(fail open): a non-literal argument, an operand the fold does not support, a
+related test whose owner calls it cannot enumerate (a local shadow, a helper
+or hook that names the owner, an owner reference that is not a call), an
+instance method owner, or no readable call at all. Static methods are read
+through the class name the test imports (`Temperature.fromFahrenheit(212)`).
+A test registered inside `for (const [a, b] of rows) { ... }` runs once per
+row: when `rows` is a file-local `const` array of arrays of literals that
+nothing else in the file references, and the pattern is a plain array
+destructuring of identifiers, each owner call whose argument is a loop
+variable folds once for every row (#9653). A computed row, a second
+reference to the table, a nested or defaulted pattern or any other
+statement outside the test keeps the pre-rule credit.
+
 ### Decisions
 
 The owner delegated these choices on 2026-10-04 ("make reasonable
@@ -185,9 +216,74 @@ test may not need.
   `greeting + name` therefore reads `weakly_exposed` even when the test
   pins `"Hi Bob"`. That costs a false gap, never false credit.
 
+## Amendment 2026-10-22: rules 2 and 3
+
+The TypeScript operator grid (#9502) found two `exposed` verdicts on
+property-style tests, both from an exact matcher that cannot tell the changed
+return value apart.
+
+**Rule 2. An operator whose right operand is its identity in every tested
+call is not pinned.** The rule applies on a `return_value` probe when the
+identity input also hides the edit itself, which holds for three edits:
+the operands of `*` rewritten in place (`return qty * unit;` against `return
+unit * qty;`); the inverse operator over the same operands in the same order
+(`a / b` against `a * b`); and an added factor (`return a;` against `return a
+* b;`). Only `*` and `/` are read: `+` also concatenates strings, so neither its
+operand order nor a zero operand shows that a test cannot tell the edit apart.
+Any other edit, such as a changed operand or a dropped term, keeps the credit,
+because the identity input can still pin it. The new line reads `return
+<operand> <op>
+<param>;`, with a plain identifier or number on the left and an owner
+parameter on the right that the body never rebinds. An `exposed` result then
+reads `weakly_exposed` when every owner call whose whole result a strong value
+assertion observes passes `1` for that parameter. `return unit * qty` tested only through
+`scaled(1, u)` against `u` returns the same number as `unit / qty`. One tested
+call with another value, a nested owner call in the observed expression
+(`scaled(1, scaled(3, 4))`), an argument the reader cannot read as a number, a
+related test that does not call the owner directly, an owner call outside a
+value assertion on its whole result (setup, a local, a weak matcher), or any
+other assertion naming the owner keeps the credit. Only the right operand
+counts: `1 / qty` differs from `qty`.
+
+**Rule 3. An assertion built from owner calls alone cannot notice a changed
+return value.** On a `return_value` or `field_construction` probe, an
+`exposed` result reads `weakly_exposed` when at least one strong value
+assertion observes the whole result of an owner call and compares it with
+another whole owner call (`normalize(normalize(text))` against
+`normalize(text)`), and every owner call of the related tests sits in such an
+assertion: any other assertion naming the owner (a weak matcher included) or an
+owner call in setup keeps the credit. A constant return value satisfies such a relation. An independent
+expected value, a different function on the expected side, or a member read
+of the result (`normalize(x).length`) keeps the credit.
+
+The expected side may also be a local bound once by a single-line
+`const once = normalize(t);` and named nowhere else in the test except inside
+the observed call (`expect(normalize(once)).toEqual(once)`): the bound call
+counts as the expected-side owner call. A `let`, a reassignment, a second
+declaration, a type annotation, a multi-line initializer, an initializer that
+is not a whole owner call, or any other mention of the local keeps the credit.
+
+Both rules only move `exposed` to `weakly_exposed`; neither adds credit.
+
+Known limits of rules 2 and 3:
+
+- Rule 2 reads one operator between two operands. `a * b + c`, a call or
+  member operand and a compound assignment keep the pre-rule credit.
+- Rule 2 does not ask whether the identity makes the other mutants of the
+  line equivalent; `%` and `-` still differ from `*` at `1`.
+- A bare mention of the owner that the call counter cannot read
+  (`.map(owner)`, `owner<T>(..)`, an alias binding, `other.owner(..)`) in a
+  related test keeps the credit under both rules.
+- Rule 3 reads the one-hop local only as a single-line `const`; a chain of
+  locals (`const a = f(t); const b = f(a); ...`) or a destructured binding
+  keeps the credit.
+
 ## Required Evidence
 
 - The rule only moves `exposed` to `weakly_exposed`.
+- Rule 2: on the TypeScript verdict corpus, `shape-static-factory-rounding`
+  moves from `credited` to `gap` (#9437), `pw-loop-registered-rounding-mode`
+  moves from `credited` to `gap` (#9653), and no other row moves.
 - On the TypeScript verdict corpus, `ts-nodetest-quote-shipping-term`
   moves from `credited` to `gap` (false verdicts 10/101 to 9/101, false
   exposed 1/39 to 0/39), and no other row moves.
@@ -195,7 +291,8 @@ test may not need.
 
 ## Non-Goals
 
-- No multiplicative identity (`* 1`, `/ 1`).
+- Rule 1 does not read multiplicative identities (`* 1`, `/ 1`); rule 2
+  owns the identity operand of the changed operator.
 - No equivalence judgment for literal terms.
 - No change to Rust, Python or other languages.
 
@@ -230,13 +327,30 @@ test may not need.
     before the 2026-10-14 rule 4 amendment; corpus case
     `jest-spec0248-throw-message-term`).
 
+11. `return qty * unit` becomes `return unit * qty`, and the only test is
+    `for (u of 1..4) expect(scaled(1, u)).toBe(u)`: `weakly_exposed`
+    (rule 2). Adding `expect(scaled(3, 7)).toBe(21)`: `exposed`.
+12. As example 11 with `expect(scaled(4, 1)).toBe(4)` (the identity on the
+    left operand): `exposed`.
+13. `return text.trim()` becomes `return text.replace(/^\s+|\s+$/g, "")`, and
+    the only test is `expect(normalize(normalize(t))).toEqual(normalize(t))`:
+    `weakly_exposed` (rule 3). Adding
+    `expect(normalize(" a ")).toBe("a")`: `exposed`.
+
 ## Test Mapping
 
+- `crates/ripr/src/analysis/language/typescript/tests/rounding_mode_tests.rs`
+  pins rule 2: whole inputs, a discriminating fractional input, fractional
+  inputs both functions round alike, negative directions and unreadable
+  calls.
 - `crates/ripr/src/analysis/language/typescript/tests/dropped_term_tests.rs`
   pins examples 2 to 10, and example 1's message through the analogous
   `shipping(subtotal)` call term.
+- `crates/ripr/src/analysis/language/typescript/tests/value_hiding_tests.rs`
+  pins examples 11 to 13.
 - `fixtures/typescript-verdict-corpus` pins example 1 itself:
-  `ts-nodetest-quote-shipping-term` reads `gap`.
+  `ts-nodetest-quote-shipping-term` reads `gap`; `ts-grid-arithmetic-property`
+  and `ts-grid-returns-property` pin rules 2 and 3.
 
 ## Implementation Mapping
 
@@ -244,6 +358,14 @@ test may not need.
   `ts_dropped_additive_term`, `ts_parameter_is_stable`.
 - `crates/ripr/src/analysis/language/typescript/classifier.rs`:
   `ts_apply_post_ladder_rules`, `ts_dropped_term_witness`.
+- `crates/ripr/src/analysis/language/typescript/value_hiding_guard.rs`:
+  `ts_neutral_operand_change`.
+- `crates/ripr/src/analysis/language/typescript/classifier.rs`:
+  `ts_neutral_operand_hides`, `ts_assertions_only_relate_owner_calls`.
+- `crates/ripr/src/analysis/language/typescript/oracle.rs`:
+  `dynamic_argument_text` fills `TypeScriptAssertion::dynamic_expected_text`.
+- `crates/ripr/src/analysis/language/typescript/rounding_mode_guard.rs`:
+  `ts_rounding_swap`, `ts_rounding_witness` (rule 2).
 - `crates/ripr/src/analysis/language/typescript/mock_payload_guard.rs`:
   `masked_owner_body`, shared with RIPR-SPEC-0247 rule 1.
 
