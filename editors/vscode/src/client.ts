@@ -4126,12 +4126,24 @@ export function configurationPullFailureStatus(
   }
   const message = typeof pull.failure?.message === 'string' && pull.failure.message.trim()
     ? pull.failure.message
-    : 'The language server rejected the workspace configuration.';
+    : 'The language server could not apply the workspace configuration.';
+  const retained = 'ripr keeps using the last accepted configuration, or its fallback settings if none was accepted yet.';
+  // Only `config_pull_invalid` establishes that a pulled value was rejected.
+  // A transport failure (`config_pull_failed`) names no bad setting, so it
+  // must not tell the user to correct one.
+  if (pull.failure?.kind === 'config_pull_invalid') {
+    return {
+      kind: 'analysisFailed',
+      summary: 'ripr rejected your latest settings: the workspace configuration was invalid.',
+      detail: `${message}\n${retained}`,
+      nextStep: 'Correct the setting named above in your VS Code settings (saving them re-sends the configuration), or run ripr: Restart Server.'
+    };
+  }
   return {
     kind: 'analysisFailed',
-    summary: 'ripr rejected your latest settings: the workspace configuration was invalid.',
-    detail: `${message}\nripr keeps using the last accepted configuration, or its fallback settings if none was accepted yet.`,
-    nextStep: 'Correct the setting named above in your VS Code settings (saving them re-sends the configuration), or run ripr: Restart Server.'
+    summary: 'ripr could not obtain the latest workspace configuration.',
+    detail: `${message}\n${retained}`,
+    nextStep: 'Retry by saving your ripr settings again (which re-sends the configuration), or run ripr: Restart Server.'
   };
 }
 
