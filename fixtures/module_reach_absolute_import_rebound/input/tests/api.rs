@@ -1,5 +1,5 @@
-use std as qual_reach;
-use ::qual_reach::inner::order_discount;
+use std as r#qual_reach;
+use qual_reach::inner::order_discount;
 
 #[test]
 fn discount_boundary() {
