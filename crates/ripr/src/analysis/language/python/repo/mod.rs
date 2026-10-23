@@ -29,6 +29,7 @@ mod evidence;
 mod roles;
 mod run_status;
 
+use crate::analysis::language::{RepoCapFired, RepoFileAccounting, RepoLimitingStage};
 #[cfg(test)]
 pub(in crate::analysis::language::python) use discovery::RepoWorkingSetCapSource;
 use discovery::{CapRecoveryRoute, DiscoveryCounts, discover_repo_working_set};
@@ -144,6 +145,29 @@ pub(in crate::analysis::language::python) fn select_repo_input_with_limit(
         working_set_limit,
         recovery_routes: discovery::CAP_RECOVERY_ROUTES,
         test_framework: detect_python_test_framework(root),
+    }
+}
+
+/// Typed file accounting for one discovery pass (#6466). Python discovery has
+/// no walk cap, so the only bound that can fire is the shared working-set
+/// limit at selection. Unreadable subtrees were never discovered, so the
+/// total, `skipped` and `omitted` (lower bounds only) are unknown then while
+/// `selected` stays exact.
+pub(in crate::analysis::language::python) fn file_accounting(
+    input: &PythonRepoInput,
+) -> RepoFileAccounting {
+    let counts = &input.counts;
+    let complete = counts.unreadable_subtrees == 0;
+    RepoFileAccounting {
+        discovered: complete.then_some(counts.discovered),
+        selected: Some(counts.selected),
+        skipped: complete.then_some(counts.excluded_by_role),
+        omitted: complete.then_some(counts.capped),
+        first_cap_fired: (counts.capped > 0).then_some(RepoCapFired {
+            name: discovery::PYTHON_REPO_FILE_LIMIT_ENV,
+            stage: RepoLimitingStage::Selection,
+            limit: input.working_set_limit.limit,
+        }),
     }
 }
 
