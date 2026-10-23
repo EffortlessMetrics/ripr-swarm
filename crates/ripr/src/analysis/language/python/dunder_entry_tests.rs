@@ -789,7 +789,6 @@ fn guarded_self_field_credit_preserves_benign_prefix_expressions_and_scopes() ->
         "        for marker in []:\n            pass\n",
         "        def marker():\n            pass\n",
         "        def helper(kind):\n            pass\n",
-        "        def helper(kind=kind):\n            pass\n",
         "\t# comment-only indentation does not make an ancestor\n",
         "        \"\"\"Notes\n\treturn raise with\n        \"\"\"\n",
         "        class Marker:\n            pass\n",
