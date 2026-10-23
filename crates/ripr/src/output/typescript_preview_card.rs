@@ -1765,6 +1765,7 @@ mod tests {
 
     fn sample_finding(oracle_kind: OracleKind, oracle_strength: OracleStrength) -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_pricing.ts:2:typescript_preview".to_string(),
             canonical_gap: None,
             probe: Probe {

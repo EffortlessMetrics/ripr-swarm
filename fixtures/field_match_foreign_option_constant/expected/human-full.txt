@@ -27,7 +27,7 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Changed behavior appears to influence match arm result: foreign::None =>
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
   - local flow reaches match arm result: foreign::None => (line 5)
   - related test src/lib.rs:12 legacy_only uses strong whole object equality oracle: assert_eq!(charge(&Lease { settled_elapsed_ms: None, timeout_sec: 600 }), 600); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - source assertion argument value 600 at line 13

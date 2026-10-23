@@ -1,5 +1,6 @@
 mod module_extraction;
 mod shared_execution_context;
+mod warm_entrypoint;
 
 use super::related_tests::context::*;
 use super::related_tests::*;

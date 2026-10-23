@@ -125,6 +125,52 @@ fn shared_assertion_requires_every_target_context() -> Result<(), String> {
 }
 
 #[test]
+fn rejected_target_owners_never_grant_execution_context() -> Result<(), String> {
+    let shared = Path::new("src/shared.rs");
+    let approved = fixture("", "", false, false)?;
+    assert_eq!(
+        approved
+            .execution_context(shared)
+            .ok_or("missing approved target contexts")?
+            .roots
+            .len(),
+        2,
+        "standard distinct targets still establish both contexts"
+    );
+    for (prefix, has_include_limit) in [
+        (
+            "include!(concat!(env!(\"OUT_DIR\"), \"/generated.rs\"));",
+            true,
+        ),
+        ("#[path = \"main.rs\"] mod mounted_main;", false),
+    ] {
+        let index = fixture(prefix, "", false, false)?;
+        assert_eq!(!index.include_limitations.is_empty(), has_include_limit);
+        assert!(
+            index
+                .files()
+                .get(shared)
+                .ok_or("missing shared file")?
+                .role_provenance
+                .earliest_unresolved_reason
+                .is_some(),
+            "the existing target-root guard must refuse this placement"
+        );
+        assert!(
+            !index
+                .execution_module_parents
+                .as_ref()
+                .ok_or("missing composed context map")?
+                .contains_key(shared),
+            "rejected owners must be filtered before context capture"
+        );
+        assert!(index.execution_context(shared).is_none());
+        assert!(!admission(&index)?);
+    }
+    Ok(())
+}
+
+#[test]
 fn shared_descendants_keep_all_relevant_roots_and_ignore_other_targets() -> Result<(), String> {
     assert!(
         admission(&*fixture("", "", true, false)?)?,

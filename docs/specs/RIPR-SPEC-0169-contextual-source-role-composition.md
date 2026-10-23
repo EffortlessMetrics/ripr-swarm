@@ -88,8 +88,10 @@ file occurrence under a closed rule set:
   requirement, each root compiles its own copy of the child, so there is no
   single-module-graph conflict (tracing `benches/shared.rs`, crossbeam-channel
   `benchmarks/message.rs`). The child's location is unconstrained. Any
-  non-root owner, repeated owner file, or disagreeing declaration stays
-  ambiguous. Non-claim: crate-root detection (`CrateRoots`) ignores
+  non-root owner, repeated owner file, disagreeing declaration, owner already
+  in the ambiguous set, or unresolved include limitation anywhere in the index
+  stays ambiguous. Test: `target_root_exemption_conjuncts_each_fail_closed`
+  in `facts/role_composition.rs`. Non-claim: crate-root detection (`CrateRoots`) ignores
   `autobins`/`autotests`/`autobenches`/`autoexamples = false`, so a disabled
   autodiscovered layout file is still treated as a root.
 - **Role agreement is not unique execution context.** Retain every approved

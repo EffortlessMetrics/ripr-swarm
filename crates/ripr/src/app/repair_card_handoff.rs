@@ -1648,6 +1648,7 @@ mod tests {
         // Weakly exposed with an oracle row, so a (wrong) id match would
         // actually produce a witness and fail this control.
         let finding = crate::domain::Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_lib.rs:predicate:4036edfa".to_string(),
             canonical_gap: Some(FindingCanonicalGap {
                 id: "gap:rust:src/lib.rs:pricing::discounted_total:predicate_boundary:predicate:amount==discount_threshold"
@@ -1741,6 +1742,7 @@ mod tests {
             Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation,
         };
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: id.to_string(),
             canonical_gap: Some(FindingCanonicalGap {
                 id: gap_id.to_string(),

@@ -71,7 +71,6 @@ use super::super::{PythonFramework, PythonOwner, PythonTest};
 use super::roles::PythonFileRole;
 use super::run_status::{PartialRunReason, PythonRepoRunStatus};
 use super::{CapRecoveryRoute, DiscoveryCounts, PythonRepoInput, RepoWorkingSetLimit};
-use crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE;
 use crate::domain::{
     DeltaKind, Finding, FindingCanonicalGap, OracleKind, OracleStrength, ProbeFamily, RelatedTest,
     StaticLimitKind,
@@ -673,7 +672,7 @@ fn build_production_file_evidence(
             // Scope stamp (#5531): consumers holding only a `Finding` look the
             // capability cell up from this, so repo-mode evidence can never
             // borrow the diff-mode repair-routing cell.
-            finding.evidence.push(REPO_SCOPE_EVIDENCE_LINE.to_string());
+            finding.mark_repo_scoped();
             findings.push(finding);
         }
     }
