@@ -139,8 +139,7 @@ impl TypeScriptAdmissionContext {
             .collect();
         let known_require =
             program_require_is_known(statements, &esm_imports, block_functions_are_lexical);
-        let code = super::tests_extract::byte_preserving_code_mask(program.source_text)
-            .filter(|code| !super::tests_extract::file_is_opaque(code));
+        let scan = BindingScan::of_source(program.source_text);
         let mut context = Self {
             block_functions_are_lexical,
             imports: imports.to_vec(),
@@ -151,7 +150,7 @@ impl TypeScriptAdmissionContext {
                         || matches!(statement, Statement::VariableDeclaration(declaration)
                             if known_require && !declaration.declare
                                 && (declaration.kind == oxc_ast::ast::VariableDeclarationKind::Const
-                                    || unwritten_binding_declaration(declaration, code.as_deref())))
+                                    || !unwritten_declarator_locals(declaration, scan.as_ref()).is_empty()))
                 })
                 .flat_map(|statement| {
                     let mut imports =
@@ -178,7 +177,7 @@ impl TypeScriptAdmissionContext {
                             }
                         }
                         if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const {
-                            let kept = unwritten_declarator_locals(declaration, code.as_deref());
+                            let kept = unwritten_declarator_locals(declaration, scan.as_ref());
                             imports.retain(|import| kept.contains(&import.local));
                         }
                     }
@@ -302,30 +301,69 @@ impl TypeScriptAdmissionContext {
     }
 }
 
-/// A `var`/`let` declaration whose bindings the file never writes after
-/// their initializer, so it is as immutable as a `const` one (RIPR-SPEC-0243
-/// rule 1; pre-ES2015 CommonJS binds `var test = require('tape')`). Every
-/// binding must be unwritten outside its own declarator: a reassignment, an
-/// update, a `for (x of ...)` target or a redeclaration with an initializer
-/// elsewhere refuses. Without a readable masked source (parse-width mismatch,
-/// `eval`, `with`, `\u` escapes) nothing qualifies.
-fn unwritten_binding_declaration(
-    declaration: &oxc_ast::ast::VariableDeclaration<'_>,
-    code: Option<&str>,
-) -> bool {
-    !unwritten_declarator_locals(declaration, code).is_empty()
+/// The writes and function-declaration names of one file, computed once.
+/// `None` when the masked source is unreadable (parse-width mismatch,
+/// `eval`, `with`, `\u` escapes), so nothing qualifies.
+struct BindingScan {
+    writes: Vec<(String, usize)>,
+    functions: Vec<(String, usize)>,
+}
+
+impl BindingScan {
+    fn of_source(source: &str) -> Option<Self> {
+        let code = super::tests_extract::byte_preserving_code_mask(source)
+            .filter(|code| !super::tests_extract::file_is_opaque(code))?;
+        // The masker reads a `/` after a postfix `++`/`--` as a regex start
+        // and blanks the code up to the next `/`. When that shape appears,
+        // scan the unmasked source instead: a false write inside a string
+        // only withholds credit.
+        let text = if postfix_before_slash(&code) {
+            source
+        } else {
+            code.as_str()
+        };
+        Some(Self {
+            writes: super::tests_extract::identifier_writes(text),
+            functions: super::tests_extract::function_declaration_names(text),
+        })
+    }
+
+    /// `name` is written, or re-bound by a function declaration, outside the
+    /// declarator spanning `span`.
+    fn writes_outside(&self, name: &str, span: oxc_span::Span) -> bool {
+        let outside =
+            |offset: &usize| (*offset as u32) < span.start || (*offset as u32) >= span.end;
+        self.writes
+            .iter()
+            .any(|(written, offset)| written == name && outside(offset))
+            || self
+                .functions
+                .iter()
+                .any(|(declared, offset)| declared == name && outside(offset))
+    }
+}
+
+fn postfix_before_slash(code: &str) -> bool {
+    ["++", "--"].iter().any(|operator| {
+        code.match_indices(operator)
+            .any(|(at, _)| code[at + 2..].trim_start().starts_with('/'))
+    })
 }
 
 /// The binding names of the declarators of a `var`/`let` declaration whose own
-/// bindings the file never writes. An unrelated declarator that is written
+/// bindings the file never writes (RIPR-SPEC-0243 rule 1; pre-ES2015 CommonJS
+/// binds `var test = require('tape')`), so each is as immutable as a `const`.
+/// Only `require()`-initialized declarators can yield a runner import, so only
+/// they are judged; an unrelated written declarator
 /// (`var counter = 0, test = require('tape'); counter++`) does not withdraw
-/// the runner declarator; each declarator is judged on its own bindings.
+/// the runner declarator. A reassignment, update, loop target, wrapped target
+/// or block-level function declaration of the name refuses.
 fn unwritten_declarator_locals(
     declaration: &oxc_ast::ast::VariableDeclaration<'_>,
-    code: Option<&str>,
+    scan: Option<&BindingScan>,
 ) -> Vec<String> {
     use oxc_ast::ast::VariableDeclarationKind::{Let, Var};
-    let Some(code) = code else {
+    let Some(scan) = scan else {
         return Vec::new();
     };
     if !matches!(declaration.kind, Var | Let) {
@@ -333,22 +371,26 @@ fn unwritten_declarator_locals(
     }
     let mut locals = Vec::new();
     for declarator in &declaration.declarations {
-        let outside = format!(
-            "{}{}",
-            &code[..declarator.span.start as usize],
-            &code[declarator.span.end as usize..]
-        );
-        let names: Vec<String> = declarator
-            .id
-            .get_binding_identifiers()
-            .iter()
-            .map(|id| id.name.to_string())
-            .collect();
+        let Some(init) = declarator
+            .init
+            .as_ref()
+            .map(Expression::get_inner_expression)
+        else {
+            continue;
+        };
+        let call = match init {
+            Expression::StaticMemberExpression(member) => &member.object,
+            other => other,
+        };
+        if require_string_literal_source(call.get_inner_expression()).is_none() {
+            continue;
+        }
+        let names = declarator.id.get_binding_identifiers();
         if names
             .iter()
-            .all(|name| !super::tests_extract::identifier_written_in(&outside, name))
+            .all(|id| !scan.writes_outside(id.name.as_str(), declarator.span))
         {
-            locals.extend(names);
+            locals.extend(names.iter().map(|id| id.name.to_string()));
         }
     }
     locals

@@ -1923,6 +1923,116 @@ fn assigned_identifier_names(text: &str) -> Vec<String> {
     names
 }
 
+/// `true` when `before` (text ending in `.`) is a global-object receiver
+/// (`globalThis.`, `this.`, `window.`, `global.`, `self.`): a write through it
+/// can rebind a sloppy-mode `var` of the same name, so it is scanned like a
+/// bare identifier (fail-closed).
+fn global_object_member(before: &str) -> bool {
+    let receiver = before[..before.len() - 1].trim_end();
+    ["globalThis", "this", "window", "global", "self"]
+        .iter()
+        .any(|name| {
+            receiver.strip_suffix(name).is_some_and(|head| {
+                !head.ends_with(|ch: char| {
+                    ch.is_alphanumeric() || ch == '_' || ch == '$' || ch == '.'
+                })
+            })
+        })
+}
+
+/// `true` when the identifier ending just before `rest` is written through
+/// grouping or a TypeScript wrapper: `(name) = x`, `(name)++`, `++(name)`,
+/// `name! = x`, `(name as T) = x`, `(name satisfies T) = x` and
+/// `for ((name) of xs)`. Fail-closed: the identifier counts as written when
+/// closing parentheses, a non-null `!` or an `as`/`satisfies` clause stand
+/// between it and an assignment operator, update or loop keyword.
+fn wrapped_write(before: &str, rest: &str) -> bool {
+    if before.ends_with('(') {
+        let lead = before.trim_end_matches(|ch: char| ch == '(' || ch.is_whitespace());
+        if lead.ends_with("++") || lead.ends_with("--") {
+            return true;
+        }
+    }
+    let mut rest = rest;
+    let mut wrapped = false;
+    loop {
+        let trimmed = rest.trim_start();
+        if let Some(after) = trimmed.strip_prefix(')') {
+            rest = after;
+        } else if trimmed.starts_with('!') && !trimmed.starts_with("!=") {
+            rest = &trimmed[1..];
+        } else if ["as", "satisfies"].iter().any(|keyword| {
+            trimmed
+                .strip_prefix(keyword)
+                .is_some_and(|tail| tail.starts_with(|ch: char| ch.is_whitespace() || ch == '('))
+        }) {
+            match trimmed.find(')') {
+                Some(close) => rest = &trimmed[close + 1..],
+                None => return false,
+            }
+        } else {
+            break;
+        }
+        wrapped = true;
+    }
+    if !wrapped {
+        return false;
+    }
+    let rest = rest.trim_start();
+    if rest.starts_with("++") || rest.starts_with("--") {
+        return true;
+    }
+    let operator_end = rest
+        .find(|ch: char| {
+            !matches!(
+                ch,
+                '+' | '-' | '*' | '/' | '%' | '&' | '|' | '^' | '?' | '<' | '>'
+            )
+        })
+        .unwrap_or(rest.len());
+    let after_operator = &rest[operator_end..];
+    if after_operator.starts_with('=')
+        && !after_operator[1..].starts_with(['=', '>'])
+        && !matches!(&rest[..operator_end], "<" | ">" | "!")
+    {
+        return true;
+    }
+    ["of", "in"].iter().any(|keyword| {
+        rest.strip_prefix(keyword).is_some_and(|tail| {
+            !tail.starts_with(|ch: char| ch.is_alphanumeric() || ch == '_' || ch == '$')
+        })
+    })
+}
+
+/// Every function declaration or expression name `text` introduces, with its
+/// byte offset (`function name`, `function* name`). A declaration nested in a
+/// block re-binds a sloppy-mode `var` of the same name (Annex B.3.3), so
+/// callers treat it as a write to that name.
+pub(crate) fn function_declaration_names(text: &str) -> Vec<(String, usize)> {
+    let mut names = Vec::new();
+    let mut from = 0;
+    while let Some(found) = text[from..].find("function") {
+        let start = from + found;
+        from = start + "function".len();
+        let boundary_before = text[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_' || ch == '$' || ch == '.'));
+        if !boundary_before {
+            continue;
+        }
+        let rest = text[from..].trim_start_matches(|ch: char| ch.is_whitespace() || ch == '*');
+        let name_start = text.len() - rest.len();
+        let length = rest
+            .find(|ch: char| !(ch.is_alphanumeric() || ch == '_' || ch == '$'))
+            .unwrap_or(rest.len());
+        if length > 0 && name_start > from {
+            names.push((rest[..length].to_string(), name_start));
+        }
+    }
+    names
+}
+
 /// `true` when `text` may write `identifier`; see [`identifier_writes`].
 pub(crate) fn identifier_written_in(text: &str, identifier: &str) -> bool {
     identifier_writes(text)
@@ -1936,7 +2046,7 @@ pub(crate) fn identifier_written_in(text: &str, identifier: &str) -> bool {
 /// that is itself assigned (`[name] = ...`, `({ name } = ...)`). Member
 /// targets (`this.name =`) are not writes. Comments and strings are not
 /// skipped: a false entry only withholds a relation.
-fn identifier_writes(text: &str) -> Vec<(String, usize)> {
+pub(crate) fn identifier_writes(text: &str) -> Vec<(String, usize)> {
     let bytes = text.as_bytes();
     let destructured = destructuring_ranges(text);
     let mut writes = Vec::new();
@@ -1955,7 +2065,7 @@ fn identifier_writes(text: &str) -> Vec<(String, usize)> {
             index += 1;
         }
         let before = text[..start].trim_end();
-        if before.ends_with('.') && !before.ends_with("...") {
+        if before.ends_with('.') && !before.ends_with("...") && !global_object_member(before) {
             continue;
         }
         let rest = text[index..].trim_start();
@@ -1986,7 +2096,8 @@ fn identifier_writes(text: &str) -> Vec<(String, usize)> {
                 prefix.ends_with("for") || prefix.ends_with("await")
             });
         let in_target = destructured.iter().any(|range| range.contains(&start));
-        if assigns || steps || loop_target || in_target {
+        let wrapped = wrapped_write(before, rest);
+        if assigns || steps || loop_target || in_target || wrapped {
             writes.push((text[start..index].to_string(), start));
         }
     }
