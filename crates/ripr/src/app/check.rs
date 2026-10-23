@@ -45,6 +45,16 @@ pub fn check_workspace_with_config(
     check_with_progress(input, config, AnalysisProgressScope::Diff, None)
 }
 
+/// [`check_workspace_with_config`] keeping the failure typed, so a caller
+/// (the MCP refresh) can name the recovery route for the failure family
+/// instead of re-reading rendered text.
+pub(crate) fn check_workspace_with_config_typed(
+    input: CheckInput,
+    config: &RiprConfig,
+) -> Result<CheckOutput, CoreError> {
+    check_with_progress_core(input, config, AnalysisProgressScope::Diff, None)
+}
+
 pub fn check_workspace_worktree_with_config(
     input: CheckInput,
     config: &RiprConfig,
@@ -215,7 +225,7 @@ fn check_with_progress_and_origins(
 }
 
 fn check_with_progress_and_origins_with_open_rust_paths(
-    mut input: CheckInput,
+    input: CheckInput,
     config: &RiprConfig,
     scope: AnalysisProgressScope,
     sink: Option<&dyn AnalysisProgressSink>,
@@ -235,6 +245,57 @@ fn check_with_progress_and_origins_with_open_rust_paths(
     CoreError,
 > {
     let mut progress = ProgressRun::new(sink, scope);
+    // #9922: a user-fixable input failure (unresolvable base, unusable root
+    // or config, missing `--diff` file) is reported by the real error the
+    // caller prints; the CLI progress sink must not also project `failed`.
+    let missing_diff_file = input
+        .diff_file
+        .as_ref()
+        .is_some_and(|path| path != std::path::Path::new("-") && !path.exists());
+    let result = check_with_progress_and_origins_run(
+        input,
+        config,
+        scope,
+        open_rust_index_paths,
+        disclosure_probes,
+        &mut progress,
+    );
+    if let Err(error) = &result
+        && (missing_diff_file || error_is_user_fixable_input(error))
+    {
+        progress.fail_user_fixable();
+    }
+    result
+}
+
+fn error_is_user_fixable_input(error: &CoreError) -> bool {
+    use crate::core_error::CheckFailureKind;
+    matches!(
+        error.check_failure_kind(),
+        Some(
+            CheckFailureKind::BaseUnresolvable
+                | CheckFailureKind::RepositoryRootUnusable
+                | CheckFailureKind::ConfigInvalid
+                | CheckFailureKind::SuppressionPolicyInvalid
+        )
+    )
+}
+
+fn check_with_progress_and_origins_run(
+    mut input: CheckInput,
+    config: &RiprConfig,
+    scope: AnalysisProgressScope,
+    open_rust_index_paths: &std::collections::BTreeSet<PathBuf>,
+    disclosure_probes: crate::analysis::DisclosureProbes,
+    progress: &mut ProgressRun<'_>,
+) -> Result<
+    (
+        CheckOutput,
+        crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
+        crate::analysis::consumed_source::ConsumedRustSources,
+    ),
+    CoreError,
+> {
     progress.emit(AnalysisProgressStage::LoadingInput);
     // Immutable Git candidate subjects (#3237 / #3276): bind-and-validate
     // only in this build. Validate first, before any subprocess or diff
@@ -327,7 +388,10 @@ fn check_with_progress_and_origins_with_open_rust_paths(
             &languages,
             &config.languages().rust,
             config.languages(),
-            config.perl().cache_dir(),
+            crate::analysis::DiffIntake {
+                perl_cache_dir: config.perl().cache_dir(),
+                scope: &input.scope,
+            },
         )?,
         AnalysisProgressScope::Worktree => {
             run_worktree_analysis_with_oracle_policy_and_rust_config(
@@ -336,7 +400,10 @@ fn check_with_progress_and_origins_with_open_rust_paths(
                 &languages,
                 &config.languages().rust,
                 config.languages(),
-                config.perl().cache_dir(),
+                crate::analysis::DiffIntake {
+                    perl_cache_dir: config.perl().cache_dir(),
+                    scope: &input.scope,
+                },
                 disclosure_probes,
             )?
         }
@@ -345,6 +412,7 @@ fn check_with_progress_and_origins_with_open_rust_paths(
             config.oracles(),
             &languages,
             &config.languages().rust,
+            config.languages(),
         )?,
     };
     // #5988: the published identity block must distinguish runs whose loaded

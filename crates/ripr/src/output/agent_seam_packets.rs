@@ -204,6 +204,7 @@ pub(crate) fn render_agent_seam_packets_json_with_causal_and_outcome(
         analysis_outcome,
         analysis_outcome_required,
         PacketCommandContext::Portable,
+        &[],
     )
 }
 
@@ -216,6 +217,7 @@ pub(crate) fn render_agent_seam_packets_json_for_root(
     limit_info: Option<RepoExposureLimit<'_>>,
     causal_projection: Option<&CausalDeltaArtifact>,
     root: &str,
+    declined: &[crate::analysis::DeclinedRustFile],
 ) -> String {
     render_agent_seam_packets_json_with_root(
         classified,
@@ -224,6 +226,7 @@ pub(crate) fn render_agent_seam_packets_json_for_root(
         None,
         false,
         PacketCommandContext::Standalone { root },
+        declined,
     )
 }
 
@@ -264,6 +267,7 @@ fn render_agent_seam_packets_json_with_root(
     analysis_outcome: Option<&AnalysisOutcome>,
     analysis_outcome_required: bool,
     context: PacketCommandContext<'_>,
+    declined: &[crate::analysis::DeclinedRustFile],
 ) -> String {
     let canonical_gaps = canonical_gap_identities(classified);
     let mut out = String::new();
@@ -281,31 +285,51 @@ fn render_agent_seam_packets_json_with_root(
     }
 
     // run_status mirrors the repo-exposure pattern: "complete" when nothing
-    // was capped, "seam_limit_applied" when either cap fired.
-    match limit_info {
-        None => out.push_str("  \"run_status\": \"complete\",\n"),
-        Some(_) => out.push_str("  \"run_status\": \"seam_limit_applied\",\n"),
+    // was capped, "seam_limit_applied" when either cap fired, and
+    // "limited_declined_files" when only a parse-limit decline applies (#9308).
+    match (limit_info, declined.is_empty()) {
+        (None, true) => out.push_str("  \"run_status\": \"complete\",\n"),
+        (None, false) => out.push_str("  \"run_status\": \"limited_declined_files\",\n"),
+        (Some(_), _) => out.push_str("  \"run_status\": \"seam_limit_applied\",\n"),
     }
 
+    let mut limitations = Vec::new();
     if let Some(limit) = limit_info {
         let info = limit.info();
         let repair_route = limit.repair_route();
-        out.push_str("  \"limitations\": [\n");
-        out.push_str("    {\n");
-        out.push_str(&format!("      \"category\": \"{}\",\n", limit.category()));
-        out.push_str(&format!("      \"seams_analyzed\": {},\n", info.analyzed));
-        out.push_str(&format!("      \"seams_total\": {},\n", info.total));
-        out.push_str(&format!(
-            "      \"limit_source\": \"{}\",\n",
-            info.source.as_str()
-        ));
-        out.push_str(&format!("      \"control\": \"{}\",\n", limit.control()));
-        out.push_str(&format!(
-            "      \"repair_route\": \"{}\"\n",
+        limitations.push(format!(
+            "    {{\n      \"category\": \"{}\",\n      \"seams_analyzed\": {},\n      \"seams_total\": {},\n      \"limit_source\": \"{}\",\n      \"control\": \"{}\",\n      \"repair_route\": \"{}\"\n    }}",
+            limit.category(),
+            info.analyzed,
+            info.total,
+            info.source.as_str(),
+            limit.control(),
             crate::output::json::escape(repair_route)
         ));
-        out.push_str("    }\n");
-        out.push_str("  ],\n");
+    }
+    if !declined.is_empty() {
+        let files = declined
+            .iter()
+            .take(3)
+            .map(|file| {
+                format!(
+                    "{{\"path\": \"{}\", \"reason\": \"{}\"}}",
+                    crate::output::json::escape(&file.path.to_string_lossy().replace('\\', "/")),
+                    crate::output::json::escape(&file.reason)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        limitations.push(format!(
+            "    {{\n      \"category\": \"rust_files_declined\",\n      \"declined_file_count\": {},\n      \"declined_files\": [{}],\n      \"repair_route\": \"Split the listed file(s) below the Rust parse budget, or save them as UTF-8, then re-run; until then their seams are under-credited and packets may be missing.\"\n    }}",
+            declined.len(),
+            files
+        ));
+    }
+    if !limitations.is_empty() {
+        out.push_str("  \"limitations\": [\n");
+        out.push_str(&limitations.join(",\n"));
+        out.push_str("\n  ],\n");
     }
 
     let actionable: Vec<&ClassifiedSeam> = classified
@@ -522,6 +546,7 @@ pub(crate) fn render_agent_seam_packet_json_with_context(
         None,
         false,
         context,
+        &[],
     )
 }
 
@@ -771,6 +796,40 @@ pub(crate) fn render_agent_gap_record_packet_json_with_causal(
         .map_err(|err| format!("render agent gap packet JSON failed: {err}"))?;
     rendered.push('\n');
     Ok(rendered)
+}
+
+/// Render the repair packet a gap-bound TypeScript repair start consumes
+/// (#9103, RIPR-SPEC-0311). This is the shared GapRecord packet builder
+/// ([`render_agent_gap_record_packet_json`]) with the canonical gap id named
+/// as the packet's `seam_id`, so the attempt authority's edit-cage reader
+/// binds the packet to the same identity the attempt records. No second
+/// packet shape and no second validator: the shared
+/// [`validate_agent_gap_record_packet`] runs inside the builder and stays the
+/// only actionability authority, so a record that does not validate yields
+/// no packet. Static evidence only; the packet claims no runtime outcome.
+pub(crate) fn render_typescript_gap_repair_packet(
+    gap_ledger_path: &str,
+    record: &GapRecord,
+) -> Result<String, String> {
+    if record.language != "typescript" {
+        return Err("gap-bound repair packets are rendered for TypeScript gaps only".to_string());
+    }
+    let canonical = non_empty(&record.canonical_gap_id)
+        .ok_or_else(|| "requires a canonical gap id".to_string())?;
+    let rendered = render_agent_gap_record_packet_json(gap_ledger_path, record)?;
+    let mut envelope: Value = serde_json::from_str(&rendered)
+        .map_err(|error| format!("decode TypeScript gap packet failed: {error}"))?;
+    let packet = envelope
+        .get_mut("packets")
+        .and_then(Value::as_array_mut)
+        .and_then(|packets| packets.first_mut())
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| "TypeScript gap packet envelope carries no packet".to_string())?;
+    packet.insert("seam_id".to_string(), Value::String(canonical));
+    let mut out = serde_json::to_string_pretty(&envelope)
+        .map_err(|error| format!("render TypeScript gap packet JSON failed: {error}"))?;
+    out.push('\n');
+    Ok(out)
 }
 
 fn gap_record_command_specs_json(record: &GapRecord) -> Option<serde_json::Value> {
@@ -1391,10 +1450,13 @@ pub(crate) fn targeted_test_brief_for_classified_seam(entry: &ClassifiedSeam) ->
     out.push_str("\nWhy it matters:\n");
     if let Some(test) = evidence.related_tests.first() {
         out.push_str(&format!(
-            "- Related test evidence: {} uses {} {} oracle.\n",
+            "- Related test evidence: {} uses {}.\n",
             test.test_name,
-            test.oracle_strength.as_str(),
-            test.oracle_kind.as_str()
+            crate::output::related_test_miss::oracle_projection(
+                &test.oracle_strength,
+                &test.oracle_kind,
+                !matches!(test.oracle_strength, crate::domain::OracleStrength::None),
+            )
         ));
     } else {
         out.push_str("- No related test location is visible in saved-workspace analysis.\n");
@@ -1444,10 +1506,20 @@ pub(crate) fn targeted_test_brief_for_classified_seam(entry: &ClassifiedSeam) ->
             "- Limitation route: {}\n",
             target.limitation_route
         ));
-        out.push_str(&format!(
-            "- Authority: {}; repair_packet_ready={}\n",
-            target.authority_boundary, target.repair_packet_ready
-        ));
+        // The wire value stays for identity, but the line must end in
+        // guidance, not a raw `key=value` dump (#9604): a navigation-only
+        // external observer has no automated repair route.
+        if target.repair_packet_ready {
+            out.push_str(&format!(
+                "- Authority: {}; repair packet ready for an automated start\n",
+                target.authority_boundary
+            ));
+        } else {
+            out.push_str(&format!(
+                "- Authority: {}; no automated repair route — ripr cannot drive an edit from this external-language observer, so open the test above and work by hand\n",
+                target.authority_boundary
+            ));
+        }
     }
 
     if !patterns_to_imitate.is_empty() {
@@ -1518,6 +1590,19 @@ pub(crate) fn targeted_test_brief_outline_for_classified_seam(
     }
 }
 
+/// Producer reason tokens travel in gap-ledger JSON; known tokens translate
+/// to a user sentence here so a refusal reads as guidance, not as a raw wire
+/// spelling (#9604). Unknown future tokens pass through verbatim so no
+/// evidence is ever dropped.
+fn humanize_agent_packet_refusal_reason(reason: &str) -> String {
+    match reason {
+        "already_observed" => {
+            "a test already observes this gap, so there is no repair to drive".to_string()
+        }
+        other => other.to_string(),
+    }
+}
+
 pub(crate) fn validate_agent_gap_record_packet(record: &GapRecord) -> Result<(), String> {
     validate_gap_record_command_specs(record)?;
     let projection = record
@@ -1529,7 +1614,10 @@ pub(crate) fn validate_agent_gap_record_packet(record: &GapRecord) -> Result<(),
         if reason.is_empty() {
             return Err("is not agent-packet eligible".to_string());
         }
-        return Err(format!("is not agent-packet eligible: {reason}"));
+        return Err(format!(
+            "is not agent-packet eligible: {}",
+            humanize_agent_packet_refusal_reason(reason)
+        ));
     }
     let Some(route) = record.repair_route.as_ref() else {
         return Err("requires a repair_route".to_string());
@@ -3753,6 +3841,102 @@ mod tests {
         Ok(record)
     }
 
+    fn typescript_gap_record(eligible: bool) -> Result<GapRecord, String> {
+        crate::output::gap_decision_ledger::parse_gap_records_json(&format!(
+            r#"{{"records":[{{
+              "gap_id": "probe:src/pricing.ts:typescript_preview:1a2b3c4d",
+              "canonical_gap_id": "gap:typescript:typescript_preview:1a2b3c4d",
+              "source_currentness": "candidate_current",
+              "kind":"typescript_preview_boundary",
+              "language":"typescript",
+              "language_status":"preview",
+              "scope":"diff",
+              "evidence_class":"weakly_exposed",
+              "gap_state":"advisory",
+              "policy_state":"preview",
+              "repairability":"repairable",
+              "anchor":{{"file":"src/pricing.ts","line":7,"owner":"discountedTotal","dedupe_fingerprint":"probe:src/pricing.ts:typescript_preview:1a2b3c4d"}},
+              "repair_route":{{
+                "route_kind":"AddBoundaryAssertion",
+                "target_file":"test/pricing.test.ts",
+                "related_test":"test/pricing.test.ts::discounts",
+                "missing_discriminator":"subtotal == DISCOUNT_THRESHOLD",
+                "assertion_shape":"expect(discountedTotal(10000)).toBe(expected)",
+                "stop_conditions":["Stop if the gap record is no longer present."]
+              }},
+              "verification_commands":["npx --no-install vitest run test/pricing.test.ts"],
+              "receipt_command":"ripr receipt write --gap-id gap:typescript:typescript_preview:1a2b3c4d",
+              "projection_eligibility":{{"agent_packet":{{"eligible":{eligible},"reason":"TypeScript preview complete-contract projection"}}}}
+            }}]}}"#
+        ))?
+        .pop()
+        .ok_or_else(|| "expected a TypeScript gap record".to_string())
+    }
+
+    #[test]
+    fn typescript_gap_repair_packet_names_the_canonical_gap_as_its_seam() -> Result<(), String> {
+        let record = typescript_gap_record(true)?;
+        let rendered = render_typescript_gap_repair_packet("before.check-findings.json", &record)?;
+        let value = serde_json::from_str::<serde_json::Value>(&rendered)
+            .map_err(|error| format!("packet JSON should parse: {error}"))?;
+        let packet = value["packets"]
+            .as_array()
+            .and_then(|packets| packets.first())
+            .ok_or_else(|| format!("missing packet: {rendered}"))?;
+        assert_eq!(
+            packet["seam_id"],
+            serde_json::json!("gap:typescript:typescript_preview:1a2b3c4d")
+        );
+        assert_eq!(
+            packet["allowed_edit_surface"],
+            serde_json::json!(["test/pricing.test.ts"])
+        );
+        assert_eq!(
+            packet["forbidden_files"],
+            serde_json::json!(["src/pricing.ts"])
+        );
+        assert_eq!(
+            packet["recommended_test"]["file"],
+            serde_json::json!("test/pricing.test.ts")
+        );
+        // Same builder, same envelope: the shared packet minus the seam alias.
+        let shared = render_agent_gap_record_packet_json("before.check-findings.json", &record)?;
+        let mut shared_value = serde_json::from_str::<serde_json::Value>(&shared)
+            .map_err(|error| format!("shared packet JSON should parse: {error}"))?;
+        let packet_mut = shared_value["packets"][0]
+            .as_object_mut()
+            .ok_or_else(|| "shared packet object".to_string())?;
+        packet_mut.insert(
+            "seam_id".to_string(),
+            serde_json::json!("gap:typescript:typescript_preview:1a2b3c4d"),
+        );
+        assert_eq!(shared_value, value);
+        Ok(())
+    }
+
+    #[test]
+    fn typescript_gap_repair_packet_stays_fail_closed() -> Result<(), String> {
+        // The shared validator is the only authority: an ineligible record
+        // yields no packet.
+        let refused = render_typescript_gap_repair_packet("p.json", &typescript_gap_record(false)?);
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|error| error.contains("not agent-packet eligible")),
+            "{refused:?}"
+        );
+        // A non-TypeScript record never renders through this entry.
+        let rust = typed_gap_record()?;
+        let refused = render_typescript_gap_repair_packet("p.json", &rust);
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|error| error.contains("TypeScript gaps only")),
+            "{refused:?}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn targeted_outline_accessor_identifies_limited_routes() {
         let limited = TargetedTestBriefOutline {
@@ -5391,8 +5575,10 @@ mod tests {
             Some(2)
         );
         assert!(
-            json.contains("is not agent-packet eligible: already_observed"),
-            "queue should explain excluded no-action records: {json}"
+            json.contains(
+                "is not agent-packet eligible: a test already observes this gap, so there is no repair to drive"
+            ),
+            "queue should explain excluded no-action records in user terms: {json}"
         );
         Ok(())
     }
@@ -5929,7 +6115,10 @@ mod tests {
             .ok_or_else(|| "expected parsed gap record".to_string())?;
         assert_eq!(
             render_agent_gap_record_packet_json("gap-ledger.json", record),
-            Err("is not agent-packet eligible: already_observed".to_string())
+            Err(
+                "is not agent-packet eligible: a test already observes this gap, so there is no repair to drive"
+                    .to_string()
+            )
         );
         Ok(())
     }
@@ -5979,7 +6168,7 @@ mod tests {
             "- weak, weakly_gripped",
             "- owner: pricing::discounted_total",
             "Why it matters:",
-            "- Related test evidence: below_threshold_has_no_discount uses strong exact_value oracle.",
+            "- Related test evidence: below_threshold_has_no_discount uses strong exact value oracle.",
             "- Missing discriminator: discount_threshold (equality boundary) (observed values do not include the equality-boundary case)",
             "Add a targeted test:",
             "- Suggested file: tests/pricing.rs",
@@ -6013,6 +6202,46 @@ mod tests {
                     "missing inferred brief text {needle:?} in:\n{brief}"
                 ));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn targeted_test_brief_oracle_wording_distinguishes_ungraded_assertions() -> Result<(), String>
+    {
+        for (kind, strength, expected) in [
+            (
+                OracleKind::ExactValue,
+                OracleStrength::Unknown,
+                "exact value oracle, not graded against this probe",
+            ),
+            (
+                OracleKind::Unknown,
+                OracleStrength::Unknown,
+                "an unclassified oracle, not graded against this probe",
+            ),
+            (
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+                "strong exact value oracle",
+            ),
+        ] {
+            let mut entry = weakly_gripped_classified();
+            entry.evidence.related_tests = vec![std::sync::Arc::new(related_test_with(
+                "observes_price",
+                kind,
+                strength,
+                crate::analysis::test_grip_evidence::RelationConfidence::High,
+            ))];
+            let brief = targeted_test_brief_for_classified_seam(&entry);
+            let row = brief
+                .lines()
+                .find(|line| line.starts_with("- Related test evidence:"))
+                .ok_or_else(|| format!("missing related-test evidence: {brief}"))?;
+            assert_eq!(
+                row,
+                format!("- Related test evidence: observes_price uses {expected}.")
+            );
         }
         Ok(())
     }
@@ -6234,7 +6463,7 @@ mod tests {
             "- Target: test/js/web/fetch/blob.test.ts:41",
             "- Test: blob copies resizable buffers",
             "- Language: typescript",
-            "- Authority: navigation_only_external_observer_context; repair_packet_ready=false",
+            "- Authority: navigation_only_external_observer_context; no automated repair route — ripr cannot drive an edit from this external-language observer, so open the test above and work by hand",
         ] {
             if !brief.contains(needle) {
                 return Err(format!(
@@ -7586,7 +7815,7 @@ mod tests {
             };
             let subjects = [weakly_gripped_classified(), strongly_gripped_classified()];
             let rendered =
-                render_agent_seam_packets_json_for_root(&subjects, Some(limit), None, ".");
+                render_agent_seam_packets_json_for_root(&subjects, Some(limit), None, ".", &[]);
             let doc: serde_json::Value =
                 serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
             assert_eq!(doc["run_status"], "seam_limit_applied", "{doc}");

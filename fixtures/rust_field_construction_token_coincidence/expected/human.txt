@@ -23,6 +23,11 @@ Start here:
     implementations with a focused run using the project's configured test runner (`cargo test` for
     ordinary Cargo tests). Static classification may remain unknown
   Evidence: reach yes · infection yes · propagation unknown · observation yes · discriminator not established
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: Related tests appear to reach default_config: config_timeout_and_fallback_retries
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 8 more detail line(s) in --format human-full
@@ -32,7 +37,7 @@ Next: drill into the top finding:
   ripr context --root <cwd>/fixtures/rust_field_construction_token_coincidence/input --diff <cwd>/fixtures/rust_field_construction_token_coincidence/diff.patch --mode fast --at probe:src_lib.rs:return_value:8ed284d1
   no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:return_value:8ed284d1 --root <cwd>/fixtures/rust_field_construction_token_coincidence/input` for the full gate's answer
 Write a test for it:
-  ripr agent stub --root <cwd>/fixtures/rust_field_construction_token_coincidence/input --at src/lib.rs:9 --kind return_value
+  ripr agent stub --root <cwd>/fixtures/rust_field_construction_token_coincidence/input --at src/lib.rs:8 --kind return_value
 
 Hidden:
   All 1 omitted finding(s) are base-side evidence, not candidate edit targets.

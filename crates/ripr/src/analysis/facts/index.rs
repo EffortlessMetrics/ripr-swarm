@@ -120,6 +120,9 @@ pub struct RustIndex {
     test_positions: Vec<usize>,
     membership_revision: u64,
     pub package_names: BTreeSet<String>,
+    /// The identifier the root package's library is imported as (#8999);
+    /// `None` when not established. Not serialized, like `macro_owned_crates`.
+    pub(crate) root_library_name: Option<String>,
     /// `package_names` plus the crate names of workspace members that have
     /// at least one indexed file. Only the trusted-macro binding scan reads
     /// it: a glob import from such a crate brings in macros whose
@@ -135,6 +138,9 @@ pub struct RustIndex {
     /// member's library, read from member manifests. Unset for an index
     /// assembled without a manifest walk, which names nothing.
     pub(crate) member_crates: super::member_crates::MemberCrates,
+    /// All module parents approved by composition, independently of its
+    /// canonical role explanation. Transient: rebuilt after file-cache reads.
+    pub(crate) execution_module_parents: Option<BTreeMap<PathBuf, Vec<SourceRoleProvenanceEdge>>>,
     pub include_parents: BTreeMap<PathBuf, ResolvedIncludeParent>,
     pub include_limitations: Vec<RustIncludeLimitation>,
     pub non_utf8_sources: BTreeSet<PathBuf>,
@@ -448,6 +454,8 @@ impl serde::Serialize for IndexFiles<'_> {
     }
 }
 
+const SLACK_CHECKPOINT_STRIDE: usize = 4096;
+
 impl RustIndex {
     /// Crate names whose glob imports the trusted-macro scan treats as
     /// workspace-owned: `macro_owned_crates` when the build computed it,
@@ -508,6 +516,7 @@ impl RustIndex {
     /// Insert each supplied occurrence once. Shared membership is explicit;
     /// equal names, coordinates and bodies never collapse two occurrences.
     pub fn insert_file(&mut self, path: PathBuf, facts: FileFacts, flat: bool) {
+        self.execution_module_parents = None;
         self.call_identity_memos.clear();
         self.bump_membership_revision();
         let FileFacts {
@@ -592,10 +601,51 @@ impl RustIndex {
         self.test_positions[id.offset] = self.test_order.len();
         self.test_order.push(id);
     }
-    #[cfg(test)]
-    pub fn remove_file(&mut self, path: &Path) -> bool {
+    pub(crate) fn remove_file(&mut self, path: &Path) -> bool {
         self.bump_membership_revision();
-        self.files.remove(path).is_some()
+        let Some(removed) = self.files.remove(path) else {
+            return false;
+        };
+        self.call_identity_memos.clear();
+        self.execution_module_parents = None;
+        // Purge the flat memberships too: `finalize` keeps every record a
+        // flat order names, so a removed file's tests and functions would
+        // otherwise survive as evidence (and a changed file would appear
+        // twice after its replacement is inserted). Filter by the removed
+        // file's own memberships and by each fact's owning file, which also
+        // covers flat-only records (role splits, `push_test`/`push_function`)
+        // whose facts name the same file.
+        let removed_functions: std::collections::BTreeSet<usize> =
+            removed.functions.iter().map(|id| id.offset).collect();
+        let removed_tests: std::collections::BTreeSet<usize> =
+            removed.tests.iter().map(|id| id.offset).collect();
+        self.function_order.retain(|id| {
+            !removed_functions.contains(&id.offset)
+                && self.function_facts[*id].file.as_path() != path
+        });
+        self.test_order.retain(|id| {
+            !removed_tests.contains(&id.offset) && self.test_facts[*id].file.as_path() != path
+        });
+        self.non_utf8_sources.remove(path);
+        // The file's doctest sources die with it: a re-inserted file must
+        // register its examples from its new bytes, never the old text.
+        self.doctest_sources
+            .retain(|(file, _), _| file.as_path() != path);
+        // Positions follow the retained orders; rebuild them now so slot
+        // lookups never answer from the pre-removal layout.
+        self.function_positions.clear();
+        self.function_positions
+            .resize(self.function_facts.len(), usize::MAX);
+        for (position, id) in self.function_order.iter().enumerate() {
+            self.function_positions[id.offset] = position;
+        }
+        self.test_positions.clear();
+        self.test_positions
+            .resize(self.test_facts.len(), usize::MAX);
+        for (position, id) in self.test_order.iter().enumerate() {
+            self.test_positions[id.offset] = position;
+        }
+        true
     }
     /// Drop records unreachable from either view, preserving every surviving
     /// occurrence and each view's order. No source or earlier generation is pinned.
@@ -616,7 +666,117 @@ impl RustIndex {
         );
         crate::analysis::cancellation::checkpoint()?;
         self.refresh_memberships()?;
+        crate::analysis::cancellation::checkpoint()?;
+        self.release_build_slack()?;
         crate::analysis::cancellation::checkpoint()
+    }
+    /// The parse producers push facts one at a time, so every growable
+    /// buffer ends up with spare capacity: about a quarter of a cold
+    /// workspace index. A finished index never grows, so give the spare back.
+    ///
+    /// Cancellation is checked every [`SLACK_CHECKPOINT_STRIDE`] facts, so a
+    /// superseded analysis stops within a bounded slice of the pass.
+    fn release_build_slack(&mut self) -> Result<(), String> {
+        self.release_build_slack_in_strides(SLACK_CHECKPOINT_STRIDE)
+    }
+
+    /// The stride is a parameter so a test can cross several checkpoints
+    /// without building a multi-thousand-fact index.
+    fn release_build_slack_in_strides(&mut self, stride: usize) -> Result<(), String> {
+        self.function_order.shrink_to_fit();
+        self.test_order.shrink_to_fit();
+        self.function_positions.shrink_to_fit();
+        self.test_positions.shrink_to_fit();
+        self.function_facts.records.shrink_to_fit();
+        for (visited, fact) in self.function_facts.iter_mut().enumerate() {
+            if visited % stride == 0 {
+                crate::analysis::cancellation::checkpoint()?;
+            }
+            fact.name.shrink_to_fit();
+            fact.calls.shrink_to_fit();
+            fact.returns.shrink_to_fit();
+            fact.literals.shrink_to_fit();
+            fact.attrs.shrink_to_fit();
+            fact.impl_attrs.shrink_to_fit();
+            fact.nested_fn_names.shrink_to_fit();
+            fact.let_bindings.shrink_to_fit();
+            for call in &mut fact.calls {
+                call.name.shrink_to_fit();
+            }
+            for ret in &mut fact.returns {
+                ret.text.shrink_to_fit();
+            }
+            for literal in &mut fact.literals {
+                literal.value.shrink_to_fit();
+            }
+            for attr in fact.attrs.iter_mut().chain(&mut fact.impl_attrs) {
+                attr.shrink_to_fit();
+            }
+            for name in &mut fact.nested_fn_names {
+                name.shrink_to_fit();
+            }
+            for binding in &mut fact.let_bindings {
+                binding.name.shrink_to_fit();
+            }
+        }
+        self.test_facts.records.shrink_to_fit();
+        for (visited, fact) in self.test_facts.iter_mut().enumerate() {
+            if visited % stride == 0 {
+                crate::analysis::cancellation::checkpoint()?;
+            }
+            fact.name.shrink_to_fit();
+            fact.calls.shrink_to_fit();
+            fact.assertions.shrink_to_fit();
+            fact.literals.shrink_to_fit();
+            fact.attrs.shrink_to_fit();
+            fact.nested_fn_names.shrink_to_fit();
+            fact.let_bindings.shrink_to_fit();
+            for call in &mut fact.calls {
+                call.name.shrink_to_fit();
+            }
+            for assertion in &mut fact.assertions {
+                assertion.text.shrink_to_fit();
+                assertion.observed_tokens.shrink_to_fit();
+                for token in &mut assertion.observed_tokens {
+                    token.shrink_to_fit();
+                }
+            }
+            for literal in &mut fact.literals {
+                literal.value.shrink_to_fit();
+            }
+            for attr in &mut fact.attrs {
+                attr.shrink_to_fit();
+            }
+            for name in &mut fact.nested_fn_names {
+                name.shrink_to_fit();
+            }
+            for binding in &mut fact.let_bindings {
+                binding.name.shrink_to_fit();
+            }
+        }
+        for (visited, file) in self.files.values_mut().enumerate() {
+            if visited % stride == 0 {
+                crate::analysis::cancellation::checkpoint()?;
+            }
+            file.functions.shrink_to_fit();
+            file.tests.shrink_to_fit();
+            file.data.returns.shrink_to_fit();
+            file.data.literals.shrink_to_fit();
+            file.data.probe_shapes.shrink_to_fit();
+            for ret in &mut file.data.returns {
+                ret.text.shrink_to_fit();
+            }
+            for literal in &mut file.data.literals {
+                literal.value.shrink_to_fit();
+            }
+            file.data.module_declarations.shrink_to_fit();
+            file.data.unresolved_property_macros.shrink_to_fit();
+            file.data.role_provenance.edges.shrink_to_fit();
+            for edge in &mut file.data.role_provenance.edges {
+                edge.declaration.shrink_to_fit();
+            }
+        }
+        Ok(())
     }
     pub(super) fn validate_memberships(&self) -> Result<(), String> {
         validate(
@@ -740,7 +900,6 @@ impl RustIndex {
         }
         index
     }
-    #[cfg(test)]
     pub(crate) fn owned_file(&self, path: &Path) -> Option<FileFacts> {
         let file = self.files().get(path)?;
         let FileData {

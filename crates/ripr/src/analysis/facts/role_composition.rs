@@ -40,7 +40,7 @@ use std::path::{Component, Path, PathBuf};
 /// Chain-walk bound, mirroring the include pass's depth limit. Module and
 /// include chains past this bound are exotic input that fails closed instead
 /// of risking unbounded recursion.
-const MAX_CONTEXT_CHAIN_DEPTH: usize = 32;
+pub(super) const MAX_CONTEXT_CHAIN_DEPTH: usize = 32;
 
 /// Limitation reason: two distinct parent declarations resolve to the same
 /// child file (or a default-resolution declaration matches both candidate
@@ -98,7 +98,9 @@ impl Context {
 /// fully parsed, normalized index. Deterministic: all intermediate maps are
 /// ordered, so grants and provenance are byte-identical across runs.
 pub(super) fn compose_index_source_roles(index: &mut RustIndex, workspace_root: &Path) {
-    let module_edges = resolved_module_edges(index, workspace_root);
+    let mut execution_parents = BTreeMap::new();
+    let module_edges = resolved_module_edges(index, workspace_root, &mut execution_parents);
+    index.execution_module_parents = Some(execution_parents);
     // Phase 1 (immutable): resolve every file's context and provenance.
     // The resolver borrows `include_parents`, so all mutations wait for it
     // to go out of scope.
@@ -290,10 +292,14 @@ enum DeclarationTargets {
 fn resolved_module_edges(
     index: &RustIndex,
     workspace_root: &Path,
+    execution_parents: &mut BTreeMap<PathBuf, Vec<SourceRoleProvenanceEdge>>,
 ) -> BTreeMap<PathBuf, Result<ModuleEdge, &'static str>> {
     let mut candidates: BTreeMap<PathBuf, BTreeSet<(PathBuf, usize, String, bool)>> =
         BTreeMap::new();
     let mut ambiguous: BTreeSet<PathBuf> = BTreeSet::new();
+    // (declaring file, line) -> simple cfg guard, for exclusive-alternative
+    // detection below.
+    let mut guards: BTreeMap<(PathBuf, usize), (String, bool)> = BTreeMap::new();
     let containing_directory_files = index
         .files
         .iter()
@@ -342,6 +348,9 @@ fn resolved_module_edges(
                     ambiguous.extend(children);
                 }
                 DeclarationTargets::Exact(child) => {
+                    if let Some(guard) = &declaration.cfg_guard {
+                        guards.insert((file.clone(), declaration.line), guard.clone());
+                    }
                     candidates.entry(child).or_default().insert((
                         file.clone(),
                         declaration.line,
@@ -359,9 +368,20 @@ fn resolved_module_edges(
     // has a single exact owner (two declarations can both reach the same
     // child file). The candidates loop runs first and skips ambiguous
     // children; the moved set then seeds their errors.
+    let mut crate_roots = CrateRoots::default();
     for (child, owners) in &candidates {
         if ambiguous.contains(child)
-            || (owners.len() > 1 && !is_shared_integration_test_module(child, owners, &candidates))
+            || (owners.len() > 1
+                && !is_shared_integration_test_module(child, owners, &candidates)
+                && !are_distinct_target_crate_roots(
+                    index,
+                    owners,
+                    &candidates,
+                    &ambiguous,
+                    &mut crate_roots,
+                    workspace_root,
+                )
+                && !are_exclusive_cfg_alternatives(owners, &guards))
         {
             edges.insert(child.clone(), Err(REASON_MODULE_AMBIGUOUS_PARENT));
         }
@@ -378,6 +398,24 @@ fn resolved_module_edges(
         if edges.contains_key(&child) {
             continue;
         }
+        // Role agreement admits the edges, not a unique execution scope.
+        // Retain every approved parent before selecting the role explanation.
+        execution_parents.insert(
+            child.clone(),
+            owners
+                .iter()
+                .map(
+                    |(parent, line, declaration, requires_test)| SourceRoleProvenanceEdge {
+                        kind: SourceRoleProvenanceEdgeKind::Module,
+                        parent: parent.clone(),
+                        child: child.clone(),
+                        declaration: declaration.clone(),
+                        line: *line,
+                        requires_test: *requires_test,
+                    },
+                )
+                .collect(),
+        );
         if let Some((parent, line, declaration, requires_test)) = owners.into_iter().next() {
             edges.insert(
                 child,
@@ -391,6 +429,34 @@ fn resolved_module_edges(
         }
     }
     edges
+}
+
+/// True when the owners are exactly two declarations in one file, guarded by
+/// `#[cfg(X)]` and `#[cfg(not(X))]` for the same simple predicate, with the
+/// same declaration text and test requirement. At most one is ever compiled,
+/// so they are alternatives of one owner rather than competing parents (the
+/// `rust-lang/log` `src/kv/mod.rs` `mod source;` shape). Any other shape,
+/// including non-complementary or compound cfgs, stays ambiguous.
+fn are_exclusive_cfg_alternatives(
+    owners: &BTreeSet<(PathBuf, usize, String, bool)>,
+    guards: &BTreeMap<(PathBuf, usize), (String, bool)>,
+) -> bool {
+    let mut iter = owners.iter();
+    let (Some(first), Some(second), None) = (iter.next(), iter.next(), iter.next()) else {
+        return false;
+    };
+    if first.0 != second.0 || first.2 != second.2 || first.3 != second.3 {
+        return false;
+    }
+    match (
+        guards.get(&(first.0.clone(), first.1)),
+        guards.get(&(second.0.clone(), second.1)),
+    ) {
+        (Some((left, left_negated)), Some((right, right_negated))) => {
+            left == right && left_negated != right_negated
+        }
+        _ => false,
+    }
 }
 
 /// The idiomatic shared integration-test helper layout: several Cargo
@@ -421,6 +487,53 @@ fn is_shared_integration_test_module(
             parent.parent() == Some(tests_dir)
                 && parent.extension().and_then(|ext| ext.to_str()) == Some("rs")
                 && !candidates.contains_key(parent)
+        })
+}
+
+/// Several Cargo target crate roots (benches, examples, bins, integration
+/// tests, or manifest-declared target paths) each declare the same shared file,
+/// typically with `#[path = "../shared.rs"] mod shared;` (the tracing
+/// `benches/shared.rs` and crossbeam-channel `benchmarks/message.rs` shapes).
+/// Every root is its own compilation unit, so the child is compiled once per
+/// crate and the owners never compete inside one module graph. Holds only when
+/// every owner is a distinct file that is a Cargo target root, no owner is
+/// itself a module child or an `include!` target (an included root can sit
+/// behind a `#[cfg(test)]` or other context the owners would no longer share),
+/// and all declarations agree on name and test requirement. Non-root owners (two ordinary modules of one crate) stay
+/// ambiguous and fail closed.
+fn are_distinct_target_crate_roots(
+    index: &RustIndex,
+    owners: &BTreeSet<(PathBuf, usize, String, bool)>,
+    candidates: &BTreeMap<PathBuf, BTreeSet<(PathBuf, usize, String, bool)>>,
+    ambiguous: &BTreeSet<PathBuf>,
+    crate_roots: &mut CrateRoots,
+    workspace_root: &Path,
+) -> bool {
+    // An unresolved include anywhere may reach an owner through context the
+    // index cannot see, so no owner's context is established (the same
+    // fail-closed guard as `files_outside_module_tree`).
+    if !index.include_limitations.is_empty() {
+        return false;
+    }
+    let mut declarations = owners
+        .iter()
+        .map(|(_, _, declaration, requires_test)| (declaration, requires_test));
+    let Some(first) = declarations.next() else {
+        return false;
+    };
+    let distinct_files = owners
+        .iter()
+        .map(|(parent, _, _, _)| parent)
+        .collect::<BTreeSet<_>>()
+        .len();
+    declarations.all(|other| other == first)
+        && distinct_files == owners.len()
+        && owners.iter().all(|(parent, _, _, _)| {
+            !candidates.contains_key(parent)
+                && !ambiguous.contains(parent)
+                && !index.include_parents.contains_key(parent)
+                && !index.include_targets.contains(parent)
+                && crate_roots.is_crate_root(workspace_root, parent)
         })
 }
 
@@ -1796,6 +1909,179 @@ mod tests {
         Ok(())
     }
 
+    fn cfg_pair_reason(first: &str, second: &str, tag: &str) -> Result<Option<String>, String> {
+        let root = temp_dir(tag)?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(
+                &root,
+                "src/lib.rs",
+                &format!("{first}\nmod source;\n{second}\npub mod source;\n"),
+            )?,
+            write(&root, "src/source.rs", "pub fn helper() -> i32 { 1 }\n")?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+        Ok(index
+            .files()
+            .at(Path::new("src/source.rs"))
+            .data()
+            .role_provenance
+            .earliest_unresolved_reason
+            .clone())
+    }
+
+    /// `#[cfg(X)] mod m;` / `#[cfg(not(X))] pub mod m;` are alternatives of
+    /// one module (rust-lang/log `src/kv/mod.rs`), not competing parents.
+    #[test]
+    fn complementary_cfg_module_declarations_are_one_owner() -> Result<(), String> {
+        for (positive, negative) in [
+            (
+                "#[cfg(feature = \"kv_unstable\")]",
+                "#[cfg(not(feature = \"kv_unstable\"))]",
+            ),
+            ("#[cfg(unix)]", "#[cfg( not( unix ) )]"),
+        ] {
+            assert_eq!(cfg_pair_reason(positive, negative, "cfg-alt")?, None);
+            assert_eq!(cfg_pair_reason(negative, positive, "cfg-alt-rev")?, None);
+        }
+        Ok(())
+    }
+
+    /// Punctuation inside a quoted cfg value is data, not a compound
+    /// predicate; a real compound predicate still fails closed.
+    #[test]
+    fn quoted_cfg_value_punctuation_is_not_a_compound_predicate() -> Result<(), String> {
+        assert_eq!(
+            cfg_pair_reason(
+                "#[cfg(mode = \"a,b)\")]",
+                "#[cfg(not(mode = \"a,b)\"))]",
+                "cfg-quoted"
+            )?,
+            None
+        );
+        assert_eq!(
+            cfg_pair_reason("#[cfg(all(a, b))]", "#[cfg(not(all(a, b)))]", "cfg-real")?.as_deref(),
+            Some(REASON_MODULE_AMBIGUOUS_PARENT)
+        );
+        Ok(())
+    }
+
+    /// A backslash escape in a cfg value fails closed (no guard, so the pair
+    /// stays ambiguous).
+    #[test]
+    fn escaped_quote_in_cfg_value_fails_closed() -> Result<(), String> {
+        assert_eq!(
+            cfg_pair_reason(
+                "#[cfg(mode = \"a\\\" b\")]",
+                "#[cfg(not(mode = \"a\\\" b\"))]",
+                "cfg-escape"
+            )?
+            .as_deref(),
+            Some(REASON_MODULE_AMBIGUOUS_PARENT)
+        );
+        Ok(())
+    }
+
+    /// Cached facts written before `cfg_guard` existed still decode.
+    #[test]
+    fn module_declaration_without_cfg_guard_still_deserializes() -> Result<(), String> {
+        let fact: crate::analysis::facts::ModuleDeclarationFact = serde_json::from_str(
+            r#"{"name":"m","line":3,"path_target":{"kind":"default"},"requires_test":false}"#,
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(fact.cfg_guard, None);
+        assert_eq!(fact.name, "m");
+        Ok(())
+    }
+
+    /// `cfg(test)` / `cfg(not(test))` stays ambiguous by design: merging
+    /// would grant a test-only role to a child that also compiles in
+    /// production.
+    #[test]
+    fn cfg_test_pair_stays_ambiguous() -> Result<(), String> {
+        assert_eq!(
+            cfg_pair_reason("#[cfg(test)]", "#[cfg(not(test))]", "cfg-test-pair")?.as_deref(),
+            Some(REASON_MODULE_AMBIGUOUS_PARENT)
+        );
+        Ok(())
+    }
+
+    /// Other attributes cannot merge distinct module identities: a
+    /// `#[path]` that redirects one alternative to a different file leaves
+    /// each child with a single owner, and alternatives with different
+    /// declared names are not merged even under complementary guards.
+    #[test]
+    fn other_attributes_do_not_merge_distinct_module_identities() -> Result<(), String> {
+        let root = temp_dir("cfg-alt-path")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(
+                &root,
+                "src/lib.rs",
+                "#[cfg(unix)]\n#[path = \"other.rs\"]\nmod source;\n#[cfg(not(unix))]\nmod source;\n",
+            )?,
+            write(&root, "src/source.rs", "pub fn a() -> i32 { 1 }\n")?,
+            write(&root, "src/other.rs", "pub fn b() -> i32 { 1 }\n")?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+        for child in ["src/source.rs", "src/other.rs"] {
+            let provenance = &index.files().at(Path::new(child)).data().role_provenance;
+            assert_ne!(
+                provenance.earliest_unresolved_reason.as_deref(),
+                Some(REASON_MODULE_AMBIGUOUS_PARENT),
+                "{child} has one owner"
+            );
+        }
+        // Different declared names redirected to one file: not alternatives.
+        let root = temp_dir("cfg-alt-names")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(
+                &root,
+                "src/lib.rs",
+                "#[cfg(unix)]\n#[path = \"shared.rs\"]\nmod a;\n#[cfg(not(unix))]\n#[path = \"shared.rs\"]\nmod b;\n",
+            )?,
+            write(&root, "src/shared.rs", "pub fn c() -> i32 { 1 }\n")?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(
+            index
+                .files()
+                .at(Path::new("src/shared.rs"))
+                .data()
+                .role_provenance
+                .earliest_unresolved_reason
+                .as_deref(),
+            Some(REASON_MODULE_AMBIGUOUS_PARENT)
+        );
+        Ok(())
+    }
+
+    /// Negative: non-complementary, compound or unguarded pairs stay
+    /// ambiguous (fail closed).
+    #[test]
+    fn non_complementary_cfg_module_declarations_stay_ambiguous() -> Result<(), String> {
+        for (first, second) in [
+            ("#[cfg(unix)]", "#[cfg(windows)]"),
+            ("#[cfg(unix)]", "#[cfg(unix)]"),
+            ("#[cfg(unix)]", "#[cfg(not(windows))]"),
+            ("#[cfg(unix)]", ""),
+            ("#[cfg(all(unix, a))]", "#[cfg(not(all(unix, a)))]"),
+            ("#[cfg(feature = \"a\")]", "#[cfg(not(feature = \"b\"))]"),
+            ("#[cfg(unix)]", "#[cfg(not(unix))] #[cfg(a)]"),
+        ] {
+            assert_eq!(
+                cfg_pair_reason(first, second, "cfg-amb")?.as_deref(),
+                Some(REASON_MODULE_AMBIGUOUS_PARENT),
+                "{first} / {second}"
+            );
+        }
+        Ok(())
+    }
+
     /// The idiomatic `tests/common/mod.rs` layout, declared by several
     /// integration-test crate roots, is not an ambiguous parent: each test is
     /// its own crate. Owners that disagree on test requirement stay ambiguous.
@@ -1848,6 +2134,341 @@ mod tests {
                 .as_deref(),
             Some(REASON_MODULE_AMBIGUOUS_PARENT)
         );
+        Ok(())
+    }
+
+    fn ambiguity_reason(index: &RustIndex, file: &str) -> Option<String> {
+        index
+            .files()
+            .at(Path::new(file))
+            .role_provenance
+            .earliest_unresolved_reason
+            .clone()
+    }
+
+    /// Bench and example targets are separate crates, so several of them
+    /// including one shared file through `#[path]` (tracing `benches/shared.rs`,
+    /// crossbeam-channel `benchmarks/message.rs`) is not an ambiguous parent.
+    #[test]
+    fn shared_bench_example_and_custom_target_includes_are_not_ambiguous() -> Result<(), String> {
+        let root = temp_dir("shared-bench-path")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(&root, "src/lib.rs", "pub fn lib_fn() -> i32 { 1 }\n")?,
+            write(
+                &root,
+                "benches/a.rs",
+                "#[path = \"shared.rs\"]\nmod shared;\n",
+            )?,
+            write(
+                &root,
+                "benches/b.rs",
+                "#[path = \"shared.rs\"]\nmod shared;\n",
+            )?,
+            write(
+                &root,
+                "benches/shared.rs",
+                "pub fn bench_helper() -> i32 { 1 }\n",
+            )?,
+            write(
+                &root,
+                "examples/x.rs",
+                "#[path = \"../benches/shared.rs\"]\nmod shared;\n",
+            )?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(ambiguity_reason(&index, "benches/shared.rs"), None);
+        assert_eq!(
+            role_of(&index, "benches/shared.rs", "bench_helper")?,
+            FunctionSourceRole::Production
+        );
+        let provenance = &index
+            .files()
+            .at(Path::new("benches/shared.rs"))
+            .data()
+            .role_provenance;
+        assert_eq!(provenance.edges.len(), 1, "{:?}", provenance.edges);
+        assert_eq!(provenance.edges[0].parent, PathBuf::from("benches/a.rs"));
+
+        // A manifest-declared target outside the autodiscovered layout is
+        // also a crate root.
+        let root = temp_dir("shared-custom-target-path")?;
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname='role-composition'\nversion='0.1.0'\nedition='2024'\n\n[[bench]]\nname='one'\npath='benchmarks/one.rs'\nharness=false\n\n[[bench]]\nname='two'\npath='benchmarks/two.rs'\nharness=false\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let files = vec![
+            write(&root, "src/lib.rs", "pub fn lib_fn() -> i32 { 1 }\n")?,
+            write(&root, "benchmarks/one.rs", "mod message;\n")?,
+            write(&root, "benchmarks/two.rs", "mod message;\n")?,
+            write(
+                &root,
+                "benchmarks/message.rs",
+                "pub fn msg() -> i32 { 1 }\n",
+            )?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(ambiguity_reason(&index, "benchmarks/message.rs"), None);
+        assert_eq!(
+            role_of(&index, "benchmarks/message.rs", "msg")?,
+            FunctionSourceRole::Production
+        );
+        Ok(())
+    }
+
+    /// Fail-closed counterparts: two ordinary modules of one crate, a root
+    /// mixed with a non-root module, and disagreeing declarations all stay
+    /// ambiguous.
+    #[test]
+    fn shared_file_with_non_root_or_disagreeing_owners_stays_ambiguous() -> Result<(), String> {
+        let ambiguous = Some(REASON_MODULE_AMBIGUOUS_PARENT.to_string());
+
+        let root = temp_dir("same-crate-path-owners")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(&root, "src/lib.rs", "mod a;\nmod b;\n")?,
+            write(&root, "src/a.rs", "#[path = \"shared.rs\"]\nmod shared;\n")?,
+            write(&root, "src/b.rs", "#[path = \"shared.rs\"]\nmod shared;\n")?,
+            write(&root, "src/shared.rs", "pub fn helper() -> i32 { 1 }\n")?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(ambiguity_reason(&index, "src/shared.rs"), ambiguous);
+
+        let root = temp_dir("bench-root-plus-module-owner")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(&root, "src/lib.rs", "mod a;\n")?,
+            write(
+                &root,
+                "src/a.rs",
+                "#[path = \"../benches/shared.rs\"]\nmod shared;\n",
+            )?,
+            write(
+                &root,
+                "benches/b.rs",
+                "#[path = \"shared.rs\"]\nmod shared;\n",
+            )?,
+            write(&root, "benches/shared.rs", "pub fn helper() -> i32 { 1 }\n")?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(ambiguity_reason(&index, "benches/shared.rs"), ambiguous);
+
+        let root = temp_dir("bench-roots-disagree")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(&root, "src/lib.rs", "pub fn lib_fn() -> i32 { 1 }\n")?,
+            write(&root, "benches/a.rs", "mod shared;\n")?,
+            write(&root, "benches/b.rs", "#[cfg(test)]\nmod shared;\n")?,
+            write(&root, "benches/shared.rs", "pub fn helper() -> i32 { 1 }\n")?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(ambiguity_reason(&index, "benches/shared.rs"), ambiguous);
+
+        // A root-shaped owner that is itself a `#[path]` module child is a
+        // module of another file's graph, not a separate crate root.
+        let root = temp_dir("bench-root-owner-is-module-child")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(&root, "src/lib.rs", "pub fn lib_fn() -> i32 { 1 }\n")?,
+            write(&root, "benches/a.rs", "mod shared;\n")?,
+            write(&root, "benches/b.rs", "mod shared;\n")?,
+            write(&root, "benches/c.rs", "#[path = \"a.rs\"]\nmod a;\n")?,
+            write(&root, "benches/shared.rs", "pub fn helper() -> i32 { 1 }\n")?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(ambiguity_reason(&index, "benches/shared.rs"), ambiguous);
+        Ok(())
+    }
+
+    /// A root can itself be included behind `#[cfg(test)]`, so the owners no
+    /// longer share one effective context: the shared helper must stay
+    /// ambiguous and must not gain the evidence-only test role that the
+    /// lexically first owner alone would give it.
+    #[test]
+    fn included_root_owner_keeps_shared_child_ambiguous() -> Result<(), String> {
+        let root = temp_dir("included-root-owner")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(
+                &root,
+                "src/lib.rs",
+                "#[cfg(test)]\ninclude!(\"../benches/a.rs\");\n",
+            )?,
+            write(
+                &root,
+                "benches/a.rs",
+                "#[path = \"shared.rs\"]\nmod shared;\n",
+            )?,
+            write(
+                &root,
+                "benches/b.rs",
+                "#[path = \"shared.rs\"]\nmod shared;\n",
+            )?,
+            write(&root, "benches/shared.rs", "pub fn helper() -> i32 { 1 }\n")?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+        assert!(
+            index
+                .include_parents
+                .contains_key(Path::new("benches/a.rs")),
+            "fixture must include benches/a.rs behind cfg(test)"
+        );
+        assert_eq!(
+            ambiguity_reason(&index, "benches/shared.rs"),
+            Some(REASON_MODULE_AMBIGUOUS_PARENT.to_string())
+        );
+        assert_eq!(
+            role_of(&index, "benches/shared.rs", "helper")?,
+            FunctionSourceRole::Production
+        );
+        Ok(())
+    }
+
+    /// Documented non-claim (RIPR-SPEC-0169): `CrateRoots` ignores
+    /// `autobenches = false`, so autodiscovered-layout files still count as
+    /// roots. This pins the current behaviour so a change is deliberate.
+    #[test]
+    fn autobenches_false_is_not_modeled_for_crate_roots() -> Result<(), String> {
+        let root = temp_dir("autobenches-false")?;
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname='role-composition'\nversion='0.1.0'\nedition='2024'\nautobenches=false\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let files = vec![
+            write(&root, "src/lib.rs", "pub fn lib_fn() -> i32 { 1 }\n")?,
+            write(&root, "benches/a.rs", "mod shared;\n")?,
+            write(&root, "benches/b.rs", "mod shared;\n")?,
+            write(&root, "benches/shared.rs", "pub fn helper() -> i32 { 1 }\n")?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(ambiguity_reason(&index, "benches/shared.rs"), None);
+        Ok(())
+    }
+
+    /// Each conjunct of the target-root exemption is isolated by a layout the
+    /// other conjuncts accept: orphan owners that are neither roots, module
+    /// children nor include targets; one root declaring the child twice; a
+    /// root that is itself an ambiguous module child; and an unresolved
+    /// include elsewhere in the workspace.
+    #[test]
+    fn target_root_exemption_conjuncts_each_fail_closed() -> Result<(), String> {
+        let ambiguous = Some(REASON_MODULE_AMBIGUOUS_PARENT.to_string());
+
+        // Not crate roots: undeclared `src/` files are no compilation units.
+        let root = temp_dir("orphan-non-root-owners")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(&root, "src/lib.rs", "pub fn lib_fn() -> i32 { 1 }\n")?,
+            write(
+                &root,
+                "src/orphan_a.rs",
+                "#[path = \"shared.rs\"]\nmod shared;\n",
+            )?,
+            write(
+                &root,
+                "src/orphan_b.rs",
+                "#[path = \"shared.rs\"]\nmod shared;\n",
+            )?,
+            write(&root, "src/shared.rs", "pub fn helper() -> i32 { 1 }\n")?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(ambiguity_reason(&index, "src/shared.rs"), ambiguous);
+
+        // One root declaring the child twice is one compilation unit.
+        let root = temp_dir("same-root-duplicate-declaration")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(&root, "src/lib.rs", "pub fn lib_fn() -> i32 { 1 }\n")?,
+            write(
+                &root,
+                "benches/a.rs",
+                "mod shared;\n#[path = \"shared.rs\"]\nmod shared;\n",
+            )?,
+            write(&root, "benches/shared.rs", "pub fn helper() -> i32 { 1 }\n")?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(ambiguity_reason(&index, "benches/shared.rs"), ambiguous);
+
+        // A root that is itself an ambiguous module child has no context.
+        // Defense in depth: today the dual directory anchors of such an owner
+        // already mark the child ambiguous before the helper is reached, so
+        // the `ambiguous` owner guard is not reached by this layout.
+        let root = temp_dir("ambiguous-root-owner")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(&root, "src/lib.rs", "pub fn lib_fn() -> i32 { 1 }\n")?,
+            write(&root, "benches/a.rs", "mod shared;\n")?,
+            write(&root, "benches/b.rs", "mod shared;\n")?,
+            write(&root, "benches/c.rs", "mod a;\n")?,
+            write(&root, "benches/a/mod.rs", "pub fn other() -> i32 { 1 }\n")?,
+            write(&root, "benches/shared.rs", "pub fn helper() -> i32 { 1 }\n")?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(ambiguity_reason(&index, "benches/a.rs"), ambiguous);
+        assert_eq!(ambiguity_reason(&index, "benches/shared.rs"), ambiguous);
+        // Ancestry would name the same reason through a suppressed edge from
+        // the ambiguous owner, so also require that no edge was minted.
+        assert!(
+            index
+                .files()
+                .at(Path::new("benches/shared.rs"))
+                .data()
+                .role_provenance
+                .edges
+                .is_empty(),
+            "an ambiguous root owner must not mint a module edge"
+        );
+
+        // An unresolved include anywhere withholds the exemption.
+        let root = temp_dir("include-limitation-present")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(
+                &root,
+                "src/lib.rs",
+                "include!(concat!(env!(\"OUT_DIR\"), \"/generated.rs\"));\n",
+            )?,
+            write(&root, "benches/a.rs", "mod shared;\n")?,
+            write(&root, "benches/b.rs", "mod shared;\n")?,
+            write(&root, "benches/shared.rs", "pub fn helper() -> i32 { 1 }\n")?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+        assert!(
+            !index.include_limitations.is_empty(),
+            "fixture must carry an unresolved include limitation"
+        );
+        assert_eq!(ambiguity_reason(&index, "benches/shared.rs"), ambiguous);
+        Ok(())
+    }
+
+    /// `src/lib.rs` and `src/main.rs` are separate crates of one package, so
+    /// both declaring `mod shared;` is not an ambiguous parent.
+    #[test]
+    fn lib_and_main_roots_sharing_a_child_are_not_ambiguous() -> Result<(), String> {
+        let root = temp_dir("lib-main-shared-child")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(&root, "src/lib.rs", "mod shared;\n")?,
+            write(&root, "src/main.rs", "mod shared;\nfn main() {}\n")?,
+            write(&root, "src/shared.rs", "pub fn helper() -> i32 { 1 }\n")?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(ambiguity_reason(&index, "src/shared.rs"), None);
         Ok(())
     }
 

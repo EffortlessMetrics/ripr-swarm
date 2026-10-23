@@ -58,6 +58,50 @@ pub(super) struct EvidenceEntry {
     pub key: Option<Vec<u8>>,
 }
 
+/// #9244: the producer's reveal-stage summaries carry the machine marker
+/// `observation_unverified`, which consumers of the stage summary in JSON key
+/// on. The human window already says the same thing in words ("Discriminator
+/// unconfirmed: ..."), so it drops the marker. The JSON stage summary is
+/// untouched.
+///
+/// Only the producer-appended forms are recognized, each at its fixed
+/// position; no substring or token scanning is done, so source text the
+/// summary embeds (identifiers, quoted literals, backticks of any parity) is
+/// never modified. The forms are the ones the producers emit:
+/// - the trailing ` (observation_unverified)` suffix (Rust reveal stage and
+///   classifier evidence);
+/// - the Python adapter's fixed `... not observed (observation_unverified). `
+///   sentence and its fixed `... unexecuted (observation_unverified). Add a
+///   test input ...` tail;
+/// - the TypeScript adapter's exact strong-oracle-no-flow summary.
+pub(super) fn plain_observation_wording(text: &str) -> String {
+    const MARKER: &str = " (observation_unverified)";
+    const PYTHON_PREFIX: &str = "A strong Python oracle reaches `";
+    const PYTHON_METHOD_CALL: &str =
+        "so the edited value is not observed (observation_unverified). ";
+    const PYTHON_UNEXECUTED_TAIL: &str =
+        " (observation_unverified). Add a test input that satisfies the guarding condition.";
+    const TYPESCRIPT_NO_FLOW: &str = "TypeScript preview adapter: strong oracle found but no assertion's observed_expression flows from the changed sub-expression; observation_unverified — discriminate unknown.";
+    if let Some(head) = text.strip_suffix(MARKER) {
+        return head.to_string();
+    }
+    if text == TYPESCRIPT_NO_FLOW {
+        return TYPESCRIPT_NO_FLOW
+            .replace("observation_unverified", "the observation is unconfirmed");
+    }
+    if text.starts_with(PYTHON_PREFIX) {
+        if let Some(head) = text.strip_suffix(PYTHON_UNEXECUTED_TAIL) {
+            return format!("{head}. Add a test input that satisfies the guarding condition.");
+        }
+        return text.replacen(
+            PYTHON_METHOD_CALL,
+            "so the edited value is not observed. ",
+            1,
+        );
+    }
+    text.to_string()
+}
+
 pub(super) fn evidence_path_lines(finding: &Finding, wording: JsonPointerWording) -> Vec<String> {
     evidence_path(finding, wording, |text, _| text)
 }
@@ -112,12 +156,15 @@ fn evidence_path<T>(
             format!(
                 "observation {}: {}",
                 finding.ripr.reveal.observe.state.as_str(),
-                finding.ripr.reveal.observe.summary
+                plain_observation_wording(&finding.ripr.reveal.observe.summary)
             ),
             EvidenceSource::Stage("observation", &finding.ripr.reveal.observe),
         ),
         project(
-            crate::output::discriminator_line::discriminator_evidence_line(finding),
+            crate::output::discriminator_line::discriminator_evidence_line_with_summary(
+                finding,
+                &plain_observation_wording(&finding.ripr.reveal.discriminate.summary),
+            ),
             EvidenceSource::Discriminator(
                 &finding.ripr.reveal.discriminate,
                 &finding.class,
@@ -188,7 +235,10 @@ fn evidence_path<T>(
             )
         );
         if let Some(oracle) = &test.oracle {
-            line.push_str(&format!(": {oracle}"));
+            line.push_str(&format!(
+                ": {}",
+                crate::output::related_test_miss::single_line_evidence_text(oracle)
+            ));
         }
         // A matched row keeps its oracle projection and adds the reason it
         // still misses, so the oracle kind and strength stay readable.
@@ -252,7 +302,7 @@ fn evidence_path<T>(
             if name_files {
                 crate::output::observed_values::source_value_evidence_line_with_file(value)
             } else {
-                crate::output::observed_values::source_value_evidence_line(value)
+                crate::output::observed_values::human_source_value_evidence_line(value)
             },
             EvidenceSource::Value(value),
         ));
@@ -310,6 +360,7 @@ pub(super) fn weakness_lines(finding: &Finding) -> Vec<String> {
         .filter(|missing| {
             !is_duplicate_discriminator_missing(missing, &discriminator_values)
                 && !is_preview_actionability_missing_summary(missing)
+                && !restates_no_static_path_evidence(finding, missing)
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -320,6 +371,29 @@ pub(super) fn weakness_lines(finding: &Finding) -> Vec<String> {
         ));
     }
     lines
+}
+
+/// Whether a `missing` entry only restates a stage line the Evidence block
+/// already prints for this finding. A `no_static_path` finding carries three
+/// generic entries ("No static test path reaches the changed owner", "No
+/// relevant oracle was detected", "No strong discriminator was detected"),
+/// and its Evidence block says `reach no`, `observation no` and
+/// `discriminator no` in the same words, so listing them again reads one fact
+/// (no test reaches this code) as several problems (#9033). An entry is
+/// dropped only while its own stage reads `no`; any other stage state keeps
+/// the entry. The entries stay in the JSON `missing` list, and a distinct
+/// entry such as the missing boundary input is never dropped.
+pub(super) fn restates_no_static_path_evidence(finding: &Finding, missing: &str) -> bool {
+    if finding.class != crate::domain::ExposureClass::NoStaticPath {
+        return false;
+    }
+    let stage = match missing {
+        "No static test path reaches the changed owner" => &finding.ripr.reach,
+        "No relevant oracle was detected" => &finding.ripr.reveal.observe,
+        "No strong discriminator was detected" => &finding.ripr.reveal.discriminate,
+        _ => return false,
+    };
+    stage.state == crate::domain::StageState::No
 }
 
 fn is_duplicate_discriminator_missing(missing: &str, discriminator_values: &[&str]) -> bool {

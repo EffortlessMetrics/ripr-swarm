@@ -23,6 +23,11 @@ Start here:
     implementations with a focused run using the project's configured test runner (`cargo test` for
     ordinary Cargo tests). Static classification may remain unknown
   Evidence: reach yes · infection yes · propagation unknown · observation yes · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: Related tests appear to reach lower_statement: lower_ast_only_checks_name
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 6 more detail line(s) in --format human-full
@@ -32,7 +37,7 @@ Next: drill into the top finding:
   ripr context --root <cwd>/fixtures/rust_constructor_field_wrong_field_observer/input --diff <cwd>/fixtures/rust_constructor_field_wrong_field_observer/diff.patch --mode fast --at probe:src_lib.rs:return_value:f04ff7e2
   no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:return_value:f04ff7e2 --root <cwd>/fixtures/rust_constructor_field_wrong_field_observer/input` for the full gate's answer
 Write a test for it:
-  ripr agent stub --root <cwd>/fixtures/rust_constructor_field_wrong_field_observer/input --at src/lib.rs:15 --kind return_value
+  ripr agent stub --root <cwd>/fixtures/rust_constructor_field_wrong_field_observer/input --at src/lib.rs:14 --kind return_value
 
 More:
   Full evidence: rerun with --format human-full

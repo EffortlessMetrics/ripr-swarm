@@ -21,12 +21,17 @@ Start here:
   Canonical gap: gap:python:src/notifications.py:warn_coupon:return_value:return_value:coupon_expired
   Changed behavior: return "coupon expired"
   Missing discriminator (1 of 2): Related Python test reaches `warn_coupon` but the strongest extracted oracle is `relational_check`; add or strengthen a focused assertion for the returned value
-  Related test: tests/test_notifications.py:7 test_warn_coupon_output_message
+  Related test: tests/test_notifications.py:7 test_warn_coupon_output_message (assertion too weak to tell the old behavior from the new)
   Suggested test file: tests/test_notifications.py
   Suggested test: test_warn_coupon_output_message
   Verify command: python -m unittest tests.test_notifications.NotificationTests.test_warn_coupon_output_message (high)
   Next step — Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `return value == "coupon expired"`
   Evidence: reach yes · infection yes · propagation yes · observation weak · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: 1 related Python test(s) found for owner `warn_coupon`
     - infection yes: Changed Python return expression can alter the owner return value: `return "coupon expired"`
     - 5 more detail line(s) in --format human-full
@@ -34,7 +39,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_unittest_oracle_shapes/input --diff <cwd>/fixtures/python_unittest_oracle_shapes/diff.patch --mode fast probe:src_notifications.py:python_preview:469534bc
   ripr context --root <cwd>/fixtures/python_unittest_oracle_shapes/input --diff <cwd>/fixtures/python_unittest_oracle_shapes/diff.patch --mode fast --at probe:src_notifications.py:python_preview:469534bc
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_notifications.py:python_preview:469534bc --root <cwd>/fixtures/python_unittest_oracle_shapes/input` for the full gate's answer
+  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/notifications.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
 
 More:
   Full evidence: rerun with --format human-full

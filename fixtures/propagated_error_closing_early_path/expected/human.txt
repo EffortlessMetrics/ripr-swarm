@@ -19,6 +19,11 @@ Start here:
   Related test: src/lib.rs:16 observes_only_the_early_error (ripr could not confirm that this assertion observes the changed behavior)
   Next step: Inspect existing tests for activation of the changed `?` exit and whether their oracle constrains that path; static activation is unestablished
   Evidence: reach yes · infection yes · propagation weak · observation yes · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: Related tests appear to reach check: observes_only_the_early_error
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 7 more detail line(s) in --format human-full
@@ -28,7 +33,7 @@ Next: drill into the top finding:
   ripr context --root <cwd>/fixtures/propagated_error_closing_early_path/input --diff <cwd>/fixtures/propagated_error_closing_early_path/diff.patch --mode fast --at probe:src_lib.rs:error_path:107ffe09
   no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:error_path:107ffe09 --root <cwd>/fixtures/propagated_error_closing_early_path/input` for the full gate's answer
 Write a test for it:
-  ripr agent stub --root <cwd>/fixtures/propagated_error_closing_early_path/input --at src/lib.rs:6 --kind error_path
+  ripr agent stub --root <cwd>/fixtures/propagated_error_closing_early_path/input --at src/lib.rs:5 --kind error_path
 
 Hidden:
   All 1 omitted finding(s) are base-side evidence, not candidate edit targets.

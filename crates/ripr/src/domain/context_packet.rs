@@ -27,6 +27,9 @@ pub struct ContextPacket {
     /// `confidence` float on the check finding (#8743).
     pub confidence: f32,
     pub ripr: ContextPacketRipr,
+    /// Matched related-test rows before the packet's display window, using
+    /// the finding's conservative retained-count fallback for legacy data.
+    pub related_tests_total: usize,
     pub related_tests: Vec<RelatedTest>,
     pub observed_values: Vec<ValueFact>,
     pub missing_discriminators: Vec<MissingDiscriminatorFact>,
@@ -116,6 +119,7 @@ impl ContextPacket {
                 observe: finding.ripr.reveal.observe.state.as_str().to_string(),
                 discriminate: finding.ripr.reveal.discriminate.state.as_str().to_string(),
             },
+            related_tests_total: finding.related_tests_total(),
             related_tests: finding
                 .related_tests
                 .iter()
@@ -313,6 +317,7 @@ mod tests {
 
     fn sample_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_lib_rs:9:predicate".to_string(),
             canonical_gap: None,
             probe: Probe {

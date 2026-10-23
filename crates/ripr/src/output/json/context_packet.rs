@@ -117,6 +117,13 @@ pub(crate) fn render_context_packet_dto(packet: &ContextPacket) -> String {
     );
     out.push_str("  },\n");
     let related_test_count = packet.related_tests.len();
+    number_field(
+        &mut out,
+        1,
+        "related_tests_total",
+        packet.related_tests_total,
+        true,
+    );
     out.push_str("  \"related_tests\": [\n");
     for (idx, test) in packet.related_tests.iter().enumerate() {
         related_test_json(&mut out, test, &packet.missing_discriminators, 2);
@@ -331,6 +338,7 @@ mod tests {
 
     fn sample_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_lib_rs:9:error_path".to_string(),
             canonical_gap: None,
             probe: Probe {

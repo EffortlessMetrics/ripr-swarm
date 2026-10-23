@@ -3488,6 +3488,7 @@ mod tests {
     ) -> Finding {
         let probe_id = format!("probe:src_device_labels_rs:{line}:{id_suffix}");
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: probe_id.clone(),
             canonical_gap: None,
             probe: Probe {

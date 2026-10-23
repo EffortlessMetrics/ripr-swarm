@@ -223,7 +223,9 @@ Covered by:
 
 ## Acceptance Examples
 
-### Before (incorrect â€” exposed with self-contradiction)
+Before shows the behavior this spec corrects. It is not an example.
+
+Before (incorrect â€” exposed with self-contradiction):
 
 ```
 Static exposure
@@ -240,35 +242,35 @@ Missing
 The finding says `exposed` (discriminated) but simultaneously lists
 `Missing discriminator value: ParseError::TooLong`. Self-contradiction.
 
-### After (correct â€” weakly_exposed, no self-contradiction)
+1. After (correct â€” weakly_exposed, no self-contradiction):
 
-```
-Static exposure
-  weakly_exposed (warning, confidence 0.92)
+   ```
+   Static exposure
+     weakly_exposed (warning, confidence 0.92)
 
-Evidence
-  - discriminator weak: Discriminator unconfirmed: no assertion text references
-    this probe's changed expression (observation_unverified)
+   Evidence
+     - discriminator weak: Discriminator unconfirmed: no assertion text references
+       this probe's changed expression (observation_unverified)
 
-Missing
-  - No exact error variant discriminator was detected
-  - Missing discriminator value: ParseError::TooLong
-```
+   Missing
+     - No exact error variant discriminator was detected
+     - Missing discriminator value: ParseError::TooLong
+   ```
 
-### Variant-pinning positive (must-not-over-correct)
+2. Variant-pinning positive (must-not-over-correct):
 
-```
-// Test: assert_eq!(err, ParseError::TooLong(12));
+   ```
+   // Test: assert_eq!(err, ParseError::TooLong(12));
 
-Static exposure
-  exposed (info, confidence 1.00)
+   Static exposure
+     exposed (info, confidence 1.00)
 
-Evidence
-  - discriminator yes: Strong oracle found: exact error variant assertion
-```
+   Evidence
+     - discriminator yes: Strong oracle found: exact error variant assertion
+   ```
 
-This stays `exposed`. The variant token `TooLong` appears in the assertion text,
-so `has_token_match=true` clears `observation_unverified`.
+   This stays `exposed`. The variant token `TooLong` appears in the assertion text,
+   so `has_token_match=true` clears `observation_unverified`.
 
 ## Test Mapping
 
@@ -374,6 +376,19 @@ with that guard's side flip when the edit kept the returned payload, so the
 only changed behavior on the line is which inputs return `Err`
 (`side_flip/guard.rs`). Every other `error_path` probe still needs a
 variant-observing oracle.
+
+Wording rule (#9122, 2026-10-21): when the strongest credited oracle for a
+non-`error_path` family (for example a predicate or call probe) is an
+`exact_error_variant` or `guarded_result_match` assertion in a test related
+only by proximity (`RelationReason::is_proximity_only`: same test file,
+same module, or a weak name-token link), the discriminator summary names no
+assertion kind and reads "Strong oracle found: assertion kind not
+established (test linked by file, module or name proximity only)". The
+location clause must cover name-token proximity as well as file and module
+location. Grading, classes and actionability are unchanged. Tests:
+`proximity_only_error_variant_assertion_is_not_named_for_a_predicate`,
+`name_token_proximity_error_variant_assertion_names_no_kind_or_location`,
+`proximity_only_strong_oracle_names_no_kind`.
 
 RIPR-SPEC-0238 (2026-10-04) states the Python error-path gate as rule 6:
 `exposed` needs one `exact_error_variant` assertion that itself credits a

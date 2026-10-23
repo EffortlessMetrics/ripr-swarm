@@ -67,7 +67,10 @@ fn portfolio(source: &str) -> Result<Vec<Step>, String> {
             {
                 continue;
             }
-            if *name == "PR evidence" && field == "if: github.event_name == 'pull_request'" {
+            if *name == "PR evidence"
+                && field
+                    == "if: github.event_name == 'pull_request' || github.event_name == 'merge_group'"
+            {
                 continue;
             }
             return Err(format!(
@@ -105,10 +108,14 @@ fn portfolio(source: &str) -> Result<Vec<Step>, String> {
             // integration rehearsal; every other expression is unsupported.
             if value.contains("${{") {
                 let supported = match key {
-                    "BASE_SHA" => "${{ github.event.pull_request.base.sha }}",
-                    "HEAD_SHA" => "${{ github.event.pull_request.head.sha }}",
+                    "BASE_SHA" => {
+                        "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}"
+                    }
+                    "HEAD_SHA" => {
+                        "${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}"
+                    }
                     "GITHUB_PR_LABELS" => {
-                        "${{ join(github.event.pull_request.labels.*.name, ',') }}"
+                        "${{ inputs.pr-labels || join(github.event.pull_request.labels.*.name, ',') }}"
                     }
                     _ => "",
                 };
@@ -616,7 +623,7 @@ mod tests {
         let source = fs::read_to_string(root.join(OWNER)).map_err(|e| e.to_string())?;
         for changed in [
             source.replace(
-                "BASE_SHA: ${{ github.event.pull_request.base.sha }}",
+                "BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}",
                 "BASE_SHA: ${{ secrets.UNKNOWN }}",
             ),
             source.replace("id: formatting", "id: formatting\n        shell: pwsh"),
@@ -625,7 +632,10 @@ mod tests {
                 "id: formatting\n        working-directory: other",
             ),
             source.replace("id: formatting", "id: formatting\n        if: false"),
-            source.replace("if: github.event_name == 'pull_request'", "if: false"),
+            source.replace(
+                "if: github.event_name == 'pull_request' || github.event_name == 'merge_group'",
+                "if: false",
+            ),
         ] {
             assert_ne!(source, changed);
             assert!(portfolio(&changed).is_err());

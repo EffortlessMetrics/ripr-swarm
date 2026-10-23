@@ -11,7 +11,7 @@ Shared evidence and guidance
   E1 [findings 2, 3]: reach yes: Related tests appear to reach charge: sibling_only
   E2 [findings 2, 3]: infection yes: Reachable tests can plausibly activate this changed behavior
   E3 [findings 2, 3]: observation yes: A related test observes a value or effect near the changed behavior
-  E4 [findings 2, 3]: discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  E4 [findings 2, 3]: discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
   E5 [findings 2, 3]: related test src/lib.rs:15 sibling_only uses strong whole object equality oracle: assert_eq!(charge(&Lease { settled_elapsed_ms: None, timeout_sec: 600 }), 2); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   E6 [findings 2, 3]: source assertion argument value 2 at line 16
   E7 [findings 2, 3]: source function argument value lease = 600 at line 16
@@ -21,6 +21,7 @@ Finding 1: WARNING ./src/lib.rs:6
 Changed
   before: None => 0,
   after:  None =>
+          (arm head only; open the arm at ./src/lib.rs:6 to read its new body)
 Probe
   family: match_arm
   delta:  control
@@ -32,7 +33,7 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Changed behavior appears to influence match arm result: None =>
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
   - local flow reaches match arm result: None => (line 6)
   - related test src/lib.rs:15 sibling_only uses strong whole object equality oracle: assert_eq!(charge(&Lease { settled_elapsed_ms: None, timeout_sec: 600 }), 2); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - source assertion argument value 2 at line 16
@@ -52,7 +53,7 @@ Drill in:
   ripr explain --root <cwd>/fixtures/field_match_raw_option_shadow/input --diff <cwd>/fixtures/field_match_raw_option_shadow/diff.patch --mode fast probe:src_lib.rs:match_arm:23efc786
   ripr context --root <cwd>/fixtures/field_match_raw_option_shadow/input --diff <cwd>/fixtures/field_match_raw_option_shadow/diff.patch --mode fast --at probe:src_lib.rs:match_arm:23efc786
 
-Finding 2: WARNING ./src/lib.rs:6
+Finding 2: NOTE ./src/lib.rs:6
   id: probe:src_lib.rs:match_arm:dd1110e0
 Changed
   before: None => 0,
@@ -64,7 +65,7 @@ Probe
   owner:  src/lib.rs::charge
   canonical gap: gap:rust:src/lib.rs:charge:match_arm:match_arm:none=>0
 Static exposure
-  weakly_exposed (warning, confidence 0.92)
+  weakly_exposed (note, confidence 0.92)
 Evidence
   shared evidence: E1, E2
   - propagation yes: Changed behavior appears to influence match arm result: 0
@@ -79,7 +80,7 @@ Drill in:
   ripr explain --root <cwd>/fixtures/field_match_raw_option_shadow/input --diff <cwd>/fixtures/field_match_raw_option_shadow/diff.patch --mode fast probe:src_lib.rs:match_arm:dd1110e0
   ripr context --root <cwd>/fixtures/field_match_raw_option_shadow/input --diff <cwd>/fixtures/field_match_raw_option_shadow/diff.patch --mode fast --at probe:src_lib.rs:match_arm:dd1110e0
 
-Finding 3: WARNING ./src/lib.rs:6
+Finding 3: NOTE ./src/lib.rs:6
   id: probe:src_lib.rs:return_value:e5ff3cbb
 Changed
   before: None => 0,
@@ -91,7 +92,7 @@ Probe
   owner:  src/lib.rs::charge
   canonical gap: gap:rust:src/lib.rs:charge:return_value:return_value:none=>0
 Static exposure
-  weakly_exposed (warning, confidence 0.66)
+  weakly_exposed (note, confidence 0.66)
 Evidence
   shared evidence: E1, E2
   - propagation weak: Propagation witness is incomplete for returned value: None => 1

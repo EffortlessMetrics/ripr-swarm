@@ -150,7 +150,7 @@
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `smoke_only` (rank 2)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter found no strong discriminator; missing proof: `return value == this.items.length + 1`."}
        },
-      "evidence_path": ["reach yes: 1 related test(s) found for owner `total`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `smoke_only` (rank 2)", "discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `return value == this.items.length + 1`.", "local flow reaches returned value: return this.items.length + 1; (line 7)", "related test tests/owners.test.ts:7 cart total smoke uses smoke smoke only oracle: expect(...).toBeDefined(...)", "missing discriminator return value == this.items.length + 1: changed TypeScript returned-value at line 7 lacks a concrete preview discriminator"],
+      "evidence_path": ["reach yes: 1 related test(s) found for owner `total`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `smoke_only` (rank 2)", "discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `return value == this.items.length + 1`.", "local flow reaches returned value: return this.items.length + 1; (line 7)", "related test tests/owners.test.ts:7 cart total smoke uses smoke only oracle: expect(...).toBeDefined(...)", "missing discriminator return value == this.items.length + 1: changed TypeScript returned-value at line 7 lacks a concrete preview discriminator"],
       "flow_sinks": [
         {"kind":"return_value","text":"return this.items.length + 1;","line":7}
       ],
@@ -188,7 +188,9 @@
           "oracle_kind": "smoke_only",
           "oracle": "expect(...).toBeDefined(...)",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
         }
       ],
       "typescript_preview_card": {
@@ -289,7 +291,7 @@
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `smoke_only` (rank 2)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter found no strong discriminator; missing proof: `return value == new Cart({ tracked: true })`."}
        },
-      "evidence_path": ["reach yes: 1 related test(s) found for owner `build`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `smoke_only` (rank 2)", "discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `return value == new Cart({ tracked: true })`.", "local flow reaches returned value: return new Cart({ tracked: true }); (line 11)", "related test tests/owners.test.ts:12 static build smoke uses smoke smoke only oracle: expect(...).toBeDefined(...)", "missing discriminator return value == new Cart({ tracked: true }): changed TypeScript returned-value at line 11 lacks a concrete preview discriminator"],
+      "evidence_path": ["reach yes: 1 related test(s) found for owner `build`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `smoke_only` (rank 2)", "discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `return value == new Cart({ tracked: true })`.", "local flow reaches returned value: return new Cart({ tracked: true }); (line 11)", "related test tests/owners.test.ts:12 static build smoke uses smoke only oracle: expect(...).toBeDefined(...)", "missing discriminator return value == new Cart({ tracked: true }): changed TypeScript returned-value at line 11 lacks a concrete preview discriminator"],
       "flow_sinks": [
         {"kind":"return_value","text":"return new Cart({ tracked: true });","line":11}
       ],
@@ -327,7 +329,9 @@
           "oracle_kind": "smoke_only",
           "oracle": "expect(...).toBeDefined(...)",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
         }
       ],
       "typescript_preview_card": {
@@ -414,8 +418,8 @@
       "confidence": 0.40,
       "probe": {
         "id": "probe:src_owners.ts:typescript_preview:961b59c7",
-        "family": "predicate",
-        "delta": "control",
+        "family": "return_value",
+        "delta": "value",
         "file": "src/owners.ts",
         "line": 15,
         "expression": "export const DEFAULT_RATE = 0.09;",
@@ -428,10 +432,11 @@
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `relational_check` (rank 3)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter found no strong discriminator; use `toBe` / `toEqual` / `toStrictEqual` to escalate. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands."}
        },
-      "evidence_path": ["reach yes: 1 related test(s) found for owner `DEFAULT_RATE`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `relational_check` (rank 3)", "discriminator weak: TypeScript preview adapter found no strong discriminator; use `toBe` / `toEqual` / `toStrictEqual` to escalate. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.", "related test tests/owners.test.ts:16 rate is visible uses weak relational check oracle: expect(...).toBeGreaterThan(...)"],
+      "evidence_path": ["reach yes: 1 related test(s) found for owner `DEFAULT_RATE`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `relational_check` (rank 3)", "discriminator weak: TypeScript preview adapter found no strong discriminator; use `toBe` / `toEqual` / `toStrictEqual` to escalate. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.", "local flow reaches returned value: export const DEFAULT_RATE = 0.09; (line 15)", "related test tests/owners.test.ts:16 rate is visible uses weak relational check oracle: expect(...).toBeGreaterThan(...)"],
       "flow_sinks": [
+        {"kind":"return_value","text":"export const DEFAULT_RATE = 0.09;","line":15}
       ],
-      "evidence": ["owner: DEFAULT_RATE", "probe_fact: ambiguous_fallback", "typescript_oracle_observed: DEFAULT_RATE", "typescript_oracle_expected: 0", "typescript_oracle_confidence: low", "typescript_oracle_evidence_ref: tests/owners.test.ts:17", "gap_state: advisory", "actionability_category: missing_target_shape", "why_not_actionable: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape", "repair_route: add probe-specific discriminator extraction for this expression before repair packet projection", "missing_actionability_fields: repair_kind, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/owners.ts;line=15;kind=typescript_preview_probe;source_id=probe:src_owners.ts:typescript_preview:961b59c7;owner=DEFAULT_RATE", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "evidence": ["owner: DEFAULT_RATE", "typescript_oracle_observed: DEFAULT_RATE", "typescript_oracle_expected: 0", "typescript_oracle_confidence: low", "typescript_oracle_evidence_ref: tests/owners.test.ts:17", "gap_state: advisory", "actionability_category: missing_target_shape", "why_not_actionable: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape", "repair_route: add probe-specific discriminator extraction for this expression before repair packet projection", "missing_actionability_fields: repair_kind, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/owners.ts;line=15;kind=typescript_preview_probe;source_id=probe:src_owners.ts:typescript_preview:961b59c7;owner=DEFAULT_RATE", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
       "missing": ["Related test reaches `DEFAULT_RATE` but the strongest extracted oracle is `relational_check`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow` form with an exact payload (string, object, or class reference).", "TypeScript preview actionability `advisory` / `missing_target_shape`: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape. Repair route: add probe-specific discriminator extraction for this expression before repair packet projection"],
       "assertion_texts": {
       },
@@ -455,14 +460,16 @@
           "oracle_kind": "relational_check",
           "oracle": "expect(...).toBeGreaterThan(...)",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
         }
       ],
       "typescript_preview_card": {
         "authority_boundary": "preview_advisory_only",
         "bun_cross_language_grip": null,
         "card_version": "typescript_preview_card.v1",
-        "changed_behavior": "predicate changed at src/owners.ts:15: `export const DEFAULT_RATE = 0.09;`",
+        "changed_behavior": "return_value changed at src/owners.ts:15: `export const DEFAULT_RATE = 0.09;`",
         "language": "typescript",
         "language_status": "preview",
         "limits": [
@@ -475,7 +482,7 @@
         "oracle_strength": "weak",
         "owner": "DEFAULT_RATE",
         "owner_kind": "module_function",
-        "probe_family": "predicate",
+        "probe_family": "return_value",
         "related_test": {
           "file": "tests/owners.test.ts",
           "line": 16,
@@ -485,7 +492,7 @@
         "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
         "source": "check_typescript_preview",
         "static_limits": [],
-        "suggested_assertion_shape": "Add an exact boundary assertion for the changed predicate.",
+        "suggested_assertion_shape": "Add an exact return-value assertion for the changed output.",
         "verify": {
           "command": null
         },

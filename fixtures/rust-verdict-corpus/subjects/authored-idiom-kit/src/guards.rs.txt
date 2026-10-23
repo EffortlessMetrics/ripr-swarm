@@ -1,0 +1,38 @@
+pub fn require_positive(n: i32) -> i32 {
+    assert!(n > 0, "n must be positive");
+    n
+}
+
+pub fn checked_ratio(num: u32, den: u32) -> u32 {
+    if den == 0 {
+        panic!("zero denominator");
+    }
+    num / den
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "n must be positive")]
+    fn zero_is_rejected() {
+        require_positive(0);
+    }
+
+    #[test]
+    fn five_passes_through() {
+        assert_eq!(require_positive(5), 5);
+    }
+
+    #[test]
+    #[should_panic(expected = "zero denominator")]
+    fn zero_denominator_panics() {
+        checked_ratio(10, 0);
+    }
+
+    #[test]
+    fn ten_over_two() {
+        assert_eq!(checked_ratio(10, 2), 5);
+    }
+}

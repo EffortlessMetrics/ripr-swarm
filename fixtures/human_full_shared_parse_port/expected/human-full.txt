@@ -11,7 +11,7 @@ Shared evidence and guidance
   E1 [findings 1, 4, 6, 7]: reach yes: Related tests appear to reach parse_port: parses_valid_port
   E2 [findings 1, 4, 6, 7]: infection yes: Reachable tests can plausibly activate this changed behavior
   E3 [findings 1, 4, 6, 7]: observation yes: A related test observes a value or effect near the changed behavior
-  E4 [findings 1, 4, 6, 7]: discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  E4 [findings 1, 4, 6, 7]: discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
   E5 [findings 1, 4, 6, 7]: related test src/lib.rs:14 parses_valid_port uses strong exact value oracle: assert_eq!(parse_port("8080").unwrap(), 8080); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   E6 [findings 1, 4, 6, 7]: source assertion argument value 8080 at line 15
   E7 [findings 1, 4, 6, 7]: source function argument value input = "8080" at line 15
@@ -19,7 +19,7 @@ Shared evidence and guidance
   E8 [findings 2, 5]: reach yes: Related tests appear to reach parse_port: parses_valid_port
   E9 [findings 2, 5]: infection yes: Reachable tests can plausibly activate this changed behavior
   E10 [findings 2, 5]: observation yes: A related test observes a value or effect near the changed behavior
-  E11 [findings 2, 5]: discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  E11 [findings 2, 5]: discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
   E12 [findings 2, 5]: related test src/lib.rs:14 parses_valid_port uses strong exact value oracle: assert_eq!(parse_port("8080").unwrap(), 8080); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   E13 [findings 2, 5]: source assertion argument value 8080 at line 15
   E14 [findings 2, 5]: source function argument value input = "8080" at line 15
@@ -50,7 +50,7 @@ Drill in:
   ripr explain --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast probe:src_lib.rs:match_arm:6b71a4f5
   ripr context --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast --at probe:src_lib.rs:match_arm:6b71a4f5
 
-Finding 2: WARNING ./src/lib.rs:3
+Finding 2: NOTE ./src/lib.rs:3
   id: probe:src_lib.rs:match_arm:35759cb1
 Changed
   before: Ok(p) => Ok(p),
@@ -62,7 +62,7 @@ Probe
   owner:  src/lib.rs::parse_port
   canonical gap: gap:rust:src/lib.rs:parse_port:match_arm:match_arm:ok_p=>ok_p
 Static exposure
-  weakly_exposed (warning, confidence 0.92)
+  weakly_exposed (note, confidence 0.92)
 Evidence
   shared evidence: E8, E9
   - propagation yes: Changed behavior appears to influence match arm result: Ok(p)
@@ -133,7 +133,7 @@ Drill in:
   ripr explain --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast probe:src_lib.rs:return_value:d9dae5de
   ripr context --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast --at probe:src_lib.rs:return_value:d9dae5de
 
-Finding 5: WARNING ./src/lib.rs:3
+Finding 5: NOTE ./src/lib.rs:3
   id: probe:src_lib.rs:return_value:a207aa93
 Changed
   before: Ok(p) => Ok(p),
@@ -145,7 +145,7 @@ Probe
   owner:  src/lib.rs::parse_port
   canonical gap: gap:rust:src/lib.rs:parse_port:return_value:return_value:ok_p=>ok_p
 Static exposure
-  weakly_exposed (warning, confidence 0.66)
+  weakly_exposed (note, confidence 0.66)
 Evidence
   shared evidence: E8, E9
   - propagation weak: Propagation witness is incomplete for returned value: Ok(p) if p > 0 => Ok(p)

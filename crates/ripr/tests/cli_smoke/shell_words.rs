@@ -1,62 +1,24 @@
-//! Bash-word splitting for replaying printed `ripr` commands (#6762).
-//!
-//! Producers quote values with `shell_arg` (POSIX single quotes, `'\''` for
-//! an embedded quote). Splitting a printed command on whitespace breaks any
-//! checkout path that needs quoting, such as one with a space, and keeps the
-//! quotes as literal bytes. Replays split the way the shell would instead.
+//! Replay splitting for printed `ripr` commands (#6762). The host-aware
+//! splitter lives in `common/printed_words.rs`, shared with the
+//! boundary-gap harness; this module adds the redirect split and the tests.
 
-/// Split `command` into the argv a POSIX shell would pass for the subset
-/// `shell_arg` prints: bare words, single quotes and backslash escapes
-/// outside them. Double quotes (the `ansi_c_quote` form for control or bidi
-/// characters), unterminated quotes and a trailing backslash are errors,
-/// not silently repaired tokens.
-pub(crate) fn posix_words(command: &str) -> Result<Vec<String>, String> {
-    let mut words = Vec::new();
-    let mut chars = command.chars().peekable();
-    loop {
-        while chars.peek().is_some_and(|ch| ch.is_whitespace()) {
-            chars.next();
-        }
-        if chars.peek().is_none() {
-            break;
-        }
-        let mut word = String::new();
-        while let Some(ch) = chars.peek().copied() {
-            if ch.is_whitespace() {
-                break;
-            }
-            chars.next();
-            match ch {
-                '\'' => loop {
-                    match chars.next() {
-                        Some('\'') => break,
-                        Some(inner) => word.push(inner),
-                        None => return Err(format!("unterminated quote in `{command}`")),
-                    }
-                },
-                '\\' => word.push(
-                    chars
-                        .next()
-                        .ok_or_else(|| format!("trailing backslash in `{command}`"))?,
-                ),
-                '"' => {
-                    return Err(format!(
-                        "double-quoted form is not replayable here: `{command}`"
-                    ));
-                }
-                other => word.push(other),
-            }
-        }
-        words.push(word);
-    }
-    Ok(words)
-}
+#[path = "../common/printed_words.rs"]
+mod printed_words;
 
-/// Split a printed `ripr … > path` command after POSIX word splitting, so a
+pub(crate) use printed_words::{posix_words, printed_words, windows_console_words};
+
+/// Split a printed `ripr … > path` command after host word splitting, so a
 /// quoted root that contains ` > ` stays one argument (#6942). `split_once(" > ")`
 /// would cut inside that quoted path.
-pub(crate) fn posix_words_with_redirect(command: &str) -> Result<(Vec<String>, String), String> {
-    let words = posix_words(command)?;
+pub(crate) fn printed_words_with_redirect(command: &str) -> Result<(Vec<String>, String), String> {
+    split_redirect(command, printed_words(command)?)
+}
+
+fn posix_words_with_redirect(command: &str) -> Result<(Vec<String>, String), String> {
+    split_redirect(command, posix_words(command)?)
+}
+
+fn split_redirect(command: &str, words: Vec<String>) -> Result<(Vec<String>, String), String> {
     let Some(at) = words.iter().position(|word| word == ">") else {
         return Err(format!("no redirect in `{command}`"));
     };
@@ -128,5 +90,95 @@ fn posix_words_with_redirect_keep_quoted_gt_inside_the_root() -> Result<(), Stri
             "split_once(\" > \") unexpectedly kept the quoted root whole: {check_part}"
         ));
     }
+    Ok(())
+}
+
+/// The Windows console form `shell_arg` prints on Windows (#7729, #8152)
+/// decodes with the native argv rules on every host, so this pins the
+/// Windows replay splitter on the Linux lane too.
+#[test]
+fn windows_console_words_decode_the_printed_console_form() -> Result<(), String> {
+    for (printed, expected) in [
+        (
+            r#"ripr continue --root "/srv/after test not run" --attempt repair-attempt-1"#,
+            vec![
+                "ripr",
+                "continue",
+                "--root",
+                "/srv/after test not run",
+                "--attempt",
+                "repair-attempt-1",
+            ],
+        ),
+        (
+            r#"ripr doctor --root "/srv/selected répo it's""#,
+            vec!["ripr", "doctor", "--root", "/srv/selected répo it's"],
+        ),
+        // Interior `"` is doubled; a backslash run is literal unless a quote
+        // follows, and a trailing run is doubled before the closing quote.
+        (r#"x "a""b""#, vec!["x", r#"a"b"#]),
+        (r#"x "srv\a b\c""#, vec!["x", r"srv\a b\c"]),
+        (r#"x "srv\repo dir\\""#, vec!["x", r"srv\repo dir\"]),
+        (r#"x srv\plain\path"#, vec!["x", r"srv\plain\path"]),
+        (r#"x "" y"#, vec!["x", "", "y"]),
+        (
+            r#"ripr check --root "/srv/r x" > "/srv/r x/out.json""#,
+            vec![
+                "ripr",
+                "check",
+                "--root",
+                "/srv/r x",
+                ">",
+                "/srv/r x/out.json",
+            ],
+        ),
+        // `%` and `!` are literal outside cmd.exe (the console form's
+        // documented limit, #9659).
+        (
+            r#"ripr check --root "/srv/100% done!/repo""#,
+            vec!["ripr", "check", "--root", "/srv/100% done!/repo"],
+        ),
+        // `$` keeps the single-quote form on Windows, read as Git Bash does.
+        (
+            r"ripr doctor --root 'srv\x\it'\''s $'",
+            vec!["ripr", "doctor", "--root", r"srv\x\it's $"],
+        ),
+        // A recovery hint's `<ref>` placeholder stays one word, as
+        // `posix_words` reads it (#9272 run 39819783344).
+        (
+            "ripr first-pr --base <ref> --head HEAD",
+            vec!["ripr", "first-pr", "--base", "<ref>", "--head", "HEAD"],
+        ),
+    ] {
+        assert_eq!(windows_console_words(printed)?, expected, "{printed}");
+    }
+    for rejected in [
+        r#"ripr check --root "a$b""#,
+        r#"ripr check --root 'a'"$(printf '\033')"'b'"#,
+        r#"ripr check --root "open"#,
+        "ripr check --root a & b",
+    ] {
+        if let Ok(words) = windows_console_words(rejected) {
+            return Err(format!(
+                "`{rejected}` split into {words:?} instead of failing"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// `printed_words` dispatches on the host form: the POSIX form on Unix and
+/// the console form on Windows, so a replay decodes what this host printed.
+#[test]
+fn printed_words_follow_the_host_quoting_form() -> Result<(), String> {
+    let printed = if cfg!(windows) {
+        r#"ripr explain --root "/srv/checkouts/my repo/it's""#
+    } else {
+        r"ripr explain --root '/srv/checkouts/my repo/it'\''s'"
+    };
+    assert_eq!(
+        printed_words(printed)?,
+        ["ripr", "explain", "--root", "/srv/checkouts/my repo/it's"]
+    );
     Ok(())
 }

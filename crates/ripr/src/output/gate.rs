@@ -220,6 +220,22 @@ pub(crate) fn build_gate_decision_report(
     } else {
         Vec::new()
     };
+    // Issue #9301 F2: disclose which files the candidate source analyzed. A
+    // diff-scoped review-comments document evaluates only the changed files,
+    // so a baseline entry elsewhere is not evidence of resolution.
+    let analysis_scope = if config_errors.is_empty() {
+        match gap_ledger.as_ref() {
+            Some(records) => {
+                Some(crate::output::review_comments::gap_ledger_analysis_scope_json(records))
+            }
+            None => pr_guidance
+                .get("analysis_scope")
+                .filter(|scope| scope.is_object())
+                .cloned(),
+        }
+    } else {
+        None
+    };
     let policy = GatePolicy {
         mode: input.mode,
         threshold: DEFAULT_THRESHOLD.to_string(),
@@ -325,6 +341,7 @@ pub(crate) fn build_gate_decision_report(
         causal_delta,
         causal_projection,
         exception_policy,
+        analysis_scope,
     })
 }
 
@@ -720,9 +737,24 @@ fn gate_decision(
         .iter()
         .filter(|identity| fallback_identity.as_ref() != Some(*identity))
         .any(|identity| baseline.identities.contains(identity));
-    let fallback_hit = fallback_identity
-        .as_ref()
-        .is_some_and(|identity| baseline.identities.contains(identity));
+    // One divergence rule shared with `ripr baseline diff` (issue #1964): a
+    // fallback join through a canonical-bearing baseline entry is stale
+    // evidence when both canonical ids exist and differ.
+    let fallback_hit = fallback_identity.as_ref().is_some_and(|identity| {
+        baseline.identities.contains(identity)
+            || baseline
+                .fallback_canonical
+                .get(identity)
+                .is_some_and(|ids| {
+                    ids.iter().any(|baseline_canonical| {
+                        super::baseline_delta::canonical_identity_divergence(
+                            Some(baseline_canonical),
+                            candidate.canonical_gap_id.as_deref(),
+                        )
+                        .is_none()
+                    })
+                })
+    });
     let is_baseline_new = !canonical_hit && !fallback_hit;
     // DISCLOSE-FIRST (issue #1934, RIPR-SPEC-0014 § Baseline Comparison): a
     // fallback-only match still suppresses blocking during the legacy
@@ -954,12 +986,13 @@ fn fallback_identity_for(
     static_class: Option<&str>,
 ) -> Option<String> {
     match (path, line) {
-        // Normalize exactly like the baseline writers
-        // (`baseline_update.rs` / `baseline_delta.rs`): a candidate reported
-        // as `./src/x.rs` or `src\x.rs` must still match the legacy entry.
+        // Normalize through the baseline stored-string owner
+        // (`baseline::normalize_fallback_path`): a candidate reported as
+        // `./src/x.rs` or `src\x.rs` must still match the legacy entry. A
+        // missing static class renders as `unknown` (gate-only behavior).
         (Some(path), Some(line)) => Some(format!(
             "{}:{line}:{}",
-            path.replace('\\', "/").trim_start_matches("./"),
+            crate::output::baseline::normalize_fallback_path(path),
             static_class.unwrap_or("unknown")
         )),
         _ => None,
@@ -1472,10 +1505,7 @@ fn partial_scope_input_error(value: &Value, path: &Path) -> Option<String> {
             crate::analysis::PartialDiffScope::GATE_ELIGIBILITY,
         ))
     } else if discloses_incomplete_analysis_outcome(value) {
-        let kind = value
-            .pointer("/analysis_outcome/outcome/kind")
-            .and_then(Value::as_str)
-            .unwrap_or("incomplete");
+        let kind = incomplete_analysis_outcome_kind(value);
         Some(format!(
             "gate input {} discloses an incomplete analysis outcome ({kind}); \
              an incomplete or unsupported denominator is never a gate, baseline, \
@@ -1565,11 +1595,27 @@ fn findings_bound_input_error(value: &Value, path: &Path, role: &str) -> Option<
 /// This is intentionally separate from the older run-state vocabulary: an
 /// unsupported input or another typed limitation is still an incomplete
 /// denominator even when it does not use `limited_partial_scope`.
+///
+/// It also fails closed on `analysis_outcome.document_complete: false` (#9010):
+/// the producer emits that additive member only when the findings array was
+/// cut by the byte budget, so the analysis verdict can read complete while the
+/// document holds just a prefix of the findings.
 pub(crate) fn discloses_incomplete_analysis_outcome(value: &Value) -> bool {
     value
         .pointer("/analysis_outcome/analysis_complete")
         .and_then(Value::as_bool)
         == Some(false)
+        || discloses_bounded_analysis_document(value)
+}
+
+/// Whether the check document discloses `analysis_outcome.document_complete:
+/// false` (#9010): the rendered findings are a budget-bounded prefix.
+pub(crate) fn discloses_bounded_analysis_document(value: &Value) -> bool {
+    // A present non-`true` member (including a malformed one) cannot
+    // establish a complete document.
+    value
+        .pointer("/analysis_outcome/document_complete")
+        .is_some_and(|member| member.as_bool() != Some(true))
 }
 
 /// Whether a gap-ledger document discloses a blocked producer run: the
@@ -1605,6 +1651,14 @@ pub(crate) fn blocked_producer_warnings(value: &Value) -> Vec<String> {
 /// Return the producer-owned typed outcome kind for an incomplete envelope.
 /// Consumers use this only for fail-closed diagnostics.
 pub(crate) fn incomplete_analysis_outcome_kind(value: &Value) -> &str {
+    if discloses_bounded_analysis_document(value)
+        && value
+            .pointer("/analysis_outcome/analysis_complete")
+            .and_then(Value::as_bool)
+            != Some(false)
+    {
+        return "findings_document_bounded";
+    }
     value
         .pointer("/analysis_outcome/outcome/kind")
         .and_then(Value::as_str)
@@ -1620,7 +1674,8 @@ fn resolve_root_path(root: &Path, path: &Path) -> PathBuf {
 }
 
 fn display_path(path: &Path) -> String {
-    let value = path.display().to_string().replace('\\', "/");
+    let value =
+        crate::output::path::fold_verbatim_on_host(path.display().to_string().replace('\\', "/"));
     if value.is_empty() {
         ".".to_string()
     } else {

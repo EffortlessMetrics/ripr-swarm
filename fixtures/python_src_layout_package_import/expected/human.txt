@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/python_src_layout_package_import/input
 config: <cwd>/fixtures/python_src_layout_package_import/input/ripr.toml
 
-Summary: 2 probes (0 exposed, 2 weak, 0 unrevealed, 0 no path); 2 of 2 findings unsuppressed
+Summary: 2 probes (0 exposed, 1 weak, 0 unrevealed, 1 no path); 2 of 2 findings unsuppressed
 
 Changed file(s) by language: python = 2
 
@@ -28,6 +28,11 @@ Start here:
   Verify command: python -m pytest tests/test_discounts.py::test_bulk_discount_large_order (high)
   Next step — Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `quantity == 100`
   Evidence: reach yes · infection weak · propagation weak · observation yes · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: 1 related Python test(s) found for owner `bulk_discount`
     - infection weak: Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary
     - 6 more detail line(s) in --format human-full
@@ -35,11 +40,11 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_src_layout_package_import/input --diff <cwd>/fixtures/python_src_layout_package_import/diff.patch --mode fast probe:src_pricing_discounts.py:python_preview:230c5b86
   ripr context --root <cwd>/fixtures/python_src_layout_package_import/input --diff <cwd>/fixtures/python_src_layout_package_import/diff.patch --mode fast --at probe:src_pricing_discounts.py:python_preview:230c5b86
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_pricing_discounts.py:python_preview:230c5b86 --root <cwd>/fixtures/python_src_layout_package_import/input` for the full gate's answer
+  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/pricing/discounts.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (Python preview: 1).
-    - src/pricing/legacy.py:2 (weak)
+    - src/pricing/legacy.py:2 (no path)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

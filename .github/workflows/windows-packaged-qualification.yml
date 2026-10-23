@@ -11,6 +11,11 @@ on:
         description: "Immutable candidate tag/ref that must resolve to candidate_sha"
         required: true
         type: string
+      rehearsal:
+        description: "Rehearsal only: accept refs/heads/rehearsal/windows-packaged-<sha> instead of the release tag; the receipt is marked non-qualifying"
+        required: false
+        type: boolean
+        default: false
 
 # Actions-only rehearsal for #2769/#2379. This never creates a release,
 # uploads a release asset, publishes a VSIX, uses a secret, or changes a ref.
@@ -30,6 +35,7 @@ jobs:
       CARGO_TERM_COLOR: always
       CANDIDATE_SHA: ${{ inputs.candidate_sha }}
       CANDIDATE_REF: ${{ inputs.candidate_ref }}
+      REHEARSAL: ${{ inputs.rehearsal && 'true' || 'false' }}
 
     steps:
       - name: Initialize receipt root before checkout
@@ -68,18 +74,23 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if ($env:CANDIDATE_SHA -notmatch '^[0-9a-fA-F]{40}$') { throw 'candidate_sha must be a full 40-character commit SHA' }
-          if ($env:CANDIDATE_REF -notmatch '^refs/tags/ripr-release-0\.11\.0-[0-9a-fA-F]{40}$') { throw 'candidate_ref must be refs/tags/ripr-release-0.11.0-<40 hex SHA>' }
+          # A rehearsal never touches the protected release-tag namespace: it uses a
+          # throwaway branch ref and the receipt records rehearsal = true.
+          if ($env:REHEARSAL -eq 'true') {
+            if ($env:CANDIDATE_REF -notmatch '^refs/heads/rehearsal/windows-packaged-[0-9a-fA-F]{40}$') { throw 'rehearsal candidate_ref must be refs/heads/rehearsal/windows-packaged-<40 hex SHA>' }
+          } elseif ($env:CANDIDATE_REF -notmatch '^refs/tags/ripr-release-0\.11\.0-[0-9a-fA-F]{40}$') { throw 'candidate_ref must be refs/tags/ripr-release-0.11.0-<40 hex SHA>' }
           $candidateTagSha = ($env:CANDIDATE_REF -split '-')[-1].ToLowerInvariant()
-          if ($candidateTagSha -ne $env:CANDIDATE_SHA.ToLowerInvariant()) { throw 'candidate_ref tag suffix must equal candidate_sha' }
+          if ($candidateTagSha -ne $env:CANDIDATE_SHA.ToLowerInvariant()) { throw 'candidate_ref suffix must equal candidate_sha' }
           $head = (git rev-parse HEAD).Trim()
           if ($head -ne $env:CANDIDATE_SHA.ToLowerInvariant()) { throw "checkout identity mismatch: HEAD=$head candidate_sha=$env:CANDIDATE_SHA" }
           $remoteLine = git ls-remote --exit-code origin $env:CANDIDATE_REF
           if ($LASTEXITCODE -ne 0) { throw "candidate tag was not found on origin: $env:CANDIDATE_REF" }
           $remoteSha = ($remoteLine -split '\s+')[0].Trim()
           if ($remoteSha -ne $head) { throw "origin tag does not resolve directly to candidate_sha: $env:CANDIDATE_REF -> $remoteSha" }
-          $refSha = (git rev-parse "$env:CANDIDATE_REF^{commit}").Trim()
+          # A rehearsal branch exists only as a remote ref here; ls-remote above is its identity check.
+          $refSha = if ($env:REHEARSAL -eq 'true') { $remoteSha } else { (git rev-parse "$env:CANDIDATE_REF^{commit}").Trim() }
           if ($refSha -ne $head) { throw "local candidate ref does not resolve to candidate_sha: $env:CANDIDATE_REF -> $refSha" }
-          [ordered]@{ candidate_sha = $head; candidate_ref = $env:CANDIDATE_REF; candidate_parent = (git rev-parse "$head^"); repository = $env:GITHUB_REPOSITORY; workflow_run = $env:GITHUB_RUN_ID } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $env:QUAL_ROOT 'candidate-identity.json')
+          [ordered]@{ candidate_sha = $head; candidate_ref = $env:CANDIDATE_REF; rehearsal = ($env:REHEARSAL -eq 'true'); candidate_parent = (git rev-parse "$head^"); repository = $env:GITHUB_REPOSITORY; workflow_run = $env:GITHUB_RUN_ID } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $env:QUAL_ROOT 'candidate-identity.json')
 
       - name: Set up Rust and Node
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
@@ -184,7 +195,7 @@ jobs:
           function Invoke-CLI([string]$name, [string[]]$cliArgs) { if ($null -eq $cliArgs -or $cliArgs.Count -eq 0) { throw "packaged CLI $name requires arguments" }; $log = Join-Path $root "cli-$name.log"; Push-Location $fixture; try { & $env:RIPR_PACKAGED @cliArgs 2>&1 | Tee-Object $log; $code = $LASTEXITCODE } finally { Pop-Location }; if ($code -ne 0) { throw "packaged CLI $name failed with exit $code" } }
           Invoke-CLI 'version' @('--version'); if ((Get-Content (Join-Path $root 'cli-version.log') -Raw) -notmatch [regex]::Escape($env:RIPR_PACKAGED_VERSION)) { throw 'packaged --version did not report the package version' }; Invoke-CLI 'help' @('--help'); Invoke-CLI 'doctor' @('doctor', '--root', $fixture, '--json'); if ($null -eq (Get-Content (Join-Path $root 'cli-doctor.log') -Raw | ConvertFrom-Json)) { throw 'doctor did not emit JSON' }
           $artifact = Join-Path $root 'cli-check-artifact.json'; $checkLog = Join-Path $root 'cli-check.json'
-          Push-Location $fixture; try { & $env:RIPR_PACKAGED check --root $fixture --base $base --json --write-artifact $artifact 2>&1 | Tee-Object $checkLog; if ($LASTEXITCODE -ne 0) { throw "check failed with exit $LASTEXITCODE" } } finally { Pop-Location }
+          Push-Location $fixture; try { & $env:RIPR_PACKAGED check --root $fixture --base $base --json --write-artifact $artifact 2>(Join-Path $root 'cli-check.stderr.log') | Tee-Object $checkLog; if ($LASTEXITCODE -ne 0) { throw "check failed with exit $LASTEXITCODE" } } finally { Pop-Location }
           $check = Get-Content $checkLog -Raw | ConvertFrom-Json; $finding = $check.findings | Select-Object -First 1
           if ($null -eq $finding -or [string]::IsNullOrWhiteSpace($finding.id)) { throw 'check emitted no finding selector for explain/context' }
           # `explain` takes its finding selector positionally and emits its
@@ -209,6 +220,7 @@ jobs:
           [ordered]@{ vsix = $vsix.Name; sha256 = $hash; bytes = $vsix.Length; candidate_sha = $env:CANDIDATE_SHA } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $env:QUAL_ROOT 'vsix-identity.json'); "RIPR_VSIX=$($vsix.FullName)" >> $env:GITHUB_ENV
 
       - name: Run trusted packaged editor journey
+        timeout-minutes: 30
         shell: pwsh
         working-directory: editors/vscode
         run: |
@@ -218,6 +230,7 @@ jobs:
           $owned = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine -like "*$env:QUAL_TEMP_ROOT*" -and ($_.Name -match 'ripr|Code|electron') }; if ($owned) { $owned | Format-List Name,ProcessId,CommandLine; throw 'trusted editor journey left an owned process' }
 
       - name: Run untrusted trust-boundary journey
+        timeout-minutes: 30
         shell: pwsh
         working-directory: editors/vscode
         run: |
@@ -225,12 +238,55 @@ jobs:
           npm run test:e2e 2>&1 | Tee-Object (Join-Path $env:QUAL_ROOT 'editor-untrusted.log'); if ($LASTEXITCODE -ne 0) { throw "untrusted editor journey failed with exit $LASTEXITCODE" }
           $owned = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine -like "*$env:QUAL_TEMP_ROOT*" -and ($_.Name -match 'ripr|Code|electron') }; if ($owned) { $owned | Format-List Name,ProcessId,CommandLine; throw 'untrusted editor journey left an owned process' }
 
+      - name: Retain editor host logs
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $dest = Join-Path $env:QUAL_ROOT 'editor-host-logs'
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          # Mirrors redactHostDiagnosticsText in editors/vscode/test/hostDiagnostics.ts; a
+          # timed-out step never reaches the runner's own collector, so redact here too.
+          $cap = 256KB
+          $patterns = @(
+            '-----BEGIN [A-Z0-9 ]+-----[\s\S]*?-----END [A-Z0-9 ]+-----',
+            '-----BEGIN [A-Z0-9 ]+-----[\s\S]*$',
+            '-----END [A-Z0-9 ]+-----',
+            '\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b',
+            '\bgithub_pat_[A-Za-z0-9_]{20,}\b',
+            'x-access-token:[^@\s]+'
+          )
+          foreach ($lane in 'trusted-editor', 'untrusted-editor') {
+            $logs = Join-Path $env:QUAL_TEMP_ROOT "$lane\vscode-test-user-data\logs"
+            if (-not (Test-Path $logs)) { continue }
+            foreach ($file in Get-ChildItem $logs -File -Recurse -Filter *.log) {
+              try {
+                # Share-tolerant open: the hung VS Code host still holds its logs, and ReadAllBytes
+                # fails on a file another process has open for write (run 39720121179).
+                $stream = [System.IO.File]::Open($file.FullName, 'Open', 'Read', 'ReadWrite,Delete')
+                try {
+                  $take = [int][Math]::Min($stream.Length, $cap)
+                  $null = $stream.Seek(-$take, 'End')
+                  $bytes = New-Object byte[] $take
+                  $read = 0
+                  while ($read -lt $take) { $n = $stream.Read($bytes, $read, $take - $read); if ($n -le 0) { break }; $read += $n }
+                  if ($read -lt $take) { $bytes = $bytes[0..($read - 1)] }
+                } finally { $stream.Dispose() }
+                $text = [System.Text.Encoding]::UTF8.GetString($bytes)
+                foreach ($pattern in $patterns) { $text = [regex]::Replace($text, $pattern, '[redacted]', 'IgnoreCase') }
+                $to = Join-Path $dest "$lane\$($file.FullName.Substring($logs.Length + 1))"
+                New-Item -ItemType Directory -Force -Path (Split-Path $to) | Out-Null
+                [System.IO.File]::WriteAllText($to, $text)
+              } catch { Write-Host "skipped $($file.Name): $_" }
+            }
+          }
+
       - name: Write Actions-only qualification receipt
         if: always()
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'; $root = $env:QUAL_ROOT; New-Item -ItemType Directory -Force -Path $root | Out-Null
-          [ordered]@{ schema_version = '0.1'; candidate_sha = $env:CANDIDATE_SHA; candidate_ref = $env:CANDIDATE_REF; publication = 'forbidden'; secrets = 'forbidden'; receipts = @(Get-ChildItem $root -File -Recurse -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName.Substring($root.Length + 1) } | Sort-Object); claim_boundary = 'Actions-only exact-candidate packaged CLI and VSIX journey evidence; no correctness, release, publication, signing, marketplace, or merge claim.' } | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 (Join-Path $root 'qualification-receipt.json')
+          [ordered]@{ schema_version = '0.1'; candidate_sha = $env:CANDIDATE_SHA; candidate_ref = $env:CANDIDATE_REF; rehearsal = ($env:REHEARSAL -eq 'true'); publication = 'forbidden'; secrets = 'forbidden'; receipts = @(Get-ChildItem $root -File -Recurse -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName.Substring($root.Length + 1) } | Sort-Object); claim_boundary = $(if ($env:REHEARSAL -eq 'true') { 'NON-QUALIFYING REHEARSAL on a throwaway branch ref, not the release candidate. ' } else { '' }) + 'Actions-only exact-candidate packaged CLI and VSIX journey evidence; no correctness, release, publication, signing, marketplace, or merge claim.' } | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 (Join-Path $root 'qualification-receipt.json')
           Get-ChildItem $root -File -Recurse | ForEach-Object { Get-FileHash $_.FullName -Algorithm SHA256 } | Select-Object Path,Hash | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $root 'receipt-file-digests.json')
 
       - name: Upload Actions-only receipts

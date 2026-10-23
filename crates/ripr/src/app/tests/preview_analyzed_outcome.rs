@@ -131,6 +131,7 @@ fn malformed_perl_adapter_run_is_enabled_but_not_analyzed_in_every_renderer() ->
                 suppression_policy: None,
                 git_timeout: None,
                 git_candidate: None,
+                scope: Default::default(),
             },
             &config,
         )?;
@@ -184,6 +185,7 @@ fn missing_perl_fact_packet_reason_is_user_facing() -> Result<(), String> {
                 suppression_policy: None,
                 git_timeout: None,
                 git_candidate: None,
+                scope: Default::default(),
             },
             &config,
         )?;
@@ -252,6 +254,7 @@ fn configured_producer_failure_is_typed_not_misattributed_to_missing_packet() ->
                 suppression_policy: None,
                 git_timeout: None,
                 git_candidate: None,
+                scope: Default::default(),
             },
             &config,
         )?;
@@ -369,6 +372,7 @@ fn producer_failure_is_recorded_even_when_perl_is_not_enabled() -> Result<(), St
                 suppression_policy: None,
                 git_timeout: None,
                 git_candidate: None,
+                scope: Default::default(),
             },
             &config,
         )?;
@@ -432,6 +436,7 @@ fn typescript_output(enabled: bool) -> Result<(std::path::PathBuf, crate::CheckO
             suppression_policy: None,
             git_timeout: None,
             git_candidate: None,
+            scope: Default::default(),
         },
         &config,
     )?;
@@ -495,6 +500,7 @@ fn typescript_output_for_paths(
             suppression_policy: None,
             git_timeout: None,
             git_candidate: None,
+            scope: Default::default(),
         },
         &config,
     )?;
@@ -643,6 +649,7 @@ fn limitation_kinds_for_preview_diff(
             suppression_policy: None,
             git_timeout: None,
             git_candidate: None,
+            scope: Default::default(),
         },
         &config,
     )?;

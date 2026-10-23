@@ -12,7 +12,7 @@ typechecker or test runner, and they do not make generated CI blocking.
 | Language | Status | Default | Evidence scope |
 | --- | --- | --- | --- |
 | Rust | reference path | enabled | Rust static exposure evidence and the existing CLI, CI, editor, report, and gate surfaces. |
-| TypeScript and JavaScript | preview | disabled | Syntax-first owners, tests, assertions, probes, related tests, and visible static limits for `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, and `.cjs`. |
+| TypeScript and JavaScript | preview | detected TypeScript projects (root `tsconfig.json`/`jsconfig.json`, or `.ts`/`.tsx`/`.mts`/`.cts` source under `src/` or `tests/`) without `ripr.toml`; otherwise disabled unless configured | Syntax-first owners, tests, assertions, probes, related tests, and visible static limits for `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, and `.cjs`. |
 | Python | preview static facts; scoped repair routing is `usable alpha` | detected Python projects without `ripr.toml`; otherwise disabled unless configured | Syntax-first owners, tests, assertions, probes, related tests, RIPR-stage evidence, selected repair-class missing discriminators, fail-closed static limits, and bounded repair cards/packets for selected pytest/unittest routes. |
 
 The preview adapters feed the same output schema and review surfaces as Rust.
@@ -29,6 +29,11 @@ control:
 [languages]
 enabled = ["rust", "typescript", "python"]
 ```
+
+With no `ripr.toml`, Python and TypeScript projects are detected and enabled
+automatically; a `ripr.toml` with `enabled = ["rust"]` keeps both off. A
+binary without the matching Cargo feature errors for Python and ignores
+detection silently for TypeScript.
 
 This runtime opt-in is separate from build-time adapter availability. The
 default published `ripr` build includes the TypeScript/JavaScript and Python
@@ -79,7 +84,8 @@ enabled = ["rust"]
 ## Bun UB Advisory Profile
 
 Bun stable-byte review can opt into the calibrated TypeScript-family preview
-profile without making TypeScript or JavaScript default-on:
+profile with an explicit language list (detection does not turn on the
+profile):
 
 ```toml
 [languages]
@@ -222,7 +228,7 @@ Useful references:
 - [TypeScript preview static facts](specs/RIPR-SPEC-0027-typescript-preview-static-facts.md).
 - [Python preview static facts](specs/RIPR-SPEC-0028-python-preview-static-facts.md).
 
-## Repo-Mode Analysis: Rust/Perl Full, Python Bounded Preview, TypeScript Stub
+## Repo-Mode Analysis: Rust/Perl Full, Python and TypeScript Bounded Preview
 
 The preview adapters (TypeScript, Python) implement diff-mode static exposure
 analysis. Repo-mode analysis differs per adapter:
@@ -241,11 +247,64 @@ analysis. Repo-mode analysis differs per adapter:
   findings and discloses a partial language run on the shared
   `language_runs` channel, which gates fail closed on: a capped or partial
   Python repo run can never back a full-denominator, all-clear, badge, or
-  baseline claim. A workspace with no Python production source is an honest
+  baseline claim. The scope is the typed `Finding.analysis_scope` (set only via
+  `Finding::mark_repo_scoped`, which also derives the compatibility evidence
+  line; consumers read the typed field and fail closed if the two disagree). The
+  typed scope is emitted in the hand-rendered check report JSON as
+  `findings[].analysis_scope: "repo"` for repo findings only (omitted for diff
+  scope, so diff bytes are unchanged); check-output consumers such as the gap
+  ledger read that field, never the evidence line, and a contradiction fails
+  closed.
+  Repo-mode Python findings carry the evidence line
+  `analysis_scope: repo` and never get a `python_repair_card` or repair
+  routing: the capability registry has no repo-mode `repair_routing` cell for
+  Python (absent = `not_proven`, #5531), so they differ from diff-mode
+  findings there. The gap ledger may still carry an advisory non-repair
+  record for them; its reason, like the human safe-next-action line, is
+  scope-specific and registry-derived from the typed scope (`repo-mode
+  findings have no repair routing (python/any/repo/repair_routing is
+  not_proven)`) rather than a test-placement reason, which stays the
+  diff-mode wording. A workspace with no Python production source is an honest
   zero with zero counts, not a fabricated limitation. Broader Python repo
   support remains preview until #1160's tier ruling.
-- **TypeScript** remains an intentional stub that returns an empty result
-  (`typescript/mod.rs`).
+- **TypeScript/JavaScript** `analyze_repo` is no longer a stub (#5545). It
+  selects the production `.ts/.tsx/.mts/.cts/.js/.jsx/.mjs/.cjs` files under
+  the same shared cap (#2109; default 800, `RIPR_MAX_REPO_INDEX_FILES`) and
+  runs the diff-mode owner/test/oracle/probe producers with every non-blank
+  line of each selected file treated as added (whole-file, not diff-scoped), keeping one finding per owner, probe family, delta, exposure class and changed expression (identical repeated lines collapse; distinct behaviors stay separate rows). Findings keep
+  their `typescript` or `javascript` language identity and preview status;
+  no Rust `RepoSeam` is fabricated. Test, declaration, generated, vendor and
+  build files never seed findings (tests still feed the evidence index). A
+  capped run, a truncated walk, an unreadable root, unreadable or
+  unparseable files, or typed indexing limitations disclose a partial
+  language run whose `partial_reason` starts with a stable `typescript_repo_*:`
+  code (`capped`, `discovery_truncated`, `links_skipped`, `unread`, `unread_tests`,
+  `test_parse_failure`, `limitations`, `root_unreadable`), joined by ` | `,
+  and can never back an all-clear, badge or baseline claim; a
+  fully discovered workspace without TS/JS production source is an honest
+  zero. The cap bounds the analysis subjects (the selected production
+  files); the test/evidence index stays workspace-wide and is bounded by
+  `RIPR_TS_MAX_WORKSPACE_FILES` and the `RIPR_TS_MAX_FILE_READ_BYTES` /
+  `RIPR_TS_MAX_WORKSPACE_READ_BYTES` read budgets, with any refusal named as a
+  partial reason. Declared `handwritten_files` are admitted as in diff mode.
+  Alongside the disclosure string, each repo-mode run reports typed per-language
+  file accounting (#6466: discovered, selected, skipped, omitted, and the first
+  fired cap) into the internal language outcome. Two caps are named with their
+  stage: `RIPR_TS_MAX_WORKSPACE_FILES` (discovery, TypeScript walk entries) and
+  `RIPR_MAX_REPO_INDEX_FILES` (selection, TypeScript and Python). Counts that
+  would only be lower bounds after truncated or unreadable discovery are
+  unknown, never zero; this does not change the public `LanguageRun` wire.
+  No support-tier, gate or baseline promotion.
+  Repo-mode TypeScript/JavaScript findings carry an `analysis_scope: repo` evidence line and never project a
+  repair packet or `repair_packet_ready: true`, because the capability
+  registry has no repo-mode `repair_routing` cell for these languages (#5531);
+  repair routing stays diff-mode only. The closed-packet reason shown for such
+  a finding names that scope (`repo-mode findings have no repair routing
+  (typescript/any/repo/repair_routing is not_proven)`), from the typed scope,
+  followed by `; ` and the finding's specific `why_not_actionable` reason when
+  one exists. This scope-led text is the `why_not_actionable` value in JSON,
+  SARIF, LSP diagnostics/hover, the TypeScript preview card and the human
+  `limitation:` row for repo-scoped TS/JS findings; diff-mode text is unchanged.
 
 Consumption boundary: the repo-scoped CLI formats (`repo-exposure-*`,
 `repo-seams-*`, `repo-badge-*`, `agent-seam-packets-json`) render the
@@ -271,10 +330,10 @@ result, never silent skips.
 
 | Format | Rust repo | Perl repo | TypeScript repo | Python repo |
 | --- | --- | --- | --- | --- |
-| `repo-exposure-json` / `repo-exposure-md` / `repo-sarif` | full | full | empty (stub); `typescript_diff_first` limitation | seams: none rendered; `python_diff_first` limitation |
-| `repo-seams-json` / `repo-seams-md` | full | full | empty (stub) | seams: none rendered; evidence via repo analysis result |
-| `repo-badge-json` / `repo-badge-shields` | full | full | empty (stub) | seams: none rendered; capped/partial runs never badge-eligible |
-| `agent-seam-packets-json` | full | full | empty (stub) | seams: none rendered; evidence via repo analysis result |
+| `repo-exposure-json` / `repo-exposure-md` / `repo-sarif` | full | full | seams: none rendered; `typescript_diff_first` limitation | seams: none rendered; `python_diff_first` limitation |
+| `repo-seams-json` / `repo-seams-md` | full | full | seams: none rendered; evidence via repo analysis result | seams: none rendered; evidence via repo analysis result |
+| `repo-badge-json` / `repo-badge-shields` | full | full | seams: none rendered; evidence via repo analysis result | seams: none rendered; capped/partial runs never badge-eligible |
+| `agent-seam-packets-json` | full | full | seams: none rendered; evidence via repo analysis result | seams: none rendered; evidence via repo analysis result |
 
 Diff-scoped `check` formats (`check --json`, `check --format human`, SARIF from
 a diff) work normally on all four languages. The base/head `review-comments`
@@ -299,10 +358,10 @@ adapter, and the canonical exporter (`perl-ripr-facts`) is not yet published, so
 no released ripr build plus exporter combination analyzes Perl yet; a released
 install reports changed Perl files as not analyzed.
 
-**Until the TypeScript stub is implemented**, do not interpret a zero-seam
-repo-mode report for TypeScript as evidence of clean coverage. Run
-`ripr check --diff <diff>` against a representative PR diff to get real
-exposure evidence for that language. For Python, read repo-mode results
+Do not interpret a zero-seam repo-mode report for TypeScript or Python as
+evidence of clean coverage; the seam renderers do not show preview findings.
+Run `ripr check --diff <diff>` against a representative PR diff, or read the
+repo analysis result. For both languages, read repo-mode results
 together with the disclosed run status: a capped or partial run covers only
 its selected working set, and preview-tier exposure evidence is draft-mode
 input, not a coverage claim.

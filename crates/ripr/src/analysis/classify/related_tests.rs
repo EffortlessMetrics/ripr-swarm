@@ -7,6 +7,8 @@
 //! represent safely fall back to the full test set. Cross-package relations consume
 //! path-dependency adjacency owned by `analysis/workspace`.
 
+mod fmt_dispatch;
+
 use super::super::rust_index::{
     FunctionSummary, RustIndex, TestSummary, extract_identifier_tokens,
 };
@@ -20,6 +22,13 @@ use crate::analysis::workspace::{PathDependencyAdjacency, PathDependencyGraphSta
 use crate::domain::{Probe, RelationConfidence, RelationReason};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+
+mod equality_dispatch;
+
+pub(in crate::analysis) use equality_dispatch::is_partial_eq_method;
+pub(in crate::analysis) use fmt_dispatch::{
+    assertion_pins_display_string, changes_only_string_literals,
+};
 
 /// Per-pass workspace dependency context for the #2972 cross-crate admit.
 /// Built once per classification pass in the Rust adapter and shared by
@@ -89,17 +98,26 @@ pub(in crate::analysis) struct RelatedTestCandidateIndex {
     by_path_trigram: BTreeMap<[u8; RELATION_TRIGRAM_WIDTH], Vec<usize>>,
     by_test_stem: BTreeMap<String, Vec<usize>>,
     by_function_name: BTreeMap<String, Vec<usize>>,
+    /// Tests whose body spells `assert_eq!`/`assert_ne!` (or a `debug_`
+    /// twin): candidates for an owner a comparison macro runs without
+    /// naming it (`PartialEq::eq`, #8999).
+    by_equality_assert: Vec<usize>,
     common_tokens: CommonTestTokens,
     // Deny-only, per-pass memo. No-property suites leave it empty, so probes
     // do not rescan ordinary bodies or property token trees.
     property_only_calls: BTreeMap<usize, BTreeSet<String>>,
     all_tests: Vec<usize>,
+    /// Tests whose body may format a value (`format!`, `write!`, `to_string`),
+    /// the candidates for a changed `Display`/`Debug` `fmt` owner.
+    fmt_dispatch_tests: Vec<usize>,
     /// Run-scoped reveal memo filled lazily from the same index; valid for
     /// exactly as long as the candidate lists above are.
     file_use_statements: super::FileUseStatements,
     /// Run-scoped activation memo, keyed by slots of the same index.
     test_value_facts: super::TestValueFacts,
     owner_pin_syntax: super::OwnerPinSyntax,
+    /// Source-expansion facts for this immutable classification run.
+    implicit_expansion: super::ImplicitExpansionMemo,
     /// Run-scoped unseen-reach scan. `includes_external_docs` parses each
     /// file; asking per owner re-parsed the crate on every changed function.
     unseen_reach: super::UnseenReachNames,
@@ -128,6 +146,12 @@ impl RelatedTestCandidateIndex {
 
         for (test_index, test) in index.tests().iter().enumerate() {
             candidates.all_tests.push(test_index);
+            if fmt_dispatch::body_may_dispatch_fmt(&test.body) {
+                candidates.fmt_dispatch_tests.push(test_index);
+            }
+            if test.body.contains("assert_eq!") || test.body.contains("assert_ne!") {
+                candidates.by_equality_assert.push(test_index);
+            }
             let refused =
                 crate::analysis::extract::property_macros::property_only_call_names(&test.body);
             if !refused.is_empty() {
@@ -189,8 +213,19 @@ impl RelatedTestCandidateIndex {
         &self.file_use_statements
     }
 
+    pub(in crate::analysis) fn implicit_expansion(&self) -> &super::ImplicitExpansionMemo {
+        &self.implicit_expansion
+    }
+
     pub(in crate::analysis) fn owner_pin_syntax(&self) -> &super::OwnerPinSyntax {
         &self.owner_pin_syntax
+    }
+
+    /// Pays the workspace macro-site scan once, ahead of the classify
+    /// workers (#9211). Call it on a classify-pool thread before any probe is
+    /// queued.
+    pub(in crate::analysis) fn prime_workspace_macro_scan(&self, index: &RustIndex) {
+        self.owner_pin_syntax.prime_workspace_macro_scan(index);
     }
 
     pub(in crate::analysis) fn unseen_reach_names(&self) -> &super::UnseenReachNames {
@@ -203,6 +238,39 @@ impl RelatedTestCandidateIndex {
     pub(in crate::analysis) fn with_analysis_root(mut self, root: &Path) -> Self {
         self.analysis_root = Some(root.to_path_buf());
         self
+    }
+
+    /// Whether `probe` sits in a root build script no package source mounts:
+    /// the exact answer the related-test gate uses (same root-relative path).
+    pub(in crate::analysis) fn probe_in_unmounted_build_script(
+        &self,
+        probe: &Probe,
+        owner_fn: Option<&FunctionSummary>,
+        index: &RustIndex,
+    ) -> bool {
+        probe_index_path(
+            &probe.location.file,
+            self.analysis_root.as_deref(),
+            owner_fn,
+            index,
+        )
+        .is_some_and(|relative| root_build_script_unmounted(index, &relative))
+    }
+
+    /// #9871: the probe's file as the index keys it (root-relative), the same
+    /// resolution the related-test gate uses.
+    pub(in crate::analysis) fn probe_index_file(
+        &self,
+        probe: &Probe,
+        index: &RustIndex,
+    ) -> Option<std::path::PathBuf> {
+        probe_index_path(
+            &probe.location.file,
+            self.analysis_root.as_deref(),
+            None,
+            index,
+        )
+        .map(std::path::PathBuf::from)
     }
 
     /// Record which tests the diff adds or changes, so they lead their
@@ -281,6 +349,15 @@ impl RelatedTestCandidateIndex {
             {
                 scan_all = true;
             }
+        }
+
+        // A changed `Display`/`Debug` `fmt` is reached through formatting
+        // that never spells `fmt`.
+        if owner_fn.is_some_and(fmt_dispatch::is_fmt_dispatch_owner) {
+            selected.extend(self.fmt_dispatch_tests.iter().copied());
+        }
+        if owner_fn.is_some_and(equality_dispatch::has_partial_eq_shape) {
+            extend_bucket(&mut selected, Some(self.by_equality_assert.as_slice()));
         }
 
         if owner_fn.is_none() {
@@ -674,6 +751,14 @@ fn find_related_tests_with_candidates<'a>(
         RelatedTestCandidates::FullScan => None,
     };
     let probe_path = probe_index_path(&probe.location.file, analysis_root, owner_fn, index);
+    // #9173: a root build script is unreachable from package tests unless one
+    // really mounts it; see `root_build_script_unmounted`.
+    if probe_path
+        .as_deref()
+        .is_some_and(|relative| root_build_script_unmounted(index, relative))
+    {
+        return Vec::new();
+    }
     let owner_package_prefix = owner_fn.and_then(|owner| package_prefix(&owner.file));
 
     // #2971 ambiguity rule: a call to `owner_name` can bypass the
@@ -742,6 +827,8 @@ fn find_related_tests_with_candidates<'a>(
         }
     }
     let owner_name_is_unique = workspace_complete && same_name_function_count == 1;
+    // #8999: a user `PartialEq::eq`/`ne` a comparison macro runs unnamed.
+    let equality_owner = owner_fn.and_then(|owner| equality_dispatch::equality_owner(owner, index));
     // Same-crate trait impls share a method name (`size_hint` on WhileSome
     // and Combinations). The uniqueness bypass above only gates *cross-crate*
     // package-prefix filtering; this count is the receiver-identity gate
@@ -856,6 +943,18 @@ fn find_related_tests_with_candidates<'a>(
         .iter()
         .filter_map(|token| test_name_word_token(token, common_words))
         .collect();
+    let fmt_context: std::cell::OnceCell<Option<fmt_dispatch::FmtContext>> =
+        std::cell::OnceCell::new();
+    // #9329: a free-function owner reached through a method-hop chain cannot be
+    // the target of a receiver call. A call fact whose only mention of the
+    // owner's name is `x.name(..)` (a std `expected.to_string()` inside a test
+    // helper) is not a call of the owner, so it neither relates a test by name
+    // nor hides the chain entry's `helper_owner_call` relation.
+    let receiver_calls_cannot_reach_owner = helper_chain
+        .is_some_and(super::helper_transfer::chain_has_method_hop)
+        && owner_fn.is_some_and(|owner| {
+            owner.item.container == crate::analysis::facts::FunctionContainer::Free
+        });
     for test_index in candidate_indices {
         let test = index.tests().at(test_index);
         // Compute calls_owner BEFORE the package-prefix guard so a cross-crate
@@ -872,10 +971,54 @@ fn find_related_tests_with_candidates<'a>(
                     .contains(owner_name)
             }
         };
-        let calls_owner = !owner_name.is_empty()
+        let calls_owner_by_name = !owner_name.is_empty()
             && !property_only_owner_call
-            && (test.calls.iter().any(|call| call.name == owner_name)
-                || body_contains_owner_call(&test.body, owner_name));
+            && if receiver_calls_cannot_reach_owner {
+                // The body fallback must preserve the same free-call identity
+                // as captured calls; a receiver spelling cannot restore it.
+                test_calls_free_function(test, owner_name)
+            } else {
+                test.calls.iter().any(|call| call.name == owner_name)
+                    || body_contains_owner_call(&test.body, owner_name)
+            };
+        // A formatting macro or `to_string()` on a value typed as the owner's
+        // self type runs a changed `Display`/`Debug` `fmt` without naming it.
+        let dispatches_to_fmt = owner_fn.is_some_and(|owner| {
+            fmt_context
+                .get_or_init(|| fmt_dispatch::FmtContext::new(index, owner))
+                .as_ref()
+                .is_some_and(|context| {
+                    fmt_dispatch::test_dispatches_to_fmt(
+                        test,
+                        owner,
+                        &indexed_same_name_ids,
+                        context,
+                    )
+                })
+        });
+        let calls_owner = calls_owner_by_name || dispatches_to_fmt;
+        // #8999: `assert_eq!(a, b)` over two values of the owner's type runs
+        // the owner's `PartialEq::eq` with no call fact naming it. A distinct
+        // signal from `calls_owner`: it bypasses none of the cross-package
+        // guards below, so only an in-package, same-file test can use it.
+        // Evaluated independently of `calls_owner`: a name-only `Other::eq`
+        // call elsewhere in the test must not hide a real macro dispatch.
+        let equality_asserts_owner = !property_only_owner_call
+            && match (owner_fn, equality_owner.as_ref()) {
+                (Some(owner), Some(equality)) => {
+                    equality_dispatch::test_asserts_equality_through_owner(
+                        test,
+                        owner,
+                        equality,
+                        index
+                            .files()
+                            .get(&test.file)
+                            .map(|facts| facts.data().source.as_ref()),
+                        index,
+                    )
+                }
+                _ => false,
+            };
         // #3714: captured `calls` facts only — the same authority as
         // `calls_owner`. Never overrides owner attribution. A same-named
         // local definition or binding in the test body defeats the admit
@@ -957,7 +1100,15 @@ fn find_related_tests_with_candidates<'a>(
             test.calls.iter().any(|call| {
                 chain.hops.iter().any(|hop| {
                     hop.caller.name == call.name
-                        && super::helper_transfer::is_direct_call_site(&call.text, &hop.caller.name)
+                        && (super::helper_transfer::is_direct_call_site(
+                            &call.text,
+                            &hop.caller.name,
+                        ) || own_crate_qualified_entry_call(
+                            index,
+                            test,
+                            &hop.caller,
+                            &call.text,
+                        ))
                         // #6780 Devin review: a test-local closure or nested
                         // fn named like the hop caller shadows it, so the
                         // call never reaches the helper.
@@ -972,6 +1123,7 @@ fn find_related_tests_with_candidates<'a>(
         });
 
         if calls_owner
+            && !equality_asserts_owner
             && !calls_helper_entry
             && call_identity.as_ref().is_some_and(|identity| {
                 identity.resolve_test(test, index) == super::CallTarget::Other
@@ -1081,6 +1233,7 @@ fn find_related_tests_with_candidates<'a>(
             !calls_owner && !assertions_reference_owner && calls_helper_entry;
 
         if !calls_owner
+            && !equality_asserts_owner
             && !assertions_reference_owner
             && !same_file_or_named
             && !helper_chain_reaches
@@ -1100,7 +1253,9 @@ fn find_related_tests_with_candidates<'a>(
         // Determine the single highest-priority reason for the match so the
         // emitted `RelatedTest` can carry `relation_reason` /
         // `relation_confidence` tags for consumer filtering.
-        let reason = if calls_owner {
+        let reason = if equality_asserts_owner {
+            RelationReason::DirectOwnerCall
+        } else if calls_owner {
             // A unique owner name, or a receiver resolved to this impl, is a
             // direct call. An impl method whose name has other workspace
             // definitions cannot be `direct_owner_call` until the receiver
@@ -1120,6 +1275,7 @@ fn find_related_tests_with_candidates<'a>(
                 &indexed_same_name_ids,
                 test_source,
                 index,
+                dispatches_to_fmt,
             )
         } else if helper_chain_reaches {
             // The test calls a function that reaches the owner through
@@ -1571,6 +1727,143 @@ fn declares_module(stripped: &str, name: &str) -> bool {
         previous_is_mod = word == "mod";
         found
     })
+}
+
+/// Whether comment-and-string-stripped `source` may bind `name` to something
+/// other than a crate: an item (`mod`/`fn`/`struct`/`enum`/`union`/`trait`/
+/// `type`/`const`/`static`) or a `let`/`mut` binding named `name`, a closure
+/// parameter (`|name|`) or a typed parameter/field (`name:` but not `name::`).
+/// Conservative on purpose: any such mention refuses.
+fn file_may_bind_name(stripped: &str, name: &str) -> bool {
+    const BINDERS: [&str; 11] = [
+        "mod", "fn", "struct", "enum", "union", "trait", "type", "const", "static", "let", "mut",
+    ];
+    let bytes = stripped.as_bytes();
+    let mut previous_word = "";
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if !is_ident_char(char::from(bytes[index])) {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < bytes.len() && is_ident_char(char::from(bytes[index])) {
+            index += 1;
+        }
+        let mut word = &stripped[start..index];
+        // `r#name` is the identifier `name`: read it as one word.
+        if word == "r"
+            && bytes.get(index) == Some(&b'#')
+            && bytes
+                .get(index + 1)
+                .is_some_and(|byte| is_ident_char(char::from(*byte)))
+        {
+            index += 1;
+            let raw_start = index;
+            while index < bytes.len() && is_ident_char(char::from(bytes[index])) {
+                index += 1;
+            }
+            word = &stripped[raw_start..index];
+        }
+        if word == name {
+            let before = stripped[..start].trim_end().chars().next_back();
+            let after = stripped[index..].trim_start();
+            if BINDERS.contains(&previous_word)
+                || before == Some('|')
+                || (after.starts_with(':') && !after.starts_with("::"))
+            {
+                return true;
+            }
+        }
+        previous_word = word;
+    }
+    false
+}
+
+/// #8999: whether `call_text` is an integration test's call of the helper
+/// chain's entry `caller`, spelled through the package's own library name
+/// (`rr::order_discount(..)` with no `use`).
+///
+/// Fail-closed admit, only for the one shape whose identity is established:
+/// the test sits under `tests/` of the root package, the entry is a
+/// module-level item of that package's `src/lib.rs` (a recognized library
+/// root, so a binary's modules never match), and the call is spelled exactly
+/// `<crate>::<entry>(` with `<crate>` the root manifest's library identifier
+/// (`[lib] name`, else the package name). A test that declares, renames or imports that crate name
+/// (or globs anything), binds it locally, or any workspace member / nested
+/// package / absolute path keeps the existing refusal.
+fn own_crate_qualified_entry_call(
+    index: &RustIndex,
+    test: &TestSummary,
+    caller: &FunctionSummary,
+    call_text: &str,
+) -> bool {
+    if !super::call_identity::under_tests_dir(&test.file)
+        || path_is_absolute_form(&test.file)
+        || path_is_absolute_form(&caller.file)
+        || package_prefix(&test.file).is_some()
+        || package_prefix(&caller.file).is_some()
+    {
+        return false;
+    }
+    let is_library_root_item = super::owner_pin::target_root(&caller.file, index, &BTreeSet::new())
+        .is_some_and(|root| root == Path::new("src/lib.rs"))
+        && super::call_identity::definition_module_path(caller)
+            .is_some_and(|module| module.is_empty());
+    if !is_library_root_item {
+        return false;
+    }
+    // Only a test-crate root (`tests/<name>.rs`, `tests/<name>/main.rs`):
+    // a module child (`tests/api/child.rs`, `tests/common/mod.rs`) resolves
+    // paths from a parent file whose bindings this scan does not read.
+    let normalized_test = normalize_path(&test.file);
+    let test_segments: Vec<&str> = normalized_test.split('/').collect();
+    let is_test_crate_root = match test_segments.as_slice() {
+        ["tests", file] => file.ends_with(".rs"),
+        ["tests", _, "main.rs"] => true,
+        _ => false,
+    };
+    if !is_test_crate_root {
+        return false;
+    }
+    let Some(facts) = index.files().get(&test.file) else {
+        return false;
+    };
+    if facts.source.contains("include!") {
+        return false;
+    }
+    // The one identifier the package's library is imported as: `[lib] name`
+    // when set, else the package name (hyphens folded). The package name is
+    // not a second spelling when `[lib] name` differs.
+    let Some(crate_name) = index.root_library_name.as_deref() else {
+        return false;
+    };
+    let stripped_file = strip_comments_and_strings(&facts.source);
+    // Any import that may bind the crate name to something else, in the
+    // file or in the test body: a glob, or a path ending in that name
+    // (`use some_dep::qual_reach;`). `as` renames are read by
+    // `file_renames_to`.
+    let may_rebind_crate_name = |source: &str| {
+        super::reveal::flattened_use_paths(source)
+            .iter()
+            .any(|import| {
+                let unraw = |name: &str| name.strip_prefix("r#").unwrap_or(name).to_string();
+                import.path.ends_with('*')
+                    || import.path.rsplit("::").next().map(unraw).as_deref() == Some(crate_name)
+                    || import.alias.as_deref().map(unraw).as_deref() == Some(crate_name)
+            })
+    };
+    // The call fact's text is the whole source line: match the own-crate
+    // spelling only in code, never in a string or comment beside a foreign
+    // call of the same name.
+    let code_line = mask_comments_and_strings(call_text);
+    is_qualified_owner_call(&code_line, &format!("{crate_name}::{}", caller.name))
+        && !file_may_bind_name(&stripped_file, crate_name)
+        && !body_binds_owner_name(&test.body, crate_name)
+        && !super::owner_pin::file_renames_to(&facts.source, crate_name)
+        && !super::owner_pin::file_renames_to(&facts.source, &format!("r#{crate_name}"))
+        && !may_rebind_crate_name(&facts.source)
+        && !may_rebind_crate_name(&test.body)
 }
 
 /// Whether `text` invokes the owner through the dependency's declared name,
@@ -2202,6 +2495,202 @@ const GENERIC_PROBE_TOKENS: &[&str] = &[
     "tests",
 ];
 
+/// Whether the root-relative `path` is a package's root `build.rs`: the file
+/// name is `build.rs` and no `src`, `tests`, `examples` or `benches`
+/// directory sits above it. A `package.build = "tools/gen.rs"` script is not
+/// recognised and keeps the ordinary relation rules.
+pub(in crate::analysis) fn is_root_build_script(path: &str) -> bool {
+    let mut parts = path.rsplit('/');
+    parts.next() == Some("build.rs")
+        && !parts.any(|part| matches!(part, "src" | "tests" | "examples" | "benches"))
+}
+
+/// The one authority for "no package test can reach this build script": the
+/// root-relative `path` is a root `build.rs` and no source file of its own
+/// package mounts it (#9173). Both the related-test gate and the
+/// `no_static_path` next step read this answer.
+pub(in crate::analysis) fn root_build_script_unmounted(index: &RustIndex, path: &str) -> bool {
+    is_root_build_script(path) && !package_mounts_build_script(index, path)
+}
+
+/// Whether any indexed source file of the build script's own package mounts
+/// it. The package is the script's directory; a file belongs to it only
+/// through a conventional target directory (`src`, `tests`, `examples`,
+/// `benches`) directly below, so a workspace member (`member/tests/x.rs`)
+/// or a nested package (`a/b/src/lib.rs` for `a/build.rs`) does not count.
+/// Library, binary and test-helper files all count.
+fn package_mounts_build_script(index: &RustIndex, script: &str) -> bool {
+    let package_dir = script.strip_suffix("build.rs").unwrap_or("");
+    index.files().iter().any(|(file, facts)| {
+        let normalized = normalize_path(file);
+        let Some(rest) = normalized.strip_prefix(package_dir) else {
+            return false;
+        };
+        let first = rest.split('/').next().unwrap_or("");
+        rest.contains('/')
+            && matches!(first, "src" | "tests" | "examples" | "benches")
+            && source_mounts_build_script(&facts.data().source)
+    })
+}
+
+/// Whether `source` mounts a build script: an `include!` or `#[path]` whose
+/// arguments hold a string-literal path with an exact `build.rs` component.
+/// Including the script's generated `OUT_DIR` output is not a mount. Comments and string
+/// literals are masked first, so a mention in either, `mybuild.rs`, and
+/// `build.rs.bak` do not count; a multi-line argument list is read whole.
+fn source_mounts_build_script(source: &str) -> bool {
+    if !source.contains("include!") && !source.contains("#[path") {
+        return false;
+    }
+    let (masked, literals) = mask_comments_and_literals(source);
+    ["include!", "#[path"].iter().any(|needle| {
+        masked.match_indices(needle).any(|(at, _)| {
+            let args = &masked[at + needle.len()..];
+            let span = &args[..balanced_end(args)];
+            literal_ids(span).any(|id| {
+                literals.get(id).is_some_and(|literal| {
+                    literal.split(['/', '\\']).any(|part| part == "build.rs")
+                })
+            })
+        })
+    })
+}
+
+/// Replace comments with spaces and every string literal with `"<n>"`
+/// (`n` indexes the returned literal contents), so structure scans cannot be
+/// fooled by text inside comments or strings. Char literals become `' '`.
+fn mask_comments_and_literals(source: &str) -> (String, Vec<String>) {
+    let chars: Vec<char> = source.chars().collect();
+    let mut masked = String::with_capacity(source.len());
+    let mut literals = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let next = chars.get(i + 1).copied();
+        if c == '/' && next == Some('/') {
+            while i < chars.len() && chars[i] != '\n' {
+                i += 1;
+            }
+        } else if c == '/' && next == Some('*') {
+            let mut depth = 0usize;
+            while i < chars.len() {
+                if chars[i] == '/' && chars.get(i + 1) == Some(&'*') {
+                    depth += 1;
+                    i += 2;
+                } else if chars[i] == '*' && chars.get(i + 1) == Some(&'/') {
+                    depth -= 1;
+                    i += 2;
+                    if depth == 0 {
+                        break;
+                    }
+                } else {
+                    if chars[i] == '\n' {
+                        masked.push('\n');
+                    }
+                    i += 1;
+                }
+            }
+            masked.push(' ');
+        } else if c == 'r'
+            && (next == Some('"') || next == Some('#'))
+            && raw_string_hashes(&chars, i).is_some()
+            && !masked.ends_with(|prev: char| prev.is_alphanumeric() || prev == '_')
+        {
+            let hashes = raw_string_hashes(&chars, i).unwrap_or(0);
+            let start = i + 2 + hashes;
+            let mut end = start;
+            while end < chars.len()
+                && !(chars[end] == '"' && (0..hashes).all(|k| chars.get(end + 1 + k) == Some(&'#')))
+            {
+                end += 1;
+            }
+            literals.push(chars[start..end.min(chars.len())].iter().collect());
+            masked.push_str(&format!("\"{}\"", literals.len() - 1));
+            i = (end + 1 + hashes).min(chars.len());
+        } else if c == '"' {
+            let mut literal = String::new();
+            i += 1;
+            while i < chars.len() && chars[i] != '"' {
+                if chars[i] == '\\' && i + 1 < chars.len() {
+                    literal.push(chars[i + 1]);
+                    i += 2;
+                } else {
+                    literal.push(chars[i]);
+                    i += 1;
+                }
+            }
+            i += 1;
+            literals.push(literal);
+            masked.push_str(&format!("\"{}\"", literals.len() - 1));
+        } else if c == '\'' && is_char_literal(&chars, i) {
+            i += 1;
+            if chars.get(i) == Some(&'\\') {
+                i += 1;
+            }
+            while i < chars.len() && chars[i] != '\'' {
+                i += 1;
+            }
+            i += 1;
+            masked.push_str("' '");
+        } else {
+            masked.push(c);
+            i += 1;
+        }
+    }
+    (masked, literals)
+}
+
+/// The `#` count of a raw string opening at `at` (`r"`, `r#"`), if it is one.
+fn raw_string_hashes(chars: &[char], at: usize) -> Option<usize> {
+    let mut hashes = 0;
+    while chars.get(at + 1 + hashes) == Some(&'#') {
+        hashes += 1;
+    }
+    (chars.get(at + 1 + hashes) == Some(&'"')).then_some(hashes)
+}
+
+/// `'x'` and `'\n'` are char literals; `'a` followed by anything else is a
+/// lifetime or label.
+fn is_char_literal(chars: &[char], at: usize) -> bool {
+    match chars.get(at + 1) {
+        Some('\\') => true,
+        Some(_) => chars.get(at + 2) == Some(&'\''),
+        None => false,
+    }
+}
+
+/// Length of the argument group that starts `args`: through the matching
+/// close of an opening bracket, or up to the first unmatched close (`]` of
+/// `#[path = "..."]`).
+fn balanced_end(args: &str) -> usize {
+    let mut depth = 0usize;
+    for (at, c) in args.char_indices() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                if depth == 0 {
+                    return at;
+                }
+                depth -= 1;
+                if depth == 0 {
+                    return at + 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    args.len()
+}
+
+/// The literal indexes named by `"<n>"` placeholders in masked text.
+fn literal_ids(masked: &str) -> impl Iterator<Item = usize> + '_ {
+    masked
+        .split('"')
+        .skip(1)
+        .step_by(2)
+        .filter_map(|id| id.parse().ok())
+}
+
 /// Whether a test file is named for the probe's source stem: the stem is a
 /// whole `_` word of the test file's own stem (`tests/pricing.rs`,
 /// `pricing_edge_tests.rs`), or the test file's immediate parent directory is
@@ -2436,7 +2925,7 @@ pub(in crate::analysis) fn impl_trait_name(owner_id: &str) -> Option<String> {
 /// The trait named by a trait-impl owner's symbol id, generic or not
 /// (`impl From<f64> for Meters::from` → `From`). `None` for inherent impls and
 /// free functions.
-fn owner_trait_name(owner_id: &str) -> Option<String> {
+pub(in crate::analysis) fn owner_trait_name(owner_id: &str) -> Option<String> {
     let impl_rest = owner_id.split("::impl ").nth(1)?;
     let impl_body = impl_rest.rsplit_once("::")?.0;
     let (trait_ty, _) = impl_body.rsplit_once(" for ")?;
@@ -2496,11 +2985,56 @@ fn last_let_statement<'a>(body: &'a str, binding: &str) -> Option<&'a str> {
     last
 }
 
+/// The type a `let` binding certainly has: its annotation, or a constructor
+/// written as one segment (`Tile(1)`, `Tile { .. }`). Unlike
+/// [`let_binding_type_head`] an associated call (`Factory::new()`) is not
+/// read: its name says nothing about the type it returns.
+pub(in crate::analysis) fn let_binding_certain_type_head<'a>(
+    body: &'a str,
+    binding: &str,
+) -> Option<&'a str> {
+    let stmt = last_let_statement(body, binding)?;
+    let eq = stmt.find('=')?;
+    if let Some(colon) = stmt[..eq].find(':') {
+        return type_head(&stmt[colon + 1..eq]).and_then(|(segments, _)| segments.last().copied());
+    }
+    let init = &stmt[eq + 1..];
+    if !initializer_is_one_head_expr(init) {
+        return None;
+    }
+    match type_head(init)? {
+        (segments, Some(b'(' | b'{')) if segments.len() == 1 => segments.first().copied(),
+        _ => None,
+    }
+}
+
+/// Whether the operand expression ending just before byte `end` of `code`
+/// (comments and strings masked) has type `ty`: a unit value, a bound
+/// identifier, or a constructor call or struct literal whose head is `ty`.
+/// Method chains, fields and anything unbalanced fail closed.
+pub(in crate::analysis) fn expr_ending_at_has_type(code: &str, end: usize, ty: &str) -> bool {
+    let Some(before) = code.get(..end) else {
+        return false;
+    };
+    let lets = before.rfind(';').map_or("", |at| &before[..=at]);
+    let end = before.trim_end().len();
+    match code.as_bytes().get(end.wrapping_sub(1)) {
+        Some(b')' | b'}') => bracketed_expr_has_type(code, end, ty, lets, false),
+        Some(_) => ident_ending_at(code, end)
+            .is_some_and(|ident| ident == ty || let_binding_mentions_type(lets, ident, ty)),
+        None => false,
+    }
+}
+
 /// Whether the binding's own type is `type_name`: its annotation
 /// (`let x: Site = ..`) or its initializer head (`Site::new(..)`,
 /// `Site { .. }`, `&mut Site::default()`). A type named only inside nested
 /// arguments (`Cache::new(Site::default())`) is not the binding's type.
-fn let_binding_mentions_type(body: &str, binding: &str, type_name: &str) -> bool {
+pub(in crate::analysis) fn let_binding_mentions_type(
+    body: &str,
+    binding: &str,
+    type_name: &str,
+) -> bool {
     last_let_statement(body, binding)
         .and_then(let_statement_type_head)
         .is_some_and(|head| head == type_name)
@@ -3091,6 +3625,121 @@ fn method_call_resolves_to_impl_in(
     })
 }
 
+/// A bounded, test-local dispatch witness for an indexed trait impl. Naming
+/// its type elsewhere, an unknown method, or a same-name free/inherent function
+/// is not a witness. Reuse the established receiver binding rules (#4760).
+pub(in crate::analysis) fn test_dispatches_trait_impl(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+) -> bool {
+    let FunctionContainer::TraitImpl {
+        trait_path,
+        self_ty,
+    } = &owner.item.container
+    else {
+        return false;
+    };
+    let Some(impl_type) = compact_impl_type_name(self_ty) else {
+        return false;
+    };
+    if method_call_resolves_to_impl(
+        test,
+        &owner.name,
+        &impl_type,
+        owner_dispatch_trait(owner).as_deref(),
+    ) {
+        return true;
+    }
+    let trait_name = trait_path
+        .split('<')
+        .next()
+        .unwrap_or(trait_path)
+        .rsplit("::")
+        .next()
+        .unwrap_or("");
+    let body = mask_comments_and_strings(&test.body);
+    if matches!(
+        (trait_name, owner.name.as_str()),
+        ("Iterator", "next") | ("IntoIterator", "into_iter")
+    ) {
+        if method_call_resolves_to_impl_type_in(test, &body, "for_each", &impl_type) {
+            return true;
+        }
+        for (at, _) in body.match_indices("in") {
+            if !ident_boundary(body.as_bytes(), at, at + 2) {
+                continue;
+            }
+            let Some(for_at) = body[..at].rmatch_indices("for").find_map(|(start, _)| {
+                ident_boundary(body.as_bytes(), start, start + 3).then_some(start)
+            }) else {
+                continue;
+            };
+            if body[for_at..at].contains([';', '{', '}']) {
+                continue;
+            }
+            let after = &body[at + 2..];
+            let Some(end) = after.find('{') else {
+                continue;
+            };
+            let receiver = after[..end].trim();
+            if dispatch_operand_has_type(receiver, &body[..for_at], &impl_type) {
+                return true;
+            }
+        }
+    }
+    let operator = match (trait_name, owner.name.as_str()) {
+        ("Add", "add") => "+",
+        ("Sub", "sub") => "-",
+        ("Mul", "mul") => "*",
+        ("Div", "div") => "/",
+        ("Rem", "rem") => "%",
+        ("BitAnd", "bitand") => "&",
+        ("BitOr", "bitor") => "|",
+        ("BitXor", "bitxor") => "^",
+        ("Shl", "shl") => "<<",
+        ("Shr", "shr") => ">>",
+        ("AddAssign", "add_assign") => "+=",
+        ("SubAssign", "sub_assign") => "-=",
+        ("MulAssign", "mul_assign") => "*=",
+        ("DivAssign", "div_assign") => "/=",
+        ("RemAssign", "rem_assign") => "%=",
+        ("BitAndAssign", "bitand_assign") => "&=",
+        ("BitOrAssign", "bitor_assign") => "|=",
+        ("BitXorAssign", "bitxor_assign") => "^=",
+        ("ShlAssign", "shl_assign") => "<<=",
+        ("ShrAssign", "shr_assign") => ">>=",
+        ("PartialEq", "eq") => "==",
+        ("PartialEq", "ne") => "!=",
+        ("PartialOrd", "lt") => "<",
+        ("PartialOrd", "le") => "<=",
+        ("PartialOrd", "gt") => ">",
+        ("PartialOrd", "ge") => ">=",
+        _ => return false,
+    };
+    body.match_indices(operator).any(|(at, _)| {
+        // A short operator inside another token is not this trait's dispatch.
+        let before = body[..at].trim_end();
+        let after = &body[at + operator.len()..];
+        if after.starts_with(['=', operator.as_bytes()[0] as char]) {
+            return false;
+        }
+        let prior_bindings = before.rfind(';').map_or("", |end| &before[..=end]);
+        ident_ending_at(before, before.len())
+            .is_some_and(|receiver| dispatch_operand_has_type(receiver, prior_bindings, &impl_type))
+            || receiver_expr_resolves_to_type(before, before.len(), &impl_type, prior_bindings)
+    })
+}
+
+fn dispatch_operand_has_type(expr: &str, preceding: &str, impl_type: &str) -> bool {
+    let preceding = preceding.rfind(';').map_or("", |end| &preceding[..=end]);
+    let expr = expr.trim().strip_prefix('&').unwrap_or(expr).trim();
+    let expr = expr.strip_prefix("mut ").unwrap_or(expr).trim();
+    if !expr.is_empty() && expr.bytes().all(is_ident_byte) {
+        return let_binding_mentions_type(preceding, expr, impl_type);
+    }
+    bracketed_expr_has_type(expr, expr.len(), impl_type, preceding, true)
+}
+
 fn owner_call_relation_reason(
     test: &TestSummary,
     owner_fn: Option<&FunctionSummary>,
@@ -3098,6 +3747,7 @@ fn owner_call_relation_reason(
     same_name_ids: &[&str],
     test_source: Option<&str>,
     index: &RustIndex,
+    fmt_dispatch_resolved: bool,
 ) -> RelationReason {
     let indexed_same_name_count = same_name_ids.len();
     let Some(owner) = owner_fn else {
@@ -3235,7 +3885,9 @@ fn owner_call_relation_reason(
     }) {
         return RelationReason::WeakTokenSubstring;
     }
-    if indexed_same_name_count <= 1 {
+    // The formatting dispatch already bound the value to this impl's type
+    // and trait, and refused a second `fmt` for the same pair.
+    if indexed_same_name_count <= 1 || fmt_dispatch_resolved {
         return RelationReason::DirectOwnerCall;
     }
     let impl_trait = owner_dispatch_trait(owner);
@@ -4417,6 +5069,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 caller: helper,
                 call_text: "target_owner(value)".to_string(),
                 arguments: vec!["value".to_string()],
+                receiver: None,
                 through_macro: false,
             }],
             stop_above: None,
@@ -4456,6 +5109,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 caller: wrapper,
                 call_text: "if is_bulk(qty) {".to_string(),
                 arguments: vec!["qty".to_string()],
+                receiver: None,
                 through_macro: false,
             }],
             stop_above: None,
@@ -4509,6 +5163,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 caller: wrapper,
                 call_text: "if is_bulk(qty) {".to_string(),
                 arguments: vec!["qty".to_string()],
+                receiver: None,
                 through_macro: false,
             }],
             stop_above: None,
@@ -5175,6 +5830,49 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             .into_iter()
             .map(|(_, reason)| reason)
             .collect()
+    }
+
+    /// Related-test relation for the free `kb` owner when the test's call
+    /// facts come from the real extractor (not hand-built facts).
+    fn free_kb_relation_from_extracted_calls(body: &str) -> Vec<RelationReason> {
+        let owner = free_function("src/lib.rs", "kb");
+        let mut test = test_with_call("tests/units.rs", "test_comparison", body, "kb");
+        test.calls = crate::analysis::extract::extract_call_facts(body, 1);
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "size.into() * KB");
+        find_related_tests(&probe, Some(&owner), &index, true, None, None)
+            .into_iter()
+            .map(|(_, reason)| reason)
+            .collect()
+    }
+
+    /// #8999: a test that calls the free function only through a local alias
+    /// of its module path is a direct owner call; an alias of a same-named
+    /// associated function, a local closure, or a quoted token is not.
+    #[test]
+    fn given_free_fn_when_test_calls_it_through_a_local_alias_then_direct_owner_call() {
+        assert_eq!(
+            free_kb_relation_from_extracted_calls("let f = units::kb;\nassert_eq!(f(1), 1000);"),
+            vec![RelationReason::DirectOwnerCall]
+        );
+        for body in [
+            // associated function of a type, not the free function
+            "let f = ByteSize::kb;\nassert_eq!(f(1), 1000);",
+            // local closure named like the owner
+            "let kb = |x: u64| x * 1000;\nlet f = kb;\nassert_eq!(f(1), 1000);",
+            // alias never called; the owner name only appears quoted
+            "let f = units::kb;\nassert_eq!(g(1), \"kb(1)\");",
+        ] {
+            assert_ne!(
+                free_kb_relation_from_extracted_calls(body),
+                vec![RelationReason::DirectOwnerCall],
+                "{body}"
+            );
+        }
     }
 
     /// #6713: `ByteSize::kb(1000)` calls the associated function, never the
@@ -10300,6 +10998,182 @@ try_parse_summary(raw).map_err(Into::into)"
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].0.name, "repo_lane_deserializes_fields_correctly");
         assert_eq!(related[0].1, RelationReason::AssertionTargetAffinity);
+    }
+
+    /// #9173: a package's root `build.rs` runs under Cargo before the package
+    /// compiles, so a test merely named for a token of the changed
+    /// expression (here from a string literal) must not relate to it.
+    #[test]
+    fn root_build_script_probe_relates_no_name_token_test() {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            tests: vec![test(
+                "tests/test_lints.rs",
+                "test_allow_attributes",
+                "let x = 1; let _ = x;",
+            )],
+            ..Default::default()
+        });
+        let expression = ".arg(\"--cap-lints=allow\")";
+
+        for file in ["build.rs", "./build.rs", "member/build.rs"] {
+            let probe = probe(file, expression);
+            let indexed = find_related_tests_with_candidate_index(
+                &probe,
+                None,
+                &index,
+                true,
+                None,
+                None,
+                &RelatedTestCandidateIndex::new(&index),
+            );
+            let full_scan = find_related_tests_with_candidates(
+                &probe,
+                None,
+                &index,
+                true,
+                None,
+                None,
+                RelatedTestCandidates::FullScan,
+            );
+            assert!(
+                indexed.is_empty(),
+                "indexed related for {file}: {indexed:?}"
+            );
+            assert!(full_scan.is_empty(), "full scan related for {file}");
+        }
+
+        // An absolute checkout path under `src` is judged root-relative: the
+        // root `build.rs` still relates nothing, a real `src/build.rs` does.
+        let root = Path::new("/work/src/shop");
+        let candidate_index = RelatedTestCandidateIndex::new(&index).with_analysis_root(root);
+        for (file, expected) in [
+            ("/work/src/shop/build.rs", 0),
+            ("/work/src/shop/src/build.rs", 1),
+        ] {
+            let probe = probe(file, expression);
+            let related = find_related_tests_with_candidate_index(
+                &probe,
+                None,
+                &index,
+                true,
+                None,
+                None,
+                &candidate_index,
+            );
+            assert_eq!(related.len(), expected, "{file}: {related:?}");
+        }
+
+        // Discriminating control: the same expression in a `src/` file keeps
+        // the name-token relation, and `src/build.rs` is an ordinary module.
+        for file in ["src/probe.rs", "src/build.rs"] {
+            let probe = probe(file, expression);
+            let related = find_related_tests(&probe, None, &index, true, None, None);
+            assert_eq!(related.len(), 1, "control for {file}");
+            assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
+        }
+    }
+
+    /// #9173: the mount scanner reads structure, not text. Each negative
+    /// fails if comment/string masking, argument joining or exact-component
+    /// matching is removed.
+    #[test]
+    fn mount_scanner_reads_structure_not_text() {
+        for mount in [
+            "include!(\"../build.rs\");",
+            "include!(\n    \"../build.rs\"\n);",
+            "#[path = \"../build.rs\"]\nmod script;",
+            "#[path=\"..\\\\build.rs\"] mod script;",
+            "/* old */ include!(r#\"../build.rs\"#);",
+            "let c = 'x'; include!(\"../build.rs\");",
+        ] {
+            assert!(source_mounts_build_script(mount), "mount: {mount}");
+        }
+        for plain in [
+            "// include!(\"../build.rs\");",
+            "/* include!(\"../build.rs\"); */",
+            "/* /* nested */ include!(\"../build.rs\"); */",
+            "let s = \"include!(\\\"../build.rs\\\")\";",
+            "let s = r#\"#[path = \"../build.rs\"]\"#;",
+            "include!(\"../mybuild.rs\");",
+            "include!(\"../build.rs.bak\");",
+            "include!( concat!(env!(\"OUT_DIR\"), \"/gen.rs\") );",
+            "include!(\"../fixtures/data.rs\"); // build.rs OUT_DIR",
+            "mod build; let _ = \"build.rs\";",
+        ] {
+            assert!(!source_mounts_build_script(plain), "plain: {plain}");
+        }
+    }
+
+    /// #9173: a source file of the build script's own package that mounts it
+    /// (`src/lib.rs`, `tests/common/mod.rs`, a test) restores the ordinary
+    /// relation; a mount in a workspace member, a nested package, or an
+    /// unrelated mention does not.
+    #[test]
+    fn mounting_package_source_restores_build_script_relation() -> Result<(), String> {
+        let expression = ".arg(\"--cap-lints=allow\")";
+        const TEST: &str = "#[test]\nfn test_allow_attributes() {}\n";
+        const MOUNT: &str = "include!(\"../build.rs\");\n";
+        let index_with = |files: &[(&str, &str)]| -> Result<RustIndex, String> {
+            let mut tests = Vec::new();
+            let mut file_map = BTreeMap::new();
+            for (path, source) in files {
+                let facts = crate::analysis::syntax::ra::summarize_file_with_parser(
+                    std::path::Path::new(path),
+                    source,
+                )
+                .map_err(|error| error.to_string())?;
+                tests.extend(facts.tests.clone());
+                file_map.insert(PathBuf::from(path), facts);
+            }
+            Ok(RustIndex::from_owned(
+                crate::analysis::facts::OwnedRustIndex {
+                    tests,
+                    files: file_map.into_iter().collect(),
+                    ..Default::default()
+                },
+            ))
+        };
+        let related_for = |index: &RustIndex, file: &str| {
+            let probe = probe(file, expression);
+            find_related_tests(&probe, None, index, true, None, None).len()
+        };
+        let mounted = format!("{MOUNT}{TEST}");
+
+        // Mounted from a test, the library root, or a test helper module.
+        for files in [
+            vec![("tests/lints.rs", mounted.as_str())],
+            vec![("tests/lints.rs", TEST), ("src/lib.rs", MOUNT)],
+            vec![("tests/lints.rs", TEST), ("src/main.rs", MOUNT)],
+            vec![("tests/lints.rs", TEST), ("tests/common/mod.rs", MOUNT)],
+        ] {
+            let index = index_with(&files)?;
+            assert_eq!(related_for(&index, "build.rs"), 1, "mounted: {files:?}");
+        }
+
+        // Unmounted, or only mentioned in a comment.
+        let plain = index_with(&[("tests/lints.rs", TEST)])?;
+        assert_eq!(related_for(&plain, "build.rs"), 0);
+        let commented = index_with(&[
+            ("tests/lints.rs", TEST),
+            ("src/lib.rs", "// include!(\"../build.rs\");\n"),
+        ])?;
+        assert_eq!(related_for(&commented, "build.rs"), 0);
+
+        // Root package versus a workspace member: the member's mount does
+        // not re-enable the root script, and the root's mount does not
+        // re-enable the member's.
+        let workspace = index_with(&[
+            ("tests/lints.rs", TEST),
+            ("member/tests/lints.rs", &mounted),
+        ])?;
+        assert_eq!(related_for(&workspace, "build.rs"), 0);
+        assert!(related_for(&workspace, "member/build.rs") > 0);
+
+        // Nested packages: `a/b` mounting its own script does not enable `a`.
+        let nested = index_with(&[("a/tests/lints.rs", TEST), ("a/b/tests/lints.rs", &mounted)])?;
+        assert_eq!(related_for(&nested, "a/build.rs"), 0);
+        assert!(related_for(&nested, "a/b/build.rs") > 0);
+        Ok(())
     }
 
     /// Another crate's common assertion token does not silence the only

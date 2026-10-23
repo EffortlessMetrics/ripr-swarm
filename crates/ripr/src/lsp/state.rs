@@ -421,6 +421,11 @@ impl AnalysisAttemptState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum AnalysisFailureKind {
     AnalysisError,
+    /// The configured or default base ref does not resolve to a commit
+    /// (`CheckFailureKind::BaseUnresolvable`). The client branches on this
+    /// wire name to offer the `ripr.baseRef` next step (#6740) instead of
+    /// matching message wording.
+    BaseUnresolvable,
     TaskFailure,
     RootProjection,
     SnapshotCommitFailure,
@@ -435,6 +440,7 @@ impl AnalysisFailureKind {
     pub(super) fn as_str(self) -> &'static str {
         match self {
             Self::AnalysisError => "analysis_error",
+            Self::BaseUnresolvable => "base_unresolvable",
             Self::TaskFailure => "task_failure",
             Self::RootProjection => "root_projection",
             Self::SnapshotCommitFailure => "snapshot_commit_failure",
@@ -746,6 +752,19 @@ pub(super) struct AnalysisSnapshot {
 pub(super) struct UnavailableAdapterCoverage {
     pub(super) named_paths: Vec<String>,
     pub(super) incomplete_languages: Vec<String>,
+    /// Typed per-language rows (#8585): the wire language name and how many
+    /// changed files were skipped, in producer order. The status payload and
+    /// the generic-client notice read this instead of parsing the
+    /// limitation's detail text.
+    pub(super) languages: Vec<UnavailableLanguage>,
+}
+
+/// One language whose changed files were skipped because its adapter was
+/// not enabled or not compiled in (#8585).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct UnavailableLanguage {
+    pub(super) language: String,
+    pub(super) file_count: usize,
 }
 
 impl UnavailableAdapterCoverage {
@@ -754,10 +773,15 @@ impl UnavailableAdapterCoverage {
     pub(super) fn from_preview_advisories(advisories: &[PreviewLanguageAdvisory]) -> Self {
         let mut named_paths = Vec::new();
         let mut incomplete_languages = Vec::new();
+        let mut languages = Vec::new();
         for advisory in advisories {
             if advisory.enabled {
                 continue;
             }
+            languages.push(UnavailableLanguage {
+                language: advisory.language.clone(),
+                file_count: advisory.file_count,
+            });
             named_paths.extend(advisory.sample_paths.iter().cloned());
             if advisory.sample_paths.len() < advisory.file_count {
                 incomplete_languages.push(advisory.language.clone());
@@ -766,6 +790,7 @@ impl UnavailableAdapterCoverage {
         Self {
             named_paths,
             incomplete_languages,
+            languages,
         }
     }
 
@@ -817,10 +842,14 @@ fn limitation_covers_language(outcome: Option<&AnalysisOutcome>, language: Langu
 }
 
 fn normalize_unavailable_adapter_path(path: &Path) -> String {
-    crate::analysis::stable_path_text(path)
-        .replace('\\', "/")
-        .trim_start_matches("./")
-        .to_string()
+    // `\` is a separator only on Windows; a Unix `a\b.rs` must not alias `a/b.rs`.
+    let text = crate::analysis::stable_path_text(path);
+    let text = if cfg!(windows) {
+        text.replace('\\', "/")
+    } else {
+        text
+    };
+    text.trim_start_matches("./").to_string()
 }
 
 /// Named-path membership for #7205. Windows and macOS file identity is
@@ -836,11 +865,9 @@ fn unavailable_adapter_paths_eq(left: &str, right: &str) -> bool {
 }
 
 fn unavailable_adapter_paths_eq_impl(left: &str, right: &str, ignore_ascii_case: bool) -> bool {
-    if ignore_ascii_case {
-        left.eq_ignore_ascii_case(right)
-    } else {
-        left == right
-    }
+    use crate::output::path::path_identity_key_on;
+    path_identity_key_on(Path::new(left), false, ignore_ascii_case)
+        == path_identity_key_on(Path::new(right), false, ignore_ascii_case)
 }
 
 /// `analysis::route` matches extensions exactly (`py`, not `PY`). Windows
@@ -1888,6 +1915,7 @@ mod tests {
     fn analysis_failure_kinds_keep_stable_wire_names() {
         let cases = [
             (AnalysisFailureKind::AnalysisError, "analysis_error"),
+            (AnalysisFailureKind::BaseUnresolvable, "base_unresolvable"),
             (AnalysisFailureKind::TaskFailure, "task_failure"),
             (AnalysisFailureKind::RootProjection, "root_projection"),
             (
@@ -3387,6 +3415,7 @@ mod tests {
         let coverage = UnavailableAdapterCoverage {
             named_paths: vec!["zpy/pricing.py".to_string()],
             incomplete_languages: Vec::new(),
+            ..Default::default()
         };
         let relative = Path::new("zpy/pricing.py");
         if coverage.not_enabled_language(relative, None).is_some() {
@@ -3445,6 +3474,7 @@ mod tests {
         let coverage = UnavailableAdapterCoverage {
             named_paths: vec!["zpy/a.py".to_string()],
             incomplete_languages: vec!["python".to_string()],
+            ..Default::default()
         };
         let outcome = python_unavailable_outcome()?;
         if coverage.not_enabled_language(Path::new("zpy/b.py"), Some(&outcome))
@@ -3527,6 +3557,7 @@ mod tests {
         let coverage = UnavailableAdapterCoverage {
             named_paths: vec!["zpy/pricing.py".to_string()],
             incomplete_languages: Vec::new(),
+            ..Default::default()
         };
         let outcome = python_unavailable_outcome()?;
         let mixed = coverage.not_enabled_language(Path::new("ZPY/Pricing.py"), Some(&outcome));
@@ -3585,6 +3616,7 @@ mod tests {
         let coverage = UnavailableAdapterCoverage {
             named_paths: vec!["zpy/pricing.py".to_string()],
             incomplete_languages: Vec::new(),
+            ..Default::default()
         };
         let outcome = python_unavailable_outcome()?;
         let mixed = coverage.not_enabled_language(Path::new("ZPY/Pricing.PY"), Some(&outcome));

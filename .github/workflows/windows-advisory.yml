@@ -87,14 +87,17 @@ jobs:
     name: windows-advisory
     if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'windows-ci') || contains(github.event.pull_request.labels.*.name, 'full-ci'))
     runs-on: windows-latest
-    timeout-minutes: 90
+    # Above the sum of the cargo step deadlines below (15+45+15+75+75), so the
+    # cargo steps alone cannot exhaust it. Checkout, toolchain, cache, summary
+    # compilation and the manual isolation repeats have no deadline of their own.
+    timeout-minutes: 270
 
     steps:
       - uses: actions/checkout@v6
 
-      - uses: dtolnay/rust-toolchain@1.95
+      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: ripr-windows-advisory-1.95-${{ runner.os }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -102,28 +105,51 @@ jobs:
       - name: Prepare locked owner-return fixture dependencies
         run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
 
+      - name: Prepare locked JSON owner-return fixture dependencies
+        run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
+
+      # Every cargo step below writes its log with a file redirect, not
+      # `| tee`. A pipe stays open until every process holding its write end
+      # exits, so one test that leaks a child (a failed test skipping its
+      # cleanup) made `tee` wait for EOF after cargo had already finished.
+      # The 2026-10-21 run (39549631529) printed cargo's final
+      # "7 targets failed" at 05:50 and then sat until the 90-minute job limit
+      # cancelled it; the nightly was cancelled 15 of its last 18 runs for
+      # this reason. A redirect makes the step wait on cargo alone and the log
+      # is replayed with `cat` afterwards. Each step also has its own
+      # `timeout-minutes`, and every later step runs under `!cancelled()`, so a
+      # genuinely stuck step is bounded and the rest still run: its missing
+      # status file is reported as missing evidence by the summarizer instead
+      # of the whole job dying with no verdict. A xtask test pins that no step
+      # swallows its failure, so the summarizer refusal stays a job failure.
       # Feature-combination testing (#2400): verify --no-default-features and
       # --all-features compile and test. These paths are never exercised by the
       # default CI which always uses all three language features.
       - name: Check --no-default-features (advisory)
+        timeout-minutes: 15
         shell: bash
         run: |
-          mkdir -p target; set +e; cargo check -p ripr --no-default-features --features lang-rust --all-targets 2>&1 | tee target/nofeatures-check.log; printf '%s\n' "${PIPESTATUS[0]}" > target/nofeatures-check.status; exit 0
+          mkdir -p target; set +e; cargo check -p ripr --no-default-features --features lang-rust --all-targets > target/nofeatures-check.log 2>&1; printf '%s\n' "$?" > target/nofeatures-check.status; cat target/nofeatures-check.log; exit 0
 
       - name: Test --no-default-features (advisory)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 45
         shell: bash
         run: |
-          mkdir -p target; set +e; cargo test -p ripr --no-default-features --features lang-rust --no-fail-fast 2>&1 | tee target/nofeatures-test.log; printf '%s\n' "${PIPESTATUS[0]}" > target/nofeatures-test.status; exit 0
+          mkdir -p target; set +e; cargo test -p ripr --no-default-features --features lang-rust --no-fail-fast > target/nofeatures-test.log 2>&1; printf '%s\n' "$?" > target/nofeatures-test.status; cat target/nofeatures-test.log; exit 0
 
       - name: Check --all-features (advisory)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 15
         shell: bash
         run: |
-          mkdir -p target; set +e; cargo check -p ripr --all-features --all-targets 2>&1 | tee target/allfeatures-check.log; printf '%s\n' "${PIPESTATUS[0]}" > target/allfeatures-check.status; exit 0
+          mkdir -p target; set +e; cargo check -p ripr --all-features --all-targets > target/allfeatures-check.log 2>&1; printf '%s\n' "$?" > target/allfeatures-check.status; cat target/allfeatures-check.log; exit 0
 
       # Every `run:` below uses a `|` block scalar. A plain YAML scalar treats
       # ` #` as the start of a comment, which silently truncates a command
       # mid-string and leaves an unterminated quote for the shell.
       - name: Record environment
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           mkdir -p target && { rustc -Vv; cargo -V; echo "checkout_root=$PWD"; echo "cores=$(nproc 2>/dev/null || echo unknown)"; echo "parallel_mode=default"; } 2>&1 | tee target/windows-env.log
@@ -131,20 +157,25 @@ jobs:
       # `--no-fail-fast` keeps cargo going after one target fails, so a routine
       # test failure no longer hides every later target — the masking this lane
       # exists to expose. The real cargo exit status is captured from
-      # PIPESTATUS[0] into a file rather than inferred from log prose, which
+      # `$?` into a file rather than inferred from log prose, which
       # cannot distinguish a compile failure from a test failure reliably. The
       # step itself exits 0 because test outcomes are advisory.
       - name: Run workspace tests (advisory, run 1)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 75
         shell: bash
         run: |
-          mkdir -p target; set +e; cargo test --workspace --no-fail-fast 2>&1 | tee target/windows-run1.log; printf '%s\n' "${PIPESTATUS[0]}" > target/windows-run1.status; exit 0
+          mkdir -p target; set +e; cargo test --workspace --no-fail-fast > target/windows-run1.log 2>&1; printf '%s\n' "$?" > target/windows-run1.status; cat target/windows-run1.log; exit 0
 
       - name: Run workspace tests (advisory, run 2)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 75
         shell: bash
         run: |
-          mkdir -p target; set +e; cargo test --workspace --no-fail-fast 2>&1 | tee target/windows-run2.log; printf '%s\n' "${PIPESTATUS[0]}" > target/windows-run2.status; exit 0
+          mkdir -p target; set +e; cargo test --workspace --no-fail-fast > target/windows-run2.log 2>&1; printf '%s\n' "$?" > target/windows-run2.status; cat target/windows-run2.log; exit 0
 
       - name: Summarize environment
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           printf '## Windows advisory lane\n\nAdvisory only: this lane never fails and is not a required check (issue 2393).\n\n### Environment\n\n```\n%s\n```\n' "$(cat target/windows-env.log 2>/dev/null || echo unavailable)" >> "$GITHUB_STEP_SUMMARY" || true
@@ -164,6 +195,7 @@ jobs:
       # runs with `pipefail`, so extending the pipeline with a second `tee` does
       # not mask that exit status.
       - name: Summarize verdicts and repeated-run stability
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           cargo xtask windows-advisory-summary --run1 target/windows-run1.log --run1-status target/windows-run1.status --run2 target/windows-run2.log --run2-status target/windows-run2.status | tee target/windows-verdict.md | tee -a "$GITHUB_STEP_SUMMARY"
@@ -174,6 +206,7 @@ jobs:
       # through the API, and the artifact needs a separate authenticated
       # download.
       - name: Summarize feature-combination results
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           printf '\n### Feature-combination tests (#2400)\n\n' >> target/windows-verdict.md
@@ -201,11 +234,11 @@ jobs:
           { echo "head=$(git rev-parse HEAD)"; rustc -Vv; cargo -V; printf 'command='; printf '%q ' "${command[@]}"; printf '\n'; } | tee target/nested-alias-isolated-env.log
           for run in 1 2 3; do
             set +e
-            "${command[@]}" 2>&1 | tee "target/nested-alias-isolated-$run.log"
-            statuses=("${PIPESTATUS[@]}")
+            "${command[@]}" > "target/nested-alias-isolated-$run.log" 2>&1
+            status=$?
             set -e
-            printf '%s\n' "${statuses[0]}" > "target/nested-alias-isolated-$run.status"
-            test "${statuses[1]}" -eq 0 || { echo "run $run: log capture failed" >&2; exit 1; }
+            printf '%s\n' "$status" > "target/nested-alias-isolated-$run.status"
+            cat "target/nested-alias-isolated-$run.log"
           done
 
       - name: Summarize isolated nested-alias repeats (#4377)
@@ -313,10 +346,23 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@1.95
+      # The storage tests below ship in this run's workflow definition (the merge ref on a
+      # pull_request), so they read the consumer from that same ref and not from the PR head;
+      # otherwise a branch behind main pairs new tests with an old consumer (#9521).
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: target/workflow-ref
+          sparse-checkout: .github/workflows/windows-advisory.yml
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95
 
       - name: Check selector storage boundaries without a product build
         shell: pwsh
+        env:
+          SELECTOR_WORKFLOW_FILE: target/workflow-ref/.github/workflows/windows-advisory.yml
         run: |
           $storage_tests = @'
           """Exercise the actual inline Actions consumer with synthetic files; never build RIPR."""
@@ -333,7 +379,7 @@ jobs:
           import unittest
           from unittest.mock import patch
 
-          WORKFLOW = Path.cwd() / '.github/workflows/windows-advisory.yml'
+          WORKFLOW = Path.cwd() / os.environ['SELECTOR_WORKFLOW_FILE']
 
 
           def consumer():
@@ -447,31 +493,57 @@ jobs:
                   with self.assertRaises(RuntimeError):
                       self.packet(listing)
 
-              def test_windows_recovery_matches_published_slashes_and_keeps_literal(self):
+              def test_windows_recovery_matches_console_quotes_and_keeps_literal(self):
                   # Inert Windows-shaped sentinels: no real drive or directory is accessed.
                   drive = 'Q' + ':'
                   root = drive + r'\synthetic-selector-fixture literal'
                   diff = root + r'\fixture change.diff'
-                  expected = f"ripr check --root '{drive}/synthetic-selector-fixture literal' --diff '{drive}/synthetic-selector-fixture literal/fixture change.diff' --json"
+                  expected = f'ripr check --root "{drive}/synthetic-selector-fixture literal" --diff "{drive}/synthetic-selector-fixture literal/fixture change.diff" --json'
                   self.assertEqual(self.ns['recovery_command'](root, diff, windows=True), expected)
                   stderr = ('No finding. Retry `' + expected + '`.').encode()
                   self.assertEqual(self.ns['printed_recovery'](stderr, root, diff, windows=True), expected)
+                  with self.assertRaisesRegex(RuntimeError, 'frozen root/diff/JSON scope'):
+                      self.ns['printed_recovery'](stderr.replace(b'"', b"'"), root, diff, windows=True)
+
+              def test_windows_recovery_keeps_single_quotes_for_dollar_paths(self):
+                  drive = 'Q' + ':'
+                  root = drive + r'\synthetic $selector literal'
+                  diff = root + r'\fixture change.diff'
+                  expected = f"ripr check --root '{drive}/synthetic $selector literal' --diff '{drive}/synthetic $selector literal/fixture change.diff' --json"
+                  self.assertEqual(self.ns['recovery_command'](root, diff, windows=True), expected)
+                  self.assertEqual(self.ns['printed_recovery'](('`' + expected + '`').encode(), root, diff, windows=True), expected)
+
+              def test_recovery_escapes_apostrophes_like_the_formatter(self):
+                  drive = 'Q' + ':'
+                  root = drive + r"\synthetic $O'Brien literal"
+                  diff = root + r'\fixture change.diff'
+                  expected = "ripr check --root '" + drive + "/synthetic $O'\\''Brien literal' --diff '" + drive + "/synthetic $O'\\''Brien literal/fixture change.diff' --json"
+                  self.assertEqual(self.ns['recovery_command'](root, diff, windows=True), expected)
+                  self.assertEqual(self.ns['printed_recovery'](('`' + expected + '`').encode(), root, diff, windows=True), expected)
+
+              def test_posix_recovery_keeps_single_quotes(self):
+                  root = '/synthetic-selector-fixture literal'
+                  diff = root + '/fixture change.diff'
+                  expected = "ripr check --root '/synthetic-selector-fixture literal' --diff '/synthetic-selector-fixture literal/fixture change.diff' --json"
+                  self.assertEqual(self.ns['recovery_command'](root, diff, windows=False), expected)
+                  self.assertEqual(self.ns['printed_recovery'](('`' + expected + '`').encode(), root, diff, windows=False), expected)
 
               def test_recovery_refuses_changed_scope_or_literal(self):
-                  command = self.ns['recovery_command'](self.root, self.out)
-                  for wrong in (self.ns['recovery_command'](self.stock, self.out),
-                                self.ns['recovery_command'](self.root, self.binary),
-                                command.replace(' --json', ''), command + ' --no-cache'):
-                      with self.subTest(command=wrong), self.assertRaises(RuntimeError):
-                          self.ns['printed_recovery'](('`' + wrong + '`').encode(), self.root, self.out)
-                  with self.assertRaises(RuntimeError):
-                      self.ns['printed_recovery'](('`' + command + '` `' + command + '`').encode(), self.root, self.out)
+                  for windows in (False, True):
+                      command = self.ns['recovery_command'](self.root, self.out, windows=windows)
+                      for wrong in (self.ns['recovery_command'](self.stock, self.out, windows=windows),
+                                    self.ns['recovery_command'](self.root, self.binary, windows=windows),
+                                    command.replace(' --json', ''), command + ' --no-cache'):
+                          with self.subTest(windows=windows, command=wrong), self.assertRaises(RuntimeError):
+                              self.ns['printed_recovery'](('`' + wrong + '`').encode(), self.root, self.out, windows=windows)
+                      with self.assertRaises(RuntimeError):
+                          self.ns['printed_recovery'](('`' + command + '` `' + command + '`').encode(), self.root, self.out, windows=windows)
 
               def test_cache_target_is_owned_before_restore_and_all_subset_builds(self):
                   text = WORKFLOW.read_text()
                   section = text[text.index('\n      - name: Own stable same-volume Cargo target before cache and subset builds\n'):]
-                  self.assertLess(section.index('$target_setup'), section.index('uses: Swatinem/rust-cache@v2'))
-                  self.assertLess(section.index('uses: Swatinem/rust-cache@v2'), section.index('cargo test -p ripr'))
+                  self.assertLess(section.index('$target_setup'), section.index('uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0'))
+                  self.assertLess(section.index('uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0'), section.index('cargo test -p ripr'))
                   self.assertIn('"CARGO_TARGET_DIR=$($owner.target)" >> $env:GITHUB_ENV', section)
                   self.assertIn('workspaces: ". -> target/selector-cargo-cache"', section)
                   self.assertIn('cache-targets: false', section)
@@ -766,7 +838,7 @@ jobs:
       # different target subsets, and GitHub cache keys are immutable, so one
       # shared key would let whichever job saves first on `main` starve the
       # other of its artifacts.
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           # v2 joins target to workspace root; cross-drive absolute targets cannot
           # be mapped directly. Prune through the junction, archive the real path
@@ -797,6 +869,51 @@ jobs:
         shell: bash
         run: |
           mkdir -p target; set +e; cargo clippy -p ripr --all-targets -- -D warnings 2>&1 | tee target/subset-clippy.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-clippy.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-clippy.log" >&2; exit 1; fi; exit 0
+
+      # Native proof for the Windows process-ownership and LSP-terminality
+      # controls (#3803, #3802, #3807): the only place these Windows-gated tests
+      # run without the 90-minute full suite. Outcomes stay advisory; a missing
+      # log/status or a filter that executes no test fails the job below.
+      - name: Run process-ownership subset (advisory, #3803)
+        shell: bash
+        run: |
+          mkdir -p target; set +e; cargo test -p ripr --lib process_owner::tests 2>&1 | tee target/subset-process-owner.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-process-owner.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-process-owner.log" >&2; exit 1; fi; exit 0
+
+      - name: Run xtask timed-capture subset (advisory, #3803)
+        shell: bash
+        run: |
+          mkdir -p target; set +e; cargo test -p xtask capture_output_with 2>&1 | tee target/subset-xtask-capture.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-xtask-capture.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-xtask-capture.log" >&2; exit 1; fi; exit 0
+
+      - name: Run LSP initialize-failure subset (advisory, #3802)
+        shell: bash
+        run: |
+          mkdir -p target; set +e; cargo test -p ripr --lib -- initialize_surfaces_poisoned poisoned_initialize_failure_commit 2>&1 | tee target/subset-lsp-initialize.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-lsp-initialize.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-lsp-initialize.log" >&2; exit 1; fi; exit 0
+
+      # #9498: native-Windows proof for the VS Code managed-server install lock
+      # (#9304/#9448). The suite imports no `vscode` module, so it runs under
+      # plain mocha on Node, not the VS Code test host. Same advisory contract
+      # as the other members: the mocha outcome becomes a verdict, a missing
+      # log/status or a run that executed zero tests fails the job.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+
+      # A compile failure must not skip the later selector evidence, and must not
+      # be hidden by a passing suite (tsc can emit JS while exiting nonzero): the
+      # outcome is retained and consumed by the mocha step's recorded status.
+      - name: Compile VS Code extension tests (#9498)
+        shell: bash
+        working-directory: editors/vscode
+        run: |
+          mkdir -p ../../target; set +e; npm ci && npx tsc -p ./; compile_status=$?; printf '%s\n' "$compile_status" > ../../target/subset-vscode-install-lock-compile.status; exit 0
+
+      - name: Run VS Code managed-server install lock suite (advisory, #9498)
+        shell: bash
+        working-directory: editors/vscode
+        run: |
+          mkdir -p ../../target; set +e; npx mocha --ui tdd out/test/suite/managed_server_install.test.js 2>&1 | tee ../../target/subset-vscode-install-lock.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > ../../target/subset-vscode-install-lock.status; if [ "$(cat ../../target/subset-vscode-install-lock-compile.status 2>/dev/null || echo missing)" != "0" ]; then echo "subset-vscode-install-lock: npm ci or tsc failed; a passing suite does not clear it" | tee -a ../../target/subset-vscode-install-lock.log; printf '%s\n' 1 > ../../target/subset-vscode-install-lock.status; fi; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-vscode-install-lock.log" >&2; exit 1; fi; exit 0
 
       # #5252/#5581: real stock-environment PowerShell recovery, not argv recording.
       - name: Produce and replay exact-head selector recovery (advisory)
@@ -1054,12 +1171,13 @@ jobs:
               return finding["id"]
 
           def recovery_command(fixture, diff, windows=None):
-              # Frozen fixture paths contain spaces: shell_arg quotes them; Windows display uses slashes.
+              # These frozen spaced paths use shell_arg's host quotes (#7729/#8152).
               windows = os.name == "nt" if windows is None else windows
               paths = [str(fixture), str(diff)]
               if windows:
                   paths = [p.removeprefix("\\\\?\\").replace("\\", "/") for p in paths]
-              return f"ripr check --root '{paths[0]}' --diff '{paths[1]}' --json"
+              quote = lambda p: f'"{p}"' if windows and not any(c in p for c in '$' + chr(96)) else "'" + p.replace("'", "'\\''") + "'"
+              return f"ripr check --root {quote(paths[0])} --diff {quote(paths[1])} --json"
 
           def printed_recovery(stderr, fixture, diff, windows=None):
               matches = re.findall(chr(96) + r"(ripr check [^\x60]+)" + chr(96), stderr.decode())
@@ -1272,7 +1390,7 @@ jobs:
           {
             printf '## Windows advisory subset (#4938)\n\n'
             printf 'Advisory only: not a required check and does not gate merges. Test/lint verdicts:\n\n'
-            for label in subset-gap-artifacts subset-cargo-home subset-cache-warning subset-clippy subset-selector-literal; do
+            for label in subset-gap-artifacts subset-cargo-home subset-cache-warning subset-clippy subset-process-owner subset-xtask-capture subset-lsp-initialize subset-vscode-install-lock subset-selector-literal; do
             if [ "$label" = subset-selector-literal ] && [ "$SELECTOR_CONSUMER_ENABLED" != true ]; then continue; fi
               status_file="target/${label}.status"
               if [ ! -f "$status_file" ]; then
@@ -1294,11 +1412,11 @@ jobs:
       - name: Fail on missing or empty subset evidence
         shell: bash
         run: |
-          for label in subset-gap-artifacts subset-cargo-home subset-cache-warning subset-clippy; do
+          for label in subset-gap-artifacts subset-cargo-home subset-cache-warning subset-clippy subset-process-owner subset-xtask-capture subset-lsp-initialize subset-vscode-install-lock; do
             test -f "target/${label}.status" || exit 1
             test -f "target/${label}.log" || exit 1
           done
-          for label in subset-gap-artifacts subset-cargo-home subset-cache-warning; do
+          for label in subset-gap-artifacts subset-cargo-home subset-cache-warning subset-process-owner subset-xtask-capture subset-lsp-initialize; do
             if [ "$(cat "target/${label}.status")" = "0" ]; then
               executed="$(awk '/^test result:/{for (i = 1; i <= NF; i++) if ($i == "passed;" || $i == "failed;" || $i == "measured;") executed += $(i - 1)} END {print executed + 0}' "target/${label}.log")"
               if [ "$executed" -eq 0 ]; then
@@ -1307,6 +1425,10 @@ jobs:
               fi
             fi
           done
+          # mocha prints `N passing`; a run that executed zero tests is not proof (#9498).
+          if [ "$(cat target/subset-vscode-install-lock.status)" = "0" ]; then
+            grep -Eq '^ +[1-9][0-9]* passing' target/subset-vscode-install-lock.log || { echo "subset-vscode-install-lock: mocha exited 0 but reported no passing test" >&2; exit 1; }
+          fi
 
       - name: Require selector consumer receipt, log and native status
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -1366,6 +1488,15 @@ jobs:
             target/subset-cache-warning.status
             target/subset-clippy.log
             target/subset-clippy.status
+            target/subset-process-owner.log
+            target/subset-process-owner.status
+            target/subset-xtask-capture.log
+            target/subset-xtask-capture.status
+            target/subset-lsp-initialize.log
+            target/subset-lsp-initialize.status
+            target/subset-vscode-install-lock.log
+            target/subset-vscode-install-lock.status
+            target/subset-vscode-install-lock-compile.status
             target/windows-subset-verdict.md
             target/subset-selector-literal.log
             target/subset-selector-literal.status

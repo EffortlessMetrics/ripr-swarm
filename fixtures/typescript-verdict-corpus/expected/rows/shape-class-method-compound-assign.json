@@ -1,0 +1,22 @@
+{
+  "case_id": "shape-class-method-compound-assign",
+  "subject_id": "authored-ts-vitest-shapes",
+  "origin": "authored",
+  "anchor": "src/account.ts:9",
+  "behavior_family": "arithmetic_operator",
+  "test_shape": "vitest_class_method_tobe",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

@@ -20,8 +20,51 @@ use tower_lsp_server::ls_types::{
     Diagnostic, Hover, HoverContents, MarkupContent, MarkupKind, NumberOrString, Position, Range,
 };
 
-pub(super) fn hover_response() -> Hover {
-    markdown_hover(HOVER_TEXT.to_string())
+/// Join configured language labels for prose: `Rust`, `Rust and Python`,
+/// `Rust, Python, and TypeScript`.
+pub(super) fn join_language_labels(labels: &[String]) -> String {
+    match labels {
+        [] => "Rust".to_string(),
+        [only] => only.clone(),
+        [first, second] => format!("{first} and {second}"),
+        [first, rest @ ..] => {
+            let mut text = first.clone();
+            for (index, label) in rest.iter().enumerate() {
+                if index + 1 == rest.len() {
+                    text.push_str(", and ");
+                } else {
+                    text.push_str(", ");
+                }
+                text.push_str(label);
+            }
+            text
+        }
+    }
+}
+
+/// The no-evidence hover, aware of whether any analysis has committed and
+/// which languages the workspace analyzes (#9604 finding 32). Before the
+/// first successful analysis the generic "run the CLI" pointer names the
+/// wrong recovery — the `ripr.refresh` editor command is the route that
+/// populates this server — and the language list comes from the session
+/// configuration instead of a hardcoded `Rust`.
+pub(super) fn hover_response_without_evidence(has_analyzed: bool, languages: &[String]) -> Hover {
+    // The analyzed, Rust-only workspace renders the exact legacy text so the
+    // long-standing generic hover stays byte-identical.
+    if has_analyzed && languages.len() == 1 && languages[0] == "Rust" {
+        return markdown_hover(HOVER_TEXT.to_string());
+    }
+    let language_text = join_language_labels(languages);
+    let value = if has_analyzed {
+        format!(
+            "ripr estimates static RIPR exposure for changed {language_text} behavior. Run `ripr check --format json` for current findings."
+        )
+    } else {
+        format!(
+            "ripr estimates static RIPR exposure for changed {language_text} behavior, but has not analyzed this workspace yet. Run the `ripr.refresh` editor command (or `ripr check --format json`) to obtain findings."
+        )
+    };
+    markdown_hover(value)
 }
 
 pub(super) fn markdown_hover(value: String) -> Hover {
@@ -245,6 +288,44 @@ pub(super) fn is_gap_diagnostic(diagnostic: &Diagnostic) -> bool {
         == Some("gap_decision_ledger")
 }
 
+/// The governed exposure-classification tokens. Diagnostics whose code is one
+/// of these are exposure findings and lead with the plain word (#9367).
+const EXPOSURE_CLASSIFICATIONS: [&str; 7] = [
+    "exposed",
+    "weakly_exposed",
+    "reachable_unrevealed",
+    "no_static_path",
+    "infection_unknown",
+    "propagation_unknown",
+    "static_unknown",
+];
+
+/// The hover header for a diagnostic. Exposure findings lead with the plain
+/// word for the class, not the raw schema token (#9367): the token stays
+/// available on `Diagnostic.code` for the Problems panel and LLM consumers,
+/// while a human reading the hover meets governed vocabulary
+/// (`ExposureClass::plain_label`). Diagnostics that are not exposure findings
+/// (seam grips, gap decisions, scope or budget limitations) keep their stable
+/// code in the header — calling a budget omission a "finding: unknown" would
+/// misdescribe a delivery limitation as an unknown-class exposure.
+fn hover_header(classification: &str) -> String {
+    if EXPOSURE_CLASSIFICATIONS.contains(&classification) {
+        format!("**ripr** finding: {}", class_header_label(classification))
+    } else {
+        format!("**ripr** `{classification}`")
+    }
+}
+
+fn class_header_label(classification: &str) -> &'static str {
+    match classification {
+        "exposed" => "exposed",
+        "weakly_exposed" => "weak",
+        "reachable_unrevealed" => "unrevealed",
+        "no_static_path" => "no path",
+        _ => "unknown",
+    }
+}
+
 fn diagnostic_hover_markdown(diagnostic: &Diagnostic) -> String {
     if is_gap_diagnostic(diagnostic)
         && let Some(data) = &diagnostic.data
@@ -257,7 +338,7 @@ fn diagnostic_hover_markdown(diagnostic: &Diagnostic) -> String {
         .map(number_or_string_label)
         .unwrap_or_else(|| "static exposure".to_string());
     let mut lines = vec![
-        format!("**ripr** `{classification}`"),
+        hover_header(&classification),
         String::new(),
         diagnostic.message.clone(),
     ];
@@ -502,7 +583,7 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
         .as_ref()
         .map(number_or_string_label)
         .unwrap_or_else(|| "static exposure".to_string());
-    let mut lines = vec![format!("**ripr** `{classification}`"), String::new()];
+    let mut lines = vec![hover_header(&classification), String::new()];
     push_preview_boundary(&mut lines, finding);
     push_preview_actionability(&mut lines, finding);
     lines.extend([
@@ -563,9 +644,12 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
                 (Some(why), None) => format!(" {label}: {why}"),
                 (why, Some(oracle)) => {
                     let mut text = format!(
-                        " \u{2014} {} {} oracle: {}",
-                        test.oracle_strength.as_str(),
-                        test.oracle_kind.as_str(),
+                        " \u{2014} {}: {}",
+                        crate::output::related_test_miss::oracle_projection(
+                            &test.oracle_strength,
+                            &test.oracle_kind,
+                            true,
+                        ),
                         oracle
                     );
                     if let Some(why) = why {
@@ -1095,7 +1179,8 @@ fn push_static_limits(lines: &mut Vec<String>) {
 }
 
 fn display_hover_path(path: &std::path::Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
+    // Display-only (not an identity key): lossy, `\` rewritten only on Windows.
+    crate::output::path::path_display_lossy(path)
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -1230,12 +1315,7 @@ fn root_matches_report(root: &Path, report_root: Option<&str>) -> bool {
 }
 
 fn normalize_path(path: &Path) -> String {
-    let normalized = path.to_string_lossy().replace('\\', "/");
-    if crate::output::path::host_paths_case_insensitive() {
-        normalized.to_lowercase()
-    } else {
-        normalized
-    }
+    crate::output::path::path_identity_key(path)
 }
 
 fn seam_stage_line(name: &str, stage: &StageEvidence) -> String {
@@ -1617,6 +1697,33 @@ mod seam_hover_tests {
         }
         if !md.contains("Probe:") && !md.contains("**ripr**") {
             return Err(format!("expected generic diagnostic hover in:\n{md}"));
+        }
+        Ok(())
+    }
+
+    /// A scope or budget limitation is not an exposure finding: its hover must
+    /// keep the stable diagnostic code in the header instead of claiming an
+    /// `unknown`-class finding (#9367 review).
+    #[test]
+    fn limitation_diagnostic_hover_keeps_its_code_instead_of_finding_unknown() -> Result<(), String>
+    {
+        let mut diagnostic = sample_diagnostic();
+        diagnostic.code = Some(NumberOrString::String(
+            "ripr-diagnostic-budget-omitted".to_string(),
+        ));
+        diagnostic.message =
+            "Some current diagnostics were omitted; re-run with --verbose.".to_string();
+        let hover = diagnostic_hover_response(&diagnostic);
+        let md = extract_markup(&hover)?;
+        if md.contains("finding: unknown") || md.contains("finding:") {
+            return Err(format!(
+                "limitation diagnostic must not masquerade as a finding:\n{md}"
+            ));
+        }
+        if !md.contains("`ripr-diagnostic-budget-omitted`") {
+            return Err(format!(
+                "limitation diagnostic hover must keep its stable code:\n{md}"
+            ));
         }
         Ok(())
     }
@@ -2169,5 +2276,20 @@ mod seam_hover_tests {
             ));
         }
         Ok(())
+    }
+}
+
+#[cfg(all(test, not(windows)))]
+mod root_identity_tests {
+    use super::root_matches_report;
+    use std::path::Path;
+
+    /// A Windows-produced report root spelled with `\` fails closed on Unix
+    /// instead of aliasing `<root>/sub/proj`.
+    #[test]
+    fn backslash_report_root_does_not_alias_slash_root_on_unix() {
+        let root = Path::new("/w/sub/proj");
+        assert!(root_matches_report(root, Some("/w/sub/proj")));
+        assert!(!root_matches_report(root, Some("/w\\sub\\proj")));
     }
 }
