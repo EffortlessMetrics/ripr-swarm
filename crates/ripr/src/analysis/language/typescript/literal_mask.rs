@@ -39,7 +39,9 @@ impl<'a> Visit<'a> for Plan {
     fn visit_reg_exp_literal(&mut self, node: &RegExpLiteral<'a>) {
         let close = node.span.start + 1 + node.regex.pattern.text.len() as u32;
         self.set(Span::new(node.span.start + 1, close), true);
-        self.set(Span::new(close + 1, node.span.end), true);
+        // The closing slash is blanked too so the division-only lexer cannot
+        // read it with a following `*` or `/` as a comment start.
+        self.set(Span::new(close, node.span.end), true);
         self.finish_operand(node.span);
     }
 

@@ -743,24 +743,25 @@ fn review_9936_for_member_then_await_is_division() -> Result<(), String> {
 
 #[test]
 fn review_9936_comparison_regex_after_angle_shapes_keeps_the_write_visible() -> Result<(), String> {
-    let regex = "const q = n</a`/.test(s); test = null;";
+    let ts_regex = "const q = n</a`/.source.length; test = null;";
+    let tsx_regex = "const q = n < /a`/.source.length; test = null;";
     let cases = [
         (
             "test/k.test.ts",
-            format!("const n = 1, s = ''; const a = <any>s; {regex}"),
+            format!("const n = 1, s = ''; const a = <any>s; {ts_regex}"),
         ),
         (
             "test/k.test.ts",
-            format!("const n = 1, s = ''; 1<<n; {regex}"),
+            format!("const n = 1, s = ''; 1<<n; {ts_regex}"),
         ),
         (
             "test/k.test.tsx",
-            format!("const n = 1, s = ''; const a = <Foo a={{1}} />; {regex}"),
+            format!("const n = 1, s = ''; const a = <Foo a={{1}} />; {tsx_regex}"),
         ),
         (
             "test/k.test.tsx",
             format!(
-                "const n = 1, s = ''; function f() {{ return <p>x</p>; test = null; }} {regex}"
+                "const n = 1, s = ''; function f() {{ return <p>x</p>; test = null; }} {tsx_regex}"
             ),
         ),
         (
@@ -773,6 +774,29 @@ fn review_9936_comparison_regex_after_angle_shapes_keeps_the_write_visible() -> 
         let source = tape_test("var test = require('tape');", tail);
         assert_eq!(
             class_for_file("masker-angle-shapes-review", file, &source)?,
+            ExposureClass::NoStaticPath,
+            "case {index}: {tail}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn review_9936_parser_known_regex_followed_by_star_or_slash_keeps_the_write_visible()
+-> Result<(), String> {
+    for (index, tail) in [
+        "const t = `x`; const r = /a/*2; test = null; /* c */",
+        "const t = `x`; const r = /a/*2; test = null; // c",
+        "const t = `x`; const r = /a/ /* c */; test = null;",
+        "const t = `x`; const r = /a// c\n; test = null;",
+        "const t = `x`; const r = 6 / /a/.source.length / 2; test = null;",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let source = tape_test("var test = require('tape');", tail);
+        assert_eq!(
+            class_for_file("masker-regex-close-review", "test/k.test.ts", &source)?,
             ExposureClass::NoStaticPath,
             "case {index}: {tail}"
         );
