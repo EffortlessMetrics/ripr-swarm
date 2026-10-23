@@ -22896,8 +22896,8 @@ fn receipt_help_exits_zero_smoke() {
         "help should mention check"
     );
     assert!(
-        stdout.contains("RIPR-SPEC-0079"),
-        "help should reference spec"
+        stdout.contains("canonical repair receipts"),
+        "help should describe the receipt command"
     );
 }
 
@@ -30557,7 +30557,7 @@ fn check_rejects_invalid_check_timeout_flag_and_env() -> Result<(), String> {
         &[("RIPR_CHECK_TIMEOUT", "abc")],
     );
     let stderr = String::from_utf8_lossy(&explicit.stderr);
-    if stderr.contains("RIPR_CHECK_TIMEOUT") {
+    if stderr.contains("RIPR_CHECK_TIMEOUT requires a non-negative integer") {
         return Err(format!(
             "--timeout should take precedence over the env var: {stderr}"
         ));

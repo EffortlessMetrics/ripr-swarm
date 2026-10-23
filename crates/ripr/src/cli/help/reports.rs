@@ -217,9 +217,9 @@ Producing the input:
   includes it, when the Summary counts should reflect observed runtime
   evidence. cargo-mutants selection flags only narrow its own run; ripr
   does not invoke it. The importer was validated against cargo-mutants
-  27.1.0 `outcomes.json` and `mutants.json` shapes; see RIPR-SPEC-0006 and
-  fixtures/boundary_gap/calibration/. A checked-in sample is
-  fixtures/boundary_gap/calibration/runtime-mutants.json.
+  27.1.0 `outcomes.json` and `mutants.json` shapes. A checked-in example
+  ships in the ripr repository's calibration fixtures
+  (runtime-mutants.json).
 
 Limitation: the join matches by seam_id, span containment, or file/line. It
 does not check that the cargo-mutants JSON and the repo-exposure snapshot
@@ -245,9 +245,8 @@ mod tests {
             "`cargo mutants`",
             "`mutants.out/`",
             "27.1.0",
-            "RIPR-SPEC-0006",
-            "fixtures/boundary_gap/calibration/",
-            "fixtures/boundary_gap/calibration/runtime-mutants.json",
+            "calibration fixtures",
+            "runtime-mutants.json",
         ] {
             assert!(
                 CALIBRATE_HELP.contains(needle),
