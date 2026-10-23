@@ -446,7 +446,8 @@ is not evidence that a resource with a particular identity exists.
   — real committed analysis with nonempty subjects before filtering, fitting
   empty pages, independently sized structured-envelope overflow below the
   raw-document ceiling, raw-document overflow, the `file` and `language` filters,
-  typed refusals bound to the current snapshot, and same-session recovery.
+  typed refusals bound to the current snapshot, echo-driven refusals naming
+  the filter rather than the snapshot identity route, and same-session recovery.
 - `crates/ripr/src/mcp/workspace.rs::tests::list_gaps_overflow_recovery_names_the_shrinkable_cause`
   — filter-driven shell overflow names the filter; shell-driven overflow
   keeps the snapshot identity route.
