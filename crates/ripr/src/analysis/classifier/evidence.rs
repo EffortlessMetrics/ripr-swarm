@@ -1178,8 +1178,11 @@ impl ClassifiedProbeEvidence {
                     .value_guard_subject()
                     .is_none_or(|subject| direct_call_name(subject) == Some(owner_name))
         };
-        let assertion_refusal = (observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
-            || discriminate.state != StageState::Yes)
+        // #9871: a reader-only relation has no owner pin to refuse against, so
+        // an owner-name scan would only add a misleading refusal note.
+        let assertion_refusal = (context.const_readers.is_empty()
+            && (observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
+                || discriminate.state != StageState::Yes))
             .then(|| {
                 let mut notes = Vec::new();
                 for (test, _) in &context.related_tests {

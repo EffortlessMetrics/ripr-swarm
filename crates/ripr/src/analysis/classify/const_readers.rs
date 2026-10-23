@@ -58,15 +58,9 @@ fn function_reads(body: &str, name: &str) -> bool {
     code_reads(&masked, name) || format_macro_reads(body, name)
 }
 
-/// A local, loop variable or parameter spelled like the constant.
+/// A local, loop variable, pattern binding or parameter spelled like the
+/// constant. Every check is whole-word, so `let LIMIT_X` does not shadow.
 fn shadows(masked: &str, name: &str) -> bool {
-    if masked.contains(&format!("let {name}"))
-        || masked.contains(&format!("let mut {name}"))
-        || masked.contains(&format!("for {name} in"))
-        || masked.contains(&format!("|{name}|"))
-    {
-        return true;
-    }
     let bytes = masked.as_bytes();
     let mut start = 0;
     while let Some(found) = masked[start..].find(name) {
@@ -75,18 +69,43 @@ fn shadows(masked: &str, name: &str) -> bool {
         start = end;
         let whole = (at == 0 || !is_ident_byte(bytes[at - 1]))
             && !bytes.get(end).is_some_and(|b| is_ident_byte(*b));
-        if whole
-            && masked[end..].trim_start().starts_with(':')
-            && !masked[end..].trim_start().starts_with("::")
-            && matches!(
-                masked[..at].trim_end().chars().next_back(),
-                Some('(' | ',' | '|')
-            )
+        if !whole {
+            continue;
+        }
+        let before = masked[..at].trim_end();
+        let after = masked[end..].trim_start();
+        let prev = before.chars().next_back();
+        // `let NAME`, `let mut NAME`, `mut NAME: T`, `for NAME in`.
+        if ends_with_word(before, "let")
+            || ends_with_word(before, "for")
+            || (ends_with_word(before, "mut") && !before.trim_end_matches("mut").ends_with('&'))
+        {
+            return true;
+        }
+        // A binding inside a `let (a, NAME)` / `let [a, NAME]` pattern.
+        if let Some(let_at) = before.rfind("let ")
+            && !before[let_at..].contains(['=', ';', '{'])
+            && (let_at == 0 || !is_ident_byte(before.as_bytes()[let_at - 1]))
+        {
+            return true;
+        }
+        // Parameters: `(NAME: T`, `, NAME: T`, closure `|NAME|`, `|NAME,`,
+        // `|a, NAME|`.
+        let typed = after.starts_with(':') && !after.starts_with("::");
+        if (typed && matches!(prev, Some('(' | ',' | '|')))
+            || (prev == Some('|') && after.starts_with(['|', ',']))
+            || (prev == Some(',') && after.starts_with('|'))
         {
             return true;
         }
     }
     false
+}
+
+/// Whether `text` ends with the whole word `word`.
+fn ends_with_word(text: &str, word: &str) -> bool {
+    text.strip_suffix(word)
+        .is_some_and(|rest| rest.as_bytes().last().is_none_or(|b| !is_ident_byte(*b)))
 }
 
 /// Whether the occurrence ending at `end` is only assigned to (`NAME = x`,
@@ -97,6 +116,7 @@ fn is_assigned(masked: &str, end: usize) -> bool {
     match (chars.next(), chars.next()) {
         (Some('='), next) => next != Some('=') && next != Some('>'),
         (Some('+' | '-' | '*' | '/' | '%' | '^' | '|' | '&'), Some('=')) => true,
+        (Some('<'), Some('<')) | (Some('>'), Some('>')) => chars.next() == Some('='),
         _ => false,
     }
 }
@@ -138,27 +158,30 @@ fn code_reads(masked: &str, name: &str) -> bool {
     false
 }
 
-const FORMAT_MACROS: [&str; 12] = [
-    "format",
-    "print",
-    "println",
-    "eprint",
-    "eprintln",
-    "write",
-    "writeln",
-    "panic",
-    "format_args",
-    "assert",
-    "assert_eq",
-    "assert_ne",
+/// Format macros and the zero-based argument index of their format string.
+const FORMAT_MACROS: [(&str, usize); 12] = [
+    ("format", 0),
+    ("print", 0),
+    ("println", 0),
+    ("eprint", 0),
+    ("eprintln", 0),
+    ("write", 1),
+    ("writeln", 1),
+    ("panic", 0),
+    ("format_args", 0),
+    ("assert", 1),
+    ("assert_eq", 2),
+    ("assert_ne", 2),
 ];
 
-/// Whether a string literal that is an argument of a format macro in `body`
+/// Whether the format-string argument of a format macro in `body`
 /// captures `name` inline. Comments are skipped; a literal outside a format
 /// macro, or an escaped `{{name}}`, does not count.
 fn format_macro_reads(body: &str, name: &str) -> bool {
     let chars: Vec<char> = body.chars().collect();
-    let mut stack: Vec<bool> = Vec::new();
+    // Per open bracket: the format-string argument index (when it is a
+    // format macro's parenthesis) and the commas seen at its level.
+    let mut stack: Vec<(Option<usize>, usize)> = Vec::new();
     let mut i = 0;
     while i < chars.len() {
         match chars[i] {
@@ -189,20 +212,35 @@ fn format_macro_reads(body: &str, name: &str) -> bool {
                 while j > 0 && chars[j - 1].is_whitespace() {
                     j -= 1;
                 }
-                let is_macro = j > 0 && chars[j - 1] == '!' && {
+                let position = if j > 0 && chars[j - 1] == '!' {
                     let end = j - 1;
                     let mut k = end;
                     while k > 0 && (chars[k - 1].is_alphanumeric() || chars[k - 1] == '_') {
                         k -= 1;
                     }
                     let ident: String = chars[k..end].iter().collect();
-                    FORMAT_MACROS.contains(&ident.as_str())
+                    FORMAT_MACROS
+                        .iter()
+                        .find(|(macro_name, _)| *macro_name == ident)
+                        .map(|(_, position)| *position)
+                } else {
+                    None
                 };
-                stack.push(is_macro);
+                stack.push((position, 0));
                 i += 1;
             }
-            ')' => {
+            '[' | '{' => {
+                stack.push((None, 0));
+                i += 1;
+            }
+            ')' | ']' | '}' => {
                 stack.pop();
+                i += 1;
+            }
+            ',' => {
+                if let Some(frame) = stack.last_mut() {
+                    frame.1 += 1;
+                }
                 i += 1;
             }
             '"' => {
@@ -217,7 +255,11 @@ fn format_macro_reads(body: &str, name: &str) -> bool {
                     i += 1;
                 }
                 i += 1;
-                if stack.last() == Some(&true) && literal_captures(&literal, name) {
+                if stack
+                    .last()
+                    .is_some_and(|(position, commas)| *position == Some(*commas))
+                    && literal_captures(&literal, name)
+                {
                     return true;
                 }
             }
@@ -300,6 +342,13 @@ mod tests {
         assert!(function_reads("{ &v[..LIMIT] }", "LIMIT"));
         assert!(function_reads("{ a..LIMIT }", "LIMIT"));
         assert!(function_reads("{ a..=LIMIT }", "LIMIT"));
+        assert!(function_reads("{ let LIMIT_X = 1; LIMIT }", "LIMIT"));
+        assert!(function_reads("{ f(&mut LIMIT) }", "LIMIT"));
+        assert!(function_reads(
+            "{ assert_eq!(v.len(), 2, \"{LIMIT}\") }",
+            "LIMIT"
+        ));
+        assert!(function_reads("{ write!(f, \"{LIMIT}\") }", "LIMIT"));
         assert!(function_reads("{ f(a, LIMIT) }", "LIMIT"));
         assert!(function_reads(
             "{ if LIMIT >= 2 { 1 } else { 0 } }",
@@ -323,6 +372,14 @@ mod tests {
             "{ a::Self::LIMIT }",
             "{ x.LIMIT }",
             "{ x . LIMIT }",
+            "{ LIMIT <<= 1; }",
+            "{ LIMIT >>= 1; }",
+            "{ let (a, LIMIT) = p; LIMIT }",
+            "{ let mut LIMIT: u32 = 1; LIMIT }",
+            "{ v.map(|a, LIMIT| LIMIT) }",
+            "{ v.map(|LIMIT, b| LIMIT) }",
+            "{ println!(\"{}\", \"{LIMIT}\") }",
+            "{ assert!(s == \"{LIMIT}\") }",
             "{ x.\n LIMIT }",
             "{ let LIMIT = 1; LIMIT }",
             "{ LIMIT = 5; }",

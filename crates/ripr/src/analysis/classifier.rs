@@ -1604,6 +1604,15 @@ pub(super) mod tests {
         // A reader-only relation credits no observation or discrimination.
         assert_eq!(finding.ripr.reveal.observe.state, StageState::Unknown);
         assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Unknown);
+        // No owner pin exists to refuse against, so no refusal note is added.
+        assert!(
+            !finding
+                .evidence
+                .iter()
+                .any(|line| line.starts_with(crate::domain::ASSERTION_NOT_CREDITED_PREFIX)),
+            "{:?}",
+            finding.evidence
+        );
         assert!(
             finding
                 .ripr
