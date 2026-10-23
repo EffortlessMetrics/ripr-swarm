@@ -1133,6 +1133,12 @@ fn non_object_params_keep_the_request_id_and_the_session_recovers() -> Result<()
             responses.len()
         ));
     }
+    if responses[0].get("id") != Some(&json!("discover")) {
+        return Err(format!(
+            "first response must answer the discover request: {}",
+            responses[0]
+        ));
+    }
     for (index, id) in expected.iter().enumerate() {
         let response = &responses[index + 1];
         if response.get("id") != Some(id) {
@@ -1149,6 +1155,11 @@ fn non_object_params_keep_the_request_id_and_the_session_recovers() -> Result<()
         }
     }
     let last = &responses[expected.len() + 1];
+    if last.get("id") != Some(&json!("recovered-status")) {
+        return Err(format!(
+            "last response must answer the recovered-status request: {last}"
+        ));
+    }
     if last.get("result").is_none() {
         return Err(format!("session must recover after rejections: {last}"));
     }
