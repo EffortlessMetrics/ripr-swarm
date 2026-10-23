@@ -100,3 +100,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — match_arm_tuple_terminal_imported_formatter (9)
+
+Reason:
+RIPR-SPEC-0122: a head-only match-arm after row names the arm head and the line holding the new body (#9244)
+
+Command:
+`cargo xtask goldens bless match_arm_tuple_terminal_imported_formatter --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

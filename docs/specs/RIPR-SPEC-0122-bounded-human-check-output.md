@@ -593,6 +593,17 @@ the instruction to add or strengthen a test only when the inspection finds a
 gap. The wording is static guidance only; it does not claim a runtime outcome.
 The assertion-shaped owner reframing (RIPR-SPEC-0133) is unchanged.
 
+### Match-arm after row names a head-only text (#9244)
+
+A match-arm probe keeps the parser's arm head (`Tier::Pro =>`) as its `after`
+text while its `before` can be the whole old arm (`Tier::Pro => seats * 20 + 5,`).
+When the human `Changed` block would print a head-only `after:` beside a
+`before:` that carries an arm body, it adds one continuation row stating that the
+row is the arm head only and naming the `file:line` that holds the new arm body.
+A pattern-only edit, a complete after arm and every other probe family print no
+note. The probe fields and every machine output are unchanged; the note is static
+guidance only and claims no runtime outcome.
+
 ## Non-Claims
 
 - Bounded human output is not runtime mutation evidence.
@@ -638,6 +649,8 @@ The assertion-shaped owner reframing (RIPR-SPEC-0133) is unchanged.
 
 ## Test Mapping
 
+- `crates/ripr/src/output/human.rs::tests::render_finding_marks_a_match_arm_head_only_after_row`
+- `crates/ripr/src/output/human.rs::tests::render_finding_adds_no_arm_note_when_the_after_row_is_complete`
 - `crates/ripr/src/analysis/classify/decision.rs::tests::infection_unknown_next_step_names_a_concrete_action`
 - `crates/ripr/src/output/human.rs::tests::human_evidence_spells_the_unconfirmed_observation_in_words`
 - `crates/ripr/src/output/human.rs::tests::plain_observation_wording_handles_each_producer_form`

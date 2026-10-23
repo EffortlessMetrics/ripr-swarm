@@ -13,6 +13,7 @@ WARNING ./src/lib.rs:27
 Changed
   before: (true, false) => "request_identity_v1",
   after:  (true, false) =>
+          (arm head only; the new arm body is at ./src/lib.rs:27)
 
 Probe
   family: match_arm

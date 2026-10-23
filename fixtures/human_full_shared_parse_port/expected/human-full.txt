@@ -191,6 +191,7 @@ Finding 7: WARNING ./src/lib.rs:4
 Changed
   before: Ok(p) => Ok(p),
   after:  Ok(_) =>
+          (arm head only; the new arm body is at ./src/lib.rs:4)
 Probe
   family: match_arm
   delta:  control

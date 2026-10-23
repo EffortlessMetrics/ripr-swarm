@@ -1,7 +1,7 @@
 use crate::config::RiprConfig;
 use crate::domain::{
     CALLEE_ONLY_REACH_PREFIX, ExposureClass, Finding, LanguageId, LanguageStatus,
-    MISSING_DISCRIMINATOR_VALUE_PREFIX, RiprEvidence, StageState,
+    MISSING_DISCRIMINATOR_VALUE_PREFIX, ProbeFamily, RiprEvidence, StageState,
 };
 use crate::output::agent_seam_packets::{
     allowed_edit_surface_for_gap_route, gap_record_packet_do_not_do,
@@ -417,6 +417,37 @@ fn wrapped_fragment(label: &str, value: &str) -> String {
     out
 }
 
+/// Marks a match-arm `after:` row that carries only the arm head.
+///
+/// The probe keeps the parser's head shape (`Tier::Pro =>`) as `after` while the
+/// paired `before` can be the whole old arm (`Tier::Pro => seats * 20 + 5,`).
+/// Printed side by side, the head alone reads as an arm that lost its body. The
+/// probe fields are consumed by arm-selection classification, so the human row
+/// says what it shows and where the new body is instead of changing them.
+fn match_arm_head_only_note(
+    finding: &Finding,
+    before: Option<&str>,
+    after: &str,
+    root: &Path,
+) -> Option<String> {
+    if finding.probe.family != ProbeFamily::MatchArm {
+        return None;
+    }
+    let after = after.trim();
+    if !after.ends_with("=>") || after.matches("=>").count() != 1 {
+        return None;
+    }
+    let (_, old_body) = before?.split_once("=>")?;
+    if old_body.trim().is_empty() {
+        return None;
+    }
+    Some(format!(
+        "          (arm head only; the new arm body is at {}:{})\n",
+        crate::analysis::finding_location_text(root, &finding.probe.location.file),
+        finding.probe.location.line
+    ))
+}
+
 pub(crate) fn render_finding_with_config(
     finding: &Finding,
     config: &RiprConfig,
@@ -456,11 +487,15 @@ pub(super) fn render_finding_with_shared_sections(
     // the only surface that carries `before`/`after` at all — see
     // `wrapped_fragment`.
     out.push_str("\nChanged\n");
+    let before_text = finding.probe.before.as_deref();
     if let Some(before) = &finding.probe.before {
         out.push_str(&wrapped_fragment("  before: ", before));
     }
     if let Some(after) = &finding.probe.after {
         out.push_str(&wrapped_fragment("  after:  ", after));
+        if let Some(note) = match_arm_head_only_note(finding, before_text, after, root) {
+            out.push_str(&note);
+        }
     } else {
         out.push_str(&wrapped_fragment("  expr:   ", &finding.probe.expression));
     }

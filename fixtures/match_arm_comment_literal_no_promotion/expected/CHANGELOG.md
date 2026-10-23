@@ -319,3 +319,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — match_arm_comment_literal_no_promotion (24)
+
+Reason:
+RIPR-SPEC-0122: a head-only match-arm after row names the arm head and the line holding the new body (#9244)
+
+Command:
+`cargo xtask goldens bless match_arm_comment_literal_no_promotion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

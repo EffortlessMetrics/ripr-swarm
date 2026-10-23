@@ -13,6 +13,7 @@ WARNING ./src/lib.rs:5
 Changed
   before: foreign::None => 0,
   after:  foreign::None =>
+          (arm head only; the new arm body is at ./src/lib.rs:5)
 
 Probe
   family: match_arm

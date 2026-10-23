@@ -6153,6 +6153,49 @@ mod tests {
         assert!(rendered.contains("  after:  assert_eq!(msg, \"a b\")"));
     }
 
+    /// A match-arm probe keeps the parser's head as `after` while `before` can
+    /// be the whole old arm. The head alone reads as an arm that lost its body,
+    /// so the row says it is the head and where the new body is (#9244).
+    #[test]
+    fn render_finding_marks_a_match_arm_head_only_after_row() {
+        let mut finding = sample_finding();
+        finding.probe.family = crate::domain::ProbeFamily::MatchArm;
+        finding.probe.before = Some("Tier::Pro => seats * 20 + 5,".to_string());
+        finding.probe.after = Some("Tier::Pro =>".to_string());
+
+        let rendered = render_finding(&finding);
+
+        assert!(rendered.contains("  before: Tier::Pro => seats * 20 + 5,\n"));
+        assert!(rendered.contains("  after:  Tier::Pro =>\n"));
+        assert!(
+            rendered.contains("(arm head only; the new arm body is at "),
+            "a head-only after row must say so; got:\n{rendered}"
+        );
+        assert!(rendered.contains(":7)"), "the note names the line");
+    }
+
+    /// Discriminating negatives: a pattern-only edit (old arm is also just a
+    /// head), a complete after arm, and a non-arm family add no note.
+    #[test]
+    fn render_finding_adds_no_arm_note_when_the_after_row_is_complete() {
+        let mut head_edit = sample_finding();
+        head_edit.probe.family = crate::domain::ProbeFamily::MatchArm;
+        head_edit.probe.before = Some("1..=8 =>".to_string());
+        head_edit.probe.after = Some("1..=9 =>".to_string());
+        assert!(!render_finding(&head_edit).contains("arm head only"));
+
+        let mut whole = sample_finding();
+        whole.probe.family = crate::domain::ProbeFamily::MatchArm;
+        whole.probe.before = Some("Tier::Pro => seats * 20,".to_string());
+        whole.probe.after = Some("Tier::Pro => seats * 25,".to_string());
+        assert!(!render_finding(&whole).contains("arm head only"));
+
+        let mut other_family = sample_finding();
+        other_family.probe.before = Some("x => y,".to_string());
+        other_family.probe.after = Some("x =>".to_string());
+        assert!(!render_finding(&other_family).contains("arm head only"));
+    }
+
     /// The `expr:` fallback is the same rendered fragment reached through a
     /// different branch, so it gets the same treatment: wrapped, complete, and
     /// not whitespace-normalized.

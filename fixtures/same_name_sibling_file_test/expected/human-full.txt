@@ -13,6 +13,7 @@ WARNING ./src/heaters.rs:9
 Changed
   before: Mode::Warm => 5,
   after:  Mode::Warm =>
+          (arm head only; the new arm body is at ./src/heaters.rs:9)
 
 Probe
   family: match_arm

@@ -13,6 +13,7 @@ WARNING ./src/lib.rs:61
 Changed
   before: _ if arg.starts_with('-') => unknown_option = false,
   after:  _ if arg.starts_with('-') =>
+          (arm head only; the new arm body is at ./src/lib.rs:61)
 
 Probe
   family: match_arm

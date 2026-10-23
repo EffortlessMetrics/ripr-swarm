@@ -22,6 +22,7 @@ Finding 1: WARNING ./src/lib.rs:4
 Changed
   before: Some(ms) => 1,
   after:  Some(ms) =>
+          (arm head only; the new arm body is at ./src/lib.rs:4)
 Probe
   family: match_arm
   delta:  control
