@@ -567,6 +567,16 @@ fn mark_commonjs_default_binding(
     program: &oxc_ast::ast::Program<'_>,
     owners: &mut [TypeScriptOwner],
 ) {
+    // One file-level gate for the inline (`module.exports = function ...`)
+    // and the declared (`module.exports = name;`) forms.
+    let code = super::tests_extract::byte_preserving_code_mask(program.source_text)
+        .filter(|code| commonjs_default_gate(code));
+    let Some(code) = code else {
+        for owner in owners.iter_mut() {
+            owner.commonjs_default_export = false;
+        }
+        return;
+    };
     let mut target: Option<&str> = None;
     for stmt in &program.body {
         let Statement::ExpressionStatement(expression) = stmt else {
@@ -599,16 +609,7 @@ fn mark_commonjs_default_binding(
                 if function.id.as_ref().is_some_and(|id| id.name == name))
         })
         .count();
-    if declarations != 1 {
-        return;
-    }
-    let Some(code) = super::tests_extract::byte_preserving_code_mask(program.source_text) else {
-        return;
-    };
-    if super::tests_extract::file_is_opaque(&code)
-        || module_exports_assignments(&code) != 1
-        || super::tests_extract::identifier_written_in(&code, name)
-    {
+    if declarations != 1 || super::tests_extract::identifier_written_in(&code, name) {
         return;
     }
     for owner in owners.iter_mut() {
@@ -622,32 +623,61 @@ fn mark_commonjs_default_binding(
     }
 }
 
-/// How many times masked source text assigns to `module.exports` itself (a
-/// property write such as `module.exports.name = ...` is not counted, but a
-/// bracket spelling of `module` makes the count unknowable, so it reads as
-/// many).
-fn module_exports_assignments(code: &str) -> usize {
-    if code.contains("module[") {
-        return usize::MAX;
+/// The file-level proof that `module.exports` holds one statically known
+/// value (RIPR-SPEC-0243 rule 15). On masked, whitespace-free text the bare
+/// identifier `module` must occur only as `module.exports=` (exactly once, not
+/// `==`/`=>`) or as the base of a property access `module.exports.name`; any
+/// other use (an alias, `module?.exports`, `module[...]`, compound or update
+/// writes, `Object.assign(module, ...)`, `typeof module` guards) makes the
+/// value unknowable. `eval`, `with` and `\u` escapes refuse the file.
+fn commonjs_default_gate(code: &str) -> bool {
+    if super::tests_extract::file_is_opaque(code) {
+        return false;
     }
-    let mut count = 0;
-    let mut from = 0;
-    while let Some(found) = code[from..].find("module.exports") {
-        let start = from + found;
-        let end = start + "module.exports".len();
-        from = end;
-        let before = code[..start].chars().next_back();
-        if before
-            .is_some_and(|ch| ch == '.' || ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
-        {
+    let word = |ch: Option<char>| {
+        ch.is_some_and(|ch| ch == '_' || ch == '$' || ch.is_alphanumeric() || !ch.is_ascii())
+    };
+    // Drop every JS whitespace run (Unicode spaces, line terminators, BOM)
+    // except one space kept between two word characters, so `delete module`
+    // does not fuse into the word `deletemodule`.
+    let is_space = |ch: char| ch.is_whitespace() || ch == '\u{feff}';
+    let chars: Vec<char> = code.chars().collect();
+    let mut compact = String::with_capacity(code.len());
+    let mut at = 0;
+    while at < chars.len() {
+        if !is_space(chars[at]) {
+            compact.push(chars[at]);
+            at += 1;
             continue;
         }
-        let rest = code[end..].trim_start();
-        if rest.starts_with('=') && !rest[1..].starts_with(['=', '>']) {
-            count += 1;
+        let start = at;
+        while at < chars.len() && is_space(chars[at]) {
+            at += 1;
+        }
+        let before = if start == 0 { None } else { Some(chars[start - 1]) };
+        if word(before) && word(chars.get(at).copied()) {
+            compact.push(' ');
         }
     }
-    count
+    let mut assignments = 0usize;
+    for (at, _) in compact.match_indices("module") {
+        let before = compact[..at].chars().next_back();
+        let rest = &compact[at + "module".len()..];
+        if word(before) || word(rest.chars().next()) || before == Some('.') {
+            continue;
+        }
+        if let Some(after) = rest.strip_prefix(".exports") {
+            if after.starts_with('.') {
+                continue;
+            }
+            if after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>") {
+                assignments += 1;
+                continue;
+            }
+        }
+        return false;
+    }
+    assignments == 1
 }
 
 /// Mark top-level function (or const arrow) owners held by the module's `export default {
@@ -1712,4 +1742,44 @@ fn span_hits_changed_line(
     let start_line = source.line_for_offset(span.start as usize);
     let end_line = source.line_for_offset(span.end as usize);
     (start_line..=end_line).find(|line| changed.contains(line))
+}
+
+/// Drop a `let`/`var` `require()` binding the file writes again
+/// (`let f = require('./k'); f = other;`): after the write the name no longer
+/// holds the required module, so a call through it proves nothing about the
+/// owner (RIPR-SPEC-0243 rule 15). `const` bindings cannot be rebound.
+pub(crate) fn drop_rebound_require_bindings(
+    imports: &mut Vec<TypeScriptImport>,
+    program: &oxc_ast::ast::Program<'_>,
+) {
+    let Some(code) = super::tests_extract::byte_preserving_code_mask(program.source_text) else {
+        return;
+    };
+    for stmt in &program.body {
+        let Statement::VariableDeclaration(var_decl) = stmt else {
+            continue;
+        };
+        if var_decl.kind == oxc_ast::ast::VariableDeclarationKind::Const {
+            continue;
+        }
+        for declarator in &var_decl.declarations {
+            let Some(init) = &declarator.init else {
+                continue;
+            };
+            if require_string_literal_source(init).is_none() {
+                continue;
+            }
+            let Some(name) = binding_identifier_name(&declarator.id) else {
+                continue;
+            };
+            let (start, end) = (declarator.span.start as usize, declarator.span.end as usize);
+            let (Some(before), Some(after)) = (code.get(..start), code.get(end..)) else {
+                continue;
+            };
+            let outside = format!("{before} {after}");
+            if super::tests_extract::identifier_written_in(&outside, name) {
+                imports.retain(|import| !(import.namespace && import.local == name));
+            }
+        }
+    }
 }

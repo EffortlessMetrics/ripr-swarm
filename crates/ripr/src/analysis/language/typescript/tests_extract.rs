@@ -126,7 +126,8 @@ fn extract_tests_expanding_suite_factories(file: &Path, source: &str, expand: bo
         {
             return (Vec::new(), None, Some(expansion));
         }
-        let imports = extract_imports_for_test_file(&ret.program.body);
+        let mut imports = extract_imports_for_test_file(&ret.program.body);
+        super::owners::drop_rebound_require_bindings(&mut imports, &ret.program);
         let mocks = extract_mocks_from_statements(&ret.program.body, &imports);
         let mut tests = Vec::new();
         let mut scope = TestScope {

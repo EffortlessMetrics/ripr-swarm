@@ -95,7 +95,7 @@ fn es_default_export_required_from_commonjs_is_a_namespace_not_a_call() -> Resul
     // at runtime, so the call must not reach the owner.
     let es_owner = "export default function (x) {\n  // triple\n  return x * 3;\n}\n";
     let class = class_for("cjs-es-owner", es_owner, &test_with("t", "t(2)"))?;
-    assert_ne!(class, ExposureClass::Exposed);
+    assert_eq!(class, ExposureClass::NoStaticPath);
     Ok(())
 }
 
@@ -142,7 +142,7 @@ fn property_assignments_on_the_exported_function_keep_the_default_export() {
 fn body_local_shadow_of_the_require_binding_is_not_credited() -> Result<(), String> {
     let test = "const t = require('../src/k.js');\n\ntest('triples', () => {\n  const t = (x) => x * 3;\n  expect(t(2)).toBe(6);\n});\n";
     let class = class_for("cjs-shadow", ANONYMOUS, test)?;
-    assert_ne!(class, ExposureClass::Exposed);
+    assert_eq!(class, ExposureClass::NoStaticPath);
     Ok(())
 }
 
@@ -150,7 +150,7 @@ fn body_local_shadow_of_the_require_binding_is_not_credited() -> Result<(), Stri
 fn require_of_a_different_module_is_not_credited() -> Result<(), String> {
     let test = "const t = require('../src/other.js');\n\ntest('triples', () => {\n  expect(t(2)).toBe(6);\n});\n";
     let class = class_for("cjs-other", ANONYMOUS, test)?;
-    assert_ne!(class, ExposureClass::Exposed);
+    assert_eq!(class, ExposureClass::NoStaticPath);
     Ok(())
 }
 
@@ -159,6 +159,124 @@ fn assertion_on_an_unrelated_value_is_not_credited() -> Result<(), String> {
     // The changed result is computed but never observed.
     let test = "const t = require('../src/k.js');\n\ntest('triples', () => {\n  t(2);\n  expect(1 + 1).toBe(2);\n});\n";
     let class = class_for("cjs-unobserved", ANONYMOUS, test)?;
-    assert_ne!(class, ExposureClass::Exposed);
+    assert_eq!(class, ExposureClass::NoStaticPath);
+    Ok(())
+}
+
+fn gated_off(label: &str, owner: &str) -> Result<(), String> {
+    let class = class_for(label, owner, &test_with("t", "t(2)"))?;
+    assert_eq!(class, ExposureClass::NoStaticPath, "{label}: {owner:?}");
+    assert!(
+        marks(owner).iter().all(|(_, _, commonjs)| !commonjs),
+        "{label}: {owner:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_inline_form_needs_the_single_assignment_gate() -> Result<(), String> {
+    let head = "module.exports = function (x) {\n  // triple\n  return x * 3;\n};\n";
+    for (label, tail) in [
+        (
+            "cjs-gate-second",
+            "function other(x) { return x; }\nmodule.exports = other;\n",
+        ),
+        ("cjs-gate-object", "module.exports = { a: 1 };\n"),
+        (
+            "cjs-gate-nested",
+            "function other(x) { return x; }\nif (process.env.C) { module.exports = other; }\n",
+        ),
+        ("cjs-gate-eval", "eval('module.exports = other');\n"),
+        ("cjs-gate-with", "with (ctx) { run(); }\n"),
+        (
+            "cjs-gate-newline",
+            "function other(x) { return x; }\nmodule\n  .exports = other;\n",
+        ),
+        (
+            "cjs-gate-optional",
+            "function other(x) { return x; }\nmodule?.exports = other;\n",
+        ),
+        ("cjs-gate-compound", "module.exports &&= null;\n"),
+        ("cjs-gate-plus", "module.exports += 1;\n"),
+        ("cjs-gate-update", "module.exports++;\n"),
+        ("cjs-gate-alias", "const m = module;\nm.exports = null;\n"),
+        (
+            "cjs-gate-assign",
+            "Object.assign(module, { exports: null });\n",
+        ),
+        (
+            "cjs-gate-define",
+            "Object.defineProperty(module, 'exports', { value: null });\n",
+        ),
+        ("cjs-gate-bracket", "module['exports'] = null;\n"),
+    ] {
+        gated_off(label, &format!("{head}{tail}"))?;
+    }
+    Ok(())
+}
+
+#[test]
+fn the_declared_form_needs_the_same_gate() -> Result<(), String> {
+    let head = "function triple(x) {\n  // triple\n  return x * 3;\n}\nmodule.exports = triple;\n";
+    for (label, tail) in [
+        ("cjs-decl-eval", "eval('module.exports = null');\n"),
+        ("cjs-decl-with", "with (ctx) { run(); }\n"),
+        ("cjs-decl-alias", "const m = module;\nm.exports = null;\n"),
+        ("cjs-decl-newline", "module\n  .exports = null;\n"),
+    ] {
+        gated_off(label, &format!("{head}{tail}"))?;
+    }
+    Ok(())
+}
+
+#[test]
+fn other_export_shapes_are_not_default_function_exports() {
+    for source in [
+        "const obj = { a: 1 };\nmodule.exports = obj;\n",
+        "function f(x) { return x; }\nmodule.exports = { f };\n",
+        "exports.x = function (x) {\n  return x;\n};\n",
+        "const triple = (x) => x * 3;\nmodule.exports = triple;\n",
+        "class Triple {}\nmodule.exports = Triple;\n",
+        "function f(x) { return x; }\nexport = f;\n",
+    ] {
+        assert!(
+            marks(source).iter().all(|(_, _, commonjs)| !commonjs),
+            "{source:?}"
+        );
+    }
+}
+
+#[test]
+fn crlf_and_non_ascii_sources_keep_the_gate() -> Result<(), String> {
+    let owner =
+        "// é ü\r\nmodule.exports = function (x) {\r\n  // triple\r\n  return x * 3;\r\n};\r\n";
+    let class = class_for("cjs-crlf", owner, &test_with("t", "t(2)"))?;
+    assert_eq!(class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn a_rebound_let_require_binding_does_not_call_the_owner() -> Result<(), String> {
+    let owner = "module.exports = function (x) {\n  // triple\n  return x * 3;\n};\n";
+    for (label, prelude) in [
+        (
+            "cjs-rebound-let",
+            "let f = require('../src/k.js');\nf = (x) => x * 3;\n",
+        ),
+        (
+            "cjs-rebound-var",
+            "var f = require('../src/k.js');\nf = (x) => x * 3;\n",
+        ),
+    ] {
+        let test = format!("{prelude}test('x', () => {{\n  expect(f(2)).toBe(6);\n}});\n");
+        let class = class_for(label, owner, &test)?;
+        assert_eq!(class, ExposureClass::NoStaticPath, "{label}");
+    }
+    // An unwritten `let` binding still reaches the owner.
+    let test = "let f = require('../src/k.js');\ntest('x', () => {\n  expect(f(2)).toBe(6);\n});\n";
+    assert_eq!(
+        class_for("cjs-unwritten-let", owner, test)?,
+        ExposureClass::Exposed
+    );
     Ok(())
 }
