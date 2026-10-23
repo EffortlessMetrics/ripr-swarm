@@ -13,6 +13,7 @@ pub(crate) mod check_artifact;
 mod context;
 pub(crate) mod diff_source;
 mod explain;
+pub(crate) mod gap_bound_repair;
 pub(crate) mod impacted_evidence;
 mod navigation;
 pub mod pr_evidence;
@@ -105,8 +106,8 @@ pub(crate) use explain::{
     explain_finding_with_config_navigation_mode_and_progress,
 };
 pub(crate) use navigation::{
-    CheckDiffProvenance, CheckRepairRoute, FindingDrillIn, FindingNavigation, RepairRoute,
-    finding_navigation, finding_navigation_with_worktree,
+    CheckDiffProvenance, CheckRepairRoute, FindingDrillIn, FindingNavigation, GapRepairRoute,
+    RepairRoute, finding_navigation, finding_navigation_with_worktree,
 };
 pub(crate) use progress::{
     AnalysisProgressEvent, AnalysisProgressScope, AnalysisProgressSink, AnalysisProgressStage,
@@ -166,6 +167,12 @@ pub struct CheckInput {
     /// subject in diff mode; worktree and repo modes fail closed with a
     /// named error rather than falling back to worktree analysis.
     pub git_candidate: Option<crate::domain::GitCandidateSubject>,
+    /// Caller-chosen narrowing of the changed files to analyze (#9277). The
+    /// default admits every file. A restricted scope is applied before the
+    /// diff-size guards; files outside it are reported as a
+    /// `language_scope_unsupported` limitation, never as clean, and a scope
+    /// that leaves no changed file is an error. Diff-scoped runs only.
+    pub scope: crate::analysis::DiffScopeFilter,
 }
 
 impl Default for CheckInput {
@@ -184,6 +191,7 @@ impl Default for CheckInput {
             suppression_policy: None,
             git_timeout: None,
             git_candidate: None,
+            scope: crate::analysis::DiffScopeFilter::default(),
         }
     }
 }

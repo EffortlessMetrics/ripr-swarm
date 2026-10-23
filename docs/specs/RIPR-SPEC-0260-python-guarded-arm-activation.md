@@ -7,7 +7,9 @@ Owner: product-analysis
 Created: 2026-10-14
 
 Linked issues: [#7392](https://github.com/EffortlessMetrics/ripr-swarm/issues/7392),
-[#9002](https://github.com/EffortlessMetrics/ripr-swarm/issues/9002).
+[#9002](https://github.com/EffortlessMetrics/ripr-swarm/issues/9002),
+[#9184](https://github.com/EffortlessMetrics/ripr-swarm/issues/9184),
+[#9429](https://github.com/EffortlessMetrics/ripr-swarm/issues/9429).
 
 Support-tier impact: Python preview adapter output only; no support-tier
 change. See: [docs/status/SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md).
@@ -38,7 +40,8 @@ bind:
   calls bind as observed values, the way the predicate boundary rule does.
 - A row with an unevaluable guard is never excluded: one unreadable input
   keeps the existing verdict. Shapes that fail open (keep the pre-gate
-  verdict) include `else` arms, `elif` chains read by their own condition,
+  verdict) include an `else` that closes a `for`/`while`/`try` rather than an
+  `if`/`elif` chain, `elif` arms read by their own condition,
   guards containing `or`/`not` boolean syntax anywhere in the WHOLE
   condition (the check runs before any `and` conjunct is evaluated, so a
   false leading conjunct cannot exclude a row a later `or` lets in,
@@ -59,6 +62,18 @@ bind:
   call that misses every exit, a non-terminating or nested-only `return`
   body, a chained `elif`/`else`, and unreadable guards keep the existing
   verdict.
+- Else arm (#9184): a changed line inside the `else:` of an `if`/`elif`
+  chain runs only for inputs that fail every chain condition. When every
+  strong related call provably satisfies at least one condition of that chain
+  (the same readable-comparison evaluation as an early exit), the finding
+  fails closed to `weakly_exposed` with missing discriminator
+  `not (X)` (one `not (...)` per chain condition, joined by `and`); the reason
+  says the line sits in the else arm, which is entered only when none of the
+  chain conditions hold, and each strong related test input is kept off it by
+  this chain or an enclosing guard. A call that fails every chain condition enters the arm and keeps the
+  existing verdict, as do a chain condition containing `or`/`not` or a conditional expression
+  (`a if b else c`), an
+  unreadable row, and an `else` that closes a `for`/`while`/`try`.
 - Equality follows Python semantics for scalar literals: `True == 1` and
   `False == 0` hold, and `2 == True` does not, so a bool call argument is
   not excluded by a numeric guard (or vice versa).
@@ -68,6 +83,30 @@ bind:
   holds): both integer-form operands compare as `i128`, refusing on
   overflow, while float literals keep the f64 path because Python rounds
   them at parse time too (#7874).
+
+## Unreached `match` arms and `.get` defaults (#9429)
+
+The same all-rows-excluded rule covers two more branch shapes, in
+`arm_activation.rs`:
+
+- A changed line directly in a `case` arm of `match NAME:` where `NAME` is an
+  owner parameter the owner does not rebind. A row is excluded when its
+  literal binding matches an earlier unguarded arm, or does not match any
+  alternative of the changed arm. Patterns read: scalar literals (compared
+  with Python `==`, so `True` takes `case 1`), `None`/`True`/`False` by
+  identity, builtin `int()`, `float()`, `str()`, `bool()` class patterns,
+  `_`, a capture name and `|` alternatives. Any other pattern, or a guarded
+  earlier arm, leaves the row not excluded.
+- An edit that changes only the literal default of `TABLE.get(key, default)`,
+  where `TABLE` is one module-level dict literal of scalar keys that nothing
+  in the file but `.get` reads touches and no related test mentions or
+  rebinds. A row is excluded when its literal key equals a table key.
+
+Both fail open exactly like the guard rule: an unbound call row, a `*args`
+unpack, a non-literal input or any unreadable structure keeps the existing
+verdict. A derived observation (`Owner.make().method()` where the edited
+constructor argument only reaches the assertion through `method`) is not
+covered and still reads `exposed` (#9429, third shape).
 
 ## Required Evidence
 
@@ -129,9 +168,24 @@ text is display only and never feeds a decision:
 - `analysis::language::python::classify::tests::guarded_arm_*` and the
   `or_guard_*`, `unreadable_strong_call_*`, `rebound_parameter_*`, and
   `bool_numeric_guard_*` cases cover the end-to-end verdicts.
+- `analysis::language::python::classify::tests::else_arm_*` (including
+  `else_text_inside_a_docstring_is_not_an_else_arm` and
+  `nested_else_reason_does_not_claim_the_inner_chain_excluded_an_outer_guard_row`)
+  cover the else-arm verdicts and reason.
+- `analysis::language::python::guard_activation::tests::walk_guards_*` and
+  `conditional_expressions_are_not_a_single_comparison` cover the chain walk
+  (if/elif reading, no bridging across unrelated headers, loop-else fail-open)
+  and the conditional-expression fail-open.
+
+- `analysis::language::python::arm_activation_tests` covers the unreached
+  wildcard and literal arms, the controls that reach them, the fail-open
+  patterns, and the `.get` default with its table-mutation fail-opens.
 
 ## Implementation Mapping
 
+- `crates/ripr/src/analysis/language/python/arm_activation.rs` owns the
+  `match` arm and `.get` default exclusion, chained after the guard rule in
+  `classify.rs`.
 - `crates/ripr/src/analysis/language/python/guard_activation.rs` owns the
   guard reading, row exclusion, and fail-open shapes.
 - `crates/ripr/src/analysis/language/python/boundary.rs::strong_owner_call_rows_with_gaps`

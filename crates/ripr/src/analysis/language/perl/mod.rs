@@ -335,6 +335,7 @@ impl LanguageAdapter for PerlAdapter {
             // for every non-Rust adapter (#3532).
             harness_projections: Vec::new(),
             partial_reason,
+            file_accounting: Default::default(),
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
         })
@@ -3916,6 +3917,8 @@ fn stable_repo_path_arg(path: String, field: &str) -> Result<String, String> {
     Ok(path)
 }
 
+#[cfg(test)]
+mod capability_disposition_tests;
 #[cfg(test)]
 mod fact_index_projection_tests;
 #[cfg(test)]

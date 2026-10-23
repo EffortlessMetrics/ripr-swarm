@@ -1,0 +1,11 @@
+diff --git a/src/stats.ts b/src/stats.ts
+--- a/src/stats.ts
++++ b/src/stats.ts
+@@ -1,6 +1,6 @@
+ export class Stats {
+   misses = 0;
+   recordMiss(): void {
+-    this.misses = this.misses + 1;
++    this.misses += 1;
+   }
+ }

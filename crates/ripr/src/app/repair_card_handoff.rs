@@ -2217,6 +2217,7 @@ mod tests {
             repository_head: repository_head.to_string(),
             producer_version: "test".to_string(),
             seam_id: seam_id.to_string(),
+            gap_binding: None,
             created_unix_ms: 0,
             artifacts: Vec::new(),
             next_command: "ripr agent repair --root . --seam-id seam-a --phase after".to_string(),

@@ -980,6 +980,29 @@ mod tests {
             &crate::analysis::rust_index::lexical_fallback_files(&index),
         );
         assert_eq!(warm.as_deref(), Some(cold.as_str()));
+        // #9308: the typed list that JSON consumers read agrees cold and warm
+        // and names only the declined file.
+        let declined = crate::analysis::rust_index::declined_rust_files(&index);
+        assert_eq!(
+            declined
+                .iter()
+                .map(|file| file.path.as_path())
+                .collect::<Vec<_>>(),
+            vec![Path::new("src/deep.rs")]
+        );
+        assert!(
+            declined[0]
+                .reason
+                .starts_with("static limit rust_nesting_budget:"),
+            "{declined:?}"
+        );
+        assert_eq!(
+            crate::analysis::rust_index::declined_rust_files_at(
+                &root,
+                &crate::analysis::rust_index::lexical_fallback_files(&index),
+            ),
+            declined
+        );
         fs::remove_dir_all(&root)?;
         Ok(())
     }

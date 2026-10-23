@@ -12,110 +12,110 @@
   "test_framework": "vitest",
   "node_identity": "node v22.14.0",
   "npm_identity": "npm 10.9.2",
-  "runner_identity": "vitest 3.2.4 via the package-lock.json-selected npm runner",
-  "lockfile_note": "the base snapshot's package-lock.json is the full npm lockfile for vitest 3.2.4 (generated with `npm install --package-lock-only --ignore-scripts`, `npm ci` succeeds); the head and variant snapshots still retain the root-entry skeleton until their own lockfiles land (#9104); the journey environment records the installed node/npm/vitest identities above"
+  "runner_identity": "vitest 5.0.5 via the package-lock.json-selected npm runner",
+  "lockfile_note": "each snapshot's package-lock.json is the full npm lockfile for vitest 5.0.5 (generated with `npm install --package-lock-only --ignore-scripts`, `npm ci` succeeds); all ten snapshots carry the same lockfile (#9104); the journey environment records the installed node/npm/vitest identities above"
  },
  "repository": {
   "identity": "fixtures/blind_journey_installed_typescript/repository",
   "default_base_ref": "main",
   "snapshots": {
    "base": {
-    "commit": "7634ae2d3c1ce78b8c2eae627a57b2c898360c2d",
-    "tree": "b4bb5899f84b70b72859c032aa0fb5714b938000",
+    "commit": "0d2028aa4dd22048eb5667de075328d82fc47e01",
+    "tree": "1a96b11c9a3dceaa5768da948ccbce0209972899",
     "files": {
-     "package-lock.json": "a93951553edc81a4be8db16f3e7012d3bb06a84cddf746bcf7c4af88192f3b51",
-     "package.json": "3a6a29b8a24f3a57abecdd9324e3e887353a12e7a372a8e970a04480d6f780dd",
+     "package-lock.json": "64f6702f73acf5e9046ffbd120245abb7bf96a0ba579757677e1f10b531d2dae",
+     "package.json": "ccad69cc671962f45ee1a2953ae73d01c31220e142abb57676a8cf75e140bdd1",
      "src/pricing.ts": "90729bd40d79fa2580a2bdbd3ecda07e5a1ea371eebaf73d970b18095d1423d8",
      "test/pricing.test.ts": "57e14e54b5ce8302d8457fa1b9ff947571cabf4d6448ef9c3e2fc293e85250da"
     }
    },
    "head": {
-    "commit": "d7858e239839e626548a02170ca82f267c9a9edb",
-    "tree": "8da68b121a26fbbb50a96d2c11c54a3628db4dc9",
+    "commit": "db5f7f85e2d3bad3ee9731e27ef14de43f059dfe",
+    "tree": "ebe731c498962661ee0970a67be98ec5c965282e",
     "files": {
-     "package-lock.json": "33b11eeaac39f8f8ef3da4bfe5f2857b638f7a63b46af961f0e130e04cc71379",
-     "package.json": "3a6a29b8a24f3a57abecdd9324e3e887353a12e7a372a8e970a04480d6f780dd",
+     "package-lock.json": "64f6702f73acf5e9046ffbd120245abb7bf96a0ba579757677e1f10b531d2dae",
+     "package.json": "ccad69cc671962f45ee1a2953ae73d01c31220e142abb57676a8cf75e140bdd1",
      "src/pricing.ts": "d5305cef7b658d2b658de2ade29832b7991205373a167b52450fb8b91dbe1500",
      "test/pricing.test.ts": "57e14e54b5ce8302d8457fa1b9ff947571cabf4d6448ef9c3e2fc293e85250da"
     }
    },
    "variant-let-binding": {
-    "commit": "610741e9999f5fb229aa1289d0b7300046161631",
-    "tree": "30f83a8fc868a7bc2d91981fb14bb5a03a6b95b0",
+    "commit": "1d14b50dac59bd165f5202a5a53c20255e8e27b9",
+    "tree": "422f9fa3099d9c1f4492e2e51240055ae0a90702",
     "files": {
-     "package-lock.json": "33b11eeaac39f8f8ef3da4bfe5f2857b638f7a63b46af961f0e130e04cc71379",
-     "package.json": "3a6a29b8a24f3a57abecdd9324e3e887353a12e7a372a8e970a04480d6f780dd",
+     "package-lock.json": "64f6702f73acf5e9046ffbd120245abb7bf96a0ba579757677e1f10b531d2dae",
+     "package.json": "ccad69cc671962f45ee1a2953ae73d01c31220e142abb57676a8cf75e140bdd1",
      "src/pricing.ts": "bd018e6af9928204494165e91405d7bf4a6324e7a5645faae206c8fac8c5d17c",
      "test/pricing.test.ts": "57e14e54b5ce8302d8457fa1b9ff947571cabf4d6448ef9c3e2fc293e85250da"
     }
    },
    "variant-reassignment": {
-    "commit": "f626bf455a8a0d47d45928e49f295b6afe1b0c7d",
-    "tree": "afd28c7e75c32083e4a4fb21a2e893604c5dc103",
+    "commit": "f2d55c37312e84866dc67f3591bce47f7b040ecc",
+    "tree": "85d00c8fc503930fec7c2124da833e47a6b3f8a4",
     "files": {
-     "package-lock.json": "33b11eeaac39f8f8ef3da4bfe5f2857b638f7a63b46af961f0e130e04cc71379",
-     "package.json": "3a6a29b8a24f3a57abecdd9324e3e887353a12e7a372a8e970a04480d6f780dd",
+     "package-lock.json": "64f6702f73acf5e9046ffbd120245abb7bf96a0ba579757677e1f10b531d2dae",
+     "package.json": "ccad69cc671962f45ee1a2953ae73d01c31220e142abb57676a8cf75e140bdd1",
      "src/pricing.ts": "284b0a47aeb33eea010f2a0ff4cd0a235e0231c11947047640b63729fa925646",
      "test/pricing.test.ts": "57e14e54b5ce8302d8457fa1b9ff947571cabf4d6448ef9c3e2fc293e85250da"
     }
    },
    "variant-shadowing": {
-    "commit": "c27c29c63a39dde59c8842b770c34e81ae6c83f5",
-    "tree": "cd6aef1e0edfa31d25c0aa794c86d1ba8e02da11",
+    "commit": "b0900c5709189566d3d22a127336c28d349c5aee",
+    "tree": "317f06a9ab69e5ec614e0a2ac8f4584acd721d14",
     "files": {
-     "package-lock.json": "33b11eeaac39f8f8ef3da4bfe5f2857b638f7a63b46af961f0e130e04cc71379",
-     "package.json": "3a6a29b8a24f3a57abecdd9324e3e887353a12e7a372a8e970a04480d6f780dd",
+     "package-lock.json": "64f6702f73acf5e9046ffbd120245abb7bf96a0ba579757677e1f10b531d2dae",
+     "package.json": "ccad69cc671962f45ee1a2953ae73d01c31220e142abb57676a8cf75e140bdd1",
      "src/pricing.ts": "3b2212d0addb6b2a07592aa47af5c3d9abcb3805f32dfe40fa3884f2c59a4117",
      "test/pricing.test.ts": "57e14e54b5ce8302d8457fa1b9ff947571cabf4d6448ef9c3e2fc293e85250da"
     }
    },
    "variant-imported-constant": {
-    "commit": "82a103315879e10fb862027a7d83a6fbb3f89789",
-    "tree": "e69e259ab36958446bb08c7416164550acc63cb5",
+    "commit": "dc70cf09d4b5fafb7f3c3f5d7316a60c5ce790f2",
+    "tree": "739582b150359a1c9ed29191b005cecd3ffbefe3",
     "files": {
-     "package-lock.json": "33b11eeaac39f8f8ef3da4bfe5f2857b638f7a63b46af961f0e130e04cc71379",
-     "package.json": "3a6a29b8a24f3a57abecdd9324e3e887353a12e7a372a8e970a04480d6f780dd",
+     "package-lock.json": "64f6702f73acf5e9046ffbd120245abb7bf96a0ba579757677e1f10b531d2dae",
+     "package.json": "ccad69cc671962f45ee1a2953ae73d01c31220e142abb57676a8cf75e140bdd1",
      "src/constants.ts": "ece5808de14af715353fb9c452676811af467d89bae5005560e3906bd5844985",
      "src/pricing.ts": "14122b860abd68530b4a48355b6b1dc2a3bdbc15f313ceeff1f16d25496e5d66",
      "test/pricing.test.ts": "57e14e54b5ce8302d8457fa1b9ff947571cabf4d6448ef9c3e2fc293e85250da"
     }
    },
    "variant-object-namespace-write": {
-    "commit": "925faba1ca374a59f0cda3a077700227dbb83465",
-    "tree": "6fd139f3a5c8e2cf29817f46e96388bb07419970",
+    "commit": "944d3379bf614f9282233231e23da1d6ed512ad5",
+    "tree": "c96e7fba484fc812d215582d0cec10b5c8df553b",
     "files": {
-     "package-lock.json": "33b11eeaac39f8f8ef3da4bfe5f2857b638f7a63b46af961f0e130e04cc71379",
-     "package.json": "3a6a29b8a24f3a57abecdd9324e3e887353a12e7a372a8e970a04480d6f780dd",
+     "package-lock.json": "64f6702f73acf5e9046ffbd120245abb7bf96a0ba579757677e1f10b531d2dae",
+     "package.json": "ccad69cc671962f45ee1a2953ae73d01c31220e142abb57676a8cf75e140bdd1",
      "src/pricing.ts": "1f6b591b6924961ae3b2025991df3d1d22350f3540c53369651101be90565dca",
      "test/pricing.test.ts": "57e14e54b5ce8302d8457fa1b9ff947571cabf4d6448ef9c3e2fc293e85250da"
     }
    },
    "variant-enum-computed-initializer": {
-    "commit": "d6e30b12609ece564d179065238ee27ccf9fd1f9",
-    "tree": "d802fbd63d7d3aee5c7ab07fae27a400646d85cc",
+    "commit": "5356d671d92e4c2e8444bd8bec146895b36ad589",
+    "tree": "2249ae404c37231ea9474d6016b937fca6f7ba80",
     "files": {
-     "package-lock.json": "33b11eeaac39f8f8ef3da4bfe5f2857b638f7a63b46af961f0e130e04cc71379",
-     "package.json": "3a6a29b8a24f3a57abecdd9324e3e887353a12e7a372a8e970a04480d6f780dd",
+     "package-lock.json": "64f6702f73acf5e9046ffbd120245abb7bf96a0ba579757677e1f10b531d2dae",
+     "package.json": "ccad69cc671962f45ee1a2953ae73d01c31220e142abb57676a8cf75e140bdd1",
      "src/pricing.ts": "e0c5ef9ad991eeb14f09b3a5048274c17a9d04823a19ae78353a6aa6c17fa8e4",
      "test/pricing.test.ts": "57e14e54b5ce8302d8457fa1b9ff947571cabf4d6448ef9c3e2fc293e85250da"
     }
    },
    "variant-nonliteral-arithmetic": {
-    "commit": "61f0ceaf86882f53bca2176e48ae2d1d9f6b64a9",
-    "tree": "b0432c297b291cef884299389f9baae6493e5eca",
+    "commit": "37fa2cf450c3cd38b9b7357f6d9be80b2bdb5401",
+    "tree": "66ff8ae7dddf579454711977d16ef5a5097fa30e",
     "files": {
-     "package-lock.json": "33b11eeaac39f8f8ef3da4bfe5f2857b638f7a63b46af961f0e130e04cc71379",
-     "package.json": "3a6a29b8a24f3a57abecdd9324e3e887353a12e7a372a8e970a04480d6f780dd",
+     "package-lock.json": "64f6702f73acf5e9046ffbd120245abb7bf96a0ba579757677e1f10b531d2dae",
+     "package.json": "ccad69cc671962f45ee1a2953ae73d01c31220e142abb57676a8cf75e140bdd1",
      "src/pricing.ts": "b8f7c3436adb6d0d6fc3839330b4b48e0a74d692d55a5a701875bc2f1327aa11",
      "test/pricing.test.ts": "57e14e54b5ce8302d8457fa1b9ff947571cabf4d6448ef9c3e2fc293e85250da"
     }
    },
    "variant-reach-barrier": {
-    "commit": "9c553e0d2ad57c0dd217fe9a84eb87cc8f73ee58",
-    "tree": "3b3ae62869b666121e7eeaaace61e996a2a0db83",
+    "commit": "a0745bdfc3f87536810247f0067d7c998fe6833b",
+    "tree": "5133ceae4bfa22b834f11604b9adf22175014673",
     "files": {
-     "package-lock.json": "33b11eeaac39f8f8ef3da4bfe5f2857b638f7a63b46af961f0e130e04cc71379",
-     "package.json": "3a6a29b8a24f3a57abecdd9324e3e887353a12e7a372a8e970a04480d6f780dd",
+     "package-lock.json": "64f6702f73acf5e9046ffbd120245abb7bf96a0ba579757677e1f10b531d2dae",
+     "package.json": "ccad69cc671962f45ee1a2953ae73d01c31220e142abb57676a8cf75e140bdd1",
      "src/pricing.ts": "3670a98b9c8210f9fa522758786e6613591f13d4e2e7e8ee1f3add7314ffcc05",
      "test/pricing.test.ts": "57e14e54b5ce8302d8457fa1b9ff947571cabf4d6448ef9c3e2fc293e85250da"
     }
@@ -155,7 +155,7 @@
    "agent_receipt": "ripr agent receipt --root <selected-root> --attempt <repair-attempt-id> --verify-json target/ripr/workflow/agent-verify.json --seam-id seam-pricing-threshold-equality --json --out target/ripr/reports/agent-receipt.json",
    "verification": "vitest run test/pricing.test.ts"
   },
-  "substitution_contract": "<selected-root> and <repair-attempt-id> are the only placeholders; the product prints concrete values and the scripted transcript records the printed bytes literally, executed from a foreign launch directory against the selected root; the printed vitest command runs in the documented npm environment selected by the retained package.json and package-lock.json (a root-entry skeleton until the snapshot's full lockfile lands, #9104)."
+  "substitution_contract": "<selected-root> and <repair-attempt-id> are the only placeholders; the product prints concrete values and the scripted transcript records the printed bytes literally, executed from a foreign launch directory against the selected root; the printed vitest command runs in the documented npm environment selected by the retained package.json and package-lock.json of the base and head snapshots."
  },
  "journey_scenario_ids": [
   "installed_typescript_positive_journey_emits_receipt",
@@ -218,7 +218,7 @@
   "limitations": [
    "the scripted rows bind the retained fixture snapshots by content digest and recorded git identity; the frozen-candidate run through the #4510 harness rebinds live process and package identities",
    "recorded command output bytes are the retained literal observations of the printed route; the real installed run may print equivalent concrete roots and attempt ids",
-   "only the base snapshot retains a full npm lockfile so far; the head and variant snapshots retain the root-entry skeleton that backs the npm-runner selection until their lockfiles land (#9104), and the installed node/npm/vitest identities belong to the journey environment recorded in the transcript"
+   "all ten snapshots (base, head and eight variants) carry the same full npm lockfile (#9104), and the installed node/npm/vitest identities belong to the journey environment recorded in the transcript"
   ],
   "non_claims": [
    "no installed usefulness, candidate qualification or blind acceptance is claimed",

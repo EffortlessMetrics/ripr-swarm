@@ -507,6 +507,24 @@ pub(crate) fn build_gap_decision_ledger_report(
     }
 
     let summary = summarize_records(&records);
+    // #9500 (a): an unenveloped repo-exposure document carries no producer
+    // identity, canonicalization or currentness, and this route does not
+    // run the artifact envelope validation `agent verify` applies. Reading
+    // it silently as a clean advisory ledger overstated what was checked.
+    if parsed_cleanly
+        && input.source_kind == GapDecisionLedgerSourceKind::RepoExposure
+        && !source_value_snapshot
+            .as_ref()
+            .is_some_and(|value| value.get("artifact").is_some_and(Value::is_object))
+    {
+        warnings.push(
+            "repo exposure input has no artifact envelope (an unversioned or legacy document): \
+             its producer identity and currentness are not established and were not validated. \
+             Regenerate it with `ripr check --format repo-exposure-json` before relying on \
+             this ledger"
+                .to_string(),
+        );
+    }
     // #5264: name the route's language coverage when a valid check output
     // carried findings but none projected. Without this, a machine consumer
     // keying on `status` reads a healthy Rust run exactly like corrupted
@@ -4863,7 +4881,20 @@ mod tests {
         // takes the preceding early exit (RIPR-SPEC-0260); the card names the
         // missing `not (total > 1000)` discriminator and stays direct-aligned
         // and packet-eligible.
-        if (direct, no_strong, orthogonal, family_selection) != (6, 27, 16, 1) {
+        // #8759: a test importing the name from another defining module is no
+        // longer related, so `python_adversarial_free_function_module_collision`
+        // and the `legacy.py` finding of `python_src_layout_package_import`
+        // read `no_static_path` and drop their two orthogonal cards.
+        // #9424: the `python_pytest_oracle_shapes` caplog finding now abstains
+        // (`static_unknown`), so it no longer carries a no-strong-oracle card.
+        // #9429: `python_unreached_match_arm` and `python_unreached_get_default`
+        // downgrade a changed arm or `.get` default no observed input reaches
+        // to `weakly_exposed` (RIPR-SPEC-0260); each card names the missing
+        // discriminator and stays direct-aligned. Their `_control` twins reach
+        // the edit, stay exposed and carry no card.
+        // #9184: `python_else_arm_no_exposed_credit` downgrades a changed else-arm
+        // return to `weakly_exposed` (RIPR-SPEC-0260); the card is direct-aligned.
+        if (direct, no_strong, orthogonal, family_selection) != (9, 26, 14, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));
@@ -6737,6 +6768,41 @@ mod tests {
         assert_eq!(report.summary.records_total, 1);
         assert_eq!(report.records[0].kind, "MissingErrorDiscriminator");
         Ok(())
+    }
+
+    #[test]
+    fn unenveloped_repo_exposure_input_warns_and_enveloped_does_not() {
+        let build = |payload: serde_json::Value| {
+            build_gap_decision_ledger_report(GapDecisionLedgerInput {
+                root: ".".to_string(),
+                generated_at: "test".to_string(),
+                source_kind: GapDecisionLedgerSourceKind::RepoExposure,
+                records_path: "exposure.json".to_string(),
+                records_json: Ok(payload.to_string()),
+            })
+        };
+        let seam = make_repo_exposure_seam("actionable", "add_focused_test", "error_variant");
+        let bare = build(serde_json::json!({ "seams": [seam.clone()] }));
+        assert_eq!(bare.summary.records_total, 1);
+        assert!(
+            bare.warnings
+                .iter()
+                .any(|w| w.contains("no artifact envelope")),
+            "warnings: {:?}",
+            bare.warnings
+        );
+        let enveloped = build(serde_json::json!({
+            "artifact": { "kind": "repo_exposure" },
+            "seams": [seam]
+        }));
+        assert!(
+            !enveloped
+                .warnings
+                .iter()
+                .any(|w| w.contains("no artifact envelope")),
+            "warnings: {:?}",
+            enveloped.warnings
+        );
     }
 
     #[test]

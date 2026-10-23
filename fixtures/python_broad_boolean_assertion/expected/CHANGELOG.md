@@ -598,3 +598,39 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_broad_boolean_assertion (21)
+
+Reason:
+RIPR-SPEC-0122: non-Rust repair-start refusal names the Rust-only seam inventory and the manual route (#9102)
+
+Command:
+`cargo xtask goldens bless python_broad_boolean_assertion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_broad_boolean_assertion (22)
+
+Reason:
+RIPR-SPEC-0224 / #5491: Python related-test rows now carry truthful typed miss and why (explanation only; class, stages, order unchanged)
+
+Command:
+`cargo xtask goldens bless python_broad_boolean_assertion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_broad_boolean_assertion (23)
+
+Reason:
+RIPR-SPEC-0028: fixture assertion argument is now a variable so the fixture keeps testing a broad boolean assertion after literal bare bool asserts on bool owners became exact pins (#9542); text change only
+
+Command:
+`cargo xtask goldens bless python_broad_boolean_assertion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

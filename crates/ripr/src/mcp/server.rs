@@ -119,7 +119,10 @@ impl McpServer {
         {
             return Err(ErrorData::invalid_params(
                 format!("base must be at most {MAX_BASE_REVISION_BYTES} bytes"),
-                None,
+                Some(serde_json::json!({
+                    "argument": "base",
+                    "expected": format!("a revision of at most {MAX_BASE_REVISION_BYTES} bytes"),
+                })),
             ));
         }
         let root = match workspace::available_root(self.analysis_root.as_deref()) {
@@ -136,7 +139,7 @@ impl McpServer {
                 let failure = workspace::AttemptFailure::new(
                     workspace::CODE_ANALYSIS_IN_FLIGHT,
                     "an analysis attempt is already running",
-                    "poll ripr_workspace_status until attempt_state leaves in_flight",
+                    "wait for the running attempt to finish (the stdio transport answers one request at a time, so a pipelined request is served after it), then retry",
                 );
                 return self.typed_failure(failure, workspace::REFRESH_SCHEMA_VERSION);
             }
@@ -203,6 +206,31 @@ impl McpServer {
         let limit = optional_positive_argument(&arguments, "limit")?;
         let file = optional_nonempty_string_argument(&arguments, "file")?;
         let class = optional_nonempty_string_argument(&arguments, "class")?;
+        // An unknown class token would narrow to an empty page that reads like
+        // "no such gaps"; name the vocabulary instead (a typo like `weak`).
+        if let Some(token) = class.as_deref()
+            && !crate::domain::ExposureClass::ALL
+                .iter()
+                .any(|known| known.as_str() == token)
+        {
+            let allowed = crate::domain::ExposureClass::ALL
+                .iter()
+                .map(crate::domain::ExposureClass::as_str)
+                .collect::<Vec<_>>();
+            // The echoed token is caller-controlled and unbounded; cap it so
+            // the error stays well under the writer's response bound.
+            const ECHO_CHARS: usize = 32;
+            let echoed: String = token.chars().take(ECHO_CHARS).collect();
+            let marker = if token.chars().nth(ECHO_CHARS).is_some() {
+                "..."
+            } else {
+                ""
+            };
+            return Err(ErrorData::invalid_params(
+                format!("unknown class \"{echoed}{marker}\"; allowed: {allowed:?}"),
+                Some(serde_json::json!({ "argument": "class", "allowed": allowed })),
+            ));
+        }
         let language = optional_nonempty_string_argument(&arguments, "language")?;
         if let Some(language) = language.as_deref()
             && crate::domain::LanguageId::display_name_for_wire(language).is_none()
@@ -542,7 +570,7 @@ fn optional_string_argument(
         Some(Value::String(value)) => Ok(Some(value.clone())),
         Some(_other) => Err(ErrorData::invalid_params(
             format!("{name} must be a string"),
-            None,
+            Some(serde_json::json!({ "argument": name, "expected": "string" })),
         )),
     }
 }
@@ -556,7 +584,7 @@ fn optional_nonempty_string_argument(
     match optional_string_argument(arguments, name)? {
         Some(value) if value.is_empty() => Err(ErrorData::invalid_params(
             format!("{name} must be a non-empty string"),
-            None,
+            Some(serde_json::json!({ "argument": name, "expected": "non-empty string" })),
         )),
         other => Ok(other),
     }
@@ -576,7 +604,7 @@ fn optional_bool_argument(
         Some(Value::Bool(value)) => Ok(Some(*value)),
         Some(_other) => Err(ErrorData::invalid_params(
             format!("{name} must be a boolean"),
-            None,
+            Some(serde_json::json!({ "argument": name, "expected": "boolean" })),
         )),
     }
 }
@@ -594,10 +622,20 @@ fn optional_nonnegative_argument(
         None => Ok(None),
         Some(value) => {
             let raw = value.as_u64().ok_or_else(|| {
-                ErrorData::invalid_params(format!("{name} must be a non-negative integer"), None)
+                ErrorData::invalid_params(
+                    format!("{name} must be a non-negative integer"),
+                    Some(
+                        serde_json::json!({ "argument": name, "expected": "non-negative integer" }),
+                    ),
+                )
             })?;
             usize::try_from(raw).map(Some).map_err(|error| {
-                ErrorData::invalid_params(format!("{name} is out of range: {error}"), None)
+                ErrorData::invalid_params(
+                    format!("{name} is out of range: {error}"),
+                    Some(
+                        serde_json::json!({ "argument": name, "expected": "non-negative integer" }),
+                    ),
+                )
             })
         }
     }
@@ -611,7 +649,7 @@ fn optional_positive_argument(
     match optional_nonnegative_argument(arguments, name)? {
         Some(0) => Err(ErrorData::invalid_params(
             format!("{name} must be at least 1"),
-            None,
+            Some(serde_json::json!({ "argument": name, "expected": "integer at least 1" })),
         )),
         other => Ok(other),
     }
@@ -629,7 +667,9 @@ fn optional_capped_page_limit(
     match optional_positive_argument(arguments, name)? {
         Some(value) if value > max => Err(ErrorData::invalid_params(
             format!("{name} must be at most {max}"),
-            None,
+            Some(
+                serde_json::json!({ "argument": name, "expected": format!("integer at most {max}") }),
+            ),
         )),
         other => Ok(other),
     }
@@ -693,7 +733,7 @@ fn reject_unknown_arguments(
         if !allowed.contains(&name.as_str()) {
             return Err(ErrorData::invalid_params(
                 format!("unknown argument {name:?}; allowed: {allowed:?}"),
-                None,
+                Some(serde_json::json!({ "argument": name, "allowed": allowed })),
             ));
         }
     }
@@ -708,7 +748,7 @@ fn required_string_argument(
     value.filter(|value| !value.is_empty()).ok_or_else(|| {
         ErrorData::invalid_params(
             format!("{name} is required and must be a non-empty string"),
-            None,
+            Some(serde_json::json!({ "argument": name, "expected": "non-empty string" })),
         )
     })
 }
@@ -792,7 +832,10 @@ impl ServerHandler for McpServer {
             } else {
                 format!("invalid params for `{}`", request.method)
             };
-            return Err(ErrorData::invalid_params(message, None));
+            return Err(ErrorData::invalid_params(
+                message,
+                Some(serde_json::json!({ "method": request.method })),
+            ));
         }
         Err(ErrorData::new(
             ErrorCode::METHOD_NOT_FOUND,
@@ -839,7 +882,7 @@ impl ServerHandler for McpServer {
                 {
                     return Err(ErrorData::invalid_params(
                         "ripr_workspace_status does not accept arguments",
-                        None,
+                        Some(serde_json::json!({ "allowed": [] })),
                     ));
                 }
                 self.status_tool(max_envelope_bytes).await
@@ -1082,9 +1125,23 @@ fn json_envelope(uri: &str, text: String) -> Value {
     })
 }
 
-/// Standard resource-miss semantics with the typed failure as data: the
+/// Typed resource-failure semantics with the typed failure as data: the
 /// message stays bounded and human-readable, and `data.code` carries the
 /// typed state (`no_snapshot`, `stale_snapshot`, `item_not_found`, …).
+///
+/// #9854: the JSON-RPC code now categorizes the failure instead of reading
+/// "not found" for every kind. Identity misses — the requested id does not
+/// exist (`item_not_found`, `attempt_not_found`) — keep ResourceNotFound
+/// (`-32002`, upgraded to `-32602` for 2026-07-28 peers by the SDK, keeping
+/// `current_snapshot_id` disclosure). Every other kind is a server state or
+/// a bound, not an identity claim: `no_snapshot`, `stale_snapshot`,
+/// `analysis_in_flight`, `workspace_unavailable`, `result_too_large`,
+/// `attempt_invalid`, `superseded`, `seam_not_found`, … answer InternalError
+/// (`-32603`), the closest standard JSON-RPC code, with the same `data`
+/// payload and the same human sentence. `data.code` stays the stable
+/// machine signal for existing clients, so a client branching on the
+/// JSON-RPC code no longer mistakes a retryable state for a missing
+/// namespace.
 fn resource_failure(
     kind: &str,
     failure: &workspace::AttemptFailure,
@@ -1099,10 +1156,13 @@ fn resource_failure(
     if let Some(snapshot_id) = current_snapshot_id {
         data["current_snapshot_id"] = Value::from(snapshot_id);
     }
-    ErrorData::resource_not_found(
-        format!("unavailable {kind} resource: {}", failure.code),
-        Some(data),
-    )
+    let message = format!("unavailable {kind} resource: {}", failure.code);
+    match failure.code {
+        workspace::CODE_ITEM_NOT_FOUND | repair::CODE_ATTEMPT_NOT_FOUND => {
+            ErrorData::resource_not_found(message, Some(data))
+        }
+        _ => ErrorData::internal_error(message, Some(data)),
+    }
 }
 
 /// Serve adapter that answers `ping` by method name on an `initialize`
