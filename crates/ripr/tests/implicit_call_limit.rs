@@ -130,12 +130,14 @@ fn kept(lib: &str, diff: &str, line: usize, label: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// No finding carries the limit and some finding has no static path: the
+/// No finding carries the limit or is still a weak or unrevealed gap, and some
+/// finding has no static path: the
 /// method belongs to a trait this workspace declares and nothing names it, so
 /// nothing reaches it unseen (#9169), which is also not an implicit call.
 fn unreached(lib: &str, diff: &str, line: usize, label: &str) -> Result<(), String> {
     let findings = findings_on(lib, diff, line)?;
     if findings.iter().any(limited)
+        || findings.iter().any(is_gap)
         || !findings
             .iter()
             .any(|f| f.class == ExposureClass::NoStaticPath)
