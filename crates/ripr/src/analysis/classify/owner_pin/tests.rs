@@ -12176,6 +12176,10 @@ fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() -> Resu
         "use ::core::arch::x86::*;\n",
         "use core::{simd::*, mem};\n",
         "mod inner {\n    use std::collections::*;\n}\n",
+        // #9676: serde_core's facade. A path in a module resolves only against
+        // that module's own items, so a module named `core` beside the glob
+        // (here, the one holding it) does not shadow the standard root.
+        "mod lib {\n    mod core {\n        #[cfg(not(feature = \"std\"))]\n        pub use core::*;\n        #[cfg(feature = \"std\")]\n        pub use std::*;\n    }\n}\n",
     ] {
         assert_eq!(refusal_beside(sibling), None, "{sibling}");
     }
@@ -12197,6 +12201,12 @@ fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() -> Resu
         "mod core {}\nuse core::simd::prelude::*;\n",
         "extern crate other as std;\nuse std::io::prelude::*;\n",
         "use other as core;\nuse core::simd::prelude::*;\n",
+        // The module-local admission still refuses a binding in the glob's own
+        // module, and an item-position macro that may emit one.
+        "mod lib {\n    mod core {\n        mod std {}\n        pub use std::*;\n    }\n}\n",
+        "mod lib {\n    mod core {\n        use other as std;\n        pub use std::*;\n    }\n}\n",
+        "mod lib {\n    mod core {\n        mod core {}\n        pub use core::*;\n    }\n}\n",
+        "mod lib {\n    mod core {\n        emit!();\n        pub use core::*;\n    }\n}\n",
         // A plain import that binds the root name, by path or by `{self}`,
         // takes it over for the module.
         "use other::std;\nuse std::io::prelude::*;\n",
