@@ -1,0 +1,3 @@
+case = "perl-idiom-regex-version"
+issue = 9418
+reason = "False exposed: exact is_deeply on v1.2 misses multi-digit minor versions and the end anchor in the changed regex; the committed truth remains partially_discriminated and the owning analyzer repair is #9418."
