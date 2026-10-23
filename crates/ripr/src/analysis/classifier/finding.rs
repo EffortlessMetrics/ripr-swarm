@@ -1133,7 +1133,8 @@ mod tests {
 
     /// #9175: a demoted (name-only) row retained for display cannot align an
     /// exact oracle while another related test reaches the owner, exactly
-    /// the rule the reveal pass applies to oracle credit.
+    /// the rule the reveal pass applies to oracle credit. A name-token-only
+    /// row never supplies oracle credit, even alone (#9169).
     #[test]
     fn name_only_relation_cannot_align_an_exact_oracle_beside_a_reaching_test() {
         let probe = probe(ProbeFamily::ReturnValue, "amount");
@@ -1160,8 +1161,16 @@ mod tests {
             "a demoted row beside a reaching test must not align"
         );
         assert!(
-            aligns(RelationReason::WeakTokenSubstring, false),
-            "with no reaching test the existing credit rule is unchanged"
+            !aligns(RelationReason::WeakTokenSubstring, false),
+            "a name-token-only row must not align even without a reaching test"
+        );
+        assert!(
+            aligns(RelationReason::OwnerNamedTest, false),
+            "an owner-named row alone keeps its existing oracle credit"
+        );
+        assert!(
+            !aligns(RelationReason::OwnerNamedTest, true),
+            "an owner-named row beside a reaching test must not align"
         );
     }
 
