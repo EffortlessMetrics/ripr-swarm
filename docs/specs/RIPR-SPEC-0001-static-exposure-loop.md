@@ -629,7 +629,8 @@ Related-test name tokens come from the changed expression's identifiers. A Rust
 keyword (`return`, `while`, `loop`, ...) is syntax and never a name token, and
 the substring fallback applies the same generic/common-word gate as the
 word-boundary path (#9172), so a test named `ready_return` or `wait_while` does
-not make an uncalled owner read `weakly_exposed`.
+not make an uncalled owner read `weakly_exposed`. Words inside string literals
+remain name tokens; that residual is tracked in #9172.
 
 ## Implementation Mapping
 

@@ -2384,7 +2384,9 @@ fn common_across_tests(
         .collect()
 }
 
-/// Strict and reserved Rust keywords: syntax, never a behavior name.
+/// Strict and reserved Rust keywords: syntax, never a behavior name. A raw
+/// identifier (`r#match`) tokenizes to its bare word and is dropped too, which
+/// only withholds a weak name link (fail closed).
 const RUST_KEYWORDS: &[&str] = &[
     "abstract", "as", "async", "await", "become", "box", "break", "const", "continue", "crate",
     "do", "dyn", "else", "enum", "extern", "false", "final", "fn", "for", "gen", "if", "impl",
@@ -5226,6 +5228,12 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 test_with_call("tests/other.rs", "wait_while", "ready(true);", "ready"),
                 test_with_call(
                     "tests/other.rs",
+                    "while_budget_loads",
+                    "ready(true);",
+                    "ready",
+                ),
+                test_with_call(
+                    "tests/other.rs",
                     "scale_factor_loads",
                     "ready(true);",
                     "ready",
@@ -5244,6 +5252,28 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             );
             assert!(related.is_empty(), "{expression}: {related:?}");
         }
+        // A keyword-prefixed identifier is a different token and still relates;
+        // a raw identifier (`r#match`) tokenizes to the bare keyword and is
+        // dropped (fail closed: only a weak name link is withheld).
+        let prefixed = find_related_tests(
+            &probe("src/lib.rs", "return while_budget * n"),
+            Some(&owner),
+            &index,
+            true,
+            None,
+            None,
+        );
+        assert_eq!(prefixed.len(), 1, "{prefixed:?}");
+        assert_eq!(prefixed[0].0.name, "while_budget_loads");
+        let raw = find_related_tests(
+            &probe("src/lib.rs", "return r#match * n"),
+            Some(&owner),
+            &index,
+            true,
+            None,
+            None,
+        );
+        assert!(raw.is_empty(), "{raw:?}");
         // Positive control: a non-keyword identifier token still relates.
         let related = find_related_tests(
             &probe("src/lib.rs", "return scale_factor * n"),
