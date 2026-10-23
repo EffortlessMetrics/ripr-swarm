@@ -868,6 +868,11 @@ scope = "out"
 reason = "check-findings-json verify artifact contract; not an exposure-verdict example a corpus case labels"
 
 [[spec]]
+id = "RIPR-SPEC-0311"
+scope = "out"
+reason = "gap-bound TypeScript repair start from a complete packet; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
 id = "RIPR-SPEC-0318"
 scope = "out"
 reason = "pilot next-step text for an uncommitted inline-module target; not an exposure-verdict example a corpus case labels"
