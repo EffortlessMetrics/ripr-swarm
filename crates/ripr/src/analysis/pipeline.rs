@@ -73,6 +73,30 @@ fn routed_outcome_labels(files: &[diff::ChangedFile]) -> BTreeSet<String> {
         .collect()
 }
 
+/// Changed-file counts per language label whose preview adapter is not
+/// compiled in (JavaScript-family files counted apart from TypeScript).
+fn uncompiled_preview_file_counts(
+    files: &[diff::ChangedFile],
+) -> std::collections::BTreeMap<&'static str, usize> {
+    let mut counts = std::collections::BTreeMap::new();
+    for file in files {
+        let Some(language) = route(&file.path) else {
+            continue;
+        };
+        if !is_preview_language(language) || language == LanguageId::Perl || language.is_available()
+        {
+            continue;
+        }
+        let label = if is_javascript_family_path(&file.path) {
+            LanguageId::JavaScript.as_str()
+        } else {
+            language.as_str()
+        };
+        *counts.entry(label).or_default() += 1;
+    }
+    counts
+}
+
 /// Typed limitation kinds as stable wire labels, in adapter order.
 fn limitation_kind_labels(limitations: &[AnalysisLimitation]) -> Vec<String> {
     limitations
@@ -1497,6 +1521,20 @@ fn run_pipeline_for_diff_text_with_language_config(
                 .with_detail(detail)?,
             );
         }
+    }
+
+    // A preview language whose adapter is not compiled into this binary has
+    // no advisory above (its files are never analyzable here), yet its
+    // changed files are still part of the diff: the aggregate must not read
+    // as whole-diff complete over them. Perl is exempt, it always advises.
+    // Aggregate-only: the public limitation set is unchanged.
+    for (label, count) in uncompiled_preview_file_counts(&analysis_changed_files) {
+        diff_outcomes.push(LanguageAnalysisOutcomeV1::not_selected(
+            label,
+            count,
+            "adapter not compiled into this ripr binary",
+            &scope_label,
+        ));
     }
 
     // An enabled preview adapter skips generated and excluded-path files
@@ -5662,7 +5700,10 @@ mod tests {
             "aggregate-perl-unavailable",
             &["src/cost.ts"],
             &ts_diff(&["src/cost.ts"]),
-            &[LanguageId::TypeScript, LanguageId::Perl],
+            // Only Perl is enabled so the run list is the same in every
+            // feature combination (an enabled-but-uncompiled TypeScript
+            // adapter would add its own unavailable run).
+            &[LanguageId::Perl],
         )?;
         assert_eq!(
             child_status(&aggregate, "perl"),
