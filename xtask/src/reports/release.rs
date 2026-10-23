@@ -2422,6 +2422,26 @@ fn agent_receipt_fixture_check(binary: &Path) -> ReleaseReadinessCheck {
     }
 }
 
+/// The latency report's named `status_reasons`, forwarded verbatim into the
+/// readiness detail. Empty when the report is unreadable or carries none.
+fn repo_exposure_latency_status_reasons(artifact: &Path) -> Vec<String> {
+    read_json_value(artifact)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("status_reasons")
+                .and_then(Value::as_array)
+                .map(|reasons| {
+                    reasons
+                        .iter()
+                        .filter_map(|reason| reason.as_str())
+                        .map(|reason| format!("status reason: {reason}"))
+                        .collect()
+                })
+        })
+        .unwrap_or_default()
+}
+
 fn repo_exposure_latency_check() -> ReleaseReadinessCheck {
     let command = "cargo xtask repo-exposure-latency-report";
     let artifact = "target/ripr/reports/repo-exposure-latency.json";
@@ -2439,18 +2459,25 @@ fn repo_exposure_latency_check() -> ReleaseReadinessCheck {
                 ],
                 Vec::new(),
             ),
-            Ok(status) => readiness_check(
-                "repo-exposure-latency",
-                "warn",
-                false,
-                command,
-                "repo-exposure latency report exists but is not passing",
-                vec![
-                    artifact.to_string(),
-                    "target/ripr/reports/repo-exposure-latency.md".to_string(),
-                ],
-                vec![format!("report status: {status}")],
-            ),
+            Ok(status) => {
+                // The report cannot say `pass` while output parity is unchecked
+                // (#9503), so release-readiness carries a non-required `warn`
+                // and names the report's own status reasons.
+                let mut details = vec![format!("report status: {status}")];
+                details.extend(repo_exposure_latency_status_reasons(Path::new(artifact)));
+                readiness_check(
+                    "repo-exposure-latency",
+                    "warn",
+                    false,
+                    command,
+                    "repo-exposure latency report exists but is not passing",
+                    vec![
+                        artifact.to_string(),
+                        "target/ripr/reports/repo-exposure-latency.md".to_string(),
+                    ],
+                    details,
+                )
+            }
             Err(err) => readiness_check(
                 "repo-exposure-latency",
                 "fail",
@@ -2721,7 +2748,10 @@ fn vsix_packaging_check() -> ReleaseReadinessCheck {
     let package_json = Path::new("editors/vscode/package.json");
     let release_doc = Path::new("docs/RELEASE_MARKETPLACE.md");
     let icon = Path::new("editors/vscode/icon.png");
-    let command = "npm --prefix editors/vscode run package";
+    // Static presence check only: it does not run packaging. The inventory and
+    // license-notice proof is `npm run package` / `vscode-verify-vsix`, run by
+    // ci.yml and publish-extension.yml.
+    let command = "static presence check (no VSIX is built)";
     let mut missing = Vec::new();
     for path in [package_json, release_doc, icon] {
         if !path.exists() {
@@ -3476,14 +3506,32 @@ mod tests {
         init_pin_version_check_from, latest_released_version_in, missing_required_needles,
         package_version, packaged_archive_commit, parse_release_readiness_args, read_crate_version,
         readiness_check, release_readiness_json, release_readiness_markdown,
-        release_readiness_status, validate_binary_identity, validate_doctor_result,
-        validate_installed_version, validate_installed_version_result, validate_package_entry,
-        vsix_start_current_repair_command_present,
+        release_readiness_status, repo_exposure_latency_status_reasons, validate_binary_identity,
+        validate_doctor_result, validate_installed_version, validate_installed_version_result,
+        validate_package_entry, vsix_start_current_repair_command_present,
     };
     use serde_json::Value;
     use std::fs;
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn latency_status_reasons_are_forwarded_into_readiness_detail() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("ripr-9503-reasons-{}", std::process::id()));
+        fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let report = dir.join("latency.json");
+        fs::write(
+            &report,
+            r#"{"status":"warn","status_reasons":["output_parity_not_checked"]}"#,
+        )
+        .map_err(|err| err.to_string())?;
+        let reasons = repo_exposure_latency_status_reasons(&report);
+        let missing = repo_exposure_latency_status_reasons(&dir.join("absent.json"));
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(reasons, vec!["status reason: output_parity_not_checked"]);
+        assert!(missing.is_empty());
+        Ok(())
+    }
 
     #[test]
     fn packaged_crate_extraction_rejects_entry_outside_package_root() -> Result<(), String> {

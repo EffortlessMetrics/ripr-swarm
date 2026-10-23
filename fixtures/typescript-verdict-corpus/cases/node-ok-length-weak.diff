@@ -1,0 +1,11 @@
+diff --git a/src/slugify.ts b/src/slugify.ts
+index 0000000..1111111 100644
+--- a/src/slugify.ts
++++ b/src/slugify.ts
+@@ -7,5 +7,5 @@
+     .split(" ")
+     .map((p) => p[0])
+     .join("")
+-    .toUpperCase();
++    .toLowerCase();
+ }

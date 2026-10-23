@@ -339,7 +339,10 @@ pub(super) fn apply_rust_macro_wrapped_assertion_limit(
         // #9122: a same-file macro earns an unknown-grade fact, never a
         // graded oracle. It must not turn the macro limit into a gap: the
         // named limit stays, because the macro's discrimination is unresolved.
-        find_unresolved_assertion_macro_witness(finding, index, None)
+        // The credited macro need not be named `assert_*` (`check_eq!`), so
+        // its own spelling is the witness (#7089).
+        let credited = credited_local_macro_names(finding);
+        find_unresolved_assertion_macro_witness_among(finding, index, None, &credited)
     } else {
         return;
     };
@@ -456,9 +459,10 @@ fn only_proximity_tests_supply_an_oracle(finding: &Finding) -> bool {
     direct_seen && proximity_oracle_seen
 }
 
-/// A `weakly_exposed` finding whose every recognized oracle is a same-file
-/// macro call credited at unknown grade (#9122): `name!(..)` text with kind
-/// and strength both unknown. A truncated related-test window never qualifies.
+/// A `weakly_exposed` finding whose every recognized oracle on a directly
+/// related test is a same-file macro call credited at unknown grade (#9122):
+/// `name!(..)` text with kind and strength both unknown. Oracles of tests
+/// related only by proximity are ignored (#7089). A truncated related-test window never qualifies.
 fn only_credited_local_macros_supply_an_oracle(finding: &Finding) -> bool {
     if finding.class != ExposureClass::WeaklyExposed
         || finding
@@ -470,8 +474,25 @@ fn only_credited_local_macros_supply_an_oracle(finding: &Finding) -> bool {
     let mut seen = false;
     for related in finding.oracle_related_tests() {
         let Some(oracle) = related.oracle.as_deref() else {
+            // A refused assertion on a directly related test is still an
+            // assertion ripr judged (#7089).
+            if related.miss == Some(crate::domain::RelatedTestMiss::AssertionNotCredited)
+                && (related.relation_reason.is_none()
+                    || is_direct_relation(related.relation_reason))
+            {
+                return false;
+            }
             continue;
         };
+        // #7089: a test related only by proximity never calls the owner, so
+        // its recognized oracle (a strong `assert_eq!` on another function)
+        // says nothing about this probe and must not hide the macro limit.
+        if related
+            .relation_reason
+            .is_some_and(|reason| !is_direct_relation(Some(reason)))
+        {
+            continue;
+        }
         let macro_call = oracle.split_once('!').is_some_and(|(name, rest)| {
             !name.is_empty()
                 && name
@@ -497,6 +518,35 @@ fn find_unresolved_assertion_macro_witness(
     index: &RustIndex,
     owner_in_arguments: Option<&str>,
 ) -> Option<RustMacroAssertionWitness> {
+    find_unresolved_assertion_macro_witness_among(finding, index, owner_in_arguments, &[])
+}
+
+/// Names of the macros behind the unknown-grade oracles of directly related
+/// tests (`check_eq!(..)` gives `check_eq`).
+fn credited_local_macro_names(finding: &Finding) -> Vec<String> {
+    finding
+        .oracle_related_tests()
+        .filter(|related| {
+            related.relation_reason.is_none() || is_direct_relation(related.relation_reason)
+        })
+        .filter_map(|related| related.oracle.as_deref())
+        .filter_map(|oracle| {
+            oracle
+                .split_once('!')
+                .map(|(name, _)| name.trim().to_string())
+        })
+        .collect()
+}
+
+fn find_unresolved_assertion_macro_witness_among(
+    finding: &Finding,
+    index: &RustIndex,
+    owner_in_arguments: Option<&str>,
+    credited: &[String],
+) -> Option<RustMacroAssertionWitness> {
+    // A credited macro is the oracle of a direct test, so the witness must
+    // come from one too (#7089).
+    let restrict_to_direct = owner_in_arguments.is_some() || !credited.is_empty();
     let mut candidates = Vec::new();
     for test in index
         .tests()
@@ -506,13 +556,16 @@ fn find_unresolved_assertion_macro_witness(
         if !finding.oracle_related_tests().any(|related| {
             related.name == test.name
                 && related.file == test.file
-                && (owner_in_arguments.is_none() || is_direct_relation(related.relation_reason))
+                && (!restrict_to_direct || is_direct_relation(related.relation_reason))
         }) {
             continue;
         }
-        for (macro_name, macro_line) in
-            unresolved_assertion_macro_invocations(&test.body, test.start_line, owner_in_arguments)
-        {
+        for (macro_name, macro_line) in unresolved_assertion_macro_invocations_among(
+            &test.body,
+            test.start_line,
+            owner_in_arguments,
+            credited,
+        ) {
             candidates.push(RustMacroAssertionWitness {
                 test_name: test.name.clone(),
                 test_file: test.file.clone(),
@@ -527,10 +580,20 @@ fn find_unresolved_assertion_macro_witness(
     candidates.into_iter().next()
 }
 
+#[cfg(test)]
 fn unresolved_assertion_macro_invocations(
     body: &str,
     start_line: usize,
     owner_in_arguments: Option<&str>,
+) -> Vec<(String, usize)> {
+    unresolved_assertion_macro_invocations_among(body, start_line, owner_in_arguments, &[])
+}
+
+fn unresolved_assertion_macro_invocations_among(
+    body: &str,
+    start_line: usize,
+    owner_in_arguments: Option<&str>,
+    credited: &[String],
 ) -> Vec<(String, usize)> {
     let mut invocations = Vec::new();
     let masked_body = mask_rust_comments_and_strings(body);
@@ -560,7 +623,14 @@ fn unresolved_assertion_macro_invocations(
             let Some(macro_name) = macro_name_before_bang(line, bang) else {
                 continue;
             };
-            if !is_unresolved_assertion_like_macro(&macro_name) {
+            // With credited macros the witness is the credited spelling, not
+            // another assertion-like macro in the same test (#7089).
+            let named = if credited.is_empty() {
+                is_unresolved_assertion_like_macro(&macro_name)
+            } else {
+                credited.contains(&macro_name)
+            };
+            if !named {
                 continue;
             }
             if let Some(owner_name) = owner_in_arguments {
@@ -1154,6 +1224,7 @@ mod tests {
             );
             finding.class = ExposureClass::WeaklyExposed;
             for related in &mut finding.related_tests {
+                related.relation_reason = Some(crate::domain::RelationReason::DirectOwnerCall);
                 related.oracle = Some(oracle.to_string());
                 related.oracle_kind = kind.clone();
                 related.oracle_strength = strength.clone();

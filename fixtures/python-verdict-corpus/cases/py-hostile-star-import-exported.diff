@@ -1,0 +1,12 @@
+diff --git a/hostile/stars.py b/hostile/stars.py
+--- a/hostile/stars.py
++++ b/hostile/stars.py
+@@ -2,7 +2,7 @@
+ 
+ 
+ def starred_total(a, b):
+-    return a + b
++    return a - b
+ 
+ 
+ def hidden_total(a, b):

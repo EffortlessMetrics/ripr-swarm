@@ -1,0 +1,12 @@
+diff --git a/src/boundary.ts b/src/boundary.ts
+--- a/src/boundary.ts
++++ b/src/boundary.ts
+@@ -3,7 +3,7 @@
+ }
+ 
+ export function freeShipping(cents: number): boolean {
+-  return cents >= 5000;
++  return 5000 <= cents;
+ }
+ 
+ export function canRetire(age: number): boolean {
