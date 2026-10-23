@@ -333,6 +333,19 @@ Updated:
 ## Pending — error_variant_wrapper_callee_only_pin (26)
 
 Reason:
+RIPR-SPEC-0122: route-not-ready refusal names its missing evidence (#9604 batch C)
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_callee_only_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_variant_wrapper_callee_only_pin (27)
+
+Reason:
 RIPR-SPEC-0224: multi-line related-test oracle collapses to one human evidence row (#9165); formatting only, no verdict change
 
 Command:

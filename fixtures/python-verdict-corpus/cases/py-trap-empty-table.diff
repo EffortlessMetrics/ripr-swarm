@@ -1,0 +1,12 @@
+diff --git a/trapkit/core.py b/trapkit/core.py
+--- a/trapkit/core.py
++++ b/trapkit/core.py
+@@ -118,7 +118,7 @@
+ 
+ 
+ def empty_table(a, b):
+-    return a * b
++    return b * a
+ 
+ 
+ def filled_table(a, b):

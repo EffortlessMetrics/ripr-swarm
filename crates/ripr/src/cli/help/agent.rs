@@ -89,7 +89,7 @@ falls back to all repo-actionable seams. This scope-widening is disclosed in
 the warnings[] field of the JSON output — check warnings[] to confirm whether
 you received a scoped result or a repo-wide fallback.
 
-This parser is the first implementation seam for RIPR-SPEC-0010. The brief
+This parser is the agent-brief router's first implementation seam. The brief
 router remains advisory and static; it does not run mutation testing, generate
 tests, edit files, change cache behavior, or touch LSP/MCP surfaces.
 "#;
@@ -194,17 +194,24 @@ the prose; without `--json` stdout stays empty on a refusal.
 
 pub(super) const AGENT_VERIFY_HELP: &str = r#"Verify static-evidence movement between a before and after snapshot.
 
-Usage: ripr agent verify [--root PATH] --before PATH --after PATH --json
+Usage: ripr agent verify [--root PATH] --before PATH --after PATH [--gap-id ID] --json
 
 Options:
   --root PATH      Workspace root. Defaults to the current directory, then
                    walks up to the enclosing workspace or package, or the git
                    top level; `--root .` pins this directory.
-  --before PATH    Before `repo-exposure-json` snapshot.
-  --after PATH     After `repo-exposure-json` snapshot.
+  --before PATH    Before `repo-exposure-json` or `check-findings-json` snapshot.
+  --after PATH     After snapshot of the same format.
+  --gap-id ID      Bind the result to one canonical gap id (for example
+                   `gap:typescript:typescript_preview:1a2b3c4d`) in two
+                   `check-findings-json` snapshots. The gap must read open in
+                   the before snapshot and `exposed` in the after snapshot;
+                   absence from the after snapshot is never closure. Any other
+                   outcome is a named refusal (exit `3`, empty stdout).
   --json           Required until a human verify surface exists.
 
-The verify command compares two saved static repo-exposure artifacts and emits
+The verify command compares two saved static artifacts (`repo-exposure-json`,
+or `check-findings-json` for a diff-scoped TypeScript gap) and emits
 an agent-focused before/after summary. Snapshot paths must resolve under
 `--root`. The command remains advisory and static; it does not run analysis,
 mutation testing, generate tests, edit files, change cache behavior, or touch
@@ -213,7 +220,7 @@ LSP/MCP surfaces.
 Refusal contract: a typed verify refusal — drifted analysis inputs
 (`analysis input identities differ`) or no repository movement between the
 artifacts — names the cause on stderr, exits `3`, and leaves stdout empty
-(RIPR-SPEC-0134). Other rejections (unreadable or invalid artifacts, lineage
+. Other rejections (unreadable or invalid artifacts, lineage
 or metadata mismatches) exit `2`.
 
 Movement vocabulary (#2648): the JSON output uses two related fields:
@@ -376,7 +383,7 @@ Options:
                        Which phase of the repair loop to run.
   --python-repair-trust-manifest PATH
                        Bind this attempt to an accepted Python repair-trust
-                       selection manifest (RIPR-SPEC-0176); `before` only.
+                       selection manifest; `before` only.
   --python-repair-trust-attempt ID
                        The selection attempt identity to bind; requires the
                        manifest flag.

@@ -1,7 +1,7 @@
 //! Qualification-only source/package custody. Raw inputs are not admitted handles.
 mod archive;
 mod input;
-mod live_head;
+pub(crate) mod live_head;
 pub(crate) use live_head::handoff::{AdmittedHandoff, HandoffInput, HandoffReceipt};
 mod source;
 pub(crate) use archive::{AttributedArchive, CandidateExecution};

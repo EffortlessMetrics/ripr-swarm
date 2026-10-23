@@ -19,11 +19,10 @@ fn case_named(id: &str) -> Result<Case, String> {
         .ok_or_else(|| format!("no corpus case named {id}"))
 }
 
-fn observe<'a>(stdout: &'a str, stderr: &'a str, artifact: Option<&'a str>) -> Observed<'a> {
+fn observe<'a>(stdout: &'a str, _stderr: &'a str, artifact: Option<&'a str>) -> Observed<'a> {
     Observed {
         exit_code: Some(0),
         stdout,
-        stderr,
         artifact,
     }
 }
@@ -87,6 +86,40 @@ fn corpus_covers_every_issue_required_shape() -> TestResult {
         }
     }
     Ok(())
+}
+
+/// `ripr` reports every generated skip under one limitation wording, so the
+/// harness cannot read an exclusion's cause from it. It attributes the cause by
+/// experiment instead: a file is only credited as excluded by the configured
+/// pattern if the same path is analyzed under a nonmatching pattern, which rules
+/// out a naming convention or generator header as the cause.
+#[test]
+fn every_generated_exclusion_is_paired_with_an_analyzed_run_of_the_same_path() -> TestResult {
+    let cases = all_cases();
+    let analyzed: BTreeSet<&str> = cases
+        .iter()
+        .filter(|case| matches!(case.expect, Expect::GeneratedNotExcluded))
+        .map(|case| case.changed.as_str())
+        .collect();
+    let excluded: Vec<&str> = cases
+        .iter()
+        .filter(|case| matches!(case.expect, Expect::GeneratedExcluded))
+        .map(|case| case.changed.as_str())
+        .collect();
+    if excluded.is_empty() {
+        return Err("corpus has no generated-exclusion row".to_string());
+    }
+    let unpaired: Vec<&str> = excluded
+        .into_iter()
+        .filter(|path| !analyzed.contains(path))
+        .collect();
+    if unpaired.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "generated exclusions with no analyzed run of the same path: {unpaired:?}"
+        ))
+    }
 }
 
 #[test]
@@ -208,13 +241,18 @@ fn supported_rows_reject_a_limitation_that_names_the_input() -> TestResult {
     Ok(())
 }
 
+const DECLINED_SUMMARY: &str = "{\"status\":\"complete\",\"declined_rust_files\":{\"file_count\":1,\"files\":[{\"path\":\"src/deep.rs\",\"reason\":\"static limit rust_nesting_budget: estimated nesting depth 10001 exceeds the 256-level parse budget\"}]}}";
+const DECLINED_ARTIFACT: &str = "{\"run_status\":\"limited_declined_files\",\"limitations\":[{\"category\":\"rust_files_declined\",\"declined_file_count\":1,\"declined_files\":[{\"path\":\"src/deep.rs\",\"reason\":\"static limit rust_nesting_budget: estimated nesting depth 10001 exceeds the 256-level parse budget\"}]}],\"seams\":[{\"seam_id\":\"a\",\"file\":\"src/lib.rs\",\"grip_class\":\"strongly_gripped\"}]}";
+const COMPLETE_ARTIFACT: &str = "{\"run_status\":\"complete\",\"seams\":[{\"seam_id\":\"a\",\"file\":\"src/lib.rs\",\"grip_class\":\"strongly_gripped\"}]}";
+
 #[test]
-fn rust_pilot_requires_the_stderr_disclosure_and_the_unaffected_seam() -> TestResult {
+fn rust_pilot_requires_the_declined_field_the_limited_status_and_the_unaffected_seam() -> TestResult
+{
     let case = case_named("rust-parentheses-over-budget.pilot")?;
-    let summary = "{\"status\":\"complete\"}";
-    let artifact = "{\"run_status\":\"complete\",\"seams\":[{\"seam_id\":\"a\",\"file\":\"src/lib.rs\",\"grip_class\":\"strongly_gripped\"}]}";
-    let disclosure = "ripr: src/deep.rs: static limit rust_nesting_budget: estimated nesting depth 10001 exceeds the 256-level parse budget";
-    let good = assess(&case, &observe(summary, disclosure, Some(artifact)));
+    let good = assess(
+        &case,
+        &observe(DECLINED_SUMMARY, "", Some(DECLINED_ARTIFACT)),
+    );
     if good.result != RowResult::PassedTypedLimitation {
         return Err(format!("good pilot classified {:?}", good.result));
     }
@@ -222,24 +260,328 @@ fn rust_pilot_requires_the_stderr_disclosure_and_the_unaffected_seam() -> TestRe
         return Err("pilot must project its artifact deterministically".to_string());
     }
 
-    let silent = assess(&case, &observe(summary, "", Some(artifact)));
+    // The old stderr-only shape is exactly the false-complete defect.
+    let stderr_only =
+        "ripr: src/deep.rs: static limit rust_nesting_budget: estimated nesting depth 10001";
+    let silent = assess(
+        &case,
+        &observe(
+            "{\"status\":\"complete\"}",
+            stderr_only,
+            Some(COMPLETE_ARTIFACT),
+        ),
+    );
     if silent.result != RowResult::MissingOrFalseCleanLimitation {
-        return Err(format!("silent pilot classified {:?}", silent.result));
+        return Err(format!("stderr-only pilot classified {:?}", silent.result));
     }
 
-    let no_seams = "{\"run_status\":\"complete\",\"seams\":[]}";
-    let lost = assess(&case, &observe(summary, disclosure, Some(no_seams)));
+    let status_complete = assess(
+        &case,
+        &observe(DECLINED_SUMMARY, "", Some(COMPLETE_ARTIFACT)),
+    );
+    if status_complete.result != RowResult::MissingOrFalseCleanLimitation {
+        return Err(format!(
+            "complete run_status with a declined file classified {:?}",
+            status_complete.result
+        ));
+    }
+
+    let no_seams = "{\"run_status\":\"limited_declined_files\",\"limitations\":[{\"category\":\"rust_files_declined\",\"declined_file_count\":1,\"declined_files\":[{\"path\":\"src/deep.rs\",\"reason\":\"static limit rust_nesting_budget: estimated nesting depth 10001 exceeds the 256-level parse budget\"}]}],\"seams\":[]}";
+    let lost = assess(&case, &observe(DECLINED_SUMMARY, "", Some(no_seams)));
     if lost.result != RowResult::WrongSubject {
         return Err(format!("lost seam classified {:?}", lost.result));
     }
 
+    // The summary names the hostile file but the artifact only another one.
+    let wrong_artifact = DECLINED_ARTIFACT.replace("src/deep.rs", "src/other.rs");
+    let mismatched = assess(&case, &observe(DECLINED_SUMMARY, "", Some(&wrong_artifact)));
+    if mismatched.result != RowResult::MissingOrFalseCleanLimitation {
+        return Err(format!(
+            "an artifact naming another file classified {:?}",
+            mismatched.result
+        ));
+    }
+
     let control = case_named("rust-supported-control.pilot")?;
-    let false_limit = assess(&control, &observe(summary, disclosure, Some(artifact)));
+    // Any declined file, whichever path, fails a supported row.
+    let other_summary = DECLINED_SUMMARY.replace("src/deep.rs", "src/other.rs");
+    let other_decline = assess(
+        &control,
+        &observe(&other_summary, "", Some(COMPLETE_ARTIFACT)),
+    );
+    if other_decline.result != RowResult::SemanticFailure {
+        return Err(format!(
+            "a decline of another file on a supported row classified {:?}",
+            other_decline.result
+        ));
+    }
+    let false_limit = assess(
+        &control,
+        &observe(DECLINED_SUMMARY, "", Some(DECLINED_ARTIFACT)),
+    );
     if false_limit.result != RowResult::SemanticFailure {
         return Err(format!(
-            "false disclosure on a supported file classified {:?}",
+            "declined entry on a supported file classified {:?}",
             false_limit.result
         ));
+    }
+    let clean = assess(
+        &control,
+        &observe("{\"status\":\"complete\"}", "", Some(COMPLETE_ARTIFACT)),
+    );
+    if clean.result != RowResult::PassedSupportedAnalysis {
+        return Err(format!(
+            "clean supported pilot classified {:?}",
+            clean.result
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn rust_pilot_rejects_a_decline_the_two_surfaces_do_not_agree_on() -> TestResult {
+    let case = case_named("rust-parentheses-over-budget.pilot")?;
+    let reason = "static limit rust_nesting_budget: estimated nesting depth 10001 exceeds the 256-level parse budget";
+    let cases = [
+        (
+            "the wrong token in the artifact reason",
+            DECLINED_SUMMARY.to_string(),
+            DECLINED_ARTIFACT.replace("rust_nesting_budget", "some_other_limit"),
+        ),
+        (
+            "the wrong token in both reasons",
+            DECLINED_SUMMARY.replace("rust_nesting_budget", "some_other_limit"),
+            DECLINED_ARTIFACT.replace("rust_nesting_budget", "some_other_limit"),
+        ),
+        (
+            "different reasons on the two surfaces",
+            DECLINED_SUMMARY.to_string(),
+            DECLINED_ARTIFACT.replace("exceeds the 256-level", "exceeds the 128-level"),
+        ),
+        (
+            "an artifact count that disagrees with its list",
+            DECLINED_SUMMARY.to_string(),
+            DECLINED_ARTIFACT.replace("\"declined_file_count\":1", "\"declined_file_count\":2"),
+        ),
+        (
+            "a summary count that disagrees with its list",
+            DECLINED_SUMMARY.replace("\"file_count\":1", "\"file_count\":2"),
+            DECLINED_ARTIFACT.to_string(),
+        ),
+        (
+            "an artifact with no count",
+            DECLINED_SUMMARY.to_string(),
+            DECLINED_ARTIFACT.replace("\"declined_file_count\":1,", ""),
+        ),
+        (
+            "a limited status with no rust_files_declined limitation",
+            DECLINED_SUMMARY.to_string(),
+            DECLINED_ARTIFACT.replace("rust_files_declined", "generated_rust_source_skipped"),
+        ),
+        (
+            "the decline reported twice in the artifact",
+            DECLINED_SUMMARY.to_string(),
+            DECLINED_ARTIFACT.replace(
+                "\"limitations\":[",
+                &format!(
+                    "\"limitations\":[{{\"category\":\"rust_files_declined\",\"declined_file_count\":1,\"declined_files\":[{{\"path\":\"src/deep.rs\",\"reason\":\"{reason}\"}}]}},"
+                ),
+            ),
+        ),
+    ];
+    for (name, summary, artifact) in &cases {
+        let verdict = assess(&case, &observe(summary, "", Some(artifact)));
+        if verdict.result != RowResult::MissingOrFalseCleanLimitation {
+            return Err(format!("{name} classified {:?}", verdict.result));
+        }
+    }
+
+    // Stderr cannot stand in for the structured decline.
+    let loud = assess(
+        &case,
+        &observe(
+            "{\"status\":\"complete\"}",
+            "ripr: src/deep.rs: static limit rust_nesting_budget: estimated nesting depth 10001",
+            Some(DECLINED_ARTIFACT),
+        ),
+    );
+    if loud.result != RowResult::MissingOrFalseCleanLimitation {
+        return Err(format!(
+            "stderr over a bare summary classified {:?}",
+            loud.result
+        ));
+    }
+
+    // The count the row reports is the validated one, and the projection
+    // carries the decline identity, reason and count from both surfaces.
+    let good = assess(
+        &case,
+        &observe(DECLINED_SUMMARY, "", Some(DECLINED_ARTIFACT)),
+    );
+    if good.declined_files != 1 {
+        return Err(format!("declined count {}", good.declined_files));
+    }
+    let projection = good.artifact_projection.unwrap_or_default();
+    for needle in [
+        "decline.summary=Some(1):src/deep.rs|",
+        "decline.artifact=Some(1):src/deep.rs|",
+        "rust_nesting_budget",
+    ] {
+        if !projection.contains(needle) {
+            return Err(format!("projection lacks {needle}:\n{projection}"));
+        }
+    }
+    let other_reason = DECLINED_ARTIFACT.replace(
+        "estimated nesting depth 10001",
+        "estimated nesting depth 20000",
+    );
+    let changed = assess(&case, &observe(DECLINED_SUMMARY, "", Some(&other_reason)));
+    if changed.result != RowResult::MissingOrFalseCleanLimitation {
+        return Err("a changed artifact reason must not pass".to_string());
+    }
+
+    // A supported row rejects the structured decline even with silent stderr.
+    let control = case_named("rust-supported-control.pilot")?;
+    let summary_only = assess(
+        &control,
+        &observe(DECLINED_SUMMARY, "", Some(COMPLETE_ARTIFACT)),
+    );
+    let artifact_only = assess(
+        &control,
+        &observe("{\"status\":\"complete\"}", "", Some(DECLINED_ARTIFACT)),
+    );
+    for (name, verdict) in [("summary", summary_only), ("artifact", artifact_only)] {
+        if verdict.result != RowResult::SemanticFailure {
+            return Err(format!(
+                "{name}-only decline on a supported row classified {:?}",
+                verdict.result
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn rust_check_requires_the_producer_failure_limitation_naming_the_declined_file() -> TestResult {
+    let case = case_named("rust-parentheses-over-budget.check")?;
+    let limitation = python_limitation(
+        "",
+        "1 Rust file(s) declined: src/deep.rs (rust_nesting_budget)",
+        "producer_failure",
+    );
+    let good = check_json(&["src/lib.rs"], &limitation, false);
+    let result = assess(&case, &observe(&good, "", None));
+    if result.result != RowResult::PassedTypedLimitation {
+        return Err(format!("good check classified {:?}", result.result));
+    }
+
+    // Before #9308 the decline was stderr-only and the run read complete.
+    let clean = check_json(&["src/lib.rs"], "", true);
+    let silent = assess(&case, &observe(&clean, "", None));
+    if silent.result != RowResult::MissingOrFalseCleanLimitation {
+        return Err(format!(
+            "false-complete check classified {:?}",
+            silent.result
+        ));
+    }
+
+    let other_file = python_limitation(
+        "",
+        "1 Rust file(s) declined: src/other.rs (rust_nesting_budget)",
+        "producer_failure",
+    );
+    let wrong = check_json(&["src/lib.rs"], &other_file, false);
+    if assess(&case, &observe(&wrong, "", None)).result != RowResult::MissingOrFalseCleanLimitation
+    {
+        return Err("a limitation naming another file must not pass".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn glob_normalization_rows_pin_both_consumers_and_reject_opposite_results() -> TestResult {
+    for (id, pattern, matches) in [
+        ("leading-dot-segment", "./src/lib.rs", true),
+        ("inner-dot-segment", "src/./lib.rs", true),
+        ("empty-segment", "src//lib.rs", true),
+        ("normalized-nonmatch", "src/./other.rs", false),
+    ] {
+        for (consumer, config_path, config_key) in [
+            (
+                "suppression",
+                super::corpus::SUPPRESSION_POLICY_FILE,
+                "path",
+            ),
+            ("generated", "ripr.toml", "generated_file_patterns"),
+        ] {
+            let case = case_named(&format!("glob-{consumer}-{id}"))?;
+            if case.changed != "src/lib.rs" || case.route != Route::Check {
+                return Err(format!(
+                    "{} does not exercise the retained check path",
+                    case.id
+                ));
+            }
+            let config = case
+                .files
+                .iter()
+                .find(|(path, _)| path == config_path)
+                .ok_or_else(|| format!("{} has no consumer config", case.id))?;
+            let config: toml::Value =
+                toml::from_str(std::str::from_utf8(&config.1).map_err(|error| error.to_string())?)
+                    .map_err(|error| error.to_string())?;
+            let (configured, expected, matched, unmatched) = if consumer == "suppression" {
+                (
+                    config.get("suppressions").and_then(|value| value.get(0))
+                        .and_then(|value| value.get(config_key)).and_then(toml::Value::as_str),
+                    matches!(case.expect, Expect::GlobMatch),
+                    serde_json::json!({
+                        "findings": [{"canonical_gap": {"file": case.changed}, "suppressed": true, "suppressed_by": "qualification"}],
+                        "suppression_policy": {"suppressed": 1}, "summary": {"suppressed_by_policy": 1},
+                        "analysis_outcome": {"analysis_complete": true}
+                    }).to_string(),
+                    check_json(&[&case.changed], "", true),
+                )
+            } else {
+                (
+                    config
+                        .get("languages")
+                        .and_then(|value| value.get("rust"))
+                        .and_then(|value| value.get(config_key))
+                        .and_then(|value| value.get(0))
+                        .and_then(toml::Value::as_str),
+                    matches!(case.expect, Expect::GeneratedExcluded),
+                    check_json(
+                        &[],
+                        &python_limitation(
+                            &case.changed,
+                            "intentionally skipped",
+                            "language_scope_unsupported",
+                        ),
+                        false,
+                    ),
+                    check_json(&[&case.changed], "", true),
+                )
+            };
+            if configured != Some(pattern) || expected != matches {
+                return Err(format!(
+                    "{} changed its literal pattern or expectation",
+                    case.id
+                ));
+            }
+            let (good, wrong) = if matches {
+                (&matched, &unmatched)
+            } else {
+                (&unmatched, &matched)
+            };
+            if !assess(&case, &observe(good, "", None)).result.is_pass()
+                || assess(&case, &observe(wrong, "", None)).result.is_pass()
+            {
+                return Err(format!(
+                    "{} accepts the wrong consumer disposition",
+                    case.id
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -290,6 +632,94 @@ fn glob_rows_cannot_pass_by_suppressing_or_excluding_silently() -> TestResult {
         return Err("an exclusion with no disclosure must not pass".to_string());
     }
     Ok(())
+}
+
+#[test]
+fn the_commit_in_a_version_line_binds_a_build_manifest() -> TestResult {
+    use super::removal_builds::version_commit;
+    if version_commit("ripr 0.11.0 (c7d6b397)") != Some("c7d6b397") {
+        return Err("the commit in parentheses must be extracted".to_string());
+    }
+    if version_commit("ripr 0.11.0").is_some() || version_commit("ripr (").is_some() {
+        return Err("a version without a commit binds nothing".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn the_candidate_manifest_reader_agrees_with_the_admitted_live_head_manifest() -> TestResult {
+    use super::candidate_manifest::{candidate_sha, parse_candidate_sha};
+    use crate::reports::release::candidate_harness::live_head::LiveHeadSnapshot;
+    use crate::reports::release::candidate_harness::live_head::tests::Fixture;
+
+    // The real #1609 DTO admits this manifest; the harness must read the same
+    // commit from the same bytes, so a schema move cannot split the two.
+    let fixture = Fixture::new()?;
+    let approved = fixture.write()?;
+    let admitted = LiveHeadSnapshot::admit(
+        &fixture.root,
+        "0.11.0",
+        std::path::Path::new("manifest.json"),
+        &approved,
+    )?;
+    let read = candidate_sha(&fixture.root.join("manifest.json"))?;
+    if read != admitted.candidate_sha()? {
+        return Err(format!(
+            "harness read {read}, admitted manifest names {}",
+            admitted.candidate_sha()?
+        ));
+    }
+
+    // The committed template selects no candidate, so it must not satisfy the
+    // harness's candidate binding.
+    let template = include_str!("../../../docs/release-candidates/0.11.0-live-head-selection.json");
+    if parse_candidate_sha(template).is_ok() {
+        return Err("the unfilled template must not name a candidate".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn the_candidate_manifest_reader_takes_only_a_full_commit() -> TestResult {
+    use super::candidate_manifest::parse_candidate_sha;
+    let sha = "c7d6b397c5ea11d121800e32af890856f252d097";
+    let good = format!("{{\"schema\":\"x\",\"candidate\":{{\"sha\":\"{sha}\",\"tree\":\"t\"}}}}");
+    if parse_candidate_sha(&good)? != sha {
+        return Err("a full commit must be read back".to_string());
+    }
+    for bad in [
+        "{}",
+        "{\"candidate\":{\"sha\":\"c7d6b397\"}}",
+        "{\"candidate\":{\"sha\":\"zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}}",
+        "not json",
+    ] {
+        if parse_candidate_sha(bad).is_ok() {
+            return Err(format!("`{bad}` must be refused"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_family_takes_one_removal_control_only() -> TestResult {
+    let args: Vec<String> = [
+        "--binary",
+        "b",
+        "--removal-control",
+        "rust_nesting=a",
+        "--removal-control",
+        "rust_nesting=c",
+    ]
+    .iter()
+    .map(|arg| arg.to_string())
+    .collect();
+    match super::command::parse_args(&args) {
+        Err(error) if error.contains("given twice") => Ok(()),
+        other => Err(format!(
+            "a duplicate --removal-control must be refused, got {:?}",
+            other.map(|_| "accepted")
+        )),
+    }
 }
 
 #[test]
@@ -360,17 +790,13 @@ fn a_nonzero_exit_distrusts_otherwise_correct_output() -> TestResult {
 }
 
 #[test]
-fn pilot_disclosure_must_name_the_hostile_file() -> TestResult {
+fn pilot_declined_entry_must_name_the_hostile_file() -> TestResult {
     let case = case_named("rust-parentheses-over-budget.pilot")?;
-    let artifact = "{\"run_status\":\"complete\",\"seams\":[{\"seam_id\":\"a\",\"file\":\"src/lib.rs\",\"grip_class\":\"g\"}]}";
-    let other = "ripr: src/other.rs: static limit rust_nesting_budget: depth";
-    let result = assess(
-        &case,
-        &observe("{\"status\":\"complete\"}", other, Some(artifact)),
-    );
+    let other = DECLINED_SUMMARY.replace("src/deep.rs", "src/other.rs");
+    let result = assess(&case, &observe(&other, "", Some(DECLINED_ARTIFACT)));
     if result.result != RowResult::MissingOrFalseCleanLimitation {
         return Err(format!(
-            "disclosure for another file classified {:?}",
+            "declined entry for another file classified {:?}",
             result.result
         ));
     }
@@ -476,8 +902,10 @@ fn options() -> Options {
         work: PathBuf::from("work"),
         expected_sha256: None,
         expected_version: None,
+        expected_commit: None,
         families: Vec::new(),
         removal_controls: Vec::new(),
+        removal_manifest: None,
         repeat: true,
         deadline: Duration::from_mins(1),
         allow_incomplete: false,
@@ -750,8 +1178,10 @@ mod unix_stubs {
             work: root.join("work"),
             expected_sha256: None,
             expected_version: None,
+            expected_commit: None,
             families: vec![Family::PythonNesting],
             removal_controls: Vec::new(),
+            removal_manifest: None,
             repeat: false,
             deadline: Duration::from_secs(5),
             allow_incomplete: false,
@@ -835,6 +1265,29 @@ mod unix_stubs {
     }
 
     #[test]
+    fn a_flooding_stub_is_an_instrument_failure_naming_the_stream() -> TestResult {
+        let root = scratch("flood")?;
+        let binary = stub(
+            &root,
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'ripr 0.0.0 (stub)'; exit 0; fi\nhead -c 20000000 /dev/zero\n",
+        )?;
+        let options = stub_options(&root, binary);
+        let packet = build_packet(&options)?;
+        let _ = fs::remove_dir_all(&root);
+        if packet.rows.is_empty()
+            || packet.rows.iter().any(|row| {
+                row.result != RowResult::InstrumentFailure
+                    || !row.detail.contains("stdout exceeds its")
+            })
+        {
+            return Err(
+                "every row of a stdout-flooding binary must be an instrument failure".to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn a_binary_with_the_wrong_digest_is_refused_before_any_row_runs() -> TestResult {
         let root = scratch("digest")?;
         let binary = stub(
@@ -854,6 +1307,132 @@ mod unix_stubs {
             }
             other => Err(format!("wrong digest was not refused up front: {other:?}")),
         }
+    }
+
+    #[test]
+    fn execution_controls_discriminate_on_the_real_launch_path() -> TestResult {
+        let root = scratch("execution")?;
+        let controls =
+            super::super::execution_controls::execution_controls(&root.join("w"), &all_cases());
+        let _ = fs::remove_dir_all(&root);
+        let ids: Vec<&str> = controls.iter().map(|control| control.id.as_str()).collect();
+        if ids
+            != [
+                "execution-scrubbed-path",
+                "execution-owned-cwd",
+                "execution-decoy-repository",
+                "execution-stale-artifact",
+                "execution-snapshot-isolation",
+                "execution-cleanup-failure",
+            ]
+        {
+            return Err(format!("unexpected execution controls: {ids:?}"));
+        }
+        for control in &controls {
+            if !control.discriminated {
+                return Err(format!(
+                    "{} did not discriminate: {:?} {}",
+                    control.id, control.observed, control.detail
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_manifest_may_only_vouch_for_the_repairs_the_tool_builds() -> TestResult {
+        use super::super::removal_builds::{finish_for_test, load_manifest};
+        let root = scratch("manifest")?;
+        let write = |name: &str, family: &str, digest: &str| -> Result<PathBuf, String> {
+            let path = root.join(name);
+            let text = format!(
+                "{{\"schema\":\"ripr.termination_removal_builds.v1\",\"source_commit\":\"abc\",\"controls\":[{{\"id\":\"rust-nesting-refusal-off\",\"families\":[\"{family}\"],\"binary\":\"b\",\"sha256\":\"s\",\"edits_sha256\":\"{digest}\"}}]}}"
+            );
+            fs::write(&path, text).map_err(|error| format!("write: {error}"))?;
+            Ok(path)
+        };
+        let digest = super::super::removal_builds::rust_nesting_digest();
+        let good = load_manifest(&write("good.json", "rust_nesting", &digest)?);
+        let wrong_family = load_manifest(&write("family.json", "python_nesting", &digest)?);
+        let wrong_digest = load_manifest(&write("digest.json", "rust_nesting", "0")?);
+        let _ = fs::remove_dir_all(&root);
+        if good.is_err() {
+            return Err("a manifest the tool could have written must load".to_string());
+        }
+        if wrong_family.is_ok() || wrong_digest.is_ok() {
+            return Err("a mislabeled family or edit digest must be refused".to_string());
+        }
+        let kept = finish_for_test(true, true);
+        let retained = finish_for_test(true, false);
+        let both = finish_for_test(false, false);
+        if kept.is_err()
+            || !retained.is_err_and(|error| error.contains("could not be removed"))
+            || !both
+                .is_err_and(|error| error.contains("build failed") && error.contains("retained"))
+        {
+            return Err(
+                "a retained worktree must fail the run without hiding a build error".to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_manifest_bound_control_needs_the_recorded_bytes_and_commit() -> TestResult {
+        use super::super::controls::Binding;
+        let root = scratch("bound")?;
+        let dir = root.join("abort");
+        fs::create_dir_all(&dir).map_err(|error| format!("mkdir: {error}"))?;
+        let aborting = stub(
+            &dir,
+            "#!/bin/sh\n[ \"$1\" = \"--version\" ] && { echo ripr-test 1 \\(abc123\\); exit 0; }\nkill -ABRT $$\n",
+        )?;
+        let sha = crate::blind_journey::sha256_hex(
+            &fs::read(&aborting).map_err(|error| format!("read: {error}"))?,
+        );
+        let cases: Vec<Case> = all_cases()
+            .into_iter()
+            .filter(|case| case.family == Family::PythonNesting)
+            .collect();
+        let bind = |expected: &str, commit: &str| Binding {
+            family: Family::PythonNesting,
+            id: "python-parse-budget-off".to_string(),
+            expected_sha256: expected.to_string(),
+            edits_sha256: "e".repeat(64),
+            source_commit: commit.to_string(),
+        };
+        let run = |name: &str, binding: Binding| {
+            super::super::controls::removal_controls(
+                &root.join(name),
+                &cases,
+                &[(Family::PythonNesting, aborting.clone())],
+                &[binding],
+                &"c".repeat(64),
+                "ripr-test 1 (abc123)",
+                Duration::from_secs(10),
+            )
+        };
+        let good = run("good", bind(&sha, "abc123"));
+        let wrong_bytes = run("bytes", bind(&"0".repeat(64), "abc123"));
+        let wrong_commit = run("commit", bind(&sha, "def456"));
+        let _ = fs::remove_dir_all(&root);
+        if !good[0].discriminated || !good[0].detail.contains("manifest-bound") {
+            return Err(format!(
+                "a bound abort must discriminate: {:?}",
+                good[0].detail
+            ));
+        }
+        if wrong_bytes[0].discriminated
+            || wrong_bytes[0].observed.as_deref() != Some("manifest_sha_mismatch")
+        {
+            return Err("bytes the manifest did not record must not count".to_string());
+        }
+        if wrong_commit[0].discriminated
+            || wrong_commit[0].observed.as_deref() != Some("source_commit_mismatch")
+        {
+            return Err("a manifest from another commit must not count".to_string());
+        }
+        Ok(())
     }
 
     #[test]
@@ -877,6 +1456,7 @@ mod unix_stubs {
             &root.join("w1"),
             &cases,
             &[(Family::PythonNesting, candidate.clone())],
+            &[],
             &candidate_sha,
             "ripr-test 1",
             deadline,
@@ -895,6 +1475,7 @@ mod unix_stubs {
             &root.join("w2"),
             &cases,
             &[(Family::PythonNesting, aborting)],
+            &[],
             &candidate_sha,
             "ripr-test 1",
             deadline,
@@ -904,6 +1485,7 @@ mod unix_stubs {
             &root.join("w4"),
             &cases,
             &[(Family::PythonNesting, unrelated)],
+            &[],
             &candidate_sha,
             "ripr-test 1",
             deadline,
@@ -912,6 +1494,7 @@ mod unix_stubs {
         let none = super::super::controls::removal_controls(
             &root.join("w3"),
             &cases,
+            &[],
             &[],
             &candidate_sha,
             "ripr-test 1",
@@ -965,5 +1548,18 @@ mod unix_stubs {
             }
         }
         Ok(())
+    }
+}
+
+#[test]
+fn the_child_never_inherits_a_variable_that_redirects_git() {
+    // The parent environment cannot be set here (`unsafe` is forbidden), so this
+    // pins what `launch` hands the runner to remove, whatever the caller exports.
+    let removed = super::exec::removed_env();
+    for name in ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"] {
+        assert!(
+            removed.iter().any(|removed| removed == name),
+            "{name} must be removed from every child"
+        );
     }
 }

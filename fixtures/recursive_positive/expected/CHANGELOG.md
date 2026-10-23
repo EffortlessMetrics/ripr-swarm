@@ -167,3 +167,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — recursive_positive (15)
+
+Reason:
+RIPR-SPEC-0122: route-not-ready refusal names its missing evidence (#9604 batch C)
+
+Command:
+`cargo xtask goldens bless recursive_positive --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

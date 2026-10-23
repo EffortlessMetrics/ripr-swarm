@@ -1,0 +1,45 @@
+{
+  "case_id": "method-hop-field-read-rebound",
+  "subject_id": "authored-method-hop",
+  "diff": "cases/method-hop-field-read-rebound.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 63
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "helper_wrapped_assert",
+  "hard_case": "The helper rebinds its receiver parameter (`let size = Size(size.0);`) before the receiver call, so the hop must not carry the test's value.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "bytes <= unit",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests::rebound_formats_one_binary_unit",
+        "equivalence_review": "the edit itself: exactly one unit formats as the raw byte count instead of one unit"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`check_rebound` shadows `size` before `size.rebound_as(si)`. The rebinding keeps the value, so Size::kib(1) at si true still sits on the boundary, but ripr cannot show that and keeps the earlier stop. 1 of 1 listed mutants fails cargo test. Spec cells: RIPR-SPEC-0158, RIPR-SPEC-0159.",
+  "labeling_observation": {
+    "ripr_commit": "da433a6",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

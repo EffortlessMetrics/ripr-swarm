@@ -4619,6 +4619,33 @@ fn a_std_qualified_assertion_is_admitted_unless_its_root_may_be_rebound() -> Res
 }
 
 #[test]
+fn owner_pin_refuses_a_test_whose_indexed_body_no_longer_matches_the_parsed_source()
+-> Result<(), String> {
+    let tests = "use demo::weight;\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    let index = index(&[(LIB, WEIGHT_LIB), (TESTS, tests)]);
+    let test = index
+        .tests()
+        .iter()
+        .find(|test| test.file == Path::new(TESTS))
+        .ok_or("fixture has no test")?;
+    let assertion = test.assertions.first().ok_or("fixture has no assertion")?;
+    let syntax = OwnerPinSyntax::default();
+    assert_eq!(syntax.refusal(test, assertion, &index), None);
+    // The same length, one byte different: the stored fingerprint must see it.
+    let mut stale = test.clone();
+    stale.body = stale.body.replacen("12", "13", 1).into();
+    assert_ne!(stale.body, test.body);
+    assert_eq!(
+        OwnerPinSyntax::default().refusal(&stale, assertion, &index),
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::StaleSource
+        )),
+        "a body differing from the parsed source must be refused as stale"
+    );
+    Ok(())
+}
+
+#[test]
 fn owner_pin_requires_test_item_ancestry_and_enabled_cfg() {
     for module in [
         "mod nested { #![cfg(any())] BODY }",
@@ -11387,6 +11414,70 @@ fn adaptor_tail_pins_only_a_non_empty_literal_sequence() {
     );
 }
 
+/// #9444: a changed tail that walks a slice parameter is not reached by a
+/// call passing only an empty literal there, whatever the adaptor.
+#[test]
+fn walked_parameter_refuses_an_empty_literal_argument() {
+    for walk in ["iter()", "into_iter()", "iter_mut()"] {
+        let tail = format!("xs.{walk}.count()");
+        let lib = adaptor_lib(
+            &tail,
+            &adaptor_test(
+                "        assert_eq!(count_positive(&[]), 0);\n        assert_eq!(count_positive(&[3, 4]), 2);",
+            ),
+        );
+        let index = index(&[(LIB, &lib)]);
+        let pin = establish(&index, "count_positive", &tail);
+        assert!(pin.is_some(), "`{walk}` must establish a pin");
+        let Some(pin) = pin else { return };
+        assert_eq!(
+            admitted_texts(&index, &pin),
+            vec!["assert_eq!(count_positive(&[3, 4]), 2);".to_string()],
+            "{walk}"
+        );
+    }
+}
+
+/// #9444 review: the refusal also reads a call wrapped in a rendered or
+/// indexed comparison, a spaced method call, and leaves a field receiver
+/// or a rebound parameter alone.
+#[test]
+fn walked_parameter_refusal_reads_wrapped_calls_and_only_the_parameter() {
+    for (tail, assertion, admitted) in [
+        (
+            "xs.iter().count()",
+            "assert_eq!(format!(\"{}\", count_positive(&[])), \"0\");",
+            false,
+        ),
+        (
+            "xs.iter().count()",
+            "assert_eq!(vec![count_positive(&[])][0], 0);",
+            false,
+        ),
+        (
+            "xs .iter() .count()",
+            "assert_eq!(count_positive(&[]), 0);",
+            false,
+        ),
+        (
+            "row.xs.iter().count()",
+            "assert_eq!(count_positive(&[]), 0);",
+            true,
+        ),
+    ] {
+        let lib = adaptor_lib(tail, &adaptor_test(&format!("        {assertion}")));
+        let index = index(&[(LIB, &lib)]);
+        let pin = establish(&index, "count_positive", tail);
+        assert!(pin.is_some(), "`{tail}` must establish a pin");
+        let Some(pin) = pin else { return };
+        assert_eq!(
+            !admitted_texts(&index, &pin).is_empty(),
+            admitted,
+            "{tail} {assertion}"
+        );
+    }
+}
+
 /// RIPR-SPEC-0265 rule 2 through a constant-row table: some row must pass a
 /// non-empty sequence.
 #[test]
@@ -12106,6 +12197,10 @@ fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() -> Resu
         "mod core {}\nuse core::simd::prelude::*;\n",
         "extern crate other as std;\nuse std::io::prelude::*;\n",
         "use other as core;\nuse core::simd::prelude::*;\n",
+        // A plain import that binds the root name, by path or by `{self}`,
+        // takes it over for the module.
+        "use other::std;\nuse std::io::prelude::*;\n",
+        "use other::std::{self};\nuse std::io::prelude::*;\n",
         // `alloc` has no manifest proof, so it stays a foreign glob.
         "use alloc::vec::*;\n",
     ] {

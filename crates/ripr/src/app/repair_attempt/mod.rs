@@ -456,7 +456,41 @@ pub(crate) fn receipt_binding_from(
     {
         return Err("repair attempt packet binding is tampered or replayed".to_string());
     }
-    let baseline_artifact = find_manifest_artifact(&manifest, "edit_cage_baseline")?;
+    let (verdict, binding_holds) = recompute_after_verdict_binding(&root, &manifest, after)?;
+    if !binding_holds {
+        return Err("repair attempt after verdict binding is tampered or stale".to_string());
+    }
+    validate_trusted_head_surface(
+        &root,
+        &policy,
+        &verdict.changed_paths,
+        &manifest.repository_head,
+    )?;
+    let manifest_path = display_path(&manifest_path);
+    Ok(serde_json::json!({
+        "attempt_id": after.attempt_id.as_str(),
+        "manifest": manifest_path,
+        "seam_id": manifest.seam_id,
+        "before_head": manifest.repository_head,
+        "after_head": after.repository_head,
+        "packet_sha256": after.packet_sha256,
+        "delta_sha256": after.delta_sha256,
+        "current": after.current,
+        "edit_cage_verdict": after.verdict,
+    }))
+}
+
+/// Recompute the edit-cage delta from the live worktree under the admitting
+/// rule and compare it with the after verdict the finish bound. Shared by
+/// receipt issuance and the read-only currentness reading so `status` cannot
+/// call an attempt current that `receipt` would refuse (#9501). The error is
+/// an unreadable or tampered baseline; `false` is drift from the bound verdict.
+fn recompute_after_verdict_binding(
+    root: &Path,
+    manifest: &RepairAttemptManifest,
+    after: &RepairAttemptAfter,
+) -> Result<(crate::edit_cage::EditCageVerdict, bool), String> {
+    let baseline_artifact = find_manifest_artifact(manifest, "edit_cage_baseline")?;
     let baseline_bytes = std::fs::read(root.join(&baseline_artifact.path))
         .map_err(|error| format!("read staged edit-cage baseline failed: {error}"))?;
     if sha256_bytes(&baseline_bytes) != baseline_artifact.sha256 {
@@ -483,27 +517,8 @@ pub(crate) fn receipt_binding_from(
     let verdict = crate::edit_cage::evaluate_edit_cage(baseline.policy(), &delta);
     let delta_bytes = serde_json::to_vec(&delta)
         .map_err(|error| format!("serialize repair delta failed: {error}"))?;
-    if sha256_bytes(&delta_bytes) != after.delta_sha256 || verdict != after.verdict {
-        return Err("repair attempt after verdict binding is tampered or stale".to_string());
-    }
-    validate_trusted_head_surface(
-        &root,
-        &policy,
-        &verdict.changed_paths,
-        &manifest.repository_head,
-    )?;
-    let manifest_path = display_path(&manifest_path);
-    Ok(serde_json::json!({
-        "attempt_id": after.attempt_id.as_str(),
-        "manifest": manifest_path,
-        "seam_id": manifest.seam_id,
-        "before_head": manifest.repository_head,
-        "after_head": after.repository_head,
-        "packet_sha256": after.packet_sha256,
-        "delta_sha256": after.delta_sha256,
-        "current": after.current,
-        "edit_cage_verdict": after.verdict,
-    }))
+    let holds = sha256_bytes(&delta_bytes) == after.delta_sha256 && verdict == after.verdict;
+    Ok((verdict, holds))
 }
 
 /// Resolve the retained before snapshot a verify document must name, and read
@@ -558,7 +573,7 @@ pub(crate) fn validate_verify_binding_from(
     let validated = crate::agent::artifact::validate_repo_exposure_artifact(
         &root,
         &before_snapshot,
-        "repair attempt before",
+        crate::agent::artifact::RETAINED_BEFORE_SUBJECT,
     )?;
     if verify_before_sha256 != validated.content_sha256 {
         return Err(format!(
@@ -2770,6 +2785,22 @@ pub(crate) fn repair_attempt_head_reading(
             .map(|admission| matches!(admission, AfterPhaseHeadAdmission::Current { .. }))
     } else {
         current_head.map(|head| head == evidence_head)
+    };
+    // #9501: HEAD alone cannot call a finished attempt current. `agent receipt`
+    // recomputes the delta from the worktree and refuses drift (an uncommitted
+    // edit after the verdict), so the reading applies the same binding where a
+    // receipt could otherwise be issued; unreadable evidence is `unknown`.
+    let head_current = match (head_current, manifest.after.as_ref()) {
+        (Some(true), Some(after))
+            if manifest.state == RepairAttemptState::ReadyToFinish && after.current =>
+        {
+            match recompute_after_verdict_binding(root, manifest, after) {
+                Ok((_, true)) => Some(true),
+                Ok((_, false)) => Some(false),
+                Err(_) => None,
+            }
+        }
+        (reading, _) => reading,
     };
     RepairAttemptHeadReading {
         evidence_head,
@@ -5879,6 +5910,64 @@ mod tests {
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
         Ok(())
+    }
+
+    /// #9501 negative experiment: `status` read currentness from HEAD alone, so
+    /// an uncommitted production edit after the finish still printed `current`
+    /// while `receipt` refused the same state. Both now share one binding.
+    #[test]
+    fn finished_attempt_currentness_follows_worktree_drift_like_the_receipt() -> Result<(), String>
+    {
+        let root = test_repo_root("worktree-drift-currentness")?;
+        let result = (|| -> Result<(), String> {
+            let prepared = prepare_sample_attempt(&root, "seam:sample", "drift")?;
+            let finished = finish_sample_attempt(&root, &prepared)?;
+            if finished.state != RepairAttemptState::ReadyToFinish {
+                return Err(format!("expected a finished attempt: {:?}", finished.state));
+            }
+            let head = crate::agent::artifact::current_git_head(&root)?;
+            let reading = repair_attempt_head_reading(&root, &finished, Some(&head));
+            if reading.currentness() != "current" {
+                return Err(format!(
+                    "undrifted finished attempt must read current: {reading:?}"
+                ));
+            }
+
+            // Drift: an uncommitted production edit outside the allowed
+            // surface after the verdict was bound. HEAD does not move.
+            let production = root.join("src.rs");
+            std::fs::write(&production, "pub fn drifted() {}\n")
+                .map_err(|error| format!("write {} failed: {error}", production.display()))?;
+            if crate::agent::artifact::current_git_head(&root)? != head {
+                return Err("the drift must not move HEAD".to_string());
+            }
+            let drifted = repair_attempt_head_reading(&root, &finished, Some(&head));
+            if drifted.currentness() == "current" {
+                return Err(format!(
+                    "a drifted worktree must not read current: {drifted:?}"
+                ));
+            }
+            // The authority path refuses the same state, and issues the
+            // receipt before the drift.
+            let packet = root.join(&find_manifest_artifact(&finished, "agent_packet")?.path);
+            let attempt = finished.repair_attempt_id.as_str();
+            match receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt)) {
+                Err(error) if error.contains("tampered or stale") => {}
+                other => return Err(format!("receipt must refuse drift: {other:?}")),
+            }
+            std::fs::remove_file(&production)
+                .map_err(|error| format!("remove {} failed: {error}", production.display()))?;
+            let restored = repair_attempt_head_reading(&root, &finished, Some(&head));
+            if restored.currentness() != "current" {
+                return Err(format!(
+                    "reverting the drift must restore current: {restored:?}"
+                ));
+            }
+            receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt))?;
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
     }
 
     /// The after-phase window decision observes the production currentness

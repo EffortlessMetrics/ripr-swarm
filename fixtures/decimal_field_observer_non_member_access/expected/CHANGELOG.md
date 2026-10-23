@@ -357,3 +357,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — decimal_field_observer_non_member_access (31)
+
+Reason:
+RIPR-SPEC-0122: route-not-ready refusal names its missing evidence (#9604 batch C)
+
+Command:
+`cargo xtask goldens bless decimal_field_observer_non_member_access --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

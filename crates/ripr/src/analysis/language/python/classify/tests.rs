@@ -447,12 +447,12 @@ fn activation_controlled_python_tests_do_not_credit_their_assertions() -> Result
     for decorator in [
         "unittest.skip('disabled')",
         "unittest.skipIf(True, 'disabled')",
-        "unittest.skipIf(False, 'runtime condition not evaluated')",
+        "unittest.skipIf(DISABLED, 'runtime condition not evaluated')",
         "unittest.skipUnless(False, 'disabled')",
         "unittest.expectedFailure",
         "pytest.mark.skip(reason='disabled')",
         "pytest.mark.skipif(True, reason='disabled')",
-        "pytest.mark.skipif(False, reason='runtime condition not evaluated')",
+        "pytest.mark.skipif(DISABLED, reason='runtime condition not evaluated')",
         "pytest.mark.xfail(strict=False)",
     ] {
         let test = if decorator == "unittest.expectedFailure" {
@@ -484,6 +484,31 @@ fn activation_controlled_python_tests_do_not_credit_their_assertions() -> Result
                 .any(|line| line.contains("test activation")),
             "{decorator}"
         );
+    }
+    Ok(())
+}
+
+// A boolean-literal condition that never triggers the skip leaves the test
+// running, so its exact oracle credits the edit (#9271 trap controls).
+#[test]
+fn an_inert_literal_skip_condition_keeps_oracle_credit() -> Result<(), String> {
+    for decorator in [
+        "pytest.mark.skipif(False, reason='never')",
+        "pytest.mark.xfail(False, reason='never')",
+        "unittest.skipIf(False, 'never')",
+        "unittest.skipUnless(True, 'never')",
+    ] {
+        let tests = format!(
+            "import unittest\nimport pytest\nfrom src.subject import score\n@{decorator}\ndef test_score():\n    assert score(0) == 8\n"
+        );
+        let finding = classify_case(
+            "def score(value):\n    return 8\n",
+            &tests,
+            2,
+            "    return 7",
+            "    return 8",
+        )?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{decorator}");
     }
     Ok(())
 }
@@ -2403,5 +2428,139 @@ fn value_preserving_wrapper_around_owner_call_keeps_exposed() -> Result<(), Stri
         )?;
         assert_eq!(finding.class, ExposureClass::Exposed, "{body}");
     }
+    Ok(())
+}
+
+/// Changed-line classification with both the old line and the new-side source
+/// threaded in, matching the production diff path.
+fn classify_edit_case(
+    source: &str,
+    tests: &str,
+    line: usize,
+    before: &str,
+    after: &str,
+) -> Result<Finding, String> {
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(Path::new("tests/test_subject.py"), tests);
+    classify_change_with_source(
+        file,
+        line,
+        after,
+        Some(before),
+        &owners,
+        &tests,
+        Some(source),
+    )
+    .ok_or_else(|| "behavioral fixture must produce a finding".to_string())
+}
+
+// #9426: a reversing flip (`>` -> `<`) differs for every unequal pair, so a
+// strong exact call on unequal literals discriminates it; the `a == b`
+// boundary is not what changed.
+#[test]
+fn reversing_flip_with_unequal_inputs_is_not_a_boundary_gap() -> Result<(), String> {
+    let finding = classify_edit_case(
+        "def biggest(a, b):\n    return a if a < b else b\n",
+        "from src.subject import biggest\n\ndef test_biggest():\n    assert biggest(2, 9) == 9\n",
+        2,
+        "    return a if a > b else b",
+        "    return a if a < b else b",
+    )?;
+    assert_owner(&finding, "biggest");
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(finding.activation.missing_discriminators.is_empty());
+    Ok(())
+}
+
+// Discriminating negative: an adjacent flip (`>` -> `>=`) keeps the boundary
+// requirement even with unequal inputs.
+#[test]
+fn adjacent_flip_with_unequal_inputs_stays_a_boundary_gap() -> Result<(), String> {
+    let finding = classify_edit_case(
+        "def biggest(a, b):\n    return a if a >= b else b\n",
+        "from src.subject import biggest\n\ndef test_biggest():\n    assert biggest(2, 9) == 9\n",
+        2,
+        "    return a if a > b else b",
+        "    return a if a >= b else b",
+    )?;
+    assert_owner(&finding, "biggest");
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert!(
+        missing_boundary(&finding, "a == b").is_some(),
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+// #9426: `start` is rebound in the loop body, so the argument 3 reaches 0
+// inside the owner; the boundary is unknown, not missing.
+#[test]
+fn rebound_loop_operand_declines_the_boundary_gap() -> Result<(), String> {
+    let finding = classify_edit_case(
+        "def countdown(start):\n    while start >= 0:\n        yield start\n        start -= 1\n",
+        "from src.subject import countdown\n\ndef test_countdown():\n    assert list(countdown(3)) == [3, 2, 1]\n",
+        2,
+        "    while start > 0:",
+        "    while start >= 0:",
+    )?;
+    assert_owner(&finding, "countdown");
+    assert!(
+        missing_boundary(&finding, "start == 0").is_none(),
+        "{finding:?}"
+    );
+    assert_ne!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    Ok(())
+}
+
+// Discriminating negative: a parameter named only in `if ...:` headers (the
+// trailing `:` is not an annotation) is not rebound and keeps the gap.
+#[test]
+fn parameter_in_condition_headers_keeps_the_boundary_gap() -> Result<(), String> {
+    let finding = classify_edit_case(
+        "def apply_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n",
+        "from src.subject import apply_discount\n\ndef test_apply_discount():\n    assert apply_discount(150, 100) == 140\n",
+        2,
+        "    if amount > threshold:",
+        "    if amount >= threshold:",
+    )?;
+    assert_owner(&finding, "apply_discount");
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    Ok(())
+}
+
+// Discriminating negative: a local assigned once from a parameter is not a
+// call-bound operand, so its assignment must not decline the boundary gap.
+#[test]
+fn derived_local_operand_keeps_the_boundary_gap() -> Result<(), String> {
+    let finding = classify_edit_case(
+        "def parse_age(text):\n    age = int(text)\n    if age <= 0:\n        raise ValueError('bad')\n    return age\n",
+        "import pytest\nfrom src.subject import parse_age\n\ndef test_parse_age():\n    assert parse_age('5') == 5\n    with pytest.raises(ValueError):\n        parse_age('-1')\n",
+        3,
+        "    if age < 0:",
+        "    if age <= 0:",
+    )?;
+    assert_owner(&finding, "parse_age");
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    Ok(())
+}
+
+// Discriminating negative: the same adjacent flip with the operand never
+// rebound keeps the gap.
+#[test]
+fn unrebound_loop_operand_keeps_the_boundary_gap() -> Result<(), String> {
+    let finding = classify_edit_case(
+        "def gate(start):\n    while start >= 0:\n        return start\n    return 0\n",
+        "from src.subject import gate\n\ndef test_gate():\n    assert gate(3) == 3\n",
+        2,
+        "    while start > 0:",
+        "    while start >= 0:",
+    )?;
+    assert_owner(&finding, "gate");
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert!(
+        missing_boundary(&finding, "start == 0").is_some(),
+        "{finding:?}"
+    );
     Ok(())
 }

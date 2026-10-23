@@ -67,6 +67,19 @@ Updated:
 ## Pending — owner_return_pin_err_guard_shadowed_err (6)
 
 Reason:
+RIPR-SPEC-0122: route-not-ready refusal names its missing evidence (#9604 batch C)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_err_guard_shadowed_err --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — owner_return_pin_err_guard_shadowed_err (7)
+
+Reason:
 RIPR-SPEC-0224: multi-line related-test oracle collapses to one human evidence row (#9165); formatting only, no verdict change
 
 Command:
