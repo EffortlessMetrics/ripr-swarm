@@ -289,7 +289,7 @@ Options:
                            badge and warns on stderr. No public ripr command
                            writes that file yet; hand-author the documented
                            minimum shape from real test measurements or wait
-                           for the portable producer tracked in issue #7221.
+                           for the portable producer (not shipped yet).
                            See docs/BADGE_ADOPTION.md.
                            repo-* and agent-seam-packets-json formats render
                            against the full repo baseline; the non-repo badge-*
@@ -346,8 +346,9 @@ Options:
                            settable via RIPR_GIT_TIMEOUT env var.
   --timeout SECS           Wall-clock budget in seconds for the whole
                            diff or worktree analysis (not the repo-wide
-                           repo-exposure and seam formats). When it runs out, check stops
-                           and refuses with analysis_timeout: no findings
+                           repo-exposure and seam formats). When it runs
+                           out, check stops and refuses with
+                           analysis_timeout: no findings
                            are produced and the result is never a clean
                            pass. 0 disables the budget. Default: 600 (10
                            minutes). Also settable via RIPR_CHECK_TIMEOUT
@@ -617,13 +618,18 @@ no repository, runs nothing and promotes no support tier.
 "#;
 pub(super) const DOCTOR_HELP: &str = r#"Diagnose the local ripr setup (workspace, config, toolchains, paths).
 
-Usage: ripr doctor [--root PATH] [--json] [--profile analysis|source-build]
+Usage: ripr doctor [--root PATH] [--json] [--timings] [--profile analysis|source-build]
 
 Options:
-  --root PATH  Diagnose the selected workspace (defaults to `.`).
-  --json       Emit the core checks as stable JSON and use the same exit status.
-  --profile    Check installed-binary analysis (default) or prerequisites for
-               building RIPR from source.
+  --root PATH   Diagnose the selected workspace (defaults to `.`).
+  --json        Emit the core checks as stable JSON and use the same exit status.
+  --timings     With --json, include the volatile timing fields (elapsed_ms,
+                segments). Default --json output is byte-stable across runs
+                that changed nothing: timing fields are omitted. The human
+                screen always prints its run-time summary; --timings only
+                affects --json.
+  --profile     Check installed-binary analysis (default) or prerequisites for
+                building RIPR from source.
 
 Environment variables:
   RIPR_CACHE_DIR  Relocate the cache base directory (all cache reads and
@@ -637,7 +643,8 @@ Environment variables:
 Default human output fits one 80x24 screen: failures first, each with a Fix
 line, then compact passing groups. `-v`/`--verbose` prints binary identity,
 config defaults, test surfaces, Perl preview, known limitations, and start-here
-detail. `--json` is unchanged and remains the complete typed report.
+detail. `--json` remains the complete typed report minus the volatile timing
+fields; pass `--timings` with `--json` to include them.
 
 The JSON report is machine-readable advisory setup evidence. A `fail` status
 means at least one core check failed; it is not a release or gate decision.
