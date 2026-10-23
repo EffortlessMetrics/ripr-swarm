@@ -651,7 +651,12 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
         if let Some(defaults) = environment.facts.config_defaults.as_ref() {
             match &defaults.source_path {
                 Some(path) => {
-                    workspace.push(format!("Config: loaded {CONFIG_FILE_NAME}"));
+                    // A file root can inherit a parent config; the config path
+                    // line below keeps that provenance, but a passing
+                    // Workspace group would read as a healthy root.
+                    if root.is_dir() {
+                        workspace.push(format!("Config: loaded {CONFIG_FILE_NAME}"));
+                    }
                     lines.push(format!("- Config path: {}", display_text(path)));
                     // Init follow-ups replay bare `ripr doctor` to confirm
                     // the written policy (#8168 keeps the rest verbose).

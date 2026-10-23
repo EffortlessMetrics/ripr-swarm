@@ -14915,6 +14915,38 @@ fn doctor_file_root_is_not_reported_as_missing() -> Result<(), String> {
 }
 
 #[test]
+fn doctor_file_root_with_parent_config_has_no_passing_workspace_line() -> Result<(), String> {
+    // #9922: a file root discovers the parent's ripr.toml; the config path
+    // keeps that provenance, but a passing Workspace group must not appear
+    // beside the root failure.
+    let dir = unique_temp_workspace("doctor-file-root-parent-config");
+    std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    std::fs::write(dir.join("ripr.toml"), "[analysis]\nmode = \"draft\"\n")
+        .map_err(|err| err.to_string())?;
+    let file = dir.join("afile.txt");
+    std::fs::write(&file, "not a directory\n").map_err(|err| err.to_string())?;
+    let root = file.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root]);
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    ignore_remove_dir_all(&dir);
+    assert_failure(&output);
+    if !stdout.contains("root is not a directory") {
+        return Err(format!("root failure missing:\n{stdout}"));
+    }
+    if !stdout.contains("- Config path: ") {
+        return Err(format!(
+            "inherited config provenance must stay visible:\n{stdout}"
+        ));
+    }
+    if stdout.contains("✓ Workspace") || stdout.contains("Config: loaded ripr.toml") {
+        return Err(format!(
+            "a file root must not render a passing Workspace group:\n{stdout}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn doctor_recommends_worktree_check_on_dirty_worktree() -> Result<(), String> {
     // First-run honesty: doctor must not route a user with uncommitted edits to
     // `ripr check --base origin/main`, which analyzes committed history only and
