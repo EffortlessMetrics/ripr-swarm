@@ -723,6 +723,10 @@ const PORTABLE_TESTS: &[&str] = &[
     "check_help_is_one_screen_and_all_is_the_full_reference",
     "check_help_all_is_a_parsed_flag_not_a_raw_scan",
     "check_help_wins_over_later_option_values",
+    "default_help_discloses_exit_codes_and_global_verbose",
+    "per_command_help_renders_the_catalog_example",
+    "help_all_rejects_trailing_arguments",
+    "help_all_flag_pair_is_rejected_outside_check",
 ];
 
 #[test]
