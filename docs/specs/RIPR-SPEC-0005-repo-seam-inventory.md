@@ -286,6 +286,12 @@ seam when the current shape is broad, smoke-only, or unknown. These semantics
 do not change `oracle_kind`, `oracle_strength`, relation confidence, or static
 classification; they make the existing oracle facts actionable.
 
+A standard-crate glob that is a direct item of an inline module is resolved
+against that module's own items only, so `mod core { pub use core::*; }` does
+not shadow the real root and no longer makes every assertion macro ambiguous
+workspace-wide; a binding of the root name in that module, or an item-position
+macro call that may emit one, keeps the whole-file refusal.
+
 ### Constructor-field observation linkage
 
 For a `field_construction` seam, repo-scoped evidence may link an exact-field

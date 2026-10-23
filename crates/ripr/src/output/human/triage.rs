@@ -362,33 +362,46 @@ pub(crate) fn render_human_triage(
             // The refusal advisory is not gated on the static-limited state:
             // a static-limited finding whose seam the gate concretely
             // refused must name that refusal, not merge into the limitation.
-            match navigation.repair_route_for(&finding.id) {
-                Some(route) => {
-                    if !is_static_limited(finding) {
-                        let command = navigation.repair_command(&route.seam_id);
-                        if let Some(file) = route.uncommitted_target.as_deref() {
-                            // `ripr repair` would refuse this start: its
-                            // inline test module target begins from the
-                            // committed file. State the requirement instead
-                            // of a command that exits 2.
-                            let alternative = if stub_rendered {
-                                ", or use the test route below"
-                            } else {
-                                ""
-                            };
-                            out.push_str(&format!(
+            // #9103: a TypeScript finding with a validated repair packet gets
+            // a gap-bound start in place of the seam-bound line. Computed by
+            // the same pipeline step; static-limited findings never get one.
+            let gap_route = navigation.gap_repair_route_for(&finding.id);
+            if let Some(route) = gap_route {
+                if !is_static_limited(finding) {
+                    let command = navigation.gap_repair_command(route);
+                    out.push_str(&format!("  {command}\n"));
+                    super::push_powershell_variant(out, "  ", &command);
+                }
+            } else {
+                match navigation.repair_route_for(&finding.id) {
+                    Some(route) => {
+                        if !is_static_limited(finding) {
+                            let command = navigation.repair_command(&route.seam_id);
+                            if let Some(file) = route.uncommitted_target.as_deref() {
+                                // `ripr repair` would refuse this start: its
+                                // inline test module target begins from the
+                                // committed file. State the requirement instead
+                                // of a command that exits 2.
+                                let alternative = if stub_rendered {
+                                    ", or use the test route below"
+                                } else {
+                                    ""
+                                };
+                                out.push_str(&format!(
                                 "  Repair start (needs a committed `{file}`; it has uncommitted changes, so commit or stash it first{alternative}): {command}\n"
                             ));
-                        } else {
-                            out.push_str(&format!("  {command}\n"));
-                            super::push_powershell_variant(out, "  ", &command);
+                            } else {
+                                out.push_str(&format!("  {command}\n"));
+                                super::push_powershell_variant(out, "  ", &command);
+                            }
                         }
                     }
-                }
-                None => {
-                    if let Some(refusal) = navigation.repair_route_refusal() {
-                        let advisory = refusal.advisory(&navigation.repair_command(&finding.id));
-                        out.push_str(&format!("  {advisory}\n"));
+                    None => {
+                        if let Some(refusal) = navigation.repair_route_refusal() {
+                            let advisory =
+                                refusal.advisory(&navigation.repair_command(&finding.id));
+                            out.push_str(&format!("  {advisory}\n"));
+                        }
                     }
                 }
             }
@@ -1271,6 +1284,7 @@ mod tests {
 
     fn test_finding(id: &str) -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: id.to_string(),
             canonical_gap: None,
             probe: Probe {

@@ -79,6 +79,21 @@ file occurrence under a closed rule set:
   declarations. The single-identity index marks children from distinct
   anchors `rust_module_ambiguous_parent`, even if only one layout is indexed;
   it does not choose an anchor or mint an evidence role from partial context.
+- **Distinct Cargo target roots are not competing parents.** When every owner
+  of a child is a different file that is a Cargo target crate root
+  (autodiscovered `src/lib.rs`, `src/main.rs`, `src/bin/*.rs`,
+  `tests|benches|examples/*.rs`, or a manifest-declared target path), no owner
+  is itself a module child or an `include!` target (an included root may sit
+  behind a context the owners no longer share), and all declarations agree on name and test
+  requirement, each root compiles its own copy of the child, so there is no
+  single-module-graph conflict (tracing `benches/shared.rs`, crossbeam-channel
+  `benchmarks/message.rs`). The child's location is unconstrained. Any
+  non-root owner, repeated owner file, disagreeing declaration, owner already
+  in the ambiguous set, or unresolved include limitation anywhere in the index
+  stays ambiguous. Test: `target_root_exemption_conjuncts_each_fail_closed`
+  in `facts/role_composition.rs`. Non-claim: crate-root detection (`CrateRoots`) ignores
+  `autobins`/`autotests`/`autobenches`/`autoexamples = false`, so a disabled
+  autodiscovered layout file is still treated as a root.
 - **Exclusive cfg alternatives are one owner.** Exactly two `mod name;`
   declarations in one parent file that resolve to the same child, have the same
   declared name and test requirement, and carry complementary simple guards

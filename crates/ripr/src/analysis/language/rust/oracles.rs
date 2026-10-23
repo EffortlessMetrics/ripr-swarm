@@ -961,6 +961,7 @@ mod tests {
         test_line: usize,
     ) -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_lib.rs:predicate:test".to_string(),
             canonical_gap: None,
             probe: Probe {

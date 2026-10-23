@@ -400,7 +400,7 @@ fn uncertainty_next_step(
         crate::domain::ASSERTION_SHAPED_INFECTION_UNKNOWN_NEXT_STEP.to_string()
     } else {
         match class {
-            ExposureClass::InfectionUnknown => "Trace the related test input through the local or computed operand, including default/empty cases, to check whether the change matters. ripr.toml does not support fixture/builder value mappings.",
+            ExposureClass::InfectionUnknown => "Open the related test and trace its input through the local or computed operand (including default and empty cases) to see which side of the changed condition it exercises, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings.",
             ExposureClass::PropagationUnknown => "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes.",
             _ => "Inspect the changed behavior and its existing tests; ripr has not established a test gap.",
         }.to_string()
@@ -522,6 +522,46 @@ mod tests {
                 &"No detected assertion observes the changed value, error, field, or effect"
                     .to_string()
             )
+        );
+    }
+
+    // #9244 item 5: the infection_unknown next step names a concrete action
+    // (open the test, find the side of the condition it exercises, name an
+    // input for the other side) instead of an open-ended "trace" instruction.
+    #[test]
+    fn infection_unknown_next_step_names_a_concrete_action() {
+        let step = recommended_next_step(
+            &probe(ProbeFamily::Predicate, "amount >= threshold"),
+            &ExposureClass::InfectionUnknown,
+            false,
+            &[],
+        )
+        .unwrap_or_default();
+        assert!(
+            step.starts_with(
+                "Open the related test and trace its input through the local or computed operand"
+            ),
+            "{step}"
+        );
+        assert!(
+            step.contains("then name an input that would exercise the other side"),
+            "{step}"
+        );
+        assert!(
+            !step.contains("to check whether the change matters"),
+            "{step}"
+        );
+        // The assertion-shaped owner reframing is unchanged.
+        let shaped = recommended_next_step(
+            &probe(ProbeFamily::Predicate, "amount >= threshold"),
+            &ExposureClass::InfectionUnknown,
+            true,
+            &[],
+        )
+        .unwrap_or_default();
+        assert!(
+            shaped.starts_with("The changed owner is an assertion helper"),
+            "{shaped}"
         );
     }
 

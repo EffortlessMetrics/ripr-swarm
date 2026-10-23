@@ -4892,7 +4892,12 @@ mod tests {
         // to `weakly_exposed` (RIPR-SPEC-0260); each card names the missing
         // discriminator and stays direct-aligned. Their `_control` twins reach
         // the edit, stay exposed and carry no card.
-        if (direct, no_strong, orthogonal, family_selection) != (8, 26, 14, 1) {
+        // #9184: `python_else_arm_no_exposed_credit` downgrades a changed else-arm
+        // return to `weakly_exposed` (RIPR-SPEC-0260); the card is direct-aligned.
+        // #9185: `python_message_pin_no_exposed_credit` downgrades a message-only
+        // `raise` edit under a pattern that fits both messages to `weakly_exposed`
+        // (RIPR-SPEC-0238); the card is direct-aligned.
+        if (direct, no_strong, orthogonal, family_selection) != (10, 26, 14, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

@@ -4410,7 +4410,11 @@ fn shared_return_admission_uses_the_outer_invocation_identity() {
         "pretty_assertions::assert_eq!(weight(input), 12);",
         "similar_asserts :: assert_eq !(weight(input), 12);",
     ] {
-        assert!(is_admission_gated_assert_eq(assertion), "{assertion}");
+        assert_eq!(
+            OwnerPinSyntax::assertion_macro_name(assertion).as_deref(),
+            Some("assert_eq"),
+            "{assertion}"
+        );
     }
     for assertion in [
         "assert!({ assert_eq!(weight(input), 12); true });",
@@ -4419,8 +4423,21 @@ fn shared_return_admission_uses_the_outer_invocation_identity() {
         "pretty_assertions::nested::assert_eq!(weight(input), 12);",
         "matches!(value, Some(_));",
         "match value { _ => assert_eq!(weight(input), 12) }",
+        // A leading prefix token is not part of the macro path (#8927).
+        "if matches!(1, 2) { assert_eq!(weight(input), 12); }",
+        "if !cfg!(test) { assert_eq!(weight(input), 12); }",
+        "if cfg!(any()) { assert_eq!(weight(input), 12); }",
+        "if!cfg!(test) { assert_eq!(weight(input), 12); }",
+        "matches!(1, 2) && { assert_eq!(weight(input), 12); true };",
+        "!true && { assert_eq!(weight(input), 12); true };",
+        "if ::core::matches!(1, 2) { assert_eq!(weight(input), 12); }",
+        "while ::std::cfg!(any()) { assert_eq!(weight(input), 12); }",
     ] {
-        assert!(!is_admission_gated_assert_eq(assertion), "{assertion}");
+        assert_ne!(
+            OwnerPinSyntax::assertion_macro_name(assertion).as_deref(),
+            Some("assert_eq"),
+            "{assertion}"
+        );
     }
 }
 
@@ -7482,6 +7499,7 @@ fn analyzer_limit_refusals_are_limits_of_ripr_reading() {
         syntax(AssertionContextRefusal::UnidentifiedTest),
         syntax(AssertionContextRefusal::AsyncTest),
         syntax(AssertionContextRefusal::DuplicateSpelling),
+        syntax(AssertionContextRefusal::DuplicateSpellingOneRuns),
         syntax(AssertionContextRefusal::StaleSource),
         syntax(AssertionContextRefusal::TestAttribute(
             "#[cfg(any(feature = \"std\", not(no_core_net)))]".to_string(),
@@ -12176,6 +12194,10 @@ fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() -> Resu
         "use ::core::arch::x86::*;\n",
         "use core::{simd::*, mem};\n",
         "mod inner {\n    use std::collections::*;\n}\n",
+        // #9676: serde_core's facade. A path in a module resolves only against
+        // that module's own items, so a module named `core` beside the glob
+        // (here, the one holding it) does not shadow the standard root.
+        "mod lib {\n    mod core {\n        #[cfg(not(feature = \"std\"))]\n        pub use core::*;\n        #[cfg(feature = \"std\")]\n        pub use std::*;\n    }\n}\n",
     ] {
         assert_eq!(refusal_beside(sibling), None, "{sibling}");
     }
@@ -12197,6 +12219,12 @@ fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() -> Resu
         "mod core {}\nuse core::simd::prelude::*;\n",
         "extern crate other as std;\nuse std::io::prelude::*;\n",
         "use other as core;\nuse core::simd::prelude::*;\n",
+        // The module-local admission still refuses a binding in the glob's own
+        // module, and an item-position macro that may emit one.
+        "mod lib {\n    mod core {\n        mod std {}\n        pub use std::*;\n    }\n}\n",
+        "mod lib {\n    mod core {\n        use other as std;\n        pub use std::*;\n    }\n}\n",
+        "mod lib {\n    mod core {\n        mod core {}\n        pub use core::*;\n    }\n}\n",
+        "mod lib {\n    mod core {\n        emit!();\n        pub use core::*;\n    }\n}\n",
         // A plain import that binds the root name, by path or by `{self}`,
         // takes it over for the module.
         "use other::std;\nuse std::io::prelude::*;\n",

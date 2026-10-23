@@ -472,7 +472,7 @@ pub(crate) fn render_with_config(
                 3,
                 "why",
                 &format!(
-                    "empty working-tree range: the merge base of {base} and HEAD to the working tree contains no changed tracked files; nothing was analyzed because nothing changed"
+                    "empty working-tree range: the merge base of {base} and HEAD to the working tree has no analyzable changed files; nothing was analyzed; deleted files, submodule pointer changes and files ripr does not analyze are not counted, so this does not mean no behavior changed"
                 ),
                 false,
             );
@@ -482,7 +482,7 @@ pub(crate) fn render_with_config(
                 3,
                 "why",
                 &format!(
-                    "empty range: {base}...HEAD contains no changed files; nothing was analyzed because nothing changed"
+                    "empty range: {base}...HEAD has no analyzable changed files; nothing was analyzed; deleted files, submodule pointer changes and files ripr does not analyze are not counted, so this does not mean no behavior changed"
                 ),
                 false,
             );
@@ -1999,6 +1999,7 @@ mod evidence_path_separator_tests {
 
     fn finding_with_related(file: &str) -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_lib_rs:9:error_path".to_string(),
             canonical_gap: None,
             probe: Probe {
