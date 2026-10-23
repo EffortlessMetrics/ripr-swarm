@@ -294,15 +294,18 @@ impl RepoScopedInventoryCache {
                 Some((metadata.modified().ok()?, entry.path()))
             })
             .collect::<Vec<_>>();
-        if entries.len() <= RETAINED_ENTRIES {
+        // The entry just written is always kept; the newest `RETAINED - 1`
+        // others join it. Ties on modification time break by file name, so
+        // the kept set is deterministic and never miscounted.
+        entries.retain(|(_, path)| path != just_written);
+        if entries.len() < RETAINED_ENTRIES {
             return;
         }
         entries.sort();
-        let excess = entries.len() - RETAINED_ENTRIES;
+        let excess = entries.len() - (RETAINED_ENTRIES - 1);
         for (_, path) in entries.into_iter().take(excess) {
-            if path != just_written
-                && let Ok(()) = std::fs::remove_file(&path)
-            {}
+            // Best effort: a stranded old entry costs only disk space.
+            let _ = std::fs::remove_file(&path);
         }
     }
 }
@@ -588,6 +591,33 @@ mod tests {
             "an over-ceiling store must write nothing"
         );
         assert!(allowed, "an under-ceiling store must succeed");
+        Ok(())
+    }
+
+    #[test]
+    fn tied_modification_times_never_drop_the_entry_just_written() -> Result<(), String> {
+        let dir = scratch("prune-tie")?;
+        let cache = RepoScopedInventoryCache::at_dir(dir.clone());
+        let tied = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+        let mut paths = Vec::new();
+        for index in 0..(RETAINED_ENTRIES + 3) {
+            let path = dir.join(format!("{index:016x}.json"));
+            let file = std::fs::File::create(&path).map_err(|error| format!("create: {error}"))?;
+            file.set_modified(tied)
+                .map_err(|error| format!("set mtime: {error}"))?;
+            paths.push(path);
+        }
+        // The just-written entry sorts first by name, the worst tie case.
+        let written = paths[0].clone();
+        cache.prune(&written);
+        let remaining: Vec<bool> = paths.iter().map(|path| path.exists()).collect();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(remaining[0], "the entry just written must survive a tie");
+        assert_eq!(
+            remaining.iter().filter(|kept| **kept).count(),
+            RETAINED_ENTRIES,
+            "exactly the retained count must remain: {remaining:?}"
+        );
         Ok(())
     }
 }

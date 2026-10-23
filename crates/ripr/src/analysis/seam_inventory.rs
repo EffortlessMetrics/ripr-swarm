@@ -2148,7 +2148,8 @@ fn inventory_diff_scoped_classified_seams_inner(
     }
     // One cache handle per call, so the Git tracked-files probe of the cache
     // root runs at most once for the lookup and the store.
-    let persisted_cache = reuse_identity.map(|_| RepoScopedInventoryCache::at(root));
+    let persisted_cache =
+        reuse_identity.map(|_| crate::analysis::seam_cache::RepoScopedInventoryCache::at(root));
     if let Some(identity) = reuse_identity
         && let Some(cache) = persisted_cache.as_ref()
         && let Some(mut persisted) =
@@ -2160,6 +2161,9 @@ fn inventory_diff_scoped_classified_seams_inner(
             Duration::ZERO,
         );
         persisted.absent_changed_files = absent_changed_files;
+        // The disk entry is for the hashed corpus; confirm the corpus is
+        // still those bytes before accepting it or seeding the process.
+        state.verify_corpus_unchanged()?;
         cancellation::checkpoint()?;
         bound_inventory_reuse::store(&workspace_cache_key, identity, &persisted);
         return Ok(persisted);
@@ -3122,6 +3126,29 @@ impl OwnedWorkspaceState {
             ));
         }
         Ok(cached)
+    }
+
+    /// Re-read the corpus and require the bytes this state hashed (#9899).
+    /// `build_index` makes this second-read check on the computing path; a
+    /// persisted result is served without building an index, so it makes the
+    /// same check here, over the same file set and hash, before it is
+    /// accepted. A moved source is refused exactly as on the cold path.
+    fn verify_corpus_unchanged(&self) -> Result<(), String> {
+        let mut builder = FilesContentHashBuilder::new();
+        for path in &self.files {
+            cancellation::checkpoint()?;
+            let bytes = std::fs::read(self.workspace_root.join(path))
+                .map_err(|err| format!("read {} failed: {err}", path.display()))?;
+            builder.push(path, &bytes);
+        }
+        if builder.finish() == self.files_content_hash {
+            Ok(())
+        } else {
+            Err(format!(
+                "workspace Rust sources under {} changed during analysis; retry the run",
+                self.workspace_root.display()
+            ))
+        }
     }
 
     fn cache_key(&self) -> super::seam_cache::RepoSeamCacheKey {
@@ -8654,6 +8681,105 @@ marker = "libtest_mimic::Trial"
         let _ = std::fs::remove_dir_all(&root);
         assert!(reused_in_process, "a disk hit must also seed the process");
         assert_eq!(scoped_projection(&again)?, scoped_projection(&cold)?);
+        Ok(())
+    }
+
+    /// #9899: a source that moves between the hashing read and the persisted
+    /// lookup is refused exactly like the computing path, with no in-process
+    /// entry to hide behind, and a refused run serves nothing.
+    #[test]
+    fn bound_seams_persisted_hit_refuses_a_source_moved_after_hashing() -> Result<(), String> {
+        let root = make_tempdir("bound-seams-persisted-moved")?;
+        bound_seams_layout(&root)?;
+        let config = RiprConfig::default();
+        let changed = [PathBuf::from("src/pricing.rs")];
+        let owners = ["discounted_total".to_string()];
+        let identity = {
+            let keys = changed
+                .iter()
+                .map(|path| inventory_scope_key(path))
+                .collect::<BTreeSet<_>>();
+            let names = owners.iter().map(String::as_str).collect::<BTreeSet<_>>();
+            bound_seams_reuse_identity(&keys, &names)
+        };
+        let cold =
+            inventory_diff_scoped_bound_seams_at_with_config(&root, &config, &changed, &owners)?;
+        assert_eq!(persisted_entries(&root).len(), 1, "cold run must persist");
+
+        // Stable-input parity: a new process serves the same bytes.
+        bound_inventory_reuse::forget(&cold.workspace_cache_key, &identity);
+        let stable =
+            inventory_diff_scoped_bound_seams_at_with_config(&root, &config, &changed, &owners)?;
+        assert_eq!(scoped_projection(&stable)?, scoped_projection(&cold)?);
+
+        // New process again; the source moves right after the hashing read.
+        bound_inventory_reuse::forget(&cold.workspace_cache_key, &identity);
+        let pricing = root.join("src/pricing.rs");
+        let edit = pricing.clone();
+        between_passes::install(&root, move || {
+            let _ = std::fs::write(
+                &edit,
+                "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount > threshold { amount - 10 } else { amount }\n}\n",
+            );
+        });
+        evaluation_probe::reset();
+        let refused =
+            inventory_diff_scoped_bound_seams_at_with_config(&root, &config, &changed, &owners);
+        let evaluated = evaluation_probe::evaluated();
+        let seeded = bound_inventory_reuse::lookup(&cold.workspace_cache_key, &identity).is_some();
+        let _ = std::fs::remove_dir_all(&root);
+        match refused {
+            Err(message) if message.contains("changed during analysis") => {}
+            other => return Err(format!("a moved source must be refused, got {other:?}")),
+        }
+        assert_eq!(evaluated, 0, "the refusal must not classify anything");
+        assert!(!seeded, "a refused hit must not seed the process store");
+        Ok(())
+    }
+
+    /// #9899: a same-length source edit with the modification time restored
+    /// still misses the persisted entry, because the key is content-based.
+    #[test]
+    fn bound_seams_persisted_entry_misses_a_same_length_edit_with_restored_mtime()
+    -> Result<(), String> {
+        let root = make_tempdir("bound-seams-persisted-mtime")?;
+        bound_seams_layout(&root)?;
+        let config = RiprConfig::default();
+        let changed = [PathBuf::from("src/pricing.rs")];
+        let owners = ["discounted_total".to_string()];
+        let pricing = root.join("src/pricing.rs");
+        let cold =
+            inventory_diff_scoped_bound_seams_at_with_config(&root, &config, &changed, &owners)?;
+        let identity = {
+            let keys = changed
+                .iter()
+                .map(|path| inventory_scope_key(path))
+                .collect::<BTreeSet<_>>();
+            let names = owners.iter().map(String::as_str).collect::<BTreeSet<_>>();
+            bound_seams_reuse_identity(&keys, &names)
+        };
+        bound_inventory_reuse::forget(&cold.workspace_cache_key, &identity);
+
+        let modified = std::fs::metadata(&pricing)
+            .and_then(|metadata| metadata.modified())
+            .map_err(|error| format!("stat: {error}"))?;
+        let original = std::fs::read_to_string(&pricing).map_err(|error| error.to_string())?;
+        let edited = original.replace(">=", "> ");
+        assert_eq!(edited.len(), original.len(), "the edit keeps the length");
+        write_file(&pricing, &edited)?;
+        std::fs::File::options()
+            .write(true)
+            .open(&pricing)
+            .and_then(|file| file.set_modified(modified))
+            .map_err(|error| format!("restore mtime: {error}"))?;
+
+        evaluation_probe::reset();
+        let warm =
+            inventory_diff_scoped_bound_seams_at_with_config(&root, &config, &changed, &owners)?;
+        let evaluated = evaluation_probe::evaluated();
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(evaluated > 0, "a content change must recompute");
+        assert_ne!(scoped_projection(&warm)?, scoped_projection(&cold)?);
         Ok(())
     }
 
