@@ -2716,7 +2716,14 @@ fn inside_triple_quoted_string(text: &str, idx: usize) -> bool {
         let rest = &text[cursor..];
         if let Some((delimiter, formatted)) = triple {
             if let Some(escaped) = rest.strip_prefix('\\') {
-                cursor += 1 + escaped.chars().next().map_or(0, char::len_utf8);
+                // In an f-string a backslash before a brace is a literal
+                // character on its own; the brace then lexes normally.
+                let brace = formatted && matches!(escaped.chars().next(), Some('{' | '}'));
+                cursor += 1 + if brace {
+                    0
+                } else {
+                    escaped.chars().next().map_or(0, char::len_utf8)
+                };
             } else if rest.starts_with(delimiter) {
                 triple = None;
                 cursor += delimiter.len();
@@ -2921,7 +2928,18 @@ fn fstring_field_scan(
                             nested.len
                         }
                         Some(triple) => triple_literal_len(literal, triple)?,
-                        None => single_line_string_len(literal),
+                        None => {
+                            let len = single_line_string_len(literal);
+                            // A single-line f-string with a field of its own may
+                            // nest its own quote (Python 3.12), which the quote
+                            // pairing cannot follow: give up and hide.
+                            if string_prefix_is_f_string(rest, index)
+                                && literal[..len].contains('{')
+                            {
+                                return None;
+                            }
+                            len
+                        }
                     };
                     if target >= index && target < index + len {
                         return hidden(index + len);
@@ -2967,10 +2985,16 @@ fn nested_fstring_scan(
     while index < bytes.len() {
         let tail = &bytes[index..];
         if bytes[index] == b'\\' {
-            if target >= index && target < index + 2 {
-                return hidden(index + 2);
+            // A backslash before a brace is a literal character on its own.
+            let step = if matches!(bytes.get(index + 1), Some(b'{' | b'}')) {
+                1
+            } else {
+                2
+            };
+            if target >= index && target < index + step {
+                return hidden(index + step);
             }
-            index += 2;
+            index += step;
         } else if tail.starts_with(triple.as_bytes()) {
             let len = index + triple.len();
             return Some(NestedFString {

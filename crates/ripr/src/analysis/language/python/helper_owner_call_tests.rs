@@ -453,6 +453,11 @@ fn direct_call_finding(tests_source: &str) -> Result<Finding, String> {
     let source = "def helper(x):\n    return x + 1\n";
     let owners = extract_owners(Path::new("src/version.py"), source);
     let tests = extract_tests(Path::new("tests/test_version.py"), tests_source);
+    if tests.len() != 1 {
+        return Err(format!(
+            "the parser must admit exactly one test: {tests_source:?}"
+        ));
+    }
     classify_change(
         Path::new("src/version.py"),
         2,
@@ -461,6 +466,20 @@ fn direct_call_finding(tests_source: &str) -> Result<Finding, String> {
         &tests,
     )
     .ok_or_else(|| "expected a finding for the changed helper line".to_string())
+}
+
+/// Indent every line that is not already indented, so the whole row stays in
+/// the test function body.
+fn indent_into_test_body(body: &str) -> String {
+    body.split_inclusive('\n')
+        .map(|line| {
+            if line.starts_with("    ") {
+                line.to_string()
+            } else {
+                format!("    {line}")
+            }
+        })
+        .collect()
 }
 
 fn call_credit(finding: &Finding) -> bool {
@@ -484,11 +503,8 @@ fn given_literal_spec_or_nested_literal_text_then_the_classifier_credits_no_call
         "    assert f\"\"\"v\n{\n    '''\n    helper(0)\n    '''\n}\"\"\" == 'v'\n",
         "    assert f'''v\n{\n    \"\"\"\n    helper(0)\n    \"\"\"\n}''' == 'v'\n",
         "    assert f\"\"\"v\n{ len('''\n  { helper(0) }\n  }''') }\"\"\" == 'v'\n",
-        "    assert f\"\"\"\n{x  # (\n}\nhelper(0)\n}}\n\"\"\" == 'v'\n",
-        "    x = f\"\"\"{\n  \"\"\"\n  helper(0)\n  \"\"\"\n}\"\"\"\n    assert x == 'v'\n",
-        "    x = f\'\'\'{\n  \'\'\'\n  helper(0)\n  \'\'\'\n}\'\'\'\n    assert x == 'v'\n",
     ] {
-        let body = body.replace('\n', "\n    ");
+        let body = indent_into_test_body(body);
         let tests = format!("from src.version import helper\n\n\ndef test_x():\n{body}");
         let finding = direct_call_finding(&tests)?;
         assert!(!call_credit(&finding), "{body:?}: {finding:?}");
@@ -507,7 +523,7 @@ fn given_real_field_calls_then_the_classifier_credits_a_syntactic_call() -> Resu
         "    assert f\"\"\"v\n{ (lambda:\n    helper(0))() }\"\"\" == 'v'\n",
         "    assert f\"\"\"v\n{ \"}\"\n    + str(helper(0)) }\"\"\" == 'v'\n",
     ] {
-        let body = body.replace('\n', "\n    ");
+        let body = indent_into_test_body(body);
         let tests = format!("from src.version import helper\n\n\ndef test_x():\n{body}");
         let finding = direct_call_finding(&tests)?;
         assert!(call_credit(&finding), "{body:?}: {finding:?}");
@@ -536,6 +552,105 @@ fn given_crlf_line_endings_then_a_continued_string_hides_its_continuation_line()
     assert!(sees_call("x = \"about \\\r\nmore\"\r\nhelper(1)\r\n"));
     // Without a backslash the CRLF ends the string line.
     assert!(sees_call("x = \"about\"\r\nhelper(1)\r\n"));
+}
+
+#[test]
+fn given_a_backslash_before_a_brace_in_an_f_string_then_the_brace_still_lexes() {
+    for body in [
+        // `\{{` is a literal backslash and an escaped brace: no field.
+        "x = f\"\"\"\n\\{{\nhelper(1)\n}}\"\"\"\n",
+        "x = f'''\n\\{{x}}\nhelper(1)\n'''\n",
+        "x = f\"\"\"\\}}\nhelper(1)\n\"\"\"\n",
+        // The same text in a nested f-string literal in a field.
+        "x = f\"\"\"{\nf'''\n\\{{\nhelper(1)\n}}'''\n}\"\"\"\n",
+    ] {
+        assert!(!sees_call(body), "{body:?}");
+    }
+    for body in [
+        // `\{` is a literal backslash and a real field.
+        "x = f\"\"\"\n\\{\nhelper(1)\n}\"\"\"\n",
+        "x = f'''\n\\{\nhelper(1)\n}'''\n",
+        "x = f\"\"\"{\nf'''\n\\{\nhelper(1)\n}'''\n}\"\"\"\n",
+    ] {
+        assert!(sees_call(body), "{body:?}");
+    }
+    // A backslash still escapes an ordinary character, and a non-f string
+    // keeps hiding its braces.
+    assert!(!sees_call("x = \"\"\"\n\\{\nhelper(1)\n}\"\"\"\n"));
+    assert!(!sees_call("x = f\"\"\"\n\\\"\"\"\nhelper(1)\n\"\"\"\n"));
+}
+
+#[test]
+fn given_a_backslash_before_a_brace_then_the_classifier_credits_only_a_real_field()
+-> Result<(), String> {
+    let negative = direct_call_finding(
+        "from src.version import helper\n\n\ndef test_x():\n    assert f\"\"\"\n    \\{{\n    helper(0)\n    }}\"\"\" == 'v'\n",
+    )?;
+    assert!(!call_credit(&negative), "{negative:?}");
+    assert_eq!(negative.class, ExposureClass::NoStaticPath);
+    let positive = direct_call_finding(
+        "from src.version import helper\n\n\ndef test_x():\n    assert f\"\"\"\n    \\{\n    helper(0)\n    }\"\"\" == 'v'\n",
+    )?;
+    assert!(call_credit(&positive), "{positive:?}");
+    Ok(())
+}
+
+#[test]
+fn given_same_quote_nesting_in_a_single_line_f_string_field_then_the_rest_stays_hidden() {
+    for body in [
+        "x = f\"\"\"\n{ f'x{ 'helper(1)' }z' }\"\"\"\n",
+        "x = f'''\n{ f\"x{ \"helper(1)\" }z\" }'''\n",
+    ] {
+        assert!(!sees_call(body), "{body:?}");
+    }
+    // A single-line f-string without a field of its own is skipped locally.
+    assert!(sees_call(
+        "x = f\"\"\"{\n  'x'\n  + str(helper(1))\n}\"\"\"\n"
+    ));
+}
+
+fn nested_f_strings(levels: usize) -> String {
+    let mut inner = "helper(1)".to_string();
+    for level in (1..=levels).rev() {
+        let delimiter = if level % 2 == 1 { "'''" } else { "\"\"\"" };
+        inner = format!("f{delimiter}{{\n{inner}\n}}{delimiter}");
+    }
+    format!("x = f\"\"\"{{\n{inner}\n}}\"\"\"\n")
+}
+
+#[test]
+fn given_deeply_nested_f_strings_then_the_depth_limit_hides_rather_than_exposes() {
+    assert!(sees_call(&nested_f_strings(1)));
+    assert!(sees_call(&nested_f_strings(4)));
+    assert!(!sees_call(&nested_f_strings(5)));
+    assert!(!sees_call(&nested_f_strings(8)));
+}
+
+#[test]
+fn given_degenerate_nested_f_string_text_then_the_call_lexer_never_panics() {
+    let inputs = [
+        "x = f\"\"\"{\nf'''",
+        "x = f\"\"\"{\nf'''abc",
+        "x = f\"\"\"{\nf'''\\",
+        "x = f\"\"\"{\nf'''\\\u{e9}",
+        "x = f\"\"\"{\nf'''\\\u{1f600}{helper(1)}'''\n}\"\"\"",
+        "x = f\"\"\"{\nf'''{",
+        "x = f\"\"\"{\nf'''{{",
+        "x = f\"\"\"{\nf'''\\{",
+        "x = f\"\"\"{\nf'''\\}",
+        "x = f\"\"\"{\nf'''{x:",
+        "x = f\"\"\"{\n'''\\",
+        "x = f\"\"\"{ f'x{ 'a",
+        "x = f\"\"\"\\",
+        "x = f\"\"\"\\{",
+        "x = f\"\"\"\\\u{e9}{helper(1)}\"\"\"",
+    ];
+    for input in inputs {
+        let _ = related_tests::contains_call_name(input, "helper");
+        for (idx, _) in input.char_indices().chain([(input.len(), ' ')]) {
+            let _ = related_tests::python_text_hides_code(input, idx);
+        }
+    }
 }
 
 #[test]
