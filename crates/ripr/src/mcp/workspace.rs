@@ -347,7 +347,7 @@ pub(crate) struct Snapshot {
 pub(crate) struct ScopeFacts {
     pub(crate) uncommitted_edits: bool,
     pub(crate) untracked: Vec<String>,
-    /// Gitignored Rust files the diff source could not analyze (#7467).
+    /// Gitignored source files the diff source could not analyze (#7467).
     pub(crate) ignored: Vec<String>,
 }
 
@@ -610,7 +610,7 @@ impl WorkspaceSession {
             return Err(AttemptFailure::new(
                 CODE_ANALYSIS_IN_FLIGHT,
                 "an analysis attempt is running",
-                "poll ripr_workspace_status until attempt_state leaves in_flight, then retry",
+                "wait for the running attempt to finish (the stdio transport answers one request at a time, so a pipelined request is served after it), then retry",
             ));
         }
         let Some(snapshot) = &self.last_good else {
@@ -845,6 +845,16 @@ impl WorkspaceSession {
             "schema_version": GAP_LIST_SCHEMA_VERSION,
             "snapshot_id": snapshot.snapshot_id,
             "requested_snapshot_id": scope.requested,
+            "outcome": {
+                "kind": snapshot.outcome.kind.as_str(),
+                "label": snapshot.outcome.kind.plain_label(),
+                "limitations": snapshot
+                    .outcome
+                    .limitations
+                    .iter()
+                    .map(|limitation| limitation.kind.as_str())
+                    .collect::<Vec<_>>(),
+            },
             "snapshot_profile_budget_identity": selection.snapshot_profile_budget_identity,
             "selection_basis_version": selection.selection_basis_version,
             "budget": {
@@ -1109,21 +1119,45 @@ fn scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
         return disclosure;
     }
     const NAMED_PATHS: usize = 3;
+    // #9604 batch G finding 34: the ignored-files wording names the languages
+    // the snapshot actually analyzed, derived from the committed findings, so
+    // a Python or five-language workspace is not mislabeled "Rust".
+    let language_label = analyzed_language_label(&snapshot.findings);
     let ignored_edits = json!({
         "files": scope.ignored.iter().take(NAMED_PATHS).collect::<Vec<_>>(),
         "total": scope.ignored.len(),
         "more": scope.ignored.len().saturating_sub(NAMED_PATHS),
-        "remedy": "gitignored Rust files were excluded and not analyzed; neither the committed diff nor plain `--worktree` sees them. Stage them with `git add -f <paths>` (or `git add -f -N <paths>` force intent-to-add) and rerun `ripr check --worktree`, or pass an explicit `--diff`",
+        "languages_analyzed": language_label,
+        "remedy": format!("gitignored {language_label} files were excluded and not analyzed; neither the committed diff nor plain `--worktree` sees them. Stage them with `git add -f <paths>` (or `git add -f -N <paths>` force intent-to-add) and rerun `ripr check --worktree`, or pass an explicit `--diff`"),
     });
     let base = disclosure.get_or_insert_with(|| {
         json!({
             "analyzed": analyzed_label(snapshot),
             "ignored_files": "outside this analysis",
-            "note": "gitignored Rust files were excluded and are not analyzed by this snapshot",
+            "note": format!("gitignored {language_label} files were excluded and are not analyzed by this snapshot"),
         })
     });
     base["ignored_edits"] = ignored_edits;
     disclosure
+}
+
+/// The languages the snapshot actually analyzed, for scope-disclosure wording
+/// (#9604 batch G finding 34): derived from the committed findings so a
+/// Python-only or five-language workspace is not mislabeled "Rust". A snapshot
+/// with zero findings cannot name a language from evidence; the wording falls
+/// back to "source" rather than guessing.
+fn analyzed_language_label(findings: &[crate::domain::Finding]) -> String {
+    let mut languages = findings
+        .iter()
+        .filter_map(|finding| finding.language)
+        .collect::<Vec<_>>();
+    languages.sort_by_key(|language| language.as_str());
+    languages.dedup();
+    match languages.as_slice() {
+        [] => "source".to_string(),
+        [only] => only.display_name().to_string(),
+        _ => "mixed-language".to_string(),
+    }
 }
 
 /// What the snapshot analyzed: the default-branch diff, or the diff against
@@ -1374,6 +1408,7 @@ pub(crate) fn run_check(
         &output.findings,
         &inventory.candidate_seams,
         crate::app::agent_brief::AgentBriefPolicy::from_config(&config),
+        &inventory.completeness,
     );
     let mut snapshot = Snapshot::from_output_admitted(&output, root_identity, &admission)?;
     snapshot.base = base.map(str::to_string);
@@ -1963,7 +1998,84 @@ mod tests {
         Ok(())
     }
 
-    /// #7464: each filter dimension narrows the stored selection on its own,
+    /// #9604 batch G finding 29: a gap list over a partial run must disclose
+    /// the run's outcome, not read as clean. The block embeds the snapshot's
+    /// typed outcome kind, a plain label, and the limitation kinds — and stays
+    /// consistent with the snapshot resource.
+    #[test]
+    fn gap_list_discloses_the_snapshots_analysis_outcome() -> Result<(), String> {
+        let session = session_with_varied_findings()?;
+        let document = session
+            .list_gaps(
+                None,
+                GapListWindow::default(),
+                &GapListFilter::default(),
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
+            .map_err(|failure| failure.detail)?;
+        let snapshot_id = document
+            .pointer("/snapshot_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("gap list lost its snapshot identity: {document}"))?
+            .to_string();
+        let snapshot = session
+            .snapshot_document(&snapshot_id)
+            .map_err(|failure| failure.detail)?;
+        let snapshot_kind = snapshot
+            .pointer("/outcome/kind")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("snapshot resource lost its outcome kind: {snapshot}"))?;
+        let list_kind = document
+            .pointer("/outcome/kind")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("gap list omitted the run outcome: {document}"))?;
+        if list_kind != snapshot_kind {
+            return Err(format!(
+                "gap list outcome ({list_kind}) must match the snapshot resource ({snapshot_kind})"
+            ));
+        }
+        if document
+            .pointer("/outcome/label")
+            .and_then(Value::as_str)
+            .is_none()
+        {
+            return Err(format!("gap list outcome lost its plain label: {document}"));
+        }
+        let outcome_limitations = document
+            .pointer("/outcome/limitations")
+            .and_then(Value::as_array)
+            .ok_or_else(|| format!("gap list outcome lost its limitations array: {document}"))?;
+        let snapshot_limitations = snapshot
+            .pointer("/outcome/limitations")
+            .and_then(Value::as_array)
+            .map(|limitations| limitations.len())
+            .unwrap_or(0);
+        if outcome_limitations.len() != snapshot_limitations {
+            return Err(format!(
+                "gap list carried {} outcome limitations where the snapshot carries {snapshot_limitations}",
+                outcome_limitations.len()
+            ));
+        }
+        Ok(())
+    }
+
+    /// #9604 batch G finding 34: ignored-file disclosure must name the
+    /// languages the snapshot actually analyzed, not hardcode Rust.
+    #[test]
+    fn analyzed_language_label_follows_the_committed_findings() -> Result<(), String> {
+        let rust_only = vec![gaps::test_finding()?];
+        assert_eq!(analyzed_language_label(&rust_only), "Rust");
+        let mut python = gaps::test_finding()?;
+        python.language = Some(crate::domain::LanguageId::Python);
+        assert_eq!(analyzed_language_label(&[python]), "Python");
+        let mut typescript = gaps::test_finding()?;
+        typescript.language = Some(crate::domain::LanguageId::TypeScript);
+        let mixed = vec![rust_only[0].clone(), typescript];
+        assert_eq!(analyzed_language_label(&mixed), "mixed-language");
+        let no_language: Vec<crate::domain::Finding> = Vec::new();
+        assert_eq!(analyzed_language_label(&no_language), "source");
+        Ok(())
+    }
     /// dimensions combine conjunctively, and `offset`/`limit` page the
     /// narrowed set — while `selected` stays the full stored-selection count
     /// and `filters` echoes the request.

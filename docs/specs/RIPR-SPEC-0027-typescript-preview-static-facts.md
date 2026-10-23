@@ -306,8 +306,13 @@ the entry must pass every identity gate a direct or imported owner call does.
 The relation is `helper_owner_call` with `medium` confidence and is admitted
 only when no owner-call, import-call, receiver, class-method, module-observer,
 or re-export relation exists, so it never mixes with a relation that calls the
-owner. Reach only through entries is at most `weakly_exposed`, and the
-missing-evidence line names the entries the related tests call.
+owner. Reach only through entries is never `exposed`. When the strongest
+related oracle is exact, the entry's own code may or may not carry the owner's
+effect to the assertion, so the finding is `static_unknown` (reach `yes`,
+stop reason `propagation_evidence_unknown`, no repair packet) rather than an
+actionable gap; when the oracle is weak it stays `weakly_exposed`, because the
+missing stronger assertion is actionable on any reach. The missing-evidence line
+names the entries the related tests call (#9290).
 
 A test is related to an owner only when the test references the owner. When
 no owner-call, import-call, receiver, class-method, module-observer, or
@@ -338,6 +343,16 @@ Probes the adapter must generate (syntax-first):
 
 - predicate probes for changed `if`/`else if`/ternary boundary conditions
 - return-value probes for changed `return` and tail expressions
+- return-value probes for a changed column-zero module scalar constant
+  (`[export ]const NAME[: Type] = <literal>;`, where the literal is a JavaScript
+  numeric literal (decimal with fraction and exponent, `0x`/`0o`/`0b`, `_`
+  separators, `n` suffix), `true`, `false`, `null` or one quoted
+  string without `${}` or a second unescaped quote). A computed, structured,
+  indented or multi-declarator initializer keeps the unrecognised shape.
+  Identifiers match tests by Unicode alphanumerics, not ASCII only
+  A related test whose assertion compares the bare constant to the very literal
+  the edit wrote passes on the edit, so the finding reads `weakly_exposed`
+  rather than `exposed` (quote style is ignored)
 - error-path probes for changed `throw` statements and `try`/`catch`/
   `Promise.reject` shapes
 - field probes for changed object-literal or class-field assignments

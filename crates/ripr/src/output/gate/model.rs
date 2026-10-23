@@ -82,6 +82,11 @@ pub(crate) struct GateDecisionReport {
     /// passed `--exception-policy`; absent otherwise so existing
     /// gate-decision consumers and goldens see identical output.
     pub(super) exception_policy: Option<super::exception_policy::ExceptionPolicyReport>,
+    /// The candidate source's analysis scope, disclosed verbatim so a
+    /// downstream baseline comparison can tell which files this decision
+    /// actually evaluated (issue #9301 F2). `None` when the source carried
+    /// no scope disclosure; consumers then fail closed.
+    pub(super) analysis_scope: Option<serde_json::Value>,
 }
 
 /// Canonical downstream-thresholding receipt field.
@@ -388,4 +393,11 @@ pub(super) struct CalibrationIndex {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(super) struct BaselineIndex {
     pub(super) identities: BTreeSet<String>,
+    /// Fallback `path:line:class` selectors of entries that also carry a
+    /// canonical gap id, mapped to those canonical ids (issue #1964). A
+    /// fallback join through one of these is accepted only when the shared
+    /// divergence rule (`baseline_delta::canonical_identity_divergence`)
+    /// finds no canonical disagreement. Entries without a canonical id keep
+    /// their fallback in `identities` (legacy compatibility window).
+    pub(super) fallback_canonical: BTreeMap<String, BTreeSet<String>>,
 }

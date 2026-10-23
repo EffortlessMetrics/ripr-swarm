@@ -7,8 +7,9 @@ Spec: RIPR-SPEC-0014
 A `baseline-check` gate run whose explicit baseline contains legacy
 `path:line:static_class` fallback identities, and current PR guidance whose
 candidates share an anchor with those entries. The `expected/gate-baseline/`
-corpus holds five adversarial scenarios (issue #1934): a fallback-only match
-for a genuinely new canonical gap, a line-moved candidate whose canonical
+corpus holds five adversarial scenarios (issue #1934): a fallback collision
+with a genuinely different canonical gap (now new and blocking, issue #1964),
+a line-moved candidate whose canonical
 identity still matches, two gaps on one line with the same static class, a
 candidate with no canonical identity, and a baseline mixing canonical and
 legacy entries. The top-level check golden uses a comment-only diff so the
@@ -33,8 +34,14 @@ compares against the checked-in `gate-decision.json` / `gate-decision.md`.
 
 ## Then
 
-- Every fallback-only baseline match keeps `is_baseline_new = false` during
-  the legacy compatibility window, emits a report-level warning naming the
+- A fallback join to a baseline entry whose canonical gap id differs from the
+  candidate's is refused: the candidate is new and blocks (issue #1964).
+- A candidate with no canonical gap id of its own still joins a
+  canonical-bearing fallback, disclosed as `legacy_path_line_class` (no
+  divergence can be shown; same as `ripr baseline diff`).
+- Every fallback-only baseline match against a legacy entry without a
+  canonical id keeps `is_baseline_new = false` during the legacy
+  compatibility window, emits a report-level warning naming the
   candidate and the matched legacy identity, and records
   `baseline_match_kind: "legacy_path_line_class"` on the decision payload.
 - Canonical identity matches record no `baseline_match_kind` and emit no
@@ -45,8 +52,8 @@ compares against the checked-in `gate-decision.json` / `gate-decision.md`.
 
 - Treat a fallback-only match as a canonical identity match, or let it stay
   silent.
-- Flip a fallback-only match to `is_baseline_new = true` (the deferred
-  deprecation question).
+- Flip a fallback-only match against a legacy entry without a canonical id to
+  `is_baseline_new = true` (the deferred deprecation question).
 - Use mutation-runtime outcome vocabulary reserved for real mutation
   execution.
 - Present a legacy compatibility match as reviewed canonical debt.

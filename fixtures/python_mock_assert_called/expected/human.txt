@@ -30,7 +30,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_mock_assert_called/input --diff <cwd>/fixtures/python_mock_assert_called/diff.patch --mode fast probe:src_notify.py:python_preview:5f03d3bc
   ripr context --root <cwd>/fixtures/python_mock_assert_called/input --diff <cwd>/fixtures/python_mock_assert_called/diff.patch --mode fast --at probe:src_notify.py:python_preview:5f03d3bc
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_notify.py:python_preview:5f03d3bc --root <cwd>/fixtures/python_mock_assert_called/input` for the full gate's answer
+  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/notify.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
 
 More:
   Full evidence: rerun with --format human-full

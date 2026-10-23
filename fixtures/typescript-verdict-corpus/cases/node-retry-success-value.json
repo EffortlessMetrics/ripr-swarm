@@ -1,0 +1,45 @@
+{
+  "case_id": "node-retry-success-value",
+  "subject_id": "authored-ts-nodetest-mocks",
+  "diff": "cases/node-retry-success-value.diff",
+  "anchor": {
+    "file": "src/retry.ts",
+    "line": 5
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "nodetest_strict_equal_awaited",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --import tsx --test test/*.test.ts",
+    "toolchain": "Node.js v22.22.0, node:test, tsx 4.23, typescript 5.9, x86_64-linux; edit applied by hand to the whole package",
+    "mutants": [
+      {
+        "replacement": "return undefined as T;",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "returns the first success",
+        "equivalence_review": "the edit itself: The first-success test compares the awaited result exactly."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The first-success test compares the awaited result exactly. The edited package's test command fails, so a discriminator exists and the credit is deserved.",
+  "labeling_observation": {
+    "ripr_commit": "3b4ac1e",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
