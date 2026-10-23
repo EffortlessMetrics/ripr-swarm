@@ -216,6 +216,22 @@ owner returns:
 Whether a test's input runs the closure is rules 1 and 2's question, not
 this edge's.
 
+### Rule 5: a returned closure applied in the pinned expression
+
+A changed `return_value` probe whose expression is the owner's whole tail
+`[move] |a, b| e` (one closure, no statement before it, parameters that are
+plain identifiers, and a body `e` that reads only the closure's parameters,
+the owner's parameters and constants, with no branch, short circuit, `?`,
+`return`, macro, block or nested closure) establishes the owner-return pin
+when the test compares the closure applied inline: `owner(args)(args)`. The
+application runs the closure exactly once, on the literals written there.
+The pin is read only when every argument of the owner call and of the
+application is a plain numeric literal, all are nonzero, and no two are the
+same value, so an identity element (`n + 0`) or a coincident pair
+(`2 + 2 == 2 * 2`) cannot hide a changed operator. A closure bound to a
+variable and called later, a call with a non-literal argument, a partial
+application and any other operand keep the earlier reading (#9490).
+
 ### Decisions
 
 1. **Literal sequences only.** Adopted: an element is read only from a
@@ -284,6 +300,11 @@ this edge's.
    `let ages = vec![40; n]` in a `for n in 1..10` loop: the rule does not
    apply; the predicate stays `infection_unknown`.
 
+9. `fn make_adder(n: i32) -> impl Fn(i32) -> i32 { move |x| n + x }` with
+   `assert_eq!(make_adder(2)(3), 5)`: the return value reads `exposed`. With
+   `make_adder(0)(7)`, `make_adder(2)(2)`, a variable argument, or the closure
+   bound to a name and called later, it keeps the earlier reading (#9490).
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/classify/owner_pin/closure_adaptor.rs`: the
@@ -295,6 +316,9 @@ this edge's.
   observed, missing, short-circuit and unreadable readings.
 - `crates/ripr/src/analysis/classify/boundary_pairing.rs` tests: rule 1's
   same-test pairing, including the constant-boundary refusal.
+- `crates/ripr/tests/returned_closure_pin.rs`: rule 5's credited pin and its
+  keeping controls (zero, repeated and non-literal inputs, an unapplied
+  closure, a branch in the closure).
 - `crates/ripr/tests/iterator_adaptor_propagation.rs`: rule 3 through
   `check_workspace`, and the `map` + `count` refusal.
 - `fixtures/rust-verdict-corpus`: examples 1 to 3 (`grid-iter-exact`,
@@ -307,7 +331,8 @@ this edge's.
   `adaptor_tail_of`, `admitted_consumer`, `literal_sequence`, `argument_sequences`,
   `pinned_call_runs_closure`, `AdaptorTail::run_reaches_boundary`.
 - `crates/ripr/src/analysis/classify/owner_pin.rs`:
-  `ReturnPathGate::Adaptor` in `OwnerReturnPin::establish` and `admits`.
+  `ReturnPathGate::Adaptor` in `OwnerReturnPin::establish` and `admits`;
+  `ReturnPathGate::ReturnedClosure` and `owner_pin/returned_closure.rs` (rule 5).
 - `crates/ripr/src/analysis/classify/activation.rs`:
   `adaptor_element_view`, `element_boundary_discriminator`,
   `element_boundary_observations`.

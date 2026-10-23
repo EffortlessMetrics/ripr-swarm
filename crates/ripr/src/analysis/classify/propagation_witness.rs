@@ -348,10 +348,22 @@ pub(in crate::analysis) fn constant_tail_witness(
                 owner.start_line + tail.tail_line_offset,
                 "iterator_adaptor_owner_tail",
             ),
-            None => (
-                short_circuit_owner_tail_line(owner, &probe.expression, &identity)?,
-                "short_circuit_owner_tail",
-            ),
+            // RIPR-SPEC-0265 rule 5: a closure that is the owner's whole body
+            // is the value the owner returns; whether the pinned expression
+            // applies it on inputs that tell its operators apart is the owner
+            // pin's question.
+            None => match super::owner_pin::returned_closure::owner_returned_closure_tail(owner)
+                .filter(|tail| tail.tail_is(&probe.expression))
+            {
+                Some(tail) => (
+                    owner.start_line + tail.tail_line_offset,
+                    "returned_closure_owner_tail",
+                ),
+                None => (
+                    short_circuit_owner_tail_line(owner, &probe.expression, &identity)?,
+                    "short_circuit_owner_tail",
+                ),
+            },
         },
     };
     if tail_line != probe.location.line {
