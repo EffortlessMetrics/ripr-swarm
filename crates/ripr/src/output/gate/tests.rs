@@ -5439,15 +5439,11 @@ fn guidance_only_input(
     name: &str,
     contents: &str,
 ) -> Result<GateEvaluateInput, String> {
-    let path = write_temp_json(dir, name, contents)?;
+    write_temp_json(dir, name, contents)?;
     Ok(GateEvaluateInput {
         root: dir.to_path_buf(),
         repo_exposure: None,
-        pr_guidance: Some(
-            path.strip_prefix(dir)
-                .map_err(|err| err.to_string())?
-                .to_path_buf(),
-        ),
+        pr_guidance: Some(PathBuf::from(name)),
         gap_ledger: None,
         sarif_policy: None,
         labels_json: None,
@@ -5614,7 +5610,7 @@ fn blocked_producer_outcome_requires_status_blocked_and_nonempty_warnings() {
 fn blocked_producer_warnings_keeps_only_string_entries_and_defaults_empty() {
     assert_eq!(
         blocked_producer_warnings(&json!({"warnings": ["a", 3, null, "b", {"k": "v"}]})),
-        vec!["a".to_string(), "b".to_string()]
+        ["a", "b"]
     );
     assert!(blocked_producer_warnings(&json!({})).is_empty());
     assert!(blocked_producer_warnings(&json!({"warnings": "not-an-array"})).is_empty());
