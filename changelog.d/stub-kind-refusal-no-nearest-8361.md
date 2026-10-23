@@ -1,2 +1,2 @@
 <!-- section: Fixed -->
-- `ripr agent stub --at FILE:LINE --kind FAMILY` no longer ends its refusal with an empty `nearest: .` when the file has no seam of that family; it now says `nearest: none (no seam of that family in this file)` (#8361).
+- `ripr agent stub --at FILE:LINE --kind FAMILY` renders an empty nearest list as `nearest: none`, without claiming that a family is absent when a suffix selector searches only reported gaps (#8361).

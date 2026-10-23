@@ -850,7 +850,7 @@ fn resolve_at(
         None => noun.to_string(),
     };
     let nearest = if listed.is_empty() {
-        "none (no seam of that family in this file)".to_string()
+        "none".to_string()
     } else {
         listed.join(", ")
     };

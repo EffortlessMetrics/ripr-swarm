@@ -330,6 +330,9 @@ a direct `ripr agent stub --at FILE:LINE --kind FAMILY` refusal names
 `FAMILY`, rather than the internal seam kind (#6689). Its `nearest:`
 suggestions are filtered to that family before the five-entry limit is
 applied. If the file contains only other families, the suggestions are empty.
+An empty list renders as `nearest: none`. A suffix selector searches reported
+gaps rather than every seam shape; an empty list must not claim that a filtered
+family has no seam in the file.
 
 Direct JSON stub refusals distinguish an absent selector (`seam_not_found`)
 from a suffix naming several files or disjoint same-kind seams that tie
@@ -598,6 +601,7 @@ suggested write cannot fail on the same missing base.
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_refusal_preserves_the_requested_probe_family`
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub`
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_without_a_matching_family_suggests_no_other_seams`
+- `crates/ripr/tests/agent_stub_compiles.rs::kind_suffix_refusal_does_not_claim_filtered_family_is_absent`
 - `crates/ripr/src/output/human.rs::tests::bounded_human_output_caps_many_findings_and_reports_omitted_count`
 - `crates/ripr/src/output/human.rs::tests::terminal_safe_escapes_controls_and_bidi_but_keeps_lines_and_tabs`
 - `crates/ripr/tests/hostile_repos.rs::terminal_control_bytes_in_repo_text_never_reach_the_terminal`
