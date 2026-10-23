@@ -653,7 +653,9 @@ const LEAVING_CALLS: [&str; 12] = [
 /// context or calls a skipping function.
 fn straight_line_assertion(test: &PythonTest, assertion: &PythonAssertion) -> bool {
     // A call of a generator test does not execute its body.
-    if super::mentions_python_name(&test.body_text, "yield") {
+    if rustpython_parser::lexer::lex(&test.body_text, rustpython_parser::Mode::Module)
+        .any(|token| matches!(token, Ok((rustpython_parser::Tok::Yield, _)) | Err(_)))
+    {
         return false;
     }
     let lines: Vec<&str> = test.body_text.lines().collect();
@@ -687,6 +689,17 @@ fn straight_line_assertion(test: &PythonTest, assertion: &PythonAssertion) -> bo
     };
     let target = lines[index];
     if indent(target) != base || !target.trim_start().starts_with("assert ") {
+        return false;
+    }
+    // Bind the extracted assertion to the statement that actually starts this
+    // physical line; an earlier `assert False;` must not stand in for it.
+    let Some(first_line) = assertion.gate_text.lines().next() else {
+        return false;
+    };
+    let Some(tail) = target.trim_start().strip_prefix(first_line.trim()) else {
+        return false;
+    };
+    if !tail.trim_start().is_empty() && !tail.trim_start().starts_with('#') {
         return false;
     }
     lines[header + 1..index].iter().all(|line| {

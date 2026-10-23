@@ -847,3 +847,31 @@ fn prior_assertions_and_generator_tests_cannot_lend_unreached_credit() -> Check 
     ))?);
     Ok(())
 }
+
+#[test]
+fn generator_keyword_in_test_data_or_comments_preserves_credit() -> Check {
+    for body in [
+        "    label = 'yield'\n    assert over_limit(11)",
+        "    # yield is data here\n    assert over_limit(11)",
+    ] {
+        assert_credited(&classify_limit(&limit_test(body))?);
+    }
+    Ok(())
+}
+
+#[test]
+fn the_target_assertion_is_identified_before_crediting_its_line() -> Check {
+    for body in [
+        "    assert False; assert over_limit(11)",
+        "    assert True; assert over_limit(11)",
+    ] {
+        assert_abstains(&classify_limit(&limit_test(body))?);
+    }
+    for body in [
+        "    assert over_limit(11) # a pin",
+        "    assert (\n        over_limit(11)\n    )",
+    ] {
+        assert_credited(&classify_limit(&limit_test(body))?);
+    }
+    Ok(())
+}
