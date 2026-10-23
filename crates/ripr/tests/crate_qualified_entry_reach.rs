@@ -966,3 +966,27 @@ fn an_absolute_import_prefix_goes_through_the_same_proof() -> Result<(), String>
     }
     Ok(())
 }
+
+/// A macro exported from a test-crate module and invoked in item position may
+/// expand to `mod qual_reach { .. }`; the test file refuses on both the
+/// qualified and the imported bare route.
+#[test]
+fn an_item_position_macro_in_the_test_crate_fails_closed() -> Result<(), String> {
+    let qualified_path = spelled("qual_reach::inner::order_discount");
+    let common = (
+        "tests/common/mod.rs",
+        "#[macro_export]\nmacro_rules! mk {\n    () => {\n        mod qual_reach {\n            pub mod inner {\n                pub fn order_discount(_: u32) -> u32 { 5 }\n            }\n        }\n    };\n}\n".to_string(),
+    );
+    let tests = format!("#[macro_use]\nmod common;\nmk!();\n{qualified_path}");
+    let package = module_package("src/inner.rs", MODULE_LIB, tests, vec![common.clone()]);
+    assert_eq!(package.relation()?, None);
+    assert_ne!(package.classification()?, "exposed");
+    let bare = format!(
+        "#[macro_use]\nmod common;\nmk!();\nuse qual_reach::inner::order_discount;\n{}",
+        test_file(BARE)
+    );
+    let package = module_package("src/inner.rs", MODULE_LIB, bare, vec![common]);
+    assert_eq!(package.relation()?, None, "bare route");
+    assert_ne!(package.classification()?, "exposed", "bare route");
+    Ok(())
+}
