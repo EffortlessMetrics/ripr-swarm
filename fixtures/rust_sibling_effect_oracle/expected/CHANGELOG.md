@@ -67,7 +67,7 @@ Updated:
 ## Pending — rust_sibling_effect_oracle (6)
 
 Reason:
-RIPR-SPEC-0224: multi-line related-test oracle collapses to one human evidence row (#9165); formatting only, no verdict change
+RIPR-SPEC-0197: effect assertions in the retained module need execution admission; json! at line 101 mentions format, so the line-374 assert_eq! is refused and the finding reads reachable_unrevealed (#8927)
 
 Command:
 `cargo xtask goldens bless rust_sibling_effect_oracle --reason "..."`
@@ -80,7 +80,7 @@ Updated:
 ## Pending — rust_sibling_effect_oracle (7)
 
 Reason:
-RIPR-SPEC-0122: #9373 item 1 bounded Evidence stage and state legend; preserve current analysis, JSON and human-full
+RIPR-SPEC-0224: multi-line related-test oracle collapses to one human evidence row (#9165); formatting only, no verdict change
 
 Command:
 `cargo xtask goldens bless rust_sibling_effect_oracle --reason "..."`
@@ -91,6 +91,19 @@ Updated:
 - `expected/human-full.txt`
 
 ## Pending — rust_sibling_effect_oracle (8)
+
+Reason:
+RIPR-SPEC-0122: #9373 item 1 bounded Evidence stage and state legend; preserve current analysis, JSON and human-full
+
+Command:
+`cargo xtask goldens bless rust_sibling_effect_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_sibling_effect_oracle (9)
 
 Reason:
 RIPR-SPEC-0122: #9373 item 1 observation-gloss repair; report independent related test/assertion evidence without implying that the changed arm executes.

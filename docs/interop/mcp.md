@@ -461,7 +461,7 @@ item_not_found         result_too_large    attempt_not_found
 config_invalid         workspace_ambiguous static_limitation
 cancelled              superseded          attempt_invalid
 seam_not_found         policy_omitted      witness_unavailable
-identity_unnameable    budget_overflow
+identity_unnameable    budget_overflow     incomplete_inventory
 ```
 
 Before the first successful refresh the evidence tools fail with
@@ -471,9 +471,12 @@ bound to a snapshot that is no longer current, while superseded tombstones
 older than the 64-entry session bound read `attempt_not_found` instead
 (oldest-first eviction); `attempt_invalid` reports a
 durable manifest that fails canonical validation; `seam_not_found`,
-`identity_unnameable`, and `budget_overflow` are reachable on the repair-card
-read (an item no seam owner-discriminated binds, an unnameable portable
-workspace identity, a card over its detail budget); `policy_omitted` and
+`identity_unnameable`, `budget_overflow`, and `incomplete_inventory` are
+reachable on the repair-card read (an item no seam owner-discriminated binds,
+an unnameable portable workspace identity, a card over its detail budget, a
+truncated or unverified repo-wide seam inventory). The card uses the CLI-pinned
+`incomplete_inventory` code, while the list/get/prepare readiness fields keep
+`seam_inventory_truncated`. `policy_omitted` and
 `witness_unavailable` stay named for wire stability even though this adapter
 cannot reach them; the rest stay reserved for the slices that own those
 states (they are named now so the wire contract

@@ -140,6 +140,50 @@ fn need<'a>(text: &'a str, needle: &str, label: &str) -> Result<&'a str, String>
     Err(format!("{label}: expected `{needle}` in:\n{text}"))
 }
 
+/// The canonical TypeScript gap id of the top finding `ripr check` selected,
+/// derived from the finding id its drill-in commands print
+/// (`probe:<path>:<family>:<fp8>` -> `gap:typescript:<family>:<fp8>`).
+#[cfg(feature = "lang-typescript")]
+fn selected_typescript_gap(check_output: &str) -> Result<String, String> {
+    let id = check_output
+        .split_whitespace()
+        .find(|token| token.starts_with("probe:") && token.contains(":typescript_preview:"))
+        .ok_or_else(|| format!("check printed no finding id:\n{check_output}"))?;
+    let parts: Vec<&str> = id.splitn(4, ':').collect();
+    if parts.len() != 4 {
+        return Err(format!("unexpected finding id `{id}`"));
+    }
+    Ok(format!("gap:typescript:{}:{}", parts[2], parts[3]))
+}
+
+/// Published repair-attempt manifests under the root. The before-phase lock
+/// directory exists after any attempt to start; a manifest only after a start.
+#[cfg(feature = "lang-typescript")]
+fn attempt_manifests(root: &Path) -> Result<usize, String> {
+    let attempts = root.join("target").join("ripr").join("repair-attempts");
+    if !attempts.exists() {
+        return Ok(0);
+    }
+    let mut count = 0;
+    for entry in std::fs::read_dir(&attempts).map_err(|error| format!("attempts dir: {error}"))? {
+        let path = entry
+            .map_err(|error| format!("attempt entry: {error}"))?
+            .path();
+        if path.join("attempt.json").is_file() {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+#[cfg(feature = "lang-typescript")]
+fn attempt_id_of(manifest: &serde_json::Value) -> Result<String, String> {
+    manifest["repair_attempt_id"]
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| "manifest has no repair_attempt_id".to_string())
+}
+
 #[cfg(feature = "lang-python")]
 #[test]
 fn python_flat_layout_journey_stays_in_selected_root_and_ends_in_named_terminal_reason()
@@ -320,12 +364,34 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
         "npx --no-install vitest run test/pricing.test.ts",
         "printed runner command",
     )?;
-    // Observed first-use break: complete packet, but no `repair`/`agent repair` start.
-    need(
-        &check,
-        "no repair start offered",
-        "check offers no repair start",
-    )?;
+    // #9103 (RIPR-SPEC-0311): the complete packet now offers a gap-bound
+    // repair start, and the manual-only terminal reason is gone for it.
+    if check.contains("no repair start offered") {
+        return Err(format!("a complete packet still offers no start:\n{check}"));
+    }
+    let start_line = check
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("ripr agent repair --gap-id "))
+        .ok_or_else(|| format!("check printed no gap-bound repair start:\n{check}"))?;
+    let gap = start_line
+        .split_whitespace()
+        .nth(4)
+        .ok_or_else(|| format!("start line names no gap: {start_line}"))?
+        .to_string();
+    if !gap.starts_with("gap:typescript:typescript_preview:") {
+        return Err(format!(
+            "start line names a non-TypeScript gap: {start_line}"
+        ));
+    }
+    if !start_line.contains("--base ") || !start_line.contains("HEAD~1") {
+        return Err(format!("start line base: {start_line}"));
+    }
+    if !start_line.ends_with(" --phase before") || start_line.contains("--seam-id") {
+        return Err(format!(
+            "start line is not a gap-bound before start: {start_line}"
+        ));
+    }
     let (status_ok, status) = ripr(&decoy, &["agent", "status", "--root", &root_arg])?;
     expect_exit(status_ok, true, "agent status")?;
     // Before pilot, status routes to pilot; pilot routes to check; status then
@@ -344,6 +410,288 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
         &status,
         "Status selects no next command",
         "status terminates after pilot",
+    )?;
+    decoy_untouched(&decoy)?;
+
+    // An unknown gap id is refused and leaves no attempt or gap artifact.
+    let (unknown_ok, unknown) = ripr(
+        &decoy,
+        &[
+            "agent",
+            "repair",
+            "--gap-id",
+            "gap:typescript:typescript_preview:00000000",
+            "--base",
+            "HEAD~1",
+            "--root",
+            &root_arg,
+            "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(unknown_ok, false, "unknown gap start")?;
+    need(&unknown, "names no current TypeScript gap", "unknown gap")?;
+    let workflow_dir = root.join("target").join("ripr").join("workflow");
+    if attempt_manifests(&root)? != 0
+        || workflow_dir.join("gap-repair-packet.json").exists()
+        || workflow_dir.join("before.check-findings.json").exists()
+    {
+        return Err(format!("unknown gap start left artifacts:\n{unknown}"));
+    }
+
+    let gap_start_args = [
+        "agent", "repair", "--gap-id", &gap, "--base", "HEAD~1", "--root", &root_arg, "--phase",
+        "before",
+    ];
+    let no_leftovers = |what: &str, out: &str| -> Result<(), String> {
+        if attempt_manifests(&root)? != 0
+            || workflow_dir.join("gap-repair-packet.json").exists()
+            || workflow_dir.join("before.check-findings.json").exists()
+        {
+            return Err(format!("{what} left artifacts:\n{out}"));
+        }
+        Ok(())
+    };
+
+    // A tracked non-test file that already differs from HEAD fails closed
+    // with the gap-specific restart and leaves nothing behind.
+    let production = root.join("src/pricing.ts");
+    let original = std::fs::read_to_string(&production)
+        .map_err(|error| format!("read production: {error}"))?;
+    std::fs::write(&production, format!("{original}\n// dirty\n"))
+        .map_err(|error| format!("dirty production: {error}"))?;
+    let (dirty_ok, dirty) = ripr(&decoy, &gap_start_args)?;
+    std::fs::write(&production, &original)
+        .map_err(|error| format!("restore production: {error}"))?;
+    expect_exit(dirty_ok, false, "dirty production start")?;
+    need(
+        &dirty,
+        "outside the allowed test surface already differ from HEAD",
+        "dirty premise",
+    )?;
+    need(&dirty, "--gap-id", "gap-specific restart")?;
+    if dirty.contains("--seam-id") {
+        return Err(format!("dirty refusal names --seam-id:\n{dirty}"));
+    }
+    no_leftovers("dirty production start", &dirty)?;
+
+    // A ready gap whose publication fails (the edit-cage baseline path is a
+    // directory) removes the snapshots it wrote.
+    let baseline_path = workflow_dir.join("attempt-baseline.json");
+    std::fs::create_dir_all(&baseline_path).map_err(|error| format!("block baseline: {error}"))?;
+    let (blocked_ok, blocked) = ripr(&decoy, &gap_start_args)?;
+    std::fs::remove_dir_all(&baseline_path)
+        .map_err(|error| format!("unblock baseline: {error}"))?;
+    expect_exit(blocked_ok, false, "blocked publication")?;
+    no_leftovers("failed publication", &blocked)?;
+
+    // Pre-existing shared workflow artifacts (an earlier gap projection, a
+    // seam workflow baseline) survive every refusal byte-identical: a refused
+    // start removes or rewrites only what it wrote itself.
+    let sentinels = [
+        ("before.check-findings.json", "sentinel-snapshot"),
+        ("gap-repair-packet.json", "sentinel-packet"),
+        ("attempt-baseline.json", "sentinel-baseline"),
+    ];
+    let plant = || -> Result<(), String> {
+        for (name, bytes) in sentinels {
+            std::fs::write(workflow_dir.join(name), bytes)
+                .map_err(|error| format!("plant {name}: {error}"))?;
+        }
+        Ok(())
+    };
+    let sentinels_intact = |what: &str, only: &[&str]| -> Result<(), String> {
+        for (name, bytes) in sentinels {
+            if !only.contains(&name) {
+                continue;
+            }
+            let found = std::fs::read_to_string(workflow_dir.join(name))
+                .map_err(|error| format!("{what}: sentinel {name} lost: {error}"))?;
+            if found != bytes {
+                return Err(format!("{what}: sentinel {name} rewritten to `{found}`"));
+            }
+        }
+        Ok(())
+    };
+    let all_names: Vec<&str> = sentinels.iter().map(|(name, _)| *name).collect();
+    plant()?;
+    let (stale_ok, stale) = ripr(
+        &decoy,
+        &[
+            "agent",
+            "repair",
+            "--gap-id",
+            "gap:typescript:typescript_preview:00000000",
+            "--base",
+            "HEAD~1",
+            "--root",
+            &root_arg,
+            "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(stale_ok, false, "stale gap with sentinels")?;
+    need(&stale, "names no current TypeScript gap", "stale gap")?;
+    sentinels_intact("stale gap refusal", &all_names)?;
+    std::fs::write(&production, format!("{original}\n// dirty\n"))
+        .map_err(|error| format!("dirty production: {error}"))?;
+    let (dirty_ok, dirty) = ripr(&decoy, &gap_start_args)?;
+    std::fs::write(&production, &original)
+        .map_err(|error| format!("restore production: {error}"))?;
+    expect_exit(dirty_ok, false, "dirty premise with sentinels")?;
+    need(
+        &dirty,
+        "outside the allowed test surface already differ from HEAD",
+        "dirty premise",
+    )?;
+    sentinels_intact("dirty premise refusal", &all_names)?;
+    // Accepted gap whose publication fails after the snapshot and packet were
+    // rewritten: their prior bytes return.
+    std::fs::remove_file(&baseline_path).map_err(|error| format!("clear baseline: {error}"))?;
+    std::fs::create_dir_all(&baseline_path).map_err(|error| format!("block baseline: {error}"))?;
+    let (failed_ok, failed) = ripr(&decoy, &gap_start_args)?;
+    std::fs::remove_dir_all(&baseline_path)
+        .map_err(|error| format!("unblock baseline: {error}"))?;
+    expect_exit(failed_ok, false, "blocked publication with sentinels")?;
+    sentinels_intact(
+        "partial publication failure",
+        &["before.check-findings.json", "gap-repair-packet.json"],
+    )?;
+    if attempt_manifests(&root)? != 0 {
+        return Err(format!("failed publication left an attempt:\n{failed}"));
+    }
+    for (name, _) in sentinels {
+        let _ = std::fs::remove_file(workflow_dir.join(name));
+    }
+
+    // The printed start is accepted by `agent repair --phase before`: the
+    // flags are replayed exactly as the start line names them.
+    let (repair_ok, repair) = ripr(
+        &decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", "HEAD~1", "--root", &root_arg,
+            "--phase", "before",
+        ],
+    )?;
+    if !repair_ok {
+        return Err(format!("gap-bound before phase was refused:\n{repair}"));
+    }
+    need(
+        &repair,
+        "awaiting the focused test edit",
+        "attempt published",
+    )?;
+    need(&repair, "test/pricing.test.ts", "edit target is the test")?;
+    if repair.contains("--seam-id") {
+        return Err(format!("gap-bound output leaks --seam-id:\n{repair}"));
+    }
+    let attempts = root.join("target").join("ripr").join("repair-attempts");
+    let mut manifests = Vec::new();
+    for entry in std::fs::read_dir(&attempts).map_err(|error| format!("attempts dir: {error}"))? {
+        let path = entry
+            .map_err(|error| format!("attempt entry: {error}"))?
+            .path();
+        if path.join("attempt.json").is_file() {
+            manifests.push(path.join("attempt.json"));
+        }
+    }
+    if manifests.len() != 1 {
+        return Err(format!("expected one attempt manifest, got {manifests:?}"));
+    }
+    let manifest_text =
+        std::fs::read_to_string(&manifests[0]).map_err(|error| format!("manifest: {error}"))?;
+    let manifest: serde_json::Value =
+        serde_json::from_str(&manifest_text).map_err(|error| format!("manifest json: {error}"))?;
+    if manifest["seam_id"] != gap.as_str() || manifest["gap_binding"]["base"] != "HEAD~1" {
+        return Err(format!(
+            "manifest does not record the gap binding:\n{manifest_text}"
+        ));
+    }
+    let persisted_next = manifest["next_command"].as_str().unwrap_or_default();
+    if persisted_next.contains("--phase after") || !persisted_next.contains("--gap-id") {
+        return Err(format!(
+            "persisted next step is not the manual by-gap route: {persisted_next}"
+        ));
+    }
+    let roles: Vec<&str> = manifest["artifacts"]
+        .as_array()
+        .ok_or_else(|| "manifest artifacts".to_string())?
+        .iter()
+        .filter_map(|artifact| artifact["role"].as_str())
+        .collect();
+    if !roles.contains(&"before_check_findings") || !roles.contains(&"edit_cage_baseline") {
+        return Err(format!("unexpected artifact roles {roles:?}"));
+    }
+    // The retained before snapshot is the check-findings producer's artifact.
+    let snapshot = std::fs::read_to_string(
+        root.join("target")
+            .join("ripr")
+            .join("workflow")
+            .join("before.check-findings.json"),
+    )
+    .map_err(|error| format!("before snapshot: {error}"))?;
+    need(&snapshot, "\"kind\":\"check_findings\"", "snapshot kind")?;
+    need(&snapshot, &gap, "snapshot carries the gap")?;
+    // A later refused start (unknown gap) leaves the accepted start's shared
+    // snapshot and baseline byte-identical.
+    let accepted_snapshot_path = workflow_dir.join("before.check-findings.json");
+    let accepted_baseline_path = workflow_dir.join("attempt-baseline.json");
+    let accepted_baseline = std::fs::read(&accepted_baseline_path)
+        .map_err(|error| format!("accepted baseline: {error}"))?;
+    let (late_ok, _) = ripr(
+        &decoy,
+        &[
+            "agent",
+            "repair",
+            "--gap-id",
+            "gap:typescript:typescript_preview:00000000",
+            "--base",
+            "HEAD~1",
+            "--root",
+            &root_arg,
+            "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(late_ok, false, "unknown gap after accepted start")?;
+    if std::fs::read_to_string(&accepted_snapshot_path)
+        .ok()
+        .as_deref()
+        != Some(snapshot.as_str())
+        || std::fs::read(&accepted_baseline_path).ok().as_deref()
+            != Some(accepted_baseline.as_slice())
+    {
+        return Err("a refused start changed the accepted start's shared artifacts".to_string());
+    }
+    // Status over a gap-bound attempt never names a seam-bound start.
+    let (status_ok, status) = ripr(&decoy, &["agent", "status", "--root", &root_arg])?;
+    expect_exit(status_ok, true, "agent status over a gap-bound attempt")?;
+    if status.contains("--seam-id") {
+        return Err(format!(
+            "status leaks --seam-id for a gap attempt:\n{status}"
+        ));
+    }
+    // The gap-bound after phase is a later slice: it refuses with the manual
+    // by-gap route instead of scoring against the wrong snapshot kind.
+    let (after_ok, after) = ripr(
+        &decoy,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &root_arg,
+            "--phase",
+            "after",
+            "--attempt",
+            &attempt_id_of(&manifest)?,
+        ],
+    )?;
+    expect_exit(after_ok, false, "gap-bound after phase")?;
+    need(&after, "gap-bound", "after refusal names the binding")?;
+    need(
+        &after,
+        "agent verify",
+        "after refusal names the manual route",
     )?;
     decoy_untouched(&decoy)?;
 
@@ -380,6 +728,36 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
             if projected {
                 return Err(format!("{variant} projected a delegatable packet:\n{out}"));
             }
+            // #9103: an unrouted variant is offered no gap-bound start, and
+            // starting one by hand is refused by the shared validator.
+            if out.contains("ripr agent repair --gap-id") {
+                return Err(format!("{variant} was offered a gap-bound start:\n{out}"));
+            }
+            // The selected (top) finding is the one the check screen offered
+            // no start for; other findings of the same diff keep their own
+            // independent packet decisions.
+            let variant_gap = selected_typescript_gap(&out)?;
+            let (start_ok, start) = ripr(
+                &vdecoy,
+                &[
+                    "agent",
+                    "repair",
+                    "--gap-id",
+                    &variant_gap,
+                    "--base",
+                    "HEAD~1",
+                    "--root",
+                    &vroot_arg,
+                    "--phase",
+                    "before",
+                ],
+            )?;
+            expect_exit(start_ok, false, variant)?;
+            need(&start, "repair packet is not ready", variant)?;
+            if attempt_manifests(&vroot)? != 0 || vroot.join("target/ripr/workflow").exists() {
+                return Err(format!("{variant} left an attempt behind:\n{start}"));
+            }
+            decoy_untouched(&vdecoy)?;
         } else if !projected {
             return Err(format!(
                 "{variant} now fails closed; flip its row to true (#9107):\n{out}"

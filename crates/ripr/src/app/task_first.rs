@@ -584,6 +584,14 @@ impl RepairStartGate {
 
     /// `None` when the gate admits a start for `seam_id`.
     pub(crate) fn check(&self, seam_id: &str) -> Option<RepairStartRefusal> {
+        // #9103 (RIPR-SPEC-0311): a gap-bound attempt's subject is a
+        // canonical TypeScript gap id, not a Rust seam, so this seam-inventory
+        // gate has no verdict to give. Its admission is decided where the
+        // start is: the shared agent-packet validator at the gap-bound before
+        // phase, which re-checks it on every restart.
+        if super::gap_bound_repair::is_gap_bound_subject(seam_id) {
+            return None;
+        }
         #[cfg(test)]
         if self.admitted.iter().any(|id| id == seam_id) {
             return None;
@@ -844,14 +852,25 @@ pub(crate) fn check_repair_route(
     // computed refusal is named instead of silent (#8729): a static-limited
     // finding whose seam the gate refused must not read as "analysis could
     // not decide" either.
-    let static_limited = finding.static_limit_kind.is_some()
-        || matches!(
-            finding.class,
-            crate::domain::ExposureClass::NoStaticPath
-                | crate::domain::ExposureClass::InfectionUnknown
-                | crate::domain::ExposureClass::PropagationUnknown
-                | crate::domain::ExposureClass::StaticUnknown
-        );
+    let static_limited = super::gap_bound_repair::finding_is_static_limited(finding);
+    // #9103 (RIPR-SPEC-0311): a TypeScript preview finding carries no Rust
+    // canonical gap, but its GapRecord validates through the shared
+    // agent-packet validator and starts a gap-bound attempt. The canonical
+    // gap id and the base this run analyzed are the whole start. A finding
+    // that does not validate, a static-limited one, and a run without a base
+    // keep the refusals below. Python and the other routed languages are
+    // unchanged.
+    if non_rust_language(&finding.probe.location.file) == Some("TypeScript")
+        && !static_limited
+        && let Some(base) = output.base.as_deref()
+        && let Some(record) = super::gap_bound_repair::startable_typescript_gap_record(finding)
+    {
+        return CheckRepairRoute::GapRoute(crate::app::GapRepairRoute {
+            finding_id: finding.id.clone(),
+            gap_id: record.canonical_gap_id,
+            base: base.to_string(),
+        });
+    }
     let Some(gap) = finding.canonical_gap.as_ref() else {
         return CheckRepairRoute::Refused(RepairRouteRefusal::NoCanonicalGap);
     };
@@ -1620,6 +1639,7 @@ pub(crate) mod tests {
             repository_head: head.to_string(),
             producer_version: "test".to_string(),
             seam_id: seam.to_string(),
+            gap_binding: None,
             created_unix_ms: created,
             artifacts: Vec::new(),
             next_command: format!("ripr agent repair --root . --attempt {id_tail} --phase after"),

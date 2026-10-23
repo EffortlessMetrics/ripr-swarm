@@ -36,9 +36,9 @@ Policy impact:
 
 - None. No new output format, gate, badge, or report file is added; the card
   document is a wire payload bounded by the existing MCP byte caps. The wire
-  failure vocabulary gains the five `AgentCardRefusalKind` spellings
+  failure vocabulary gains the six `AgentCardRefusalKind` spellings
   (`seam_not_found`, `policy_omitted`, `witness_unavailable`,
-  `identity_unnameable`, `budget_overflow`); `policy_omitted` and
+  `identity_unnameable`, `budget_overflow`, `incomplete_inventory`); `policy_omitted` and
   `witness_unavailable` stay named for wire stability even though this slice
   cannot reach them.
 
