@@ -1,0 +1,10 @@
+diff --git a/hostile/unicode_names.py b/hostile/unicode_names.py
+--- a/hostile/unicode_names.py
++++ b/hostile/unicode_names.py
+@@ -1,5 +1,5 @@
+ def größe(x):
+-    return x * 2
++    return x * 3
+ 
+ 
+ def grüße(name):

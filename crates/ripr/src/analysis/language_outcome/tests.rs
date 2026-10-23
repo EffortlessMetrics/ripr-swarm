@@ -1,4 +1,5 @@
 use super::*;
+use crate::analysis::language::{RepoCapFired, RepoLimitingStage};
 
 fn finding_in(language: Option<LanguageId>) -> Result<Finding, String> {
     let mut finding = crate::mcp::gaps::test_finding()?;
@@ -147,6 +148,17 @@ fn digest_tracks_semantics_but_not_resource_telemetry_or_limitation_order() {
         LanguageResourceObservations {
             files_skipped: Some(9),
             production_files: Some(9),
+            files: RepoFileAccounting {
+                discovered: Some(9),
+                selected: Some(2),
+                skipped: Some(1),
+                omitted: Some(6),
+                first_cap_fired: Some(RepoCapFired {
+                    name: "RIPR_MAX_REPO_INDEX_FILES",
+                    stage: RepoLimitingStage::Selection,
+                    limit: 2,
+                }),
+            },
         },
         &["b", "a"],
     );
@@ -157,4 +169,99 @@ fn digest_tracks_semantics_but_not_resource_telemetry_or_limitation_order() {
         &["a", "b"],
     );
     assert_ne!(base.semantic_digest, other_status.semantic_digest);
+}
+
+fn accounted(files: RepoFileAccounting) -> LanguageRepoResult {
+    LanguageRepoResult {
+        file_accounting: files,
+        ..result(Vec::new(), Some("capped"))
+    }
+}
+
+fn capped_files() -> RepoFileAccounting {
+    RepoFileAccounting {
+        discovered: Some(10),
+        selected: Some(4),
+        skipped: Some(1),
+        omitted: Some(5),
+        first_cap_fired: Some(RepoCapFired {
+            name: "RIPR_MAX_REPO_INDEX_FILES",
+            stage: RepoLimitingStage::Selection,
+            limit: 4,
+        }),
+    }
+}
+
+#[test]
+fn outcome_carries_the_producer_accounting_verbatim_and_unknown_stays_none() {
+    let capped = LanguageAnalysisOutcomeV1::from_repo_result(
+        LanguageId::TypeScript,
+        &accounted(capped_files()),
+        None,
+    );
+    assert_eq!(capped.resources.files, capped_files());
+    let unmeasured = LanguageAnalysisOutcomeV1::from_repo_result(
+        LanguageId::Perl,
+        &accounted(RepoFileAccounting::default()),
+        None,
+    );
+    assert_eq!(unmeasured.resources.files.discovered, None);
+    assert_eq!(unmeasured.resources.files.omitted, None);
+    assert_eq!(unmeasured.resources.files.first_cap_fired, None);
+    // The compat reason is unchanged by accounting.
+    assert_eq!(
+        capped.compat_run().and_then(|run| run.reason),
+        Some("capped".to_string())
+    );
+}
+
+#[test]
+fn sibling_rows_are_independent_and_reordering_does_not_change_them() {
+    let rows = |order: &[(LanguageId, RepoFileAccounting)]| {
+        order
+            .iter()
+            .map(|(language, files)| {
+                let outcome = LanguageAnalysisOutcomeV1::from_repo_result(
+                    *language,
+                    &accounted(*files),
+                    None,
+                );
+                (
+                    outcome.language.as_str().to_string(),
+                    outcome.resources.files,
+                )
+            })
+            .collect::<BTreeMap<_, _>>()
+    };
+    let python = RepoFileAccounting {
+        discovered: Some(3),
+        selected: Some(3),
+        skipped: Some(0),
+        omitted: Some(0),
+        first_cap_fired: None,
+    };
+    let forward = rows(&[
+        (LanguageId::TypeScript, capped_files()),
+        (LanguageId::Python, python),
+    ]);
+    let reversed = rows(&[
+        (LanguageId::Python, python),
+        (LanguageId::TypeScript, capped_files()),
+    ]);
+    assert_eq!(forward, reversed);
+    assert_eq!(forward["python"].first_cap_fired, None);
+    assert_eq!(forward["python"].omitted, Some(0));
+    assert_eq!(forward["typescript"], capped_files());
+}
+
+#[test]
+fn accounting_alone_never_changes_the_semantic_digest() {
+    let digest = |files| {
+        LanguageAnalysisOutcomeV1::from_repo_result(LanguageId::Python, &accounted(files), None)
+            .semantic_digest
+    };
+    assert_eq!(
+        digest(capped_files()),
+        digest(RepoFileAccounting::default())
+    );
 }

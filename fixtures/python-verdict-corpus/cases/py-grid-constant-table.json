@@ -1,0 +1,45 @@
+{
+  "case_id": "py-grid-constant-table",
+  "subject_id": "authored-py-grid-constant",
+  "diff": "cases/py-grid-constant-table.diff",
+  "anchor": {
+    "file": "grid_constant/core.py",
+    "line": 9
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "pytest_parametrized_table",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return days * 6",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "test_late_fee_table",
+        "equivalence_review": "not equivalent: one day costs 6 instead of 5"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Grid cell: constant x parametrized table. Rows 1 and 4 pin the daily fee.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -61,6 +61,13 @@ proving a universal RSS threshold.
   be spawned leaves its shards to the calling thread, so a thread limit does
   not leave the cache cold. A failed or cancelled publication removes its
   unpublished generation and keeps the prior one.
+- Planning overlaps its two encode passes where a second thread can run: a
+  shard's real-encode check runs while the next shard is modeled, and the
+  question whether one entry holds every seam runs while the shard plan is
+  computed. Whichever answer ends the other first stops it. A shard whose
+  check disagrees with the model is replanned by the probing search, so the
+  chosen ranges, and the single-entry decision, are those of the sequential
+  planner (#5363).
 - The primary shard/single-entry bound is encoded bytes:
   `RIPR_CLASSIFIED_SEAM_CACHE_SHARD_BYTES` (default 8 MiB,
   `CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_BYTES`). Record count
@@ -197,6 +204,9 @@ proving a universal RSS threshold.
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::parallel_shard_publication_writes_the_serial_bytes`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::parallel_shard_publication_stops_on_cancellation_without_a_manifest`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::parallel_shard_publication_falls_back_to_the_caller_when_no_worker_spawns`
+- `crates/ripr/src/analysis/seam_cache/store.rs::tests::overlapped_shard_plan_matches_the_serial_plan`
+- `crates/ripr/src/analysis/seam_cache/store.rs::tests::overlapped_shard_plan_replans_a_shard_the_encode_rejects`
+- `crates/ripr/src/analysis/seam_cache/store.rs::tests::concurrent_single_entry_probe_agrees_with_the_serial_decision`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::encoded_byte_ceiling_defaults_and_rejects_invalid_env`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::publication_ids_stay_unique_across_concurrent_calls`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::size_probe_stops_once_the_encoded_ceiling_is_exceeded`

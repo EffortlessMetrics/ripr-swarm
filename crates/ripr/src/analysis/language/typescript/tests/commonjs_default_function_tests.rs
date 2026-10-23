@@ -1,4 +1,4 @@
-//! RIPR-SPEC-0243 rule 15: a CommonJS module whose whole export is a function
+//! RIPR-SPEC-0243 rule 19: a CommonJS module whose whole export is a function
 //! (`module.exports = function ...` or `module.exports = name;`) IS that
 //! function for every test that `require()`s it, so a call through the test's
 //! binding reaches the owner, as the ES `export default` twin already does.

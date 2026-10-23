@@ -557,7 +557,7 @@ fn mark_default_exported_bindings(body: &[Statement<'_>], owners: &mut [TypeScri
 /// Mark a top-level function declaration as the module's CommonJS default
 /// export when a separate statement assigns its binding to `module.exports`
 /// (`module.exports = stringify;`), the CommonJS twin of `export default
-/// stringify;` (RIPR-SPEC-0243 rule 15). Only a plain reference qualifies, and
+/// stringify;` (RIPR-SPEC-0243 rule 19). Only a plain reference qualifies, and
 /// only while the binding is unambiguous: exactly one assignment to
 /// `module.exports` appears in the whole file, the name is declared by exactly
 /// one top-level function declaration and the file never writes it, so the
@@ -632,7 +632,7 @@ fn mark_commonjs_default_binding(
 }
 
 /// The file-level proof that `module.exports` holds one statically known
-/// value (RIPR-SPEC-0243 rule 15). On masked, whitespace-free text the bare
+/// value (RIPR-SPEC-0243 rule 19). On masked, whitespace-free text the bare
 /// identifier `module` must occur only as `module.exports=` (exactly once, not
 /// `==`/`=>`) or as the base of a property access `module.exports.name`; any
 /// other use (an alias, `module?.exports`, `module[...]`, compound or update
@@ -1508,6 +1508,65 @@ pub(crate) fn detect_owner_extraction_gap(
         shape,
         snippet: snippet_for_span(source, span.0, span.1),
     })
+}
+
+/// Changed lines that sit inside a runtime enum member (`High = 3,`). The
+/// owner extractor indexes no enum, so such a line has no owner and the
+/// classifier returns nothing for it; without this the edit is silent apart
+/// from the file-level `typescript_owner_extraction_partial` disclosure
+/// (#9436). Ambient `declare enum` is type-only and never listed. A file that
+/// does not parse yields nothing, as its parse-error disclosure owns it.
+pub(crate) fn changed_enum_member_lines(
+    file: &Path,
+    source: &str,
+    changed_lines: &[usize],
+) -> std::collections::BTreeMap<usize, String> {
+    // A file without the keyword has no enum; skip the extra parse.
+    if changed_lines.is_empty() || !source.contains("enum") {
+        return std::collections::BTreeMap::new();
+    }
+    let changed: std::collections::HashSet<usize> = changed_lines.iter().copied().collect();
+    parse_on_worker(file, source, move |file, source, allocator| {
+        let ret = Parser::new(allocator, source, source_type_for(file)).parse();
+        if !ret.errors.is_empty() {
+            return std::collections::BTreeMap::new();
+        }
+        let raw = source;
+        let source = SourceText::new(source);
+        let mut lines = std::collections::BTreeMap::new();
+        let mut collect = |decl: &oxc_ast::ast::TSEnumDeclaration<'_>| {
+            if decl.declare {
+                return;
+            }
+            for member in &decl.body.members {
+                let start = source.line_for_offset(member.span.start as usize);
+                let end = source.line_for_offset(member.span.end as usize);
+                // Enum and member names, not the line, identify the member so
+                // the finding id survives unrelated line shifts.
+                let name = raw
+                    .get(member.id.span().start as usize..member.id.span().end as usize)
+                    .unwrap_or("");
+                let identity = format!("{}::{name}", decl.id.name);
+                for line in (start..=end).filter(|line| changed.contains(line)) {
+                    lines.entry(line).or_insert_with(|| identity.clone());
+                }
+            }
+        };
+        for stmt in &ret.program.body {
+            match stmt {
+                Statement::TSEnumDeclaration(decl) => collect(decl),
+                Statement::ExportNamedDeclaration(export) => {
+                    if let Some(Declaration::TSEnumDeclaration(decl)) = export.declaration.as_ref()
+                    {
+                        collect(decl);
+                    }
+                }
+                _ => {}
+            }
+        }
+        lines
+    })
+    .unwrap_or_default()
 }
 
 /// 1-based inclusive line ranges of top-level ambient declarations

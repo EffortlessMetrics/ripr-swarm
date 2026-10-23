@@ -1472,10 +1472,20 @@ pub(crate) fn targeted_test_brief_for_classified_seam(entry: &ClassifiedSeam) ->
             "- Limitation route: {}\n",
             target.limitation_route
         ));
-        out.push_str(&format!(
-            "- Authority: {}; repair_packet_ready={}\n",
-            target.authority_boundary, target.repair_packet_ready
-        ));
+        // The wire value stays for identity, but the line must end in
+        // guidance, not a raw `key=value` dump (#9604): a navigation-only
+        // external observer has no automated repair route.
+        if target.repair_packet_ready {
+            out.push_str(&format!(
+                "- Authority: {}; repair packet ready for an automated start\n",
+                target.authority_boundary
+            ));
+        } else {
+            out.push_str(&format!(
+                "- Authority: {}; no automated repair route — ripr cannot drive an edit from this external-language observer, so open the test above and work by hand\n",
+                target.authority_boundary
+            ));
+        }
     }
 
     if !patterns_to_imitate.is_empty() {
@@ -1546,6 +1556,19 @@ pub(crate) fn targeted_test_brief_outline_for_classified_seam(
     }
 }
 
+/// Producer reason tokens travel in gap-ledger JSON; known tokens translate
+/// to a user sentence here so a refusal reads as guidance, not as a raw wire
+/// spelling (#9604). Unknown future tokens pass through verbatim so no
+/// evidence is ever dropped.
+fn humanize_agent_packet_refusal_reason(reason: &str) -> String {
+    match reason {
+        "already_observed" => {
+            "a test already observes this gap, so there is no repair to drive".to_string()
+        }
+        other => other.to_string(),
+    }
+}
+
 pub(crate) fn validate_agent_gap_record_packet(record: &GapRecord) -> Result<(), String> {
     validate_gap_record_command_specs(record)?;
     let projection = record
@@ -1557,7 +1580,10 @@ pub(crate) fn validate_agent_gap_record_packet(record: &GapRecord) -> Result<(),
         if reason.is_empty() {
             return Err("is not agent-packet eligible".to_string());
         }
-        return Err(format!("is not agent-packet eligible: {reason}"));
+        return Err(format!(
+            "is not agent-packet eligible: {}",
+            humanize_agent_packet_refusal_reason(reason)
+        ));
     }
     let Some(route) = record.repair_route.as_ref() else {
         return Err("requires a repair_route".to_string());
@@ -5419,8 +5445,10 @@ mod tests {
             Some(2)
         );
         assert!(
-            json.contains("is not agent-packet eligible: already_observed"),
-            "queue should explain excluded no-action records: {json}"
+            json.contains(
+                "is not agent-packet eligible: a test already observes this gap, so there is no repair to drive"
+            ),
+            "queue should explain excluded no-action records in user terms: {json}"
         );
         Ok(())
     }
@@ -5957,7 +5985,10 @@ mod tests {
             .ok_or_else(|| "expected parsed gap record".to_string())?;
         assert_eq!(
             render_agent_gap_record_packet_json("gap-ledger.json", record),
-            Err("is not agent-packet eligible: already_observed".to_string())
+            Err(
+                "is not agent-packet eligible: a test already observes this gap, so there is no repair to drive"
+                    .to_string()
+            )
         );
         Ok(())
     }
@@ -6302,7 +6333,7 @@ mod tests {
             "- Target: test/js/web/fetch/blob.test.ts:41",
             "- Test: blob copies resizable buffers",
             "- Language: typescript",
-            "- Authority: navigation_only_external_observer_context; repair_packet_ready=false",
+            "- Authority: navigation_only_external_observer_context; no automated repair route — ripr cannot drive an edit from this external-language observer, so open the test above and work by hand",
         ] {
             if !brief.contains(needle) {
                 return Err(format!(

@@ -47,7 +47,7 @@ Evidence
   - observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)
   - discriminator weak: TypeScript preview adapter: strong oracle found but no assertion's observed_expression flows from the changed sub-expression; observation_unverified — discriminate unknown
   - local flow reaches call effect: console.log("audit", amount * 9); (line 2)
-  - related test tests/receipt.test.ts:4 unchanged return is not the audit event uses strong exact value oracle: assert.strictEqual(...)
+  - related test tests/receipt.test.ts:4 unchanged return is not the audit event uses strong exact value oracle: assert.strictEqual(...); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
 
 Weakness
   - propagation_unknown: changed value sinks to a non-escaping call effect (`"audit"`); all strong assertions observe the owner return value, not this call effect; propagation unknown

@@ -59,3 +59,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_ffi_attribute_literals (6)
+
+Reason:
+RIPR-SPEC-0122: route-not-ready refusal names its missing evidence (#9604 batch C)
+
+Command:
+`cargo xtask goldens bless rust_ffi_attribute_literals --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

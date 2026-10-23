@@ -43,16 +43,20 @@ impl Assessment {
 pub(crate) struct Observed<'a> {
     pub(crate) exit_code: Option<i32>,
     pub(crate) stdout: &'a str,
-    pub(crate) stderr: &'a str,
     pub(crate) artifact: Option<&'a str>,
 }
 
 pub(crate) fn assess(case: &Case, observed: &Observed<'_>) -> Assessment {
-    if observed.exit_code != Some(0) {
+    let expected_exit = if matches!(case.expect, Expect::PolicyRefused) {
+        2
+    } else {
+        0
+    };
+    if observed.exit_code != Some(expected_exit) && !matches!(case.expect, Expect::PolicyRefused) {
         return Assessment::fail(
             RowResult::SemanticFailure,
             format!(
-                "exit code {:?}, expected 0; output is not trusted",
+                "exit code {:?}, expected {expected_exit}; output is not trusted",
                 observed.exit_code
             ),
         );
@@ -101,6 +105,47 @@ fn limitation_text(limitation: &Value) -> String {
     )
 }
 
+/// A passing "analyzed" row needs a complete analysis and no limitation that
+/// names the changed file, the same bar the `Supported` arm applies.
+fn require_whole_analysis(case: &Case, root: &Value) -> Option<Assessment> {
+    let names_changed = limitations(root)
+        .iter()
+        .any(|limitation| limitation_text(limitation).contains(case.changed.as_str()));
+    if names_changed {
+        return Some(Assessment::fail(
+            RowResult::SemanticFailure,
+            "a limitation names the changed file; the row is not fully analyzed".to_string(),
+        ));
+    }
+    (root
+        .pointer("/analysis_outcome/analysis_complete")
+        .and_then(Value::as_bool)
+        != Some(true))
+    .then(|| {
+        Assessment::fail(
+            RowResult::SemanticFailure,
+            "an analyzed row did not report analysis_complete=true".to_string(),
+        )
+    })
+}
+
+fn changed_finding_suppressed(case: &Case, findings: &[Value]) -> (usize, usize) {
+    let of_changed = findings
+        .iter()
+        .filter(|finding| finding_file(finding).as_deref() == Some(case.changed.as_str()));
+    let total = of_changed.clone().count();
+    let marked = of_changed
+        .filter(|finding| {
+            finding.get("suppressed").and_then(Value::as_bool) == Some(true)
+                && finding
+                    .get("suppressed_by")
+                    .and_then(Value::as_str)
+                    .is_some()
+        })
+        .count();
+    (total, marked)
+}
+
 fn assess_check(case: &Case, observed: &Observed<'_>) -> Assessment {
     let root = match parse(observed.stdout, "check stdout") {
         Ok(root) => root,
@@ -129,7 +174,7 @@ fn assess_check(case: &Case, observed: &Observed<'_>) -> Assessment {
         |result: Assessment| result.with_counts(changed_findings, suppressed, declined.len());
 
     match &case.expect {
-        Expect::Supported | Expect::TerminatesWithEvidence => {
+        Expect::Supported => {
             let names_changed = all_limitations
                 .iter()
                 .any(|limitation| limitation_text(limitation).contains(case.changed.as_str()));
@@ -140,11 +185,10 @@ fn assess_check(case: &Case, observed: &Observed<'_>) -> Assessment {
                         .to_string(),
                 ));
             }
-            if matches!(case.expect, Expect::Supported)
-                && root
-                    .pointer("/analysis_outcome/analysis_complete")
-                    .and_then(Value::as_bool)
-                    != Some(true)
+            if root
+                .pointer("/analysis_outcome/analysis_complete")
+                .and_then(Value::as_bool)
+                != Some(true)
             {
                 return counts(Assessment::fail(
                     RowResult::SemanticFailure,
@@ -236,6 +280,167 @@ fn assess_check(case: &Case, observed: &Observed<'_>) -> Assessment {
                 artifact_projection: None,
             })
         }
+        Expect::GlobMatch => {
+            let summary_suppressed = root
+                .pointer("/summary/suppressed_by_policy")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            if suppressed == 0 || summary_suppressed == 0 {
+                return counts(Assessment::fail(
+                    RowResult::SemanticFailure,
+                    "expected the pattern to suppress the finding; none was suppressed".to_string(),
+                ));
+            }
+            let (_, marked) = changed_finding_suppressed(case, &findings);
+            if marked == 0 {
+                return counts(Assessment::fail(
+                    RowResult::WrongSubject,
+                    format!(
+                        "suppression counters are positive but no finding for {} is marked suppressed",
+                        case.changed
+                    ),
+                ));
+            }
+            counts(Assessment {
+                result: RowResult::PassedSupportedAnalysis,
+                detail: format!("{suppressed} finding(s) suppressed by the pattern"),
+                limitation: None,
+                findings_reported: 0,
+                findings_suppressed: 0,
+                declined_files: 0,
+                artifact_projection: None,
+            })
+        }
+        Expect::GlobNonmatch => {
+            if suppressed != 0 {
+                return counts(Assessment::fail(
+                    RowResult::SemanticFailure,
+                    format!("pattern suppressed {suppressed} finding(s); expected none"),
+                ));
+            }
+            if changed_findings == 0 {
+                return counts(Assessment::fail(
+                    RowResult::WrongSubject,
+                    format!(
+                        "no finding for {} after a nonmatching pattern",
+                        case.changed
+                    ),
+                ));
+            }
+            if changed_finding_suppressed(case, &findings).1 != 0 {
+                return counts(Assessment::fail(
+                    RowResult::SemanticFailure,
+                    "a nonmatching pattern marked the changed finding suppressed".to_string(),
+                ));
+            }
+            if let Some(failure) = require_whole_analysis(case, &root) {
+                return counts(failure);
+            }
+            counts(Assessment {
+                result: RowResult::PassedSupportedAnalysis,
+                detail: "pattern did not match; finding stays visible".to_string(),
+                limitation: None,
+                findings_reported: 0,
+                findings_suppressed: 0,
+                declined_files: 0,
+                artifact_projection: None,
+            })
+        }
+        Expect::PolicyRefused => {
+            let limitation = root
+                .pointer("/analysis_scope/limitation")
+                .and_then(Value::as_str);
+            if observed.exit_code != Some(2)
+                || limitation != Some("suppression_policy_invalid")
+                || !findings.is_empty()
+            {
+                return counts(Assessment::fail(
+                    RowResult::MissingOrFalseCleanLimitation,
+                    format!(
+                        "malformed policy was not refused: exit {:?}, limitation {limitation:?}, {} finding(s)",
+                        observed.exit_code,
+                        findings.len()
+                    ),
+                ));
+            }
+            counts(Assessment {
+                result: RowResult::PassedTypedLimitation,
+                detail: "malformed selector refused as suppression_policy_invalid".to_string(),
+                limitation: Some("suppression_policy_invalid".to_string()),
+                findings_reported: 0,
+                findings_suppressed: 0,
+                declined_files: 0,
+                artifact_projection: None,
+            })
+        }
+        Expect::GeneratedExcluded => {
+            let excluded = all_limitations.iter().any(|limitation| {
+                limitation_text(limitation).contains("intentionally skipped")
+                    && limitation_text(limitation).contains(case.changed.as_str())
+            });
+            if !excluded {
+                return counts(Assessment::fail(
+                    RowResult::MissingOrFalseCleanLimitation,
+                    "expected the file to be excluded as generated with a disclosure".to_string(),
+                ));
+            }
+            if root
+                .pointer("/analysis_outcome/analysis_complete")
+                .and_then(Value::as_bool)
+                != Some(false)
+            {
+                return counts(Assessment::fail(
+                    RowResult::MissingOrFalseCleanLimitation,
+                    "exclusion disclosed but analysis_complete is not false".to_string(),
+                ));
+            }
+            if changed_findings != 0 {
+                return counts(Assessment::fail(
+                    RowResult::SemanticFailure,
+                    "excluded file still produced a finding".to_string(),
+                ));
+            }
+            counts(Assessment {
+                result: RowResult::PassedTypedLimitation,
+                detail: "excluded as generated with disclosure".to_string(),
+                limitation: Some(format!("generated exclusion names {}", case.changed)),
+                findings_reported: 0,
+                findings_suppressed: 0,
+                declined_files: 0,
+                artifact_projection: None,
+            })
+            .with_counts(0, 0, 1)
+        }
+        Expect::GeneratedNotExcluded => {
+            let excluded = all_limitations.iter().any(|limitation| {
+                limitation_text(limitation).contains("intentionally skipped")
+                    && limitation_text(limitation).contains(case.changed.as_str())
+            });
+            if excluded {
+                return counts(Assessment::fail(
+                    RowResult::SemanticFailure,
+                    "a nonmatching pattern silently excluded the file".to_string(),
+                ));
+            }
+            if changed_findings == 0 {
+                return counts(Assessment::fail(
+                    RowResult::WrongSubject,
+                    format!("no finding for {} though it was not excluded", case.changed),
+                ));
+            }
+            if let Some(failure) = require_whole_analysis(case, &root) {
+                return counts(failure);
+            }
+            counts(Assessment {
+                result: RowResult::PassedSupportedAnalysis,
+                detail: "pattern did not match; file analyzed".to_string(),
+                limitation: None,
+                findings_reported: 0,
+                findings_suppressed: 0,
+                declined_files: 0,
+                artifact_projection: None,
+            })
+        }
     }
 }
 
@@ -289,11 +494,35 @@ fn assess_pilot(case: &Case, observed: &Observed<'_>) -> Assessment {
         .collect();
     projection.sort();
     let projection = format!(
-        "run_status={}\n{}",
+        "run_status={}\n{}\n{}\n{}",
         exposure
             .get("run_status")
             .and_then(Value::as_str)
             .unwrap_or_default(),
+        decline_projection(
+            "summary",
+            summary.get("declined_rust_files"),
+            "file_count",
+            "files"
+        ),
+        exposure
+            .get("limitations")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|limitation| {
+                limitation.get("category").and_then(Value::as_str) == Some("rust_files_declined")
+            })
+            .map(|limitation| {
+                decline_projection(
+                    "artifact",
+                    Some(limitation),
+                    "declined_file_count",
+                    "declined_files",
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
         projection.join("\n")
     );
     let attach = |mut assessment: Assessment| {
@@ -301,27 +530,48 @@ fn assess_pilot(case: &Case, observed: &Observed<'_>) -> Assessment {
         assessment
     };
     let run_status = exposure.get("run_status").and_then(Value::as_str);
-    if !matches!(run_status, Some("complete" | "limited_declined_files")) {
-        return attach(Assessment::fail(
-            RowResult::SemanticFailure,
-            format!("pilot inventory is not whole: run_status {run_status:?}"),
-        ));
-    }
     let hostile = case.hostile.as_deref().unwrap_or_default();
-    let disclosure = observed
-        .stderr
-        .lines()
-        .find(|line| line.contains(hostile) && line.contains("static limit rust_nesting_budget"));
+    // The decline is carried by the summary's `declined_rust_files` field and
+    // by the artifact's `run_status` and `rust_files_declined` limitation
+    // (#9308); stderr is no longer the evidence.
+    let declined_limitations: Vec<&Value> = exposure
+        .get("limitations")
+        .and_then(Value::as_array)
+        .map(|limitations| {
+            limitations
+                .iter()
+                .filter(|limitation| {
+                    limitation.get("category").and_then(Value::as_str)
+                        == Some("rust_files_declined")
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    // A supported row is a whole run: any declined file, whichever path it
+    // names, in either surface, fails it.
+    let any_decline_reported = summary
+        .get("declined_rust_files")
+        .is_some_and(|field| !field.is_null())
+        || !declined_limitations.is_empty();
     match &case.expect {
         Expect::TypedLimitation { token, .. } => {
-            let Some(line) = disclosure.filter(|line| line.contains(token)) else {
-                return attach(Assessment::fail(
-                    RowResult::MissingOrFalseCleanLimitation,
-                    format!(
-                        "pilot completed (status complete) with no `{token}` disclosure naming {hostile}"
-                    ),
-                )
-                .with_counts(unaffected, 0, 0));
+            let decline = match validated_decline(
+                &summary,
+                &declined_limitations,
+                run_status,
+                hostile,
+                token,
+            ) {
+                Ok(decline) => decline,
+                Err(why) => {
+                    return attach(
+                        Assessment::fail(
+                            RowResult::MissingOrFalseCleanLimitation,
+                            format!("pilot decline of {hostile} is not structured evidence: {why}"),
+                        )
+                        .with_counts(unaffected, 0, 0),
+                    );
+                }
             };
             if unaffected == 0 {
                 return attach(
@@ -329,28 +579,32 @@ fn assess_pilot(case: &Case, observed: &Observed<'_>) -> Assessment {
                         RowResult::WrongSubject,
                         format!("hostile file declined but no seam for {}", case.changed),
                     )
-                    .with_counts(0, 0, 1),
+                    .with_counts(0, 0, decline.count),
                 );
             }
             attach(
                 Assessment {
                     result: RowResult::PassedTypedLimitation,
-                    detail: "declined with a stderr static-limit disclosure".to_string(),
-                    limitation: Some(line.trim_start_matches("ripr: ").to_string()),
+                    detail:
+                        "declined with a typed limited run_status and declined_rust_files entry"
+                            .to_string(),
+                    limitation: Some(decline.reason),
                     findings_reported: 0,
                     findings_suppressed: 0,
                     declined_files: 0,
                     artifact_projection: None,
                 }
-                .with_counts(unaffected, 0, 1),
+                .with_counts(unaffected, 0, decline.count),
             )
         }
         _ => {
-            if disclosure.is_some() {
+            if any_decline_reported || run_status != Some("complete") {
                 return attach(
                     Assessment::fail(
                         RowResult::SemanticFailure,
-                        "a supported input received a rust_nesting_budget disclosure".to_string(),
+                        format!(
+                            "a supported input was not a whole run: run_status {run_status:?}, decline reported: {any_decline_reported}"
+                        ),
                     )
                     .with_counts(unaffected, 0, 1),
                 );
@@ -375,4 +629,119 @@ fn assess_pilot(case: &Case, observed: &Observed<'_>) -> Assessment {
             )
         }
     }
+}
+
+struct ValidatedDecline {
+    reason: String,
+    count: usize,
+}
+
+/// One decline, seen the same way by the pilot summary and the artifact.
+/// Everything the row reports is read back from these fields, so a surface
+/// that disagrees with the other cannot be averaged into a pass.
+fn validated_decline(
+    summary: &Value,
+    artifact_limitations: &[&Value],
+    run_status: Option<&str>,
+    hostile: &str,
+    token: &str,
+) -> Result<ValidatedDecline, String> {
+    if run_status != Some("limited_declined_files") {
+        return Err(format!("artifact run_status is {run_status:?}"));
+    }
+    let from_summary = decline_entry(
+        summary.get("declined_rust_files"),
+        "file_count",
+        "files",
+        hostile,
+        token,
+    )
+    .map_err(|why| format!("summary declined_rust_files: {why}"))?;
+    let [limitation] = artifact_limitations else {
+        return Err(format!(
+            "artifact carries {} rust_files_declined limitations, not one",
+            artifact_limitations.len()
+        ));
+    };
+    let from_artifact = decline_entry(
+        Some(limitation),
+        "declined_file_count",
+        "declined_files",
+        hostile,
+        token,
+    )
+    .map_err(|why| format!("artifact rust_files_declined: {why}"))?;
+    if from_summary.reason != from_artifact.reason {
+        return Err(format!(
+            "summary reason {:?} and artifact reason {:?} disagree",
+            from_summary.reason, from_artifact.reason
+        ));
+    }
+    Ok(from_summary)
+}
+
+fn decline_entry(
+    field: Option<&Value>,
+    count_key: &str,
+    files_key: &str,
+    hostile: &str,
+    token: &str,
+) -> Result<ValidatedDecline, String> {
+    let field = field.ok_or_else(|| "missing".to_string())?;
+    let count = field
+        .get(count_key)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("no numeric {count_key}"))?;
+    let files = field
+        .get(files_key)
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("no {files_key} list"))?;
+    if count != 1 || files.len() != 1 {
+        return Err(format!(
+            "{count_key} {count} with {} listed files, expected exactly the hostile file",
+            files.len()
+        ));
+    }
+    let path = files[0].get("path").and_then(Value::as_str);
+    if path != Some(hostile) {
+        return Err(format!("names {path:?}, not {hostile}"));
+    }
+    let reason = files[0]
+        .get("reason")
+        .and_then(Value::as_str)
+        .filter(|reason| reason.contains(token))
+        .ok_or_else(|| format!("reason does not carry `{token}`"))?;
+    Ok(ValidatedDecline {
+        reason: reason.to_string(),
+        count: usize::try_from(count).map_err(|err| format!("{count_key} {count}: {err}"))?,
+    })
+}
+
+fn decline_projection(
+    surface: &str,
+    field: Option<&Value>,
+    count_key: &str,
+    files_key: &str,
+) -> String {
+    let Some(field) = field.filter(|field| !field.is_null()) else {
+        return format!("decline.{surface}=none");
+    };
+    let count = field.get(count_key).and_then(Value::as_u64);
+    let mut files: Vec<String> = field
+        .get(files_key)
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|file| {
+            format!(
+                "{}|{}",
+                file.get("path").and_then(Value::as_str).unwrap_or_default(),
+                file.get("reason")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+            )
+        })
+        .collect();
+    files.sort();
+    format!("decline.{surface}={count:?}:{}", files.join(";"))
 }

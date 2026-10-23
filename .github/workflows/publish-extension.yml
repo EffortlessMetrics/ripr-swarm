@@ -4,8 +4,18 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version label for the VSIX artifact, for example 0.2.0"
+        description: "Release version, for example 0.11.0"
         required: true
+      source_sha:
+        description: "Full 40-hex SOURCE_RELEASE_HEAD the release tag v<version> peels to; the run must be dispatched at it"
+        required: true
+      manifest_sha256:
+        description: "Raw-byte SHA-256 of ripr-server-manifest-v<version>.json from the release transaction receipt"
+        required: true
+      vsix_sha256:
+        description: "SHA-256 of the VSIX the first channel dispatch attached to the Release (its package job summary); required for the second dispatch, empty for the first"
+        required: false
+        default: ""
       publish_vs_marketplace:
         description: "Publish to VS Marketplace"
         required: false
@@ -16,19 +26,20 @@ on:
         default: "false"
   # No tag trigger and no default-on marketplace: each channel is dispatched
   # explicitly per docs/RELEASE_TRANSACTION.md (#1646 owns the full topology).
+  # One VSIX per release: the first dispatch builds it and attaches it to the
+  # GitHub Release; later dispatches (the other channel) reuse those exact bytes.
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   admit-dispatch:
     runs-on: ubuntu-latest
     steps:
-      - name: Require exactly one marketplace channel and a release version
+      - name: Require exactly one marketplace channel
         env:
           PUBLISH_VS_MARKETPLACE: ${{ github.event.inputs.publish_vs_marketplace }}
           PUBLISH_OPEN_VSX: ${{ github.event.inputs.publish_open_vsx }}
-          RAW_VERSION: ${{ github.event.inputs.version }}
         run: |
           # Fail closed: one dispatch authorizes exactly one channel, so neither
           # "no channel" (a Release write with no marketplace) nor "both" passes.
@@ -39,21 +50,125 @@ jobs:
               exit 1
               ;;
           esac
-          if ! [[ "${RAW_VERSION#v}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
-            echo "::error::version must be a release version such as 0.11.0 (got $RAW_VERSION)"
+
+      - name: Require a release version and receipted digests
+        env:
+          RAW_VERSION: ${{ github.event.inputs.version }}
+          SOURCE_SHA: ${{ github.event.inputs.source_sha }}
+          MANIFEST_SHA256: ${{ github.event.inputs.manifest_sha256 }}
+          VSIX_SHA256: ${{ github.event.inputs.vsix_sha256 }}
+        run: |
+          if ! [[ -z "$VSIX_SHA256" || "$VSIX_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::vsix_sha256 must be empty or 64 lowercase hex"
+            exit 1
+          fi
+          if ! [[ "${RAW_VERSION#v}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must be a stable MAJOR.MINOR.PATCH release such as 0.11.0 (got $RAW_VERSION)"
+            exit 1
+          fi
+          if ! [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ && "$MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::source_sha must be 40 lowercase hex and manifest_sha256 64 lowercase hex"
             exit 1
           fi
 
-  package:
+      - name: Bind the dispatch to the receipted candidate
+        env:
+          RAW_VERSION: ${{ github.event.inputs.version }}
+          SOURCE_SHA: ${{ github.event.inputs.source_sha }}
+          RUN_SHA: ${{ github.sha }}
+        run: |
+          # The candidate is the receipted SOURCE_RELEASE_HEAD, not whatever ref
+          # was dispatched: the run commit must equal it and the release tag must
+          # peel to it (a lightweight tag resolves to the commit directly).
+          [ "$RUN_SHA" = "$SOURCE_SHA" ] \
+            || { echo "::error::dispatched at $RUN_SHA but source_sha is $SOURCE_SHA"; exit 1; }
+          repo="https://github.com/${GITHUB_REPOSITORY}.git"
+          tag="v${RAW_VERSION#v}"
+          tag_commit="$(git ls-remote "$repo" "refs/tags/${tag}^{}" | cut -f1)"
+          [ -n "$tag_commit" ] || tag_commit="$(git ls-remote "$repo" "refs/tags/${tag}" | cut -f1)"
+          [ "$tag_commit" = "$SOURCE_SHA" ] \
+            || { echo "::error::tag $tag resolves to '${tag_commit}', not source_sha $SOURCE_SHA"; exit 1; }
+
+  verify-server-assets:
+    # Anchors the editor's admitted manifest digest to the receipted value and
+    # proves every archive the manifest names is published with the digest the
+    # manifest claims, before any VSIX is built or published.
     needs: admit-dispatch
     runs-on: ubuntu-latest
+    env:
+      RAW_VERSION: ${{ github.event.inputs.version }}
+      MANIFEST_SHA256: ${{ github.event.inputs.manifest_sha256 }}
+    steps:
+      - name: Fetch the server manifest
+        run: |
+          version="${RAW_VERSION#v}"
+          # The manifest is keyed by distribution generation (X.Y.Z), while an
+          # RC places it under its own tag (the editor's rcManifestUrl).
+          generation="${version%%[-+]*}"
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${version}/ripr-server-manifest-v${generation}.json"
+          mkdir -p server
+          for attempt in $(seq 1 90); do
+            curl -fsSL -o "server/ripr-server-manifest-v${generation}.json" "$url" && exit 0
+            echo "Waiting for $url (attempt $attempt/90)"
+            sleep 20
+          done
+          echo "::error::server manifest was not available: $url"
+          exit 1
+
+      - name: Verify the manifest against the receipted digest
+        run: |
+          version="${RAW_VERSION#v}"
+          generation="${version%%[-+]*}"
+          file="server/ripr-server-manifest-v${generation}.json"
+          actual="$(sha256sum "$file" | cut -d' ' -f1)"
+          [ "$actual" = "$MANIFEST_SHA256" ] \
+            || { echo "::error::manifest SHA-256 $actual does not match the receipted $MANIFEST_SHA256"; exit 1; }
+          jq -e --arg v "$generation" '.version == $v and (.assets | length) > 0' "$file" >/dev/null
+
+      - name: Verify every archive the manifest names
+        run: |
+          set -euo pipefail
+          version="${RAW_VERSION#v}"
+          generation="${version%%[-+]*}"
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${version}"
+          jq -r '.assets | to_entries[] | [.key, .value.url, .value.sha256] | @tsv' \
+            "server/ripr-server-manifest-v${generation}.json" \
+            | while IFS=$'\t' read -r target url sha; do
+                case "$url" in
+                  *..*) echo "::error::asset $target url $url contains '..'"; exit 1 ;;
+                  "$base"/*) ;;
+                  *) echo "::error::asset $target url $url is outside $base"; exit 1 ;;
+                esac
+                curl -fsSL -o server/asset "$url"
+                got="$(sha256sum server/asset | cut -d' ' -f1)"
+                [ "$got" = "$sha" ] \
+                  || { echo "::error::asset $target digest $got does not match manifest $sha"; exit 1; }
+                echo "verified $target"
+              done
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ripr-server-manifest
+          path: server/ripr-server-manifest-v*.json
+
+  package:
+    needs: verify-server-assets
+    runs-on: ubuntu-latest
+    outputs:
+      vsix_sha256: ${{ steps.digest.outputs.sha256 }}
     defaults:
       run:
         working-directory: editors/vscode
     env:
-      EXTENSION_VERSION: ${{ github.event.inputs.version || github.ref_name }}
+      RAW_VERSION: ${{ github.event.inputs.version }}
+      MANIFEST_SHA256: ${{ github.event.inputs.manifest_sha256 }}
+      EXPECTED_VSIX_SHA256: ${{ github.event.inputs.vsix_sha256 }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.inputs.source_sha }}
 
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
@@ -61,17 +176,82 @@ jobs:
           cache: npm
           cache-dependency-path: editors/vscode/package-lock.json
 
+      - name: Require package.json version to equal the release version
+        run: |
+          version="${RAW_VERSION#v}"
+          jq -e --arg v "$version" '.version == $v' package.json >/dev/null \
+            || { echo "::error::package.json version does not equal $version"; exit 1; }
+
+      - name: Reuse the VSIX already attached to the release
+        id: existing
+        run: |
+          # One VSIX per release: the other channel's dispatch promotes the
+          # bytes the first dispatch attached. A name on the Release proves
+          # nothing, so the operator carries the first run's digest in
+          # `vsix_sha256` and the downloaded bytes must match it.
+          version="${RAW_VERSION#v}"
+          vsix="dist/ripr-${version}.vsix"
+          mkdir -p dist
+          if gh release view "v${version}" --json assets --jq '.assets[].name' \
+              | grep -Fxq "ripr-${version}.vsix"; then
+            [ -n "$EXPECTED_VSIX_SHA256" ] \
+              || { echo "::error::a VSIX is already attached; pass its digest as vsix_sha256"; exit 1; }
+            gh release download "v${version}" --pattern "ripr-${version}.vsix" --dir dist
+            echo "${EXPECTED_VSIX_SHA256}  ${vsix}" | sha256sum -c -
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            [ -z "$EXPECTED_VSIX_SHA256" ] \
+              || { echo "::error::vsix_sha256 given but no VSIX is attached to the Release"; exit 1; }
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install
-        run: npm ci
+        run: npm ci --ignore-scripts
+
+      - name: Download the verified server manifest
+        if: ${{ steps.existing.outputs.found != 'true' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: ripr-server-manifest
+          path: ${{ github.workspace }}/server
+
+      - name: Bind the receipted manifest digest into the editor descriptor
+        if: ${{ steps.existing.outputs.found != 'true' }}
+        working-directory: .
+        run: |
+          version="${RAW_VERSION#v}"
+          # The descriptor and manifest are keyed by distribution generation.
+          generation="${version%%[-+]*}"
+          cargo xtask release-bind-server-descriptor \
+            --version "$generation" \
+            --manifest "server/ripr-server-manifest-v${generation}.json" \
+            --manifest-sha256 "$MANIFEST_SHA256"
 
       - name: Compile
+        if: ${{ steps.existing.outputs.found != 'true' }}
         run: npm run compile
 
-      - name: Package VSIX
+      - name: Package and verify VSIX
+        if: ${{ steps.existing.outputs.found != 'true' }}
+        # Same inventory bounds and license-notice checks CI applies.
+        run: npm run package
+
+      - name: Verify the VSIX
         run: |
-          version="${EXTENSION_VERSION#v}"
-          mkdir -p dist
-          npx @vscode/vsce package --out "dist/ripr-${version}.vsix"
+          version="${RAW_VERSION#v}"
+          vsix="dist/ripr-${version}.vsix"
+          cargo xtask vscode-verify-vsix -- "$vsix"
+          # The admitted descriptor in the VSIX must carry the receipted digest.
+          unzip -p "$vsix" extension/out/src/serverDescriptor.js | grep -Fq "$MANIFEST_SHA256" \
+            || { echo "::error::VSIX does not embed the receipted manifest digest"; exit 1; }
+
+      - name: Record VSIX digest
+        id: digest
+        run: |
+          version="${RAW_VERSION#v}"
+          sha="$(sha256sum "dist/ripr-${version}.vsix" | cut -d' ' -f1)"
+          echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+          echo "VSIX sha256 $sha" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -79,104 +259,14 @@ jobs:
           name: ripr-vsix
           path: editors/vscode/dist/*.vsix
 
-  server-assets-ready:
-    needs: admit-dispatch
-    runs-on: ubuntu-latest
-    env:
-      RAW_VERSION: ${{ github.event.inputs.version || github.ref_name }}
-    steps:
-      - name: Wait for server manifest
-        run: |
-          version="${RAW_VERSION#v}"
-          # The manifest is keyed by distribution generation (X.Y.Z), while an
-          # RC places it under its own tag (the editor's rcManifestUrl).
-          generation="${version%%[-+]*}"
-          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${version}/ripr-server-manifest-v${generation}.json"
-          for attempt in $(seq 1 90); do
-            status="$(curl -L -sS -o /dev/null -w "%{http_code}" "$url" || true)"
-            if [ "$status" = "200" ]; then
-              echo "Found $url"
-              exit 0
-            fi
-            echo "Waiting for $url (attempt $attempt/90, HTTP $status)"
-            sleep 20
-          done
-          echo "Server manifest was not available: $url" >&2
-          exit 1
-
-  publish-vs-marketplace:
-    needs: [package, server-assets-ready]
-    if: ${{ github.event.inputs.publish_vs_marketplace == 'true' }}
-    runs-on: ubuntu-latest
-    env:
-      RAW_VERSION: ${{ github.event.inputs.version || github.ref_name }}
-      VSCE_PAT: ${{ secrets.VSCE_PAT }}
-    steps:
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 24
-
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        with:
-          name: ripr-vsix
-          path: dist
-
-      - name: Require VSCE_PAT
-        if: ${{ env.VSCE_PAT == '' }}
-        run: |
-          echo "::error::VSCE_PAT is not configured; VS Code Marketplace publish cannot run."
-          exit 1
-
-      - name: Publish to VS Marketplace
-        if: ${{ env.VSCE_PAT != '' }}
-        run: |
-          version="${RAW_VERSION#v}"
-          vsix_file="dist/ripr-${version}.vsix"
-          PUBLISHED_VERSION="$(
-            npx -y @vscode/vsce show EffortlessMetrics.ripr --json 2>/dev/null \
-              | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['versions'][0]['version'])" \
-              2>/dev/null || echo ""
-          )"
-          if [ "$PUBLISHED_VERSION" = "$version" ]; then
-            echo "::warning::VS Code Marketplace already has version $version; skipping publish."
-            exit 0
-          fi
-          npx -y @vscode/vsce publish --packagePath "$vsix_file" --pat "$VSCE_PAT"
-
-  publish-open-vsx:
-    needs: [package, server-assets-ready]
-    if: ${{ github.event.inputs.publish_open_vsx == 'true' }}
-    runs-on: ubuntu-latest
-    env:
-      RAW_VERSION: ${{ github.event.inputs.version || github.ref_name }}
-      OVSX_PAT: ${{ secrets.OVSX_PAT }}
-    steps:
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 24
-
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        with:
-          name: ripr-vsix
-          path: dist
-
-      - name: Require OVSX_PAT
-        if: ${{ env.OVSX_PAT == '' }}
-        run: |
-          echo "::error::OVSX_PAT is not configured; Open VSX publish cannot run."
-          exit 1
-
-      - name: Publish to Open VSX
-        if: ${{ env.OVSX_PAT != '' }}
-        run: |
-          version="${RAW_VERSION#v}"
-          npx -y ovsx publish "dist/ripr-${version}.vsix" -p "$OVSX_PAT" --skip-duplicate
-
   attach-release-asset:
-    # The Release tag comes from the version input, not the execution ref, so a
-    # fix-forward dispatch from a branch still attaches to the original Release.
+    # The Release tag comes from the version input. This runs before the
+    # marketplace publishes so the first channel's VSIX becomes the one every
+    # later channel reuses.
     needs: [admit-dispatch, package]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
@@ -205,3 +295,132 @@ jobs:
           # Through env, not template expansion, so the input is data; its
           # format is checked in admit-dispatch.
           RAW_VERSION: ${{ github.event.inputs.version }}
+          EXPECTED_VSIX_SHA256: ${{ needs.package.outputs.vsix_sha256 }}
+
+      - name: Require the Release to hold exactly this run's VSIX
+        run: |
+          # Catches an overlapping dispatch that attached different bytes first.
+          version="${RAW_VERSION#v}"
+          mkdir -p attached
+          gh release download "v${version}" --pattern "ripr-${version}.vsix" --dir attached
+          echo "${EXPECTED_VSIX_SHA256}  attached/ripr-${version}.vsix" | sha256sum -c -
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RAW_VERSION: ${{ github.event.inputs.version }}
+          EXPECTED_VSIX_SHA256: ${{ needs.package.outputs.vsix_sha256 }}
+
+  publish-vs-marketplace:
+    needs: [package, attach-release-asset]
+    if: ${{ github.event.inputs.publish_vs_marketplace == 'true' }}
+    runs-on: ubuntu-latest
+    # Approval/branch gate for the job that holds VSCE_PAT. The environment must be
+    # created and protected in repository settings (required reviewers,
+    # deployment branches limited to main) by a repository admin; this file
+    # only names it (#9303).
+    environment: vs-marketplace-publish
+    permissions:
+      contents: read
+    env:
+      RAW_VERSION: ${{ github.event.inputs.version }}
+      EXPECTED_VSIX_SHA256: ${{ needs.package.outputs.vsix_sha256 }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.inputs.source_sha }}
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - name: Install the lockfile-pinned vsce
+        working-directory: editors/vscode
+        run: npm ci --ignore-scripts
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: ripr-vsix
+          path: dist
+
+      - name: Require the VSIX that was verified in package
+        run: |
+          version="${RAW_VERSION#v}"
+          echo "${EXPECTED_VSIX_SHA256}  dist/ripr-${version}.vsix" | sha256sum -c -
+
+      # The PAT is visible to this one step only (not checkout, setup-node or
+      # npm ci). The secrets context is unavailable in `if:`, so a missing
+      # token is checked inside the step.
+      - name: Publish to VS Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          if [ -z "$VSCE_PAT" ]; then
+            echo "::error::VSCE_PAT is not configured; VS Code Marketplace publish cannot run."
+            exit 1
+          fi
+          version="${RAW_VERSION#v}"
+          vsix_file="$PWD/dist/ripr-${version}.vsix"
+          vsce="$PWD/editors/vscode/node_modules/.bin/vsce"
+          PUBLISHED_VERSION="$(
+            "$vsce" show EffortlessMetrics.ripr --json 2>/dev/null \
+              | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['versions'][0]['version'])" \
+              2>/dev/null || echo ""
+          )"
+          if [ "$PUBLISHED_VERSION" = "$version" ]; then
+            echo "::warning::VS Code Marketplace already has version $version; skipping publish."
+            exit 0
+          fi
+          "$vsce" publish --packagePath "$vsix_file" --pat "$VSCE_PAT"
+
+  publish-open-vsx:
+    needs: [package, attach-release-asset]
+    if: ${{ github.event.inputs.publish_open_vsx == 'true' }}
+    runs-on: ubuntu-latest
+    # Approval/branch gate for the job that holds OVSX_PAT. The environment must be
+    # created and protected in repository settings (required reviewers,
+    # deployment branches limited to main) by a repository admin; this file
+    # only names it (#9303).
+    environment: open-vsx-publish
+    permissions:
+      contents: read
+    env:
+      RAW_VERSION: ${{ github.event.inputs.version }}
+      EXPECTED_VSIX_SHA256: ${{ needs.package.outputs.vsix_sha256 }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.inputs.source_sha }}
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - name: Install the lockfile-pinned ovsx
+        working-directory: .github/ovsx
+        run: npm ci --ignore-scripts
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: ripr-vsix
+          path: dist
+
+      - name: Require the VSIX that was verified in package
+        run: |
+          version="${RAW_VERSION#v}"
+          echo "${EXPECTED_VSIX_SHA256}  dist/ripr-${version}.vsix" | sha256sum -c -
+
+      # The PAT is visible to this one step only; see publish-vs-marketplace.
+      - name: Publish to Open VSX
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          if [ -z "$OVSX_PAT" ]; then
+            echo "::error::OVSX_PAT is not configured; Open VSX publish cannot run."
+            exit 1
+          fi
+          version="${RAW_VERSION#v}"
+          # Lockfile-pinned (.github/ovsx), audited install: a floating
+          # `npx -y ovsx` would run unreviewed npm code in a job holding OVSX_PAT.
+          "$PWD/.github/ovsx/node_modules/.bin/ovsx" publish "$PWD/dist/ripr-${version}.vsix" -p "$OVSX_PAT" --skip-duplicate
