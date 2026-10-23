@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-py-grid-logical",
+  "origin": "authored",
+  "version_label": "authored@3608bb9a",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "grid_logical/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "grid_logical/core.py",
+      "sha256": "6d47fd4b3275f0c7560cc60530edf3d9592c4805f151a7fdf0623f3246bda0e2"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "3983ba6248f3830bfaac7e17735933bfa614efc6556cc86538041fac69518cf4"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/test_core.py",
+      "sha256": "8aaf6e50e8c4849aceb0c4c1b3c747b4fa294c63b5e2b0404b13c80106f66cca"
+    }
+  ]
+}

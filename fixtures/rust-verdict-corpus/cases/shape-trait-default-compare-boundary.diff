@@ -1,0 +1,12 @@
+diff --git a/src/traits.rs b/src/traits.rs
+--- a/src/traits.rs
++++ b/src/traits.rs
+@@ -44,7 +44,7 @@
+     const MAX: u32;
+ 
+     fn clamp(v: u32) -> u32 {
+-        if v > Self::MAX {
++        if Self::MAX < v {
+             Self::MAX
+         } else {
+             v

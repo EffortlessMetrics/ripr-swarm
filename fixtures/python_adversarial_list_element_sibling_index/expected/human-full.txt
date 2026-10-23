@@ -37,7 +37,7 @@ Evidence
   - observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)
   - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
   - local flow reaches returned value: return ["index", "browse", "detail"] (line 2)
-  - related test tests/test_routes.py:4 test_first uses strong exact value oracle: assert route_order()[0] == "index"
+  - related test tests/test_routes.py:4 test_first uses strong exact value oracle: assert route_order()[0] == "index"; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
 
 Weakness
   - A strong Python oracle reaches `route_order`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output

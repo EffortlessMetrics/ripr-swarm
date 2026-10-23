@@ -1,0 +1,7 @@
+diff --git a/hostile/shadow.py b/hostile/shadow.py
+--- a/hostile/shadow.py
++++ b/hostile/shadow.py
+@@ -1,2 +1,2 @@
+ def max(a, b):
+-    return a if a > b else b
++    return a if a < b else b

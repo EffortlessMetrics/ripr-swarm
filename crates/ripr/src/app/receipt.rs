@@ -374,10 +374,10 @@ fn receipt_file_stem(canonical_gap_id: &str) -> String {
 
 fn validate_write_options(opts: &ReceiptWriteOptions) -> Result<(), String> {
     if opts.canonical_gap_id.trim().is_empty() {
-        return Err("receipt requires a canonical_gap_id; re-run with --gap".to_string());
+        return Err("receipt write requires a canonical_gap_id; re-run with --gap".to_string());
     }
     if opts.verify_command.trim().is_empty() {
-        return Err("receipt requires --verify-command".to_string());
+        return Err("receipt write requires --verify-command".to_string());
     }
     if opts.verify_status.trim().is_empty() {
         return Err(format!(

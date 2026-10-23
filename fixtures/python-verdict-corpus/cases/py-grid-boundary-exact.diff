@@ -1,0 +1,12 @@
+diff --git a/grid_boundary/core.py b/grid_boundary/core.py
+--- a/grid_boundary/core.py
++++ b/grid_boundary/core.py
+@@ -2,7 +2,7 @@
+ 
+ 
+ def is_adult(age):
+-    return age >= 18
++    return 18 <= age
+ 
+ 
+ def free_shipping(cents):

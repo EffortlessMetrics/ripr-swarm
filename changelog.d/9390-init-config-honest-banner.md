@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- The `ripr init`-generated `ripr.toml` banner no longer claims a missing config "behaves identically": with no config, ripr enables languages detected from project markers (Python, TypeScript), while the generated file pins `[languages]` to `["rust"]`. The banner now says so and tells users they can ignore or delete the file when Rust-only analysis is what they want (#9374).

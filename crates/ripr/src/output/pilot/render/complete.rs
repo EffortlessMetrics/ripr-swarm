@@ -25,13 +25,30 @@ use crate::output::pilot::{
 };
 use crate::output::python_repair_card::PythonRepairCard;
 
+/// The actual ranking order, stated once and shared by both constants
+/// through the macro so the header and the note cannot drift at compile
+/// time (#9368 item 3): change-touched seams first, then grip class, then
+/// owner rounds — every function's first seam ranks before any function's
+/// second, whatever its evidence (`spread_across_owners`, #5770) — and the
+/// evidence key breaks ties inside each round.
+macro_rules! ranking_order_sentence {
+    () => {
+        "Order: change-touched seams first, then grip class, then one pick per owning function per round, then missing-discriminator evidence, related tests, and assertion readiness."
+    };
+}
+const RANKING_ORDER_SENTENCE: &str = ranking_order_sentence!();
+
 /// Pilot picks are ordered by static evidence (grip class, a missing
 /// value, a related test, a suggested assertion), not by measured mutant
 /// yield: published pilot precision is well below the ranking bar in
-/// `docs/PUBLIC_PROOF.md`. Human output must say so where it presents a
-/// pick as a recommendation, so the order is not read as "highest-value
-/// test first". Structured (JSON) output is unchanged.
-const EXPLORATORY_SEAMS_NOTE: &str = "Exploratory seams, not ranked by expected mutant yield: this order groups seams by static evidence and by whether a focused test can be suggested. It has not been shown to put the seams most likely to catch a wrong result first, so treat each pick as a place to inspect, not as the highest-value test to add.";
+/// `docs/PUBLIC_PROOF.md`. Human output must state both the actual order
+/// and its limit where it presents a pick as a recommendation (#9368 item
+/// 3), so the order is neither a mystery nor read as "highest-value test
+/// first". Structured (JSON) output is unchanged.
+const RANKING_ORDER_NOTE: &str = concat!(
+    ranking_order_sentence!(),
+    " Static evidence, not measured fault yield: unproven against real faults, so treat each pick as a place to inspect, not as the highest-value test to add."
+);
 
 const PYTHON_PREVIEW_SUPPORTED_FEATURES: &[&str] = &[
     "project_detection",
@@ -255,6 +272,11 @@ pub(crate) fn render_pilot_summary_md(
             actionable_total, context.max_seams
         ));
     }
+    // #9368: the summary says how many seams were cut, but no human surface
+    // pointed at the one flag that answers "why only this many".
+    if actionable_total > context.max_seams {
+        out.push_str("- Pass `--max-seams N` to rank more seams.\n");
+    }
     let withheld = withheld_static_limitations(classified);
     if withheld > 0 {
         out.push_str(&format!(
@@ -305,7 +327,7 @@ pub(crate) fn render_pilot_summary_md(
         }
     } else {
         out.push_str("## Top Recommendation\n\n");
-        out.push_str(EXPLORATORY_SEAMS_NOTE);
+        out.push_str(RANKING_ORDER_NOTE);
         out.push_str("\n\n");
         if let Some(label) = current_change_label(context, top[0]) {
             out.push_str(&format!("- Current change: {}\n", label.markdown()));
@@ -321,10 +343,12 @@ pub(crate) fn render_pilot_summary_md(
             .any(|entry| repair_start_command(context.root, entry).is_some())
         {
             out.push_str("## Ranked Actionable Seams\n\n");
-            out.push_str("Exploratory seams, not ranked by expected mutant yield.\n\n");
+            out.push_str(RANKING_ORDER_SENTENCE);
+            out.push_str("\n\n");
         } else {
             out.push_str("## Ranked Seams\n\n");
-            out.push_str("Exploratory seams, not ranked by expected mutant yield.\n\n");
+            out.push_str(RANKING_ORDER_SENTENCE);
+            out.push_str("\n\n");
             out.push_str(
                 "None of these seams can start a repair attempt (`ripr agent repair`); they are ranked for inspection by hand. Repair scope: `ripr agent repair --help`.\n\n",
             );
@@ -587,6 +611,28 @@ pub(crate) fn render_pilot_terminal(
             limit.analyzed, limit.total
         ));
     }
+    // #9368: the terminal shows the top 1 seam; without the total and a
+    // pointer to the ranked list, one unexplained pick out of an undisclosed
+    // count reads as arbitrariness on large repos. The lower-bound predicate
+    // mirrors the JSON summary (#6739): a seam limit cut the classified
+    // seams, and declined Rust files emitted no probe shapes, so either way
+    // the terminal total understates the repo.
+    let actionable = actionable_total(classified);
+    if actionable >= 1 {
+        let totals = if context.seam_limit.is_some() || !declined_rust_files(context).is_empty() {
+            format!("at least {actionable}")
+        } else {
+            format!("{actionable} total")
+        };
+        if actionable > 1 {
+            out.push_str(&format!(
+                "  actionable seams: {totals}, showing 1 (more ranked in {brief}; pass --max-seams N to rank more)\n",
+                brief = display_path(&context.artifacts.pilot_summary_md)
+            ));
+        } else {
+            out.push_str(&format!("  actionable seams: {totals}, showing 1\n"));
+        }
+    }
     let withheld = withheld_static_limitations(classified);
     if withheld > 0 {
         out.push_str(&format!(
@@ -604,7 +650,7 @@ pub(crate) fn render_pilot_terminal(
     let no_repair_target = if let Some(entry) = top.first() {
         let outline = targeted_test_brief_outline_for_classified_seam(entry);
         out.push_str("Top recommendation:\n");
-        out.push_str(&format!("  {EXPLORATORY_SEAMS_NOTE}\n"));
+        out.push_str(&format!("  {RANKING_ORDER_NOTE}\n"));
         if let Some(label) = current_change_label(context, entry) {
             out.push_str(&format!("  current change: {}\n", label.terminal()));
         }
