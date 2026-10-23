@@ -1601,11 +1601,41 @@ suite('Extension Smoke', () => {
       assert.ok(rejected.includes('last accepted configuration'));
       assert.ok(!rejected.includes('default settings'), 'a rejected pull keeps the last accepted configuration, not defaults');
 
+      // The server publishes `pending` before the corrective response
+      // arrives; that must not claim acceptance or drop the rejection.
+      context.client.emitNotification('ripr/analysisStatus', pull('pending'));
+      assert.ok(context.status.text.includes('ripr: failed'));
+      assert.ok(String(context.status.tooltip).includes('`gitTimeoutMs`'));
+      assert.ok(!String(context.status.tooltip).includes('accepted the workspace configuration'));
+
       // Correcting back to the effective value publishes `stopped` with an
       // applied pull and schedules no analysis, so nothing else repaints.
       context.client.emitNotification('ripr/analysisStatus', pull('applied'));
       assert.ok(!context.status.text.includes('ripr: failed'));
       assert.ok(!String(context.status.tooltip).includes('gitTimeoutMs'));
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('a rejected pull that is retried and rejected again stays visible (#9917)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      const pull = (state: string, extra: Record<string, unknown> = {}) => ({
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'stopped',
+        input_authority: { configuration_pull: { state, ...extra } }
+      });
+      const failure = { failure: { kind: 'config_pull_invalid', message: 'bad key `gitTimeoutMs`' } };
+      context.client.emitNotification('ripr/analysisStatus', pull('failed', failure));
+      context.client.emitNotification('ripr/analysisStatus', pull('pending'));
+      context.client.emitNotification('ripr/analysisStatus', pull('failed', failure));
+      assert.ok(context.status.text.includes('ripr: failed'));
+      assert.ok(String(context.status.tooltip).includes('`gitTimeoutMs`'));
+
+      // A later accepted pull still clears it.
+      context.client.emitNotification('ripr/analysisStatus', pull('applied'));
+      assert.ok(!context.status.text.includes('ripr: failed'));
     } finally {
       await context.dispose();
     }

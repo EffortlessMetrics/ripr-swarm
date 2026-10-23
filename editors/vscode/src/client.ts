@@ -1897,8 +1897,13 @@ export class RiprClientController {
       this.updateStatus(pullFailure);
       return;
     }
-    const clearConfigurationFailure = this.configurationFailurePainted;
-    this.configurationFailurePainted = false;
+    // `pending` is published before the corrective response arrives, so the
+    // rejection stays painted (and owed a clear) until the pull is decided.
+    const pullPending = status.input_authority?.configuration_pull?.state === 'pending';
+    const clearConfigurationFailure = this.configurationFailurePainted && !pullPending;
+    if (!pullPending) {
+      this.configurationFailurePainted = false;
+    }
     const failure = status.failure && typeof status.failure === 'object'
       ? status.failure as Record<string, unknown>
       : undefined;
