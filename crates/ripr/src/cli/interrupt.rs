@@ -207,6 +207,38 @@ mod tests {
         )
     }
 
+    /// Signal handlers and raised signals are process-wide, and a dropped
+    /// registration intentionally leaves a conditional-default handler armed
+    /// — so any test that raises a termination signal runs its scenario in a
+    /// re-invoked copy of this test binary (one exact filter plus a child
+    /// marker env var) instead of the shared lib-test runner. A retained
+    /// handler can otherwise take the whole runner down with the next
+    /// signal, which hosted CI observed as the lib test executable dying
+    /// with SIGTERM right after these tests (#9895 review).
+    fn in_isolated_child() -> bool {
+        std::env::var_os("RIPR_INTERRUPT_ISOLATED_CHILD").is_some()
+    }
+
+    fn run_isolated(test_name: &str) -> Result<std::process::ExitStatus, String> {
+        let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+        std::process::Command::new(executable)
+            .args([test_name, "--exact", "--nocapture"])
+            .env("RIPR_INTERRUPT_ISOLATED_CHILD", "1")
+            .status()
+            .map_err(|error| error.to_string())
+    }
+
+    /// Assert the isolated child completed successfully.
+    fn assert_child_success(test_name: &str) -> Result<(), String> {
+        let status = run_isolated(test_name)?;
+        if status.success() {
+            return Ok(());
+        }
+        Err(format!(
+            "isolated signal child {test_name} failed: {status}"
+        ))
+    }
+
     #[test]
     fn check_help_completes_without_interruption() {
         let result = check(&["--help".to_string()]);
@@ -250,6 +282,17 @@ mod tests {
 
     #[test]
     fn first_sigint_requests_cancellation_then_arms_native_termination() -> Result<(), String> {
+        if in_isolated_child() {
+            return child_first_sigint_requests_cancellation_then_arms_native_termination();
+        }
+        assert_child_success(concat!(
+            module_path!(),
+            "::first_sigint_requests_cancellation_then_arms_native_termination"
+        ))
+    }
+
+    fn child_first_sigint_requests_cancellation_then_arms_native_termination() -> Result<(), String>
+    {
         let _serial = serialized();
         let (pair, interrupted, native) = flags();
         let registration = SignalRegistration::create(pair)?;
@@ -276,6 +319,17 @@ mod tests {
         // so an external termination request settles the in-flight attempt
         // (bounded child waits terminate the owned tree) instead of orphaning
         // it; only a repeated signal takes native death.
+        if in_isolated_child() {
+            return child_first_sigterm_requests_cancellation_then_arms_native_termination();
+        }
+        assert_child_success(concat!(
+            module_path!(),
+            "::first_sigterm_requests_cancellation_then_arms_native_termination"
+        ))
+    }
+
+    fn child_first_sigterm_requests_cancellation_then_arms_native_termination() -> Result<(), String>
+    {
         let _serial = serialized();
         let (pair, interrupted, native) = flags();
         let registration = SignalRegistration::create_for(&[signal_hook::consts::SIGTERM], pair)?;
@@ -301,6 +355,17 @@ mod tests {
         // whichever arrives first requests settlement and a repeat of either
         // arms native termination — the two signals cannot disagree about the
         // attempt's state.
+        if in_isolated_child() {
+            return child_sigint_and_sigterm_share_one_flag_pair_in_server_registrations();
+        }
+        assert_child_success(concat!(
+            module_path!(),
+            "::sigint_and_sigterm_share_one_flag_pair_in_server_registrations"
+        ))
+    }
+
+    fn child_sigint_and_sigterm_share_one_flag_pair_in_server_registrations() -> Result<(), String>
+    {
         let _serial = serialized();
         let (pair, interrupted, native) = flags();
         let registration = SignalRegistration::create_for(
@@ -321,11 +386,66 @@ mod tests {
         Ok(())
     }
 
+    /// The escape hatch is real: once the first signal armed native
+    /// termination, a repeated signal takes native death. The expected
+    /// outcome is the scenario process dying by SIGINT, so — like every
+    /// raising scenario — it runs in an isolated re-invoked child and the
+    /// outer test only inspects the exit signal.
+    #[test]
+    fn repeated_sigint_after_arm_takes_native_death() -> Result<(), String> {
+        if in_isolated_child() {
+            return child_repeated_sigint_after_arm_takes_native_death();
+        }
+        let status = run_isolated(concat!(
+            module_path!(),
+            "::repeated_sigint_after_arm_takes_native_death"
+        ))?;
+        use std::os::unix::process::ExitStatusExt as _;
+        match status.signal() {
+            Some(signal) if signal == signal_hook::consts::SIGINT => Ok(()),
+            other => Err(format!(
+                "the repeated SIGINT must take native death by SIGINT, got signal {other:?} ({status})"
+            )),
+        }
+    }
+
+    fn child_repeated_sigint_after_arm_takes_native_death() -> Result<(), String> {
+        let _serial = serialized();
+        let (pair, interrupted, _native) = flags();
+        let registration = SignalRegistration::create(pair)?;
+        signal_hook::low_level::raise(signal_hook::consts::SIGINT)
+            .map_err(|error| error.to_string())?;
+        assert!(
+            interrupted.load(Ordering::SeqCst),
+            "the first SIGINT must still request cooperative cancellation"
+        );
+        // If the contract holds this raise never returns: the registration
+        // is still alive, native is armed, and the repeated signal takes the
+        // default action.
+        signal_hook::low_level::raise(signal_hook::consts::SIGINT)
+            .map_err(|error| error.to_string())?;
+        drop(registration);
+        Err("the repeated SIGINT must not return once native termination is armed".to_string())
+    }
+
     #[test]
     fn server_interrupt_install_is_idempotent_and_exposes_flags() -> Result<(), String> {
         // #9895: installing twice must not stack handlers (signal-hook would
         // otherwise hold duplicate registrations for the server process), and
         // the installed pair is what run_check binds its cancellation token to.
+        // The install is process-lifetime (`mem::forget`), so the isolated
+        // child owns the armed handlers; the runner never keeps them.
+        if in_isolated_child() {
+            return child_server_interrupt_install_is_idempotent_and_exposes_flags();
+        }
+        assert_child_success(concat!(
+            module_path!(),
+            "::server_interrupt_install_is_idempotent_and_exposes_flags"
+        ))
+    }
+
+    fn child_server_interrupt_install_is_idempotent_and_exposes_flags() -> Result<(), String> {
+        let _serial = serialized();
         install_server_interrupts().map_err(|error| error.to_string())?;
         install_server_interrupts().map_err(|error| error.to_string())?;
         let (interrupted, _native) = server_interrupt_flags()

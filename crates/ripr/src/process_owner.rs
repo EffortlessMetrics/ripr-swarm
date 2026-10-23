@@ -98,9 +98,13 @@ const FALLBACK_REAP_BUDGET: Duration = Duration::from_secs(5);
 /// Windows: the child is created suspended, assigned to a Job Object before
 /// any child user code executes, and only then resumed. Any descendant it
 /// spawns joins the job, so [`OwnedProcess::terminate_tree`] (or ending
-/// ownership) kills the entire assigned tree. Other platforms: a transparent
-/// wrapper over `std::process::Child`; termination kills and reaps the
-/// direct child exactly as the pre-#3803 helpers did.
+/// ownership) kills the entire assigned tree. Unix: the child is spawned as
+/// the leader of a fresh process group, every descendant it spawns inherits
+/// that group, and termination signals the whole group — a direct-child
+/// kill cannot reach pipe-inheriting grandchildren (#9895). Other
+/// platforms: a transparent wrapper over `std::process::Child`;
+/// termination kills and reaps the direct child exactly as the
+/// pre-#3803 helpers did.
 #[derive(Debug)]
 pub struct OwnedProcess {
     #[cfg(windows)]
@@ -128,7 +132,20 @@ impl OwnedProcess {
             let child = wrapped.spawn()?;
             Ok(Self { child })
         }
-        #[cfg(not(windows))]
+        #[cfg(all(unix, not(windows)))]
+        {
+            use std::os::unix::process::CommandExt as _;
+            let mut command = command;
+            // Own the whole tree, not just the direct child: the child leads
+            // a fresh process group, every descendant it spawns (including
+            // pipe-inheriting grandchildren) joins that group, and
+            // `terminate_tree` signals the group — a direct-child kill
+            // leaves those grandchildren behind as orphans (#9895).
+            command.process_group(0);
+            let child = command.spawn()?;
+            Ok(Self { child })
+        }
+        #[cfg(not(any(windows, unix)))]
         {
             // The passthrough spawn configures the prepared command in
             // place; the owned binding keeps the call site identical to
@@ -202,7 +219,11 @@ impl OwnedProcess {
 
     /// Request termination of the owned primary process without waiting.
     ///
-    /// Windows: the Job Object kill request. Other platforms:
+    /// Windows: the Job Object kill request. Unix: a `SIGKILL` to the
+    /// child's whole process group — the child was spawned as its leader
+    /// (see [`OwnedProcess::spawn`]), so the request reaches every owned
+    /// descendant, and `ESRCH` (group fully exited) mirrors `Child::kill`'s
+    /// ok-for-exited contract. Other platforms:
     /// `std::process::Child::kill`, which — like the Job Object request —
     /// returns `Ok(())` for an already-exited child and never waits, so the
     /// owner's terminate-then-reap sequence stays the single reaping
@@ -212,7 +233,20 @@ impl OwnedProcess {
         {
             self.child.start_kill()
         }
-        #[cfg(not(windows))]
+        #[cfg(all(unix, not(windows)))]
+        {
+            use nix::sys::signal::{Signal, killpg};
+            use nix::unistd::Pid;
+            let pgid = Pid::from_raw(self.child.id() as i32);
+            match killpg(pgid, Signal::SIGKILL) {
+                Ok(()) => Ok(()),
+                // Every process in the group already exited — mirrors
+                // `Child::kill`'s ok-for-exited contract.
+                Err(nix::errno::Errno::ESRCH) => Ok(()),
+                Err(errno) => Err(std::io::Error::from_raw_os_error(errno as i32)),
+            }
+        }
+        #[cfg(not(any(windows, unix)))]
         {
             self.child.kill()
         }
@@ -220,11 +254,14 @@ impl OwnedProcess {
 
     /// Terminate the whole owned tree and reap the direct child before
     /// returning. Windows: one termination request kills every process in
-    /// the job. Other platforms: the direct child kill and reap.
+    /// the job. Unix: one `SIGKILL` to the child's process group reaches
+    /// every descendant, including pipe-inheriting grandchildren. Other
+    /// platforms: the direct child kill and reap.
     ///
-    /// An already-exited child is reaped and — on Windows — its job is
-    /// still terminated, because `KILL_ON_JOB_CLOSE` is deliberately off
-    /// and descendants the child spawned may outlive it in the job. A
+    /// An already-exited child is reaped and — on Windows and Unix — its
+    /// job or process group is still terminated, because `KILL_ON_JOB_CLOSE`
+    /// is deliberately off and descendants the child spawned may outlive it
+    /// in the job or group. A
     /// FAILED termination request falls back to a bounded best-effort
     /// direct-child kill and reap and is returned as an error that reports
     /// the incomplete tree cleanup: waiting on a process that refused to
@@ -250,6 +287,22 @@ impl OwnedProcess {
                     format!(
                         "incomplete tree cleanup: failed to terminate the owned job after the \
                          primary exited: {err}"
+                    )
+                })?;
+                self.wait()
+                    .map_err(|err| format!("failed to reap owned process: {err}"))?;
+            }
+            #[cfg(all(unix, not(windows)))]
+            {
+                // The primary exited on its own, but its process group does
+                // not die with it: descendants still in the group would
+                // survive ownership unless the group is signaled here. The
+                // request is a no-op for a fully exited group (ESRCH); the
+                // wait returns immediately on the already-reaped primary.
+                self.request_kill().map_err(|err| {
+                    format!(
+                        "incomplete tree cleanup: failed to terminate the owned process group \
+                         after the primary exited: {err}"
                     )
                 })?;
                 self.wait()
@@ -345,19 +398,26 @@ impl Drop for OwnedProcess {
         // reaps the direct child first. Both steps are best-effort here;
         // typed evidence belongs to `terminate_tree`, which every explicit
         // termination path uses. An already-reaped child is left alone on
-        // non-Windows targets, and a failed kill is not followed by an
-        // unbounded wait on a process that refused to die.
+        // platforms without tree containment, and a failed kill is not
+        // followed by an unbounded wait on a process that refused to die.
         if self.child.try_wait().is_ok_and(|status| status.is_some()) {
-            // Even though the primary exited, the job does not kill on
-            // close: descendants it spawned may still hold the job, so
-            // ownership release still issues the termination request and
-            // reaps the (already exited) primary before dropping the job
-            // handle.
+            // Even though the primary exited, the containment boundary does
+            // not kill on close: descendants it spawned may still hold the
+            // job or process group, so ownership release still issues the
+            // termination request and reaps the (already exited) primary
+            // before dropping the owner.
             #[cfg(windows)]
             {
                 if self.request_kill().is_ok() {
                     let _ = self.wait();
                 }
+            }
+            #[cfg(all(unix, not(windows)))]
+            {
+                // Best-effort group signal; the primary is already reaped so
+                // no wait is needed and leftover descendants reparent to init
+                // after the SIGKILL.
+                let _ = self.request_kill();
             }
             return;
         }
@@ -728,5 +788,184 @@ mod tests {
         let _ = std::fs::remove_file(&marker_path);
         owned.terminate_tree()?;
         assert_descendant_terminated(descendant_pid, "terminate_tree after the primary exited")
+    }
+
+    /// #9895: Unix liveness probe through a safe signal-only `kill`; a
+    /// process the probe cannot signal is gone (or is a reaped zombie on
+    /// its way out, which the bounded wait below tolerates).
+    #[cfg(all(unix, not(windows)))]
+    fn unix_liveness_probe(pid: u32) -> bool {
+        nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None).is_ok()
+    }
+
+    /// Poll a pid marker file a child wrote about itself (or its own
+    /// descendant), bounded so a stuck fixture fails instead of hanging.
+    #[cfg(all(unix, not(windows)))]
+    fn wait_for_marker_pid(marker: &std::path::Path, budget: Duration) -> Result<u32, String> {
+        let deadline = std::time::Instant::now() + budget;
+        loop {
+            if let Ok(text) = std::fs::read_to_string(marker)
+                && let Ok(pid) = text.trim().parse::<u32>()
+                && pid > 0
+            {
+                return Ok(pid);
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(format!("marker {} never appeared", marker.display()));
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    /// After a group kill the descendant reparents to init and is reaped
+    /// there; poll instead of probing once so the zombie window cannot
+    /// flake the witness.
+    #[cfg(all(unix, not(windows)))]
+    fn wait_for_death(pid: u32, context: &str) -> Result<(), String> {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while unix_liveness_probe(pid) {
+            if std::time::Instant::now() >= deadline {
+                return Err(format!(
+                    "{context}: process {pid} persisted past termination"
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        Ok(())
+    }
+
+    #[cfg(all(unix, not(windows)))]
+    fn unix_stamp() -> Result<u128, String> {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .map_err(|error| error.to_string())
+    }
+
+    /// #9895: the owned child leads its own process group, so a descendant
+    /// that inherits its pipes — unreachable by a direct-child kill — still
+    /// dies with `terminate_tree`.
+    #[cfg(all(unix, not(windows)))]
+    #[test]
+    fn unix_terminate_tree_kills_pipe_inheriting_descendants() -> Result<(), String> {
+        let marker = std::env::temp_dir().join(format!(
+            "ripr-unix-descendant-{}-{}.pid",
+            std::process::id(),
+            unix_stamp()?
+        ));
+        let _ = std::fs::remove_file(&marker);
+        let marker_text = marker
+            .to_str()
+            .filter(|text| !text.contains('\''))
+            .ok_or("marker path is not script-safe")?
+            .to_string();
+        let mut command = Command::new("sh");
+        command.arg("-c");
+        // The background sleep inherits the owned child's piped stdout and
+        // shares its process group — exactly the shape that outlived a
+        // direct-child kill before group containment.
+        command.arg(format!(
+            "sleep 60 & echo $! > '{marker_text}'; exec sleep 60"
+        ));
+        command.stdout(Stdio::piped());
+        let mut owned = OwnedProcess::spawn(command).map_err(|err| format!("spawn: {err}"))?;
+        let descendant = wait_for_marker_pid(&marker, Duration::from_secs(10))?;
+        let _ = std::fs::remove_file(&marker);
+        if !unix_liveness_probe(descendant) {
+            return Err(format!("descendant {descendant} was never alive"));
+        }
+        owned
+            .terminate_tree()
+            .map_err(|err| format!("terminate_tree: {err}"))?;
+        wait_for_death(descendant, "tree containment not established")
+    }
+
+    /// #9895: group termination must not touch processes outside the owned
+    /// group. An unrelated same-shape tree in the test's own inherited
+    /// process group, and its descendant, survive `terminate_tree`.
+    #[cfg(all(unix, not(windows)))]
+    #[test]
+    fn unix_terminate_tree_leaves_unrelated_processes_alive() -> Result<(), String> {
+        let marker = std::env::temp_dir().join(format!(
+            "ripr-unix-sentinel-{}-{}.pid",
+            std::process::id(),
+            unix_stamp()?
+        ));
+        let _ = std::fs::remove_file(&marker);
+        let marker_text = marker
+            .to_str()
+            .filter(|text| !text.contains('\''))
+            .ok_or("marker path is not script-safe")?
+            .to_string();
+        let mut sentinel_command = Command::new("sh");
+        sentinel_command.arg("-c");
+        sentinel_command.arg(format!(
+            "sleep 60 & echo $! > '{marker_text}'; exec sleep 60"
+        ));
+        sentinel_command.stdout(Stdio::piped());
+        let mut sentinel = sentinel_command
+            .spawn()
+            .map_err(|err| format!("spawn sentinel: {err}"))?;
+        let descendant = wait_for_marker_pid(&marker, Duration::from_secs(10))?;
+        let _ = std::fs::remove_file(&marker);
+        if !unix_liveness_probe(descendant) {
+            return Err(format!("sentinel descendant {descendant} was never alive"));
+        }
+        let mut owned_command = Command::new("sleep");
+        owned_command.arg("60");
+        let mut owned =
+            OwnedProcess::spawn(owned_command).map_err(|err| format!("spawn: {err}"))?;
+        owned
+            .terminate_tree()
+            .map_err(|err| format!("terminate_tree: {err}"))?;
+        if !unix_liveness_probe(descendant) {
+            return Err(format!(
+                "terminate_tree killed unrelated descendant {descendant}"
+            ));
+        }
+        // The sentinel tree is in the test's own group; clean it up by pid.
+        let _ = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(descendant as i32),
+            nix::sys::signal::Signal::SIGKILL,
+        );
+        let _ = sentinel.kill();
+        let _ = sentinel.wait();
+        Ok(())
+    }
+
+    /// #9895: a primary that already exited still leaves descendants in its
+    /// process group; `terminate_tree` signals the group rather than
+    /// early-returning and orphaning them.
+    #[cfg(all(unix, not(windows)))]
+    #[test]
+    fn unix_terminate_tree_after_primary_exit_kills_descendants() -> Result<(), String> {
+        let marker = std::env::temp_dir().join(format!(
+            "ripr-unix-exited-{}-{}.pid",
+            std::process::id(),
+            unix_stamp()?
+        ));
+        let _ = std::fs::remove_file(&marker);
+        let marker_text = marker
+            .to_str()
+            .filter(|text| !text.contains('\''))
+            .ok_or("marker path is not script-safe")?
+            .to_string();
+        let mut command = Command::new("sh");
+        command.arg("-c");
+        // No trailing exec: the primary exits immediately, leaving the
+        // background sleep behind in its group.
+        command.arg(format!("sleep 60 & echo $! > '{marker_text}'"));
+        command.stdout(Stdio::piped());
+        let mut owned = OwnedProcess::spawn(command).map_err(|err| format!("spawn: {err}"))?;
+        let descendant = wait_for_marker_pid(&marker, Duration::from_secs(10))?;
+        let _ = std::fs::remove_file(&marker);
+        let _ = owned.wait().map_err(|err| format!("reap primary: {err}"))?;
+        owned
+            .terminate_tree()
+            .map_err(|err| format!("terminate_tree: {err}"))?;
+        wait_for_death(
+            descendant,
+            "descendant outlived the exited primary's group kill",
+        )
     }
 }

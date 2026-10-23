@@ -472,14 +472,16 @@ fn json_rpc_rejections_are_answered_with_spec_codes_and_the_session_survives() -
 }
 
 /// #9895: an external SIGTERM while a refresh is blocked on a git child must
-/// not leave the git child behind. The server entry installs cooperative
-/// SIGINT+SIGTERM interrupts; the bounded child waits observe cancellation at
-/// their poll cadence and terminate the owned git tree, the refresh settles
-/// as a completed document whose `attempt` block carries the typed failure
-/// (`isError` stays false, the #5254 commit contract), and the session keeps
-/// serving — the first signal settles, only a repeated signal is the
-/// native-death escape. Linux-only: it needs `nix` for the owned signal and
-/// liveness probes.
+/// not leave the git child — or any pipe-inheriting descendant of it —
+/// behind. The server entry installs cooperative SIGINT+SIGTERM interrupts;
+/// the bounded child waits observe cancellation at their poll cadence and
+/// terminate the owned tree (Unix: the child's whole process group, so
+/// grandchildren a direct-child kill cannot reach die too), the refresh
+/// settles as a completed document whose `attempt` block carries the typed
+/// failure (`isError` stays false, the #5254 commit contract), and the
+/// session keeps serving — the first signal settles, only a repeated signal
+/// is the native-death escape. Linux-only: it needs `nix` for the owned
+/// signal and liveness probes.
 #[cfg(target_os = "linux")]
 #[test]
 fn sigterm_mid_refresh_terminates_the_git_tree_and_settles_typed() -> Result<(), String> {
@@ -489,9 +491,12 @@ fn sigterm_mid_refresh_terminates_the_git_tree_and_settles_typed() -> Result<(),
     let root = install_b4_repair_ready_fixture()?;
     let _guard = FixtureGuard { root: root.clone() };
     // A `git` shim that passes every probe through but turns the refresh's
-    // uncommitted-diff read into a blocking child: it records its pid, then
-    // execs a long sleep (same pid), so the refresh sits inside the bounded
-    // git wait until the interrupt machinery terminates it.
+    // uncommitted-diff read into a blocking child: it records its pid,
+    // spawns a pipe-inheriting descendant that records its own pid (the
+    // shape a direct-child kill cannot reach — pre-#9895 it outlived the
+    // server), then execs a long sleep (same pid), so the refresh sits
+    // inside the bounded git wait until the interrupt machinery terminates
+    // the owned tree.
     let real_git = std::process::Command::new("sh")
         .args(["-c", "command -v git"])
         .output()
@@ -517,10 +522,11 @@ fn sigterm_mid_refresh_terminates_the_git_tree_and_settles_typed() -> Result<(),
     let _ = std::fs::remove_dir_all(&fake_dir);
     std::fs::create_dir_all(&fake_dir).map_err(|error| error.to_string())?;
     let pid_file = fake_dir.join("fake-git.pid");
+    let descendant_pid_file = fake_dir.join("fake-git-descendant.pid");
     std::fs::write(
         fake_dir.join("git"),
         format!(
-            "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = \"diff\" ]; then\n    printf '%s' \"$$\" > \"$FAKE_GIT_PID_FILE\"\n    exec /bin/sleep 3000\n  fi\ndone\nexec '{real_git}' \"$@\"\n"
+            "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = \"diff\" ]; then\n    printf '%s' \"$$\" > \"$FAKE_GIT_PID_FILE\"\n    sh -c 'printf \"%s\" \"$$\" > \"$FAKE_GIT_DESCENDANT_PID_FILE\"; exec sleep 3000' &\n    exec /bin/sleep 3000\n  fi\ndone\nexec '{real_git}' \"$@\"\n"
         ),
     )
     .map_err(|error| error.to_string())?;
@@ -539,10 +545,18 @@ fn sigterm_mid_refresh_terminates_the_git_tree_and_settles_typed() -> Result<(),
         .to_str()
         .ok_or_else(|| "pid file path is not UTF-8".to_string())?
         .to_string();
+    let descendant_pid_file_text = descendant_pid_file
+        .to_str()
+        .ok_or_else(|| "descendant pid file path is not UTF-8".to_string())?
+        .to_string();
     let fake_path = format!("{}:{original_path}", fake_dir.display());
     let env_pairs = [
         ("PATH", fake_path.as_str()),
         ("FAKE_GIT_PID_FILE", pid_file_text.as_str()),
+        (
+            "FAKE_GIT_DESCENDANT_PID_FILE",
+            descendant_pid_file_text.as_str(),
+        ),
     ];
     let mut session = SequentialStdio::spawn_with_env(&root, &env_pairs)?;
     let server_pid = session.child.id();
@@ -586,14 +600,37 @@ fn sigterm_mid_refresh_terminates_the_git_tree_and_settles_typed() -> Result<(),
             std::thread::sleep(Duration::from_millis(50));
         }
     };
+    // The shim's pipe-inheriting descendant must exist before the signal so
+    // the post-signal check below certifies tree containment, not absence.
+    let descendant_pid = {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            if let Ok(text) = std::fs::read_to_string(&descendant_pid_file) {
+                if let Ok(pid) = text.trim().parse::<i32>() {
+                    if pid > 0 {
+                        break pid;
+                    }
+                }
+            }
+            if Instant::now() >= deadline {
+                return Err("the shim never spawned its pipe-inheriting descendant".to_string());
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
     let probe = |pid: i32| kill(Pid::from_raw(pid), None).is_ok();
     if !probe(fake_git_pid) {
         return Err(format!("fake git child {fake_git_pid} was never alive"));
     }
+    if !probe(descendant_pid) {
+        return Err(format!("git descendant {descendant_pid} was never alive"));
+    }
 
     // The defect under test: SIGTERM used to kill the server outright and
     // orphan the git child. Now the first signal cooperatively settles the
-    // attempt: the bounded wait terminates the owned tree.
+    // attempt: the bounded wait terminates the owned tree — the direct
+    // child AND its pipe-inheriting descendant (a direct-child kill cannot
+    // reach the latter; only group containment can).
     kill(Pid::from_raw(server_pid as i32), Signal::SIGTERM)
         .map_err(|error| format!("send SIGTERM to the server: {error}"))?;
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -602,6 +639,16 @@ fn sigterm_mid_refresh_terminates_the_git_tree_and_settles_typed() -> Result<(),
             let _ = kill(Pid::from_raw(fake_git_pid), Signal::SIGKILL);
             return Err(format!(
                 "the git child {fake_git_pid} outlived SIGTERM mid-refresh (#9895)"
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let descendant_deadline = Instant::now() + Duration::from_secs(20);
+    while probe(descendant_pid) {
+        if Instant::now() >= descendant_deadline {
+            let _ = kill(Pid::from_raw(descendant_pid), Signal::SIGKILL);
+            return Err(format!(
+                "the git descendant {descendant_pid} outlived SIGTERM mid-refresh; tree containment not established (#9895)"
             ));
         }
         std::thread::sleep(Duration::from_millis(100));
