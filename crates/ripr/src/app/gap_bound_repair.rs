@@ -40,6 +40,10 @@ pub(crate) fn is_gap_bound_subject(id: &str) -> bool {
 /// `ripr check --base <ref> --format check-findings-json`.
 pub(crate) const GAP_BOUND_BEFORE_SNAPSHOT_FILE: &str = "before.check-findings.json";
 
+/// The after-phase counterpart of [`GAP_BOUND_BEFORE_SNAPSHOT_FILE`]: the
+/// same producer's artifact, written by `ripr agent repair --phase after`.
+pub(crate) const GAP_BOUND_AFTER_SNAPSHOT_FILE: &str = "after.check-findings.json";
+
 /// The workflow-side copy of a gap-bound attempt's repair packet. Distinct
 /// from the seam loop's `agent-packet.json` so a gap-bound start never
 /// overwrites a seam-bound projection nor makes `ripr agent status` read a
@@ -75,6 +79,60 @@ pub(crate) fn startable_typescript_gap_record(finding: &Finding) -> Option<GapRe
     let record = typescript_gap_record_for(finding)?;
     validate_agent_gap_record_packet(&record).ok()?;
     Some(record)
+}
+
+/// Run the diff-scoped analysis the default human `ripr check` runs for
+/// `root` (the live diff source selection included; `base: None` lets the
+/// loader resolve the default base exactly as check does). The one analysis
+/// behind a gap-bound before snapshot and behind the start admission that
+/// `ripr agent status` consults (#10001), so they cannot drift.
+pub(crate) fn default_check_output(
+    root: &std::path::Path,
+    base: Option<&str>,
+    config: &crate::config::RiprConfig,
+) -> Result<super::CheckOutput, String> {
+    let mut input = super::CheckInput {
+        root: root.to_path_buf(),
+        base: base.map(str::to_string),
+        git_timeout: Some(super::default_cli_git_timeout()),
+        ..super::CheckInput::default()
+    };
+    crate::config::apply_to_check_input(
+        &mut input,
+        config,
+        crate::config::CheckInputExplicit::default(),
+    );
+    let worktree_run = super::diff_source::select_live_diff_source(
+        &input.root,
+        super::diff_source::DiffSourceRequest::Default,
+        input.git_timeout,
+    )
+    .is_working_tree();
+    let scope = if worktree_run {
+        super::AnalysisProgressScope::Worktree
+    } else {
+        super::AnalysisProgressScope::Diff
+    };
+    let mut output = super::check_with_progress_core(input, config, scope, None)
+        .map_err(|error| error.to_string())?;
+    // The same disclosure normalization `ripr check` applies: a working-tree
+    // read analyzed the live files, so the committed-history flag is off.
+    if worktree_run {
+        output.unanalyzed_working_tree = false;
+    }
+    Ok(output)
+}
+
+/// The gap-bound start the next default `ripr check --root` would print for
+/// `root`, or `None` when it would print none or the analysis cannot decide
+/// (fail-closed: the caller keeps its "no start" wording). Admission is the
+/// check pipeline's own, [`selected_typescript_gap_route`].
+///
+/// [`selected_typescript_gap_route`]: super::task_first::selected_typescript_gap_route
+pub(crate) fn default_check_gap_start(root: &std::path::Path) -> Option<super::GapRepairRoute> {
+    let config = crate::config::load_for_root(root).ok()?;
+    let output = default_check_output(root, None, &config).ok()?;
+    super::task_first::selected_typescript_gap_route(&output, &config)
 }
 
 /// What a canonical gap id resolves to among one check run's findings.
@@ -154,7 +212,8 @@ pub(crate) fn repair_start_command(
         // forged or damaged manifest) gets a neutral route, never a
         // `--gap-id` start for a foreign subject.
         Some(base) if !is_gap_bound_subject(subject) || base.trim().is_empty() => {
-            format!("ripr check --root {}{store_flag}", shell_arg(root_display))
+            // `ripr check` has no `--store` arm, so the flag is not carried.
+            format!("ripr check --root {}", shell_arg(root_display))
         }
         Some(base) => gap_bound_start_command(root_display, store_flag, subject, base),
         None => format!(
@@ -163,24 +222,6 @@ pub(crate) fn repair_start_command(
             shell_arg(subject)
         ),
     }
-}
-
-/// The manual verification route a gap-bound attempt names until the
-/// gap-bound after phase lands: save the same producer's artifact after the
-/// edit and compare by gap id with the retained before snapshot.
-pub(crate) fn gap_bound_manual_verify_route(
-    root_display: &str,
-    before_snapshot: &str,
-    gap_id: &str,
-    base: &str,
-) -> String {
-    format!(
-        "save `ripr check --root {root} --base {base} --format check-findings-json` after the edit to a file, then run `ripr agent verify --root {root} --before {before} --after <that file> --gap-id {gap} --json`, which reports the gap closed only when it reads exposed in the after snapshot",
-        root = shell_arg(root_display),
-        base = shell_arg(base),
-        before = shell_arg(before_snapshot),
-        gap = shell_arg(gap_id),
-    )
 }
 
 #[cfg(test)]
@@ -202,6 +243,26 @@ mod tests {
             assert!(!command.contains("--seam-id"), "{subject}: {command}");
         }
         let ok = repair_start_command(".", "", "gap:typescript:typescript_preview:1a2b", Some("B"));
+        assert!(ok.contains("--gap-id"), "{ok}");
+    }
+
+    #[test]
+    fn a_malformed_binding_fallback_drops_the_store_flag() {
+        let store = " --store /tmp/s";
+        for (subject, base) in [
+            ("seam:src/lib.rs:1", "HEAD~1"),
+            ("gap:typescript:typescript_preview:1a2b", "  "),
+        ] {
+            let command = repair_start_command(".", store, subject, Some(base));
+            assert!(!command.contains("--store"), "{subject}: {command}");
+            assert!(command.starts_with("ripr check --root"), "{command}");
+        }
+        let ok = repair_start_command(
+            ".",
+            store,
+            "gap:typescript:typescript_preview:1a2b",
+            Some("B"),
+        );
         assert!(ok.contains("--gap-id"), "{ok}");
     }
 

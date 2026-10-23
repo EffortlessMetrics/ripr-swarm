@@ -1284,6 +1284,7 @@ pub(super) fn classify_change_for_owner(
     );
 
     let mut finding = Finding {
+        analysis_scope: crate::domain::AnalysisScope::Diff,
         id: probe.id.0.clone(),
         canonical_gap,
         probe,

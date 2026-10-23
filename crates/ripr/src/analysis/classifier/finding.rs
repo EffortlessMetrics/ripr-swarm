@@ -2,8 +2,8 @@ use super::evidence::{AssertionRefusalNote, ClassifiedProbeEvidence};
 use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, ProbeContext, body_contains_owner_call,
     ensure_unknown_stop_reason, exact_error_variant, exact_oracle_gap_next_step,
-    is_partial_eq_method, missing_evidence, recommended_next_step, stop_reasons,
-    wrapper_error_seam_expression,
+    is_partial_eq_method, missing_evidence, oracle_crediting_relations, recommended_next_step,
+    stop_reasons, wrapper_error_seam_expression,
 };
 use crate::analysis::rust_index::TestSummary;
 use crate::domain::*;
@@ -247,6 +247,7 @@ pub(in crate::analysis) fn build_finding(
     }
 
     Finding {
+        analysis_scope: crate::domain::AnalysisScope::Diff,
         id: context.probe.id.0.clone(),
         canonical_gap: None,
         probe: context.probe.clone(),
@@ -438,6 +439,10 @@ fn exact_oracle_aligns_with_sink(
     else {
         return false;
     };
+    // #9175: a row whose relation the reveal pass refused to credit (a
+    // name-only relation while another related test reaches the owner) may
+    // be retained for display but cannot align an exact oracle either.
+    let credits = oracle_crediting_relations(related_tests);
     evidence.related_tests.iter().any(|related| {
         let Some(oracle) = related.oracle.as_deref() else {
             return false;
@@ -445,7 +450,7 @@ fn exact_oracle_aligns_with_sink(
         if related.oracle_strength != OracleStrength::Strong {
             return false;
         }
-        let Some((test, _)) = related_tests
+        let Some((test, reason)) = related_tests
             .iter()
             .find(|(summary, _)| summary.name == related.name)
         else {
@@ -453,6 +458,9 @@ fn exact_oracle_aligns_with_sink(
             // changed owner; fail closed instead of crediting token overlap.
             return false;
         };
+        if !credits(*reason) {
+            return false;
+        }
         oracle_text_aligns_with_sink(
             &probe.expression,
             &sink.kind,
@@ -1121,6 +1129,40 @@ mod tests {
                 "let err = validate(\"aaaaaaaaaaaa\").unwrap_err();"
             )],
         ));
+    }
+
+    /// #9175: a demoted (name-only) row retained for display cannot align an
+    /// exact oracle while another related test reaches the owner, exactly
+    /// the rule the reveal pass applies to oracle credit.
+    #[test]
+    fn name_only_relation_cannot_align_an_exact_oracle_beside_a_reaching_test() {
+        let probe = probe(ProbeFamily::ReturnValue, "amount");
+        let evidence = evidence(
+            vec![sink(FlowSinkKind::ReturnValue, "amount")],
+            vec![related(
+                "amount_pinned",
+                "assert_eq!(amount, 3)",
+                OracleStrength::Strong,
+            )],
+        );
+        let pinned = test_summary("amount_pinned", "let amount = calculate(5);");
+        let reaching = test_summary("reaches_owner", "calculate(1);");
+        let aligns = |reason: RelationReason, with_reaching: bool| {
+            let mut paired = vec![(&pinned, reason)];
+            if with_reaching {
+                paired.push((&reaching, RelationReason::DirectOwnerCall));
+            }
+            exact_oracle_aligns_with_sink(&probe, Some("calculate"), &paired, &evidence)
+        };
+        assert!(aligns(RelationReason::DirectOwnerCall, true), "setup");
+        assert!(
+            !aligns(RelationReason::WeakTokenSubstring, true),
+            "a demoted row beside a reaching test must not align"
+        );
+        assert!(
+            aligns(RelationReason::WeakTokenSubstring, false),
+            "with no reaching test the existing credit rule is unchanged"
+        );
     }
 
     #[test]

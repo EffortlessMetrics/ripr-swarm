@@ -214,6 +214,35 @@ mod tests {
         assert!(rendered.contains("\"base\": \"origin/main\""));
     }
 
+    /// RIPR-SPEC-0051: the exhaustive text and JSON forms retain source details
+    /// that a compact Markdown summary may normalize onto one line.
+    #[test]
+    fn given_source_controls_when_rendered_then_json_round_trips_and_text_spells_controls()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = "`a``b``` | \\\"\n\t  next\r\n\u{0}\u{1b}\u{85}\u{202e}🦀";
+        let mut output = sample_output(None);
+        let finding = output
+            .findings
+            .first_mut()
+            .ok_or("fixture needs a finding")?;
+        finding.probe.expression = source.to_string();
+        finding.probe.before = None;
+        finding.probe.after = None;
+        let text = crate::output::human::render_finding(finding);
+        let changed = text
+            .split_once("\nChanged\n")
+            .and_then(|(_, tail)| tail.split_once("\nProbe\n"))
+            .map(|(changed, _)| changed)
+            .ok_or("full human report needs Changed and Probe sections")?;
+        assert_eq!(
+            changed,
+            "  expr:   `a``b``` | \\\"\n\t  next\\u{0d}\n\\u{00}\\u{1b}\\u{85}\\u{202e}🦀\n"
+        );
+        let json: serde_json::Value = serde_json::from_str(&render(&output))?;
+        assert_eq!(json["findings"][0]["probe"]["expression"], source);
+        Ok(())
+    }
+
     // --- Property-based tests (#2751) ---
     //
     // The JSON report is assembled by hand so that its field order stays
@@ -1889,8 +1918,24 @@ mod tests {
         finding.language_status = Some(LanguageStatus::Preview);
     }
 
+    /// #5531: the typed scope is omitted from a serialized diff `Finding`
+    /// (byte-stable) and round-trips for a repo finding.
+    #[test]
+    fn analysis_scope_serializes_only_for_repo() -> Result<(), String> {
+        let mut finding = unknown_finding();
+        let diff = serde_json::to_value(&finding).map_err(|e| e.to_string())?;
+        assert!(diff.get("analysis_scope").is_none());
+        finding.mark_repo_scoped();
+        let repo = serde_json::to_value(&finding).map_err(|e| e.to_string())?;
+        assert_eq!(repo["analysis_scope"], serde_json::json!("repo"));
+        let restored: Finding = serde_json::from_value(repo).map_err(|e| e.to_string())?;
+        assert_eq!(restored, finding);
+        Ok(())
+    }
+
     fn unknown_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_lib_rs:1:static_unknown".to_string(),
             canonical_gap: None,
             probe: Probe {

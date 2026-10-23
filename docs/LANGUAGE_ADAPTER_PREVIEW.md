@@ -247,12 +247,24 @@ analysis. Repo-mode analysis differs per adapter:
   findings and discloses a partial language run on the shared
   `language_runs` channel, which gates fail closed on: a capped or partial
   Python repo run can never back a full-denominator, all-clear, badge, or
-  baseline claim. Repo-mode Python findings carry the evidence line
+  baseline claim. The scope is the typed `Finding.analysis_scope` (set only via
+  `Finding::mark_repo_scoped`, which also derives the compatibility evidence
+  line; consumers read the typed field and fail closed if the two disagree). The
+  typed scope is emitted in the hand-rendered check report JSON as
+  `findings[].analysis_scope: "repo"` for repo findings only (omitted for diff
+  scope, so diff bytes are unchanged); check-output consumers such as the gap
+  ledger read that field, never the evidence line, and a contradiction fails
+  closed.
+  Repo-mode Python findings carry the evidence line
   `analysis_scope: repo` and never get a `python_repair_card` or repair
   routing: the capability registry has no repo-mode `repair_routing` cell for
   Python (absent = `not_proven`, #5531), so they differ from diff-mode
   findings there. The gap ledger may still carry an advisory non-repair
-  record for them. A workspace with no Python production source is an honest
+  record for them; its reason, like the human safe-next-action line, is
+  scope-specific and registry-derived from the typed scope (`repo-mode
+  findings have no repair routing (python/any/repo/repair_routing is
+  not_proven)`) rather than a test-placement reason, which stays the
+  diff-mode wording. A workspace with no Python production source is an honest
   zero with zero counts, not a fabricated limitation. Broader Python repo
   support remains preview until #1160's tier ruling.
 - **TypeScript/JavaScript** `analyze_repo` is no longer a stub (#5545). It
@@ -286,7 +298,13 @@ analysis. Repo-mode analysis differs per adapter:
   Repo-mode TypeScript/JavaScript findings carry an `analysis_scope: repo` evidence line and never project a
   repair packet or `repair_packet_ready: true`, because the capability
   registry has no repo-mode `repair_routing` cell for these languages (#5531);
-  repair routing stays diff-mode only.
+  repair routing stays diff-mode only. The closed-packet reason shown for such
+  a finding names that scope (`repo-mode findings have no repair routing
+  (typescript/any/repo/repair_routing is not_proven)`), from the typed scope,
+  followed by `; ` and the finding's specific `why_not_actionable` reason when
+  one exists. This scope-led text is the `why_not_actionable` value in JSON,
+  SARIF, LSP diagnostics/hover, the TypeScript preview card and the human
+  `limitation:` row for repo-scoped TS/JS findings; diff-mode text is unchanged.
 
 Consumption boundary: the repo-scoped CLI formats (`repo-exposure-*`,
 `repo-seams-*`, `repo-badge-*`, `agent-seam-packets-json`) render the

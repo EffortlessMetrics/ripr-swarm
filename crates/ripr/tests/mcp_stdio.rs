@@ -471,6 +471,267 @@ fn json_rpc_rejections_are_answered_with_spec_codes_and_the_session_survives() -
     Ok(())
 }
 
+/// A client-supplied pagination cursor on the static catalog lists used to
+/// parse fine and then be silently dropped, so an agent could believe paging
+/// worked while always re-reading page one (#9895). The lists are static and
+/// small — tools, prompts, resources, and resource templates alike: the
+/// server never issues a `nextCursor`, so any non-null cursor can only be stale or
+/// fabricated and the request must fail closed with the recovery spelled out,
+/// while the same lists still answer normally without a cursor.
+#[test]
+fn catalog_list_cursors_fail_closed_over_stdio() -> Result<(), String> {
+    let root = workspace_root()?;
+    let timeout = Duration::from_secs(30);
+    for legacy in [true, false] {
+        let mut session = SequentialStdio::spawn(&root)?;
+        let first = if legacy {
+            session.raw_exchange(
+                &line(json!({
+                    "jsonrpc": "2.0", "id": "init", "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2025-11-25", "capabilities": {},
+                        "clientInfo": { "name": "ripr-cursor-test", "version": "1" }
+                    }
+                }))?,
+                timeout,
+            )?
+        } else {
+            session.call("init", "server/discover", json!({}), timeout)?
+        };
+        if first.get("id") != Some(&json!("init")) || first.get("result").is_none() {
+            return Err(format!("session setup failed (legacy={legacy}): {first}"));
+        }
+        if legacy {
+            session.send_raw(&line(
+                json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+            )?)?;
+        }
+        let call = |session: &mut SequentialStdio, id: &str, method: &str, mut params: Value| {
+            if !legacy && let Some(object) = params.as_object_mut() {
+                object.insert("_meta".to_string(), current_meta());
+            }
+            session.raw_exchange(
+                &line(json!({
+                    "jsonrpc": "2.0", "id": id, "method": method, "params": params
+                }))?,
+                timeout,
+            )
+        };
+        for (method, field, count) in [
+            ("tools/list", "tools", 9),
+            ("prompts/list", "prompts", 0),
+            ("resources/list", "resources", 1),
+            ("resources/templates/list", "resourceTemplates", 5),
+        ] {
+            let baseline = call(&mut session, "plain", method, json!({}))?;
+            let catalog = baseline
+                .pointer(&format!("/result/{field}"))
+                .filter(|value| value.as_array().is_some_and(|rows| rows.len() == count))
+                .ok_or_else(|| format!("{method} lost complete catalog: {baseline}"))?
+                .clone();
+            for (index, cursor) in [
+                json!("stale-page"),
+                json!(""),
+                json!("雪"),
+                json!(false),
+                json!(42),
+                json!([]),
+                json!(true),
+                json!(1.5),
+                json!({}),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let id = format!("cursor-{index}");
+                let response = call(&mut session, &id, method, json!({"cursor": cursor}))?;
+                let message = response
+                    .pointer("/error/message")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if response.get("id") != Some(&json!(id))
+                    || response.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
+                    || response.pointer("/error/data")
+                        != Some(&json!({
+                            "argument": "cursor", "expected": "omit; the complete list fits one page"
+                        }))
+                    || !message.contains(method)
+                    || !message.contains("does not paginate")
+                    || !message.contains("nextCursor")
+                    || !message.contains("drop the cursor")
+                {
+                    return Err(format!(
+                        "{method} cursor {cursor} must fail with recovery (legacy={legacy}): {response}"
+                    ));
+                }
+                let alive = call(&mut session, "recovered", method, json!({}))?;
+                if alive.get("id") != Some(&json!("recovered"))
+                    || alive.get("error").is_some()
+                    || alive.pointer(&format!("/result/{field}")) != Some(&catalog)
+                    || alive.pointer("/result/nextCursor").is_some()
+                {
+                    return Err(format!(
+                        "{method} lost same-session complete recovery: {alive}"
+                    ));
+                }
+            }
+            // SDK Option semantics retain null as omission; legacy also permits
+            // missing/null params. Discovery requests still require metadata.
+            let mut defaults = vec![json!({"cursor": null})];
+            if legacy {
+                defaults.push(Value::Null);
+            }
+            for params in defaults {
+                let reply = call(&mut session, "default", method, params)?;
+                if reply.pointer(&format!("/result/{field}")) != Some(&catalog)
+                    || reply.pointer("/result/nextCursor").is_some()
+                {
+                    return Err(format!("{method} default semantics changed: {reply}"));
+                }
+            }
+            if legacy {
+                let reply = session.raw_exchange(
+                    &line(json!({
+                        "jsonrpc": "2.0", "id": "omitted", "method": method
+                    }))?,
+                    timeout,
+                )?;
+                if reply.pointer(&format!("/result/{field}")) != Some(&catalog) {
+                    return Err(format!("{method} omitted params changed: {reply}"));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Raw cursor fidelity must not bypass the SDK's lifecycle checks or the
+/// transport's envelope/ID rules, nor expand the four-catalog routing boundary.
+#[test]
+fn malformed_catalog_cursors_preserve_protocol_validation_and_recover() -> Result<(), String> {
+    let mut session = SequentialStdio::spawn(&workspace_root()?)?;
+    let timeout = Duration::from_secs(30);
+    let mut unsupported = current_meta();
+    unsupported
+        .as_object_mut()
+        .ok_or_else(|| "fixture metadata must be an object".to_string())?
+        .insert(
+            "io.modelcontextprotocol/protocolVersion".into(),
+            json!("2099-01-01"),
+        );
+    let unsupported_code =
+        serde_json::to_value(rmcp::model::ErrorCode::UNSUPPORTED_PROTOCOL_VERSION)
+            .map_err(|error| error.to_string())?;
+    for (id, meta, code) in [
+        ("missing", json!({}), json!(-32602)),
+        ("unsupported", unsupported, unsupported_code),
+    ] {
+        let baseline_id = format!("baseline-{id}");
+        let baseline = session.raw_exchange(
+            &line(json!({
+                "jsonrpc": "2.0", "id": baseline_id, "method": "tools/list",
+                "params": {"_meta": meta}
+            }))?,
+            timeout,
+        )?;
+        if baseline.get("id") != Some(&json!(baseline_id))
+            || baseline.pointer("/error/code") != Some(&code)
+            || (id == "missing"
+                && !baseline
+                    .pointer("/error/message")
+                    .and_then(Value::as_str)
+                    .is_some_and(|message| message.contains("request _meta")))
+        {
+            return Err(format!("{id} SDK baseline refusal changed: {baseline}"));
+        }
+        let reply = session.raw_exchange(
+            &line(json!({
+                "jsonrpc": "2.0", "id": id, "method": "tools/list",
+                "params": {"_meta": meta, "cursor": false}
+            }))?,
+            timeout,
+        )?;
+        if reply.get("id") != Some(&json!(id)) || reply.get("error") != baseline.get("error") {
+            return Err(format!(
+                "{id} SDK refusal must precede cursor validation: {reply}"
+            ));
+        }
+    }
+    // A valid inline request also selects the current lifecycle without a
+    // preceding server/discover, even when its raw cursor requires refusal.
+    let first = session.call(
+        "first-inline",
+        "tools/list",
+        json!({"cursor": false}),
+        timeout,
+    )?;
+    if first.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
+        || first.pointer("/error/data/argument") != Some(&json!("cursor"))
+    {
+        return Err(format!(
+            "first inline request lost cursor validation: {first}"
+        ));
+    }
+    let discovered = session.call("discover", "server/discover", json!({}), timeout)?;
+    if discovered.get("result").is_none() {
+        return Err(format!("discovery did not recover: {discovered}"));
+    }
+    for id in [json!("o".repeat(16 * 1024)), json!(null), json!([])] {
+        let reply = session.raw_exchange(
+            &line(json!({
+                "jsonrpc": "2.0", "id": id, "method": "tools/list",
+                "params": {"_meta": current_meta(), "cursor": false}
+            }))?,
+            timeout,
+        )?;
+        if reply.get("id") != Some(&Value::Null)
+            || reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32600)
+            || reply.to_string().len() > 512
+        {
+            return Err(format!(
+                "malformed cursor bypassed bounded envelope refusal: {reply}"
+            ));
+        }
+    }
+    // A notification must not acquire a response; raw_exchange below sees the
+    // next response and therefore catches an invented notification reply.
+    session.send_raw(&line(json!({
+        "jsonrpc": "2.0", "method": "tools/list",
+        "params": {"_meta": current_meta(), "cursor": false}
+    }))?)?;
+    let unknown = session.raw_exchange(
+        &line(json!({
+            "jsonrpc": "2.0", "id": "unknown", "method": "nope/never",
+            "params": {"_meta": current_meta(), "cursor": false}
+        }))?,
+        timeout,
+    )?;
+    if unknown.get("id") != Some(&json!("unknown"))
+        || unknown.pointer("/error/code").and_then(Value::as_i64) != Some(-32601)
+    {
+        return Err(format!(
+            "unknown method was rerouted as a catalog: {unknown}"
+        ));
+    }
+    let recovered = session.raw_exchange(
+        &line(json!({
+            "jsonrpc": "2.0", "id": "recovered", "method": "tools/list",
+            "params": {"_meta": current_meta()}
+        }))?,
+        timeout,
+    )?;
+    if recovered.get("id") != Some(&json!("recovered"))
+        || recovered
+            .pointer("/result/tools")
+            .and_then(Value::as_array)
+            .is_none_or(|tools| tools.len() != 9)
+    {
+        return Err(format!(
+            "protocol controls lost same-session recovery: {recovered}"
+        ));
+    }
+    Ok(())
+}
 /// Optional tool fields may be omitted, but their advertised string/integer
 /// types do not accept explicit null. Pin the schemas and dispatch separately
 /// against literal expectations, through the actual stdio process (#7314).
@@ -647,14 +908,22 @@ fn optional_tool_arguments_reject_null_and_recover_over_stdio() -> Result<(), St
         let expected_message = format!(
             "{field} must be a {}",
             if *kind == "integer" {
-                "non-negative integer"
+                "whole JSON integer"
             } else {
                 "string"
             }
         );
+        let message = rejected
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let message_matches = if *kind == "integer" {
+            message.starts_with(expected_message.as_str()) && message.ends_with(", not null")
+        } else {
+            message == expected_message
+        };
         if rejected.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
-            || rejected.pointer("/error/message").and_then(Value::as_str)
-                != Some(expected_message.as_str())
+            || !message_matches
             || rejected.get("result").is_some()
         {
             return Err(format!(
@@ -1169,6 +1438,80 @@ fn malformed_params_of_a_served_method_answer_invalid_params_and_the_session_rec
             "session must recover after rejections: {}",
             responses[4]
         ));
+    }
+    Ok(())
+}
+
+#[test]
+fn non_object_params_keep_the_request_id_and_the_session_recovers() -> Result<(), String> {
+    let root = workspace_root()?;
+    let mut request_bytes = line(json!({
+        "jsonrpc": "2.0", "id": "discover", "method": "server/discover",
+        "params": { "_meta": current_meta() }
+    }))?;
+    let mut expected: Vec<Value> = Vec::new();
+    let shapes = [
+        json!("oops"),
+        json!(7),
+        json!([1, 2]),
+        json!(true),
+        json!(1.5),
+    ];
+    let methods = ["tools/list", "tools/call", "resources/read"];
+    for (index, shape) in shapes.iter().enumerate() {
+        let method = methods[index % methods.len()];
+        let id = if index % 2 == 0 {
+            json!(100 + index)
+        } else {
+            json!(format!("req-{index}"))
+        };
+        request_bytes.extend(line(json!({
+            "jsonrpc": "2.0", "id": id, "method": method, "params": shape
+        }))?);
+        expected.push(id);
+    }
+    request_bytes.extend(line(json!({
+        "jsonrpc": "2.0", "id": "recovered-status", "method": "resources/read",
+        "params": { "_meta": current_meta(), "uri": "ripr://workspace/status" }
+    }))?);
+    let output = run_mcp(&root, &[&request_bytes])?;
+    let responses = response_lines(&output)?;
+    if responses.len() != expected.len() + 2 {
+        return Err(format!(
+            "expected {} MCP responses, got {}: {responses:?}",
+            expected.len() + 2,
+            responses.len()
+        ));
+    }
+    if responses[0].get("id") != Some(&json!("discover")) {
+        return Err(format!(
+            "first response must answer the discover request: {}",
+            responses[0]
+        ));
+    }
+    for (index, id) in expected.iter().enumerate() {
+        let response = &responses[index + 1];
+        if response.get("id") != Some(id) {
+            return Err(format!(
+                "non-object params rejection must echo request id {id}: {response}"
+            ));
+        }
+        // A frame the SDK cannot type is Invalid Request (docs/interop/mcp.md),
+        // and it keeps the request id (#8725) so the client can correlate it.
+        if response.pointer("/error/code").and_then(Value::as_i64) != Some(-32600) {
+            return Err(format!(
+                "non-object params rejection for {id} must use -32600: {response}"
+            ));
+        }
+    }
+    let last = &responses[expected.len() + 1];
+    if last.get("id") != Some(&json!("recovered-status")) {
+        return Err(format!(
+            "last response must answer the recovered-status request: {last}"
+        ));
+    }
+    if last.get("result").is_none() {
+        return Err(format!("session must recover after rejections: {last}"));
     }
     Ok(())
 }
@@ -2379,15 +2722,21 @@ fn empty_gap_pages_keep_structured_outcomes_at_the_response_bound() -> Result<()
                 .pointer("/result/structuredContent/failure/recovery")
                 .and_then(Value::as_str)
                 .ok_or("empty-page refusal omitted recovery")?;
-            if !recovery.contains("ripr://snapshot/{snapshot_id}")
-                || !recovery.contains("ripr_get_gap")
+            // #9895 discrimination: this overflow is the echoed filter's
+            // fault — the same shell with an empty echo fits — so the
+            // recovery must name the shrinkable cause (narrow the filter
+            // and retry ripr_list_gaps), not the snapshot identity route,
+            // and the refusal itself must stay inside the wire bound.
+            if !recovery.contains("narrow the file/class/language filter")
+                || !recovery.contains("retry ripr_list_gaps")
+                || recovery.contains("ripr://snapshot/")
                 || serde_json::to_vec(&refused)
                     .map_err(|error| error.to_string())?
                     .len()
                     > RESPONSE_BOUND
             {
                 return Err(format!(
-                    "empty {field} refusal lost its bounded identity recovery"
+                    "empty {field} refusal must name the filter, not the identity route: {recovery}"
                 ));
             }
         }
@@ -3163,6 +3512,137 @@ fn list_gaps_bounds_the_echoed_unknown_class_token() -> Result<(), String> {
     Ok(())
 }
 
+/// Send one `tools/call` whose `arguments` object is raw JSON text, so number
+/// literals such as `18446744073709551616` and `1e30` reach the server exactly
+/// as a client could write them. A `serde_json::Value` cannot hold
+/// `18446744073709551616` as an integer (it degrades to floating-point data,
+/// as `1e30` also is), so it could not state the literal the client wrote.
+fn call_tool_with_raw_arguments(
+    session: &mut SequentialStdio,
+    id: &str,
+    tool: &str,
+    arguments: &str,
+) -> Result<Value, String> {
+    let meta = serde_json::to_string(&current_meta()).map_err(|error| error.to_string())?;
+    let request = format!(
+        "{{\"jsonrpc\":\"2.0\",\"id\":\"{id}\",\"method\":\"tools/call\",\"params\":{{\"name\":\"{tool}\",\"arguments\":{arguments},\"_meta\":{meta}}}}}\n"
+    );
+    session.send_raw(request.as_bytes())?;
+    let deadline = Instant::now() + Duration::from_mins(1);
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let reply = session.next_reply(remaining)?;
+        if reply.get("id").and_then(Value::as_str) == Some(id) {
+            return Ok(reply);
+        }
+    }
+}
+
+/// #9895: every malformed `limit` states the real constraint (a whole JSON
+/// integer in the accepted range) and a recovery, instead of the old single
+/// "must be a non-negative integer" sentence that also answered `limit:
+/// 18446744073709551616` (which is non-negative and an integer) and `-1`
+/// (which the sentence did not name as the problem). `ripr_list_gaps` accepts
+/// up to this platform's `usize::MAX` (the effective bound `data.maximum`, the
+/// message and the recovery all name); `ripr_list_repair_attempts` caps at 256.
+#[test]
+fn limit_errors_state_the_real_constraint_and_recovery_over_stdio() -> Result<(), String> {
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    let root = install_b4_repair_ready_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+    let too_large = "is larger than the largest accepted integer";
+    let whole = "must be a whole JSON integer";
+    let platform_max = u64::try_from(usize::MAX).unwrap_or(u64::MAX);
+    // (tool, literal, message fragment, expected data.maximum); the
+    // effective maximum is capped at this platform's usize::MAX
+    let cases: [(&str, &str, &str, u64); 12] = [
+        (
+            "ripr_list_gaps",
+            "0",
+            "limit must be at least 1",
+            platform_max,
+        ),
+        ("ripr_list_gaps", "-1", "-1 is negative", platform_max),
+        (
+            "ripr_list_gaps",
+            "1.5",
+            "without a fraction or exponent, not 1.5",
+            platform_max,
+        ),
+        ("ripr_list_gaps", "\"10\"", "not a string", platform_max),
+        (
+            "ripr_list_gaps",
+            "18446744073709551616",
+            too_large,
+            platform_max,
+        ),
+        ("ripr_list_gaps", "1e30", too_large, platform_max),
+        ("ripr_list_gaps", "null", "not null", platform_max),
+        ("ripr_list_repair_attempts", "-1", "-1 is negative", 256),
+        ("ripr_list_repair_attempts", "\"10\"", whole, 256),
+        (
+            "ripr_list_repair_attempts",
+            "18446744073709551615",
+            "limit must be at most 256",
+            256,
+        ),
+        (
+            "ripr_list_repair_attempts",
+            "18446744073709551616",
+            too_large,
+            256,
+        ),
+        ("ripr_list_repair_attempts", "1e30", too_large, 256),
+    ];
+    for (tool, literal, fragment, maximum) in cases {
+        let reply = call_tool_with_raw_arguments(
+            &mut session,
+            "bad-limit",
+            tool,
+            &format!("{{\"limit\":{literal}}}"),
+        )?;
+        let message = reply
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let data = reply.pointer("/error/data").cloned().unwrap_or(Value::Null);
+        let recovery = data
+            .pointer("/recovery")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
+            || !message.contains(fragment)
+            || message.contains("non-negative integer")
+            || data.pointer("/argument") != Some(&json!("limit"))
+            || data.pointer("/minimum") != Some(&json!(1))
+            || data.pointer("/maximum") != Some(&json!(maximum))
+            || !recovery.contains(&format!("from 1 to {maximum}"))
+        {
+            return Err(format!(
+                "{tool} limit {literal} must name its constraint: {reply}"
+            ));
+        }
+    }
+    // The largest accepted value is a valid request, not an error.
+    let reply = call_tool_with_raw_arguments(
+        &mut session,
+        "max-limit",
+        "ripr_list_gaps",
+        &format!("{{\"limit\":{platform_max}}}"),
+    )?;
+    if reply.get("error").is_some() {
+        return Err(format!("usize::MAX is an accepted limit: {reply}"));
+    }
+    // The session survives the whole sweep.
+    let reply = session.call_tool("after", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
+    if reply.get("error").is_some() {
+        return Err(format!("the session must survive bad limits: {reply}"));
+    }
+    Ok(())
+}
+
 /// After refresh on the B4 repair-ready fixture, every tool/resource pair
 /// returns the same document: `ripr_get_gap` with `ripr://gap/{id}`,
 /// `ripr_get_repair_attempt` with `ripr://repair-attempt/{id}`,
@@ -3476,6 +3956,56 @@ fn resource_reads_match_tools_after_refresh() -> Result<(), String> {
         return Err(format!(
             "encoded repair-card resource id did not decode to the same document:\nencoded={card_encoded}\ntool={card_tool}"
         ));
+    }
+
+    // Trailing-slash tolerance (#9895): clients — especially LLMs
+    // hand-assembling links — not uncommonly append one slash to a resource
+    // URI. Every id route normalizes exactly one; the document must be
+    // identical to the slash-less read.
+    let snapshot_slash = read_resource_document(
+        &mut session,
+        "snapshot-resource-slash",
+        &format!("ripr://snapshot/{snapshot_id}/"),
+        REPLY_TIMEOUT,
+    )?;
+    if snapshot_slash != snapshot {
+        return Err(format!(
+            "one trailing slash must not change the snapshot document:\nslash={snapshot_slash}\nplain={snapshot}"
+        ));
+    }
+    let gap_slash = read_resource_document(
+        &mut session,
+        "gap-resource-slash",
+        &format!("ripr://gap/{canonical_id}/"),
+        REPLY_TIMEOUT,
+    )?;
+    if gap_slash != gap_tool {
+        return Err(format!(
+            "one trailing slash must not change the gap document:\nslash={gap_slash}\ntool={gap_tool}"
+        ));
+    }
+    let card_slash = read_resource_document(
+        &mut session,
+        "card-resource-slash",
+        &format!("ripr://repair-card/{canonical_id}/"),
+        REPLY_TIMEOUT,
+    )?;
+    if card_slash != card_tool {
+        return Err(format!(
+            "one trailing slash must not change the repair-card document:\nslash={card_slash}\ntool={card_tool}"
+        ));
+    }
+    // A second slash is not a normalization artifact: the read must fail
+    // closed instead of resolving to a near-miss id.
+    if read_resource_document(
+        &mut session,
+        "gap-resource-double-slash",
+        &format!("ripr://gap/{canonical_id}//"),
+        REPLY_TIMEOUT,
+    )
+    .is_ok()
+    {
+        return Err("two trailing slashes must not resolve".into());
     }
 
     // Attempt pair: prepare the B4 item, then read both routes.
