@@ -454,13 +454,24 @@ fn match_arm_head_only_note(
     let after = after.trim();
     let masked_after = crate::analysis::mask_comments_and_strings(after);
     let arrow = masked_after.find("=>")?;
-    if arrow + 2 != masked_after.trim_end().len() {
+    // The mask locates code, but erases even a complete literal body. Keep
+    // literal existence from the same lexer; comments/unread markers are empty.
+    let has_body = |text: &str, masked: &str| {
+        !masked.trim().is_empty()
+            || !crate::analysis::rust_identity_spans(text)
+                .literal_ranges
+                .is_empty()
+    };
+    if has_body(&after[arrow + 2..], &masked_after[arrow + 2..]) {
         return None;
     }
     let before = before?.trim();
     let masked_before = crate::analysis::mask_comments_and_strings(before);
     let before_arrow = masked_before.find("=>")?;
-    if masked_before[before_arrow + 2..].trim().is_empty() {
+    if !has_body(
+        &before[before_arrow + 2..],
+        &masked_before[before_arrow + 2..],
+    ) {
         return None;
     }
     if before.get(..before_arrow)?.trim() != after.get(..arrow)?.trim() {

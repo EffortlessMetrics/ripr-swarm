@@ -633,6 +633,11 @@ id = "RIPR-SPEC-0291"
 reason = "acceptance examples are prose, not numbered; agent-brief start-command root rendering is not an exposure-verdict example a corpus case labels"
 
 [[spec]]
+id = "RIPR-SPEC-0289"
+scope = "out"
+reason = "edit-cage refusal narration wording; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
 id = "RIPR-SPEC-0290"
 scope = "out"
 reason = "pilot start-command root rendering; not an exposure-verdict example a corpus case labels"
@@ -676,6 +681,11 @@ reason = "gap-bound TypeScript repair start from a complete packet; not an expos
 id = "RIPR-SPEC-0318"
 scope = "out"
 reason = "pilot next-step text for an uncommitted inline-module target; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0347"
+scope = "out"
+reason = "stderr disclosure of changed trybuild fixtures; not an exposure-verdict example a corpus case labels"
 
 # Release ledger direct-main contract
 [[spec]]
