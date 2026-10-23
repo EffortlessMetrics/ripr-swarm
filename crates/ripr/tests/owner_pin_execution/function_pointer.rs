@@ -549,3 +549,127 @@ fn function_pointer_invisible_runtime_controls_match_the_input() -> Result<(), S
     }
     Ok(())
 }
+
+#[test]
+fn function_pointer_shared_targets_require_binary_assertion_trust() -> Result<(), String> {
+    let rustc = std::env::var_os("RUSTC")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("rustc"));
+    for shadowed in [false, true] {
+        let scratch = Scratch::create()?;
+        std::fs::create_dir(scratch.0.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            scratch.0.join("Cargo.toml"),
+            "[package]\nname=\"shared_pointer\"\nversion=\"0.0.0\"\nedition=\"2024\"\n[lib]\ntest=false\ndoctest=false\n[workspace]\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(scratch.0.join("src/lib.rs"), "mod shared;\n")
+            .map_err(|error| error.to_string())?;
+        let shadow = if shadowed {
+            "macro_rules! assert_eq { ($($ignored:tt)*) => {} }\n"
+        } else {
+            ""
+        };
+        let main = scratch.0.join("src/main.rs");
+        std::fs::write(&main, format!("{shadow}mod shared;\nfn main() {{}}\n"))
+            .map_err(|error| error.to_string())?;
+        let good = "pub fn call_through_pointer(x: u32) -> u32 {\n    3 * x\n}\n";
+        let wrong = "pub fn call_through_pointer(x: u32) -> u32 {\n    4 * x\n}\n";
+        let tail = "#[cfg(test)]\nmod tests {\nuse super::*;\n#[test]\nfn pin() {\nlet f: fn(u32) -> u32 = call_through_pointer;\nassert_eq!(f(2), 6);\n}\n}\n";
+        let source = scratch.0.join("src/shared.rs");
+        std::fs::write(&source, format!("{good}{tail}")).map_err(|error| error.to_string())?;
+        let diff = scratch.0.join("change.diff");
+        std::fs::write(
+            &diff,
+            "--- a/src/shared.rs\n+++ b/src/shared.rs\n@@ -1,3 +1,3 @@\n pub fn call_through_pointer(x: u32) -> u32 {\n-    4 * x\n+    3 * x\n }\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let report = check_workspace(CheckInput {
+            root: scratch.0.clone(),
+            diff_file: Some(diff),
+            mode: Mode::Fast,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        let selected: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|finding| {
+                finding.probe.family == ProbeFamily::ReturnValue && finding.probe.location.line == 2
+            })
+            .collect();
+        assert_eq!(selected.len(), 1, "one intended shared return subject");
+        let finding = selected[0];
+        assert_eq!(finding.ripr.reach.state, ripr::StageState::Yes);
+        assert_eq!(finding.related_tests.len(), 1);
+        assert_eq!(
+            finding.class,
+            if shadowed {
+                ExposureClass::ReachableUnrevealed
+            } else {
+                ExposureClass::Exposed
+            },
+            "shadowed={shadowed}: {finding:?}"
+        );
+        assert_eq!(
+            finding.ripr.reveal.observe.state,
+            if shadowed {
+                ripr::StageState::No
+            } else {
+                ripr::StageState::Yes
+            }
+        );
+        assert_eq!(
+            finding.related_tests[0].oracle_strength,
+            if shadowed {
+                ripr::OracleStrength::None
+            } else {
+                ripr::OracleStrength::Strong
+            }
+        );
+        if shadowed {
+            assert!(
+                finding
+                    .ripr
+                    .reveal
+                    .observe
+                    .summary
+                    .contains("rust_assertion_context_unestablished")
+            );
+        }
+        // Compile the binary root, whose macro binding differs from the lib
+        // root. Compiling only the shared file would miss the refused context.
+        for (label, production, expected_exit) in [
+            ("correct", good, 0),
+            ("wrong_value", wrong, if shadowed { 0 } else { 101 }),
+        ] {
+            std::fs::write(&source, format!("{production}{tail}"))
+                .map_err(|error| error.to_string())?;
+            let executable = scratch
+                .0
+                .join(format!("{label}{}", std::env::consts::EXE_SUFFIX));
+            super::compiles(
+                super::run(
+                    &rustc,
+                    &[
+                        "--edition=2024".as_ref(),
+                        "--test".as_ref(),
+                        main.as_os_str(),
+                        "-o".as_ref(),
+                        executable.as_os_str(),
+                    ],
+                )?,
+                label,
+            )?;
+            let result = super::run(&executable, &["--nocapture".as_ref()])?;
+            let stdout = String::from_utf8_lossy(&result.stdout);
+            assert!(stdout.contains("running 1 test"));
+            assert_eq!(
+                result.status.code(),
+                Some(expected_exit),
+                "shadowed={shadowed}; {label}: {stdout}"
+            );
+        }
+    }
+    Ok(())
+}

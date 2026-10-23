@@ -13,6 +13,7 @@ pub(crate) mod check_artifact;
 mod context;
 pub(crate) mod diff_source;
 mod explain;
+pub(crate) mod gap_bound_repair;
 pub(crate) mod impacted_evidence;
 mod navigation;
 pub mod pr_evidence;
@@ -105,8 +106,8 @@ pub(crate) use explain::{
     explain_finding_with_config_navigation_mode_and_progress,
 };
 pub(crate) use navigation::{
-    CheckDiffProvenance, CheckRepairRoute, FindingDrillIn, FindingNavigation, RepairRoute,
-    finding_navigation, finding_navigation_with_worktree,
+    CheckDiffProvenance, CheckRepairRoute, FindingDrillIn, FindingNavigation, GapRepairRoute,
+    RepairRoute, finding_navigation, finding_navigation_with_worktree,
 };
 pub(crate) use progress::{
     AnalysisProgressEvent, AnalysisProgressScope, AnalysisProgressSink, AnalysisProgressStage,

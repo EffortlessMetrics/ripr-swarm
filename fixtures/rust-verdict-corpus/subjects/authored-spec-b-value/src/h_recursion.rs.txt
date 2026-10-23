@@ -1,0 +1,28 @@
+//! The helper calls itself.
+
+fn wide_r(input: &str, depth: usize) -> bool {
+    if depth == 0 {
+        input.len() > 3
+    } else {
+        wide_r(input, depth - 1)
+    }
+}
+
+pub fn classify_recursive(input: &str) -> &'static str {
+    if wide_r(input, 1) {
+        "wide"
+    } else {
+        "narrow"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rows_straddle_four_recursion_h_recursion() {
+        assert_eq!(classify_recursive("abcd"), "wide");
+        assert_eq!(classify_recursive("abc"), "narrow");
+    }
+}

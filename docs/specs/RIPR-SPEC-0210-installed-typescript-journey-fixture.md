@@ -18,6 +18,8 @@ Linked issues:
   names must execute through its gate)
 - #4603 / RIPR-SPEC-0200 (blind-journey contract; every emitted packet is
   stamped and validated through it)
+- #9103 (slice D: the scripted rows follow the gap-bound repair start, after
+  phase and receipt that RIPR-SPEC-0311 delivered)
 - #4410 / #4429 (accepted TypeScript same-file constant-threshold
   implementation authority; defects return to its owner)
 
@@ -73,11 +75,11 @@ fixture identity to reference.
   recorded Node/npm/Vitest environment identities, the journey answer
   surface (eligible item, quiet neighbor, expected edit cage, forbidden
   edits, discriminator family), the printed command templates with their
-  substitution contract, the sixteen scripted scenario ids, and the control
+  substitution contract, the seventeen scripted scenario ids, and the control
   mapping.
 - `SPEC.md` states the Given/When/Then/Must-Not fixture contract.
 
-`fixtures/blind_journey_execute/corpus.json` gains the sixteen
+`fixtures/blind_journey_execute/corpus.json` gains the seventeen
 `installed_typescript_*` scripted journeys (#4519's positive row, its
 failure controls, one row per negative variant, foreign-CWD decoy and
 second-root repeat included). They execute through the unchanged
@@ -85,13 +87,16 @@ RIPR-SPEC-0205 executor: the event chain, per-kind digest presence,
 observation binding and derived terminals are exactly the consumer's, so a
 hand-edited expectation cannot make a wrong journey emit. The derived
 terminals are the honest machine results — `passed_blind_journey` for the
-positive row, the second-root repeat and the interrupted-receipt recovery;
+positive row, the pilot/status route that resolves to the gap-bound start, the
+second-root repeat and the completed-attempt rerun re-observation (the
+row id keeps `interrupted_receipt_write_recovers`, but no interruption or
+lost-receipt recovery is exercised or claimed);
 `verification_not_run_visible` for the eight negative variants (packet
 readiness false with the precise printed reason, never a delegatable packet
 or fabricated receipt) and the skipped-verification row;
 `verification_failure_visible` for the failing printed Vitest command with
 static movement kept on its own axis; `product_discoverability_failure` for
-the cyclic pilot/agent-status route; `honest_limitation` for the deleted
+the retained cyclic pilot/agent-status control route; `honest_limitation` for the deleted
 before-artifact row that names its printed recovery; and
 `candidate_identity_failure` for the planted workspace binary.
 
@@ -106,13 +111,39 @@ named scenario's candidate identities bind the manifest snapshot its
 `scenario_snapshot_bindings` entry designates — never the unchanged `base`
 snapshot and never another variant.
 
-The receipt template and three positive scripted receipt inputs include the
-workflow verification artifact, the language's authored seam identity and JSON
-output required by the public parser. The existing public CLI receipt-attempt
-control projects each committed template onto a genuine Rust repair attempt and
-checks receipt binding plus incomplete-argument refusals. That parser/control
-proof does not execute the authored installed-language fixture or establish blind
-acceptance; the real candidate-bound installed journey remains separate.
+For the Rust and Python rows, the receipt template and three positive scripted
+receipt inputs per language include the workflow verification artifact, the
+language's authored seam identity and JSON output required by the public parser.
+The existing public CLI receipt-attempt control projects each committed template
+onto a genuine Rust repair attempt and checks receipt binding plus
+incomplete-argument refusals. That parser/control proof does not execute the
+authored installed-language fixture or establish blind acceptance; the real
+candidate-bound installed journey remains separate.
+
+The TypeScript rows follow the gap-bound route that RIPR-SPEC-0311 delivered
+(#9103, slice D). `ripr check --base 'HEAD~1'` prints the gap-bound start
+`ripr agent repair --gap-id <gap> --base 'HEAD~1' --phase before` for the
+complete packet; `ripr pilot` and `ripr agent status` route back to `ripr check`
+and terminate there instead of cycling; the printed `ripr continue --attempt`
+runs the gap-bound after phase, which closes the gap only on positive `exposed`
+evidence and issues the gap-bound receipt itself. The manifest therefore carries
+no separate `agent_receipt` template, each TypeScript positive row records the
+issued receipt once and scripts no seam-bound `ripr agent receipt` command, and
+the CLI receipt control asserts exactly that for TypeScript. The eight negative
+variants retain the verbatim not-ready diagnostics of `ripr check` and of the
+refused `agent repair --gap-id ... --phase before` (compared against the real
+binary by the installed journey test) and are offered no gap-bound start. All
+other scripted output bytes are semantic summaries, not literal transcripts. The
+inherited status warning that `ripr check` "offers no `ripr agent repair` start"
+(`pilot_routed_to_check_no_repair_target`) stays visible as a limitation even
+when the subsequent check prints the gap-bound start. The receipt is static exposure evidence only
+(`verification_not_run`); the printed Vitest command remains a separate axis.
+The retained cyclic row stays as a negative control proving the executor still
+derives `product_discoverability_failure` for a route that cycles without a
+terminal instruction; the real TypeScript product no longer produces that
+cycle, which the added `installed_typescript_pilot_status_route_resolves_to_gap_start`
+row records (pilot to status to check ending in the gap-bound start).
+Python keeps its #9102 terminal reason and its rows are unchanged.
 
 `cargo xtask check-fixture-contracts` also rebuilds the snapshot repository
 from `repository/<snapshot>/` using the manifest `construction_recipe` (offline,
@@ -127,7 +158,7 @@ reproduce, so a well-formed but hand-edited id cannot pass (#9235).
 - `cargo xtask check-fixture-contracts` recomputes every snapshot digest and
   cross-checks the manifest against the committed executor corpus on every
   policy pass.
-- `cargo xtask blind-journey-execute` executes all sixteen
+- `cargo xtask blind-journey-execute` executes all seventeen
   installed-TypeScript rows through the real executor in CI, requires the
   live RIPR-SPEC-0200 validator to accept every emitted packet, and writes
   `target/ripr/reports/blind-journey-execute.{md,json}`.
@@ -157,22 +188,24 @@ reproduce, so a well-formed but hand-edited id cannot pass (#9235).
 
 1. The positive row follows only public docs/help and literal
    product-emitted commands from `ripr doctor` through `ripr check`,
-   `ripr pilot`, `ripr agent status`, the printed `ripr agent repair
-   --phase before` that emits the packet naming `src/pricing.ts` owner,
-   the 10000 equality input and the executable `vitest run
-   test/pricing.test.ts` command, the bounded edit, the exact printed
-   Vitest command, the printed `--phase after` and the printed receipt
-   route; every emitted packet is stamped and accepted by the live
-   validator with `passed_blind_journey`.
+   `ripr pilot`, `ripr agent status`, the printed gap-bound `ripr agent
+   repair --gap-id <gap> --base 'HEAD~1' --phase before` that emits the
+   packet naming `src/pricing.ts` owner, the 10000 equality input and the
+   executable `vitest run test/pricing.test.ts` command, the bounded edit,
+   the exact printed Vitest command and the printed `ripr continue
+   --attempt` after phase, which issues the gap-bound receipt; every
+   emitted packet is stamped and accepted by the live validator with
+   `passed_blind_journey`. The pilot/status route row resolves to the same
+   start without cycling.
 2. Each negative variant stops before any edit: packet readiness stays
    false with the precise printed reason for its binding or reach shape,
    and the row derives `verification_not_run_visible` without a delegatable
    packet or fabricated receipt.
 3. The failing printed Vitest command derives `verification_failure_visible`
-   while the static movement stays on its own axis and receipt closure
-   stays blocked; the skipped-verification row keeps verification
+   while the static movement stays on its own axis and the static-only
+   receipt does not claim the test passed; the skipped-verification row keeps verification
    `not_run` even though static movement improved.
-4. The cyclic pilot/agent-status route derives
+4. The retained cyclic pilot/agent-status control route derives
    `product_discoverability_failure` with the exact blocked public input;
    the deleted before-artifact row stops with `honest_limitation`, names
    the printed recovery route, and claims no static or receipt state.
@@ -214,18 +247,18 @@ reproduce, so a well-formed but hand-edited id cannot pass (#9235).
 | Surface | Responsibility |
 | --- | --- |
 | `fixtures/blind_journey_installed_typescript/` | retained snapshot repository, digest-bound manifest, fixture SPEC |
-| `fixtures/blind_journey_execute/corpus.json` | sixteen scripted `installed_typescript_*` journey scenarios with committed executor expectations |
-| `metrics/blind-journey-execute/executor-receipt.json` | ratification receipt binding the 61-scenario corpus with fixture limitations |
-| `xtask/src/blind_journey_execute.rs` | required-scenario coverage extended to the sixteen installed-TypeScript rows |
+| `fixtures/blind_journey_execute/corpus.json` | seventeen scripted `installed_typescript_*` journey scenarios with committed executor expectations |
+| `metrics/blind-journey-execute/executor-receipt.json` | ratification receipt binding the 62-scenario corpus with fixture limitations |
+| `xtask/src/blind_journey_execute.rs` | required-scenario coverage extended to the seventeen installed-TypeScript rows |
 | `xtask/src/fixture_contracts/general_validators.rs` | dedicated fixture validator with digest recomputation and corpus cross-reference |
 | `xtask/src/reports/fixtures.rs` | manifest-only fixture directory registration |
 | `docs/specs/README.md` + `.ripr/traceability.toml` | spec registration and test traceability |
 
 ## Metrics
 
-- `blind_journey_execute_scenarios` (61, including 16 installed-TypeScript
+- `blind_journey_execute_scenarios` (62, including 17 installed-TypeScript
   rows)
-- `blind_journey_execute_positive_scenarios` (12, including the three
+- `blind_journey_execute_positive_scenarios` (13, including the four
   installed-TypeScript positive rows)
 - installed-TypeScript row terminals by control (positive, not-run,
   verification-failure-visible, discoverability-failure,

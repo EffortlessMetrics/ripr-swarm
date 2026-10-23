@@ -13,6 +13,8 @@ Linked issues:
 
 - #7314 (optional tool arguments reject explicit null consistently with
   their advertised non-null input types)
+- #9895 (a client-supplied pagination cursor on the static catalog lists
+  fails closed instead of being accepted and silently ignored)
 - #3089 (this slice: status, refresh, bounded gap list, and evidence
   resources)
 - #5267 (every pre-initialize typed-shape violation recovers with the
@@ -70,6 +72,17 @@ official SDK transport:
   correlated `-32602` Invalid Params error naming the field before session
   lookup. Omitted fields retain their defaults, valid values reach session
   lookup, and a subsequent request can recover on the same connection.
+- The catalog lists (`tools/list`, `prompts/list`, `resources/list`,
+  `resources/templates/list`) are static and complete: the server returns
+  every entry in one response and never issues a `nextCursor`. A
+  client-supplied `cursor` can therefore only be stale or fabricated;
+  instead of being accepted and silently ignored (which would let an agent
+  believe paging worked while it re-read page one), it fails closed with a
+  `-32602` Invalid Params error naming `cursor` and the recovery — drop the
+  argument (#9895). The SDK's default `prompts/list` answers an empty
+  catalog, so the override pins the same rule there instead of inheriting
+  the silent drop. Tool-level paging stays on `ripr_list_gaps`'s explicit
+  `offset`/`limit`, which is disclosed through `page`.
 - Pre-initialize typed-shape violations recover on the wire (#5267): a
   request that arrives before `initialize` and lacks the SDK's required
   `_meta` fields — and any other pre-initialize message the SDK refuses —
@@ -248,7 +261,8 @@ official SDK transport:
   `workspace_unavailable` and the same restart-with-root recovery as
   `ripr_refresh`; the adapter does not discover or recheck the root again.
   A root resolved unavailable at startup also prints exactly one
-  operator-facing warning line on stderr before serving (no path; stdout
+  operator-facing warning line on stderr before serving, naming the root
+  error code, its specific cause and a concrete next step (#9895; no path; stdout
   stays protocol-only, and a usable root stays silent). The write is
   fallible and ignored: an unwritable stderr never aborts startup, and the typed
   `workspace_unavailable` replies still arrive.
@@ -482,6 +496,11 @@ is not evidence that a resource with a particular identity exists.
 - `crates/ripr/tests/mcp_stdio.rs::optional_tool_arguments_reject_null_and_recover_over_stdio`
   — the #7314 schema/dispatch contract for all six optional argument
   positions, with omission, valid-type, wrong-type and recovery controls.
+- `crates/ripr/tests/mcp_stdio.rs::catalog_list_cursors_fail_closed_over_stdio`
+  — a `cursor` on `tools/list`, `prompts/list`, `resources/list`, or
+  `resources/templates/list` is a `-32602` whose message explains the list
+  never paginates and whose structured data names `cursor`; the same lists
+  still answer normally without one, on the same session (#9895).
 - `crates/ripr/src/mcp/protocol.rs::tests` + `server_tests.rs` —
   descriptor and dispatch contracts.
 - `crates/ripr/tests/mcp_sdk.rs`, `crates/ripr/tests/mcp_stdio.rs` —

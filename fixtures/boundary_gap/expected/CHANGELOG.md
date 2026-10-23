@@ -1,6 +1,6 @@
 # Golden Output Changes
 
-## Pending — boundary_gap (9478)
+## Prior candidate — boundary_gap (9478)
 
 Reason:
 RIPR-SPEC-0197 (#9478) advances the classified Rust corpus cache to 1.95
@@ -1106,7 +1106,7 @@ from the native receipt are retained, including an absent portable
 `seam.guidance_note` versus native `null`; four differences remain if absent and
 null are treated as equal. Full envelope equivalence is not claimed.
 
-### typed function-pointer pins classified-cache generation parity (1.97)
+### Prior-candidate typed function-pointer pins classified-cache generation parity (1.97)
 
 The snapshots follow cache generation 1.96 to 1.97 for typed pointer owner
 pins (RIPR-SPEC-0197, #9478), preserving the accepted pinned-shape generation
@@ -1118,3 +1118,50 @@ incomplete portable receipt remain explicit. Five literal envelope differences
 from the native receipt are retained, including an absent portable
 `seam.guidance_note` versus native `null`. Full envelope equivalence is not
 claimed.
+
+### effect-assertion execution admission classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.96 to 1.97 for effect-family
+assertion execution admission (RIPR-SPEC-0197, #8927), with the same scope:
+generation, content commitment, dependent verify commitments and receipt byte
+hashes only.
+
+## Pending — boundary_gap (25)
+
+Reason:
+RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — boundary_gap (26)
+
+Reason:
+RIPR-SPEC-0122: #9373 item 1 review repair; missing discriminators include absent assertions as well as inputs
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — boundary_gap (27)
+
+Reason:
+RIPR-SPEC-0122: #9373 item 1 observation-gloss repair; report independent related test/assertion evidence without implying that the changed arm executes.
+
+Operation:
+Manual edit: replaced only the observation clause in the existing five-line bounded Evidence legend with `observation = related test/assertion evidence`.
+
+Execution:
+Source-only reviewed edit; no native fixture or goldens-bless command executed because local storage admission is unavailable.
+
+Updated:
+- `expected/human.txt`

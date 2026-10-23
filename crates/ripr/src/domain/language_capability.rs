@@ -377,6 +377,47 @@ pub(crate) fn state_establishes_capability(state: SupportState) -> bool {
     )
 }
 
+/// Scope-specific reason a repo-mode finding carries no repair route (#5531),
+/// derived from the capability registry instead of a hardcoded copy. `None`
+/// when the registry establishes repo-mode `repair_routing` for `language`,
+/// so a future promotion cannot leave this text stale.
+pub(crate) fn repo_mode_no_repair_routing_reason(language: LanguageId) -> Option<String> {
+    let state = cell_state(
+        language,
+        AnalysisMode::Repo,
+        CapabilityFamily::RepairRouting,
+    );
+    if state_establishes_capability(state) {
+        return None;
+    }
+    Some(format!(
+        "repo-mode findings have no repair routing ({}/{}/{}/{} is {})",
+        language.as_str(),
+        FRAMEWORK_ANY,
+        AnalysisMode::Repo.as_str(),
+        CapabilityFamily::RepairRouting.as_str(),
+        state.as_str()
+    ))
+}
+
+/// Whether any registered cell, whatever its framework (`any`, `pytest`,
+/// `unittest`, ...), establishes `family` for `language` in `mode`. A
+/// combination with no registered cell is `not_proven` and never implied by a
+/// neighboring mode or language. Framework-agnostic on purpose: callers that
+/// hold only a `Finding` know the language and scope, not the framework.
+pub(crate) fn family_established_for_any_framework(
+    language: LanguageId,
+    mode: AnalysisMode,
+    family: CapabilityFamily,
+) -> bool {
+    CAPABILITY_CELLS.iter().any(|cell| {
+        cell.language == language
+            && cell.mode == mode
+            && cell.family == family
+            && state_establishes_capability(cell.state)
+    })
+}
+
 /// Cells for one language, in registry order.
 #[cfg(test)]
 pub(crate) fn cells_for(language: LanguageId) -> impl Iterator<Item = &'static CapabilityCell> {
@@ -467,6 +508,26 @@ pub(crate) fn semantic_digest(cells: &[CapabilityCell]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repo_mode_no_repair_routing_reason_is_registry_derived() {
+        for (language, name) in [
+            (LanguageId::Python, "python"),
+            (LanguageId::TypeScript, "typescript"),
+            (LanguageId::JavaScript, "javascript"),
+        ] {
+            assert_eq!(
+                cell_state(language, Repo, CapabilityFamily::RepairRouting),
+                NotProven
+            );
+            assert_eq!(
+                repo_mode_no_repair_routing_reason(language),
+                Some(format!(
+                    "repo-mode findings have no repair routing ({name}/any/repo/repair_routing is not_proven)"
+                ))
+            );
+        }
+    }
 
     #[test]
     fn absent_repo_repair_routing_cells_are_not_proven_and_fail_closed() {
@@ -571,6 +632,24 @@ mod tests {
         assert_eq!(ts.len(), js.len());
         assert!(ts.iter().all(|id| id.starts_with("typescript/")));
         assert!(js.iter().all(|id| id.starts_with("javascript/")));
+    }
+
+    #[test]
+    fn python_repo_repair_routing_is_not_established_but_diff_is() {
+        assert!(family_established_for_any_framework(
+            LanguageId::Python,
+            Diff,
+            RepairRouting
+        ));
+        assert!(!family_established_for_any_framework(
+            LanguageId::Python,
+            Repo,
+            RepairRouting
+        ));
+        assert!(finding_is_repo_scoped(&[
+            REPO_SCOPE_EVIDENCE_LINE.to_string()
+        ]));
+        assert!(!finding_is_repo_scoped(&["owner: f".to_string()]));
     }
 
     #[test]

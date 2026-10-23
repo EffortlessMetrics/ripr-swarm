@@ -44,6 +44,10 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     /// Tests the diff adds or changes (#8387); ranking only. `None`
     /// (unit-test contexts) ranks nothing first.
     pub diff_touched: Option<&'a super::DiffTouchedTests>,
+    /// #9173: the probe sits in a root build script no package source mounts,
+    /// so no package test can call it; only changes the `no_static_path`
+    /// guidance text.
+    pub unmounted_build_script: bool,
 }
 
 impl<'a> ProbeContext<'a> {
@@ -71,6 +75,7 @@ impl<'a> ProbeContext<'a> {
             unseen_reach_names: None,
             owner_caller_names: None,
             diff_touched: None,
+            unmounted_build_script: false,
         }
     }
 
@@ -186,7 +191,11 @@ impl<'a> ProbeContext<'a> {
             super::owner_pin::target_root(&owner.file, self.index, &Default::default())
         });
         let Some(owner_root) = owner_root else {
-            return std::borrow::Cow::Borrowed(&self.index.package_names);
+            return if self.owner_fn.is_some() {
+                std::borrow::Cow::Owned(Default::default())
+            } else {
+                std::borrow::Cow::Borrowed(&self.index.package_names)
+            };
         };
         let member = self.index.member_crates.import_names(file, &owner_root);
         // A `pub use` of a foreign item under the callee's name means the

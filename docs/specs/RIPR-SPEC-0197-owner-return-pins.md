@@ -57,6 +57,14 @@ Policy impact:
   test has one allowlisted test-only process-launch site for compiling/running the
   fixed fixture subjects.
 
+Shared physical modules compiled by several targets do not inherit the
+representative role parent's assertion binding. Existing assertion admission
+must hold across every resolved target context. The shared effect-family gate,
+including its effect-only live-duplicate exception, also governs direct
+collection matching and strength so a refused assertion cannot restore credit
+through a second observation path. Standard assertions retain their existing
+operand and binding requirements.
+
 ## Problem
 
 A Rust `return_value` probe confirms its discriminator only when an
@@ -93,6 +101,71 @@ combination produces `reachable_unrevealed` with Observe `no` and Discriminate
 `no`. Here `no` means no statically established oracle, not proof that a test
 can never execute. Other owner-specific pin failures retain the existing token
 rule only for an assertion whose context was admitted.
+
+The same execution/macro-context admission applies to `assert_eq!` and `assert!`
+oracles for `side_effect` and `call_deletion` probes (#8927). Calling the changed
+owner before `return`, a literal-false block or an uncalled closure establishes
+reach without establishing that an assertion inside the skipped context runs.
+Refuse that assertion through the shared admission decision and retain the
+SPEC-0197 refusal note with its actual macro name. An independently admitted
+effect assertion in the same test still supplies its existing observation and
+discriminator; a refused sibling does not remove it. This does not change effect
+identity, propagation or observer matching.
+
+An effect oracle whose fact text is a compound statement rather than the macro
+invocation (`loop { break; assert_eq!(..); }`, a labeled block, a `macro_rules!`
+body, a cfg-dropped `let`) names no invocation to admit, so it is gated by the
+assertion macro it contains and refused. The oracle's macro path must be the
+start of its text (optionally `std::` / `::core::` qualified); a one-line
+`if <macro-cond> { assert_eq!(..); }` (`if matches!(..)`, `if !cfg!(test)`,
+`if cfg!(any())`, `if vec![..].is_empty()`) begins with a prefix token, so it is
+compound and takes the same gate rather than reading as a plain macro path.
+More generally an effect oracle is ungated only when its text starts with an
+`assert_eq!` / `assert!` invocation; any other leading shape (`matches!(..) && { A }`,
+`!true && { A }`, `cfg!(..).then(|| { A })`) is compound and gated by the
+assertion macro in its tail. A root `loop` with no `break` and a root
+`std::process::exit` / `abort` call end the test like an earlier `return`, for every
+family that reads this admission. Not covered: `assert_ne!` and `debug_assert*!`
+(#8983), and `process::exit` reached through a `use` alias.
+
+Residual fail-open contexts. The admission is a syntactic reading, not a control
+flow proof. These contexts still credit a plain `assert_eq!` / `assert!` as
+`exposed` for `side_effect` and `call_deletion` (non-blocking, disclosed by
+review of #8934; tracked with the #8983 follow-up unless a separate issue says
+otherwise):
+
+- An infinite outer loop hidden by a nested exit: `loop { for _ in 0..1 { break; } }`
+  or `loop { let _c = || { loop { break; } }; }` before the assertion. Root
+  divergence detection treats any descendant `break` as an exit of the root loop.
+  The return family credits these too.
+- A non-root `{ std::process::exit(0); }` block, `while true {}`, and
+  `use std::process::exit; exit(0);` before the assertion. Only the `use` alias
+  is named above; the other two are equally undetected.
+
+Reachable-oracle preservation (#8927, review of #8934). A `std::` / `core::`
+qualified `assert!` is admitted exactly like a qualified `assert_eq!`: the root
+must be provably unrebound and the invocation on an eager path, so an unconditional
+`std::assert!(.. == Vec::from([..]))` keeps its `weakly_exposed` effect credit,
+while the same assertion after `return`, in a literal-false block or in an
+uncalled closure is still refused. Identical assertion spellings on one line
+(`assert_eq!(..); return; assert_eq!(..);`) share one admission key: the key is
+admitted when some invocation of it provably runs and refused when none does, so
+the first assertion keeps its `exposed` credit and a pair that cannot run
+(`return; A A`) stays uncredited. A dead copy beside a live one adds no credit the
+live copy does not already carry. This live-duplicate exception applies only to
+effect families; the return family retains its ambiguous-coordinate refusal.
+
+Compound oracles, including an invoked macro that swallows an assertion in its
+arguments, take the context gate above. When the retained compound text does not
+establish the assertion macro's identity, refusal provenance and Human guidance
+refer to the assertion generically rather than naming its outer macro.
+
+The admission also over-refuses, failing closed and matching the return family:
+qualified `std::` / `core::` assertions whose arguments contain a nested `vec!`
+(or other macro) read `static_unknown` even in direct position, and `if true { assert_eq!(..) }`,
+a called nested fn, a conditional `return` before the assertion and a called
+closure containing `return` are uncredited. These are missed advisories, not
+wrong credits.
 
 1. Oracle shape. The assertion is one plain `assert_eq!`, or that
    `assert_eq!` qualified through a `std` or `core` root (`std::assert_eq!`,
@@ -2142,7 +2215,7 @@ The covered route is Rust diff classification. Its consumer inventory is:
 | `classifier/evidence.rs` / `classify/decision.rs` | Compose admitted stages; the tuple-specific witness is MatchArm-only and outside these covered families. |
 | `classifier/finding.rs` | Strong sink guidance starts from the already-filtered `evidence.related_tests`, not raw assertions. |
 | `classify/activation.rs` / `classify/related_tests.rs` | Raw source value/missing-fact and relationship scans remain their own static authorities. They are not oracle admission or runtime execution proof and cannot bypass the final admitted pairing requirement. |
-| `test_grip_evidence.rs` | Repository grip has a separate raw-oracle consumer. This diff-path repair does not claim repository-grip execution parity; #4793 owns the shared-witness migration. |
+| `test_grip_evidence.rs` | Effect-family collection seams (`SideEffect`/`CallPresence`) with a direct collection mutation receiver pass through `admits_effect_assertion` before contradiction, discrimination and oracle-strength selection. Other repository-grip paths retain separate raw-oracle consumers; no general repository-grip execution parity is claimed, and #4793 owns the shared-witness migration. |
 
 The `observed_values` field retains lexical and bounded statically derived
 source facts independently of oracle admission, including enum tokens in
