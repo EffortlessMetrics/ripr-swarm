@@ -1,3 +1,0 @@
-case = "spec-b-0159-computed-argument"
-issue = 9889
-reason = "A computed argument stops row transfer, but the helper-owned return_value probe is still read as weakly_exposed (observation_unverified) instead of abstaining (#9889)."
