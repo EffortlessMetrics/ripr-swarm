@@ -363,6 +363,19 @@ Updated:
 ## Pending — match_arm_comment_literal_no_promotion (27)
 
 Reason:
+RIPR-SPEC-0122: a head-only match-arm after row tells the reader to open the arm at its head line to read the new body (#9244)
+
+Command:
+`cargo xtask goldens bless match_arm_comment_literal_no_promotion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — match_arm_comment_literal_no_promotion (28)
+
+Reason:
 RIPR-SPEC-0122: bounded evidence legend defines the Summary count terms (#9244 item 4)
 
 Command:

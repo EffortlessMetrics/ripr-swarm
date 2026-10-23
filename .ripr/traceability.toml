@@ -9929,6 +9929,10 @@ name = "bounded human check output"
 spec = "docs/specs/RIPR-SPEC-0122-bounded-human-check-output.md"
 tests = [
   "crates/ripr/src/analysis/classify/decision.rs::tests::infection_unknown_next_step_names_a_concrete_action",
+  "crates/ripr/src/output/human.rs::tests::render_finding_marks_a_match_arm_head_only_after_row",
+  "crates/ripr/src/output/human.rs::tests::render_finding_adds_no_arm_note_when_the_after_row_is_complete",
+  "crates/ripr/src/output/human.rs::tests::render_finding_arm_note_ignores_arrows_in_literals_and_comments",
+  "crates/ripr/tests/cli_smoke.rs::check_human_full_marks_head_only_match_arm_after_row",
   "crates/ripr/src/output/human.rs::tests::human_evidence_spells_the_unconfirmed_observation_in_words",
   "crates/ripr/src/output/human.rs::tests::shared_evidence_rows_spell_the_unconfirmed_observation_in_words",
   "crates/ripr/src/output/human.rs::tests::plain_observation_wording_handles_each_producer_form",
@@ -14311,6 +14315,7 @@ name = "Installed TypeScript journey fixture"
 spec = "docs/specs/RIPR-SPEC-0210-installed-typescript-journey-fixture.md"
 tests = [
   "crates/ripr/tests/cli_smoke.rs::agent_receipt_attempt_flag_selects_one_attempt_and_refusals_name_ids",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::typescript_literal_threshold_packet_is_complete_and_controls_fail_closed",
   "xtask/src/fixture_contracts/general_validators.rs::installed_typescript_fixture_tests::committed_installed_typescript_manifest_binds_the_snapshot_bytes",
   "xtask/src/fixture_contracts/general_validators.rs::installed_typescript_fixture_tests::committed_installed_typescript_scenarios_exist_in_the_executor_corpus",
   "xtask/src/fixture_contracts/general_validators.rs::installed_typescript_fixture_tests::unknown_installed_typescript_scenario_is_reported_missing",
@@ -14335,6 +14340,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/tests/cli_smoke.rs",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs",
   "xtask/src/fixture_contracts/general_validators.rs",
   "xtask/src/fixture_contracts/installed_journey.rs",
   "xtask/src/blind_journey_execute.rs",
