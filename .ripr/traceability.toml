@@ -18361,30 +18361,6 @@ metrics = [
 ]
 
 [[behavior]]
-id = "RIPR-SPEC-0348"
-name = "Pure reformats seed no probes"
-spec = "docs/specs/RIPR-SPEC-0348-pure-reformats-seed-no-probes.md"
-tests = [
-  "crates/ripr/src/analysis/probes/diff.rs::tests::a_pure_reformat_rewrap_seeds_no_probe_but_a_changed_token_does",
-  "crates/ripr/src/analysis/probes/diff.rs::tests::a_function_body_split_at_its_braces_seeds_no_probe",
-  "crates/ripr/src/analysis/probes/diff.rs::tests::rewrap_squeezes_bracket_spaces_but_fails_closed_on_quotes",
-  "crates/ripr/src/analysis/probes/diff.rs::tests::rewrap_normalization_keeps_word_boundaries",
-  "crates/ripr/src/analysis/probes/diff.rs::tests::position_literal_and_joint_punct_guards_keep_reformats_probed",
-  "crates/ripr/src/analysis/probes/diff.rs::tests::a_split_position_macro_keeps_its_rewrap_probed",
-  "crates/ripr/src/analysis/probes/diff.rs::tests::a_reindented_split_position_macro_keeps_its_probe",
-]
-fixtures = []
-code = [
-  "crates/ripr/src/analysis/probes/diff.rs",
-]
-outputs = [
-  "docs/specs/RIPR-SPEC-0348-pure-reformats-seed-no-probes.md",
-]
-metrics = [
-  "unit_test_pass_rate",
-]
-
-[[behavior]]
 id = "RIPR-SPEC-0296"
 name = "First-run over-budget steps count step occurrences"
 spec = "docs/specs/RIPR-SPEC-0296-first-run-over-budget-step-occurrences.md"
@@ -18584,43 +18560,24 @@ metrics = [
 ]
 
 [[behavior]]
-id = "RIPR-SPEC-0311"
-name = "A complete TypeScript packet offers a gap-bound repair start"
-spec = "docs/specs/RIPR-SPEC-0311-gap-bound-typescript-repair-start.md"
+id = "RIPR-SPEC-0348"
+name = "Pure reformats seed no probes"
+spec = "docs/specs/RIPR-SPEC-0348-pure-reformats-seed-no-probes.md"
 tests = [
-  "crates/ripr/tests/installed_python_typescript_journeys.rs::typescript_literal_threshold_packet_is_complete_and_controls_fail_closed",
-  "crates/ripr/tests/installed_python_typescript_journeys.rs::gap_bound_after_phase_closes_the_gap_on_positive_evidence",
-  "crates/ripr/tests/installed_python_typescript_journeys.rs::gap_bound_after_phase_refuses_a_gap_that_is_not_closed_and_stays_retryable",
-  "crates/ripr/tests/installed_python_typescript_journeys.rs::gap_bound_after_phase_does_not_treat_an_absent_gap_as_closed",
-  "crates/ripr/tests/installed_python_typescript_journeys.rs::gap_bound_after_phase_enforces_the_edit_cage",
-  "crates/ripr/tests/installed_python_typescript_journeys.rs::gap_bound_after_phase_stops_when_the_retry_budget_is_spent",
-  "crates/ripr/tests/installed_python_typescript_journeys.rs::gap_bound_after_phase_human_output_names_closure_and_replaces_a_stale_receipt",
-  "crates/ripr/tests/installed_python_typescript_journeys.rs::gap_bound_receipt_requires_the_verify_closure_and_rejects_forgery",
-  "crates/ripr/tests/installed_python_typescript_journeys.rs::typescript_status_warning_keeps_the_no_start_claim_for_refused_variants",
-  "crates/ripr/src/app/repair_attempt/mod.rs::tests::gap_bound_receipt_closure_needs_a_closed_bound_gap_in_verify_and_receipt",
-  "crates/ripr/src/output/agent_receipt.rs::tests::receipt_carries_bound_gap_only_when_the_verify_closure_names_its_seam",
-  "crates/ripr/src/cli/agent.rs::tests::agent_repair_gap_id_parses_a_gap_bound_before_start",
-  "crates/ripr/src/cli/agent.rs::tests::agent_repair_gap_id_is_exclusive_and_typescript_only",
-  "crates/ripr/src/app/repair_attempt/mod.rs::tests::cage_policy_binds_a_typescript_gap_packet_to_its_test_file",
-  "crates/ripr/src/app/repair_attempt/mod.rs::tests::cage_policy_refuses_typescript_gap_packets_aimed_at_production_or_non_test_files",
-  "crates/ripr/src/app/repair_attempt/mod.rs::tests::gap_binding_is_additive_and_round_trips_in_the_manifest",
-  "crates/ripr/src/app/repair_attempt/mod.rs::tests::gap_bound_recovery_text_names_the_gap_start_not_a_seam",
-  "crates/ripr/src/app/agent_status.rs::tests::gap_bound_attempt_status_recovers_with_a_gap_start_not_a_seam_id",
-  "crates/ripr/src/output/agent_seam_packets.rs::tests::typescript_gap_repair_packet_names_the_canonical_gap_as_its_seam",
-  "crates/ripr/src/output/agent_seam_packets.rs::tests::typescript_gap_repair_packet_stays_fail_closed",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::a_pure_reformat_rewrap_seeds_no_probe_but_a_changed_token_does",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::a_function_body_split_at_its_braces_seeds_no_probe",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::rewrap_squeezes_bracket_spaces_but_fails_closed_on_quotes",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::rewrap_normalization_keeps_word_boundaries",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::position_literal_and_joint_punct_guards_keep_reformats_probed",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::a_split_position_macro_keeps_its_rewrap_probed",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::a_reindented_split_position_macro_keeps_its_probe",
 ]
 fixtures = []
 code = [
-  "crates/ripr/src/app/gap_bound_repair.rs",
-  "crates/ripr/src/app/task_first.rs",
-  "crates/ripr/src/app/repair_attempt/mod.rs",
-  "crates/ripr/src/app/agent_status.rs",
-  "crates/ripr/src/app/agent_receipt.rs",
-  "crates/ripr/src/output/agent_receipt.rs",
-  "crates/ripr/src/cli/commands/agent.rs",
+  "crates/ripr/src/analysis/probes/diff.rs",
 ]
 outputs = [
-  "docs/specs/RIPR-SPEC-0311-gap-bound-typescript-repair-start.md",
+  "docs/specs/RIPR-SPEC-0348-pure-reformats-seed-no-probes.md",
 ]
 metrics = [
   "unit_test_pass_rate",
