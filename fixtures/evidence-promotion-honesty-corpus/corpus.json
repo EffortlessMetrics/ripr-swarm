@@ -3314,6 +3314,37 @@
       ]
      },
     {
+      "id": "py_else_arm_no_strong_call_enters_no_exposed_credit",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_else_arm_no_exposed_credit",
+      "vector": "every_strong_call_takes_an_earlier_arm_so_the_changed_else_return_is_not_exposed",
+      "probe_family": "return_value",
+      "assertions": [
+       {
+        "type": "must_not_report_clean"
+       },
+       {
+        "type": "must_disclose_scope"
+       },
+       {
+        "type": "expected_finding_count",
+        "count": 1
+       },
+       {
+        "type": "must_not_promote"
+       },
+       {
+        "type": "expected_class",
+        "class": "weakly_exposed"
+       },
+       {
+        "type": "maximum_class",
+        "class": "weakly_exposed"
+       }
+      ]
+     },
+    {
       "id": "py_unreached_match_arm_no_exposed_credit",
       "language": "python",
       "tier": "pure",

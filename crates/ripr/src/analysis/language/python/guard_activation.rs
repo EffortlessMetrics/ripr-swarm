@@ -55,9 +55,12 @@ pub(super) fn python_guarded_arm_gap(
     related_candidates: &[PythonRelatedCandidate<'_>],
     focus: &PythonAssertionFocus,
 ) -> Option<GuardedArmGap> {
-    let conditions = guarding_conditions(owner, owner_source, changed_line).unwrap_or_default();
+    let GuardWalk {
+        conditions,
+        else_chains,
+    } = walk_guards(owner, owner_source, changed_line).unwrap_or_default();
     let early_exits = early_exit_conditions(owner, owner_source, changed_line);
-    if conditions.is_empty() && early_exits.is_empty() {
+    if conditions.is_empty() && early_exits.is_empty() && else_chains.is_empty() {
         return None;
     }
     let constants = unrebound_constants(owner, related_candidates);
@@ -95,6 +98,18 @@ pub(super) fn python_guarded_arm_gap(
         }) || early_exits.iter().any(|(condition_line, condition)| {
             // A row that satisfies an earlier `if X: return ...` leaves the
             // owner before the changed line, so the line never runs for it.
+            condition_holds(
+                condition,
+                *condition_line,
+                row,
+                &constants,
+                owner_source,
+                owner.start_line,
+            ) == Some(true)
+        }) || else_chains.iter().any(|(condition_line, condition)| {
+            // A row that satisfies any condition of the `if`/`elif` chain
+            // owning an `else` arm takes an earlier arm, so the `else` arm
+            // holding the changed line never runs for it (#9184).
             condition_holds(
                 condition,
                 *condition_line,
@@ -158,6 +173,31 @@ pub(super) fn python_guarded_arm_gap(
             }
         ));
     }
+    if !else_chains.is_empty() {
+        let names = else_chains
+            .iter()
+            .map(|(_, condition)| format!("`{condition}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut observed: Vec<String> = else_chains
+            .iter()
+            .flat_map(|(_, condition)| {
+                condition_observed_values(condition, &rows)
+                    .into_iter()
+                    .map(|value| format!("{} = {value}", condition_lhs(condition)))
+            })
+            .collect();
+        observed.sort();
+        observed.dedup();
+        parts.push(format!(
+            "the changed line sits in the `else` arm of an `if`/`elif` chain ({names}) that is entered only when none of them hold, and each strong related test input is kept off it by this chain or an enclosing guard{}",
+            if observed.is_empty() {
+                String::new()
+            } else {
+                format!("; observed {}", observed.join(", "))
+            }
+        ));
+    }
     for (_, condition) in &conditions {
         let observed = condition_observed_values(condition, &rows);
         parts.push(format!(
@@ -181,6 +221,11 @@ pub(super) fn python_guarded_arm_gap(
         discriminator: early_exits
             .iter()
             .map(|(_, condition)| format!("not ({condition})"))
+            .chain(
+                else_chains
+                    .iter()
+                    .map(|(_, condition)| format!("not ({condition})")),
+            )
             .chain(conditions.iter().map(|(_, condition)| condition.clone()))
             .collect::<Vec<_>>()
             .join(" and "),
@@ -210,18 +255,47 @@ fn condition_observed_values(condition: &str, rows: &[CallRow]) -> Vec<String> {
     values
 }
 
+/// What the enclosing structure of a changed line says about the inputs that
+/// reach it.
+#[derive(Default)]
+struct GuardWalk {
+    /// Enclosing `if`/`elif`/`while` conditions, outermost first: the line
+    /// runs only when ALL of them hold, so a row is excluded when any one
+    /// is provably false.
+    conditions: Vec<(usize, String)>,
+    /// Conditions of the `if`/`elif` chains whose `else` arm encloses the
+    /// line: the arm is taken only when every chain condition fails, so a row
+    /// is excluded when any one is provably true (#9184).
+    else_chains: Vec<(usize, String)>,
+}
+
 /// The `if`/`while` conditions enclosing `changed_line` inside its owner,
 /// outermost first, each with the 0-based index of its header line (the
 /// rebound-parameter check needs the line to bound the assignment scan).
-/// Returns `None` when the enclosing structure cannot be read honestly: an
-/// `else` arm can never be excluded by evidence, an unrecognized dedented
-/// line means the source does not parse the way this reader expects, and
-/// the owner bounds keep the walk inside one body.
+/// Returns `None` when the enclosing structure cannot be read as plain
+/// conditions: an `else` arm is not one (see [`walk_guards`] for the
+/// chain-aware reading), an unrecognized dedented line means the source does
+/// not parse the way this reader expects, and the owner bounds keep the walk
+/// inside one body.
+#[cfg(test)]
 pub(super) fn guarding_conditions(
     owner: &PythonOwner,
     owner_source: &str,
     changed_line: usize,
 ) -> Option<Vec<(usize, String)>> {
+    let walk = walk_guards(owner, owner_source, changed_line)?;
+    if !walk.else_chains.is_empty() {
+        return None;
+    }
+    (!walk.conditions.is_empty()).then_some(walk.conditions)
+}
+
+/// Reads the structure enclosing `changed_line`: plain guarding conditions
+/// and the `if`/`elif` chains whose `else` arm holds the line. `None` when
+/// the structure cannot be read honestly (an `else` that does not close an
+/// `if`/`elif` chain such as `for`/`while`/`try` `else`, or an unrecognized
+/// dedented line).
+fn walk_guards(owner: &PythonOwner, owner_source: &str, changed_line: usize) -> Option<GuardWalk> {
     let lines: Vec<&str> = owner_source.lines().collect();
     let changed_index = changed_line.checked_sub(1)?;
     if owner.start_line == 0 || changed_index >= lines.len() {
@@ -233,7 +307,13 @@ pub(super) fn guarding_conditions(
     }
     let mut threshold = leading_whitespace(changed);
     let mut conditions = Vec::new();
+    let mut else_chains = Vec::new();
+    // Docstring text that reads like `else:` / `if X:` is not a branch.
+    let in_string = lines_inside_triple_quotes(&lines);
     for index in (owner.start_line..changed_index).rev() {
+        if in_string[index] {
+            continue;
+        }
         let raw = lines[index];
         let trimmed = raw.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -258,9 +338,15 @@ pub(super) fn guarding_conditions(
             continue;
         }
         if trimmed.starts_with("else") {
-            // An `else` arm is taken whenever the chain is reached, so no
-            // row can ever be provably excluded: fail open.
-            return None;
+            // An `else` arm is taken whenever every chain condition fails, so
+            // a row is excluded when any one provably holds. Only a plain
+            // `else:` closing an `if`/`elif` chain is read.
+            if trimmed != "else:" {
+                return None;
+            }
+            else_chains.extend(else_chain_conditions(&lines, index, owner)?);
+            threshold = indent;
+            continue;
         }
         if let Some(rest) = trimmed.strip_prefix("while ") {
             let condition = rest.trim_end().strip_suffix(':')?.trim();
@@ -281,7 +367,77 @@ pub(super) fn guarding_conditions(
         return None;
     }
     conditions.reverse();
-    (!conditions.is_empty()).then_some(conditions)
+    else_chains.reverse();
+    (!conditions.is_empty() || !else_chains.is_empty()).then_some(GuardWalk {
+        conditions,
+        else_chains,
+    })
+}
+
+/// The conditions of the `if`/`elif` chain that the `else:` at `else_index`
+/// closes, each with its header line index. Walks the chain's same-indent
+/// sibling headers upward to the `if`; `None` when a sibling is anything
+/// else (`for`/`while`/`try` `else`, or a source shape this reader does not
+/// expect), which fails open.
+fn else_chain_conditions(
+    lines: &[&str],
+    else_index: usize,
+    owner: &PythonOwner,
+) -> Option<Vec<(usize, String)>> {
+    let in_string = lines_inside_triple_quotes(lines);
+    let else_indent = leading_whitespace(lines.get(else_index)?);
+    let mut chain = Vec::new();
+    for index in (owner.start_line..else_index).rev() {
+        if in_string[index] {
+            continue;
+        }
+        let raw = lines[index];
+        let trimmed = raw.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let indent = leading_whitespace(raw);
+        if indent > else_indent {
+            continue;
+        }
+        if indent < else_indent {
+            return None;
+        }
+        let (condition, is_head) =
+            match (trimmed.strip_prefix("elif "), trimmed.strip_prefix("if ")) {
+                (Some(rest), _) => (rest, false),
+                (_, Some(rest)) => (rest, true),
+                _ => return None,
+            };
+        let condition = condition.trim_end().strip_suffix(':')?.trim();
+        // A real arm header opens an indented block. A same-indent line that
+        // merely looks like a header (a bracket continuation, a header whose
+        // body is missing) cannot join the chain, so it is never bridged.
+        if !header_opens_deeper_block(lines, &in_string, index, else_indent, else_index) {
+            return None;
+        }
+        chain.push((index, condition.to_string()));
+        if is_head {
+            return Some(chain);
+        }
+    }
+    None
+}
+
+/// Whether the first code line after the header at `header_index` (skipping
+/// blank lines, comments and string text) is indented deeper than the chain.
+fn header_opens_deeper_block(
+    lines: &[&str],
+    in_string: &[bool],
+    header_index: usize,
+    chain_indent: usize,
+    limit: usize,
+) -> bool {
+    (header_index + 1..=limit)
+        .filter(|index| !in_string[*index])
+        .map(|index| (index, lines[index].trim()))
+        .find(|(_, trimmed)| !trimmed.is_empty() && !trimmed.starts_with('#'))
+        .is_some_and(|(index, _)| leading_whitespace(lines[index]) > chain_indent)
 }
 
 /// Per line, whether it starts inside (or is wholly part of) a triple-quoted
@@ -478,9 +634,13 @@ fn condition_holds(
     Some(true)
 }
 
-/// True when `text` applies `or` or `not` outside string literals.
+/// True when `text` applies `or`, `not` or a conditional expression
+/// (`a if b else c`) outside string literals; none of them is the single
+/// comparison this reader extracts.
 fn has_boolean_operator(text: &str) -> bool {
-    keyword_outside_quotes(text, "or") || keyword_outside_quotes(text, "not")
+    ["or", "not", "if", "else"]
+        .iter()
+        .any(|keyword| keyword_outside_quotes(text, keyword))
 }
 
 /// True when `keyword` appears in `text` outside quotes, bounded by
@@ -961,6 +1121,67 @@ mod tests {
         let unguarded = "def quote(total):\n    return round(total * 1.05, 2)\n";
         let owner = quote_owner(unguarded)?;
         assert!(guarding_conditions(&owner, unguarded, 2).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn walk_guards_reads_the_if_elif_chain_of_an_else_arm() -> Result<(), String> {
+        let source = "def quote(total):\n    if total > 1000:\n        return 1\n    elif total > 10:\n        return 2\n    else:\n        return 3\n";
+        let owner = quote_owner(source)?;
+        let walk =
+            walk_guards(&owner, source, 7).ok_or_else(|| "else arm must be read".to_string())?;
+        assert!(walk.conditions.is_empty());
+        assert_eq!(
+            walk.else_chains,
+            vec![
+                (1, "total > 1000".to_string()),
+                (3, "total > 10".to_string())
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn walk_guards_never_bridges_unrelated_headers_into_a_chain() -> Result<(), String> {
+        // The shapes below are not valid Python, so the chain reader is driven
+        // directly with a parsed dummy owner instead of through the AST.
+        let owner = quote_owner("def quote(total):\n    return total\n")?;
+        let chain = |source: &str, else_index: usize| {
+            let lines: Vec<&str> = source.lines().collect();
+            else_chain_conditions(&lines, else_index, &owner)
+        };
+        // Blank lines and comments between arms belong to the chain.
+        let chained = "def quote(total):\n    if total > 1:\n        return 1\n\n    # note\n    elif total > 0:\n        return 2\n    else:\n        return 3\n";
+        assert_eq!(
+            chain(chained, 7).map(|c| c.into_iter().map(|(_, t)| t).collect::<Vec<_>>()),
+            Some(vec!["total > 0".to_string(), "total > 1".to_string()])
+        );
+        // An unrelated same-indent statement between the head and the `else`.
+        let statement = "def quote(total):\n    if total > 1:\n        return 1\n    total = 2\n    else:\n        return 3\n";
+        assert_eq!(chain(statement, 4), None);
+        // Header text that only appears in a comment is not a header.
+        let comment = "def quote(total):\n    # if total > 1:\n    else:\n        return 3\n";
+        assert_eq!(chain(comment, 2), None);
+        // A header with no indented body is not a block opener.
+        let no_body = "def quote(total):\n    if total > 1:\n    elif total > 0:\n        return 2\n    else:\n        return 3\n";
+        assert_eq!(chain(no_body, 4), None);
+        Ok(())
+    }
+
+    #[test]
+    fn conditional_expressions_are_not_a_single_comparison() {
+        assert!(has_boolean_operator("x > 1 if flag else 0"));
+        assert!(has_boolean_operator("(x > 1) if flag else (x > 2)"));
+        assert!(has_boolean_operator("x > 1 or flag"));
+        assert!(!has_boolean_operator("total > 1000 and kind == 'else if'"));
+        assert!(!has_boolean_operator("elsewhere > 1 and iffy < 2"));
+    }
+
+    #[test]
+    fn walk_guards_fails_open_on_loop_else() -> Result<(), String> {
+        let source = "def quote(xs):\n    for x in xs:\n        if x > 1000:\n            return 1\n    else:\n        return 3\n";
+        let owner = quote_owner(source)?;
+        assert!(walk_guards(&owner, source, 6).is_none());
         Ok(())
     }
 
