@@ -23,6 +23,11 @@ Start here:
     standard `assert_eq!`, so it does not report a gap. Check that one of them compares the changed
     value; add a test only if none does
   Evidence: reach yes · infection yes · propagation yes · observation no · discriminator no
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: Related tests appear to reach gate: pins
     - infection yes: Detected related test input at the changed boundary
     - 8 more detail line(s) in --format human-full

@@ -19,6 +19,11 @@ Start here:
   Related test: src/lib.rs:10 score_is_nonzero (assertion too weak to tell the old behavior from the new)
   Next step: Replace broad assertions with exact equality or a property that constrains the changed returned value
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: Related tests appear to reach score: score_is_nonzero
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 7 more detail line(s) in --format human-full
@@ -26,7 +31,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/bool_compared_inequality_not_exact/input --diff <cwd>/fixtures/bool_compared_inequality_not_exact/diff.patch --mode fast probe:src_lib.rs:return_value:27ba9fa1
   ripr context --root <cwd>/fixtures/bool_compared_inequality_not_exact/input --diff <cwd>/fixtures/bool_compared_inequality_not_exact/diff.patch --mode fast --at probe:src_lib.rs:return_value:27ba9fa1
-  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:return_value:27ba9fa1 --root <cwd>/fixtures/bool_compared_inequality_not_exact/input` for the full gate's answer
+  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: return_value); run `ripr repair probe:src_lib.rs:return_value:27ba9fa1 --root <cwd>/fixtures/bool_compared_inequality_not_exact/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/bool_compared_inequality_not_exact/input --at src/lib.rs:2 --kind return_value
 

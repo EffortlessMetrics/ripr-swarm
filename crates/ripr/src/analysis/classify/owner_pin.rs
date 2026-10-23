@@ -143,11 +143,17 @@ struct StdRootedCalls {
     unrebound: BTreeSet<String>,
 }
 
-const STD_ROOTED_ASSERT_EQ: [&str; 4] = [
+/// The rooted spellings of `assert_eq!` and, for the boolean owner pins and
+/// effect probes, `assert!` (#8927): each needs the same root proof.
+const STD_ROOTED_ASSERT_EQ: [&str; 8] = [
     "std::assert_eq",
     "core::assert_eq",
     "::std::assert_eq",
     "::core::assert_eq",
+    "std::assert",
+    "core::assert",
+    "::std::assert",
+    "::core::assert",
 ];
 
 impl StdRootedCalls {
@@ -576,7 +582,7 @@ impl OwnerPinSyntax {
     }
 
     /// Shared assertion admission for the bounded supported families.
-    /// Execution provenance is independent of the error/boundary/value matcher.
+    /// Execution provenance is independent of the error/boundary/value/effect matcher.
     /// Applicability is the invocation
     /// identity, not the more restrictive owner-pin operand shape, so token
     /// matches and nested diagnostic syntax cannot bypass the same refusal.
@@ -587,16 +593,71 @@ impl OwnerPinSyntax {
         assertion: &OracleFact,
         index: &RustIndex,
     ) -> bool {
-        let gated = (matches!(
-            probe.family,
-            ProbeFamily::ReturnValue | ProbeFamily::ErrorPath | ProbeFamily::Predicate
-        ) && is_admission_gated_assert_eq(&assertion.text))
-            || (probe.family == ProbeFamily::MatchArm
-                && outer_macro_path(&assertion.text).is_some_and(|path| {
-                    let leaf = drop_in_assertion_leaf(&path).unwrap_or(&path);
-                    leaf.strip_prefix("r#").unwrap_or(leaf) == "assert"
-                }));
-        !gated || self.admits(test, assertion, index)
+        let outer = Self::assertion_macro_name(&assertion.text);
+        // An oracle whose text is a compound statement (`loop { break;
+        // assert_eq!(..); }`, `'a: { .. }`, a `macro_rules!` body, a
+        // cfg-dropped `let`) names no invocation the admission can identify:
+        // its "macro path" is statement text, so it would skip the gate. An
+        // effect oracle that merely contains an assertion macro takes the same
+        // admission and is refused unless that exact invocation is
+        // established (#8927).
+        // Fail-closed root rule: the oracle is ungated only when its text
+        // STARTS with a recognized assertion invocation (leaf `assert_eq` or
+        // `assert`). Any other leading shape (a different macro, an empty or
+        // non-identifier path, a prefix keyword or expression) is compound and
+        // takes the context gate whenever an assertion macro sits in its tail.
+        let compound = outer
+            .as_deref()
+            .is_none_or(|name| !matches!(name, "assert_eq" | "assert"));
+        let gated = match outer.as_deref() {
+            _ if compound => {
+                let masked = mask_comments_and_strings(&assertion.text);
+                matches!(
+                    probe.family,
+                    ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+                ) && ["assert_eq", "assert"].iter().any(|name| {
+                    whole_word_offsets(&masked, name)
+                        .into_iter()
+                        .any(|at| masked[at + name.len()..].trim_start().starts_with('!'))
+                })
+            }
+            Some("assert_eq") => matches!(
+                probe.family,
+                ProbeFamily::ReturnValue
+                    | ProbeFamily::ErrorPath
+                    | ProbeFamily::Predicate
+                    | ProbeFamily::SideEffect
+                    | ProbeFamily::CallDeletion
+            ),
+            Some("assert") => matches!(
+                probe.family,
+                ProbeFamily::MatchArm | ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+            ),
+            _ => false,
+        };
+        if !gated {
+            return true;
+        }
+        match self.refusal(test, assertion, index) {
+            None => true,
+            // Identical spellings on one line, one of which provably runs
+            // (`A; return; A;`): the effect oracle is that same check, so it
+            // keeps its credit. The return family keeps refusing (#8927).
+            Some(AssertionRefusal::Syntax(AssertionContextRefusal::DuplicateSpellingOneRuns)) => {
+                matches!(
+                    probe.family,
+                    ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+                )
+            }
+            Some(_) => false,
+        }
+    }
+
+    /// The outer assertion's identity, shared by admission and its refusal note.
+    pub(in crate::analysis) fn assertion_macro_name(text: &str) -> Option<String> {
+        let path = outer_macro_path(text)?;
+        let leaf = drop_in_assertion_leaf(&path).unwrap_or(&path);
+        Some(leaf.strip_prefix("r#").unwrap_or(leaf).to_string())
     }
 
     /// Why [`Self::admits_equality_assertion`] refused this assertion, for
@@ -1194,6 +1255,7 @@ impl OwnerPinSyntax {
             .get_or_build(&test.file, || StdRootedCalls::of(&facts.source));
         let qualified: BTreeSet<String> = std_rooted_macro_path(&assertion.text, "assert_eq")
             .into_iter()
+            .chain(std_rooted_macro_path(&assertion.text, "assert"))
             .chain(rooted.calls.iter().cloned())
             .collect();
         if let Some(path) = qualified.into_iter().find(|path| {
@@ -1322,6 +1384,7 @@ impl OwnerPinSyntax {
             .map(|(name, _)| name),
         );
         if let Some(path) = std_rooted_macro_path(&assertion.text, "assert_eq")
+            .or_else(|| std_rooted_macro_path(&assertion.text, "assert"))
             .or_else(|| StdRootedCalls::of(source).calls.into_iter().next())
         {
             return Some(AssertionRefusal::Syntax(
@@ -1674,6 +1737,7 @@ impl AssertionRefusal {
                 | AssertionContextRefusal::UnidentifiedTest
                 | AssertionContextRefusal::AsyncTest
                 | AssertionContextRefusal::DuplicateSpelling
+                | AssertionContextRefusal::DuplicateSpellingOneRuns
                 | AssertionContextRefusal::StaleSource => true,
                 AssertionContextRefusal::TestAttribute(attribute) => {
                     !attribute_settles_test_outcome(attribute)
@@ -1754,7 +1818,8 @@ impl AssertionRefusal {
                 AssertionContextRefusal::ClosureExit => {
                     "a closure in the test can return early, or the test yields".into()
                 }
-                AssertionContextRefusal::DuplicateSpelling => {
+                AssertionContextRefusal::DuplicateSpelling
+                | AssertionContextRefusal::DuplicateSpellingOneRuns => {
                     "the same assertion text appears twice on one line".into()
                 }
                 AssertionContextRefusal::ConditionalPath(construct) => {
@@ -7584,7 +7649,7 @@ fn has_non_bitwise_pipe(masked: &str) -> bool {
 
 /// `Option`/`Result`/`bool` methods that evaluate or apply an argument only
 /// on some inputs.
-const CONDITIONAL_COMBINATORS: &[&str] = &[
+pub(super) const CONDITIONAL_COMBINATORS: &[&str] = &[
     "and",
     "and_then",
     "filter",
@@ -7609,20 +7674,6 @@ const CONDITIONAL_COMBINATORS: &[&str] = &[
     "zip",
 ];
 
-/// Whether `text` is one outer `assert_eq!` invocation that must pass the
-/// owner-return execution admission: bare `assert_eq!`, or the same macro
-/// called through a drop-in assertion crate (`std::assert_eq!`,
-/// `pretty_assertions::assert_eq!`). A qualified drop-in reads as an
-/// assertion, so letting it skip this gate would credit an `assert_eq!` that
-/// the bare spelling refuses (for example one under `if false`).
-fn is_admission_gated_assert_eq(text: &str) -> bool {
-    let Some(path) = outer_macro_path(text) else {
-        return false;
-    };
-    let leaf = drop_in_assertion_leaf(&path).unwrap_or(&path);
-    leaf.strip_prefix("r#").unwrap_or(leaf) == "assert_eq"
-}
-
 /// The outer invocation's path, without interpreting nested operand macros.
 fn outer_macro_path(text: &str) -> Option<String> {
     let masked = mask_comments_and_strings(text);
@@ -7636,7 +7687,37 @@ fn outer_macro_path(text: &str) -> Option<String> {
         invocation = attribute[close + 1..].trim_start();
     }
     let (path, _) = invocation.split_once('!')?;
-    Some(path.chars().filter(|c| !c.is_whitespace()).collect())
+    let path = path.trim();
+    // The oracle must BEGIN with the invocation path. Whitespace is legal only
+    // beside a `::` separator (`similar_asserts :: assert_eq !(..)`); any other
+    // whitespace means a prefix token precedes the macro (`if matches!(..) {
+    // assert_eq!(..); }`, `if !cfg!(test) { .. }`), so stripping it would fuse
+    // the prefix into a plain-looking identifier and skip the context gate.
+    let chars: Vec<char> = path.chars().collect();
+    for (at, ch) in chars.iter().enumerate() {
+        if !ch.is_whitespace() {
+            continue;
+        }
+        let before = chars[..at].iter().rev().find(|c| !c.is_whitespace());
+        let after = chars[at..].iter().find(|c| !c.is_whitespace());
+        if before != Some(&':') && after != Some(&':') {
+            return None;
+        }
+    }
+    let path: String = chars.into_iter().filter(|c| !c.is_whitespace()).collect();
+    const PREFIX_KEYWORDS: &[&str] = &[
+        "if", "while", "match", "loop", "for", "unsafe", "async", "move", "else", "return",
+        "break", "continue", "let", "in",
+    ];
+    // A keyword as any segment (`if ::core::matches!(..)` collapses to
+    // `if::core::matches`) is a prefix token, not part of a macro path.
+    if path
+        .split("::")
+        .any(|segment| PREFIX_KEYWORDS.contains(&segment))
+    {
+        return None;
+    }
+    Some(path)
 }
 
 /// #6578: the actual operand and the expected literal of an inline

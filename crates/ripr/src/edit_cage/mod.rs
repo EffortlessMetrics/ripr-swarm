@@ -962,7 +962,11 @@ fn inventory_paths(
         }
         let raw_path = raw_path?;
         let path = normalize_repo_relative_path(Path::new(&raw_path))?;
-        if !case_keys.insert(path.to_lowercase()) {
+        if !case_keys.insert(crate::output::path::path_identity_key_on(
+            Path::new(&path),
+            false,
+            true,
+        )) {
             ambiguous = true;
         }
         if inventory.insert(path, ignored_path).is_some() {

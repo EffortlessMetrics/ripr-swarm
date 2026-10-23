@@ -334,12 +334,14 @@ loud and typed on every surface:
 
 - CLI: `ripr agent repair --phase before` refuses with `has no test file
   ripr can route a repair to` and names the packet field below;
-- MCP: `ripr_prepare_repair` still applies the test-surface rule alone, so
-  it refuses every inline-module seam, including the eligible single-module
-  case, with ineligibility `fix_site_not_test_surface` once the earlier
-  gates (candidate actionability, discriminator, static limits, established
-  fix site) pass, and creates nothing (MCP parity is #5516); earlier gates
-  keep their own refusal reasons;
+- MCP: `ripr_prepare_repair` takes the same admission as the CLI: when the
+  shared seam validator admits a seam whose one governed inline module is
+  the fix site, the packet is ready with `allowed_edit_surface` the
+  production file, an `inline_test_module` block naming the module, and a
+  `must_not_change` statement confining the edit to new test functions in
+  that module (#5516). Every case the CLI refuses (no candidate module, more
+  than one, out-of-line `mod tests;`) stays `fix_site_not_test_surface` and
+  creates nothing; earlier gates keep their own refusal reasons;
 - pilot: the summary ranks seams for inspection by hand with no repair
   start, and the focused-test line names the missing test target;
 - packet: `recommended_test.file` is `"not_applicable"` when no target

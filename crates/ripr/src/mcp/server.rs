@@ -10,6 +10,7 @@ use serde_json::Value;
 use std::borrow::Cow;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
 
 /// Upper bound for the `ripr_refresh` `base` revision text; no real ref name
@@ -119,7 +120,10 @@ impl McpServer {
         {
             return Err(ErrorData::invalid_params(
                 format!("base must be at most {MAX_BASE_REVISION_BYTES} bytes"),
-                None,
+                Some(serde_json::json!({
+                    "argument": "base",
+                    "expected": format!("a revision of at most {MAX_BASE_REVISION_BYTES} bytes"),
+                })),
             ));
         }
         let root = match workspace::available_root(self.analysis_root.as_deref()) {
@@ -225,7 +229,7 @@ impl McpServer {
             };
             return Err(ErrorData::invalid_params(
                 format!("unknown class \"{echoed}{marker}\"; allowed: {allowed:?}"),
-                None,
+                Some(serde_json::json!({ "argument": "class", "allowed": allowed })),
             ));
         }
         let language = optional_nonempty_string_argument(&arguments, "language")?;
@@ -567,7 +571,7 @@ fn optional_string_argument(
         Some(Value::String(value)) => Ok(Some(value.clone())),
         Some(_other) => Err(ErrorData::invalid_params(
             format!("{name} must be a string"),
-            None,
+            Some(serde_json::json!({ "argument": name, "expected": "string" })),
         )),
     }
 }
@@ -581,7 +585,7 @@ fn optional_nonempty_string_argument(
     match optional_string_argument(arguments, name)? {
         Some(value) if value.is_empty() => Err(ErrorData::invalid_params(
             format!("{name} must be a non-empty string"),
-            None,
+            Some(serde_json::json!({ "argument": name, "expected": "non-empty string" })),
         )),
         other => Ok(other),
     }
@@ -601,7 +605,7 @@ fn optional_bool_argument(
         Some(Value::Bool(value)) => Ok(Some(*value)),
         Some(_other) => Err(ErrorData::invalid_params(
             format!("{name} must be a boolean"),
-            None,
+            Some(serde_json::json!({ "argument": name, "expected": "boolean" })),
         )),
     }
 }
@@ -612,20 +616,7 @@ fn optional_nonnegative_argument(
     arguments: &Option<serde_json::Map<String, Value>>,
     name: &str,
 ) -> Result<Option<usize>, ErrorData> {
-    let Some(arguments) = arguments else {
-        return Ok(None);
-    };
-    match arguments.get(name) {
-        None => Ok(None),
-        Some(value) => {
-            let raw = value.as_u64().ok_or_else(|| {
-                ErrorData::invalid_params(format!("{name} must be a non-negative integer"), None)
-            })?;
-            usize::try_from(raw).map(Some).map_err(|error| {
-                ErrorData::invalid_params(format!("{name} is out of range: {error}"), None)
-            })
-        }
-    }
+    optional_integer_argument(arguments, name, 0, u64::MAX)
 }
 
 /// A paging limit (#6021): a JSON integer `>= 1`.
@@ -633,13 +624,165 @@ fn optional_positive_argument(
     arguments: &Option<serde_json::Map<String, Value>>,
     name: &str,
 ) -> Result<Option<usize>, ErrorData> {
-    match optional_nonnegative_argument(arguments, name)? {
-        Some(0) => Err(ErrorData::invalid_params(
-            format!("{name} must be at least 1"),
-            None,
-        )),
-        other => Ok(other),
+    optional_integer_argument(arguments, name, 1, u64::MAX)
+}
+
+/// The shared integer validator behind `offset` and `limit` (#9895). Every
+/// refusal names the real constraint (a whole JSON integer from `minimum` to
+/// the effective maximum: the declared maximum capped at this platform's
+/// `usize::MAX`, so `data.maximum`, the message and the recovery never
+/// disagree on a 32-bit build), why this value misses it, and a
+/// `data.recovery`. A negative number, a non-number, a fractional or exponent-form number and an integer
+/// past `u64::MAX` are different mistakes that used to share the single wrong
+/// sentence "must be a non-negative integer". A JSON number that does not fit
+/// `u64` reaches this adapter as a float, so `18446744073709551616` and `1e30`
+/// are reported as too large instead of as non-integers.
+fn optional_integer_argument(
+    arguments: &Option<serde_json::Map<String, Value>>,
+    name: &str,
+    minimum: u64,
+    maximum: u64,
+) -> Result<Option<usize>, ErrorData> {
+    optional_integer_argument_for_platform(
+        arguments,
+        name,
+        minimum,
+        maximum,
+        u64::try_from(usize::MAX).unwrap_or(u64::MAX),
+    )
+}
+
+/// The bound a request is actually held to: the declared maximum, never above
+/// what the platform's `usize` can represent.
+fn effective_integer_maximum(declared: u64, platform_max: u64) -> u64 {
+    declared.min(platform_max)
+}
+
+/// `optional_integer_argument` with the platform's largest `usize` as a
+/// parameter so the effective-bound behavior is testable on any target.
+fn optional_integer_argument_for_platform(
+    arguments: &Option<serde_json::Map<String, Value>>,
+    name: &str,
+    minimum: u64,
+    declared_maximum: u64,
+    platform_max: u64,
+) -> Result<Option<usize>, ErrorData> {
+    let maximum = effective_integer_maximum(declared_maximum, platform_max);
+    let Some(value) = arguments.as_ref().and_then(|arguments| arguments.get(name)) else {
+        return Ok(None);
+    };
+    let expected = if maximum != u64::MAX {
+        format!("integer at most {maximum}")
+    } else if minimum == 0 {
+        "non-negative integer".to_string()
+    } else {
+        "integer at least 1".to_string()
+    };
+    let refuse = |message: String, recovery: String| {
+        ErrorData::invalid_params(
+            message,
+            Some(serde_json::json!({
+                "argument": name,
+                "expected": expected,
+                "minimum": minimum,
+                "maximum": maximum,
+                "recovery": recovery,
+            })),
+        )
+    };
+    let in_range = format!("send {name} as an integer from {minimum} to {maximum}, or omit it");
+    let Value::Number(number) = value else {
+        let kind = match value {
+            Value::String(_) => "a string",
+            Value::Bool(_) => "a boolean",
+            Value::Null => "null",
+            Value::Array(_) => "an array",
+            _ => "an object",
+        };
+        return Err(refuse(
+            format!("{name} must be a whole JSON integer from {minimum} to {maximum}, not {kind}"),
+            in_range,
+        ));
+    };
+    let raw = if let Some(raw) = number.as_u64() {
+        raw
+    } else if number.as_i64().is_some() || number.as_f64().is_some_and(f64::is_sign_negative) {
+        return Err(refuse(
+            format!("{name} must be at least {minimum}; {number} is negative"),
+            in_range,
+        ));
+    } else if number.as_f64().is_some_and(|float| {
+        // `u64::MAX as f64` rounds up to 2^64, which no `u64` equals.
+        float > maximum as f64 || (maximum == u64::MAX && float >= maximum as f64)
+    }) {
+        return Err(refuse(
+            format!(
+                "{name} is larger than the largest accepted integer {maximum}{}",
+                if maximum == u64::MAX {
+                    " (u64 maximum)"
+                } else {
+                    ""
+                }
+            ),
+            format!(
+                "{in_range}; a smaller value is enough because replies are byte-bounded and continuation walks the rest"
+            ),
+        ));
+    } else {
+        return Err(refuse(
+            format!(
+                "{name} must be a whole JSON integer from {minimum} to {maximum} without a fraction or exponent, not {number}"
+            ),
+            in_range,
+        ));
+    };
+    if raw < minimum {
+        return Err(refuse(
+            format!("{name} must be at least {minimum}"),
+            in_range,
+        ));
     }
+    if raw > maximum {
+        return Err(refuse(
+            format!("{name} must be at most {maximum}"),
+            in_range,
+        ));
+    }
+    // The effective maximum already caps at `usize::MAX`, so this checked
+    // conversion cannot fail for an in-range value; it stays as the guard and
+    // reports the same bound if it ever does.
+    usize::try_from(raw).map(Some).map_err(|_error| {
+        refuse(
+            format!("{name} must be at most {maximum}"),
+            in_range.clone(),
+        )
+    })
+}
+
+/// Protocol-level list pagination (#9895): these catalog lists are static and
+/// small, so the server returns the complete list in one response and never
+/// issues a `nextCursor`. A client-supplied cursor can only be stale or
+/// fabricated; ignoring it would let an agent believe paging worked, so the
+/// request fails closed with the recovery spelled out.
+fn reject_pagination_cursor(
+    params: Option<PaginatedRequestParams>,
+    method: &str,
+) -> Result<(), ErrorData> {
+    if params
+        .as_ref()
+        .is_some_and(|params| params.cursor.is_some())
+    {
+        return Err(ErrorData::invalid_params(
+            format!(
+                "{method} does not paginate: this server returns the complete list in one response and never issues a nextCursor; drop the cursor argument"
+            ),
+            Some(serde_json::json!({
+                "argument": "cursor",
+                "expected": "omit; the complete list fits one page",
+            })),
+        ));
+    }
+    Ok(())
 }
 
 /// A paging limit with a typed row cap: a JSON integer `>= 1` and `<= max`.
@@ -651,13 +794,7 @@ fn optional_capped_page_limit(
     name: &str,
     max: usize,
 ) -> Result<Option<usize>, ErrorData> {
-    match optional_positive_argument(arguments, name)? {
-        Some(value) if value > max => Err(ErrorData::invalid_params(
-            format!("{name} must be at most {max}"),
-            None,
-        )),
-        other => Ok(other),
-    }
+    optional_integer_argument(arguments, name, 1, u64::try_from(max).unwrap_or(u64::MAX))
 }
 
 /// Resolve one captured resource-id segment through an exact-id lookup with
@@ -718,7 +855,7 @@ fn reject_unknown_arguments(
         if !allowed.contains(&name.as_str()) {
             return Err(ErrorData::invalid_params(
                 format!("unknown argument {name:?}; allowed: {allowed:?}"),
-                None,
+                Some(serde_json::json!({ "argument": name, "allowed": allowed })),
             ));
         }
     }
@@ -733,7 +870,7 @@ fn required_string_argument(
     value.filter(|value| !value.is_empty()).ok_or_else(|| {
         ErrorData::invalid_params(
             format!("{name} is required and must be a non-empty string"),
-            None,
+            Some(serde_json::json!({ "argument": name, "expected": "non-empty string" })),
         )
     })
 }
@@ -817,7 +954,10 @@ impl ServerHandler for McpServer {
             } else {
                 format!("invalid params for `{}`", request.method)
             };
-            return Err(ErrorData::invalid_params(message, None));
+            return Err(ErrorData::invalid_params(
+                message,
+                Some(serde_json::json!({ "method": request.method })),
+            ));
         }
         Err(ErrorData::new(
             ErrorCode::METHOD_NOT_FOUND,
@@ -827,23 +967,37 @@ impl ServerHandler for McpServer {
     }
     async fn list_tools(
         &self,
-        _: Option<PaginatedRequestParams>,
+        params: Option<PaginatedRequestParams>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
+        reject_pagination_cursor(params, "tools/list")?;
         Ok(self.tools.clone())
+    }
+    async fn list_prompts(
+        &self,
+        params: Option<PaginatedRequestParams>,
+        _: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, ErrorData> {
+        // #9895: the SDK default returns an empty catalog and would silently
+        // ignore a client-supplied cursor; the static catalog rule is the
+        // same one tools/list and resources/list enforce.
+        reject_pagination_cursor(params, "prompts/list")?;
+        Ok(ListPromptsResult::default())
     }
     async fn list_resources(
         &self,
-        _: Option<PaginatedRequestParams>,
+        params: Option<PaginatedRequestParams>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
+        reject_pagination_cursor(params, "resources/list")?;
         Ok(self.resources.clone())
     }
     async fn list_resource_templates(
         &self,
-        _: Option<PaginatedRequestParams>,
+        params: Option<PaginatedRequestParams>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListResourceTemplatesResult, ErrorData> {
+        reject_pagination_cursor(params, "resources/templates/list")?;
         Ok(self.resource_templates.clone())
     }
     async fn call_tool(
@@ -864,7 +1018,7 @@ impl ServerHandler for McpServer {
                 {
                     return Err(ErrorData::invalid_params(
                         "ripr_workspace_status does not accept arguments",
-                        None,
+                        Some(serde_json::json!({ "allowed": [] })),
                     ));
                 }
                 self.status_tool(max_envelope_bytes).await
@@ -1107,9 +1261,23 @@ fn json_envelope(uri: &str, text: String) -> Value {
     })
 }
 
-/// Standard resource-miss semantics with the typed failure as data: the
+/// Typed resource-failure semantics with the typed failure as data: the
 /// message stays bounded and human-readable, and `data.code` carries the
 /// typed state (`no_snapshot`, `stale_snapshot`, `item_not_found`, …).
+///
+/// #9854: the JSON-RPC code now categorizes the failure instead of reading
+/// "not found" for every kind. Identity misses — the requested id does not
+/// exist (`item_not_found`, `attempt_not_found`) — keep ResourceNotFound
+/// (`-32002`, upgraded to `-32602` for 2026-07-28 peers by the SDK, keeping
+/// `current_snapshot_id` disclosure). Every other kind is a server state or
+/// a bound, not an identity claim: `no_snapshot`, `stale_snapshot`,
+/// `analysis_in_flight`, `workspace_unavailable`, `result_too_large`,
+/// `attempt_invalid`, `superseded`, `seam_not_found`, … answer InternalError
+/// (`-32603`), the closest standard JSON-RPC code, with the same `data`
+/// payload and the same human sentence. `data.code` stays the stable
+/// machine signal for existing clients, so a client branching on the
+/// JSON-RPC code no longer mistakes a retryable state for a missing
+/// namespace.
 fn resource_failure(
     kind: &str,
     failure: &workspace::AttemptFailure,
@@ -1124,10 +1292,13 @@ fn resource_failure(
     if let Some(snapshot_id) = current_snapshot_id {
         data["current_snapshot_id"] = Value::from(snapshot_id);
     }
-    ErrorData::resource_not_found(
-        format!("unavailable {kind} resource: {}", failure.code),
-        Some(data),
-    )
+    let message = format!("unavailable {kind} resource: {}", failure.code);
+    match failure.code {
+        workspace::CODE_ITEM_NOT_FOUND | repair::CODE_ATTEMPT_NOT_FOUND => {
+            ErrorData::resource_not_found(message, Some(data))
+        }
+        _ => ErrorData::internal_error(message, Some(data)),
+    }
 }
 
 /// Serve adapter that answers `ping` by method name on an `initialize`
@@ -1137,6 +1308,7 @@ fn resource_failure(
 /// keep ping as method-not-found.
 pub(super) struct InitializeSessionService {
     inner: McpServer,
+    handshake_seen: AtomicBool,
 }
 
 impl InitializeSessionService {
@@ -1146,6 +1318,7 @@ impl InitializeSessionService {
     ) -> Result<Self, ErrorData> {
         Ok(Self {
             inner: McpServer::new(status, analysis_root)?,
+            handshake_seen: AtomicBool::new(false),
         })
     }
 }
@@ -1180,6 +1353,17 @@ impl rmcp::Service<RoleServer> for InitializeSessionService {
         if matches!(request, ClientRequest::PingRequest(_)) {
             return answer_initialize_session_ping(&self.inner, context).await;
         }
+        if matches!(request, ClientRequest::InitializeRequest(_))
+            && self.handshake_seen.swap(true, Ordering::SeqCst)
+        {
+            // The first `initialize` is the handshake itself and flows
+            // through this adapter; any later one is a lifecycle violation
+            // on a live session, not a missing method (#9895).
+            return Err(ErrorData::invalid_request(
+                ALREADY_INITIALIZED_MESSAGE,
+                None,
+            ));
+        }
         <McpServer as rmcp::Service<RoleServer>>::handle_request(&self.inner, request, context)
             .await
     }
@@ -1205,6 +1389,8 @@ impl rmcp::Service<RoleServer> for InitializeSessionService {
         <McpServer as rmcp::Service<RoleServer>>::supported_protocol_versions(&self.inner)
     }
 }
+
+const ALREADY_INITIALIZED_MESSAGE: &str = "session already initialized: `initialize` is accepted once per connection; continue with the existing session or restart `ripr mcp --stdio`";
 
 #[cfg(test)]
 #[path = "server_tests.rs"]

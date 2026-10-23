@@ -239,11 +239,26 @@ pub(crate) fn check_repo_exposure_command_with_base(
     mode: &str,
     out_path: &str,
 ) -> String {
+    check_repo_exposure_command_with_program_and_base("ripr", root, base, mode, out_path)
+}
+
+/// The repo-exposure producer command bound to an explicit `program`
+/// (#9500): a recovery that tells the user to rerun `ripr` from `PATH` loops
+/// when a stale binary wins `PATH` resolution, so a refusal names the
+/// running executable instead. Shared with the PATH-form builders above.
+pub(crate) fn check_repo_exposure_command_with_program_and_base(
+    program: &str,
+    root: &str,
+    base: Option<&str>,
+    mode: &str,
+    out_path: &str,
+) -> String {
     let base_arg = base
         .map(|base| format!(" --base {}", shell_arg(base)))
         .unwrap_or_default();
     format!(
-        "ripr check --root {}{} --mode {} --format repo-exposure-json > {}",
+        "{} check --root {}{} --mode {} --format repo-exposure-json > {}",
+        shell_arg(program),
         shell_arg(&root_display(root)),
         base_arg,
         shell_arg(mode),
@@ -457,8 +472,33 @@ pub(crate) fn outcome_command(
     }
 }
 
+/// The `output::path::fold_verbatim_on_host` rule, restated because xtask
+/// includes this file by path without the rest of the crate (#9660): on
+/// Windows a slash-unified `//?/<drive>:` or `//?/UNC/` root prints in its
+/// plain spelling.
+fn fold_verbatim(unified: String) -> String {
+    fold_verbatim_for_host(unified, cfg!(windows))
+}
+
+fn fold_verbatim_for_host(unified: String, windows: bool) -> String {
+    if !windows {
+        return unified;
+    }
+    let Some(rest) = unified.strip_prefix("//?/") else {
+        return unified;
+    };
+    let bytes = rest.as_bytes();
+    if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        return rest.to_string();
+    }
+    if bytes.len() > 4 && bytes[..4].eq_ignore_ascii_case(b"UNC/") {
+        return format!("//{}", &rest[4..]);
+    }
+    unified
+}
+
 pub(crate) fn display_path(path: &Path) -> String {
-    let text = path.to_string_lossy().replace('\\', "/");
+    let text = fold_verbatim(path.to_string_lossy().replace('\\', "/"));
     if text.is_empty() {
         ".".to_string()
     } else {
@@ -508,13 +548,29 @@ pub(crate) fn shell_path(path: &Path) -> String {
 ///   expands `$VAR`, `$(cmd)`, and `` `cmd` `` inside double quotes, and so
 ///   does PowerShell — pasting `"$(...)"` into either executes the embedded
 ///   expression (#8152 review, security), while single quotes stay literal
-///   in both. cmd.exe passes single quotes through as literal characters
-///   (the argument arrives quoted and fails closed), so those values paste
-///   in Git Bash or PowerShell, not cmd.exe. PowerShell would escape an
+///   in both. cmd.exe does not treat `'` as a quote: the quotes arrive as
+///   literal characters, a space inside the value still splits it, and a
+///   `>`, `<`, `&`, `|` or `^` inside it still acts as a cmd.exe operator,
+///   so those values paste in Git Bash or
+///   PowerShell, not cmd.exe (#9738; the editor refuses such a span on
+///   Windows). No form is literal in all three shells for a value holding
+///   both `$` and a cmd.exe operator, so PowerShell, the VS Code and Windows
+///   Terminal default, decides. PowerShell would escape an
 ///   interior quote with a backtick instead of doubling, and Git Bash drops
 ///   an interior quote in the `""` form; an interior `"` cannot occur in a
 ///   Windows filename, so the `""` doubling is the conservative choice for
-///   the paths this form exists to quote.
+///   the paths this form exists to quote. One limit is accepted rather than
+///   encoded (#9659): cmd.exe expands `%NAME%` inside double quotes (and
+///   `!NAME!` when delayed expansion is on), and no quoting form prevents
+///   that on an interactive cmd.exe line, so a value carrying `%` or `!`
+///   pastes literally in PowerShell and Git Bash but not in cmd.exe. An
+///   interactive Git Bash likewise rewrites a `!` event designator inside
+///   double quotes (`"!!"`, `"a!-1"`), and Windows PowerShell 5.1 (and 7.3+
+///   when the target is a `.bat`/`.cmd` file) re-splits a value holding `"`
+///   (printed as `""`) when it passes it to a native program;
+///   both alter the argument without starting another command, so they are
+///   accepted limits too (#9738). The VS Code terminal and Windows Terminal
+///   default to PowerShell.
 ///
 /// The empty string must be quoted (`''` or `""`), or the argument disappears
 /// from the command line entirely.
@@ -644,6 +700,44 @@ fn append_redirect(root: &str, command: String, out_path: Option<&str>) -> Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The restated fold must keep `output::path::fold_verbatim_for_host`'s
+    /// cases (#9660): `cfg!(windows)` alone would leave the Windows arm
+    /// unchecked on every Linux run.
+    #[test]
+    fn fold_verbatim_matches_the_output_path_rule_on_both_hosts() {
+        // The drive is spliced in so the local-context policy never sees a
+        // machine path literal.
+        let drive = "F:";
+        let cases = [
+            (
+                format!("//?/{drive}/work/repo"),
+                format!("{drive}/work/repo"),
+            ),
+            (
+                "//?/UNC/server/share/repo".to_string(),
+                "//server/share/repo".to_string(),
+            ),
+            (
+                "//?/Volume{0}/repo".to_string(),
+                "//?/Volume{0}/repo".to_string(),
+            ),
+            ("tests/test_x.py".to_string(), "tests/test_x.py".to_string()),
+        ];
+        for (unified, windows_text) in &cases {
+            let unified = unified.as_str();
+            assert_eq!(
+                fold_verbatim_for_host(unified.to_string(), true),
+                *windows_text,
+                "windows fold of {unified}"
+            );
+            assert_eq!(
+                fold_verbatim_for_host(unified.to_string(), false),
+                unified,
+                "unix keeps {unified}"
+            );
+        }
+    }
 
     /// Hold a stable process CWD across one render-and-compare (#7034).
     ///

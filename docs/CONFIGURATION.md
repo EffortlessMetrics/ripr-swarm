@@ -421,7 +421,7 @@ ripr context [--root PATH] [--base REV] [--worktree | --diff PATH] [--from PATH]
 ### `ripr doctor`
 
 ```text
-ripr doctor [--root PATH] [--json] [--profile analysis|source-build]
+ripr doctor [--root PATH] [--json] [--timings] [--profile analysis|source-build]
 ```
 
 Reports local tooling and workspace shape. Takes no analysis-shaping flags.
@@ -440,6 +440,12 @@ The JSON report and the human command share the root-directory, `Cargo.toml`,
 configuration, `git`/`cargo`/`rustc`, and language-runtime checks. A `pass`
 report exits zero; a `fail` report exits non-zero. This is machine-readable
 setup evidence, not a release or analysis gate decision.
+
+The default `--json` document is byte-stable across runs that changed nothing:
+the volatile timing fields (the top-level `elapsed_ms` and `segments`, and the
+per-entry `elapsed_ms` on checks and runtime probes) are omitted. Pass
+`--timings` with `--json` to include them; see
+[Output schema](OUTPUT_SCHEMA.md#doctor-volatile-timing-fields-and-stable-output-9807).
 
 The JSON report includes a `runtime_probes` array. A primary runtime probe is
 `required: true` only when its language is enabled in the effective
@@ -477,11 +483,16 @@ ripr config validate --root .
 ```
 
 This uses the same ancestor-aware loader as analysis. A valid file prints
-`✓ ripr.toml valid`; a malformed or policy-invalid file returns its
-path-qualified validation error. A missing `ripr.toml` prints
-`✓ no ripr.toml found; built-in defaults apply` and follows the normal
-built-in-defaults path, including any existing root-level language detection
-rules, because that remains the normal first-run configuration.
+`✓ ripr.toml valid (<path>)`, naming the discovered file so an ancestor's
+config cannot silently stand in for a missing local one; a malformed or
+policy-invalid file returns its path-qualified validation error. A missing
+`ripr.toml` prints `✓ no ripr.toml found; built-in defaults apply` and
+follows the normal built-in-defaults path, including any existing root-level
+language detection rules, because that remains the normal first-run
+configuration. When those detection rules would refuse the root (for
+example, Python project markers in a binary built without the `lang-python`
+feature), validate still succeeds and carries the detection note in its
+output, because there is no user-written file to fail.
 
 ### `ripr lsp`
 
