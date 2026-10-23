@@ -1,0 +1,25 @@
+{
+  "owner": "review-9936",
+  "utc": "2026-10-23T19:16:37.633013+00:00",
+  "target": "/workspace/9936-repair-target",
+  "consumers": "driver28145 terminal0; no cargo/rustc/clippy-driver/xtask/rustfmt processes; independent reviewers completed without Cargo use",
+  "retained_witnesses": {
+    "/workspace/9936-evidence/review-9936-testbin": "2a3831475f974a46987f02539c0229d174d508314c84350242ae5125339854a8",
+    "/workspace/9936-evidence/repair-testbin": "ec6155f828fe8bf29dca9fc7199e43ad2034e2cb653ee8ba255338c27526cd74",
+    "/workspace/9936-evidence/integrated-testbin": "e2ad39202f0f78ea07c5ecdade473b8cabb00e9422d0bda271fc497188e1a03e"
+  },
+  "retained_for_canonical_adoption": [
+    "/workspace/review-9936",
+    "/workspace/9936-evidence",
+    "/workspace/9936-repair",
+    "/workspace/9936-independent",
+    "/workspace/9936-tools",
+    "/workspace/9936-ast-independent",
+    "/workspace/9936-integration-independent",
+    "/workspace/.ripr-toolchain"
+  ],
+  "disposition": "released",
+  "free_before": 14236516352,
+  "free_after": 30402560000,
+  "free_gain": 16166043648
+}
