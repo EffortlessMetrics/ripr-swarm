@@ -790,13 +790,13 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
             let recorded_check = recorded("ripr check", "output_bytes")?;
             if !out.lines().any(|line| line.trim() == recorded_check) {
                 return Err(format!(
-                    "{row_id}: scripted check line is not the product's:\n{recorded_check}\n--- actual:\n{out}"
+                    "{row_id}: scripted check line differs from product output:\n{recorded_check}\n--- actual:\n{out}"
                 ));
             }
             let recorded_before = recorded("ripr agent repair before", "output_bytes")?;
             if !start.lines().any(|line| line == recorded_before) {
                 return Err(format!(
-                    "{row_id}: scripted refusal is not the product's:\n{recorded_before}\n--- actual:\n{start}"
+                    "{row_id}: scripted refusal differs from product output:\n{recorded_before}\n--- actual:\n{start}"
                 ));
             }
             let recorded_input = recorded("ripr agent repair before", "input_bytes")?;
