@@ -1107,6 +1107,7 @@ fn find_related_tests_with_candidates<'a>(
                             index,
                             test,
                             &hop.caller,
+                            call.line,
                         )) || own_crate_qualified_entry_call(
                             index,
                             test,
@@ -1919,6 +1920,7 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
     index: &RustIndex,
     test: &TestSummary,
     caller: &FunctionSummary,
+    call_line: usize,
 ) -> bool {
     let Some(crate_name) = index.root_library_name.as_deref() else {
         return true;
@@ -2126,7 +2128,13 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
                     && !first.is_some_and(|first| is_lib_first(&first))
             })
     };
-    if foreign_binding(&test.body) || body_pattern_shadows_a_call(&test.body, &caller.name) {
+    if foreign_binding(&test.body)
+        || body_pattern_shadows_a_call(
+            &test.body,
+            &caller.name,
+            call_line.checked_sub(test.start_line),
+        )
+    {
         return false;
     }
     if !suffix_resolves(&facts.source) || !suffix_resolves(&test.body) {
@@ -2178,7 +2186,7 @@ fn declares_value_named(source: &str, name: &str) -> bool {
 /// a direct call of `name`: only such a binding can shadow the imported entry.
 /// A binding whose scope holds no call (`let _u = |name: u32| name + 1;`) does
 /// not. An unparsable body refuses.
-fn body_pattern_shadows_a_call(body: &str, name: &str) -> bool {
+fn body_pattern_shadows_a_call(body: &str, name: &str, call_line_in_body: Option<usize>) -> bool {
     use ra_ap_syntax::{AstNode, TextRange, ast, ast::HasName};
     let name = name.strip_prefix("r#").unwrap_or(name);
     let wrapped = format!("fn __ripr_test_body() {{\n{body}\n}}\n");
@@ -2215,6 +2223,26 @@ fn body_pattern_shadows_a_call(body: &str, name: &str) -> bool {
         })
         .map(|token| token.text_range())
         .collect();
+    // The candidate call's own coordinate: only calls on its line are judged
+    // (the wrapper adds one line before the body). When no call sits on that
+    // line the decision falls back to every call (fail-closed).
+    let on_candidate_line: Vec<TextRange> = call_line_in_body
+        .map(|line| {
+            calls
+                .iter()
+                .copied()
+                .filter(|range| {
+                    let offset = usize::from(range.start());
+                    wrapped[..offset].matches('\n').count() == line + 1
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let calls = if on_candidate_line.is_empty() {
+        calls
+    } else {
+        on_candidate_line
+    };
     let block_of = |node: &ra_ap_syntax::SyntaxNode| {
         node.ancestors()
             .skip(1)

@@ -1078,7 +1078,7 @@ fn an_imported_suffix_must_spell_the_entrys_module_path() -> Result<(), String> 
     assert_eq!(package.relation()?, None, "private re-export");
     // A unit test inside `src/` whose module shadows the std path.
     let unit_lib = format!(
-        "{LIB}\n#[cfg(test)]\nmod tests {{\n    mod foreign {{\n        pub use std::cmp;\n    }}\n    use self::foreign::cmp::order_discount;\n\n    #[test]\n    fn discount_boundary() {{\n        assert_eq!(order_discount(10), 5);\n        assert_eq!(order_discount(9), 0);\n    }}\n}}\n"
+        "{LIB}\n#[cfg(test)]\nmod tests {{\n    mod foreign {{\n        pub use std::cmp::max as order_discount;\n    }}\n    use self::foreign::order_discount;\n\n    #[test]\n    fn discount_boundary() {{\n        assert_eq!(order_discount(10, 5), 10);\n        assert_eq!(order_discount(9, 5), 9);\n    }}\n}}\n"
     );
     let package = Package::root(&unit_lib, false, "");
     assert_ne!(package.relation()?.as_deref(), LINKED, "unit shadow");
@@ -1229,7 +1229,7 @@ fn a_nearer_binding_inside_the_test_body_shadows_the_import() -> Result<(), Stri
 /// an inline ancestor (`pub mod outer { pub mod cmp; }`) still links.
 #[test]
 fn unit_crate_imports_scoped_bindings_and_inline_ancestors() -> Result<(), String> {
-    let unit = |lib: &str, import: &str| Package {
+    let unit = |lib: &str, import: &str, calls: &str| Package {
         manifest: manifest("qual_reach", None),
         diff_path: "src/cmp.rs",
         nested: false,
@@ -1238,15 +1238,14 @@ fn unit_crate_imports_scoped_bindings_and_inline_ancestors() -> Result<(), Strin
             ("src/cmp.rs", LIB.to_string()),
             (
                 "src/unit.rs",
-                format!(
-                    "{import}\n#[test]\nfn discount_boundary() {{\n    assert_eq!(order_discount(10), 5);\n    assert_eq!(order_discount(9), 0);\n}}\n"
-                ),
+                format!("{import}\n#[test]\nfn discount_boundary() {{\n{calls}\n}}\n"),
             ),
             ("tests/api.rs", String::new()),
         ],
     };
     let lib = "pub mod cmp;\npub mod foreign {\n    pub use std::cmp::max as order_discount;\n}\n#[cfg(test)]\nmod unit;\n";
-    let genuine = unit(lib, "use crate::cmp::order_discount;");
+    let own = "    assert_eq!(order_discount(10), 5);\n    assert_eq!(order_discount(9), 0);";
+    let genuine = unit(lib, "use crate::cmp::order_discount;", own);
     assert_eq!(
         genuine.relation()?.as_deref(),
         LINKED,
@@ -1257,7 +1256,9 @@ fn unit_crate_imports_scoped_bindings_and_inline_ancestors() -> Result<(), Strin
         "exposed",
         "genuine crate:: import"
     );
-    let foreign = unit(lib, "use crate::foreign::order_discount;");
+    let two_args =
+        "    assert_eq!(order_discount(10, 5), 10);\n    assert_eq!(order_discount(9, 5), 9);";
+    let foreign = unit(lib, "use crate::foreign::order_discount;", two_args);
     assert_ne!(foreign.relation()?.as_deref(), LINKED, "crate::foreign");
     assert_ne!(foreign.classification()?, "exposed", "crate::foreign");
 
@@ -1273,6 +1274,20 @@ fn unit_crate_imports_scoped_bindings_and_inline_ancestors() -> Result<(), Strin
         ),
         vec![],
     );
+    // A shadowed call in one closure does not veto the outer real calls.
+    let split = module_package(
+        "src/inner.rs",
+        MODULE_LIB,
+        format!(
+            "{import}{}",
+            test_file(&format!(
+                "    let _unused = |order_discount: fn(u32, u32) -> u32| order_discount(10, 5);\n{BARE}"
+            ))
+        ),
+        vec![],
+    );
+    assert_eq!(split.relation()?.as_deref(), LINKED, "outer calls reach");
+    assert_eq!(split.classification()?, "exposed", "outer calls reach");
     assert_eq!(
         unused.relation()?.as_deref(),
         LINKED,
