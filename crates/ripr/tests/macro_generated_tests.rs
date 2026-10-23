@@ -289,3 +289,25 @@ fn a_function_local_weak_alias_in_a_wrapped_test_is_never_stronger_than_by_hand(
     );
     Ok(())
 }
+
+#[test]
+fn an_import_alias_after_the_identity_definition_adds_no_test() -> Result<(), String> {
+    // `use other::real as suite;` rebinds the name after the definition, so
+    // the later invocation is not provably the identity.
+    let cases = [
+        format!("{IDENTITY}    use other::real as suite;\n    suite! {{\n{SUITE_BODY}    }}\n"),
+        format!(
+            "{IDENTITY}    mod inner {{\n        use other::real as suite;\n        suite! {{\n{SUITE_BODY}        }}\n    }}\n"
+        ),
+    ];
+    for tests in cases {
+        let finding = TempRepo::create(&tests)?.predicate()?;
+        assert!(finding.related_tests.is_empty(), "{tests}\n{finding:?}");
+        assert_ne!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{tests}\n{finding:?}"
+        );
+    }
+    Ok(())
+}

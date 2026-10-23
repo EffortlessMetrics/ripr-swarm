@@ -437,6 +437,7 @@ end of the file, which is an approximation for an edit in progress.
 - `crates/ripr/tests/macro_generated_tests.rs::literal_tests_in_an_identity_macro_read_like_the_hand_written_tests`
 - `crates/ripr/tests/macro_generated_tests.rs::literal_tests_in_a_macro_that_is_not_the_identity_add_no_test`
 - `crates/ripr/tests/macro_generated_tests.rs::a_function_local_weak_alias_in_a_wrapped_test_is_never_stronger_than_by_hand`
+- `crates/ripr/tests/macro_generated_tests.rs::an_import_alias_after_the_identity_definition_adds_no_test`
 - `crates/ripr/tests/helper_wrapper_reach.rs::exact_pin_through_a_local_macro_argument_abstains_as_not_forwarded`
 - `crates/ripr/tests/helper_wrapper_reach.rs::any_exact_oracle_on_a_macro_argument_caller_abstains`
 - `crates/ripr/tests/helper_wrapper_reach.rs::macro_argument_without_the_owner_or_an_exact_pin_keeps_the_gap`
