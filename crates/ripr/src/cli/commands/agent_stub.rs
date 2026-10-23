@@ -238,7 +238,10 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
             &file
         )
     );
-    for line in repair_lines(resolution.repair.as_ref(), written.is_some()) {
+    for line in repair_lines(
+        resolution.repair.as_ref(),
+        written.is_some() || stub.already_present,
+    ) {
         println!("{line}");
     }
     Ok(())
