@@ -32,7 +32,8 @@ fn classify(body: &str) -> Result<serde_json::Value, String> {
     let scratch = Scratch(root);
     std::fs::create_dir_all(scratch.0.join("src")).map_err(|error| error.to_string())?;
     std::fs::write(scratch.0.join("Cargo.toml"), MANIFEST).map_err(|error| error.to_string())?;
-    std::fs::write(scratch.0.join("src/lib.rs"), source(body)).map_err(|error| error.to_string())?;
+    std::fs::write(scratch.0.join("src/lib.rs"), source(body))
+        .map_err(|error| error.to_string())?;
     let diff = scratch.0.join("change.diff");
     std::fs::write(&diff, DIFF).map_err(|error| error.to_string())?;
     let report = check_workspace(CheckInput {

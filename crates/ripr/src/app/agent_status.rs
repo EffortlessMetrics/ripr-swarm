@@ -4815,7 +4815,9 @@ mod tests {
         let shared = WorkflowReceiptRead::Parsed(serde_json::json!({}));
         match attempt_receipt(&root, &manifest, &shared) {
             AgentStatusAttemptReceipt::NotIssued => Ok(()),
-            other => Err(format!("a gap-bound attempt must be NotIssued, got {other:?}")),
+            other => Err(format!(
+                "a gap-bound attempt must be NotIssued, got {other:?}"
+            )),
         }
     }
 
@@ -4830,7 +4832,9 @@ mod tests {
         let command =
             restart_attempt_command(&manifest, &view, "stale", "root", "manifest", "--store x")
                 .ok_or("no restart command")?;
-        if !command.reason.contains("did not record the immutable base commit")
+        if !command
+            .reason
+            .contains("did not record the immutable base commit")
             || command.reason.contains("another HEAD")
         {
             return Err(format!("unexpected reason: {}", command.reason));

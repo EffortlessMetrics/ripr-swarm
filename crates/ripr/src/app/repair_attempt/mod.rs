@@ -4219,7 +4219,9 @@ mod tests {
             ("HEAD~1", Some(String::new())),
         ] {
             if check(&mut manifest, base, commit.as_deref()) {
-                return Err(format!("malformed gap binding accepted: {base:?} {commit:?}"));
+                return Err(format!(
+                    "malformed gap binding accepted: {base:?} {commit:?}"
+                ));
             }
         }
         Ok(())

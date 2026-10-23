@@ -3424,9 +3424,7 @@ fn struct_literal_fields(initializer: &str) -> Option<StructLiteral<'_>> {
     let type_name = path.rsplit("::").next().unwrap_or_default();
     if path.is_empty()
         || !type_name.starts_with(|ch: char| ch.is_ascii_uppercase())
-        || !path
-            .chars()
-            .all(|ch| is_ident_char(ch) || ch == ':')
+        || !path.chars().all(|ch| is_ident_char(ch) || ch == ':')
     {
         return None;
     }
@@ -3561,9 +3559,7 @@ fn read_feeds_whole_result_comparison(
         return call_before_is_owner(other, owner);
     }
     !other.is_empty()
-        && other
-            .chars()
-            .all(is_ident_char)
+        && other.chars().all(is_ident_char)
         && binds_from_owner_call(body, other, &format!("{owner}("))
 }
 
@@ -3619,23 +3615,16 @@ fn call_before_is_owner(before: &str, owner: &str) -> bool {
     let Some(callee) = open.map(|index| &before[..index]) else {
         return false;
     };
-    callee.strip_suffix(owner).is_some_and(|prefix| {
-        !prefix
-            .chars()
-            .next_back()
-            .is_some_and(is_ident_char)
-    })
+    callee
+        .strip_suffix(owner)
+        .is_some_and(|prefix| !prefix.chars().next_back().is_some_and(is_ident_char))
 }
 
 /// Whether `body` has `let [mut] receiver = ...;` whose initializer calls
 /// the owner.
 fn binds_from_owner_call(body: &str, receiver: &str, owner_call: &str) -> bool {
     body.match_indices("let ").any(|(start, _)| {
-        if body[..start]
-            .chars()
-            .next_back()
-            .is_some_and(is_ident_char)
-        {
+        if body[..start].chars().next_back().is_some_and(is_ident_char) {
             return false;
         }
         let statement = body[start + 4..].split(';').next().unwrap_or_default();
