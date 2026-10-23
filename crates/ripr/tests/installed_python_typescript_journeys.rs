@@ -607,10 +607,23 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
             "manifest does not record the gap binding:\n{manifest_text}"
         ));
     }
+    // The persisted next step is the executable gap-bound after phase: the
+    // manifest carries the gap and its base, so the command needs no extra flag.
     let persisted_next = manifest["next_command"].as_str().unwrap_or_default();
-    if persisted_next.contains("--phase after") || !persisted_next.contains("--gap-id") {
+    if !persisted_next.contains("--phase after")
+        || !persisted_next.contains("--attempt ")
+        || persisted_next.contains("--seam-id")
+    {
         return Err(format!(
-            "persisted next step is not the manual by-gap route: {persisted_next}"
+            "persisted next step is not the gap-bound after phase: {persisted_next}"
+        ));
+    }
+    let resolved_base = fixture_git_output(&root, &["rev-parse", "HEAD~1"])?
+        .trim()
+        .to_string();
+    if manifest["gap_binding"]["base_commit"] != resolved_base.as_str() {
+        return Err(format!(
+            "manifest does not pin the resolved base commit:\n{manifest_text}"
         ));
     }
     let roles: Vec<&str> = manifest["artifacts"]
@@ -671,28 +684,6 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
             "status leaks --seam-id for a gap attempt:\n{status}"
         ));
     }
-    // The gap-bound after phase is a later slice: it refuses with the manual
-    // by-gap route instead of scoring against the wrong snapshot kind.
-    let (after_ok, after) = ripr(
-        &decoy,
-        &[
-            "agent",
-            "repair",
-            "--root",
-            &root_arg,
-            "--phase",
-            "after",
-            "--attempt",
-            &attempt_id_of(&manifest)?,
-        ],
-    )?;
-    expect_exit(after_ok, false, "gap-bound after phase")?;
-    need(&after, "gap-bound", "after refusal names the binding")?;
-    need(
-        &after,
-        "agent verify",
-        "after refusal names the manual route",
-    )?;
     decoy_untouched(&decoy)?;
 
     // Variants that must stay unresolved, paired with whether the product
@@ -977,4 +968,373 @@ fn typescript_check_findings_artifacts_verify_by_gap_id_and_reject_forgery() -> 
     expect_exit(ok, false, "reversed pair")?;
     need(&out, "incomparable", "reversed pair named")?;
     decoy_untouched(&decoy)
+}
+
+/// A started gap-bound attempt over the installed TypeScript fixture.
+#[cfg(feature = "lang-typescript")]
+struct GapAttempt {
+    _guard: TempDirGuard,
+    root: PathBuf,
+    root_arg: String,
+    decoy: PathBuf,
+    gap: String,
+    attempt_id: String,
+}
+
+#[cfg(feature = "lang-typescript")]
+impl GapAttempt {
+    fn start(label: &str) -> Result<Self, String> {
+        let toml = "[languages]\nenabled = [\"typescript\"]\n";
+        let (guard, root, decoy) = materialize(
+            "blind_journey_installed_typescript",
+            "head",
+            label,
+            Some(toml),
+        )?;
+        let root_arg = root.to_string_lossy().into_owned();
+        let (ok, check) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+        expect_exit(ok, true, "check")?;
+        let gap = check
+            .lines()
+            .map(str::trim)
+            .find(|line| line.starts_with("ripr agent repair --gap-id "))
+            .and_then(|line| line.split_whitespace().nth(4))
+            .ok_or_else(|| format!("check printed no gap-bound start:\n{check}"))?
+            .to_string();
+        let (ok, started) = ripr(
+            &decoy,
+            &[
+                "agent", "repair", "--gap-id", &gap, "--base", "HEAD~1", "--root", &root_arg,
+                "--phase", "before",
+            ],
+        )?;
+        expect_exit(ok, true, &format!("gap-bound before phase: {started}"))?;
+        let attempt = Self {
+            _guard: guard,
+            root,
+            root_arg,
+            decoy,
+            gap,
+            attempt_id: String::new(),
+        };
+        let manifest = attempt.manifest_for_only_attempt()?;
+        let attempt_id = attempt_id_of(&manifest)?;
+        Ok(Self {
+            attempt_id,
+            ..attempt
+        })
+    }
+
+    fn manifest_for_only_attempt(&self) -> Result<serde_json::Value, String> {
+        let attempts = self.root.join("target/ripr/repair-attempts");
+        let mut found = Vec::new();
+        for entry in
+            std::fs::read_dir(&attempts).map_err(|error| format!("attempts dir: {error}"))?
+        {
+            let path = entry.map_err(|error| format!("entry: {error}"))?.path();
+            if path.join("attempt.json").is_file() {
+                found.push(path.join("attempt.json"));
+            }
+        }
+        if found.len() != 1 {
+            return Err(format!("expected one attempt, got {found:?}"));
+        }
+        let text =
+            std::fs::read_to_string(&found[0]).map_err(|error| format!("manifest: {error}"))?;
+        serde_json::from_str(&text).map_err(|error| format!("manifest json: {error}"))
+    }
+
+    fn after(&self, json: bool) -> Result<std::process::Output, String> {
+        let mut args = vec![
+            "agent",
+            "repair",
+            "--root",
+            &self.root_arg,
+            "--phase",
+            "after",
+            "--attempt",
+            &self.attempt_id,
+        ];
+        if json {
+            args.push("--json");
+        }
+        ripr_output(&self.decoy, &args)
+    }
+
+    /// Commit an edit of the focused test that pins the equality boundary the
+    /// packet names, so the gap reads exposed.
+    fn commit_closing_test(&self) -> Result<(), String> {
+        self.commit_test_edit(
+            "  it(\"discounts exactly at the threshold\", () => {\n    expect(discountedTotal(10000)).toBe(9500);\n  });\n\n  it(\"discounts an above-threshold subtotal\"",
+            "pin the threshold",
+        )
+    }
+
+    /// Commit a focused-test edit that leaves the boundary unpinned.
+    fn commit_non_discriminating_test(&self, label: &str) -> Result<(), String> {
+        self.commit_test_edit(
+            &format!(
+                "  it(\"{label}\", () => {{\n    expect(discountedTotal(5)).toBe(5);\n  }});\n\n  it(\"discounts an above-threshold subtotal\""
+            ),
+            label,
+        )
+    }
+
+    fn commit_test_edit(&self, insertion: &str, message: &str) -> Result<(), String> {
+        let test_file = self.root.join("test/pricing.test.ts");
+        let original =
+            std::fs::read_to_string(&test_file).map_err(|error| format!("read test: {error}"))?;
+        let edited = original.replacen(
+            "  it(\"discounts an above-threshold subtotal\"",
+            insertion,
+            1,
+        );
+        if edited == original {
+            return Err("test edit did not apply".to_string());
+        }
+        std::fs::write(&test_file, edited).map_err(|error| format!("write test: {error}"))?;
+        // Only the paths the edit touched: `target/ripr` artifacts and the
+        // untracked `ripr.toml` are not part of the committed edit.
+        fixture_git_ok(&self.root, &["add", "test/pricing.test.ts"])?;
+        if self.root.join("src/extra.ts").is_file() {
+            fixture_git_ok(&self.root, &["add", "src/extra.ts"])?;
+        }
+        fixture_git_ok(&self.root, &["commit", "-q", "-m", message])
+    }
+
+    fn state(&self) -> Result<String, String> {
+        Ok(self.manifest_for_only_attempt()?["state"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string())
+    }
+}
+
+#[cfg(feature = "lang-typescript")]
+fn text_of(output: &std::process::Output) -> (String, String) {
+    (
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+/// #9103 (RIPR-SPEC-0311): the gap-bound after phase closes a gap only on
+/// positive evidence, finishes the attempt through the edit cage, and names
+/// no seam and no receipt.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_bound_after_phase_closes_the_gap_on_positive_evidence() -> Result<(), String> {
+    let attempt = GapAttempt::start("ts-after-ok")?;
+    attempt.commit_closing_test()?;
+    let output = attempt.after(true)?;
+    let (stdout, stderr) = text_of(&output);
+    expect_exit(
+        output.status.success(),
+        true,
+        &format!("gap-bound after phase:\n{stdout}\n{stderr}"),
+    )?;
+    let document: serde_json::Value =
+        serde_json::from_str(&stdout).map_err(|error| format!("stdout json: {error}\n{stdout}"))?;
+    if document["kind"] != "repair_after_result"
+        || document["verify"]["bound_gap"]["gap_id"] != attempt.gap.as_str()
+        || document["verify"]["bound_gap"]["after_classification"] != "exposed"
+        || document["verify"]["bound_gap"]["closed"] != true
+    {
+        return Err(format!("closure is not reported:\n{stdout}"));
+    }
+    if attempt.state()? != "ready_to_finish" {
+        return Err(format!("unexpected state {}", attempt.state()?));
+    }
+    if !attempt
+        .root
+        .join("target/ripr/workflow/after.check-findings.json")
+        .is_file()
+    {
+        return Err("after.check-findings.json was not written".to_string());
+    }
+    if attempt
+        .root
+        .join("target/ripr/workflow/after.repo-exposure.json")
+        .exists()
+    {
+        return Err("a gap-bound attempt wrote a repo-exposure after snapshot".to_string());
+    }
+    for text in [&stdout, &stderr] {
+        if text.contains("--seam-id") {
+            return Err(format!("gap-bound after output leaks --seam-id:\n{text}"));
+        }
+    }
+    // Status over the finished gap attempt offers no seam-bound command and
+    // no receipt: the closure rides the verify document.
+    let (status_ok, status) = ripr(
+        &attempt.decoy,
+        &["agent", "status", "--root", &attempt.root_arg],
+    )?;
+    expect_exit(status_ok, true, "agent status after a gap-bound finish")?;
+    need(
+        &status,
+        "gap-bound attempt issues no receipt",
+        "status explains the missing receipt",
+    )?;
+    if status.contains("--seam-id") || status.contains("ripr agent receipt") {
+        return Err(format!("status offers a seam or receipt route:\n{status}"));
+    }
+    // A finished attempt cannot run again, and its restart names the gap.
+    let again = attempt.after(false)?;
+    let (_, again_err) = text_of(&again);
+    expect_exit(again.status.success(), false, "second after phase")?;
+    need(&again_err, "--gap-id", "restart names the gap start")?;
+    decoy_untouched(&attempt.decoy)
+}
+
+/// A committed test that does not pin the boundary leaves the gap open: a
+/// typed refusal (exit 3) recorded on the attempt, which stays retryable, and
+/// the corrected edit then closes it.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_bound_after_phase_refuses_a_gap_that_is_not_closed_and_stays_retryable() -> Result<(), String>
+{
+    let attempt = GapAttempt::start("ts-after-open")?;
+    attempt.commit_non_discriminating_test("covers a small subtotal")?;
+    let output = attempt.after(true)?;
+    let (stdout, stderr) = text_of(&output);
+    if output.status.code() != Some(3) {
+        return Err(format!(
+            "an open gap must exit 3, got {:?}:\n{stdout}\n{stderr}",
+            output.status.code()
+        ));
+    }
+    need(&stderr, "agent verify gap binding refused", "named refusal")?;
+    need(&stderr, "still reads", "the gap is still open")?;
+    need(
+        &stderr,
+        "remains `awaiting_edit`",
+        "attempt stays retryable",
+    )?;
+    let document: serde_json::Value =
+        serde_json::from_str(&stdout).map_err(|error| format!("stdout json: {error}\n{stdout}"))?;
+    if document["kind"] != "repair_after_refusal" || stdout.contains("\"closed\": true") {
+        return Err(format!("refusal document claims closure:\n{stdout}"));
+    }
+    if attempt.state()? != "awaiting_edit" {
+        return Err(format!("unexpected state {}", attempt.state()?));
+    }
+    let manifest = attempt.manifest_for_only_attempt()?;
+    if manifest["after_refusal_count"] != 1 {
+        return Err(format!("refusal not counted:\n{manifest}"));
+    }
+    if stderr.contains("--seam-id") {
+        return Err(format!("refusal leaks --seam-id:\n{stderr}"));
+    }
+    // The retry with the discriminating test closes the gap.
+    attempt.commit_closing_test()?;
+    // The persisted next command is the executable after phase.
+    let persisted = manifest["next_command"].as_str().unwrap_or_default();
+    need(persisted, "--phase after", "persisted next command")?;
+    let retry = attempt.after(true)?;
+    let (retry_out, retry_err) = text_of(&retry);
+    expect_exit(
+        retry.status.success(),
+        true,
+        &format!("retry after the corrected edit:\n{retry_out}\n{retry_err}"),
+    )?;
+    need(&retry_out, "\"closed\": true", "retry reports closure").map(|_| ())
+}
+
+/// Absence is never closure: reverting the production change removes the gap
+/// from the after artifact, which the verifier refuses as a typed refusal.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_bound_after_phase_does_not_treat_an_absent_gap_as_closed() -> Result<(), String> {
+    let attempt = GapAttempt::start("ts-after-absent")?;
+    let base = fixture_git_output(&attempt.root, &["rev-parse", "HEAD~1"])?
+        .trim()
+        .to_string();
+    fixture_git_ok(&attempt.root, &["checkout", &base, "--", "src/pricing.ts"])?;
+    fixture_git_ok(&attempt.root, &["commit", "-q", "-m", "drop the change"])?;
+    let output = attempt.after(true)?;
+    let (stdout, stderr) = text_of(&output);
+    if output.status.code() != Some(3) {
+        return Err(format!(
+            "an absent gap must exit 3, got {:?}:\n{stdout}\n{stderr}",
+            output.status.code()
+        ));
+    }
+    need(
+        &stderr,
+        "is absent from the after artifact",
+        "absence named",
+    )?;
+    need(
+        &stderr,
+        "absence is not closure evidence",
+        "absence is not closure",
+    )?;
+    if stdout.contains("\"closed\": true") || stdout.contains("\"bound_gap\"") {
+        return Err(format!("absence was reported as closure:\n{stdout}"));
+    }
+    if attempt.state()? != "awaiting_edit" {
+        return Err(format!("unexpected state {}", attempt.state()?));
+    }
+    Ok(())
+}
+
+/// The edit cage is enforced: a closing test committed beside a file outside
+/// the test surface ends the attempt terminally and reports no closure.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_bound_after_phase_enforces_the_edit_cage() -> Result<(), String> {
+    let attempt = GapAttempt::start("ts-after-cage")?;
+    std::fs::write(
+        attempt.root.join("src/extra.ts"),
+        "export const EXTRA = 1;\n",
+    )
+    .map_err(|error| format!("write extra: {error}"))?;
+    attempt.commit_closing_test()?;
+    let output = attempt.after(true)?;
+    let (stdout, stderr) = text_of(&output);
+    expect_exit(
+        output.status.success(),
+        false,
+        &format!("cage violation:\n{stdout}\n{stderr}"),
+    )?;
+    need(&stderr, "src/extra.ts", "the refused path is named")?;
+    let document: serde_json::Value =
+        serde_json::from_str(&stdout).map_err(|error| format!("stdout json: {error}\n{stdout}"))?;
+    if document["kind"] != "repair_after_failure" || stdout.contains("\"closed\": true") {
+        return Err(format!("cage refusal reads as a repair:\n{stdout}"));
+    }
+    let state = attempt.state()?;
+    if state == "awaiting_edit" || state == "ready_to_finish" {
+        return Err(format!("cage violation left a live attempt: {state}"));
+    }
+    Ok(())
+}
+
+/// The attempt authority's retry budget applies to gap-bound refusals.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_bound_after_phase_stops_when_the_retry_budget_is_spent() -> Result<(), String> {
+    let attempt = GapAttempt::start("ts-after-budget")?;
+    attempt.commit_non_discriminating_test("covers a small subtotal")?;
+    for round in 1..=5 {
+        let output = attempt.after(false)?;
+        let (_, stderr) = text_of(&output);
+        if output.status.code() != Some(3) {
+            return Err(format!(
+                "refusal {round} must exit 3, got {:?}:\n{stderr}",
+                output.status.code()
+            ));
+        }
+        need(&stderr, "gap binding refused", "named refusal")?;
+    }
+    let stopped = attempt.after(false)?;
+    let (_, stderr) = text_of(&stopped);
+    expect_exit(stopped.status.success(), false, "after the budget")?;
+    need(&stderr, "retry budget", "budget stop is named")?;
+    need(&stderr, "--gap-id", "recovery restarts with the gap")?;
+    if stderr.contains("--seam-id") {
+        return Err(format!("budget stop leaks --seam-id:\n{stderr}"));
+    }
+    Ok(())
 }

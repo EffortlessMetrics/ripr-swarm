@@ -343,7 +343,19 @@ pub(crate) fn build_agent_status_report_from(
     let mut warnings = Vec::new();
     let seam = recover_seam_id(root, &artifacts, &mut warnings);
     warnings.extend(stale_warnings(&artifacts));
-    let missing_commands = missing_commands(root_argument, seam.as_ref(), &artifacts);
+    // #9103: the legacy seam workflow (`agent packet`/`brief`/`receipt`
+    // `--seam-id`) cannot run for a gap-bound subject, whose verify document
+    // names a canonical gap id; offering those commands would send a reader
+    // to a start the Rust seam inventory refuses. The attempt rows below own
+    // the gap-bound next step.
+    let gap_bound_seam = seam
+        .as_ref()
+        .is_some_and(|seam| crate::app::gap_bound_repair::is_gap_bound_subject(&seam.seam_id));
+    let missing_commands = if gap_bound_seam {
+        Vec::new()
+    } else {
+        missing_commands(root_argument, seam.as_ref(), &artifacts)
+    };
     let receipt = read_workflow_receipt(root);
     // One lazily loaded repair-admission gate per status read (#8766).
     let gate = RepairStartGate::new(root);
@@ -1043,6 +1055,12 @@ fn unconfirmed_receipt_reason(attempt: &AgentStatusRepairAttempt) -> String {
                 "{reason}; status does not reconstruct the outcome from another attempt's compatibility receipt"
             )
         }
+        // #9103: a gap-bound attempt issues no receipt in this slice; its
+        // closure is the `bound_gap` of the after-phase verify document, which
+        // status does not retain per attempt, so it stays unconfirmed here.
+        AgentStatusAttemptReceipt::NotIssued if attempt.gap_base.is_some() => format!(
+            "a gap-bound attempt issues no receipt; its closure is the `bound_gap` of the after-phase verify document (`{WORKFLOW_AGENT_VERIFY_ARTIFACT}`), which status does not retain per attempt"
+        ),
         _ => format!(
             "no receipt at `{WORKFLOW_AGENT_RECEIPT_ARTIFACT}` was issued for its after verdict"
         ),
@@ -4156,6 +4174,7 @@ mod tests {
                 &identity,
                 RepairAttemptGapBinding {
                     base: "HEAD~1".to_string(),
+                    base_commit: "b".repeat(40),
                 },
             )?;
             let attempt_id = only_attempt_id(&root, None)?;
@@ -4221,7 +4240,7 @@ mod tests {
     /// edit names the manual by-gap verification route, never a
     /// `--phase after` command that would refuse.
     #[test]
-    fn current_gap_bound_attempt_status_offers_the_manual_verify_route() -> Result<(), String> {
+    fn current_gap_bound_attempt_status_offers_the_executable_continuation() -> Result<(), String> {
         use crate::app::repair_attempt::{
             BeforeArtifactSource, BeforeRepairAttemptIdentity, BeginRepairAttemptOptions,
             RepairAttemptGapBinding, begin_gap_bound_repair_attempt_with_identity,
@@ -4285,6 +4304,7 @@ mod tests {
                 &identity,
                 RepairAttemptGapBinding {
                     base: "HEAD~1".to_string(),
+                    base_commit: "b".repeat(40),
                 },
             )?;
             let attempt_id = only_attempt_id(&root, None)?;
@@ -4294,21 +4314,19 @@ mod tests {
                 .as_ref()
                 .map(|next| next.command.clone())
                 .unwrap_or_default();
-            if attempt_command.contains("--phase after") {
+            // The gap-bound after phase is executable, so the ordinary
+            // continuation is offered; no seam-bound start is.
+            if !attempt_command.contains("--attempt") || attempt_command.contains("--seam-id") {
                 return Err(format!(
-                    "attempt status offers a refusing after: {attempt_command}"
+                    "attempt status offers no gap-bound continuation: {attempt_command}"
                 ));
             }
             let rendered = render_agent_status_json(&build_agent_status_report(&root, &root))?;
             if !rendered.contains("\"resumable\"") {
                 return Err(format!("the attempt must be resumable:\n{rendered}"));
             }
-            if rendered.contains("--phase after") {
-                return Err(format!("status offers a refusing after phase:\n{rendered}"));
-            }
-            if !rendered.contains("agent verify") || !rendered.contains(&format!("--gap-id {GAP}"))
-            {
-                return Err(format!("status names no manual by-gap route:\n{rendered}"));
+            if rendered.contains(&format!("--seam-id {GAP}")) {
+                return Err(format!("status names a seam start for a gap:\n{rendered}"));
             }
             Ok(())
         })();

@@ -133,7 +133,14 @@ pub(crate) fn repair_attempt_state_for_finish(after: &RepairAttemptAfter) -> Rep
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RepairAttemptGapBinding {
+    /// The base as the caller spelled it (`--base`), shown in restart text.
     pub(crate) base: String,
+    /// The full commit that spelling resolved to at the before phase. The
+    /// after phase re-analyzes against this commit, never the spelling: a
+    /// relative base such as `HEAD~1` names a different commit once the
+    /// focused test is committed, which would shrink the diff and make the
+    /// gap vanish.
+    pub(crate) base_commit: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -950,6 +957,14 @@ pub(crate) struct ResolvedRepairAttempt {
     pub(crate) manifest_path: PathBuf,
     pub(crate) before_snapshot_path: PathBuf,
     pub(crate) packet_path: PathBuf,
+    /// The recorded diff base of a gap-bound attempt (#9103, RIPR-SPEC-0311);
+    /// `None` for a seam-bound attempt. Its `before_snapshot_path` is then the
+    /// check-findings snapshot, and `seam_id` holds the canonical gap id.
+    pub(crate) gap_base: Option<String>,
+    /// The full commit `gap_base` resolved to at the before phase (see
+    /// [`RepairAttemptGapBinding::base_commit`]); `Some` exactly when
+    /// `gap_base` is.
+    pub(crate) gap_base_commit: Option<String>,
 }
 
 /// Inputs of one durable before-phase attempt publication.
@@ -1158,36 +1173,15 @@ fn complete_repair_attempt(
     let result = stage_before_artifacts(canonical_root, attempt_directory, publication.sources)
         .and_then(|artifacts| {
             let store_flag = store.quoted_store_flag();
-            let next_command = match &publication.gap_binding {
-                // #9103: a gap-bound attempt has no `--phase after` yet (it
-                // refuses), so every surface that reads the persisted next
-                // step gets the manual by-gap route instead.
-                Some(binding) => {
-                    let before = artifacts
-                        .iter()
-                        .find(|artifact| {
-                            artifact.role
-                                == crate::app::gap_bound_repair::GAP_BOUND_BEFORE_SNAPSHOT_ROLE
-                        })
-                        .map(|artifact| artifact.path.as_str())
-                        .unwrap_or_default();
-                    format!(
-                        "the gap-bound after phase is not available yet; after the test edit, {}",
-                        crate::app::gap_bound_repair::gap_bound_manual_verify_route(
-                            &bound_root(&publication.root_argument.to_string_lossy()),
-                            before,
-                            publication.seam_id,
-                            &binding.base,
-                        )
-                    )
-                }
-                None => format!(
-                    "ripr agent repair --root {}{store_flag} --attempt {} --phase after{}",
-                    shell_arg(&bound_root(&publication.root_argument.to_string_lossy())),
-                    shell_arg(publication.repair_attempt_id.as_str()),
-                    publication.next_command_suffix.unwrap_or_default()
-                ),
-            };
+            // A gap-bound attempt (#9103) finishes through the same
+            // `--phase after` command: the manifest carries the gap id and its
+            // diff base, so the command needs no extra flag.
+            let next_command = format!(
+                "ripr agent repair --root {}{store_flag} --attempt {} --phase after{}",
+                shell_arg(&bound_root(&publication.root_argument.to_string_lossy())),
+                shell_arg(publication.repair_attempt_id.as_str()),
+                publication.next_command_suffix.unwrap_or_default()
+            );
             // Finalize-path head re-verification: the earlier pre-publication
             // gate pinned the head identity before the artifacts were staged;
             // the durable manifest is the authority, so the identity is
@@ -2307,33 +2301,24 @@ pub(crate) fn resolve_awaiting_repair_attempt_from(
             &manifest,
         ));
     }
-    // #9103 (RIPR-SPEC-0311): a gap-bound attempt carries a check-findings
-    // before snapshot, not the repo-exposure snapshot this seam-bound after
-    // phase compares. Its gap-bound after phase and receipt are a later
-    // slice; until then the attempt names the manual by-gap route instead of
-    // failing on a missing seam artifact or scoring against the wrong kind.
-    if let Some(binding) = &manifest.gap_binding {
-        let before = find_manifest_artifact(
-            &manifest,
-            crate::app::gap_bound_repair::GAP_BOUND_BEFORE_SNAPSHOT_ROLE,
-        )
-        .map(|artifact| artifact.path.clone())
-        .unwrap_or_default();
-        return Err(format!(
-            "repair attempt {} is gap-bound (gap `{}`, base `{}`); its gap-bound after phase is not available yet, so this attempt cannot be finished here. To verify the repair by gap id: {}",
-            manifest.repair_attempt_id.as_str(),
-            manifest.seam_id,
-            binding.base,
-            crate::app::gap_bound_repair::gap_bound_manual_verify_route(
-                &bound_root(&root_argument.to_string_lossy()),
-                &before,
-                &manifest.seam_id,
-                &binding.base,
-            ),
-        ));
-    }
+    // #9103 (RIPR-SPEC-0311): a gap-bound attempt retains the check-findings
+    // before snapshot under its own role, so the after phase compares like
+    // kinds; a seam-bound attempt keeps the repo-exposure snapshot.
+    let gap_base = manifest
+        .gap_binding
+        .as_ref()
+        .map(|binding| binding.base.clone());
+    let gap_base_commit = manifest
+        .gap_binding
+        .as_ref()
+        .map(|binding| binding.base_commit.clone());
+    let before_role = if gap_base.is_some() {
+        crate::app::gap_bound_repair::GAP_BOUND_BEFORE_SNAPSHOT_ROLE
+    } else {
+        "before_snapshot"
+    };
     let before_snapshot_path =
-        canonical_root.join(&find_manifest_artifact(&manifest, "before_snapshot")?.path);
+        canonical_root.join(&find_manifest_artifact(&manifest, before_role)?.path);
     let packet_path = canonical_root.join(&find_manifest_artifact(&manifest, "agent_packet")?.path);
     Ok(ResolvedRepairAttempt {
         attempt_id: manifest.repair_attempt_id,
@@ -2342,6 +2327,8 @@ pub(crate) fn resolve_awaiting_repair_attempt_from(
         manifest_path,
         before_snapshot_path,
         packet_path,
+        gap_base,
+        gap_base_commit,
     })
 }
 
@@ -4152,10 +4139,11 @@ mod tests {
         gap_bound.seam_id = TS_GAP.to_string();
         gap_bound.gap_binding = Some(RepairAttemptGapBinding {
             base: "HEAD~1".to_string(),
+            base_commit: "a".repeat(40),
         });
         let gap_json =
             serde_json::to_string_pretty(&gap_bound).map_err(|error| error.to_string())?;
-        if !gap_json.contains("\"gap_binding\": {\n    \"base\": \"HEAD~1\"\n  }") {
+        if !gap_json.contains("\"gap_binding\": {\n    \"base\": \"HEAD~1\",\n    \"base_commit\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n  }") {
             return Err(format!("gap marker not serialized:\n{gap_json}"));
         }
         let reread: RepairAttemptManifest =

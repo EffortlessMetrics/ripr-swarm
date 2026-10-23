@@ -40,6 +40,10 @@ pub(crate) fn is_gap_bound_subject(id: &str) -> bool {
 /// `ripr check --base <ref> --format check-findings-json`.
 pub(crate) const GAP_BOUND_BEFORE_SNAPSHOT_FILE: &str = "before.check-findings.json";
 
+/// The after-phase counterpart of [`GAP_BOUND_BEFORE_SNAPSHOT_FILE`]: the
+/// same producer's artifact, written by `ripr agent repair --phase after`.
+pub(crate) const GAP_BOUND_AFTER_SNAPSHOT_FILE: &str = "after.check-findings.json";
+
 /// The workflow-side copy of a gap-bound attempt's repair packet. Distinct
 /// from the seam loop's `agent-packet.json` so a gap-bound start never
 /// overwrites a seam-bound projection nor makes `ripr agent status` read a
@@ -163,24 +167,6 @@ pub(crate) fn repair_start_command(
             shell_arg(subject)
         ),
     }
-}
-
-/// The manual verification route a gap-bound attempt names until the
-/// gap-bound after phase lands: save the same producer's artifact after the
-/// edit and compare by gap id with the retained before snapshot.
-pub(crate) fn gap_bound_manual_verify_route(
-    root_display: &str,
-    before_snapshot: &str,
-    gap_id: &str,
-    base: &str,
-) -> String {
-    format!(
-        "save `ripr check --root {root} --base {base} --format check-findings-json` after the edit to a file, then run `ripr agent verify --root {root} --before {before} --after <that file> --gap-id {gap} --json`, which reports the gap closed only when it reads exposed in the after snapshot",
-        root = shell_arg(root_display),
-        base = shell_arg(base),
-        before = shell_arg(before_snapshot),
-        gap = shell_arg(gap_id),
-    )
 }
 
 #[cfg(test)]

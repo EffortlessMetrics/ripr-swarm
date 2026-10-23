@@ -1341,6 +1341,25 @@ pub(crate) fn current_git_head(root: &Path) -> Result<String, String> {
     Ok(head.to_string())
 }
 
+/// Resolve a caller-spelled revision to its full commit id (#9103). A
+/// spelling that starts with `-` is refused before it reaches the VCS, and the
+/// result must be a full lowercase commit id.
+pub(crate) fn resolve_commit_rev(root: &Path, rev: &str) -> Result<String, String> {
+    if rev.trim().is_empty() || rev.starts_with('-') {
+        return Err(format!("`{rev}` is not a revision ripr can resolve"));
+    }
+    let spec = format!("{rev}^{{commit}}");
+    let resolved = git_output(root, &["rev-parse", "--verify", "--quiet", &spec])
+        .map_err(|_| format!("revision `{rev}` does not name a commit in the selected root"))?;
+    let resolved = resolved.trim();
+    if !is_full_sha(resolved) {
+        return Err(format!(
+            "revision `{rev}` resolved to an invalid commit `{resolved}`"
+        ));
+    }
+    Ok(resolved.to_string())
+}
+
 /// The artifact producer's bounded worktree probe, shared with limitation
 /// disclosure. A successful HEAD read alone does not establish this status.
 pub(crate) fn current_git_worktree_status(root: &Path) -> Result<&'static str, String> {
@@ -1852,6 +1871,16 @@ mod tests {
                 .to_string())
         );
         assert!(!"agent verify --gap-id requires".starts_with(GAP_BINDING_REFUSAL_PREFIX));
+    }
+
+    #[test]
+    fn resolve_commit_rev_refuses_option_shaped_and_blank_revisions() {
+        for rev in ["", "  ", "--output=x", "-1"] {
+            let error = resolve_commit_rev(Path::new("."), rev)
+                .err()
+                .unwrap_or_default();
+            assert!(error.contains("not a revision"), "{rev:?}: {error}");
+        }
     }
 
     #[test]
