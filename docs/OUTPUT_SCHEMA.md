@@ -3611,6 +3611,28 @@ Any other outcome is a named refusal (`agent verify gap binding refused: ...`,
 exit `3`, empty stdout), and `--gap-id` over a `repo-exposure-json` snapshot is
 an operational error (exit `2`).
 
+### Gap-Bound Repair Start
+
+For a TypeScript finding whose repair packet is complete, `ripr check` prints
+`ripr agent repair --gap-id <gap> --base <base> --phase before` as the start
+line (RIPR-SPEC-0311, #9103). The command re-runs the diff-scoped check against
+`--base`, requires the same shared packet validator to accept the finding, and
+otherwise refuses with "the repair packet is not ready" and writes nothing.
+A refused start restores the shared workflow artifacts to the bytes they had
+before the invocation (removing only files it created). On
+acceptance it writes `before.check-findings.json` (a `check-findings-json`
+artifact) and `gap-repair-packet.json` under the attempt's artifacts and a
+repair-attempt manifest whose `seam_id` is the canonical gap id and which
+carries one additive member, `gap_binding: { "base": "<base>" }`. Seam
+attempts omit `gap_binding`, so their bytes are unchanged. The packet names the
+gap as its `seam_id`; the edit cage is derived from the packet's test file
+and recorded in the attempt baseline, but this slice does not enforce it: only
+the after phase consumes it. This slice has no `--phase after` for gap attempts: that phase refuses naming the manual
+route, `ripr agent verify --before <snapshot> --after <snapshot> --gap-id <gap>`.
+Let-bound, imported and reach-barrier variants stay unrouted. Python keeps its
+terminal reason. The static result is exposure evidence only; it does not
+claim a runtime mutation outcome.
+
 ## Repo Seam Inventory
 
 `ripr check --root . --format repo-seams-json` emits the repo seam inventory
@@ -16728,9 +16750,13 @@ failed`, `git diff failed`) and `null` otherwise. The terminal and Markdown "Ins
 carries a matching scope line: `change-first (Rust seams on lines changed since
 <base> rank first)` for `changed`, `whole repository` for `no_change`, and
 `whole repository (current change unavailable: <reason>)` for `unavailable`.
-The change-first scope and the change counts cover Rust seam ranking only. A
-Python preview repair card shown as the top recommendation is still selected
-from the committed diff against the base, not from uncommitted edits.
+The change-first scope and the change counts cover Rust seam ranking only. When
+the Rust ranking is empty and a Python preview repair card leads the
+recommendation, the scope line instead reads `change-first (python (preview)
+seams on lines changed since <base> rank first)` so it names what was actually
+ranked (#9857); a Python preview repair card shown as the top recommendation is
+still selected from the committed diff against the base, not from uncommitted
+edits.
 `actionable_seams_in_change`, `withheld_seams_in_change` and
 `top_recommendation_in_change` are `null` unless `state` is `changed`;
 `top_recommendation_in_change` is also `null` when no seam is ranked.
@@ -18415,7 +18441,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.96",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.97",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -19183,7 +19209,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.96",
+      "schema_version": "1.97",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

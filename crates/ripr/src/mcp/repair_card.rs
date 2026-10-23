@@ -1011,9 +1011,9 @@ mod tests {
                     AgentCardRefusalKind::IncompleteInventory,
                     "the candidate inventory was truncated".to_string(),
                 ),
-                // Wire stability only: the uncapped diff-scoped card path
-                // never raises this refusal, but a kind must map to the same
-                // machine state on every transport.
+                // A truncated or unverified repo-wide seam inventory raises
+                // this refusal on the card read (#9231); a kind must map to
+                // the same machine state on every transport.
                 CODE_INCOMPLETE_INVENTORY,
             ),
             (
