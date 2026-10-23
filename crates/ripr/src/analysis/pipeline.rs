@@ -2164,7 +2164,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
 
 /// Build repo-scope preview advisories by walking the workspace for
 /// preview-language files, grouped by language, regardless of enablement.
-#[cfg(test)]
+#[cfg(all(test, feature = "lang-typescript"))]
 fn detect_repo_preview_advisories(
     root: &std::path::Path,
     enabled: &[LanguageId],

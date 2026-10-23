@@ -147,6 +147,28 @@ fn language_order_does_not_change_the_aggregate_identity() -> Result<(), String>
 }
 
 #[test]
+fn duplicate_labels_resolve_independently_of_arrival_order() {
+    let complete = repo_ok(LanguageId::Rust, Vec::new());
+    let blocked_a = LanguageAnalysisOutcomeV1::repo_not_selected("rust", 1, "reason a");
+    let blocked_b = LanguageAnalysisOutcomeV1::repo_not_selected("rust", 2, "reason b");
+    let orders = [
+        [&complete, &blocked_a, &blocked_b],
+        [&blocked_b, &blocked_a, &complete],
+        [&blocked_a, &complete, &blocked_b],
+        [&blocked_b, &complete, &blocked_a],
+    ];
+    let mut digests = Vec::new();
+    for order in orders {
+        let sealed = aggregate(order.iter().map(|child| (*child).clone()).collect());
+        // A complete duplicate never displaces a blocking one.
+        assert_eq!(sealed.blockers().len(), 1);
+        assert_eq!(sealed.completeness(), DiffCompleteness::Incomplete);
+        digests.push(sealed.semantic_digest);
+    }
+    assert!(digests.windows(2).all(|pair| pair[0] == pair[1]));
+}
+
+#[test]
 fn a_diff_child_cannot_sit_in_a_repo_aggregate() {
     let mut sealed = LanguageAggregate::new_repo();
     sealed.record(LanguageAnalysisOutcomeV1::unsupported("go", 1, "full"));
