@@ -1,5 +1,5 @@
-//! Admission gate: every Perl test framework the fact packet can name carries
-//! an explicit disposition against the language capability table.
+//! Admission gate for Perl test frameworks: each is classified for strict
+//! actionability, and the Perl cells are pinned against that classification.
 //!
 //! The Perl cells are all framework-agnostic (`any`) and `not_proven`, while
 //! the repair gate accepts six of the seven frameworks as strictly
@@ -128,7 +128,7 @@ fn production_actionability_matches_the_exhaustive_classification() {
 }
 
 #[test]
-fn the_perl_cells_agree_with_the_actionable_frameworks() {
+fn the_perl_cells_are_pinned_not_proven_at_preview_while_frameworks_are_actionable() {
     assert!(cells_for(LanguageId::Perl).next().is_some());
     assert_eq!(
         disposition_violations(any_actionable(), CAPABILITY_CELLS),
@@ -160,6 +160,27 @@ fn promoting_the_perl_repair_cell_is_drift() {
             let mut cell = *cell;
             if cell.language == LanguageId::Perl && cell.family == CapabilityFamily::RepairRouting {
                 cell.state = SupportState::SupportedWithRequiredFallback;
+            }
+            cell
+        })
+        .collect();
+    let violations = disposition_violations(true, &cells);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("promoting it needs a deliberate edit")),
+        "{violations:?}"
+    );
+}
+
+#[test]
+fn raising_the_perl_repair_tier_ceiling_is_drift() {
+    let cells: Vec<CapabilityCell> = CAPABILITY_CELLS
+        .iter()
+        .map(|cell| {
+            let mut cell = *cell;
+            if cell.language == LanguageId::Perl && cell.family == CapabilityFamily::RepairRouting {
+                cell.tier_ceiling = TierCeiling::UsableAlpha;
             }
             cell
         })
