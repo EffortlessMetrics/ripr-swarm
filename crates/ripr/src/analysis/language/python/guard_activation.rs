@@ -209,6 +209,9 @@ pub(super) fn python_guard_entered_by_every_call(
     let Some(conditions) = entered_if_conditions(owner, owner_source, changed_line) else {
         return false;
     };
+    if !guarded_channel_retained(owner, owner_source, changed_line, related_candidates, focus) {
+        return false;
+    }
     let constants = unrebound_constants(owner, related_candidates);
     let (rows, gaps) =
         strong_owner_call_rows_with_gaps(owner, &constants, related_candidates, focus);
@@ -217,24 +220,86 @@ pub(super) fn python_guard_entered_by_every_call(
     }
     rows.iter().all(|row| {
         conditions.iter().all(|(condition_line, condition)| {
-            condition_holds(
-                condition,
-                *condition_line,
-                row,
-                &constants,
-                owner_source,
-                owner.start_line,
-            ) == Some(true)
+            super::guard_credit::condition_literals_supported(condition, row, &constants)
+                && condition_holds(
+                    condition,
+                    *condition_line,
+                    row,
+                    &constants,
+                    owner_source,
+                    owner.start_line,
+                ) == Some(true)
         })
     })
 }
 
-/// Keywords that can leave the owner, swallow an error or loop without end
-/// before a later line runs. A line naming one stops the strict reader.
-const FLOW_ESCAPES: [&str; 12] = [
-    "return", "raise", "assert", "break", "continue", "yield", "exit", "quit", "_exit", "while",
-    "try", "with",
-];
+/// Guard entry is useful only while an explicit later write has not replaced
+/// the channel observed by the selected assertion. Direct statements keep their
+/// existing contract; this veto applies only to newly granted guarded credit.
+fn guarded_channel_retained(
+    owner: &PythonOwner,
+    source: &str,
+    changed_line: usize,
+    candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
+) -> bool {
+    use super::assertion_selection::select_relevant_assertion;
+    use super::effect_alignment::{owner_calls, self_attribute_mutation, self_attribute_write};
+    use super::guard_credit::field_retained_after;
+
+    let Some(line) = source.lines().nth(changed_line.saturating_sub(1)) else {
+        return false;
+    };
+    let Some(attr) =
+        self_attribute_write(line.trim()).or_else(|| self_attribute_mutation(line.trim()))
+    else {
+        return false;
+    };
+    let offset =
+        |text: &str, lines: usize| text.split_inclusive('\n').take(lines).map(str::len).sum();
+    if !field_retained_after(
+        source,
+        offset(source, changed_line),
+        offset(source, owner.end_line),
+        attr,
+    ) {
+        return false;
+    }
+    candidates.iter().all(|candidate| {
+        let test = candidate.test;
+        let Some(assertion) = select_relevant_assertion(&test.assertions, Some(focus)).assertion()
+        else {
+            return true;
+        };
+        if assertion.oracle_strength != crate::domain::OracleStrength::Strong {
+            return true;
+        }
+        let Some(start) = owner_calls(test, owner)
+            .first()
+            .map(|(offset, _)| *offset)
+            .or_else(|| {
+                super::related_tests::with_entry(test, owner).map(|entry| {
+                    if owner.name == "__exit__" {
+                        entry.after_block_offset
+                    } else {
+                        entry.statement_offset
+                    }
+                })
+            })
+        else {
+            return false;
+        };
+        let line_start = offset(&test.body_text, assertion.line.saturating_sub(test.line));
+        let Some(relative) = test
+            .body_text
+            .get(line_start..)
+            .and_then(|tail| tail.find(&assertion.text))
+        else {
+            return false;
+        };
+        field_retained_after(&test.body_text, start, line_start + relative, attr)
+    })
+}
 
 /// The plain `if` conditions enclosing `changed_line`, outermost first, when
 /// nothing between the owner header and the line can stop it running once
@@ -246,31 +311,36 @@ fn entered_if_conditions(
 ) -> Option<Vec<(usize, String)>> {
     let lines: Vec<&str> = owner_source.lines().collect();
     let changed_index = changed_line.checked_sub(1)?;
-    if owner.start_line == 0 || changed_index >= lines.len() {
+    if owner.start_line == 0 || owner.start_line > changed_index || changed_index >= lines.len() {
         return None;
     }
     let changed = lines.get(changed_index)?;
     if changed.trim().is_empty() {
         return None;
     }
+    // Text indentation is sound only for spaces. Python expands tabs and
+    // resets indentation on form-feed; byte counts cannot model either.
+    if lines[owner.start_line..=changed_index].iter().any(|raw| {
+        raw.chars()
+            .take_while(|ch| ch.is_whitespace())
+            .any(|ch| ch != ' ')
+    }) {
+        return None;
+    }
+    let ends = super::guard_credit::safe_prefix_line_ends(owner, owner_source, changed_index)?;
+    let starts: Vec<usize> = std::iter::once(0)
+        .chain(
+            owner_source
+                .match_indices('\n')
+                .map(|(offset, _)| offset + 1),
+        )
+        .collect();
     let mut threshold = leading_whitespace(changed);
     let mut conditions = Vec::new();
     for index in (owner.start_line..changed_index).rev() {
-        let raw = lines[index];
+        let Some(end) = ends[index] else { continue };
+        let raw = owner_source.get(starts[index]..end)?;
         let trimmed = raw.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        // Docstring text is scanned like code: a keyword in it only refuses.
-        if FLOW_ESCAPES
-            .iter()
-            .any(|keyword| keyword_outside_quotes(trimmed, keyword))
-            || trimmed.starts_with("except")
-            || trimmed.starts_with("finally")
-            || trimmed.starts_with("match ")
-        {
-            return None;
-        }
         if leading_whitespace(raw) >= threshold {
             continue;
         }

@@ -551,7 +551,7 @@ fn guarded_self_field_write_stays_uncredited_when_a_call_skips_the_guard() -> Re
     // One call enters and one skips: the read cannot be tied to the entering call.
     let mixed = classify_guarded(
         &source,
-        "    rec = Recorder()\n    rec.note(\"error\")\n    other = Recorder()\n    other.note(\"ok\")\n    assert rec.last == \"error\"",
+        "    rec = Recorder()\n    rec.note(\"error\")\n    rec.note(\"ok\")\n    assert rec.last == \"error\"",
     )?;
     assert_ne!(mixed.class, ExposureClass::Exposed);
     Ok(())
@@ -601,6 +601,269 @@ fn guarded_self_field_write_stays_uncredited_for_shapes_the_reader_does_not_mode
         with_before,
     ] {
         let finding = classify_guarded(&source, entering)?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{source}");
+    }
+    Ok(())
+}
+
+#[test]
+fn guarded_self_field_credit_refuses_native_escapes_and_binding_changes() -> Check {
+    let unchanged = "    rec = Recorder()\n    rec.note(\"error\")\n    assert rec.last == None";
+    for preamble in [
+        "        if kind == \"error\":\n            marker = \"\\\"\"; return\n",
+        "        (kind) = \"ok\"\n",
+        "        (\n            kind\n        ) = \"ok\"\n",
+        "        other, (kind) = 1, \"ok\"\n",
+        "        𝓴𝓲𝓷𝓭 = \"ok\"\n",
+        "        (self) = Recorder()\n",
+        "        [self] = [Recorder()]\n",
+        "        𝓼𝓮𝓵𝓯 = Recorder()\n",
+        "        if kind == \"error\":\n            marker = \"\\\"\"; yield 1\n",
+        "        marker = f\"{exit() if kind == 'error' else 0}\"\n",
+    ] {
+        let source = guarded_note_source(preamble, "        if kind == \"error\":");
+        assert_ne!(
+            classify_guarded(&source, unchanged)?.class,
+            ExposureClass::Exposed,
+            "{source}"
+        );
+    }
+    let source = guarded_note_source(
+        "",
+        "        if kind == \"error\":\n            self = Recorder()",
+    );
+    assert_ne!(
+        classify_guarded(&source, unchanged)?.class,
+        ExposureClass::Exposed
+    );
+    for escape in ["raise ValueError()", "assert False", "exit()"] {
+        let source = guarded_note_source(
+            &format!("        if kind == \"error\":\n            marker = \"\\\"\"; {escape}\n"),
+            "        if kind == \"error\":",
+        );
+        let catches = "    rec = Recorder()\n    try:\n        rec.note(\"error\")\n    except (ValueError, AssertionError, SystemExit):\n        pass\n    assert rec.last == None";
+        assert_ne!(
+            classify_guarded(&source, catches)?.class,
+            ExposureClass::Exposed,
+            "{source}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn guarded_self_field_credit_ignores_nonexecuting_keyword_text() -> Check {
+    let entering =
+        "    rec = Recorder()\n    rec.note(\"error\")\n    assert rec.last == \"error\"";
+    for preamble in [
+        "        marker = 1  # return raise while with\n",
+        "        marker = \"return raise while with\"\n",
+        "        \"\"\"Notes\nreturn raise while with\n        \"\"\"\n",
+    ] {
+        let source = guarded_note_source(preamble, "        if kind == \"error\":");
+        assert_eq!(
+            classify_guarded(&source, entering)?.class,
+            ExposureClass::Exposed,
+            "{source}"
+        );
+    }
+    let source = guarded_note_source(
+        "",
+        "        if kind == \"error\":  # return is only a comment",
+    );
+    assert_eq!(
+        classify_guarded(&source, entering)?.class,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn guarded_self_field_credit_refuses_mixed_binding_targets_and_non_space_indents() -> Check {
+    let unchanged = "    rec = Recorder()\n    rec.note(\"error\")\n    assert rec.last == None";
+    for preamble in [
+        "        other = Recorder()\n        (kind), other.last = \"ok\", None\n",
+        "        other = {}\n        (kind), other[\"x\"] = \"ok\", None\n",
+        "        other = Recorder()\n        (self), other.last = Recorder(), None\n",
+        "        other = {}\n        (self), other[\"x\"] = Recorder(), None\n",
+    ] {
+        let source = guarded_note_source(preamble, "        if kind == \"error\":");
+        assert_ne!(
+            classify_guarded(&source, unchanged)?.class,
+            ExposureClass::Exposed,
+            "{source}"
+        );
+    }
+    let prefix = "class Recorder:\n    def __init__(self):\n        self.last = None\n\n    def note(self, kind):\n        if kind == \"error\":\n            pass\n";
+    for branch in ["else:", "elif kind == \"error\":"] {
+        let source = format!(
+            "{prefix}{}        {branch}\n            if kind == \"error\":\n                self.last = \"fault\"\n",
+            "\u{c}".repeat(12)
+        );
+        assert_ne!(
+            classify_guarded(&source, unchanged)?.class,
+            ExposureClass::Exposed
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn guarded_self_field_credit_requires_the_value_to_survive_to_the_assertion() -> Check {
+    let source = guarded_note_source("", "        if kind == \"error\":");
+    let settled =
+        "    rec = Recorder()\n    rec.note(\"error\")\n    assert rec.last == \"settled\"";
+    for tail in [
+        "            self.last = \"settled\"\n",
+        "        self.last = \"settled\"\n",
+        "        alias = self\n        alias.last = \"settled\"\n",
+        "        (self.last) = \"settled\"\n",
+        "        other = {}\n        (self.last), other[\"x\"] = \"settled\", None\n",
+    ] {
+        assert_ne!(
+            classify_guarded(&format!("{source}{tail}"), settled)?.class,
+            ExposureClass::Exposed,
+            "{tail}"
+        );
+    }
+    for body in [
+        "    rec = Recorder()\n    rec.note(\"error\")\n    rec.last = \"settled\"\n    assert rec.last == \"settled\"",
+        "    rec = Recorder()\n    alias = rec\n    rec.note(\"error\")\n    alias.last = \"settled\"\n    assert rec.last == \"settled\"",
+        "    rec = Recorder()\n    rec.note(\"error\")\n    (rec.last) = \"settled\"\n    assert rec.last == \"settled\"",
+        "    rec = Recorder()\n    rec.note(\"error\")\n    rec.last *= 0\n    assert rec.last == \"\"",
+        "    rec = Recorder()\n    rec.note(\"error\")\n    setattr(rec, \"last\", \"settled\")\n    assert rec.last == \"settled\"",
+        "    rec = Recorder()\n    rec.note(\"error\")\n    del rec.last\n    try:\n        assert rec.last == None\n    except AttributeError:\n        pass",
+    ] {
+        assert_ne!(
+            classify_guarded(&source, body)?.class,
+            ExposureClass::Exposed,
+            "{body}"
+        );
+    }
+    let catches = "    rec = Recorder()\n    rec.note(\"error\")\n    try:\n        assert rec.last == None\n    except AttributeError:\n        pass";
+    assert_ne!(
+        classify_guarded(&format!("{source}        del self.last\n"), catches)?.class,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn guarded_self_field_credit_keeps_unrelated_writes_and_read_only_uses() -> Check {
+    let source = guarded_note_source("", "        if kind == \"error\":");
+    let entering =
+        "    rec = Recorder()\n    rec.note(\"error\")\n    assert rec.last == \"error\"";
+    for tail in [
+        "        self.other = \"settled\"\n",
+        "        marker = self.last\n",
+        "        pass\n",
+    ] {
+        assert_eq!(
+            classify_guarded(&format!("{source}{tail}"), entering)?.class,
+            ExposureClass::Exposed,
+            "{tail}"
+        );
+    }
+    for body in [
+        "    rec = Recorder()\n    rec.last = None\n    rec.note(\"error\")\n    assert rec.last == \"error\"",
+        "    rec = Recorder()\n    rec.note(\"error\")\n    rec.other = \"settled\"\n    assert rec.last == \"error\"",
+        "    rec = Recorder()\n    rec.note(\"error\")\n    assert rec.last == \"error\"\n    rec.last = None",
+    ] {
+        assert_eq!(
+            classify_guarded(&source, body)?.class,
+            ExposureClass::Exposed,
+            "{body}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn guarded_self_field_credit_preserves_benign_prefix_expressions_and_scopes() -> Check {
+    let entering =
+        "    rec = Recorder()\n    rec.note(\"error\")\n    assert rec.last == \"error\"";
+    for preamble in [
+        "        marker = kind == \"error\" or kind == \"ok\"\n",
+        "        marker = not kind\n",
+        "        marker = (other := 1)\n",
+        "        for marker in []:\n            pass\n",
+        "        def marker():\n            pass\n",
+        "        class Marker:\n            pass\n",
+        "        import math\n",
+        "        marker = 1\n        del marker\n",
+    ] {
+        let source = guarded_note_source(preamble, "        if kind == \"error\":");
+        assert_eq!(
+            classify_guarded(&source, entering)?.class,
+            ExposureClass::Exposed,
+            "{source}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn guarded_self_field_credit_refuses_native_binding_declarations() -> Check {
+    let imported = guarded_note_source("        import os.path\n", "        if kind == \"error\":")
+        .replace("kind", "os");
+    let body = "    rec = Recorder()\n    rec.note(\"error\")\n    assert rec.last == None";
+    assert_ne!(
+        classify_guarded(&imported, body)?.class,
+        ExposureClass::Exposed
+    );
+    let unchanged = "    rec = Recorder()\n    rec.note(\"error\")\n    assert rec.last == None";
+    for preamble in [
+        "        marker = (kind := \"ok\")\n",
+        "        for kind in [\"ok\"]:\n            pass\n",
+        "        for self in [Recorder()]:\n            pass\n",
+        "        def kind():\n            pass\n",
+        "        class self:\n            pass\n",
+        "        import os as self\n",
+        "        from os import path as kind\n",
+        "        other = {}\n        for other[0 in [0]], self in [(0, Recorder())]:\n            pass\n",
+    ] {
+        let source = guarded_note_source(preamble, "        if kind == \"error\":");
+        assert_ne!(
+            classify_guarded(&source, unchanged)?.class,
+            ExposureClass::Exposed,
+            "{source}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn guarded_self_field_credit_refuses_same_line_masks_and_unresolved_native_literals() -> Check {
+    for (guard, argument) in [
+        (r#"        if kind != "\x65rror":"#, r#""error""#),
+        ("        if kind != 0.10000000000000001:", "0.1"),
+        ("        if kind != 1.0000000000000001:", "True"),
+        ("        if kind == 9007199254740993:", "9007199254740993.0"),
+        ("        if kind == 9007199254740993.0:", "9007199254740993"),
+        ("        if kind <= 9007199254740992.0:", "9007199254740993"),
+    ] {
+        let source = guarded_note_source("", guard);
+        let body =
+            format!("    rec = Recorder()\n    rec.note({argument})\n    assert rec.last == None");
+        assert_ne!(
+            classify_guarded(&source, &body)?.class,
+            ExposureClass::Exposed,
+            "{source}"
+        );
+    }
+    for tail in ["; self.last = \"settled\"", "; del self.last"] {
+        let source = guarded_note_source("", "        if kind == \"error\":").replace(
+            "self.last = \"fault\"",
+            &format!("self.last = \"fault\"{tail}"),
+        );
+        let finding = classify_note_with_source(
+            &source,
+            &format!("self.last = \"fault\"{tail}"),
+            &format!("self.last = \"error\"{tail}"),
+            &noter_test(
+                "    rec = Recorder()\n    rec.note(\"error\")\n    try:\n        assert rec.last == \"settled\"\n    except AttributeError:\n        pass",
+            ),
+        )?;
         assert_ne!(finding.class, ExposureClass::Exposed, "{source}");
     }
     Ok(())

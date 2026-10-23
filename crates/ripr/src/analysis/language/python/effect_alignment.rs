@@ -271,7 +271,7 @@ impl EffectReads {
 
 /// `self.attr.append(value)` and the like: the collection attribute a method
 /// records into.
-fn self_attribute_mutation(line: &str) -> Option<&str> {
+pub(super) fn self_attribute_mutation(line: &str) -> Option<&str> {
     let (callee, _) = statement_call(line)?;
     let rest = callee.strip_prefix("self.")?;
     let (attr, mutator) = rest.split_once('.')?;
@@ -285,7 +285,7 @@ fn self_attribute_mutation(line: &str) -> Option<&str> {
 }
 
 /// `self.attr = value` or `self.attr op= value`: the written attribute.
-fn self_attribute_write(line: &str) -> Option<&str> {
+pub(super) fn self_attribute_write(line: &str) -> Option<&str> {
     let rest = line.strip_prefix("self.")?;
     let attr_len = rest
         .find(|ch: char| !is_python_identifier_char(ch))
@@ -330,7 +330,7 @@ fn statement_call(line: &str) -> Option<(&str, &str)> {
 /// its own name, an import alias, or a module-qualified spelling. A method is
 /// called only on a local bound to its class (rule 9), so a same-named method
 /// of another class does not count.
-fn owner_calls<'a>(test: &'a PythonTest, owner: &PythonOwner) -> Vec<(usize, &'a str)> {
+pub(super) fn owner_calls<'a>(test: &'a PythonTest, owner: &PythonOwner) -> Vec<(usize, &'a str)> {
     let names = owner_call_names(test, owner);
     let mut calls: Vec<(usize, &str)> = names
         .iter()
