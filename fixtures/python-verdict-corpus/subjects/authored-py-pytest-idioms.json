@@ -1,0 +1,121 @@
+{
+  "subject_id": "authored-py-pytest-idioms",
+  "origin": "authored",
+  "version_label": "authored@3608bb9a",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "idioms/__init__.py",
+      "sha256": "8b0b479ffe64de9aea462b86b071aec424fed225a2a3c0278f5c7f2f46210a44"
+    },
+    {
+      "path": "idioms/audit.py",
+      "sha256": "cdbd26b317c014d6d1f8c8526508bc004e4f98930331ee9f58f971a6d0141377"
+    },
+    {
+      "path": "idioms/clock.py",
+      "sha256": "f777d4ec7dd279ccab42e2c9ebd3b613138dc68bfc9d3c09ba8b7a3de5f8f8d9"
+    },
+    {
+      "path": "idioms/env.py",
+      "sha256": "edf46cfe0ec9ce21714324d92ebab549019bd8dcc773b32bca0c6952ebd34994"
+    },
+    {
+      "path": "idioms/geometry.py",
+      "sha256": "154b2c20ae84856bf7902ff5d0eceb27b34d47a065e8f4a920e63c96ae831585"
+    },
+    {
+      "path": "idioms/grading.py",
+      "sha256": "447af2fc55e3d07bfa3f19f922303047b2897a3a5f2fab212ff1733b52dc4c0d"
+    },
+    {
+      "path": "idioms/legacy.py",
+      "sha256": "21fb076c8bf0b3d11430427a645eb106deaa1d2c1482f9c2c62e8621a56b21ef"
+    },
+    {
+      "path": "idioms/mailer.py",
+      "sha256": "696e314b7b462993915c2583531f3c9c11f7d15b21d5bee5f0ace8fba54ca963"
+    },
+    {
+      "path": "idioms/memo.py",
+      "sha256": "c4bb5a1e0518c8307c9e3b9501a749a7199f48f5f81e3aa3933853e9e49c420b"
+    },
+    {
+      "path": "idioms/rev.py",
+      "sha256": "5c77caeebb53ca4e973a7c8c6809c6f58205ee4fd38506be97005739d5cf0ad3"
+    },
+    {
+      "path": "idioms/stock.py",
+      "sha256": "ef2e4c61cf28913fbdc4c58f841d7d845b13be85d21e92f69664d621efbdb6c8"
+    },
+    {
+      "path": "idioms/texts.py",
+      "sha256": "d7de4df9eb5a7e89b5d97c6497d0c7ebe011c76cd46f90386fa21595229f51ad"
+    },
+    {
+      "path": "idioms/validate.py",
+      "sha256": "be7864c3b6e681255977899ee29b51af06cb995da4eaf8342b703593808324e8"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "bd1b4e2cb5d4b9cf21338e8d54d3d76624a3682a17e180064916b22d03d9df90"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/conftest.py",
+      "sha256": "f88d81702f54e8c86ab4bd56643aa3dad8940c3c695c16f72fb2d07e02bde911"
+    },
+    {
+      "path": "tests/test_audit.py",
+      "sha256": "32ff1c3ac20331b68c1355c441aad043f1edd4c39bfc63d0ea2479f794c64b18"
+    },
+    {
+      "path": "tests/test_clock.py",
+      "sha256": "d876d7586a7891e210a2ea81bb2b40f6b3c82dcb0f8b22b7c2dd33e948963b6f"
+    },
+    {
+      "path": "tests/test_env.py",
+      "sha256": "02a4f86df4de5227d81604d0befcb8fd4fbbd052d4dcb2cb4fcad001bbf77eee"
+    },
+    {
+      "path": "tests/test_geometry.py",
+      "sha256": "7ce414a91e044ae6fc56777e94a6628873692f00a91967b60fa72946226ce84a"
+    },
+    {
+      "path": "tests/test_grading.py",
+      "sha256": "6a4562444a84cab34b97530ea3c44e2530d50a6b613a2f9d2f7413645dad005c"
+    },
+    {
+      "path": "tests/test_legacy.py",
+      "sha256": "77401cc2c3230881b89767ed6e595a697286458534de71f751600d3404e2f591"
+    },
+    {
+      "path": "tests/test_mailer.py",
+      "sha256": "9627ce7cc44513e54842c6c15fd36f172ede4f3c4a69667e4ca668797ff98571"
+    },
+    {
+      "path": "tests/test_memo.py",
+      "sha256": "13c6c1a92e251f9f188235c2661b7373d2ef9ad9a5aae16c51ee83f9cd459ae4"
+    },
+    {
+      "path": "tests/test_rev.py",
+      "sha256": "e3e84031c08599bd3f185965f7584121caddddd386acd992cac13c15d7accc17"
+    },
+    {
+      "path": "tests/test_stock.py",
+      "sha256": "e6fddccb2392d21e3a643a6eb90fe94b8c319118f057bbcbfca1b20b309fb35e"
+    },
+    {
+      "path": "tests/test_texts.py",
+      "sha256": "a417128dfeac336aecf9faf1baea53c977efbc21449bb96194e8bdf25e19980f"
+    },
+    {
+      "path": "tests/test_validate.py",
+      "sha256": "adcedc0ea88fce42b4c37b1c9e1bd4cf189f3c3736d3571fa8d0aabd68a2d747"
+    }
+  ]
+}

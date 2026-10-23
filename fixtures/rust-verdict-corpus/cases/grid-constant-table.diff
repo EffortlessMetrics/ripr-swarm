@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -5,7 +5,7 @@
+ }
+ 
+ pub fn late_fee(days: u64) -> u64 {
+-    days * 5
++    days * 6
+ }
+ 
+ pub fn commission(sale: u64) -> u64 {

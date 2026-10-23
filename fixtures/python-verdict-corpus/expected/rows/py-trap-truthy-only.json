@@ -1,0 +1,22 @@
+{
+  "case_id": "py-trap-truthy-only",
+  "subject_id": "authored-py-trap-kit",
+  "origin": "authored",
+  "anchor": "trapkit/core.py:81",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "assert_result_truthy",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

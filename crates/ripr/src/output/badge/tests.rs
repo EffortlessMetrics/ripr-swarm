@@ -2102,6 +2102,72 @@ fn clean_rust_diff_zero_findings_no_preview_is_pass_green() {
 }
 
 #[test]
+fn no_subject_badges_do_not_claim_a_clean_zero() -> Result<(), String> {
+    for (kind, counts) in [
+        (
+            AnalysisOutcomeKind::NoScope,
+            AnalysisOutcomeCounts::default(),
+        ),
+        (
+            AnalysisOutcomeKind::NoChangedLines,
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                ..AnalysisOutcomeCounts::default()
+            },
+        ),
+        (
+            AnalysisOutcomeKind::NoBehavioralCandidates,
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 1,
+                ..AnalysisOutcomeCounts::default()
+            },
+        ),
+    ] {
+        let mut output = check_output(Vec::new());
+        output.analysis_outcome = Some(AnalysisOutcome::new(
+            kind,
+            Default::default(),
+            counts,
+            Vec::new(),
+        )?);
+        let summary = ripr_badge_summary(&output, BadgePolicy::default());
+        assert_eq!(summary.status, BadgeStatus::Warn, "{kind:?}");
+        assert_eq!(summary.color, "yellow", "{kind:?}");
+        assert_eq!(
+            summary.message,
+            format!("no analysis subject: {}", kind.as_str())
+        );
+        let native: serde_json::Value = serde_json::from_str(&render_native_json(&summary))
+            .map_err(|error| error.to_string())?;
+        let shields: serde_json::Value = serde_json::from_str(&render_shields_json(&summary))
+            .map_err(|error| error.to_string())?;
+        assert_eq!(native["analysis_complete"], true, "{kind:?}");
+        assert_eq!(native["analysis_outcome"]["kind"], kind.as_str());
+        assert_eq!(shields["color"], "yellow");
+        assert_eq!(shields["message"], summary.message);
+    }
+
+    let mut analyzed = check_output(Vec::new());
+    analyzed.analysis_outcome = Some(AnalysisOutcome::new(
+        AnalysisOutcomeKind::CompleteNoFindings,
+        Default::default(),
+        AnalysisOutcomeCounts {
+            changed_file_count: 1,
+            changed_line_count: 1,
+            candidate_line_count: 1,
+            ..AnalysisOutcomeCounts::default()
+        },
+        Vec::new(),
+    )?);
+    let summary = ripr_badge_summary(&analyzed, BadgePolicy::default());
+    assert_eq!(summary.status, BadgeStatus::Pass);
+    assert_eq!(summary.color, "brightgreen");
+    assert_eq!(summary.message, "0");
+    Ok(())
+}
+
+#[test]
 fn incomplete_zero_finding_diff_is_not_a_green_badge() -> Result<(), String> {
     let mut output = check_output(Vec::new());
     output.analysis_outcome = Some(incomplete_outcome()?);

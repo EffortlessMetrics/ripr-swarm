@@ -1,0 +1,45 @@
+{
+  "case_id": "py-idioms-patch-clock-separator",
+  "subject_id": "authored-py-pytest-idioms",
+  "diff": "cases/py-idioms-patch-clock-separator.diff",
+  "anchor": {
+    "file": "idioms/clock.py",
+    "line": 5
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "format_string",
+  "test_shape": "pytest_patch_context_manager_exact_text",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, Hypothesis 6.168.3, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return f\"{prefix}_{int(time.time())}\"",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_clock.py::test_stamp_uses_the_patched_clock",
+        "equivalence_review": "not equivalent: the separator changes"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "patch fixes time.time and the stamp is compared exactly.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

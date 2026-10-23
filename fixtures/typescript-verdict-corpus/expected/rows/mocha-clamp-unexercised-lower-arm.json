@@ -1,0 +1,22 @@
+{
+  "case_id": "mocha-clamp-unexercised-lower-arm",
+  "subject_id": "authored-ts-mocha-hooks",
+  "origin": "authored",
+  "anchor": "src/clamp.ts:2",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "mocha_chai_equal_two_inputs_no_lower_case",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

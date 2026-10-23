@@ -1,0 +1,12 @@
+diff --git a/src/asyncs.rs b/src/asyncs.rs
+--- a/src/asyncs.rs
++++ b/src/asyncs.rs
+@@ -1,7 +1,7 @@
+ use std::future::Future;
+ 
+ pub async fn add_tax(p: u32) -> u32 {
+-    p + p / 10
++    p / 10 + p
+ }
+ 
+ async fn double(x: u32) -> u32 {

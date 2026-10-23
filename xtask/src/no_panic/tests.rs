@@ -1514,6 +1514,98 @@ callee = "unwrap"
     })
 }
 
+/// #9501 negative experiment: ids are opaque PR-referenced tokens, so a case
+/// or whitespace variant names the same identifier and must collide.
+#[test]
+fn parse_no_panic_allowlist_toml_v2_rejects_case_and_whitespace_variant_ids() -> Result<(), String>
+{
+    for (label, variant) in [
+        ("case", "PANIC-0001"),
+        ("trailing_space", "panic-0001 "),
+        ("leading_space", " panic-0001"),
+        ("inner_space", "panic- 0001"),
+        ("mixed", " Panic-0001\t"),
+    ] {
+        with_temp_cwd(&format!("variant_ids_{label}"), |root| {
+            let entry = |id: &str, container: &str| {
+                format!(
+                    r#"
+[[allow]]
+id = "{id}"
+path = "src/lib.rs"
+family = "unwrap"
+classification = "test_only"
+owner = "test-infra"
+explanation = "Site"
+expires = "2027-03-31"
+
+[allow.selector]
+kind = "method_call"
+container = "{container}"
+callee = "unwrap"
+"#
+                )
+            };
+            let toml_content = format!(
+                "schema_version = \"0.3\"\n{}{}",
+                entry("panic-0001", "first_helper"),
+                entry(variant, "second_helper")
+            );
+            write(&root.join("allowlist.toml"), &toml_content);
+            let toml_path = root
+                .join("allowlist.toml")
+                .to_str()
+                .ok_or("non-UTF-8 path")?
+                .to_string();
+            let err = parse_no_panic_allowlist_toml_v2(&toml_path)
+                .err()
+                .ok_or_else(|| format!("expected duplicate id error for variant {variant:?}"))?;
+            if !err.contains("duplicate allowlist id") {
+                return Err(format!("unexpected error for {variant:?}: {err}"));
+            }
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+#[test]
+fn distinct_panic_allow_ids_are_not_collapsed_by_normalization() -> Result<(), String> {
+    with_temp_cwd("distinct_ids", |root| {
+        let entry = |id: &str, container: &str| {
+            format!(
+                r#"
+[[allow]]
+id = "{id}"
+path = "src/lib.rs"
+family = "unwrap"
+classification = "test_only"
+owner = "test-infra"
+explanation = "Site"
+expires = "2027-03-31"
+
+[allow.selector]
+kind = "method_call"
+container = "{container}"
+callee = "unwrap"
+"#
+            )
+        };
+        let toml_content = format!(
+            "schema_version = \"0.3\"\n{}{}",
+            entry("panic-0001", "first_helper"),
+            entry("panic-0002", "second_helper")
+        );
+        write(&root.join("allowlist.toml"), &toml_content);
+        let toml_path = root
+            .join("allowlist.toml")
+            .to_str()
+            .ok_or("non-UTF-8 path")?
+            .to_string();
+        parse_no_panic_allowlist_toml_v2(&toml_path).map(|_| ())
+    })
+}
+
 #[test]
 fn v0_1_entries_still_match_by_line_and_column() -> Result<(), String> {
     with_temp_cwd("v01_in_v02_file", |root| {
