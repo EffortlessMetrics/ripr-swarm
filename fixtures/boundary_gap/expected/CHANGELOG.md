@@ -1,5 +1,25 @@
 # Golden Output Changes
 
+## Pending — typed function-pointer composition (#9478, #9705)
+
+The bounded typed function-pointer owner proof composes with accepted shared-target
+assertion contexts and effect-assertion admission. The classified corpus cache
+advances from 1.97 to 1.98; full, sharded/compact and file-fact generations retain
+their distinct invalidation roles. The accepted compiled-language identity suffix
+is preserved.
+
+The clean native producer at `28f9a5fcf6fb8901afb2513067ce78bd70b7ba7a` generated
+`ripr check --format repo-exposure-json` for `fixtures/boundary_gap/input`; the
+existing CLI-smoke normalization was applied. Native `agent verify` and
+`agent receipt` then verified the dependent commitments. Only the corpus version
+and dependent content/file hashes changed. The portable receipt envelope is
+retained with three native-verified input hashes; its five literal differences
+from the native envelope are not claimed equivalent. Historical noncurrentness,
+incomplete status, weak grip and fail-closed first-action routing are unchanged.
+
+Updated: `first-useful-action/unchanged-after-attempt/{before,after}.repo-exposure.json`,
+`agent-verify.json` and `agent-receipt.json`.
+
 ## Prior candidate — boundary_gap (9478)
 
 Reason:
