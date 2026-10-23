@@ -1221,3 +1221,85 @@ fn a_nearer_binding_inside_the_test_body_shadows_the_import() -> Result<(), Stri
     }
     Ok(())
 }
+
+/// A unit test in a separate `src/` file importing through `crate::` goes
+/// through the same suffix proof (a `crate::foreign::` std re-export refuses;
+/// the genuine `crate::cmp::` import exposes); a binding whose scope holds no
+/// call does not suppress a real imported call; an out-of-line module inside
+/// an inline ancestor (`pub mod outer { pub mod cmp; }`) still links.
+#[test]
+fn unit_crate_imports_scoped_bindings_and_inline_ancestors() -> Result<(), String> {
+    let unit = |lib: &str, import: &str| Package {
+        manifest: manifest("qual_reach", None),
+        diff_path: "src/cmp.rs",
+        nested: false,
+        files: vec![
+            ("src/lib.rs", lib.to_string()),
+            ("src/cmp.rs", LIB.to_string()),
+            (
+                "src/unit.rs",
+                format!(
+                    "{import}\n#[test]\nfn discount_boundary() {{\n    assert_eq!(order_discount(10), 5);\n    assert_eq!(order_discount(9), 0);\n}}\n"
+                ),
+            ),
+            ("tests/api.rs", String::new()),
+        ],
+    };
+    let lib = "pub mod cmp;\npub mod foreign {\n    pub use std::cmp::max as order_discount;\n}\n#[cfg(test)]\nmod unit;\n";
+    let genuine = unit(lib, "use crate::cmp::order_discount;");
+    assert_eq!(
+        genuine.relation()?.as_deref(),
+        LINKED,
+        "genuine crate:: import"
+    );
+    assert_eq!(
+        genuine.classification()?,
+        "exposed",
+        "genuine crate:: import"
+    );
+    let foreign = unit(lib, "use crate::foreign::order_discount;");
+    assert_ne!(foreign.relation()?.as_deref(), LINKED, "crate::foreign");
+    assert_ne!(foreign.classification()?, "exposed", "crate::foreign");
+
+    let import = "use qual_reach::inner::order_discount;\n";
+    let unused = module_package(
+        "src/inner.rs",
+        MODULE_LIB,
+        format!(
+            "{import}{}",
+            test_file(&format!(
+                "    let _unused = |order_discount: u32| order_discount + 1;\n{BARE}"
+            ))
+        ),
+        vec![],
+    );
+    assert_eq!(
+        unused.relation()?.as_deref(),
+        LINKED,
+        "unused closure param"
+    );
+    assert_eq!(unused.classification()?, "exposed", "unused closure param");
+
+    let nested = Package {
+        manifest: manifest("qual_reach", None),
+        diff_path: "src/outer/cmp.rs",
+        nested: false,
+        files: vec![
+            (
+                "src/lib.rs",
+                "pub mod outer {\n    pub mod cmp;\n}\n".to_string(),
+            ),
+            ("src/outer/cmp.rs", LIB.to_string()),
+            (
+                "tests/api.rs",
+                format!(
+                    "use qual_reach::outer::cmp::order_discount;\n{}",
+                    test_file(BARE)
+                ),
+            ),
+        ],
+    };
+    assert_eq!(nested.relation()?.as_deref(), LINKED, "inline ancestor");
+    assert_eq!(nested.classification()?, "exposed", "inline ancestor");
+    Ok(())
+}

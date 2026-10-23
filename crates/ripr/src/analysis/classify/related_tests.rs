@@ -1936,6 +1936,9 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
         return false;
     }
     let in_src_unit_test = !super::call_identity::under_tests_dir(&test.file);
+    // In a unit test under `src/`, `crate::` is the library itself and goes
+    // through the same suffix, declaration and binding proofs.
+    let is_lib_first = |first: &str| first == crate_name || (in_src_unit_test && first == "crate");
     let binds_entry_locally = |source: &str| {
         super::reveal::flattened_use_paths(source)
             .iter()
@@ -1972,8 +1975,7 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
                 .split("::")
                 .next()
                 .map(unraw)
-                .as_deref()
-                == Some(crate_name)
+                .is_some_and(|first| is_lib_first(&first))
         });
     if !uses_prefix {
         return true;
@@ -2070,7 +2072,11 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
             .all(|import| {
                 let segments: Vec<&str> =
                     import.path.trim_start_matches("::").split("::").collect();
-                if segments.first().map(|first| unraw(first)).as_deref() != Some(crate_name) {
+                if !segments
+                    .first()
+                    .map(|first| unraw(first))
+                    .is_some_and(|first| is_lib_first(&first))
+                {
                     return true;
                 }
                 let imported_last = segments.last().map(|last| unraw(last));
@@ -2117,10 +2123,10 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
                     .or_else(|| import.path.rsplit("::").next())
                     .map(unraw);
                 bound.as_deref() == Some(caller.name.as_str())
-                    && first.as_deref() != Some(crate_name)
+                    && !first.is_some_and(|first| is_lib_first(&first))
             })
     };
-    if foreign_binding(&test.body) || body_pattern_binds_name(&test.body, &caller.name) {
+    if foreign_binding(&test.body) || body_pattern_shadows_a_call(&test.body, &caller.name) {
         return false;
     }
     if !suffix_resolves(&facts.source) || !suffix_resolves(&test.body) {
@@ -2167,28 +2173,92 @@ fn declares_value_named(source: &str, name: &str) -> bool {
     })
 }
 
-/// Whether the test body binds `name` by a pattern (a `let`, a closure or
-/// function parameter, a match arm) or declares an item of that name, any of
-/// which shadows the imported entry.
-fn body_pattern_binds_name(body: &str, name: &str) -> bool {
-    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+/// Whether the test body binds `name` (a `let`, a closure or function
+/// parameter, a match arm, or a nested `mod`) in a lexical scope that contains
+/// a direct call of `name`: only such a binding can shadow the imported entry.
+/// A binding whose scope holds no call (`let _u = |name: u32| name + 1;`) does
+/// not. An unparsable body refuses.
+fn body_pattern_shadows_a_call(body: &str, name: &str) -> bool {
+    use ra_ap_syntax::{AstNode, TextRange, ast, ast::HasName};
     let name = name.strip_prefix("r#").unwrap_or(name);
     let wrapped = format!("fn __ripr_test_body() {{\n{body}\n}}\n");
     let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&wrapped) else {
         return true;
     };
-    parse.tree().syntax().descendants().any(|node| {
-        if let Some(pattern) = ast::IdentPat::cast(node.clone()) {
-            return pattern
-                .name()
-                .is_some_and(|n| n.text().trim_start_matches("r#") == name);
+    let root = parse.tree();
+    // Direct call sites, including those inside macro arguments (token trees):
+    // the name token followed by `(`, not a method, path tail or definition.
+    let calls: Vec<TextRange> = root
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| {
+            use ra_ap_syntax::SyntaxKind::{COLON2, DOT, FN_KW, IDENT, L_PAREN, WHITESPACE};
+            let skip = |mut next: Option<ra_ap_syntax::SyntaxToken>, forward: bool| {
+                while let Some(token) = &next {
+                    if token.kind() != WHITESPACE {
+                        break;
+                    }
+                    next = if forward {
+                        token.next_token()
+                    } else {
+                        token.prev_token()
+                    };
+                }
+                next
+            };
+            token.kind() == IDENT
+                && token.text().trim_start_matches("r#") == name
+                && skip(token.next_token(), true).is_some_and(|t| t.kind() == L_PAREN)
+                && !skip(token.prev_token(), false)
+                    .is_some_and(|t| matches!(t.kind(), DOT | COLON2 | FN_KW))
+        })
+        .map(|token| token.text_range())
+        .collect();
+    let block_of = |node: &ra_ap_syntax::SyntaxNode| {
+        node.ancestors()
+            .skip(1)
+            .find(|a| ast::BlockExpr::can_cast(a.kind()))
+            .map(|a| a.text_range())
+    };
+    let scope_of = |node: &ra_ap_syntax::SyntaxNode| -> Option<TextRange> {
+        for ancestor in node.ancestors().skip(1) {
+            if ast::ClosureExpr::can_cast(ancestor.kind())
+                || ast::Fn::can_cast(ancestor.kind())
+                || ast::MatchArm::can_cast(ancestor.kind())
+                || ast::ForExpr::can_cast(ancestor.kind())
+                || ast::IfExpr::can_cast(ancestor.kind())
+                || ast::WhileExpr::can_cast(ancestor.kind())
+            {
+                return Some(ancestor.text_range());
+            }
+            if let Some(statement) = ast::LetStmt::cast(ancestor.clone()) {
+                let block = block_of(statement.syntax())?;
+                let start = statement.syntax().text_range().end();
+                return Some(TextRange::new(start, block.end().max(start)));
+            }
         }
-        if let Some(module) = ast::Module::cast(node.clone()) {
-            return module
+        block_of(node)
+    };
+    root.syntax().descendants().any(|node| {
+        let binds = if let Some(pattern) = ast::IdentPat::cast(node.clone()) {
+            pattern
                 .name()
-                .is_some_and(|n| n.text().trim_start_matches("r#") == name);
+                .is_some_and(|n| n.text().trim_start_matches("r#") == name)
+        } else if let Some(module) = ast::Module::cast(node.clone()) {
+            module
+                .name()
+                .is_some_and(|n| n.text().trim_start_matches("r#") == name)
+        } else {
+            false
+        };
+        if !binds {
+            return false;
         }
-        false
+        match scope_of(&node) {
+            Some(scope) => calls.iter().any(|call| scope.contains_range(*call)),
+            None => true,
+        }
     })
 }
 

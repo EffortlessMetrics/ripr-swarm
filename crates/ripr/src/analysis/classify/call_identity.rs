@@ -1082,38 +1082,54 @@ fn library_declaration_chain_reaches_file(index: &RustIndex, file: &Path) -> boo
     };
     let target = super::related_tests::normalize_path(file);
     let mut current = PathBuf::from("src/lib.rs");
+    // Inline module names entered since `current` was loaded: they extend the
+    // directory the next out-of-line declaration loads from.
+    let mut inline_path: Vec<String> = Vec::new();
+    let mut container: Option<Vec<ast::Item>> = None;
     for segment in &segments {
-        let Some(facts) = index.files().get(&current) else {
-            return false;
-        };
-        let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&facts.source) else {
-            return false;
-        };
-        let named = |module: &ast::Module| {
-            module
-                .name()
-                .is_some_and(|name| name.text().trim_start_matches("r#") == segment)
-        };
-        let same_named: Vec<ast::Module> = parse
-            .tree()
-            .items()
+        if container.is_none() {
+            let Some(facts) = index.files().get(&current) else {
+                return false;
+            };
+            let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&facts.source)
+            else {
+                return false;
+            };
+            container = Some(parse.tree().items().collect());
+        }
+        let items = container.take().unwrap_or_default();
+        let same_named: Vec<ast::Module> = items
+            .into_iter()
             .filter_map(|item| match item {
-                ast::Item::Module(module) if named(&module) => Some(module),
+                ast::Item::Module(module)
+                    if module
+                        .name()
+                        .is_some_and(|n| n.text().trim_start_matches("r#") == segment) =>
+                {
+                    Some(module)
+                }
                 _ => None,
             })
             .collect();
         let [declaration] = same_named.as_slice() else {
             return false;
         };
-        if declaration.item_list().is_some()
-            || super::owner_pin::has_cfg_attr(declaration)
+        if super::owner_pin::has_cfg_attr(declaration)
             || ast::HasAttrs::attrs(declaration)
                 .any(|attr| has_path_attribute(&attr.syntax().text().to_string()))
         {
             return false;
         }
+        if let Some(items) = declaration.item_list() {
+            if super::owner_pin::has_cfg_attr(&items) {
+                return false;
+            }
+            inline_path.push(segment.clone());
+            container = Some(items.items().collect());
+            continue;
+        }
         let normalized = super::related_tests::normalize_path(&current);
-        let directory = match normalized.rsplit_once('/') {
+        let mut directory = match normalized.rsplit_once('/') {
             Some((directory, name)) if name == "lib.rs" || name == "mod.rs" => {
                 directory.to_string()
             }
@@ -1122,6 +1138,9 @@ fn library_declaration_chain_reaches_file(index: &RustIndex, file: &Path) -> boo
             }
             None => return false,
         };
+        for inline in inline_path.drain(..) {
+            directory = format!("{directory}/{inline}");
+        }
         let flat = PathBuf::from(format!("{directory}/{segment}.rs"));
         let nested = PathBuf::from(format!("{directory}/{segment}/mod.rs"));
         current = match (
@@ -1133,7 +1152,7 @@ fn library_declaration_chain_reaches_file(index: &RustIndex, file: &Path) -> boo
             _ => return false,
         };
     }
-    super::related_tests::normalize_path(&current) == target
+    inline_path.is_empty() && super::related_tests::normalize_path(&current) == target
 }
 
 /// Whether the root package's `src/` files declare `mod <segment>` other than

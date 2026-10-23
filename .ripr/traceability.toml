@@ -11623,6 +11623,7 @@ tests = [
   "crates/ripr/tests/crate_qualified_entry_reach.rs::the_library_must_bind_the_imported_module_path_to_the_entrys_file",
   "crates/ripr/tests/crate_qualified_entry_reach.rs::the_declaration_chain_must_reach_the_definitions_file",
   "crates/ripr/tests/crate_qualified_entry_reach.rs::a_nearer_binding_inside_the_test_body_shadows_the_import",
+  "crates/ripr/tests/crate_qualified_entry_reach.rs::unit_crate_imports_scoped_bindings_and_inline_ancestors",
   "crates/ripr/tests/crate_qualified_entry_reach.rs::a_nearer_binding_or_same_line_non_code_does_not_admit_a_bare_call",
   "crates/ripr/tests/crate_qualified_entry_reach.rs::an_absolute_import_prefix_goes_through_the_same_proof",
   "crates/ripr/src/analysis/facts/build.rs::tests::root_library_name_reads_lib_name_then_package_and_refuses_moved_roots",
