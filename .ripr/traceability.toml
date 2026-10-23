@@ -3502,6 +3502,8 @@ id = "RIPR-SPEC-0028"
 name = "Python preview static facts"
 spec = "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_stays_uncredited_without_a_bound_owner_receiver",
+  "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_receiver_read_in_bracketed_call_arguments_is_still_credited",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::unittest_list_equal_observes_whole_return_including_short_elements",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::unittest_list_equal_preserves_ast_call_identity",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::unittest_list_equal_withholds_unresolved_or_nonobserving_calls",

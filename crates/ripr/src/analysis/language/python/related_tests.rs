@@ -728,6 +728,7 @@ fn protocol_entry_calls(text: &str, body: &str, local: &str, builtin: &str) -> V
 /// `r: list = ...`). Any `var,` / `, var` / `var:` occurrence counts, which
 /// also demotes some reads (`f(r, 1)`); that only fails closed.
 fn binds_in_target_list(body: &str, var: &str) -> bool {
+    let mut parsed_target_line = None;
     body.match_indices(var).any(|(idx, _)| {
         let end = idx + var.len();
         python_callee_start_has_boundary(body, idx)
@@ -741,7 +742,69 @@ fn binds_in_target_list(body: &str, var: &str) -> bool {
                     || before.ends_with(',')
                     || before.ends_with('*')
                     || chained_or_bracketed_target(body, idx, before, after)
+                    || enclosing_bracketed_target_binds(body, idx, var, &mut parsed_target_line)
             }
+    })
+}
+
+/// A complete single-line target can enclose the name without every bracket
+/// touching it (`(x, (r)) = ...`, `[a, [r]] = ...`). Read the target tree rather
+/// than treating every surrounding bracket as a binding: `values[(r)]` still
+/// reads `r`, including when it occurs inside a tuple assignment target.
+fn enclosing_bracketed_target_binds(
+    body: &str,
+    idx: usize,
+    var: &str,
+    parsed_target_line: &mut Option<usize>,
+) -> bool {
+    use rustpython_parser::ast::{Expr, Mod, Stmt};
+
+    // Only a bracketed occurrence needs this fallback. In particular the
+    // original `r = Owner(...)` initializer must not count as a rebind.
+    if !body[..idx]
+        .trim_end_matches([' ', '\t'])
+        .ends_with(['(', '['])
+        || !body[idx + var.len()..]
+            .trim_start_matches([' ', '\t'])
+            .starts_with([')', ']'])
+    {
+        return false;
+    }
+    let line_start = body[..idx].rfind('\n').map_or(0, |at| at + 1);
+    // A failed lookup applies to every occurrence of this name on the line.
+    // Do not repeatedly parse wide tuple expressions containing many reads.
+    if *parsed_target_line == Some(line_start) {
+        return false;
+    }
+    *parsed_target_line = Some(line_start);
+    let line = body[line_start..].lines().next().unwrap_or_default().trim();
+    let path = Path::new("<protocol-entry-target>");
+    // Preserve inline suites by parsing the actual line first. Only an
+    // incomplete header needs a synthetic suite. Both attempts keep the
+    // common parser's nesting/tree budget and never execute user code.
+    let parsed = super::source_facts::parse_module_result(path, line).or_else(|_| {
+        super::source_facts::parse_module_result(path, &format!("{line}\n    pass\n"))
+    });
+    let Ok(Mod::Module(module)) = parsed else {
+        return false;
+    };
+    let binds = |target: &Expr| {
+        matches!(target, Expr::Tuple(_) | Expr::List(_) | Expr::Starred(_))
+            && super::sink_alignment::target_binds_name(target, var)
+    };
+    module.body.iter().any(|stmt| match stmt {
+        Stmt::Assign(assign) => assign.targets.iter().any(binds),
+        Stmt::For(loop_) => binds(&loop_.target),
+        Stmt::AsyncFor(loop_) => binds(&loop_.target),
+        Stmt::With(with) => with
+            .items
+            .iter()
+            .any(|item| item.optional_vars.as_deref().is_some_and(binds)),
+        Stmt::AsyncWith(with) => with
+            .items
+            .iter()
+            .any(|item| item.optional_vars.as_deref().is_some_and(binds)),
+        _ => false,
     })
 }
 
