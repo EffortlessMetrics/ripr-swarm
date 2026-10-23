@@ -648,3 +648,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — weak_error_oracle (52)
+
+Reason:
+RIPR-SPEC-0122: human output drops the observation_unverified token
+
+Command:
+`cargo xtask goldens bless weak_error_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -11,7 +11,7 @@ Shared evidence and guidance
   E1 [findings 1, 4, 6, 7]: reach yes: Related tests appear to reach parse_port: parses_valid_port
   E2 [findings 1, 4, 6, 7]: infection yes: Reachable tests can plausibly activate this changed behavior
   E3 [findings 1, 4, 6, 7]: observation yes: A related test observes a value or effect near the changed behavior
-  E4 [findings 1, 4, 6, 7]: discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  E4 [findings 1, 4, 6, 7]: discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
   E5 [findings 1, 4, 6, 7]: related test src/lib.rs:14 parses_valid_port uses strong exact value oracle: assert_eq!(parse_port("8080").unwrap(), 8080); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   E6 [findings 1, 4, 6, 7]: source assertion argument value 8080 at line 15
   E7 [findings 1, 4, 6, 7]: source function argument value input = "8080" at line 15
@@ -19,7 +19,7 @@ Shared evidence and guidance
   E8 [findings 2, 5]: reach yes: Related tests appear to reach parse_port: parses_valid_port
   E9 [findings 2, 5]: infection yes: Reachable tests can plausibly activate this changed behavior
   E10 [findings 2, 5]: observation yes: A related test observes a value or effect near the changed behavior
-  E11 [findings 2, 5]: discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  E11 [findings 2, 5]: discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
   E12 [findings 2, 5]: related test src/lib.rs:14 parses_valid_port uses strong exact value oracle: assert_eq!(parse_port("8080").unwrap(), 8080); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   E13 [findings 2, 5]: source assertion argument value 8080 at line 15
   E14 [findings 2, 5]: source function argument value input = "8080" at line 15

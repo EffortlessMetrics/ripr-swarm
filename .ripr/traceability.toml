@@ -9894,6 +9894,8 @@ id = "RIPR-SPEC-0122"
 name = "bounded human check output"
 spec = "docs/specs/RIPR-SPEC-0122-bounded-human-check-output.md"
 tests = [
+  "crates/ripr/src/output/human.rs::tests::shared_evidence_rows_spell_the_unconfirmed_observation_in_words",
+  "crates/ripr/src/output/human.rs::tests::plain_observation_wording_handles_each_embedded_spelling",
   "crates/ripr/src/output/human.rs::tests::no_static_path_weakness_list_drops_restated_evidence",
   "crates/ripr/src/output/human/hidden_locations_tests.rs::absolute_root_selected",
   "crates/ripr/src/output/human/hidden_locations_tests.rs::absolute_root_without_selection",

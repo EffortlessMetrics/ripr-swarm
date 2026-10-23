@@ -58,29 +58,54 @@ pub(super) struct EvidenceEntry {
     pub key: Option<Vec<u8>>,
 }
 
+/// #9244: the producer's reveal-stage summaries end with the machine marker
+/// `(observation_unverified)` (and one preview adapter embeds it mid-sentence),
+/// which consumers of the stage summary in JSON key on. The human window already
+/// says the same thing in words ("Discriminator unconfirmed: ..."), so it drops
+/// the parenthetical and spells any bare remainder as plain prose. The JSON stage
+/// summary is untouched.
+pub(super) fn plain_observation_wording(text: &str) -> String {
+    text.replace(" (observation_unverified)", "")
+        .replace("observation_unverified", "the observation is unconfirmed")
+}
+
+fn plain_wording(plain: bool, line: String) -> String {
+    if plain {
+        plain_observation_wording(&line)
+    } else {
+        line
+    }
+}
+
 pub(super) fn evidence_path_lines(finding: &Finding, wording: JsonPointerWording) -> Vec<String> {
-    evidence_path(finding, wording, |text, _| text)
+    evidence_path(finding, wording, false, |text, _| text)
 }
 
 pub(super) fn evidence_path_entries(finding: &Finding, with_keys: bool) -> Vec<EvidenceEntry> {
-    evidence_path(finding, JsonPointerWording::CheckFlag, |text, source| {
-        // Multi-line literals retain their existing rendering locally and cannot
-        // forge a catalogue definition or generated reference.
-        let key = if !with_keys
-            || matches!(source, EvidenceSource::Window)
-            || text.contains(['\n', '\r'])
-        {
-            None
-        } else {
-            serde_json::to_vec(&(source, &text)).ok()
-        };
-        EvidenceEntry { text, key }
-    })
+    evidence_path(
+        finding,
+        JsonPointerWording::CheckFlag,
+        true,
+        |text, source| {
+            // Multi-line literals retain their existing rendering locally and cannot
+            // forge a catalogue definition or generated reference.
+            let key = if !with_keys
+                || matches!(source, EvidenceSource::Window)
+                || text.contains(['\n', '\r'])
+            {
+                None
+            } else {
+                serde_json::to_vec(&(source, &text)).ok()
+            };
+            EvidenceEntry { text, key }
+        },
+    )
 }
 
 fn evidence_path<T>(
     finding: &Finding,
     wording: JsonPointerWording,
+    plain: bool,
     mut project: impl FnMut(String, EvidenceSource<'_>) -> T,
 ) -> Vec<T> {
     let mut lines = vec![
@@ -109,15 +134,21 @@ fn evidence_path<T>(
             EvidenceSource::Stage("propagation", &finding.ripr.propagate),
         ),
         project(
-            format!(
-                "observation {}: {}",
-                finding.ripr.reveal.observe.state.as_str(),
-                finding.ripr.reveal.observe.summary
+            plain_wording(
+                plain,
+                format!(
+                    "observation {}: {}",
+                    finding.ripr.reveal.observe.state.as_str(),
+                    finding.ripr.reveal.observe.summary
+                ),
             ),
             EvidenceSource::Stage("observation", &finding.ripr.reveal.observe),
         ),
         project(
-            crate::output::discriminator_line::discriminator_evidence_line(finding),
+            plain_wording(
+                plain,
+                crate::output::discriminator_line::discriminator_evidence_line(finding),
+            ),
             EvidenceSource::Discriminator(
                 &finding.ripr.reveal.discriminate,
                 &finding.class,
