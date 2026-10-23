@@ -43,7 +43,7 @@ attach the receipt
 
 ## Artifact Paths
 
-The Campaign 11 workflow uses fixed paths so humans, CI, and agents can resume
+The manual artifact workflow uses fixed paths so humans, CI, and agents can resume
 without chat history:
 
 | Artifact | Path |

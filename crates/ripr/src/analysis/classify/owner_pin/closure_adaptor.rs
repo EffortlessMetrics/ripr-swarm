@@ -54,6 +54,10 @@ pub(in crate::analysis::classify) struct AdaptorTail {
     /// Whether the tail's `collect` relies on the bare name `Vec` meaning
     /// the standard vector, which the owner's file may rebind.
     collects_named_vec: bool,
+    /// Whether that `collect` targets `Result<Vec<..>, ..>` (RIPR-SPEC-0265
+    /// amendment, #9490), which relies on the bare name `Result` meaning the
+    /// standard type as well.
+    collects_named_result: bool,
 }
 
 impl AdaptorTail {
@@ -74,19 +78,32 @@ impl AdaptorTail {
             return false;
         };
         let masked = mask_comments_and_strings(source);
-        let declares = ["struct", "enum", "union", "type", "trait"]
-            .iter()
-            .any(|keyword| {
-                whole_word_offsets(&masked, keyword)
-                    .into_iter()
-                    .any(|offset| {
-                        super::starts_with_word(
-                            masked[offset + keyword.len()..].trim_start(),
-                            "Vec",
-                        )
-                    })
-            });
-        !declares && !super::declaring_file_rebinds(source, "Vec", false, index)
+        let names: &[&str] = if self.collects_named_result {
+            &["Vec", "Result"]
+        } else {
+            &["Vec"]
+        };
+        names.iter().all(|name| {
+            let declares = ["struct", "enum", "union", "type", "trait"]
+                .iter()
+                .any(|keyword| {
+                    whole_word_offsets(&masked, keyword)
+                        .into_iter()
+                        .any(|offset| {
+                            super::starts_with_word(
+                                masked[offset + keyword.len()..].trim_start(),
+                                name,
+                            )
+                        })
+                });
+            !declares && !super::declaring_file_rebinds(source, name, false, index)
+        })
+    }
+
+    /// Whether the tail's `collect` targets `Result<Vec<..>, ..>`, which
+    /// stops at the first `Err`.
+    pub(in crate::analysis::classify) fn collects_result(&self) -> bool {
+        self.collects_named_result
     }
 
     /// Whether `operand` is the closure binding read as one element of `P`:
@@ -249,6 +266,10 @@ pub(in crate::analysis::classify) fn adaptor_tail_of(body: &str) -> Option<Adapt
     let collects_named_vec = terminal
         .as_ref()
         .is_some_and(|terminal| method_name(terminal).as_deref() == Some("collect"));
+    let collects_named_result = collects_named_vec
+        && terminal
+            .as_ref()
+            .is_some_and(|terminal| collect_target(&function, terminal).starts_with("Result<"));
     Some(AdaptorTail {
         parameter,
         position,
@@ -263,6 +284,7 @@ pub(in crate::analysis::classify) fn adaptor_tail_of(body: &str) -> Option<Adapt
         deciding,
         comparison,
         collects_named_vec,
+        collects_named_result,
     })
 }
 
@@ -290,7 +312,11 @@ fn admitted_consumer(
     };
     match (adaptor, name.as_str()) {
         ("filter", "count") => terminal.generic_arg_list().is_none(),
-        ("filter" | "map", "collect") => collects_into_vec(function, terminal),
+        ("filter", "collect") => {
+            collects_into_vec(function, terminal)
+                && !result_of_vec(&collect_target(function, terminal))
+        }
+        ("map", "collect") => collects_into_vec(function, terminal),
         ("map", "sum") => arithmetic_body(closure_body),
         _ => false,
     }
@@ -299,25 +325,41 @@ fn admitted_consumer(
 /// Whether `collect` provably builds a `Vec`: a `collect::<Vec<..>>()`
 /// turbofish, or no turbofish and an owner return type `Vec<..>`.
 fn collects_into_vec(function: &ast::Fn, terminal: &ast::MethodCallExpr) -> bool {
+    let target = collect_target(function, terminal);
+    target.starts_with("Vec<") && target.ends_with('>') || result_of_vec(&target)
+}
+
+/// The type `collect` builds, collapsed: the turbofish argument, else the
+/// owner's return type, with a `std::vec::` / `alloc::vec::` prefix removed.
+fn collect_target(function: &ast::Fn, terminal: &ast::MethodCallExpr) -> String {
     let target = match terminal.generic_arg_list() {
         Some(arguments) => {
             let mut arguments = arguments.generic_args();
             let (Some(argument), None) = (arguments.next(), arguments.next()) else {
-                return false;
+                return String::new();
             };
             argument.syntax().text().to_string()
         }
         None => match function.ret_type().and_then(|ret| ret.ty()) {
             Some(ty) => ty.syntax().text().to_string(),
-            None => return false,
+            None => return String::new(),
         },
     };
     let target = collapse(&target);
-    let target = ["std::vec::", "alloc::vec::"]
+    ["std::vec::", "alloc::vec::"]
         .iter()
         .find_map(|prefix| target.strip_prefix(prefix))
-        .unwrap_or(&target);
-    target.starts_with("Vec<") && target.ends_with('>')
+        .unwrap_or(&target)
+        .to_string()
+}
+
+/// `Result<Vec<..>, ..>`: a short-circuiting collect whose `Ok` keeps every
+/// closure value in order and whose first `Err` is the owner's result, so a
+/// changed closure value still changes what the owner returns (#9490).
+fn result_of_vec(target: &str) -> bool {
+    target
+        .strip_prefix("Result<")
+        .is_some_and(|inner| inner.trim_start().starts_with("Vec<") && inner.ends_with('>'))
 }
 
 /// Whether a `map` body summed by `sum` is arithmetic: no comparison, no
@@ -600,6 +642,78 @@ fn slice_parameter_position(function: &ast::Fn, parameter: &str) -> Option<usize
     found
 }
 
+/// The argument positions of the owner's slice-like parameters that the
+/// changed `expression` walks (`P.iter()`, `P.into_iter()`, `P.iter_mut()`).
+/// An empty literal passed at such a position leaves the walk with nothing
+/// to visit, so the changed tail cannot show on that input (#9444).
+pub(in crate::analysis::classify) fn iterated_slice_positions(
+    owner_body: &str,
+    expression: &str,
+) -> Vec<usize> {
+    // Whitespace around `.` and `(` is not significant to the parser.
+    let compact: String = expression
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    let owner_text = collapse(owner_body);
+    let Some(parse) = parse_clean_source_file(owner_body) else {
+        return Vec::new();
+    };
+    let Some(function) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
+        return Vec::new();
+    };
+    let Some(list) = function.param_list() else {
+        return Vec::new();
+    };
+    let mut positions = Vec::new();
+    for (position, param) in list.params().enumerate() {
+        let (Some(ast::Pat::IdentPat(pattern)), Some(ty)) = (param.pat(), param.ty()) else {
+            continue;
+        };
+        let Some(name) = pattern.name() else {
+            continue;
+        };
+        let name = name.text().to_string();
+        if !slice_like_type(&ty.syntax().text().to_string()) {
+            continue;
+        }
+        // A local `let` of the same name may rebind the parameter.
+        if owner_text.contains(&format!("let {name}"))
+            || owner_text.contains(&format!("let mut {name}"))
+        {
+            continue;
+        }
+        let walked = whole_word_offsets(&compact, &name)
+            .into_iter()
+            .any(|offset| {
+                // `row.values.iter()` walks a field, not the parameter.
+                !compact[..offset].ends_with('.')
+                    && [".iter()", ".into_iter()", ".iter_mut()"]
+                        .iter()
+                        .any(|walk| compact[offset + name.len()..].starts_with(walk))
+            });
+        if walked {
+            positions.push(position);
+        }
+    }
+    positions
+}
+
+/// Whether the pinned call `call_text` passes an empty literal sequence on
+/// every run at `position`, so a walk over that parameter visits nothing.
+pub(in crate::analysis::classify) fn pinned_call_passes_only_empty(
+    test: &TestSummary,
+    loan: Option<&HelperLoan>,
+    call_text: &str,
+    name: &str,
+    position: usize,
+) -> bool {
+    call_argument_texts(call_text, name)
+        .and_then(|arguments| arguments.get(position).cloned())
+        .and_then(|argument| argument_sequences(test, loan, &argument, call_text))
+        .is_some_and(|runs| runs.iter().all(Vec::is_empty))
+}
+
 fn slice_like_type(ty: &str) -> bool {
     let ty = collapse(ty);
     let mut rest = ty.as_str();
@@ -723,11 +837,23 @@ pub(in crate::analysis::classify) fn literal_sequence(argument: &str) -> Option<
     let mut elements = Vec::new();
     let mut depth = 0i32;
     let mut start = 0usize;
+    // A plain string element (`"1"`) is read whole: no escape, so its
+    // closing quote is the next one and a comma inside it is not a separator.
+    let mut in_string = false;
     for (offset, character) in inner.char_indices() {
+        if in_string {
+            match character {
+                '"' => in_string = false,
+                '\\' => return None,
+                _ => {}
+            }
+            continue;
+        }
         match character {
+            '"' => in_string = true,
             '(' | '[' | '{' => depth += 1,
             ')' | ']' | '}' => depth -= 1,
-            ';' | '"' => return None,
+            ';' => return None,
             ',' if depth == 0 => {
                 elements.push(inner[start..offset].trim());
                 start = offset + 1;
@@ -735,14 +861,28 @@ pub(in crate::analysis::classify) fn literal_sequence(argument: &str) -> Option<
             _ => {}
         }
     }
+    if in_string {
+        return None;
+    }
     let last = inner[start..].trim();
     if !last.is_empty() {
         elements.push(last);
     }
     elements
         .into_iter()
-        .map(|element| literal_element(element).then(|| element.to_string()))
+        .map(|element| {
+            (literal_element(element) || plain_string_element(element)).then(|| element.to_string())
+        })
         .collect()
+}
+
+/// `"text"` with no escape, no inner quote and no raw prefix: a value ripr
+/// can count as a run element but never compares as a boundary.
+fn plain_string_element(element: &str) -> bool {
+    element
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+        .is_some_and(|body| !body.contains('"') && !body.contains('\\'))
 }
 
 /// A comparison boundary ripr reads as a literal: its trimmed text is one
@@ -1108,6 +1248,11 @@ mod tests {
             literal_sequence("&vec![true, 'a']"),
             Some(vec!["true".into(), "'a'".into()])
         );
+        // #9490: a plain string element is a run element, commas included.
+        assert_eq!(
+            literal_sequence("&[\"1\", \"a, b\"]"),
+            Some(vec!["\"1\"".into(), "\"a, b\"".into()])
+        );
         assert_eq!(literal_sequence("&[]"), Some(Vec::new()));
         assert_eq!(literal_sequence("vec![]"), Some(Vec::new()));
         for unreadable in [
@@ -1119,7 +1264,10 @@ mod tests {
             "&[1 + 1]",
             "&[3u32]",
             "&[f(1)]",
-            "&[\"a\"]",
+            "&[\"a\\n\"]",
+            "&[\"a\", b]",
+            "&[\"a]",
+            "&[\"a\"b\"]",
             "0..4",
             "&[1, 2][..]",
             "&[.5]",

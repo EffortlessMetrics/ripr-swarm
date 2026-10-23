@@ -355,6 +355,7 @@ fn mock_payload_through_a_module_entry_is_not_credited() -> Result<(), String> {
     owner.module_entries = vec![TypeScriptModuleEntry {
         name: "announce".to_string(),
         exported_as_default: false,
+        class_member: None,
     }];
     let tests = extract_tests(
         Path::new("tests/lib.test.ts"),
@@ -381,8 +382,10 @@ test("announces", () => {
         .ok_or_else(|| "expected TypeScript preview finding".to_string())
     };
     let finding = classify(&tests)?;
+    // Not credited: an exact payload behind a module entry reads unknown
+    // (RIPR-SPEC-0027), never `exposed`.
     assert!(
-        matches!(finding.class, ExposureClass::WeaklyExposed),
+        matches!(finding.class, ExposureClass::StaticUnknown),
         "{:?}",
         finding.class
     );

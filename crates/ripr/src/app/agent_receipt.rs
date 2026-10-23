@@ -84,14 +84,11 @@ pub(crate) fn canonical_agent_receipt_verify_render(
         .map_err(|err| receipt_verify_input_error("artifact_read", err))?;
     let after_json = read_snapshot(&after_path, "receipt after")
         .map_err(|err| receipt_verify_input_error("artifact_read", err))?;
-    let before_identity = crate::agent::artifact::validate_repo_exposure_artifact(
-        root,
-        &before_json,
-        "receipt before",
-    )
-    .map_err(|err| receipt_verify_input_error("artifact", err))?;
+    let before_identity =
+        crate::agent::artifact::validate_verify_snapshot(root, &before_json, "receipt before")
+            .map_err(|err| receipt_verify_input_error("artifact", err))?;
     let after_identity =
-        crate::agent::artifact::validate_repo_exposure_artifact(root, &after_json, "receipt after")
+        crate::agent::artifact::validate_verify_snapshot(root, &after_json, "receipt after")
             .map_err(|err| receipt_verify_input_error("artifact", err))?;
     if let Err(reason) =
         crate::agent::artifact::validate_comparable_pair(&before_identity, &after_identity)
@@ -146,10 +143,41 @@ pub(crate) fn canonical_agent_receipt_verify_render(
         before_content_sha256: before_identity.content_sha256.clone(),
         after_content_sha256: after_identity.content_sha256.clone(),
     };
-    let canonical = output::outcome::render_agent_verify_json_with_currentness(
+    // A gap-bound verify document (`agent verify --gap-id`, #9103) carries a
+    // `bound_gap` member. It is never trusted as written: the closure is
+    // recomputed from the two validated snapshots, so a document that claims a
+    // gap closed without positive evidence (open before, `exposed` after)
+    // fails here, and one that omits the member while the gap closed stays the
+    // unbound canonical render.
+    let bound_gap = match verify.get("bound_gap") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(claimed) => {
+            let gap_id = claimed
+                .get("gap_id")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| {
+                    receipt_verify_input_error(
+                        "malformed",
+                        "agent verify bound_gap does not name a gap_id",
+                    )
+                })?;
+            let closure =
+                crate::agent::artifact::verify_gap_closure(root, &before_json, &after_json, gap_id)
+                    .map_err(|err| receipt_verify_input_error("gap_binding", err))?;
+            Some(output::outcome::AgentVerifyBoundGap {
+                gap_id: closure.gap_id,
+                before_classification: closure.before_classification,
+                after_classification: closure.after_classification,
+                file: closure.file,
+                line: closure.line,
+            })
+        }
+    };
+    let canonical = output::outcome::render_agent_verify_json_with_bound_gap(
         &report,
         Some(artifact_currentness),
         &binding,
+        bound_gap.as_ref(),
     )
     .map_err(|err| receipt_verify_input_error("canonical_render", err))?;
     let canonical_body = canonical.trim_end_matches('\n');

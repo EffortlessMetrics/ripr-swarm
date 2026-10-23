@@ -1,0 +1,10 @@
+diff --git a/src/level.ts b/src/level.ts
+--- a/src/level.ts
++++ b/src/level.ts
+@@ -1,5 +1,5 @@
+ export enum Level { Low = 1, High = 2 }
+ export const Other = { High: 1 };
+ export function weight(level: number): number {
+-  return level === Level.High ? 10 : 10;
++  return level === Level.High ? 11 : 10;
+ }
