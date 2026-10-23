@@ -1720,31 +1720,31 @@ mod persisted_bound_inventory {
         CacheLoad, CachedSeamLimitInfo, PersistedScopedInventory, PersistedSeamLimit,
         RepoScopedInventoryCache,
     };
-    use std::path::Path;
     use std::time::Duration;
 
     /// A verified persisted result for exactly this key and identity.
     pub(super) fn lookup(
-        root: &Path,
+        cache: &RepoScopedInventoryCache,
         key: &RepoSeamCacheKey,
         identity: &[u8],
     ) -> Option<ScopedClassifiedSeamInventory> {
-        match RepoScopedInventoryCache::at(root).load(key, identity) {
+        match cache.load(key, identity) {
             CacheLoad::Hit(persisted) => Some(from_persisted(persisted, key)),
             CacheLoad::Miss => None,
-            CacheLoad::CorruptIgnored { .. } => {
+            CacheLoad::CorruptIgnored { reason } => {
                 trace_latency_phase(
                     "diff_scoped_inventory",
                     "persisted_result_corrupt_ignored",
                     Duration::ZERO,
                 );
+                eprintln!("ripr: scoped inventory cache entry ignored ({reason})");
                 None
             }
         }
     }
 
     pub(super) fn store(
-        root: &Path,
+        cache: &RepoScopedInventoryCache,
         key: &RepoSeamCacheKey,
         identity: &[u8],
         inventory: &ScopedClassifiedSeamInventory,
@@ -1774,10 +1774,7 @@ mod persisted_bound_inventory {
             unevaluated_seams: inventory.unevaluated_seams,
             repo_seam_limit,
         };
-        if RepoScopedInventoryCache::at(root)
-            .store(key, identity, persisted)
-            .is_err()
-        {
+        if cache.store(key, identity, persisted).is_err() {
             trace_latency_phase(
                 "diff_scoped_inventory",
                 "persisted_result_store_failed",
@@ -2149,9 +2146,13 @@ fn inventory_diff_scoped_classified_seams_inner(
         cancellation::checkpoint()?;
         return Ok(reused);
     }
+    // One cache handle per call, so the Git tracked-files probe of the cache
+    // root runs at most once for the lookup and the store.
+    let persisted_cache = reuse_identity.map(|_| RepoScopedInventoryCache::at(root));
     if let Some(identity) = reuse_identity
+        && let Some(cache) = persisted_cache.as_ref()
         && let Some(mut persisted) =
-            persisted_bound_inventory::lookup(root, &workspace_cache_key, identity)
+            persisted_bound_inventory::lookup(cache, &workspace_cache_key, identity)
     {
         trace_latency_phase(
             "diff_scoped_inventory",
@@ -2271,12 +2272,14 @@ fn inventory_diff_scoped_classified_seams_inner(
     };
     if let Some(identity) = reuse_identity {
         bound_inventory_reuse::store(&inventory.workspace_cache_key, identity, &inventory);
-        persisted_bound_inventory::store(
-            root,
-            &inventory.workspace_cache_key,
-            identity,
-            &inventory,
-        );
+        if let Some(cache) = persisted_cache.as_ref() {
+            persisted_bound_inventory::store(
+                cache,
+                &inventory.workspace_cache_key,
+                identity,
+                &inventory,
+            );
+        }
     }
     Ok(inventory)
 }

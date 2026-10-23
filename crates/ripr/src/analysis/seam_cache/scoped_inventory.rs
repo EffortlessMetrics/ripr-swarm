@@ -38,6 +38,13 @@ const SCOPED_INVENTORY_DIGEST_DOMAIN: &str = "ripr-cache:ScopedInventoryEnvelope
 /// successful store; `ripr cache clear` and `cache gc` still own the layer.
 const RETAINED_ENTRIES: usize = 4;
 
+/// Largest entry file this layer reads or writes, in bytes. A measured
+/// 287-seam entry on this repository is about 40 MB compact; the ceiling is
+/// several times that so a large refresh still persists, while a planted or
+/// runaway file is neither read into memory nor written. Over the ceiling is
+/// a miss on load and a skipped store.
+pub(crate) const MAX_ENTRY_BYTES: u64 = 256 * 1024 * 1024;
+
 /// The repo-wide seam-limit fact as the scoped inventory carries it.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) enum PersistedSeamLimit {
@@ -92,15 +99,7 @@ impl ScopedInventoryEnvelope {
 }
 
 fn hex(bytes: &[u8]) -> String {
-    use std::fmt::Write;
-    let mut text = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        // Writing to a String cannot fail.
-        if write!(text, "{byte:02x}").is_err() {
-            break;
-        }
-    }
-    text
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 /// Crate-private cache I/O surface for persisted scoped inventories. Holds
@@ -177,6 +176,15 @@ impl RepoScopedInventoryCache {
         key: &RepoSeamCacheKey,
         identity: &[u8],
     ) -> CacheLoad<PersistedScopedInventory> {
+        self.load_within(key, identity, MAX_ENTRY_BYTES)
+    }
+
+    fn load_within(
+        &self,
+        key: &RepoSeamCacheKey,
+        identity: &[u8],
+        max_bytes: u64,
+    ) -> CacheLoad<PersistedScopedInventory> {
         if !key.is_reusable() {
             return CacheLoad::Miss;
         }
@@ -186,6 +194,20 @@ impl RepoScopedInventoryCache {
             };
         }
         let path = self.entry_path(key, identity);
+        match std::fs::metadata(&path) {
+            Ok(metadata) if metadata.len() > max_bytes => {
+                return corrupt_entry(
+                    &path,
+                    format!(
+                        "entry is {} bytes, over the {max_bytes} byte ceiling",
+                        metadata.len()
+                    ),
+                );
+            }
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return CacheLoad::Miss,
+            Err(err) => return corrupt_entry(&path, format!("stat failed: {err}")),
+        }
         let bytes = match std::fs::read(&path) {
             Ok(bytes) => bytes,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return CacheLoad::Miss,
@@ -215,6 +237,16 @@ impl RepoScopedInventoryCache {
         identity: &[u8],
         inventory: PersistedScopedInventory,
     ) -> Result<(), String> {
+        self.store_within(key, identity, inventory, MAX_ENTRY_BYTES)
+    }
+
+    fn store_within(
+        &self,
+        key: &RepoSeamCacheKey,
+        identity: &[u8],
+        inventory: PersistedScopedInventory,
+        max_bytes: u64,
+    ) -> Result<(), String> {
         key.require_reusable()?;
         if let Some(reason) = self.unusable_base_reason() {
             return Err(reason.to_owned());
@@ -236,6 +268,12 @@ impl RepoScopedInventoryCache {
             payload_digest: digest,
         })
         .map_err(|err| format!("encode scoped inventory failed: {err}"))?;
+        if bytes.len() as u64 > max_bytes {
+            return Err(format!(
+                "scoped inventory entry is {} bytes, over the {max_bytes} byte ceiling",
+                bytes.len()
+            ));
+        }
         let path = self.entry_path(key, identity);
         crate::atomic_file::write_cache(&path, &bytes, "scoped inventory cache")?;
         self.prune(&path);
@@ -510,6 +548,46 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(kept, RETAINED_ENTRIES);
         assert!(newest_kept, "the newest entry must survive pruning");
+        Ok(())
+    }
+
+    #[test]
+    fn entries_over_the_ceiling_are_neither_written_nor_read() -> Result<(), String> {
+        let dir = scratch("ceiling")?;
+        let cache = RepoScopedInventoryCache::at_dir(dir.clone());
+        cache.store(&key(), b"identity", inventory())?;
+        let size = std::fs::metadata(cache.entry_path(&key(), b"identity"))
+            .map_err(|error| format!("stat: {error}"))?
+            .len();
+        // Read side: the same entry is a hit at its size and refused one byte under.
+        let at_size = matches!(
+            cache.load_within(&key(), b"identity", size),
+            CacheLoad::Hit(_)
+        );
+        let under = cache.load_within(&key(), b"identity", size - 1);
+        let refused =
+            matches!(&under, CacheLoad::CorruptIgnored { reason } if reason.contains("ceiling"));
+        // Write side: a ceiling below the encoded size stores nothing.
+        let other = RepoSeamCacheKey {
+            files_content_hash: "other".to_owned(),
+            ..key()
+        };
+        let skipped = cache.store_within(&other, b"identity", inventory(), size - 1);
+        let written = cache.entry_path(&other, b"identity").exists();
+        let allowed = cache
+            .store_within(&other, b"identity", inventory(), size + 1024)
+            .is_ok();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(at_size, "an entry at the ceiling must be served");
+        assert!(
+            refused,
+            "an entry over the ceiling must not be read: {under:?}"
+        );
+        assert!(
+            skipped.is_err() && !written,
+            "an over-ceiling store must write nothing"
+        );
+        assert!(allowed, "an under-ceiling store must succeed");
         Ok(())
     }
 }
