@@ -16728,9 +16728,13 @@ failed`, `git diff failed`) and `null` otherwise. The terminal and Markdown "Ins
 carries a matching scope line: `change-first (Rust seams on lines changed since
 <base> rank first)` for `changed`, `whole repository` for `no_change`, and
 `whole repository (current change unavailable: <reason>)` for `unavailable`.
-The change-first scope and the change counts cover Rust seam ranking only. A
-Python preview repair card shown as the top recommendation is still selected
-from the committed diff against the base, not from uncommitted edits.
+The change-first scope and the change counts cover Rust seam ranking only. When
+the Rust ranking is empty and a Python preview repair card leads the
+recommendation, the scope line instead reads `change-first (python (preview)
+seams on lines changed since <base> rank first)` so it names what was actually
+ranked (#9857); a Python preview repair card shown as the top recommendation is
+still selected from the committed diff against the base, not from uncommitted
+edits.
 `actionable_seams_in_change`, `withheld_seams_in_change` and
 `top_recommendation_in_change` are `null` unless `state` is `changed`;
 `top_recommendation_in_change` is also `null` when no seam is ranked.

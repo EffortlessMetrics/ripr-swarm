@@ -18368,8 +18368,8 @@ fn pilot_projects_python_repair_card_for_git_diff() -> Result<(), String> {
     run_git(&root, &["add", "src/pricing.py"])?;
     run_git(&root, &["commit", "-m", "change threshold boundary"])?;
     // An uncommitted edit to another tracked Python file makes the working
-    // tree the current change. The scope line names Rust seam ranking only,
-    // and the Python card is still chosen from the committed diff.
+    // tree the current change. With no Rust seam ranked, the scope line names
+    // the Python ranking the card below it comes from (#9857).
     std::fs::write(
         root.join("tests/test_pricing.py"),
         "from src.pricing import calculate_discount\n\n\ndef test_calculate_discount_smoke():\n    result = calculate_discount(125, 100)\n    assert result  # note\n",
@@ -18396,7 +18396,7 @@ fn pilot_projects_python_repair_card_for_git_diff() -> Result<(), String> {
         "recommended repair: strengthen test_calculate_discount_smoke in tests/test_pricing.py",
         "verify: python -m pytest tests/test_pricing.py::test_calculate_discount_smoke",
         "receipt status: unavailable_until_python_gap_ledger",
-        "  scope: change-first (Rust seams on lines changed since origin/main rank first)\n",
+        "  scope: change-first (python (preview) seams on lines changed since origin/main rank first)\n",
     ] {
         assert!(stdout.contains(needle), "missing stdout needle: {needle}");
     }
