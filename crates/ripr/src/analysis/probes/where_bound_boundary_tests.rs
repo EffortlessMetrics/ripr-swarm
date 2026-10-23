@@ -978,7 +978,12 @@ fn impl_header_with_fn_bound_or_comment_is_static_unknown() -> Result<(), String
 #[test]
 fn replaced_type_header_is_static_unknown_but_const_default_call_is_probed() -> Result<(), String> {
     let probes_for = |header: &str, before: &str| -> Result<Vec<_>, String> {
-        let source = format!("{header}\n    x: u8,\n}}\n");
+        let body = if header.starts_with("enum") {
+            "A,"
+        } else {
+            "x: u8,"
+        };
+        let source = format!("{header}\n    {body}\n}}\n");
         probes(
             &source,
             ChangedFile {
@@ -997,7 +1002,10 @@ fn replaced_type_header_is_static_unknown_but_const_default_call_is_probed() -> 
         )
     };
     for (header, before) in [
-        ("pub struct Wrapper<T: Clone + Send> {", "pub struct Wrapper<T: Clone> {"),
+        (
+            "pub struct Wrapper<T: Clone + Send> {",
+            "pub struct Wrapper<T: Clone> {",
+        ),
         ("enum Op<Q: Ord + Copy> {", "enum Op<Q: Ord> {"),
         ("union Bits<T: Copy> {", "union Bits<T> {"),
     ] {
