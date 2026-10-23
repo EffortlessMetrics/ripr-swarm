@@ -420,7 +420,7 @@ mod direct {
     fn dunder_protocol_and_fixture_name_rows_get_no_no_call_path() -> Result<(), String> {
         let dunder = case(
             "class Box:\n    def __init__(self, v):\n        self.v = v\n    def __eq__(self, other):\n        return self.v == other.v\n",
-            "from src.subject import Box\n\ndef test_box():\n    assert Box(1) == Box(1)\n",
+            "from src.subject import Box\n\ndef test_box():\n    assert Box(1).v == 1\n",
             5,
             "        return self.v != other.v",
             "        return self.v == other.v",

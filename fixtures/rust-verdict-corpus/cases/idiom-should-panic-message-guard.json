@@ -1,0 +1,54 @@
+{
+  "case_id": "idiom-should-panic-message-guard",
+  "subject_id": "authored-idiom-kit",
+  "diff": "cases/idiom-should-panic-message-guard.diff",
+  "anchor": {
+    "file": "src/guards.rs",
+    "line": 7
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "should_panic_expected_message",
+  "hard_case": "The `expected` substring ties the panic to the guard's own message, so a different panic (the division by zero) does not satisfy it.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if den == 1 {",
+        "mutated_line": "if den == 1 {",
+        "outcome": "tests_failed",
+        "failing_test": "guards::tests::zero_denominator_panics",
+        "equivalence_review": "not equivalent: `if 0 == den {` becomes `if den == 1 {`"
+      },
+      {
+        "replacement": "if den <= 1 {",
+        "mutated_line": "if den <= 1 {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: `if 0 == den {` becomes `if den <= 1 {`, and the test's inputs do not tell the two apart"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "With `den == 1` the guard never fires for zero, the division panics with another message, and zero_denominator_panics fails. `den <= 1` still fires for zero and ten_over_two uses 2, so it survives. Shape: `#[should_panic(expected)]` message binds the guard.",
+  "axes": [
+    "std_test_form"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "969b0b8",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

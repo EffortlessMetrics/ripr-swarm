@@ -254,7 +254,10 @@ fn write_annotations(
     } else {
         print!("{}", generated.text);
     }
-    println!("Wrote {}", options.out);
+    println!(
+        "Wrote {}",
+        crate::output::path::human_path(Path::new(&options.out))
+    );
     Ok(())
 }
 

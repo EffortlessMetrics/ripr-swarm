@@ -1,0 +1,12 @@
+diff --git a/src/core.ts b/src/core.ts
+--- a/src/core.ts
++++ b/src/core.ts
+@@ -87,7 +87,7 @@
+ }
+ 
+ export function mockedSendArgs(orderId: number, sender: { send: (value: number) => void }): void {
+-  sender.send(orderId * 2);
++  sender.send(2 * orderId);
+ }
+ 
+ export function siblingArm(kind: string, qty: number): number {

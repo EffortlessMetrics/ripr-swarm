@@ -2178,12 +2178,7 @@ fn is_inside_workspace(root: &Path, path: &Path) -> bool {
 }
 
 fn normalize_path(path: &Path) -> String {
-    let normalized = path.to_string_lossy().replace('\\', "/");
-    if cfg!(windows) {
-        normalized.to_lowercase()
-    } else {
-        normalized
-    }
+    crate::output::path::path_identity_key(path)
 }
 
 fn static_limit_kind_values(value: &Value) -> Vec<String> {
@@ -2261,7 +2256,9 @@ fn known_static_limit_kind(kind: &str) -> bool {
         StaticLimitKind::RustDebugAssertionProfileUnresolved,
         StaticLimitKind::RustCallFactBudget,
         StaticLimitKind::RustFrameworkOracleUnresolved,
+        StaticLimitKind::RustPinnedShapeUnresolved,
         StaticLimitKind::RustImplicitCallUnresolved,
+        StaticLimitKind::RustCallerLoopSelectorUnresolved,
     ]
     .iter()
     .any(|known| known.as_str() == kind)
@@ -2274,6 +2271,40 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// Windows consumer regression for the URI/identity owner, kept in this
+    /// module because the Windows advisory subset runs `lsp::gap_artifacts`
+    /// (#9504): `\` separates only here, and the owner folds ASCII case.
+    #[cfg(windows)]
+    #[test]
+    fn windows_uri_identity_uses_backslash_separator_and_ascii_fold() -> Result<(), String> {
+        let native = ["C:", "Work", "Proj", "a.rs"].join("\\");
+        let slash_lower = ["c:", "work", "proj", "a.rs"].join("/");
+        let native_uri = super::super::uri::file_uri_for_path(Path::new(&native))?;
+        let slash_uri = super::super::uri::file_uri_for_path(Path::new(&slash_lower))?;
+        assert!(super::super::uri::file_uris_match(&native_uri, &slash_uri));
+        assert_eq!(
+            crate::output::path::path_identity_key(Path::new(&native)),
+            crate::output::path::path_identity_key(Path::new(&slash_lower))
+        );
+        Ok(())
+    }
+
+    /// A Windows-produced report root spelled with `\` is not this Unix
+    /// workspace: it fails closed instead of aliasing `<root>/sub/proj`.
+    #[cfg(not(windows))]
+    #[test]
+    fn backslash_report_root_does_not_alias_slash_root_on_unix() {
+        let root = Path::new("/w/sub/proj");
+        assert!(matches!(
+            validate_report_root(root, Some("/w/sub/proj")),
+            Ok(())
+        ));
+        assert!(matches!(
+            validate_report_root(root, Some("/w\\sub\\proj")),
+            Err(GapArtifactRejection::WrongRoot(_))
+        ));
+    }
 
     /// #4001 review: only a top-level `--root .` is the route's root. Text
     /// inside a quoted argument is data and stays as recorded, a root with a

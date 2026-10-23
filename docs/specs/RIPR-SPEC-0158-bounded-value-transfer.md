@@ -28,7 +28,30 @@ exercised boundary from a missing one.
   `strip_prefix`/`strip_suffix`, `chars().next()`/`next_back()`,
   `char::len_utf8`, `map_or` with a literal default and the identity
   closure, `checked_add`/`checked_sub`, and bounded string slicing
-  from exact indices.
+  from exact indices. Exact integer arithmetic (`+ - * / %`, with
+  precedence and parentheses, failing closed on a leading sign,
+  overflow, underflow, division by zero, or an operand or result at or
+  above `i32::MAX`),
+  `split_whitespace().count()` and
+  `chars().count()` are credit-only families (#9637): a chain that
+  uses one may close a boundary through an observed equality row but
+  never names a missing input, so no row on the boundary leaves the
+  stage unknown. A comparison operand that is itself such a chain over
+  `&str`/`String`/integer owner parameters, same-file constants and
+  literals resolves the same way, but only for ordering predicates
+  (`<`, `<=`, `>`, `>=`): an `==` or `!=` guard never credits, because one
+  on-boundary row cannot discriminate its neighbours. Integer owner
+  parameters must be 32 bits or wider (`u32`, `i32`, `u64`, `i64`,
+  `u128`, `i128`, `usize`, `isize`); `u8`/`i8`/`u16`/`i16` stay unknown.
+  A computed or call-result argument, a generic or slice receiver and a
+  rebound parameter stay unknown, and a local initializer that reads a
+  parameter that is rebound, assigned, `mut`, or bound by `for`/`if let`/
+  `match`/closure earlier (`let x = x + 10;`) is unresolved. A direct
+  closed-form operand is known only when every related call row
+  evaluates it; a computed local keeps its existing any-row semantics
+  (#3295), where one evaluable row suffices. The difference is
+  deliberate: the direct form is new and fails closed on a row that may
+  sit on the other side.
 - Failure modes are typed and named: `Unsupported` names the earliest
   edge (unknown method family, non-identity closure, `map_or_else`,
   dynamic non-input identifier, over-limit chain/literal);
@@ -65,6 +88,39 @@ exercised boundary from a missing one.
   is never read from a same-named declaration. Braces inside char and
   string literals do not end an arm.
 
+- Method hop (#9329): a helper chain may cross one receiver call
+  `<ident>.<method>(args)` into a unique inherent method taking `self` or
+  `&self` (never `&mut self`, which may change the field first), when `<ident>` is a parameter of the calling
+  function declared exactly `Type`, `&Type` or `&mut Type` for the
+  method's own plain single-segment `Type`, never rebound, with exactly
+  one call site, and the file does not `use`-import `Type`. The hop
+  carries its receiver separately (`HelperHop::receiver`); its positional
+  `arguments` exclude it, so the argument-binding consumers stay correct,
+  and the single-hop ledger and field-projection consumers decline a
+  method hop. A `#[cfg(test)]` helper that makes the receiver call is the
+  one evidence-role function kept as the chain's entry, because tests call
+  it with the receiver's value. For a free-function callee, a caller whose
+  only mentions of the name are receiver calls (`expected.to_string()`)
+  is not counted as a caller: a method call never resolves to a free
+  function.
+- Receiver values (#9329): the entry hop's receiver parameter gets one
+  extra row cell, the canonical string `Type(<v0>,<v1>..)`, built only from
+  `Type(<integer literals>)` for a tuple struct declared exactly once in
+  the workspace (text based, file top level, non-generic, integer fields,
+  no `enum`/`type`/`fn`/`use` or macro-generated item of the same name), or
+  `Type::ctor(<integer literals>)` for a unique `const fn` in an inherent
+  `impl Type` whose whole body is one tail expression `Type(<expr>)` or
+  `Self(<expr>)`, each `<expr>` a product of constructor parameters,
+  literals and same-file integer constants declared once, not rebound and
+  not imported, evaluated exactly and checked against the field type
+  (`value_transfer::evaluate_integer_product`; an overflow declines). A
+  leading `&` or `&mut` on the argument is the same value. Any other
+  argument shape yields no cell, and the hop binding then withdraws every
+  row. The method hop hands its callee the cell as the pseudo-parameter
+  `self`, readable only as `self.<index>` for an index in range; the cell
+  is never an owner parameter value, never copied through a plain
+  argument, and never compared against a boundary.
+
 ## Required Evidence
 
 - The #3215 reproduction flip (`observed end values: unknown` →
@@ -78,6 +134,10 @@ exercised boundary from a missing one.
 - The classifier wiring test
   (`activation_evidence_resolves_computed_local_boundary_operands`) and
   the end-to-end diff-analysis test.
+- The public `method_hop_relations` integration target (#9603) pins
+  receiver-only rejection, helper reach despite a receiver-name collision,
+  genuine bare and module-qualified free calls through the body fallback,
+  and the existing relation fallback without a method hop.
 - Golden blast radius measured: the equality-boundary fixture flips
   (the intended behavior change) and `observation_unverified_call_deletion`
   gains the additive boolean observed-value fact; `cargo xtask goldens
@@ -91,6 +151,11 @@ exercised boundary from a missing one.
   predicate through the #3294 live-span relation.
 - Observation/discrimination still requires the test's own oracle; an
   exact input value establishes activation/infection evidence only.
+- For a free owner reached through a method hop, related-test name matching
+  uses the existing free-call reader for both captured calls and the full
+  body fallback. A receiver-only spelling cannot supply owner-call identity
+  or hide an actual helper relation; genuine bare and module-qualified free
+  calls remain direct owner calls (#9603).
 - Chain depth and literal size are bounded and the limit is disclosed
   (`Unsupported`), never silently truncated.
 - Exact operand comparison uses the classifier's existing literal
@@ -144,6 +209,29 @@ exercised boundary from a missing one.
   whose only direct row binds `bytes` to a string literal: the verdict
   stays `infection_unknown` (`bytesize-format-unit-first-run`).
 
+- Accept: `fn check(expected: &str, size: Size, si: bool)` asserting on
+  `size.hit_as(si)`, `hit_as(&self, si)` calling `hit(self.0, si)`, and a
+  test calling `check("1 big", Size::kib(1), true)` with `pub const fn
+  kib(count: u64) -> Self { Size(count * KIB) }`: the owner row is `bytes
+  = 1024`, `si = true`, so infection reads `yes` at the changed boundary.
+  The helper's assertion observes the method's result and a method hop never
+  forwards, so the verdict abstains at `propagation_unknown`
+  (`method-hop-field-read-hit`, and `method-hop-field-read-name-collision`
+  where the owner is named `to_string` and the helper also calls
+  `expected.to_string()`).
+- Reject: the same chain with rows that never equal the selected unit
+  (`method-hop-field-read-trap`): no boundary input is credited.
+- Reject: a receiver rebound before the call, a receiver that is not a
+  parameter, a parameter typed as another type, two call sites, a
+  non-unique method, a constructor argument that is not a literal, a
+  constructor whose body is not one tail expression, a product that
+  overflows the field type, a shadowed, duplicated or imported constant,
+  a tuple struct declared twice, a named-field struct, and `self.1` for a
+  one-field struct: each keeps the earlier stop or withdraws the rows
+  (`method-hop-field-read-rebound`, `method-hop-field-read-nonliteral`,
+  `method-hop-field-read-second-ctor`, and the unit tests below). These keep
+  `infection_unknown`.
+
 ## Test Mapping
 
 `analysis/classify/value_transfer.rs` `tests`;
@@ -155,6 +243,18 @@ exercised boundary from a missing one.
 `local-boundary-flag-trap`, `local-boundary-flag-negated`,
 `local-boundary-flag-shadowed`, `local-boundary-flag-loop` and
 `local-boundary-flag-alias`;
+`analysis/classify/helper_transfer/method_hop_tests.rs`,
+`analysis/classify/helper_transfer/multi_caller_tests.rs` (the multi-caller
+rule: a chain whose callee has several direct callers binds through the one
+caller a test reaches, and declines when no caller is reached, when two are
+reached, when a test calls the callee directly, or when there are more than
+eight callers),
+`analysis/classify/helper_transfer/receiver_value/tests.rs` and
+`analysis/classify/activation/method_hop_rows.rs` (every admit and decline
+rule of the method hop and the receiver value);
+`rust-verdict-corpus` cases `method-hop-field-read-hit`,
+`method-hop-field-read-name-collision`, `method-hop-field-read-trap`, `method-hop-field-read-rebound`,
+`method-hop-field-read-nonliteral` and `method-hop-field-read-second-ctor`;
 `analysis/language/rust/mod.rs` end-to-end retarget+evaluation tests;
 fixtures `binding_predicate_equality_boundary` (re-blessed flip) and
 the #3295 family fixtures.
@@ -176,7 +276,14 @@ the #3295 family fixtures.
 - `analysis/classify/value_transfer.rs` — the typed evaluator.
 - `analysis/classify/activation.rs` — exact operand resolution and the
   boundary/missing-discriminator wiring; char-literal extraction in
-  `scalar_values`.
+  `scalar_values`; the method hop's receiver cell and `self.<index>`
+  binding in `helper_transferred_rows` / `bind_helper_argument`.
+- `analysis/classify/helper_transfer.rs` — the method-hop resolution
+  (`method_hop`), the free-callee caller filter (`chain_callers`, which drops a
+  caller that only makes `x.name()` receiver calls, since a method call cannot
+  resolve to a free fn) and the multi-caller rule (`resolve_multi_caller`).
+- `analysis/classify/helper_transfer/receiver_value.rs` — the one reader of
+  a receiver argument and of a `self.<index>` projection.
 
 ## Metrics
 

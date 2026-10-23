@@ -1031,7 +1031,7 @@ fn pilot_summary_md_spells_out_first_screen_recommendation() {
         "- Focused test: none: this seam has no test target that `ripr agent repair` can use (for example, the only tests are inline `#[cfg(test)]` in a file outside the test-surface paths, the only tests are in another crate, or static evidence names no exact discriminator), so it will not start a repair attempt here",
         "Target seam:",
         "Target placement blocked:",
-        "## Ranked Seams\n\nExploratory seams, not ranked by expected mutant yield.\n\nNone of these seams can start a repair attempt (`ripr agent repair`); they are ranked for inspection by hand. Repair scope: `ripr agent repair --help`.",
+        "## Ranked Seams\n\nOrder: change-touched seams first, then grip class, then one pick per owning function per round, then missing-discriminator evidence, related tests, and assertion readiness.\n\nNone of these seams can start a repair attempt (`ripr agent repair`); they are ranked for inspection by hand. Repair scope: `ripr agent repair --help`.",
         "## Next Commands",
         "No repair attempt is available for the top seam. Next, add a test for `pricing::discounted_total` in the crate that owns src/pricing.rs, then rerun repo exposure and compare the snapshots:",
         "ripr outcome --before <cwd>/target/ripr/pilot/repo-exposure.json",
@@ -1071,20 +1071,31 @@ fn pilot_human_output_labels_seams_exploratory_not_ranked_by_mutant_yield() {
     let artifacts = pilot_artifacts();
 
     let md = render_pilot_summary_md(&entries, pilot_context(&artifacts));
+    // #9368 item 3: the mechanism leads, the precision limit follows.
     assert!(
-        md.contains("Exploratory seams, not ranked by expected mutant yield"),
+        md.contains("Order: change-touched seams first, then grip class"),
+        "{md}"
+    );
+    assert!(
+        md.contains("Static evidence, not measured fault yield"),
         "{md}"
     );
     // The label sits with the list it describes, not only in a header.
     let ranked = md.find("## Ranked").map_or("", |start| &md[start..]);
     assert!(
-        ranked.contains("Exploratory seams, not ranked by expected mutant yield."),
+        ranked.contains(
+            "Order: change-touched seams first, then grip class, then one pick per owning function per round"
+        ),
         "{md}"
     );
 
     let terminal = render_pilot_terminal(&entries, pilot_context(&artifacts));
     assert!(
-        terminal.contains("Exploratory seams, not ranked by expected mutant yield"),
+        terminal.contains("Order: change-touched seams first, then grip class"),
+        "{terminal}"
+    );
+    assert!(
+        terminal.contains("Static evidence, not measured fault yield"),
         "{terminal}"
     );
 
@@ -4087,9 +4098,8 @@ fn pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change()
     // The change touches the top seam.
     let (terminal, md, json) = render(Some(&changed("src/pricing.rs", 88)))?;
     assert!(
-        terminal.contains(
-            "Top recommendation:\n  Exploratory seams, not ranked by expected mutant yield:"
-        ),
+        terminal
+            .contains("Top recommendation:\n  Order: change-touched seams first, then grip class"),
         "{terminal}"
     );
     assert!(

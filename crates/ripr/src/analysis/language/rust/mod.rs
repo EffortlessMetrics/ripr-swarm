@@ -1349,9 +1349,17 @@ fn apply_probe_and_oracle_limits(
     // environment-activated branch, a mock closure, an expect-test debug
     // literal, an unredacted insta field) is not a missing assertion.
     classify::withhold_framework_oracle_gap(finding, index);
+    // RIPR-SPEC-0240 / #9440: an exact pin on a direct call whose changed
+    // tail is a closure, a returned-receiver effect or a let-else exit is a
+    // shape the owner pin does not read, not a missing assertion.
+    classify::withhold_pinned_shape_gap(finding, index);
     // RIPR-SPEC-0240: an operator, `Drop`, iterator or dyn call a test makes
     // may run the owner without naming it.
     classify::withhold_implicit_call_gap(finding, index);
+    // RIPR-SPEC-0240 / #5503: a changed arm fed by a bounded caller loop in an
+    // iterator's `next`, checked by a test that collects the iterator, is a
+    // selector domain ripr reads but does not run.
+    classify::withhold_caller_loop_selector_gap(finding, index);
     // RIPR-SPEC-0240 runs last so a producer-named limit keeps its finding.
     classify::withhold_unsupported_gap(finding);
 }
@@ -3126,6 +3134,7 @@ impl RustAdapter {
             production_files: production_files.len(),
             skipped_files,
             partial_reason: None,
+            file_accounting: Default::default(),
             rust_diagnostic_origins,
             rust_consumed_sources,
         })
