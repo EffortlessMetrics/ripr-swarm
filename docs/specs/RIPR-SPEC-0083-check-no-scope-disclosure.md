@@ -120,6 +120,11 @@ was actually established (#4012):
 Note: `<base>...HEAD` has no analyzable changed files, so there was nothing to analyze. The compared base was `<base>`. Deleted files, submodule pointer changes and files ripr does not analyze are not counted, so this empty result does NOT mean no behavior changed.
 ```
 
+  In the bounded human render the triage "Safe next action" below already
+  names the compared range, so the note keeps only the caveat: `Note: deleted
+  files, submodule pointer changes and files ripr does not analyze are not
+  counted, so this empty result does NOT mean no behavior changed.` (#9922).
+
   The triage "Safe next action" likewise reads `no changed files were
   compared against `<base>`; commit a change and re-run, or add `--worktree` to
   include uncommitted tracked edits` (#5258 qualifies the remedy: the flag
@@ -197,8 +202,10 @@ Note: `<base>...HEAD` has no analyzable changed files, so there was nothing to a
 
 A working-tree read (`--worktree`) names `the working tree has no analyzable
 changed files against `<base>`` instead of the range. The explicit-base and
-default-base notes share this wording in the human, GitHub and JSON outputs
-(#9033, #9222): `no_scope` with zero changed files also covers ranges that only
+default-base notes share this wording in the human (full), GitHub and JSON
+outputs (#9033, #9222); the bounded human render of a default-base empty range
+shortens it to the caveat because the triage line already names the range
+(#9922): `no_scope` with zero changed files also covers ranges that only
 delete files, change submodule pointers or touch ripr artifacts, so neither
 note claims that no behavior changed.
 
