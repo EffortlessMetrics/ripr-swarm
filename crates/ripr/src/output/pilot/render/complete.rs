@@ -2026,7 +2026,7 @@ mod assertion_shape_tests {
         push_assertion_shape(&mut out, "assert!(quote.total > Money::zero())");
         assert_eq!(
             out,
-            "  assertion shape: assert!(quote.total > Money::zero())\n"
+            "  assertion: assert!(quote.total > Money::zero())\n"
         );
     }
 }
