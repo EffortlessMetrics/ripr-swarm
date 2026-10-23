@@ -354,13 +354,11 @@ be established, so `ripr repair` refuses every item; widen the budget with
 `RIPR_REPO_EXPOSURE_SEAM_LIMIT`).
 
 The truncation refusal covers repair readiness (`ripr_list_gaps`,
-`ripr_get_gap`, `ripr_prepare_repair`). `ripr_get_repair_card` is a read-only
-card projection of the shared card producer over the refresh's diff-scoped
-inventory and is out of scope for #9108 (tracked in #9231): it does not start an attempt, and it
-does not yet mirror `ripr agent card`'s own incomplete-inventory refusal. Read
-readiness from `repair_packet_ready` and `repair_ineligibility`, not from the
-card's `readiness.repair_ready`, when the seam limit may have truncated the
-inventory.
+`ripr_get_gap`, `ripr_prepare_repair`). `ripr_get_repair_card` reads the same
+completeness fact and, like `ripr agent card`, fails with the typed
+`incomplete_inventory` code (and no card) while the inventory is truncated or
+its completeness could not be established, so it never reports
+`readiness.repair_ready` true over a truncated inventory (#9231).
 
 `ripr_get_repair_attempt` (and `ripr://repair-attempt/{attempt_id}`) reads
 one transaction by identity: session transactions answer first; otherwise

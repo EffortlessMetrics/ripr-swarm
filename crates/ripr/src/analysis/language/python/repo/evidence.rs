@@ -67,7 +67,7 @@ use super::super::static_limits::{
     implicit_dunder_dispatch_limit, static_limit_for_focused_change,
 };
 use super::super::workspace::owner_for_changed_line;
-use super::super::{PythonOwner, PythonTest};
+use super::super::{PythonFramework, PythonOwner, PythonTest};
 use super::roles::PythonFileRole;
 use super::run_status::{PartialRunReason, PythonRepoRunStatus};
 use super::{CapRecoveryRoute, DiscoveryCounts, PythonRepoInput, RepoWorkingSetLimit};
@@ -98,7 +98,7 @@ pub(in crate::analysis::language::python) struct PythonRepoEvidence {
     /// Operator recovery routes retained for capped runs (#2109).
     pub(in crate::analysis::language::python) recovery_routes: &'static [CapRecoveryRoute],
     /// Test framework detected by the shared producer at the workspace root.
-    pub(in crate::analysis::language::python) test_framework: Option<&'static str>,
+    pub(in crate::analysis::language::python) test_framework: Option<PythonFramework>,
     /// Per-file input identity for every selected file, sorted by path.
     pub(in crate::analysis::language::python) files: Vec<PythonRepoFileRecord>,
     /// Production-owner evidence (behavior items + related-test evidence),
