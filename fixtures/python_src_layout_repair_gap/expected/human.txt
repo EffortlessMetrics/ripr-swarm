@@ -28,6 +28,11 @@ Start here:
   Verify command: python -m pytest tests/test_pricing.py::test_loyalty_discount_high_value_smoke (high)
   Next step — Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `subtotal == loyalty_threshold`
   Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: 1 related Python test(s) found for owner `loyalty_discount`
     - infection yes: Changed Python predicate can alter branch selection: `if subtotal >= loyalty_threshold:`
     - 5 more detail line(s) in --format human-full

@@ -16,6 +16,8 @@ Linked issues:
 - #9895 (a SIGTERM (or SIGINT) arriving mid-refresh must not leave the
   in-flight git child behind: the server entry installs cooperative
   process-lifetime interrupts on Unix)
+- #9895 (a client-supplied pagination cursor on the static catalog lists
+  fails closed instead of being accepted and silently ignored)
 - #3089 (this slice: status, refresh, bounded gap list, and evidence
   resources)
 - #5267 (every pre-initialize typed-shape violation recovers with the
@@ -73,6 +75,17 @@ official SDK transport:
   correlated `-32602` Invalid Params error naming the field before session
   lookup. Omitted fields retain their defaults, valid values reach session
   lookup, and a subsequent request can recover on the same connection.
+- The catalog lists (`tools/list`, `prompts/list`, `resources/list`,
+  `resources/templates/list`) are static and complete: the server returns
+  every entry in one response and never issues a `nextCursor`. A
+  client-supplied `cursor` can therefore only be stale or fabricated;
+  instead of being accepted and silently ignored (which would let an agent
+  believe paging worked while it re-read page one), it fails closed with a
+  `-32602` Invalid Params error naming `cursor` and the recovery — drop the
+  argument (#9895). The SDK's default `prompts/list` answers an empty
+  catalog, so the override pins the same rule there instead of inheriting
+  the silent drop. Tool-level paging stays on `ripr_list_gaps`'s explicit
+  `offset`/`limit`, which is disclosed through `page`.
 - Pre-initialize typed-shape violations recover on the wire (#5267): a
   request that arrives before `initialize` and lacks the SDK's required
   `_meta` fields — and any other pre-initialize message the SDK refuses —
@@ -511,6 +524,11 @@ is not evidence that a resource with a particular identity exists.
   `crates/ripr/src/cli/interrupt.rs::tests` — the SIGTERM cooperative-first
   contract, one shared flag pair across SIGINT+SIGTERM, and idempotent
   process-lifetime installation.
+- `crates/ripr/tests/mcp_stdio.rs::catalog_list_cursors_fail_closed_over_stdio`
+  — a `cursor` on `tools/list`, `prompts/list`, `resources/list`, or
+  `resources/templates/list` is a `-32602` whose message explains the list
+  never paginates and whose structured data names `cursor`; the same lists
+  still answer normally without one, on the same session (#9895).
 - `crates/ripr/src/mcp/protocol.rs::tests` + `server_tests.rs` —
   descriptor and dispatch contracts.
 - `crates/ripr/tests/mcp_sdk.rs`, `crates/ripr/tests/mcp_stdio.rs` —

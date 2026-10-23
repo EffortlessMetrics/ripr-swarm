@@ -1,0 +1,86 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/shared_target_assertion_return/input
+
+Summary: 2 probe(s), 0 exposed, 0 weakly_exposed, 1 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 2 of 2 finding(s) unsuppressed (1 base-side evidence, not candidate edit targets)
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+
+WARNING ./src/shared.rs:2
+  id: probe:src_shared.rs:return_value:b867b1ce
+
+Changed
+  before: 4 * x
+  after:  3 * x
+
+Probe
+  family: return_value
+  delta:  value
+  owner:  src/shared.rs::owner
+  canonical gap: gap:rust:src/shared.rs:owner:return_value:return_value:3*x
+
+Static exposure
+  reachable_unrevealed (warning, confidence 0.79)
+
+Evidence
+  - reach yes: Related tests appear to reach owner: pin
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches returned value: 3 * x
+  - observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
+  - discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
+  - local flow reaches returned value: 3 * x (line 2)
+  - related test src/shared.rs:8 pin uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
+  - source assertion argument value 6 at line 9
+  - source function argument value x = 2 at line 9
+
+Weakness
+  - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
+  - No strong discriminator was detected
+
+Next step
+  ripr did not credit the `assert_eq!` in pin at src/shared.rs:9; the "not credited" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass
+Drill in:
+  ripr explain --root <cwd>/fixtures/shared_target_assertion_return/input --diff <cwd>/fixtures/shared_target_assertion_return/diff.patch --mode fast probe:src_shared.rs:return_value:b867b1ce
+  ripr context --root <cwd>/fixtures/shared_target_assertion_return/input --diff <cwd>/fixtures/shared_target_assertion_return/diff.patch --mode fast --at probe:src_shared.rs:return_value:b867b1ce
+
+NOTE ./src/shared.rs:2
+  id: probe:src_shared.rs:static_unknown:5b8a6929
+
+Changed
+  before: 4 * x
+  expr:   4 * x
+  source:  base_deleted — base-side evidence, not a candidate edit target
+
+Probe
+  family: static_unknown
+  delta:  unknown
+  owner:  src/shared.rs::owner
+  canonical gap: gap:rust:src/shared.rs:owner:static_unknown:static_unknown:4*x
+
+Static exposure
+  static_unknown (note, confidence 0.50)
+
+Evidence
+  - reach yes: Related tests appear to reach owner: pin
+  - infection unknown: Changed syntax is not mapped to a high-confidence probe family
+  - propagation unknown: No propagation model is available for this changed syntax
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator unknown: Assertions exist, but oracle strength is unknown
+  - local flow reaches unknown sink (line 2) — ripr could not classify where the changed value ends up; propagation confidence is limited
+  - related test src/shared.rs:8 pin uses exact value oracle, not graded against this probe: assert_eq!(owner(2), 6);
+  - source assertion argument value 6 at line 9
+  - source function argument value x = 2 at line 9
+
+Weakness
+  - No strong discriminator was detected
+  - Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests
+
+Stop reasons:
+  - static_probe_unknown — ripr could not model this change well enough to classify it
+
+Next step
+  Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
+Drill in:
+  ripr explain --root <cwd>/fixtures/shared_target_assertion_return/input --diff <cwd>/fixtures/shared_target_assertion_return/diff.patch --mode fast probe:src_shared.rs:static_unknown:5b8a6929
+  ripr context --root <cwd>/fixtures/shared_target_assertion_return/input --diff <cwd>/fixtures/shared_target_assertion_return/diff.patch --mode fast --at probe:src_shared.rs:static_unknown:5b8a6929

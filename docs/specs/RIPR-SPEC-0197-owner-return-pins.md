@@ -55,6 +55,14 @@ Policy impact:
   test has one allowlisted test-only process-launch site for compiling/running the
   fixed fixture subjects.
 
+Shared physical modules compiled by several targets do not inherit the
+representative role parent's assertion binding. Existing assertion admission
+must hold across every resolved target context. The shared effect-family gate,
+including its effect-only live-duplicate exception, also governs direct
+collection matching and strength so a refused assertion cannot restore credit
+through a second observation path. Standard assertions retain their existing
+operand and binding requirements.
+
 ## Problem
 
 A Rust `return_value` probe confirms its discriminator only when an
@@ -2162,7 +2170,7 @@ The covered route is Rust diff classification. Its consumer inventory is:
 | `classifier/evidence.rs` / `classify/decision.rs` | Compose admitted stages; the tuple-specific witness is MatchArm-only and outside these covered families. |
 | `classifier/finding.rs` | Strong sink guidance starts from the already-filtered `evidence.related_tests`, not raw assertions. |
 | `classify/activation.rs` / `classify/related_tests.rs` | Raw source value/missing-fact and relationship scans remain their own static authorities. They are not oracle admission or runtime execution proof and cannot bypass the final admitted pairing requirement. |
-| `test_grip_evidence.rs` | Repository grip has a separate raw-oracle consumer. This diff-path repair does not claim repository-grip execution parity; #4793 owns the shared-witness migration. |
+| `test_grip_evidence.rs` | Effect-family collection seams (`SideEffect`/`CallPresence`) with a direct collection mutation receiver pass through `admits_effect_assertion` before contradiction, discrimination and oracle-strength selection. Other repository-grip paths retain separate raw-oracle consumers; no general repository-grip execution parity is claimed, and #4793 owns the shared-witness migration. |
 
 The `observed_values` field retains lexical and bounded statically derived
 source facts independently of oracle admission, including enum tokens in

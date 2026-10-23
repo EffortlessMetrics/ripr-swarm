@@ -503,7 +503,7 @@ pub(crate) fn receipt_binding_from(
         &manifest.repository_head,
     )?;
     let manifest_path = display_path(&manifest_path);
-    Ok(serde_json::json!({
+    let mut binding = serde_json::json!({
         "attempt_id": after.attempt_id.as_str(),
         "manifest": manifest_path,
         "seam_id": manifest.seam_id,
@@ -513,7 +513,28 @@ pub(crate) fn receipt_binding_from(
         "delta_sha256": after.delta_sha256,
         "current": after.current,
         "edit_cage_verdict": after.verdict,
-    }))
+    });
+    // A gap-bound attempt (#9103) records the diff base it was analyzed
+    // against; seam-bound receipts omit the member, so their bytes are unchanged.
+    if let (Some(gap), Some(object)) = (&manifest.gap_binding, binding.as_object_mut()) {
+        object.insert(
+            "gap_binding".to_string(),
+            serde_json::json!({ "base": gap.base, "base_commit": gap.base_commit }),
+        );
+    }
+    Ok(binding)
+}
+
+/// The recorded gap binding of the named attempt (#9103); `None` for a
+/// seam-bound attempt.
+pub(crate) fn attempt_gap_binding_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &str,
+) -> Result<Option<RepairAttemptGapBinding>, String> {
+    let attempt_id = RepairAttemptId::parse(attempt_id.to_string())?;
+    let (_, _, manifest) = open_attempt(root, store, &attempt_id)?;
+    Ok(manifest.gap_binding)
 }
 
 /// Recompute the edit-cage delta from the live worktree under the admitting
@@ -569,7 +590,14 @@ fn read_retained_before_snapshot(
     verify_before_path: &str,
 ) -> Result<String, String> {
     let attempt_id = manifest.repair_attempt_id.as_str();
-    let expected = find_manifest_artifact(manifest, "before_snapshot")?;
+    // A gap-bound attempt (#9103) retains a check-findings before snapshot
+    // under its own role; a seam-bound attempt retains the repo-exposure one.
+    let before_role = if manifest.gap_binding.is_some() {
+        crate::app::gap_bound_repair::GAP_BOUND_BEFORE_SNAPSHOT_ROLE
+    } else {
+        "before_snapshot"
+    };
+    let expected = find_manifest_artifact(manifest, before_role)?;
     let expected_path = root
         .join(&expected.path)
         .canonicalize()
@@ -606,7 +634,10 @@ pub(crate) fn validate_verify_binding_from(
     let (store, _, manifest) = open_attempt(root, store, &attempt_id)?;
     let root = store.canonical_root().to_path_buf();
     let before_snapshot = read_retained_before_snapshot(&root, &manifest, verify_before_path)?;
-    let validated = crate::agent::artifact::validate_repo_exposure_artifact(
+    // The retained snapshot's declared kind selects its validator, so a
+    // gap-bound attempt's check-findings before snapshot is validated as the
+    // findings artifact it is.
+    let validated = crate::agent::artifact::validate_verify_snapshot(
         &root,
         &before_snapshot,
         crate::agent::artifact::RETAINED_BEFORE_SUBJECT,
@@ -716,6 +747,14 @@ pub(crate) fn validate_issued_receipt_evidence(
             ));
         }
     }
+    // A gap-bound attempt's receipt is evidence only of the gap its verify
+    // document closed (#9103).
+    validate_gap_bound_receipt_closure(
+        manifest.gap_binding.is_some(),
+        &manifest.seam_id,
+        &verify,
+        receipt,
+    )?;
     let input_paths =
         crate::output::agent_receipt::agent_receipt_input_paths_from_value(&verify)
             .map_err(|error| format!("repair attempt verify document is malformed: {error}"))?;
@@ -794,6 +833,35 @@ pub(crate) fn validate_issued_receipt_evidence(
             "repair attempt receipt status `{}` does not match its recorded analysis outcome status `{}`",
             field("/status").unwrap_or("<missing>"),
             projection.unwrap_or("<missing>")
+        ));
+    }
+    Ok(())
+}
+
+/// The closure half of a gap-bound attempt's receipt binding (#9103): the
+/// verify document must carry `bound_gap` for the attempt's gap with
+/// `closed: true`, and the receipt must repeat it exactly. A receipt over a
+/// verify document with no closure evidence is a binding failure, never an
+/// issued reading. A seam-bound attempt (`gap_bound == false`) is unaffected.
+fn validate_gap_bound_receipt_closure(
+    gap_bound: bool,
+    seam_id: &str,
+    verify: &serde_json::Value,
+    receipt: &serde_json::Value,
+) -> Result<(), String> {
+    if !gap_bound {
+        return Ok(());
+    }
+    let closure = crate::output::agent_receipt::bound_gap_for_seam(verify, seam_id).ok_or_else(
+        || {
+            format!(
+                "repair attempt verify document carries no closed bound_gap for gap `{seam_id}`; a gap-bound receipt needs positive closure evidence"
+            )
+        },
+    )?;
+    if receipt.get("bound_gap") != Some(&closure) {
+        return Err(format!(
+            "repair attempt receipt bound_gap does not equal the verify document's closure of gap `{seam_id}`"
         ));
     }
     Ok(())
@@ -7982,6 +8050,61 @@ mod tests {
 
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn gap_bound_receipt_closure_needs_a_closed_bound_gap_in_verify_and_receipt()
+    -> Result<(), String> {
+        let gap = "gap:typescript:typescript_preview:1a2b3c4d";
+        let bound = serde_json::json!({
+            "gap_id": gap, "before_classification": "weakly_exposed",
+            "after_classification": "exposed", "file": "src/a.ts", "line": 5, "closed": true
+        });
+        let verify = serde_json::json!({ "bound_gap": bound });
+        let receipt = serde_json::json!({ "bound_gap": bound });
+        // Positive: closed in both documents, identical.
+        validate_gap_bound_receipt_closure(true, gap, &verify, &receipt)?;
+        // A seam-bound attempt is not subject to the gap rule.
+        validate_gap_bound_receipt_closure(false, gap, &serde_json::json!({}), &receipt)?;
+
+        let mut open = bound.clone();
+        open["closed"] = serde_json::json!(false);
+        let mut other_gap = bound.clone();
+        other_gap["gap_id"] = serde_json::json!("gap:typescript:typescript_preview:ffff");
+        let mut edited = bound.clone();
+        edited["after_classification"] = serde_json::json!("reachable_unrevealed");
+        for (label, verify, receipt) in [
+            (
+                "verify has no bound_gap",
+                serde_json::json!({}),
+                receipt.clone(),
+            ),
+            (
+                "verify bound_gap is not closed",
+                serde_json::json!({ "bound_gap": open }),
+                receipt.clone(),
+            ),
+            (
+                "verify bound_gap names another gap",
+                serde_json::json!({ "bound_gap": other_gap }),
+                receipt.clone(),
+            ),
+            (
+                "receipt omits bound_gap",
+                verify.clone(),
+                serde_json::json!({}),
+            ),
+            (
+                "receipt bound_gap differs from the verify closure",
+                verify.clone(),
+                serde_json::json!({ "bound_gap": edited }),
+            ),
+        ] {
+            if validate_gap_bound_receipt_closure(true, gap, &verify, &receipt).is_ok() {
+                return Err(format!("{label}: a gap-bound receipt was accepted"));
+            }
+        }
         Ok(())
     }
 }
