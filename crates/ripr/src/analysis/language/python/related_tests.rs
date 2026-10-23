@@ -758,55 +758,74 @@ fn chained_or_bracketed_target(body: &str, idx: usize, before: &str, after: &str
         return true;
     }
     // Peel each matching `(` ... `)` / `[` ... `]` pair around the name, so
-    // spacing and nesting (`(( r ))`) do not change the reading.
+    // spacing, nesting (`(( r ))`) and a split across lines do not change the
+    // reading.
     let mut head_end = before.len();
     let mut rest = after;
     let mut peeled = false;
     while let Some(closer) = rest.chars().next().filter(|c| matches!(c, ']' | ')')) {
         let opener = if closer == ']' { '[' } else { '(' };
-        if !body
+        let Some(open_at) = body
             .get(..head_end)
-            .is_some_and(|head| head.ends_with(opener))
-        {
+            .map(str::trim_end)
+            .filter(|head| head.ends_with(opener))
+            .map(|head| head.len() - 1)
+        else {
             break;
-        }
-        head_end -= 1;
+        };
         head_end = body
-            .get(..head_end)
-            .map_or(head_end, |head| head.trim_end_matches([' ', '\t']).len());
-        rest = rest[1..].trim_start_matches([' ', '\t']);
+            .get(..open_at)
+            .map_or(open_at, |head| head.trim_end_matches([' ', '\t']).len());
+        rest = rest[1..].trim_start();
         peeled = true;
     }
     if !peeled {
         return false;
     }
     let head = body.get(..head_end).unwrap_or("");
+    let head_line = head
+        .get(head.rfind('\n').map_or(0, |at| at + 1)..)
+        .unwrap_or("");
     plain_assign(rest)
-        || (rest.starts_with(',')
-            && opener_is_target_position(head.get(line_start.min(head.len())..).unwrap_or("")))
-        // `in` binds only as a loop target (`for (r) in items`); a membership
-        // test such as `assert ((r)) in items` rebinds nothing.
-        || (rest.starts_with("in ") && ends_with_word(head.trim_end(), "for"))
+        || (rest.starts_with(',') && opener_is_target_position(head_line))
+        // `in` binds only inside a `for` target list (`for (r) in items`,
+        // `for x, (r) in items`); a membership test such as
+        // `assert ((r)) in items` rebinds nothing.
+        || (rest.starts_with("in ") && is_inside_for_target(head_line))
         || head.trim_end().ends_with(" as")
 }
 
-/// Whether `text` ends with the whole word `word`.
-fn ends_with_word(text: &str, word: &str) -> bool {
-    text.strip_suffix(word)
-        .is_some_and(|rest| !rest.ends_with(is_python_identifier_char))
+/// Whether `head` (the text of a line before a peeled target) sits in the
+/// target list of a `for` statement: the last whole word `for` has no `in`,
+/// `=` or `:` after it.
+fn is_inside_for_target(head: &str) -> bool {
+    let mut search = head.len();
+    while let Some(at) = head[..search].rfind("for") {
+        let boundary_before = !head[..at].ends_with(is_python_identifier_char);
+        let boundary_after = !head[at + 3..].starts_with(is_python_identifier_char);
+        if boundary_before && boundary_after {
+            let targets = &head[at + 3..];
+            return !targets.contains(['=', ':'])
+                && !targets
+                    .split(|ch: char| !is_python_identifier_char(ch))
+                    .any(|word| word == "in");
+        }
+        search = at;
+    }
+    false
 }
 
 /// Whether text before a bracket opener puts it in a binding-target position
-/// (line start, or after `for`, `as`, `,`, `*` or another opener that is itself
+/// (line start, or after `for`, `as`, `,`, `*`, `:`, `;` or another opener that is itself
 /// in target position) rather than a call argument list (`len(r), 0` in
 /// `self.assertEqual(len(r), 0)`).
 fn opener_is_target_position(head: &str) -> bool {
-    let head = head.trim_end();
-    if let Some(outer) = head.strip_suffix(['(', '[']) {
-        return opener_is_target_position(outer);
+    let mut head = head.trim_end();
+    while let Some(outer) = head.strip_suffix(['(', '[']) {
+        head = outer.trim_end();
     }
     head.is_empty()
-        || head.ends_with([',', '*'])
+        || head.ends_with([',', '*', ':', ';'])
         || head
             .rsplit(|ch: char| !is_python_identifier_char(ch))
             .next()
