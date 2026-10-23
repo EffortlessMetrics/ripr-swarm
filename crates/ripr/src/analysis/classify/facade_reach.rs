@@ -71,7 +71,7 @@ pub(in crate::analysis) fn facade_reach_witness(
         return None;
     }
     let owner_manifest = nearest_manifest_identity(context.manifest_dir_prefixes, &owner.file)?;
-    let owner_keys = owner_reexport_keys(index, &owner_manifest, owner)?;
+    let reach = owner_reach(index, &owner_manifest, owner)?;
     let dependents = context.adjacency.reverse_neighbors(&owner_manifest)?;
     let mut best: Option<FacadeReachWitness> = None;
     let mut count = 0usize;
@@ -97,7 +97,7 @@ pub(in crate::analysis) fn facade_reach_witness(
             .collect();
         let Some(owner_crate) = owner_crates
             .into_iter()
-            .find(|name| lib_reexports_owner(index, directory, name, &owner_keys))
+            .find(|name| lib_reexports_owner(index, directory, name, &reach.path))
         else {
             continue;
         };
@@ -105,7 +105,7 @@ pub(in crate::analysis) fn facade_reach_witness(
             if !crate::analysis::rust_index::is_test_file(&test.file)
                 || nearest_manifest_identity(context.manifest_dir_prefixes, &test.file).as_deref()
                     != Some(dependent.as_str())
-                || !file_names_path_root(index, &test.file, &facade_crate)
+                || !file_ties_to_owner(index, &test.file, &facade_crate, &reach.tie_names)
             {
                 continue;
             }
@@ -170,21 +170,30 @@ fn manifest_lib_crate_name(root: &Path, directory: &str) -> Option<String> {
     .then_some(name)
 }
 
-/// The first path segments a re-export list may name to re-export `owner`:
-/// the owner's own name, an enclosing type, or the top-level module of its
-/// file. `None` unless the owner is declared `pub` (unrestricted) as a free
-/// or inherent function: a private, restricted or trait-method owner is not
-/// provably re-exported, so it never fires.
-fn owner_reexport_keys(
+/// How a facade can name an owner: its public module path inside the
+/// owner's crate (`[sub, Type]` or `[sub, free_fn]`) and the names a facade
+/// test must mention (when it does not glob the facade).
+struct OwnerReach {
+    path: Vec<String>,
+    tie_names: Vec<String>,
+}
+
+/// `None` unless the owner is provably public from the crate root: an
+/// unrestricted `pub` free function at module depth zero, or an unrestricted
+/// `pub` method of a `pub` struct/enum/union declared at the root of a file,
+/// with every module on the way declared `pub mod` at its parent's root.
+/// Owners in `src/main.rs` or `src/bin/*`, trait methods, private,
+/// restricted, nested or unlocatable owners never fire.
+fn owner_reach(
     index: &RustIndex,
     owner_manifest: &str,
     owner: &FunctionSummary,
-) -> Option<Vec<String>> {
-    let mut keys = vec![owner.name.clone()];
-    match &owner.item.container {
-        FunctionContainer::Free => {}
-        FunctionContainer::Inherent { self_ty } => keys.push(self_ty.clone()),
-        _ => return None,
+) -> Option<OwnerReach> {
+    let manifest_dir = owner_manifest.strip_suffix("Cargo.toml")?;
+    let file = normalize_path(&owner.file);
+    let in_src = file.strip_prefix(manifest_dir)?.strip_prefix("src/")?;
+    if !is_library_source(in_src) {
+        return None;
     }
     let facts = index.files().get(&owner.file)?;
     let stripped = strip_comments_and_strings(&facts.data().source);
@@ -197,24 +206,156 @@ fn owner_reexport_keys(
     if !rest.starts_with(char::is_whitespace) {
         return None;
     }
-    let manifest_dir = owner_manifest.strip_suffix("Cargo.toml")?;
-    let file = normalize_path(&owner.file);
-    let in_src = file.strip_prefix(manifest_dir)?.strip_prefix("src/")?;
-    let top = in_src.split('/').next()?;
-    let top = top.strip_suffix(".rs").unwrap_or(top);
-    if !matches!(top, "lib" | "main" | "mod") && in_src != "lib.rs" {
-        keys.push(top.to_string());
+    match &owner.item.container {
+        FunctionContainer::Free => {
+            if brace_depth_before_line(&stripped, owner.start_line) != 0 {
+                return None;
+            }
+            let mut path = module_chain(index, manifest_dir, in_src)?;
+            path.push(owner.name.clone());
+            Some(OwnerReach {
+                path,
+                tie_names: vec![owner.name.clone()],
+            })
+        }
+        FunctionContainer::Inherent { self_ty } => {
+            let type_file = find_root_pub_type(index, manifest_dir, self_ty)?;
+            let mut path = module_chain(index, manifest_dir, &type_file)?;
+            path.push(self_ty.clone());
+            Some(OwnerReach {
+                path,
+                tie_names: vec![owner.name.clone(), self_ty.clone()],
+            })
+        }
+        _ => None,
     }
-    Some(keys)
+}
+
+fn is_library_source(in_src: &str) -> bool {
+    in_src != "main.rs" && !in_src.starts_with("bin/")
+}
+
+/// The brace depth at the start of 1-based `line` of comment-stripped text.
+fn brace_depth_before_line(stripped: &str, line: usize) -> usize {
+    let mut depth = 0usize;
+    for text in stripped.lines().take(line.saturating_sub(1)) {
+        for ch in text.chars() {
+            match ch {
+                '{' => depth += 1,
+                '}' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+    }
+    depth
+}
+
+/// The module names between the crate root and a file under `src/`
+/// (`a/b.rs` and `a/b/mod.rs` are `[a, b]`; `lib.rs` is empty), `None`
+/// unless each is declared `pub mod` at the root of its parent file. A parent
+/// the index does not hold is unprovable.
+fn module_chain(index: &RustIndex, manifest_dir: &str, in_src: &str) -> Option<Vec<String>> {
+    let stem = in_src.strip_suffix(".rs")?;
+    let mut segments: Vec<&str> = stem.split('/').collect();
+    if segments.last() == Some(&"mod") {
+        segments.pop();
+    }
+    if segments.as_slice() == ["lib"] {
+        return Some(Vec::new());
+    }
+    for (at, segment) in segments.iter().enumerate() {
+        let parent_stem = if at == 0 {
+            "lib".to_string()
+        } else {
+            segments[..at].join("/")
+        };
+        let candidates = [
+            format!("{manifest_dir}src/{parent_stem}.rs"),
+            format!("{manifest_dir}src/{parent_stem}/mod.rs"),
+        ];
+        let declared = index
+            .files()
+            .iter()
+            .filter(|(path, _)| candidates.contains(&normalize_path(path)))
+            .any(|(_, facts)| {
+                let stripped = strip_comments_and_strings(&facts.data().source);
+                root_statements(&stripped).is_some_and(|statements| {
+                    statements
+                        .iter()
+                        .any(|statement| declares_pub_item(statement, "mod", segment))
+                })
+            });
+        if !declared {
+            return None;
+        }
+    }
+    Some(segments.iter().map(|segment| segment.to_string()).collect())
+}
+
+/// The `src/`-relative file of the single root-level `pub struct|enum|union
+/// <name>` in the owner's package; `None` when absent or ambiguous.
+fn find_root_pub_type(index: &RustIndex, manifest_dir: &str, name: &str) -> Option<String> {
+    let mut found: Vec<String> = Vec::new();
+    for (path, facts) in index.files().iter() {
+        let normalized = normalize_path(path);
+        let Some(rel) = normalized
+            .strip_prefix(manifest_dir)
+            .and_then(|rest| rest.strip_prefix("src/"))
+        else {
+            continue;
+        };
+        if !is_library_source(rel) {
+            continue;
+        }
+        let stripped = strip_comments_and_strings(&facts.data().source);
+        let Some(statements) = root_statements(&stripped) else {
+            continue;
+        };
+        let declared = statements.iter().any(|statement| {
+            ["struct", "enum", "union"]
+                .iter()
+                .any(|keyword| declares_pub_item(statement, keyword, name))
+        });
+        if declared {
+            found.push(rel.to_string());
+        }
+    }
+    (found.len() == 1).then(|| found.remove(0))
+}
+
+/// Whether the statement is `pub <keyword> <name>` (any attribute except
+/// `cfg`/`cfg_attr`), ending the name at a non-identifier byte.
+fn declares_pub_item(statement: &str, keyword: &str, name: &str) -> bool {
+    let Some(rest) = strip_attributes(statement, false) else {
+        return false;
+    };
+    let Some(rest) = rest.strip_prefix("pub") else {
+        return false;
+    };
+    if !rest.starts_with(char::is_whitespace) {
+        return false;
+    }
+    let Some(rest) = rest.trim_start().strip_prefix(keyword) else {
+        return false;
+    };
+    if !rest.starts_with(char::is_whitespace) {
+        return false;
+    }
+    rest.trim_start().strip_prefix(name).is_some_and(|after| {
+        !after
+            .bytes()
+            .next()
+            .is_some_and(|b| b.is_ascii_alphanumeric() || b == b'_')
+    })
 }
 
 /// Whether `<directory>src/lib.rs` has a crate-root, unconditional,
-/// non-macro `pub use` of `crate_name` that covers one of `owner_keys`.
+/// non-macro `pub use` of `crate_name` that covers `owner_path`.
 fn lib_reexports_owner(
     index: &RustIndex,
     directory: &str,
     crate_name: &str,
-    owner_keys: &[String],
+    owner_path: &[String],
 ) -> bool {
     let lib = format!("{directory}src/lib.rs");
     index
@@ -225,7 +366,7 @@ fn lib_reexports_owner(
             let stripped = strip_comments_and_strings(&facts.data().source);
             root_pub_use_trees(&stripped)
                 .iter()
-                .any(|tree| use_tree_covers(tree, crate_name, owner_keys))
+                .any(|tree| use_tree_covers(tree, crate_name, owner_path))
         })
 }
 
@@ -235,6 +376,18 @@ fn lib_reexports_owner(
 /// a `#[cfg]`/`#[cfg_attr]` or any unknown attribute drops the item.
 /// Malformed braces yield nothing.
 fn root_pub_use_trees(stripped: &str) -> Vec<String> {
+    root_statements(stripped)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|statement| pub_use_tree(statement))
+        .collect()
+}
+
+/// The brace-depth-zero statements of comment-stripped source. A `pub use`
+/// statement ends only at `;` (its braces belong to the use tree); any other
+/// ends at `;` or at the `}` that returns to depth zero. `None` when braces
+/// are unbalanced.
+fn root_statements(stripped: &str) -> Option<Vec<String>> {
     let mut statements = Vec::new();
     let mut current = String::new();
     let mut depth = 0usize;
@@ -245,10 +398,7 @@ fn root_pub_use_trees(stripped: &str) -> Vec<String> {
                 current.push(ch);
             }
             '}' => {
-                let Some(next) = depth.checked_sub(1) else {
-                    return Vec::new();
-                };
-                depth = next;
+                depth = depth.checked_sub(1)?;
                 current.push(ch);
                 if depth == 0 && !is_pub_use_statement(&current) {
                     statements.push(std::mem::take(&mut current));
@@ -261,13 +411,7 @@ fn root_pub_use_trees(stripped: &str) -> Vec<String> {
             _ => current.push(ch),
         }
     }
-    if depth != 0 {
-        return Vec::new();
-    }
-    statements
-        .iter()
-        .filter_map(|statement| pub_use_tree(statement))
-        .collect()
+    (depth == 0).then_some(statements)
 }
 
 /// Whether the unterminated statement so far is a `pub use` item, whose
@@ -276,7 +420,10 @@ fn is_pub_use_statement(statement: &str) -> bool {
     pub_use_tree(&format!("{statement};")).is_some()
 }
 
-fn pub_use_tree(statement: &str) -> Option<String> {
+/// The statement without its leading attributes. `strict` accepts only
+/// `doc`, `allow`, `expect`, `deprecated` and `must_use`; otherwise anything
+/// but `cfg`/`cfg_attr`. `None` for a rejected or malformed attribute.
+fn strip_attributes(statement: &str, strict: bool) -> Option<&str> {
     let mut rest = statement.trim_start();
     while rest.starts_with('#') {
         let after = rest[1..].trim_start();
@@ -307,15 +454,25 @@ fn pub_use_tree(statement: &str) -> Option<String> {
                 .chars()
                 .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
                 .collect();
-            if !matches!(
-                name.as_str(),
-                "doc" | "allow" | "expect" | "deprecated" | "must_use"
-            ) {
+            let allowed = if strict {
+                matches!(
+                    name.as_str(),
+                    "doc" | "allow" | "expect" | "deprecated" | "must_use"
+                )
+            } else {
+                !matches!(name.as_str(), "cfg" | "cfg_attr")
+            };
+            if !allowed {
                 return None;
             }
         }
         rest = body[close + 1..].trim_start();
     }
+    Some(rest)
+}
+
+fn pub_use_tree(statement: &str) -> Option<String> {
+    let rest = strip_attributes(statement, true)?;
     let rest = rest.strip_prefix("pub")?;
     if !rest.starts_with(char::is_whitespace) {
         return None;
@@ -325,20 +482,29 @@ fn pub_use_tree(statement: &str) -> Option<String> {
         return None;
     }
     let tree = rest.trim().strip_suffix(';')?.trim();
-    Some(tree.to_string())
+    // Only use-tree text: anything else (a stray `;`, `(`, `#`, `=`, `[`)
+    // means the statement splitter swallowed more than one item.
+    tree.chars()
+        .all(|c| {
+            c.is_ascii_alphanumeric()
+                || c.is_whitespace()
+                || matches!(c, '_' | ':' | '{' | '}' | ',' | '*')
+        })
+        .then(|| tree.to_string())
 }
 
-/// Whether the use tree re-exports `crate_name` in a way that covers an
-/// owner: the whole crate (`inner`, `inner as x`, `inner::*`, `inner::{self}`)
-/// or a path/list entry whose first segment is one of `owner_keys`. Nothing
-/// is resolved: an entry naming the owner's item, enclosing type or module
-/// is the whole check.
-fn use_tree_covers(tree: &str, crate_name: &str, owner_keys: &[String]) -> bool {
+/// Whether the use tree re-exports `crate_name` in a way that covers
+/// `owner_path` (the owner's module chain then its item or type): the whole
+/// crate (`inner`, `inner as x`, `inner::*`, `inner::{self}`), or a path
+/// that is a prefix of the owner's path, or a glob or `self` under such a
+/// prefix. A path that leaves the owner's (`inner::sub::Other`) does not
+/// cover it. Nothing is resolved.
+fn use_tree_covers(tree: &str, crate_name: &str, owner_path: &[String]) -> bool {
     let tree = tree.trim().trim_start_matches("::").trim_start();
     if let Some(list) = braced_list(tree) {
         return split_list(list)
             .iter()
-            .any(|entry| use_tree_covers(entry, crate_name, owner_keys));
+            .any(|entry| use_tree_covers(entry, crate_name, owner_path));
     }
     let Some(rest) = tree.strip_prefix(crate_name) else {
         return false;
@@ -354,32 +520,36 @@ fn use_tree_covers(tree: &str, crate_name: &str, owner_keys: &[String]) -> bool 
     if rest.is_empty() || rest.starts_with("as ") || rest.starts_with("as\t") {
         return true;
     }
-    let Some(after) = rest.strip_prefix("::") else {
-        return false;
-    };
-    let after = after.trim_start();
-    if after == "*" {
-        return true;
-    }
-    if let Some(list) = braced_list(after) {
-        return split_list(list).iter().any(|entry| {
-            let entry = entry.trim();
-            entry == "*"
-                || entry == "self"
-                || entry.starts_with("self ")
-                || first_segment_in(entry, owner_keys)
-        });
-    }
-    first_segment_in(after, owner_keys)
+    rest.strip_prefix("::")
+        .is_some_and(|after| path_covers(after, owner_path))
 }
 
-fn first_segment_in(path: &str, keys: &[String]) -> bool {
-    let segment: String = path
-        .trim_start()
+fn path_covers(path: &str, owner: &[String]) -> bool {
+    let path = path.trim();
+    if path == "*" || path == "self" || path.starts_with("self ") {
+        return true;
+    }
+    if let Some(list) = braced_list(path) {
+        return split_list(list)
+            .iter()
+            .any(|entry| path_covers(entry, owner));
+    }
+    let (segment, rest) = match path.split_once("::") {
+        Some((segment, rest)) => (segment, Some(rest)),
+        None => (path, None),
+    };
+    let name: String = segment
+        .trim()
         .chars()
         .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
         .collect();
-    !segment.is_empty() && keys.contains(&segment)
+    if name.is_empty() || owner.first() != Some(&name) {
+        return false;
+    }
+    match rest {
+        None => true,
+        Some(rest) => path_covers(rest, &owner[1..]),
+    }
 }
 
 /// The inside of a `{ ... }` whose closing brace ends the text.
@@ -431,6 +601,73 @@ fn file_names_path_root(index: &RustIndex, file: &std::path::Path, root: &str) -
                 .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b':');
         before_ok && stripped[end..].starts_with("::")
     })
+}
+
+/// Whether a facade test ties to the owner: it names the facade crate as a
+/// path root and either globs the facade (`use facade::*;`,
+/// `use facade::{.., *}`) or mentions one of `tie_names` as a whole word.
+/// Naming only an unrelated facade item (`facade::VERSION`) does not tie.
+fn file_ties_to_owner(
+    index: &RustIndex,
+    file: &std::path::Path,
+    root: &str,
+    tie_names: &[String],
+) -> bool {
+    if !file_names_path_root(index, file, root) {
+        return false;
+    }
+    let Some(facts) = index.files().get(file) else {
+        return false;
+    };
+    let stripped = strip_comments_and_strings(&facts.data().source);
+    globs_root(&stripped, root) || tie_names.iter().any(|name| contains_word(&stripped, name))
+}
+
+fn globs_root(stripped: &str, root: &str) -> bool {
+    stripped.match_indices(root).any(|(at, _)| {
+        let before_ok = at == 0
+            || !stripped
+                .as_bytes()
+                .get(at - 1)
+                .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b':');
+        let Some(after) = stripped[at + root.len()..].strip_prefix("::") else {
+            return false;
+        };
+        let after = after.trim_start();
+        before_ok
+            && (after.starts_with('*')
+                || braced_prefix(after)
+                    .is_some_and(|list| split_list(list).iter().any(|e| e.trim() == "*")))
+    })
+}
+
+/// The inside of a leading balanced `{ ... }`, wherever the text goes on.
+fn braced_prefix(text: &str) -> Option<&str> {
+    let body = text.strip_prefix('{')?;
+    let mut depth = 1usize;
+    for (at, ch) in body.char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&body[..at]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn contains_word(text: &str, word: &str) -> bool {
+    let ident = |b: &u8| b.is_ascii_alphanumeric() || *b == b'_';
+    !word.is_empty()
+        && text.match_indices(word).any(|(at, _)| {
+            let before = at.checked_sub(1).and_then(|i| text.as_bytes().get(i));
+            let after = text.as_bytes().get(at + word.len());
+            !before.is_some_and(ident) && !after.is_some_and(ident)
+        })
 }
 
 pub(in crate::analysis) fn facade_reach_witness_pointer(witness: &FacadeReachWitness) -> String {
@@ -487,14 +724,14 @@ pub(in crate::analysis) fn facade_reach_limitation_detail_lines(
 mod tests {
     use super::*;
 
-    fn keys(names: &[&str]) -> Vec<String> {
+    fn path(names: &[&str]) -> Vec<String> {
         names.iter().map(|n| n.to_string()).collect()
     }
 
     fn covers(source: &str, owner: &[&str]) -> bool {
         root_pub_use_trees(source)
             .iter()
-            .any(|tree| use_tree_covers(tree, "inner", &keys(owner)))
+            .any(|tree| use_tree_covers(tree, "inner", &path(owner)))
     }
 
     #[test]
@@ -507,18 +744,25 @@ mod tests {
             "pub use inner::{self};",
             "pub use {inner::*, other::A};",
         ] {
-            assert!(covers(source, &["f"]), "{source}");
+            assert!(covers(source, &["sub", "f"]), "{source}");
         }
     }
 
     #[test]
-    fn item_lists_must_name_the_owner_or_its_container() {
+    fn paths_must_be_a_prefix_of_the_owners_path() {
         assert!(covers("pub use inner::{Ext, f};", &["f"]));
         assert!(covers("pub use inner::f;", &["f"]));
-        assert!(covers("pub use inner::sub::{x};", &["f", "sub"]));
-        assert!(covers("pub use inner::{Ext, *};", &["f"]));
+        assert!(covers("pub use inner::sub::*;", &["sub", "f"]));
+        assert!(covers("pub use inner::sub::f;", &["sub", "f"]));
+        assert!(covers("pub use inner::sub;", &["sub", "f"]));
+        assert!(covers("pub use inner::sub::{x, *};", &["sub", "f"]));
+        assert!(covers("pub use inner::sub::{self};", &["sub", "f"]));
+        assert!(covers("pub use inner::sub::Ty as T;", &["sub", "Ty"]));
         assert!(!covers("pub use inner::{Other};", &["f"]));
         assert!(!covers("pub use inner::Other;", &["f"]));
+        assert!(!covers("pub use inner::sub::Other;", &["sub", "f"]));
+        assert!(!covers("pub use inner::sub::*;", &["f"]));
+        assert!(!covers("pub use inner::other::*;", &["sub", "f"]));
         assert!(!covers("pub use inner::{Other, nested::{g}};", &["f"]));
     }
 
@@ -540,7 +784,45 @@ mod tests {
         ] {
             assert!(!covers(source, &["f"]), "{source}");
         }
+        // Text around a valid `pub use` is never part of its tree.
+        for source in [
+            "pub use other::X; const A: [u8; 2] = [1, 2];\n",
+            "pub use inner::{Other};\n#[cfg(feature = \"x\")]\nfn f() {}\n",
+            "pub use other::X\n#[cfg(feature = \"x\")]\npub use inner::*;\n",
+            "pub use other::X; // pub use inner::*;\n",
+        ] {
+            assert!(!covers(source, &["f"]), "{source}");
+        }
         assert!(covers("#[doc(hidden)]\npub use inner::*;", &["f"]));
         assert!(covers("mod x { }\nfn f() {}\npub use inner::*;", &["f"]));
+    }
+
+    #[test]
+    fn facade_tests_tie_by_owner_name_type_or_glob() {
+        assert!(globs_root("use facade::*;", "facade"));
+        assert!(globs_root("use facade::{Ext, *};", "facade"));
+        assert!(!globs_root("use facade::{Ext};", "facade"));
+        assert!(!globs_root("use other_facade::*;", "facade"));
+        assert!(contains_word("facade::bump_counter(1)", "bump_counter"));
+        assert!(!contains_word("facade::bump_counter_x(1)", "bump_counter"));
+        assert!(!contains_word("facade::VERSION", "bump_counter"));
+    }
+
+    #[test]
+    fn pub_items_need_pub_attribute_free_declarations() {
+        assert!(declares_pub_item(
+            "#[derive(Debug)]\npub struct T {}",
+            "struct",
+            "T"
+        ));
+        assert!(!declares_pub_item(
+            "#[cfg(x)]\npub struct T {}",
+            "struct",
+            "T"
+        ));
+        assert!(!declares_pub_item("pub(crate) struct T {}", "struct", "T"));
+        assert!(!declares_pub_item("pub struct Tx {}", "struct", "T"));
+        assert!(declares_pub_item("pub mod a;", "mod", "a"));
+        assert!(!declares_pub_item("mod a;", "mod", "a"));
     }
 }
