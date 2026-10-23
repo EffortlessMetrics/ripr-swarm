@@ -1,0 +1,12 @@
+diff --git a/shapes/decorators.py b/shapes/decorators.py
+--- a/shapes/decorators.py
++++ b/shapes/decorators.py
+@@ -37,7 +37,7 @@
+     CALL_LOG.clear()
+ 
+ 
+-@retry(3)
++@retry(2)
+ def flaky():
+     _attempts["n"] += 1
+     if _attempts["n"] < 3:

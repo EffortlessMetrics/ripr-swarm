@@ -21,7 +21,7 @@ Start here:
   Canonical gap: gap:python:src/shop.py:fee:return_value:return_value:amount*3
   Changed behavior: return amount * 3
   Missing discriminator (1 of 2): A strong Python oracle reaches `fee`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an…
-  Related test (1 of 7 matched rows): tests/test_aliased_mock.py:5 test_local_aliased_mock
+  Related test (1 of 7 matched rows): tests/test_aliased_mock.py:5 test_local_aliased_mock (ripr could not confirm that this assertion observes the changed behavior)
   Suggested test file: tests/test_aliased_mock.py
   Suggested test: test_local_aliased_mock
   Test node: tests/test_aliased_mock.py::test_local_aliased_mock
@@ -35,7 +35,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_local_owner_stand_ins/input --diff <cwd>/fixtures/python_local_owner_stand_ins/diff.patch --mode fast probe:src_shop.py:python_preview:3e5b25e0
   ripr context --root <cwd>/fixtures/python_local_owner_stand_ins/input --diff <cwd>/fixtures/python_local_owner_stand_ins/diff.patch --mode fast --at probe:src_shop.py:python_preview:3e5b25e0
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_shop.py:python_preview:3e5b25e0 --root <cwd>/fixtures/python_local_owner_stand_ins/input` for the full gate's answer
+  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/shop.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
 
 More:
   Full evidence: rerun with --format human-full

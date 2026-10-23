@@ -1,0 +1,12 @@
+diff --git a/src/account.ts b/src/account.ts
+index 0000000..1111111 100644
+--- a/src/account.ts
++++ b/src/account.ts
+@@ -11,6 +11,6 @@
+   }
+ 
+   get overdrawn(): boolean {
+-    return this.balance < 0;
++    return this.balance <= 0;
+   }
+ }

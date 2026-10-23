@@ -1041,6 +1041,28 @@ fn generated_init_config_matches_checked_in_example() -> Result<(), String> {
 }
 
 #[test]
+fn generated_init_config_banner_discloses_defaults_and_language_pin() -> Result<(), String> {
+    let generated = generated_init_config();
+    for needle in [
+        "every value below is a built-in",
+        "this file pins to [\"rust\"]",
+        "enables languages it detects from project markers",
+        "deleting this file is not identical",
+        "ripr config validate",
+    ] {
+        if !generated.contains(needle) {
+            return Err(format!("generated init config banner is missing: {needle}"));
+        }
+    }
+    if generated.contains("behaves identically") {
+        return Err(
+            "banner must not claim a missing ripr.toml behaves identically; detection enables preview languages (see default_config_for_root)".to_string(),
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn unknown_language_error_includes_perl_fact_packet_guidance() -> Result<(), String> {
     let Err(error) = parse_config(
         r#"

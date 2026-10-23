@@ -30,7 +30,6 @@ use super::workspace::{
 use crate::agent::artifact::git_output;
 use crate::agent::command_specs::{AgentArtifactRoute, agent_inspection_command_spec};
 use crate::analysis::ClassifiedSeam;
-use crate::analysis::inventory_diff_scoped_classified_seams_at_with_config;
 use crate::analysis::repair_route::repair_packet_eligibility;
 use crate::app::repair_card_handoff::{
     AgentCardError, SeamCardFacts, assemble_repair_card, bound_finding_gap_id, card_packet_json,
@@ -63,10 +62,9 @@ pub(crate) const CODE_POLICY_OMITTED: &str = "policy_omitted";
 pub(crate) const CODE_WITNESS_UNAVAILABLE: &str = "witness_unavailable";
 pub(crate) const CODE_IDENTITY_UNNAMEABLE: &str = "identity_unnameable";
 pub(crate) const CODE_BUDGET_OVERFLOW: &str = "budget_overflow";
-/// Named for wire stability only: the card producer's diff-scoped inventory
-/// is uncapped by construction (every scoped seam is classified; the
-/// no-impact fast path declines on any owner name), so this slice never
-/// raises the truncated-inventory refusal.
+/// Raised when the repo-wide seam inventory is truncated by the seam limit or
+/// its completeness cannot be established (#9231), mirroring `ripr agent
+/// card`'s own incomplete-inventory refusal.
 pub(crate) const CODE_INCOMPLETE_INVENTORY: &str = "incomplete_inventory";
 
 /// The repair-card producer facts bound when one bounded analysis attempt
@@ -86,6 +84,11 @@ pub(crate) struct SnapshotCardProducers {
     /// The candidate seams discovered during commit, used for most-specific
     /// span selection (#7179).
     pub(crate) candidate_seams: Vec<ClassifiedSeam>,
+    /// Whether the repo-wide seam inventory `ripr agent card` consults was
+    /// complete when this snapshot committed (#9231). A card read refuses
+    /// with `incomplete_inventory` unless it is `Complete`, exactly like the
+    /// CLI, so a truncated or unverified inventory never reports a ready card.
+    pub(crate) completeness: super::repair_admission::InventoryCompleteness,
 }
 
 /// One seam bound to one snapshot canonical item at commit time.
@@ -135,6 +138,9 @@ fn inventory_changed_files(root: &Path, findings: &[Finding]) -> Vec<PathBuf> {
 pub(crate) struct SeamInventory {
     pub(crate) repository_head: String,
     pub(crate) candidate_seams: Vec<ClassifiedSeam>,
+    /// Whether the repo-wide inventory `ripr repair` consults is complete
+    /// (#9108); the diff-scoped `candidate_seams` carry no seam-limit fact.
+    pub(crate) completeness: super::repair_admission::InventoryCompleteness,
 }
 
 /// Gather the refresh's seam inventory. This runs inside the refresh attempt
@@ -163,13 +169,20 @@ pub(crate) fn gather_seam_inventory(
         .trim()
         .to_string();
     let mut candidate_seams = Vec::new();
+    let mut completeness = super::repair_admission::InventoryCompleteness::Complete;
     if !findings.is_empty() {
+        // The CLI resolves a repair item against the repo-wide inventory and
+        // errors when the seam limit truncated it. The diff-scoped inventory
+        // carries no such fact on its own, so it also derives the limit fact
+        // from the index it already built (a count-only seam walk, no
+        // repo-wide evidence or classification), keeping a small-diff refresh
+        // off a full-repo classification (#9108).
         let changed_files = inventory_changed_files(root, findings);
         let changed_owner_names = findings
             .iter()
             .filter_map(|finding| finding.canonical_gap.as_ref().map(|gap| gap.owner.clone()))
             .collect::<Vec<_>>();
-        candidate_seams = inventory_diff_scoped_classified_seams_at_with_config(
+        let scoped = crate::analysis::inventory_diff_scoped_bound_seams_at_with_config(
             root,
             config,
             &changed_files,
@@ -181,12 +194,24 @@ pub(crate) fn gather_seam_inventory(
                 format!("the seam inventory authority failed during refresh: {error}"),
                 "retry with ripr_refresh; if the failure persists, run `ripr agent packet` in the repository",
             )
-        })?
-        .classified;
+        })?;
+        completeness = match scoped.repo_seam_limit {
+            Some(limit) => {
+                super::repair_admission::InventoryCompleteness::from_inventory_limit(limit)
+            }
+            // No index was built (the no-impact fast path), so the limit fact
+            // is unknown: fall back to the repo-wide authority, fail closed.
+            None => super::repair_admission::InventoryCompleteness::from_inventory_limit(
+                crate::analysis::inventory_classified_seams_at_with_config(root, config)
+                    .map(|(_, limit_info)| limit_info),
+            ),
+        };
+        candidate_seams = scoped.classified;
     }
     Ok(SeamInventory {
         repository_head,
         candidate_seams,
+        completeness,
     })
 }
 
@@ -203,6 +228,7 @@ pub(crate) fn bind_snapshot_card_producers(
     let SeamInventory {
         repository_head,
         candidate_seams,
+        completeness,
     } = inventory;
     let mut bindings = Vec::new();
     let mut all_candidate_seams = Vec::new();
@@ -247,6 +273,7 @@ pub(crate) fn bind_snapshot_card_producers(
         repository_head,
         bindings,
         candidate_seams: all_candidate_seams,
+        completeness,
     });
     Ok(())
 }
@@ -361,6 +388,19 @@ impl WorkspaceSession {
                 "re-run ripr_refresh to commit a complete snapshot, then retry",
             ));
         };
+        // The CLI refuses a card before it resolves any seam while the repo
+        // seam inventory is truncated; the same shared completeness fact
+        // refuses here, ahead of every binding lookup, so a truncated or
+        // unverified inventory can never project `readiness.repair_ready`.
+        if let Some(detail) = producers.completeness.refusal_detail() {
+            return Err(agent_card_failure(AgentCardError::refusal(
+                AgentCardRefusalKind::IncompleteInventory,
+                format!(
+                    "repair card for canonical item {} was refused: {detail}",
+                    item.canonical_id
+                ),
+            )));
+        }
         let Some(binding) = producers
             .bindings
             .iter()
@@ -626,6 +666,16 @@ mod tests {
     fn session_with_card_producers(
         binding: Option<SeamCardBinding>,
     ) -> Result<WorkspaceSession, String> {
+        session_with_completeness(
+            binding,
+            crate::mcp::repair_admission::InventoryCompleteness::Complete,
+        )
+    }
+
+    fn session_with_completeness(
+        binding: Option<SeamCardBinding>,
+        completeness: crate::mcp::repair_admission::InventoryCompleteness,
+    ) -> Result<WorkspaceSession, String> {
         let output = output(std::slice::from_ref(&super::super::gaps::test_finding()?))?;
         let mut snapshot = Snapshot::from_output(&output, Some("root:sha256:a"))
             .map_err(|failure| failure.detail)?;
@@ -637,6 +687,7 @@ mod tests {
             repository_head: "abc123".to_string(),
             bindings: binding.into_iter().collect(),
             candidate_seams,
+            completeness,
         });
         Ok(WorkspaceSession {
             in_flight: false,
@@ -662,6 +713,7 @@ mod tests {
             repository_head: "abc123".to_string(),
             bindings: vec![binding],
             candidate_seams,
+            completeness: crate::mcp::repair_admission::InventoryCompleteness::Complete,
         });
         Ok(WorkspaceSession {
             in_flight: false,
@@ -795,6 +847,29 @@ mod tests {
             Ok(value) => return Err(format!("unknown item must fail closed: {value}")),
             Err(failure) if failure.code == CODE_ITEM_NOT_FOUND => {}
             Err(failure) => return Err(format!("unexpected code: {}", failure.code)),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn card_read_refuses_truncated_or_unverified_inventory() -> Result<(), String> {
+        use crate::mcp::repair_admission::InventoryCompleteness;
+        // #9231: even with the item bound to a seam, a truncated or
+        // unverifiable repo inventory refuses with `incomplete_inventory`
+        // (the `ripr agent card` kind), ahead of the binding lookup.
+        for completeness in [
+            InventoryCompleteness::Truncated {
+                analyzed: 1,
+                total: 5,
+            },
+            InventoryCompleteness::Unverified("inventory failed".to_string()),
+        ] {
+            let session = session_with_completeness(None, completeness.clone())?;
+            match session.repair_card_document("gap:test:1", None, Some(Path::new("."))) {
+                Ok(value) => return Err(format!("{completeness:?} must refuse: {value}")),
+                Err(failure) if failure.code == CODE_INCOMPLETE_INVENTORY => {}
+                Err(failure) => return Err(format!("unexpected code: {}", failure.code)),
+            }
         }
         Ok(())
     }
@@ -936,9 +1011,9 @@ mod tests {
                     AgentCardRefusalKind::IncompleteInventory,
                     "the candidate inventory was truncated".to_string(),
                 ),
-                // Wire stability only: the uncapped diff-scoped card path
-                // never raises this refusal, but a kind must map to the same
-                // machine state on every transport.
+                // A truncated or unverified repo-wide seam inventory raises
+                // this refusal on the card read (#9231); a kind must map to
+                // the same machine state on every transport.
                 CODE_INCOMPLETE_INVENTORY,
             ),
             (
@@ -982,6 +1057,7 @@ mod tests {
             repository_head: "abc123".to_string(),
             bindings: vec![binding_for(&entry, "gap:test:1")],
             candidate_seams: vec![entry.clone()],
+            completeness: crate::mcp::repair_admission::InventoryCompleteness::Complete,
         });
         let session = WorkspaceSession {
             last_good: Some(Arc::new(snapshot)),
@@ -1261,6 +1337,7 @@ mod tests {
             repository_head: "abc123".to_string(),
             bindings: vec![binding_for(&inner, producer_id)],
             candidate_seams: candidates.to_vec(),
+            completeness: crate::mcp::repair_admission::InventoryCompleteness::Complete,
         });
         let session = WorkspaceSession {
             last_good: Some(Arc::new(session_snapshot)),
@@ -1284,6 +1361,7 @@ mod tests {
             repository_head: "abc123".to_string(),
             bindings: vec![binding_for(&outer, producer_id)],
             candidate_seams: candidates.to_vec(),
+            completeness: crate::mcp::repair_admission::InventoryCompleteness::Complete,
         });
         let outer_session = WorkspaceSession {
             last_good: Some(Arc::new(outer_session_snapshot)),

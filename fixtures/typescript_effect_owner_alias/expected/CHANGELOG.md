@@ -76,3 +76,42 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_effect_owner_alias (7)
+
+Reason:
+typescript row-local related-test miss (#5495, RIPR-SPEC-0224): rows gain a typed non-decisional miss; class, stages and decision fields unchanged
+
+Command:
+`cargo xtask goldens bless typescript_effect_owner_alias --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_effect_owner_alias (8)
+
+Reason:
+RIPR-SPEC-0224: TypeScript row-miss narrowed to proven paths (#5495)
+
+Command:
+`cargo xtask goldens bless typescript_effect_owner_alias --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_effect_owner_alias (9)
+
+Reason:
+RIPR-SPEC-0122: human output drops the observation_unverified token
+
+Command:
+`cargo xtask goldens bless typescript_effect_owner_alias --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

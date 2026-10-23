@@ -75,7 +75,8 @@ use crate::analysis::syntax::{
     attribute_settles_test_outcome, drop_in_assertion_leaf, empty_macro_binding_ambiguities,
     err_return_guard_key, generated_test_pins, local_empty_macro_names, macro_binding_scan,
     owner_pin_assertions, parse_clean_source_file, pattern_pins, returns_leave_the_function,
-    source_binds_value_name, source_declares_value_name, trusted_macro_binding_sites,
+    source_binds_value_name, source_declares_value_name, trusted_macro_binding_site_sets,
+    trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
@@ -94,6 +95,10 @@ pub(in crate::analysis) struct OwnerReturnPin {
     name: String,
     call: PinCall,
     path: ReturnPathGate,
+    /// Argument positions of slice-like parameters the changed expression
+    /// walks; a pinned call passing only an empty literal there never
+    /// reaches the change (#9444).
+    walked_positions: Vec<usize>,
     /// Where the owner `fn` starts. It serves the #6957 exemption, where a
     /// same-name type declaration in the owner's own enclosing module is the
     /// production declaration, not a test-local shadow. It also places the
@@ -138,11 +143,17 @@ struct StdRootedCalls {
     unrebound: BTreeSet<String>,
 }
 
-const STD_ROOTED_ASSERT_EQ: [&str; 4] = [
+/// The rooted spellings of `assert_eq!` and, for the boolean owner pins and
+/// effect probes, `assert!` (#8927): each needs the same root proof.
+const STD_ROOTED_ASSERT_EQ: [&str; 8] = [
     "std::assert_eq",
     "core::assert_eq",
     "::std::assert_eq",
     "::core::assert_eq",
+    "std::assert",
+    "core::assert",
+    "::std::assert",
+    "::core::assert",
 ];
 
 impl StdRootedCalls {
@@ -571,7 +582,7 @@ impl OwnerPinSyntax {
     }
 
     /// Shared assertion admission for the bounded supported families.
-    /// Execution provenance is independent of the error/boundary/value matcher.
+    /// Execution provenance is independent of the error/boundary/value/effect matcher.
     /// Applicability is the invocation
     /// identity, not the more restrictive owner-pin operand shape, so token
     /// matches and nested diagnostic syntax cannot bypass the same refusal.
@@ -582,16 +593,71 @@ impl OwnerPinSyntax {
         assertion: &OracleFact,
         index: &RustIndex,
     ) -> bool {
-        let gated = (matches!(
-            probe.family,
-            ProbeFamily::ReturnValue | ProbeFamily::ErrorPath | ProbeFamily::Predicate
-        ) && is_admission_gated_assert_eq(&assertion.text))
-            || (probe.family == ProbeFamily::MatchArm
-                && outer_macro_path(&assertion.text).is_some_and(|path| {
-                    let leaf = drop_in_assertion_leaf(&path).unwrap_or(&path);
-                    leaf.strip_prefix("r#").unwrap_or(leaf) == "assert"
-                }));
-        !gated || self.admits(test, assertion, index)
+        let outer = Self::assertion_macro_name(&assertion.text);
+        // An oracle whose text is a compound statement (`loop { break;
+        // assert_eq!(..); }`, `'a: { .. }`, a `macro_rules!` body, a
+        // cfg-dropped `let`) names no invocation the admission can identify:
+        // its "macro path" is statement text, so it would skip the gate. An
+        // effect oracle that merely contains an assertion macro takes the same
+        // admission and is refused unless that exact invocation is
+        // established (#8927).
+        // Fail-closed root rule: the oracle is ungated only when its text
+        // STARTS with a recognized assertion invocation (leaf `assert_eq` or
+        // `assert`). Any other leading shape (a different macro, an empty or
+        // non-identifier path, a prefix keyword or expression) is compound and
+        // takes the context gate whenever an assertion macro sits in its tail.
+        let compound = outer
+            .as_deref()
+            .is_none_or(|name| !matches!(name, "assert_eq" | "assert"));
+        let gated = match outer.as_deref() {
+            _ if compound => {
+                let masked = mask_comments_and_strings(&assertion.text);
+                matches!(
+                    probe.family,
+                    ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+                ) && ["assert_eq", "assert"].iter().any(|name| {
+                    whole_word_offsets(&masked, name)
+                        .into_iter()
+                        .any(|at| masked[at + name.len()..].trim_start().starts_with('!'))
+                })
+            }
+            Some("assert_eq") => matches!(
+                probe.family,
+                ProbeFamily::ReturnValue
+                    | ProbeFamily::ErrorPath
+                    | ProbeFamily::Predicate
+                    | ProbeFamily::SideEffect
+                    | ProbeFamily::CallDeletion
+            ),
+            Some("assert") => matches!(
+                probe.family,
+                ProbeFamily::MatchArm | ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+            ),
+            _ => false,
+        };
+        if !gated {
+            return true;
+        }
+        match self.refusal(test, assertion, index) {
+            None => true,
+            // Identical spellings on one line, one of which provably runs
+            // (`A; return; A;`): the effect oracle is that same check, so it
+            // keeps its credit. The return family keeps refusing (#8927).
+            Some(AssertionRefusal::Syntax(AssertionContextRefusal::DuplicateSpellingOneRuns)) => {
+                matches!(
+                    probe.family,
+                    ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+                )
+            }
+            Some(_) => false,
+        }
+    }
+
+    /// The outer assertion's identity, shared by admission and its refusal note.
+    pub(in crate::analysis) fn assertion_macro_name(text: &str) -> Option<String> {
+        let path = outer_macro_path(text)?;
+        let leaf = drop_in_assertion_leaf(&path).unwrap_or(&path);
+        Some(leaf.strip_prefix("r#").unwrap_or(leaf).to_string())
     }
 
     /// Why [`Self::admits_equality_assertion`] refused this assertion, for
@@ -892,8 +958,8 @@ impl OwnerPinSyntax {
         self.complete_workspace_site_scan(index);
         let scan = self.workspace_site_scan.borrow();
         let retained = scan.as_ref()?;
-        let mut rebinding: Option<&(PathBuf, MacroBindingSite)> = None;
-        let mut may_rebind: Option<&(PathBuf, MacroBindingSite)> = None;
+        let mut rebinding: Option<&OrderedMacroSite> = None;
+        let mut may_rebind: Option<&OrderedMacroSite> = None;
         if let Some(rank) = retained.global.get(name) {
             merge_macro_site_rank(&mut rebinding, &mut may_rebind, rank);
         }
@@ -913,7 +979,9 @@ impl OwnerPinSyntax {
                 }
             }
         }
-        rebinding.cloned().or_else(|| may_rebind.cloned())
+        rebinding
+            .or(may_rebind)
+            .map(|site| (site.path.clone(), site.site.clone()))
     }
 
     /// #8255: finish the retained-site scan the ambiguity pass skipped. It
@@ -955,33 +1023,25 @@ impl OwnerPinSyntax {
         if retained.complete {
             return;
         }
-        for (path, name, site) in sites {
-            match site.crate_local.then(|| roots.root(&path, index)).flatten() {
-                Some(root) => {
-                    retained
-                        .by_root
-                        .entry(root)
-                        .or_default()
-                        .entry(name)
-                        .or_default()
-                        .absorb(&path, &site);
-                }
-                // A site whose file has no recognized root reaches tests of
-                // every root, exactly as the reach rule reads it.
-                None => {
-                    retained
-                        .global
-                        .entry(name)
-                        .or_default()
-                        .absorb(&path, &site);
-                }
-            }
-        }
+        retain_macro_sites(sites.retained, retained, roots, index);
         retained.complete = true;
         #[cfg(test)]
         {
             *self.workspace_scan_passes.borrow_mut() += 1;
         }
+    }
+
+    /// #9211: pay the whole workspace macro-site scan once, before the
+    /// classify workers start. The first consumer otherwise runs it in line on
+    /// one worker while holding the memo lock, and every sibling worker sleeps
+    /// on that lock until the whole corpus is parsed. Called on a thread of
+    /// the classify pool before any probe is queued, so the scan fans out over
+    /// that pool (the large-stack workers the parse needs) and the probes only
+    /// read the filled memos. The memo content is what the first consumer
+    /// would have produced, so no output changes.
+    pub(in crate::analysis) fn prime_workspace_macro_scan(&self, index: &RustIndex) {
+        let _fan_out = PrimedScanFanOut::enter();
+        self.complete_workspace_site_scan(index);
     }
 
     /// #8255 test witness: how many full-index macro-site passes this run
@@ -1195,6 +1255,7 @@ impl OwnerPinSyntax {
             .get_or_build(&test.file, || StdRootedCalls::of(&facts.source));
         let qualified: BTreeSet<String> = std_rooted_macro_path(&assertion.text, "assert_eq")
             .into_iter()
+            .chain(std_rooted_macro_path(&assertion.text, "assert"))
             .chain(rooted.calls.iter().cloned())
             .collect();
         if let Some(path) = qualified.into_iter().find(|path| {
@@ -1323,6 +1384,7 @@ impl OwnerPinSyntax {
             .map(|(name, _)| name),
         );
         if let Some(path) = std_rooted_macro_path(&assertion.text, "assert_eq")
+            .or_else(|| std_rooted_macro_path(&assertion.text, "assert"))
             .or_else(|| StdRootedCalls::of(source).calls.into_iter().next())
         {
             return Some(AssertionRefusal::Syntax(
@@ -1380,43 +1442,56 @@ struct WorkspaceMacroSiteIndex {
 /// site.
 #[derive(Clone, Debug, Default)]
 struct MacroSiteRank {
-    rebinding: Option<(PathBuf, MacroBindingSite)>,
-    may_rebind: Option<(PathBuf, MacroBindingSite)>,
+    rebinding: Option<OrderedMacroSite>,
+    may_rebind: Option<OrderedMacroSite>,
 }
 
+/// Producer position, rather than line number, preserves same-line order
+/// when global and crate-local buckets are merged.
+#[derive(Clone, Debug)]
+struct OrderedMacroSite {
+    path: PathBuf,
+    position: usize,
+    site: MacroBindingSite,
+}
+
+impl OrderedMacroSite {
+    fn precedes(&self, other: &Self) -> bool {
+        (&self.path, self.position) < (&other.path, other.position)
+    }
+}
 impl MacroSiteRank {
-    /// Keep the earlier of the retained and a fresh site. Sites arrive in
-    /// path order within one scan pass, so equal paths keep the
-    /// first-in-source-order site.
-    fn absorb(&mut self, path: &Path, site: &MacroBindingSite) {
+    fn absorb(&mut self, path: &Path, position: usize, site: &MacroBindingSite) {
         let slot = if rebinds(site) {
             &mut self.rebinding
         } else {
             &mut self.may_rebind
         };
-        if slot.as_ref().is_none_or(|(kept, _)| path < kept) {
-            *slot = Some((path.to_path_buf(), site.clone()));
+        if slot
+            .as_ref()
+            .is_none_or(|kept| (path, position) < (kept.path.as_path(), kept.position))
+        {
+            *slot = Some(OrderedMacroSite {
+                path: path.to_path_buf(),
+                position,
+                site: site.clone(),
+            });
         }
     }
 }
-
-/// Keep the earlier of a retained site reference and a candidate, by path.
 fn keep_earliest_site<'a>(
-    slot: &mut Option<&'a (PathBuf, MacroBindingSite)>,
-    candidate: Option<&'a (PathBuf, MacroBindingSite)>,
+    slot: &mut Option<&'a OrderedMacroSite>,
+    candidate: Option<&'a OrderedMacroSite>,
 ) {
     if let Some(candidate) = candidate
-        && slot.as_ref().is_none_or(|(kept, _)| candidate.0 < *kept)
+        && slot.as_ref().is_none_or(|kept| candidate.precedes(kept))
     {
         *slot = Some(candidate);
     }
 }
-
-/// Fold one name's retained sites into the running earliest rebinding and
-/// may-rebind candidates of a lookup.
 fn merge_macro_site_rank<'a>(
-    rebinding: &mut Option<&'a (PathBuf, MacroBindingSite)>,
-    may_rebind: &mut Option<&'a (PathBuf, MacroBindingSite)>,
+    rebinding: &mut Option<&'a OrderedMacroSite>,
+    may_rebind: &mut Option<&'a OrderedMacroSite>,
     rank: &'a MacroSiteRank,
 ) {
     keep_earliest_site(rebinding, rank.rebinding.as_ref());
@@ -1662,6 +1737,7 @@ impl AssertionRefusal {
                 | AssertionContextRefusal::UnidentifiedTest
                 | AssertionContextRefusal::AsyncTest
                 | AssertionContextRefusal::DuplicateSpelling
+                | AssertionContextRefusal::DuplicateSpellingOneRuns
                 | AssertionContextRefusal::StaleSource => true,
                 AssertionContextRefusal::TestAttribute(attribute) => {
                     !attribute_settles_test_outcome(attribute)
@@ -1742,7 +1818,8 @@ impl AssertionRefusal {
                 AssertionContextRefusal::ClosureExit => {
                     "a closure in the test can return early, or the test yields".into()
                 }
-                AssertionContextRefusal::DuplicateSpelling => {
+                AssertionContextRefusal::DuplicateSpelling
+                | AssertionContextRefusal::DuplicateSpellingOneRuns => {
                     "the same assertion text appears twice on one line".into()
                 }
                 AssertionContextRefusal::ConditionalPath(construct) => {
@@ -2042,38 +2119,99 @@ fn partition_macro_scan_files(
         .partition(|(_, source, _)| may_saturate_macro_ambiguity(source))
 }
 
-/// Every trusted name's sites in `files`, in path then source order. Files
-/// whose stored candidates rule out every trusted name are not parsed.
+#[derive(Default)]
+struct ScannedMacroSites {
+    ambiguities: Vec<(PathBuf, String, MacroBindingSite)>,
+    retained: Vec<(PathBuf, String, usize, MacroBindingSite)>,
+}
+
+/// One parse per candidate file in the bounded pass. Singleton queries share
+/// that tree/index, and stored candidates prune impossible names.
 fn scan_macro_sites(
     files: &[MacroScanFile<'_>],
     index: &RustIndex,
     module_resolved: &(dyn Fn(&Path, usize, &str) -> bool + Sync),
-) -> Vec<(PathBuf, String, MacroBindingSite)> {
-    let context_macros = assertion_context_macros();
+) -> ScannedMacroSites {
+    #[cfg(test)]
+    {
+        use std::hash::{Hash, Hasher};
+        let fanned_out = scan_fans_out();
+        if let Ok(mut log) = SCAN_LOG.lock() {
+            for (_, source, _) in files {
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                source.hash(&mut hasher);
+                log.push((hasher.finish(), fanned_out));
+            }
+        }
+    }
+    let names = assertion_context_macros();
     let scan_file = |(path, source, candidates): &MacroScanFile<'_>| {
         // A file whose stored candidates rule out every trusted name
         // reports no site, so it is not parsed.
         if !candidates.is_none_or(MacroBindingCandidates::may_bind_any_trusted) {
-            return Vec::new();
+            return None;
         }
-        trusted_macro_binding_sites(
-            source,
-            index.macro_scope_crates(),
-            &context_macros,
-            &|line, declaration| module_resolved(path, line, declaration),
-            &|krate| {
-                if krate == "serde_json" {
-                    index.drop_in_manifests.verified_literal_json(path)
-                } else {
-                    index.drop_in_manifests.verified_root(path, krate)
-                }
-            },
-        )
-        .into_iter()
-        .map(|(name, site)| ((*path).clone(), name, site))
-        .collect::<Vec<_>>()
+        Some({
+            let singleton_names: Vec<_> = names
+                .iter()
+                .copied()
+                .filter(|name| candidates.is_none_or(|c| c.may_bind(name)))
+                .collect();
+            let (union, singleton) = trusted_macro_binding_site_sets(
+                source,
+                index.macro_scope_crates(),
+                &names,
+                &singleton_names,
+                &|line, declaration| module_resolved(path, line, declaration),
+                &|krate| {
+                    if krate == "serde_json" {
+                        index.drop_in_manifests.verified_literal_json(path)
+                    } else {
+                        index.drop_in_manifests.verified_root(path, krate)
+                    }
+                },
+            );
+            ((*path).clone(), union, singleton)
+        })
     };
-    map_scans(files, scan_file).into_iter().flatten().collect()
+    let per_file: Vec<_> = map_scans(files, scan_file).into_iter().flatten().collect();
+    let mut scanned = ScannedMacroSites::default();
+    for (path, union, singleton) in per_file {
+        scanned.ambiguities.extend(
+            union
+                .into_iter()
+                .map(|(name, site)| (path.clone(), name, site)),
+        );
+        scanned.retained.extend(
+            singleton
+                .into_iter()
+                .enumerate()
+                .map(|(position, (name, site))| (path.clone(), name, position, site)),
+        );
+    }
+    scanned
+}
+
+/// Both initial absorption and deferred completion exclude every scoped site.
+fn retain_macro_sites(
+    sites: Vec<(PathBuf, String, usize, MacroBindingSite)>,
+    retained: &mut WorkspaceMacroSiteIndex,
+    roots: &TargetRoots,
+    index: &RustIndex,
+) {
+    for (path, name, position, site) in sites {
+        if site.scope.is_some() {
+            continue;
+        }
+        let names = match site.crate_local.then(|| roots.root(&path, index)).flatten() {
+            Some(root) => retained.by_root.entry(root).or_default(),
+            None => &mut retained.global,
+        };
+        names
+            .entry(name)
+            .or_default()
+            .absorb(&path, position, &site);
+    }
 }
 
 #[cfg(test)]
@@ -2088,7 +2226,7 @@ thread_local! {
 /// from classification goes through here, so that guard has one seam (the
 /// `#[cfg(test)]` oracle `workspace_macro_binding_site` keeps its own copy).
 fn map_scans<T: Sync, R: Send>(items: &[T], scan: impl Fn(&T) -> R + Sync + Send) -> Vec<R> {
-    if nested_parallelism_allowed() {
+    if scan_fans_out() {
         #[cfg(test)]
         LAST_SCAN_FAN_OUT.with(|last| last.set(Some(true)));
         items.par_iter().map(scan).collect()
@@ -2098,6 +2236,41 @@ fn map_scans<T: Sync, R: Send>(items: &[T], scan: impl Fn(&T) -> R + Sync + Send
         items.iter().map(scan).collect()
     }
 }
+
+thread_local! {
+    /// Set while [`OwnerPinSyntax::prime_workspace_macro_scan`] runs on a
+    /// classify-pool thread before any probe is queued (#9211).
+    static PRIMED_SCAN_FAN_OUT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Lets the priming scan fan out over the pool it runs on. Safe where
+/// [`nested_parallelism_allowed`] refuses: no sibling probe is queued yet, so
+/// the blocked thread has nothing to steal that could need the memo lock it
+/// holds (#8756).
+struct PrimedScanFanOut(bool);
+
+impl PrimedScanFanOut {
+    fn enter() -> Self {
+        Self(PRIMED_SCAN_FAN_OUT.with(|flag| flag.replace(true)))
+    }
+}
+
+impl Drop for PrimedScanFanOut {
+    fn drop(&mut self) {
+        PRIMED_SCAN_FAN_OUT.with(|flag| flag.set(self.0));
+    }
+}
+
+/// Whether a production macro-site scan on this thread maps over the pool.
+fn scan_fans_out() -> bool {
+    nested_parallelism_allowed() || PRIMED_SCAN_FAN_OUT.with(std::cell::Cell::get)
+}
+
+/// Test witness (#9211): the `(source hash, fanned out)` of every file a
+/// [`scan_macro_sites`] call mapped, from any thread.
+#[cfg(test)]
+pub(in crate::analysis) static SCAN_LOG: std::sync::Mutex<Vec<(u64, bool)>> =
+    std::sync::Mutex::new(Vec::new());
 
 /// Whether a scan may fan out on the rayon pool. A probe classified on a pool
 /// worker already runs beside its siblings, and a worker blocked in a nested
@@ -2117,7 +2290,7 @@ pub(in crate::analysis) fn nested_parallelism_allowed() -> bool {
     reason = "one ordered fold over four run-scoped ambiguity outputs and the retention index"
 )]
 fn absorb_macro_sites(
-    sites: Vec<(PathBuf, String, MacroBindingSite)>,
+    sites: ScannedMacroSites,
     global: &mut BTreeSet<String>,
     scoped: &mut ScopedMacroBindings,
     by_root: &mut CrateMacroBindings,
@@ -2125,28 +2298,17 @@ fn absorb_macro_sites(
     roots: &TargetRoots,
     index: &RustIndex,
 ) {
-    for (path, name, site) in sites {
+    retain_macro_sites(sites.retained, retained, roots, index);
+    for (path, name, site) in sites.ambiguities {
         if site.scope.is_some() {
             scoped.entry(path).or_default().push((name, site));
             continue;
         }
         match site.crate_local.then(|| roots.root(&path, index)).flatten() {
             Some(root) => {
-                retained
-                    .by_root
-                    .entry(root.clone())
-                    .or_default()
-                    .entry(name.clone())
-                    .or_default()
-                    .absorb(&path, &site);
                 by_root.entry(root).or_default().insert(name);
             }
             None => {
-                retained
-                    .global
-                    .entry(name.clone())
-                    .or_default()
-                    .absorb(&path, &site);
                 global.insert(name);
             }
         }
@@ -2642,10 +2804,13 @@ impl OwnerReturnPin {
         if other_definition_competes(owner, index, call.kind(), identity.as_deref()) {
             return None;
         }
+        let walked_positions =
+            closure_adaptor::iterated_slice_positions(&owner.body, &probe.expression);
         Some(Self {
             name: name.to_string(),
             call,
             path,
+            walked_positions,
             returns_bool,
             returns_scalar: returns_primitive_scalar(owner, index),
             returns_integer: returns_primitive_scalar(owner, index)
@@ -2773,6 +2938,7 @@ impl OwnerReturnPin {
                 trait_scope: None,
             },
             path: ReturnPathGate::CloneReceiver,
+            walked_positions: Vec::new(),
             returns_bool: false,
             returns_scalar: false,
             returns_integer: false,
@@ -2874,6 +3040,7 @@ impl OwnerReturnPin {
                 constructor_names: declared_constructor_names(index),
                 string_from_may_be_rebound: wrapper_may_be_rebound("String", index),
             }),
+            walked_positions: Vec::new(),
             returns_bool: false,
             returns_scalar: false,
             returns_integer: false,
@@ -2967,6 +3134,7 @@ impl OwnerReturnPin {
             name: owner.name.clone(),
             call,
             path,
+            walked_positions: Vec::new(),
             returns_bool: false,
             returns_scalar: false,
             returns_integer: false,
@@ -3599,6 +3767,22 @@ impl OwnerReturnPin {
                         )
                     })
                 {
+                    return false;
+                }
+                // #9444: a walk over an empty literal visits nothing.
+                // A rendered or indexed comparison (`format!("{}", call)`,
+                // `vec![call][0]`) carries no call text, so the assertion's
+                // own text is read for the first call of the owner.
+                let walk_site = call_text.unwrap_or(assertion.text.as_str());
+                if self.walked_positions.iter().any(|position| {
+                    closure_adaptor::pinned_call_passes_only_empty(
+                        test,
+                        loan.as_ref(),
+                        walk_site,
+                        &self.name,
+                        *position,
+                    )
+                }) {
                     return false;
                 }
                 // RIPR-SPEC-0197 rule 3: a short-circuit tail pins only on a
@@ -7465,7 +7649,7 @@ fn has_non_bitwise_pipe(masked: &str) -> bool {
 
 /// `Option`/`Result`/`bool` methods that evaluate or apply an argument only
 /// on some inputs.
-const CONDITIONAL_COMBINATORS: &[&str] = &[
+pub(super) const CONDITIONAL_COMBINATORS: &[&str] = &[
     "and",
     "and_then",
     "filter",
@@ -7490,20 +7674,6 @@ const CONDITIONAL_COMBINATORS: &[&str] = &[
     "zip",
 ];
 
-/// Whether `text` is one outer `assert_eq!` invocation that must pass the
-/// owner-return execution admission: bare `assert_eq!`, or the same macro
-/// called through a drop-in assertion crate (`std::assert_eq!`,
-/// `pretty_assertions::assert_eq!`). A qualified drop-in reads as an
-/// assertion, so letting it skip this gate would credit an `assert_eq!` that
-/// the bare spelling refuses (for example one under `if false`).
-fn is_admission_gated_assert_eq(text: &str) -> bool {
-    let Some(path) = outer_macro_path(text) else {
-        return false;
-    };
-    let leaf = drop_in_assertion_leaf(&path).unwrap_or(&path);
-    leaf.strip_prefix("r#").unwrap_or(leaf) == "assert_eq"
-}
-
 /// The outer invocation's path, without interpreting nested operand macros.
 fn outer_macro_path(text: &str) -> Option<String> {
     let masked = mask_comments_and_strings(text);
@@ -7517,7 +7687,37 @@ fn outer_macro_path(text: &str) -> Option<String> {
         invocation = attribute[close + 1..].trim_start();
     }
     let (path, _) = invocation.split_once('!')?;
-    Some(path.chars().filter(|c| !c.is_whitespace()).collect())
+    let path = path.trim();
+    // The oracle must BEGIN with the invocation path. Whitespace is legal only
+    // beside a `::` separator (`similar_asserts :: assert_eq !(..)`); any other
+    // whitespace means a prefix token precedes the macro (`if matches!(..) {
+    // assert_eq!(..); }`, `if !cfg!(test) { .. }`), so stripping it would fuse
+    // the prefix into a plain-looking identifier and skip the context gate.
+    let chars: Vec<char> = path.chars().collect();
+    for (at, ch) in chars.iter().enumerate() {
+        if !ch.is_whitespace() {
+            continue;
+        }
+        let before = chars[..at].iter().rev().find(|c| !c.is_whitespace());
+        let after = chars[at..].iter().find(|c| !c.is_whitespace());
+        if before != Some(&':') && after != Some(&':') {
+            return None;
+        }
+    }
+    let path: String = chars.into_iter().filter(|c| !c.is_whitespace()).collect();
+    const PREFIX_KEYWORDS: &[&str] = &[
+        "if", "while", "match", "loop", "for", "unsafe", "async", "move", "else", "return",
+        "break", "continue", "let", "in",
+    ];
+    // A keyword as any segment (`if ::core::matches!(..)` collapses to
+    // `if::core::matches`) is a prefix token, not part of a macro path.
+    if path
+        .split("::")
+        .any(|segment| PREFIX_KEYWORDS.contains(&segment))
+    {
+        return None;
+    }
+    Some(path)
 }
 
 /// #6578: the actual operand and the expected literal of an inline

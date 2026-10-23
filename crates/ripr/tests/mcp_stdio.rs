@@ -280,7 +280,33 @@ fn run_mcp_with_input_custody(
     })
 }
 
+/// Prefix of the single operator warning for an unusable root (RIPR-SPEC-0211).
+/// The reason and next step that follow are asserted per cause (#9895).
+const UNUSABLE_ROOT_WARNING_PREFIX: &str = "ripr mcp: warning: workspace root unavailable (";
+
 fn response_lines(output: &Output) -> Result<Vec<Value>, String> {
+    response_lines_expecting_stderr(output, "")
+}
+
+/// Like `response_lines`, but for a session started on an unusable root: stderr
+/// must be exactly the one startup warning, nothing more.
+fn response_lines_with_root_warning(output: &Output) -> Result<Vec<Value>, String> {
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    if !stderr.starts_with(UNUSABLE_ROOT_WARNING_PREFIX)
+        || !stderr.ends_with('\n')
+        || stderr.lines().count() != 1
+    {
+        return Err(format!(
+            "expected exactly one unusable-root warning line, got {stderr:?}"
+        ));
+    }
+    response_lines_expecting_stderr(output, &stderr)
+}
+
+fn response_lines_expecting_stderr(
+    output: &Output,
+    expected_stderr: &str,
+) -> Result<Vec<Value>, String> {
     if !output.status.success() {
         return Err(format!(
             "ripr mcp failed\nstdout:\n{}\nstderr:\n{}",
@@ -288,9 +314,9 @@ fn response_lines(output: &Output) -> Result<Vec<Value>, String> {
             String::from_utf8_lossy(&output.stderr)
         ));
     }
-    if !output.stderr.is_empty() {
+    if output.stderr != expected_stderr.as_bytes() {
         return Err(format!(
-            "successful MCP session contaminated stderr:\n{}",
+            "successful MCP session stderr differs from the expected {expected_stderr:?}:\n{}",
             String::from_utf8_lossy(&output.stderr)
         ));
     }
@@ -1007,6 +1033,77 @@ fn post_initialize_ping_with_handshake_meta_returns_an_empty_result() -> Result<
     Ok(())
 }
 
+/// A second well-formed `initialize` on an initialized session is a state
+/// violation, not a missing method (#9895): it answers `-32600` naming the
+/// already-initialized session and the session keeps serving.
+#[test]
+fn second_initialize_answers_already_initialized_and_the_session_recovers() -> Result<(), String> {
+    let root = workspace_root()?;
+    let initialize = |id: u64| {
+        line(json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": { "name": "ripr-integration-test", "version": "1" }
+            }
+        }))
+    };
+    let request_bytes = [
+        initialize(1)?,
+        line(json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }))?,
+        initialize(2)?,
+        line(json!({ "jsonrpc": "2.0", "id": 3, "method": "ping" }))?,
+        line(json!({ "jsonrpc": "2.0", "id": 4, "method": "tools/list" }))?,
+    ]
+    .concat();
+    let output = run_mcp(&root, &[&request_bytes])?;
+    let responses = response_lines(&output)?;
+    if responses.len() != 4 {
+        return Err(format!(
+            "expected four replies, got {}: {responses:?}",
+            responses.len()
+        ));
+    }
+    if responses[0].get("result").is_none() {
+        return Err(format!("first initialize must succeed: {}", responses[0]));
+    }
+    let second = &responses[1];
+    if second.get("id") != Some(&json!(2)) {
+        return Err(format!("second initialize lost its id: {second}"));
+    }
+    if second.pointer("/error/code").and_then(Value::as_i64) != Some(-32600) {
+        return Err(format!(
+            "second initialize must answer -32600 invalid request: {second}"
+        ));
+    }
+    if !second
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        .is_some_and(|message| message.contains("already initialized"))
+    {
+        return Err(format!(
+            "second initialize message must say already initialized: {second}"
+        ));
+    }
+    if responses[2].get("result") != Some(&json!({})) {
+        return Err(format!("ping must still work afterwards: {}", responses[2]));
+    }
+    if responses[3]
+        .pointer("/result/tools")
+        .and_then(Value::as_array)
+        .is_none_or(|tools| tools.is_empty())
+    {
+        return Err(format!(
+            "tools/list must still work afterwards: {}",
+            responses[3]
+        ));
+    }
+    Ok(())
+}
+
 #[test]
 fn malformed_params_of_a_served_method_answer_invalid_params_and_the_session_recovers()
 -> Result<(), String> {
@@ -1170,7 +1267,10 @@ fn rejection_arms_survive_the_stdio_transport() -> Result<(), String> {
     let snapshot = by_id
         .get("missing-snapshot")
         .ok_or("missing snapshot response")?;
-    if snapshot.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
+    // #9854: `no_snapshot` is a session state, not an identity miss, so the
+    // JSON-RPC code is InternalError; the typed state stays in `data.code`
+    // and the human sentence is unchanged.
+    if snapshot.pointer("/error/code").and_then(Value::as_i64) != Some(-32603)
         || snapshot.pointer("/error/message").and_then(Value::as_str)
             != Some("unavailable snapshot resource: no_snapshot")
         || snapshot.pointer("/error/data/code").and_then(Value::as_str) != Some("no_snapshot")
@@ -1299,7 +1399,7 @@ fn current_discovery_requires_metadata_and_rejects_legacy_ping() -> Result<(), S
     ]
     .concat();
     let output = run_mcp(&root, &[&request_bytes])?;
-    let responses = response_lines(&output)?;
+    let responses = response_lines_with_root_warning(&output)?;
     if responses.len() != 5 {
         return Err(format!(
             "cancellation notification must not emit a response; got {} lines",
@@ -1499,7 +1599,7 @@ fn unavailable_workspace_evidence_names_restart_before_any_refresh() -> Result<(
             "params": { "_meta": current_meta(), "name": "ripr_workspace_status", "arguments": {} }
         }))?);
         let output = run_mcp(root, &[&requests.concat()])?;
-        let responses = response_lines(&output)?;
+        let responses = response_lines_with_root_warning(&output)?;
         if responses.len() != 19 {
             return Err(format!(
                 "expected 19 replies for {root_error}, got {}",
@@ -1603,7 +1703,10 @@ fn unavailable_workspace_evidence_names_restart_before_any_refresh() -> Result<(
             }
             let resource = id.contains("ripr://");
             let failure = if resource {
-                if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32602) {
+                // #9854: an unavailable root is a server state, so the
+                // resource read answers InternalError; the shared typed
+                // failure (with the restart recovery) rides `data.failure`.
+                if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32603) {
                     return Err(format!("{id} lost resource failure semantics: {reply}"));
                 }
                 reply.pointer("/error/data/failure")
@@ -1812,9 +1915,12 @@ fn gap_tools_fail_closed_before_the_first_refresh() -> Result<(), String> {
     let snapshot = by_id
         .get("snapshot")
         .ok_or_else(|| format!("snapshot response missing: {responses:?}"))?;
-    if snapshot.pointer("/error/code").and_then(Value::as_i64) != Some(-32602) {
+    // #9854: before the first refresh the snapshot resource is a session
+    // state (`no_snapshot`), so the code is InternalError with the typed
+    // state preserved in `data.code` — not a resource-miss categorization.
+    if snapshot.pointer("/error/code").and_then(Value::as_i64) != Some(-32603) {
         return Err(format!(
-            "unknown snapshot resource must stay a current-version resource miss: {snapshot}"
+            "unknown snapshot resource must answer InternalError with its typed state: {snapshot}"
         ));
     }
     if snapshot.pointer("/error/data/code").and_then(Value::as_str) != Some("no_snapshot") {
@@ -1838,9 +1944,16 @@ struct SequentialStdio {
 
 impl SequentialStdio {
     fn spawn(root: &Path) -> Result<Self, String> {
-        let mut child = worktree_ripr()
-            .args(["mcp", "--stdio", "--root"])
-            .arg(root)
+        Self::spawn_with_env(root, &[])
+    }
+
+    fn spawn_with_env(root: &Path, env: &[(&str, &str)]) -> Result<Self, String> {
+        let mut command = worktree_ripr();
+        command.args(["mcp", "--stdio", "--root"]).arg(root);
+        for (key, value) in env {
+            command.env(key, value);
+        }
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -2138,7 +2251,7 @@ fn check_filtered_gap_page(
         || document["filtered"] != json!(filtered)
         || document["page"]["returned"] != json!(expected_ids.len())
         || document["snapshot_id"] != snapshot_id
-        || document["schema_version"] != "ripr-mcp-gap-list-v2"
+        || document["schema_version"] != "ripr-mcp-gap-list-v3"
     {
         return Err(format!(
             "filtered transport page differs from exact IDs/counts: expected {expected_ids:?}, selected={selected}, filtered={filtered}: {document}"
@@ -2185,9 +2298,11 @@ fn empty_gap_pages_keep_structured_outcomes_at_the_response_bound() -> Result<()
         .as_str()
         .ok_or("baseline omitted snapshot ID")?;
 
-    // `language` is not here: an unknown language is rejected as Invalid
-    // Params before any page is built, so it can no longer carry the filler.
-    for field in ["file", "class"] {
+    // `class` and `language` are not here: an unknown value is rejected as
+    // Invalid Params before any page is built (an oversized class token is
+    // covered by `list_gaps_bounds_the_echoed_unknown_class_token`), so
+    // neither can carry the filler.
+    for field in ["file"] {
         let fitting_filter = "\u{1}".repeat(9_500);
         let mut arguments = json!({});
         arguments[field] = json!(fitting_filter);
@@ -2247,7 +2362,7 @@ fn empty_gap_pages_keep_structured_outcomes_at_the_response_bound() -> Result<()
             if refused.get("error").is_some()
                 || refused.pointer("/result/isError") != Some(&json!(true))
                 || refused.pointer("/result/structuredContent/schema_version")
-                    != Some(&json!("ripr-mcp-gap-list-v2"))
+                    != Some(&json!("ripr-mcp-gap-list-v3"))
                 || refused.pointer("/result/structuredContent/failure/code")
                     != Some(&json!("result_too_large"))
                 || refused.pointer("/result/structuredContent/failure/data/current_snapshot_id")
@@ -2390,8 +2505,11 @@ fn refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation() -> Re
     };
     let mut legacy = all.clone();
     let legacy_object = legacy.as_object_mut().ok_or("list must be an object")?;
+    // Strip every post-v1 field so the synthesized document is a true
+    // v1-era envelope: v2 added `filtered`/`filters`, v3 added `outcome`.
     legacy_object.remove("filtered");
     legacy_object.remove("filters");
+    legacy_object.remove("outcome");
     legacy_object.insert("schema_version".into(), json!("ripr-mcp-gap-list-v1"));
     if v1["additionalProperties"] != false || !accepts_v1_shape(&legacy) || accepts_v1_shape(&all) {
         return Err(
@@ -2420,7 +2538,6 @@ fn refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation() -> Re
             json!({"file": "src/pricing.rs", "class": "no_static_path"}),
             vec![],
         ),
-        (json!({"class": "unknown-class"}), vec![]),
         // An unknown language wire string is Invalid Params, pinned by
         // `json_rpc_rejections_are_answered_with_spec_codes_and_the_session_survives`.
         (json!({"language": "typescript"}), vec![]),
@@ -2941,6 +3058,111 @@ fn read_resource_document(
         .map_err(|error| format!("resource {uri} text is not JSON: {error}: {text}"))
 }
 
+/// An unknown `class` token used to narrow to an empty page that read like
+/// "no such gaps". It is now invalid params naming the vocabulary, while every
+/// real wire token still passes validation (before or after a refresh).
+#[test]
+fn list_gaps_rejects_unknown_class_tokens_with_the_vocabulary() -> Result<(), String> {
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    let root = install_b4_repair_ready_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+    for bad in ["weak", "Exposed", "bogus"] {
+        let reply = session.call_tool(
+            "bad-class",
+            "ripr_list_gaps",
+            json!({ "class": bad }),
+            REPLY_TIMEOUT,
+        )?;
+        let message = reply
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
+            || !message.contains("weakly_exposed")
+        {
+            return Err(format!("class {bad:?} must be invalid params: {reply}"));
+        }
+    }
+    let refresh = session.call_tool("refresh-class", "ripr_refresh", json!({}), REPLY_TIMEOUT)?;
+    let refresh = structured_tool_success(&refresh, "class refresh")?;
+    if refresh["attempt"]["state"] != "completed" {
+        return Err(format!("fixture must complete analysis: {refresh}"));
+    }
+    let all = session.call_tool("all-class", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
+    let all = structured_tool_success(&all, "unfiltered class list")?;
+    let items = all["items"].as_array().ok_or("list omitted items")?;
+    if items.is_empty() {
+        return Err("fixture must expose a nonempty selection".into());
+    }
+    for good in ["exposed", "weakly_exposed", "static_unknown"] {
+        let reply = session.call_tool(
+            "good-class",
+            "ripr_list_gaps",
+            json!({ "class": good }),
+            REPLY_TIMEOUT,
+        )?;
+        let document = structured_tool_success(&reply, "valid class list")?;
+        let kept = document["items"].as_array().ok_or("list omitted items")?;
+        let expected = items.iter().filter(|item| item["class"] == good).count();
+        if kept.len() != expected
+            || document["filtered"] != json!(expected)
+            || kept.iter().any(|item| item["class"] != good)
+            || document["filters"]["class"] != good
+        {
+            return Err(format!(
+                "class {good:?} must keep exactly its {expected} gaps: {document}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The invalid-params message echoes the caller's class token; it must stay
+/// bounded (a near-cap or escape-heavy token must not push the error past the
+/// writer's 128 KiB response cap and turn it into -32603) and correlated.
+#[test]
+fn list_gaps_bounds_the_echoed_unknown_class_token() -> Result<(), String> {
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    let root = install_b4_repair_ready_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+    for (label, token) in [
+        ("near-cap", "x".repeat(130_000)),
+        ("escape-heavy", "\u{1}\"\\".repeat(22_000)),
+        ("multibyte", "\u{1f600}".repeat(30_000)),
+    ] {
+        let id = format!("big-class-{label}");
+        let reply = session.call_tool(
+            &id,
+            "ripr_list_gaps",
+            json!({ "class": token }),
+            REPLY_TIMEOUT,
+        )?;
+        let bytes = serde_json::to_vec(&reply)
+            .map_err(|error| error.to_string())?
+            .len();
+        let message = reply
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
+            || reply.get("id") != Some(&json!(id))
+            || !message.contains("weakly_exposed")
+            || bytes > 8 * 1024
+        {
+            return Err(format!(
+                "{label} class must be a bounded correlated -32602 (bytes={bytes}): code={:?} id={:?}",
+                reply.pointer("/error/code"),
+                reply.get("id")
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// After refresh on the B4 repair-ready fixture, every tool/resource pair
 /// returns the same document: `ripr_get_gap` with `ripr://gap/{id}`,
 /// `ripr_get_repair_attempt` with `ripr://repair-attempt/{id}`,
@@ -3322,6 +3544,155 @@ fn resource_reads_match_tools_after_refresh() -> Result<(), String> {
         if code != Some("item_not_found") {
             return Err(format!("{kind} resource miss lost item_not_found: {miss}"));
         }
+    }
+    Ok(())
+}
+
+/// An unusable `--root` must announce itself once on stderr at startup while
+/// stdout stays protocol-only; a usable root stays silent (docs/interop/mcp.md:
+/// "operational failures use stderr").
+#[test]
+fn unusable_root_warns_once_on_stderr_and_keeps_stdout_clean() -> Result<(), String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let base =
+        std::env::temp_dir().join(format!("ripr-mcp-root-warn-{}-{stamp}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let plain_dir = base.join("plain");
+    let git_dir = base.join("repo");
+    std::fs::create_dir_all(&plain_dir).map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(&git_dir).map_err(|error| error.to_string())?;
+    let file = base.join("file.txt");
+    std::fs::write(&file, "x").map_err(|error| error.to_string())?;
+    fixture_git_ok(&git_dir, &["-c", "init.defaultBranch=main", "init", "-q"])?;
+    std::fs::write(
+        git_dir.join("Cargo.toml"),
+        "[package]\nname = \"w\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+
+    let run = |root: &Path| -> Result<Output, String> {
+        worktree_ripr()
+            .args(["mcp", "--stdio", "--root"])
+            .arg(root)
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|error| error.to_string())
+    };
+    let mut failures = Vec::new();
+    // Each cause must state its own reason and a concrete next step, and must
+    // not collapse to the old circular "not a usable repository root" (#9895).
+    for (label, root, code, reason, next_step) in [
+        (
+            "nonexistent",
+            base.join("missing"),
+            "root_missing",
+            "the configured root does not exist",
+            "check the path for typos",
+        ),
+        (
+            "file",
+            file.clone(),
+            "root_not_directory",
+            "the configured root is not a directory",
+            "not a file inside it",
+        ),
+        (
+            "non-git dir",
+            plain_dir.clone(),
+            "repository_marker_missing",
+            "no repository marker (.git, Cargo.toml",
+            "run `git init` there",
+        ),
+    ] {
+        let output = run(&root)?;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.lines().count() != 1 || !stderr.contains("workspace root unavailable") {
+            failures.push(format!(
+                "{label}: expected one warning line, got {stderr:?}"
+            ));
+        }
+        for needle in [code, reason, next_step] {
+            if !stderr.contains(needle) {
+                failures.push(format!("{label}: warning lacks {needle:?}: {stderr:?}"));
+            }
+        }
+        if stderr.contains("not a usable repository root") {
+            failures.push(format!("{label}: warning is still circular: {stderr:?}"));
+        }
+        let path_text = root.to_string_lossy();
+        if stderr.contains(path_text.as_ref()) {
+            failures.push(format!("{label}: warning must not carry the path"));
+        }
+        if !output.stdout.is_empty() {
+            failures.push(format!("{label}: stdout must stay protocol-only"));
+        }
+    }
+    let usable = run(&git_dir)?;
+    if !usable.stderr.is_empty() {
+        failures.push(format!(
+            "usable root must stay silent, got {:?}",
+            String::from_utf8_lossy(&usable.stderr)
+        ));
+    }
+    let _ = std::fs::remove_dir_all(&base);
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}
+
+/// An unwritable stderr must not abort startup: the warning write is fallible
+/// and ignored, and the typed `workspace_unavailable` replies still arrive.
+/// `/dev/full` fails every write with ENOSPC, which makes `eprintln!` panic
+/// (a merely closed fd is swallowed by std, so it would not discriminate).
+#[cfg(target_os = "linux")]
+#[test]
+fn unwritable_stderr_does_not_abort_unusable_root_session() -> Result<(), String> {
+    let missing = std::env::temp_dir().join(format!(
+        "ripr-mcp-unwritable-stderr-{}-missing",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&missing);
+    let mut requests = line(json!({
+        "jsonrpc": "2.0", "id": "status", "method": "tools/call",
+        "params": { "_meta": current_meta(), "name": "ripr_workspace_status", "arguments": {} }
+    }))?;
+    requests.extend(line(json!({
+        "jsonrpc": "2.0", "id": "gaps", "method": "tools/call",
+        "params": { "_meta": current_meta(), "name": "ripr_list_gaps", "arguments": {} }
+    }))?);
+    // Every stderr write to /dev/full fails with ENOSPC.
+    let full = std::fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/full")
+        .map_err(|error| format!("open /dev/full: {error}"))?;
+    let mut child = worktree_ripr()
+        .args(["mcp", "--stdio", "--root"])
+        .arg(&missing)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::from(full))
+        .spawn()
+        .map_err(|error| format!("spawn ripr mcp with unwritable stderr: {error}"))?;
+    {
+        let mut stdin = child.stdin.take().ok_or("stdin was not piped")?;
+        std::io::Write::write_all(&mut stdin, &requests)
+            .map_err(|error| format!("write requests: {error}"))?;
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("wait for ripr mcp: {error}"))?;
+    let responses = response_lines(&output)?;
+    if responses.len() != 2 {
+        return Err(format!("expected 2 replies, got {responses:?}"));
+    }
+    let text = serde_json::to_string(&responses).map_err(|error| error.to_string())?;
+    if !text.contains("workspace_unavailable") {
+        return Err(format!("replies lost workspace_unavailable: {text}"));
     }
     Ok(())
 }
@@ -3776,6 +4147,363 @@ fn mcp_ready_item_is_the_item_the_cli_repair_gate_admits() -> Result<(), String>
         }
     }
     Ok(())
+}
+
+/// #5516 fixture: the weak-boundary shape (`age > 18` widened to `>= 18`,
+/// pinned only by `is_adult(30)`), but the only test is the crate's own inline
+/// `#[cfg(test)] mod tests` in `src/lib.rs` (the default `cargo new --lib`
+/// layout). `second_module` adds a second candidate inline module, which the
+/// CLI cage refuses as ambiguous.
+fn install_inline_test_fixture(second_module: bool) -> Result<PathBuf, String> {
+    let root = install_weak_boundary_fixture()?;
+    std::fs::remove_file(root.join("tests/adult.rs")).map_err(|error| error.to_string())?;
+    std::fs::remove_dir(root.join("tests")).map_err(|error| error.to_string())?;
+    let mut source = "pub fn is_adult(age: u32) -> bool {\n    age >= 18\n}\n\n#[cfg(test)]\nmod tests {\n    use super::is_adult;\n\n    #[test]\n    fn adult_is_recognized() {\n        assert!(is_adult(30));\n    }\n}\n".to_string();
+    if second_module {
+        source.push_str("\n#[cfg(test)]\nmod more_tests {\n    use super::is_adult;\n\n    #[test]\n    fn child_is_not_recognized() {\n        assert!(!is_adult(3));\n    }\n}\n");
+    }
+    std::fs::write(root.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
+    commit_fixture(&root, "inline tests")?;
+    Ok(root)
+}
+
+/// #5516: `ripr_prepare_repair` accepts the inline-only seam the CLI before
+/// phase accepts, states the module confinement, and refuses the same
+/// ambiguous two-module case. The admission is the shared seam validator, so
+/// MCP-ready never exceeds `ripr repair`.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn mcp_prepare_repair_agrees_with_the_cli_on_inline_test_seams() -> Result<(), String> {
+    const REFRESH_TIMEOUT: Duration = Duration::from_mins(3);
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    for (second_module, expect_ready) in [(false, true), (true, false)] {
+        let root = install_inline_test_fixture(second_module)?;
+        let _guard = FixtureGuard { root: root.clone() };
+        let mut session = SequentialStdio::spawn(&root)?;
+        session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+        let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
+        structured_tool_success(&refresh, "ripr_refresh")?;
+        let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
+        let list = structured_tool_success(&list, "ripr_list_gaps")?;
+        let items = list["items"].as_array().ok_or("list omitted items")?;
+        if items.is_empty() {
+            return Err(format!("inline fixture must yield an item: {list}"));
+        }
+        let mut ready_count = 0;
+        for item in items {
+            let id = item["canonical_id"].as_str().ok_or("item omitted id")?;
+            let prepare = session.call_tool(
+                "prepare",
+                "ripr_prepare_repair",
+                json!({ "canonical_id": id }),
+                REPLY_TIMEOUT,
+            )?;
+            let prepare = structured_tool_success(&prepare, "ripr_prepare_repair")?;
+            let gap = session.call_tool(
+                "gap",
+                "ripr_get_gap",
+                json!({ "canonical_id": id }),
+                REPLY_TIMEOUT,
+            )?;
+            let gap = structured_tool_success(&gap, "ripr_get_gap")?;
+            let finding_id = gap["item"]["finding_id"].as_str().ok_or("no finding id")?;
+            let refusal = cli_repair_refusal(&root, finding_id)?;
+            if second_module && refusal.is_none() {
+                return Err(format!(
+                    "two candidate inline modules: the CLI must refuse {finding_id}"
+                ));
+            }
+            let ready = prepare["repair_packet_ready"] == true;
+            if ready && refusal.is_some() {
+                return Err(format!(
+                    "MCP-ready {id} exceeds the CLI gate: {}",
+                    refusal.unwrap_or_default()
+                ));
+            }
+            if ready {
+                ready_count += 1;
+                if prepare["allowed_edit_surface"] != json!(["src/lib.rs"])
+                    || prepare["inline_test_module"]["module"] != "tests"
+                    || !prepare["must_not_change"][0]
+                        .as_str()
+                        .unwrap_or("")
+                        .contains("only insert new test functions inside the existing `#[cfg(test)] mod tests`")
+                {
+                    return Err(format!("inline boundary not stated: {prepare}"));
+                }
+            }
+        }
+        if (ready_count > 0) != expect_ready {
+            return Err(format!(
+                "second_module={second_module}: expected ready={expect_ready}, saw {ready_count} ready of {list}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// #9108 production path: a refresh under `RIPR_REPO_EXPOSURE_SEAM_LIMIT=1`
+/// truncates the repo-wide inventory (`gather_seam_inventory` reads the same
+/// authority `ripr repair` does), so every item refuses with the typed
+/// `seam_inventory_truncated` reason and no attempt, exactly where
+/// `ripr repair` errors. The same repository without the limit is the control:
+/// the B4 item is repair-ready and not refused for truncation.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn truncated_seam_inventory_refuses_repair_readiness_over_stdio() -> Result<(), String> {
+    const REFRESH_TIMEOUT: Duration = Duration::from_mins(3);
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    const TRUNCATED: &str = "seam_inventory_truncated";
+    let root = install_b4_repair_ready_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    std::fs::write(root.join(".gitignore"), "/target\n").map_err(|error| error.to_string())?;
+    // A second seam makes `limit=1` a real truncation (analyzed 1 < total 2).
+    let mut source =
+        std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?;
+    source.push_str("\npub fn sign(x: i32) -> i32 {\n    if x > 0 { 1 } else { 2 }\n}\n");
+    std::fs::write(root.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
+    commit_fixture(&root, "add a second seam")?;
+
+    // Control: complete inventory, the B4 boundary item is repair-ready.
+    let mut control = SequentialStdio::spawn(&root)?;
+    control.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+    let refresh = control.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
+    structured_tool_success(&refresh, "ripr_refresh")?;
+    let list = control.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
+    let list = structured_tool_success(&list, "ripr_list_gaps")?;
+    let items = list["items"].as_array().ok_or("list omitted items")?;
+    let ready_id = items
+        .iter()
+        .find(|item| item["repair_packet_ready"] == true)
+        .and_then(|item| item["canonical_id"].as_str())
+        .ok_or_else(|| format!("control must yield a repair-ready item: {list}"))?
+        .to_string();
+    let control_unready_items = items
+        .iter()
+        .filter(|item| item["repair_packet_ready"] != true)
+        .count();
+    if items
+        .iter()
+        .any(|item| item["repair_ineligibility"] == TRUNCATED)
+    {
+        return Err(format!(
+            "complete inventory must never refuse as truncated: {list}"
+        ));
+    }
+    let finding_id = {
+        let gap = control.call_tool(
+            "gap",
+            "ripr_get_gap",
+            json!({ "canonical_id": ready_id }),
+            REPLY_TIMEOUT,
+        )?;
+        let gap = structured_tool_success(&gap, "ripr_get_gap")?;
+        gap["item"]["finding_id"]
+            .as_str()
+            .ok_or("gap omitted finding_id")?
+            .to_string()
+    };
+    drop(control);
+    if let Some(refusal) = cli_repair_refusal(&root, &finding_id)? {
+        return Err(format!(
+            "control: the CLI must admit {finding_id}: {refusal}"
+        ));
+    }
+
+    // Truncated: same repository, seam limit 1.
+    let mut session =
+        SequentialStdio::spawn_with_env(&root, &[("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "1")])?;
+    session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+    let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
+    structured_tool_success(&refresh, "ripr_refresh")?;
+    let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
+    let list = structured_tool_success(&list, "ripr_list_gaps")?;
+    let items = list["items"].as_array().ok_or("list omitted items")?;
+    let item = items
+        .iter()
+        .find(|item| item["canonical_id"] == ready_id.as_str())
+        .ok_or_else(|| format!("truncated refresh lost {ready_id}: {list}"))?;
+    if item["repair_packet_ready"] != false || item["repair_ineligibility"] != TRUNCATED {
+        return Err(format!(
+            "truncated inventory must refuse {ready_id} with {TRUNCATED}: {item}"
+        ));
+    }
+    // Precedence: the truncation refusal outranks every finding-level gate
+    // (the CLI errors before resolving any item), so every item, including
+    // those that fail a finding-level gate on a complete inventory, carries it
+    // on list, get and prepare.
+    if control_unready_items == 0 {
+        return Err("control must include a finding-level-unready item".to_string());
+    }
+    for item in items {
+        let id = item["canonical_id"].as_str().ok_or("item omitted id")?;
+        if item["repair_packet_ready"] != false || item["repair_ineligibility"] != TRUNCATED {
+            return Err(format!("list must refuse {id} as {TRUNCATED}: {item}"));
+        }
+        let gap = session.call_tool(
+            &format!("gap-{id}"),
+            "ripr_get_gap",
+            json!({ "canonical_id": id }),
+            REPLY_TIMEOUT,
+        )?;
+        let gap = structured_tool_success(&gap, "ripr_get_gap")?;
+        if gap["item"]["readiness"]["repair_packet_ready"] != false
+            || !gap["item"]["readiness"]["reason"]
+                .as_str()
+                .unwrap_or("")
+                .contains("seam inventory")
+        {
+            return Err(format!("get_gap must refuse {id} as {TRUNCATED}: {gap}"));
+        }
+        let prepare = session.call_tool(
+            &format!("prepare-{id}"),
+            "ripr_prepare_repair",
+            json!({ "canonical_id": id }),
+            REPLY_TIMEOUT,
+        )?;
+        let prepare = structured_tool_success(&prepare, "ripr_prepare_repair")?;
+        if prepare["repair_packet_ready"] != false
+            || !prepare["attempt"].is_null()
+            || prepare["ineligibility"]["reason"] != TRUNCATED
+        {
+            return Err(format!(
+                "prepare must refuse {id} typed with no attempt under truncation: {prepare}"
+            ));
+        }
+    }
+    // The CLI refuses the same item for the same condition.
+    let refusal = cli_repair_refusal_with_env(&root, &finding_id, "1")?
+        .ok_or("`ripr repair` must refuse under the same seam limit")?;
+    if !refusal.contains("inventory is truncated") {
+        return Err(format!("CLI truncation refusal changed shape: {refusal}"));
+    }
+    Ok(())
+}
+
+/// #9231 production path: `ripr_get_repair_card` shares the truncation fact
+/// with list/get/prepare. Under `RIPR_REPO_EXPOSURE_SEAM_LIMIT=1` the card
+/// refuses with the `incomplete_inventory` kind `ripr agent card` itself
+/// uses, where the complete-inventory control ships a ready card.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn truncated_seam_inventory_refuses_repair_card_over_stdio() -> Result<(), String> {
+    const REFRESH_TIMEOUT: Duration = Duration::from_mins(3);
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    let root = install_b4_repair_ready_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    std::fs::write(root.join(".gitignore"), "/target\n").map_err(|error| error.to_string())?;
+    // A second seam makes `limit=1` a real truncation (analyzed 1 < total 2).
+    let mut source =
+        std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?;
+    source.push_str("\npub fn sign(x: i32) -> i32 {\n    if x > 0 { 1 } else { 2 }\n}\n");
+    std::fs::write(root.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
+    commit_fixture(&root, "add a second seam")?;
+
+    // Control: complete inventory, the card ships with repair_ready true.
+    let mut control = SequentialStdio::spawn(&root)?;
+    control.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+    let refresh = control.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
+    structured_tool_success(&refresh, "ripr_refresh")?;
+    let list = control.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
+    let list = structured_tool_success(&list, "ripr_list_gaps")?;
+    let ready_id = list["items"]
+        .as_array()
+        .ok_or("list omitted items")?
+        .iter()
+        .find(|item| item["repair_packet_ready"] == true)
+        .and_then(|item| item["canonical_id"].as_str())
+        .ok_or_else(|| format!("control must yield a repair-ready item: {list}"))?
+        .to_string();
+    let card = control.call_tool(
+        "card",
+        "ripr_get_repair_card",
+        json!({ "canonical_id": ready_id }),
+        REPLY_TIMEOUT,
+    )?;
+    let card = structured_tool_success(&card, "ripr_get_repair_card")?;
+    if card.pointer("/card/readiness/repair_ready") != Some(&json!(true)) {
+        return Err(format!("control card must be repair-ready: {card}"));
+    }
+    let seam_id = card
+        .pointer("/card/subject/seam_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("control card omitted subject.seam_id: {card}"))?
+        .to_string();
+    drop(control);
+
+    // Truncated: same repository, seam limit 1.
+    let mut session =
+        SequentialStdio::spawn_with_env(&root, &[("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "1")])?;
+    session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+    let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
+    structured_tool_success(&refresh, "ripr_refresh")?;
+    let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
+    let list = structured_tool_success(&list, "ripr_list_gaps")?;
+    let items = list["items"].as_array().ok_or("list omitted items")?;
+    if !items
+        .iter()
+        .any(|item| item["canonical_id"] == ready_id.as_str())
+    {
+        return Err(format!("truncated refresh lost {ready_id}: {list}"));
+    }
+    for item in items {
+        let id = item["canonical_id"].as_str().ok_or("item omitted id")?;
+        let reply = session.call_tool(
+            &format!("card-{id}"),
+            "ripr_get_repair_card",
+            json!({ "canonical_id": id }),
+            REPLY_TIMEOUT,
+        )?;
+        let failure = reply
+            .pointer("/result/structuredContent/failure")
+            .ok_or_else(|| format!("card for {id} must refuse under truncation: {reply}"))?;
+        if failure.get("code") != Some(&json!("incomplete_inventory"))
+            || reply.pointer("/result/structuredContent/card").is_some()
+            || !failure.to_string().contains("seam inventory is truncated")
+        {
+            return Err(format!(
+                "card for {id} must refuse as incomplete_inventory: {reply}"
+            ));
+        }
+    }
+    drop(session);
+
+    // The CLI refuses the same seam's card for the same condition.
+    let output = worktree_ripr()
+        .args(["agent", "card", "--root"])
+        .arg(&root)
+        .args(["--seam-id", &seam_id, "--json"])
+        .env("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "1")
+        .output()
+        .map_err(|error| format!("spawn ripr agent card: {error}"))?;
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    if output.status.success() || !combined.contains("truncated by the repo seam limit") {
+        return Err(format!(
+            "`ripr agent card` must refuse under the same seam limit: {combined}"
+        ));
+    }
+    Ok(())
+}
+
+fn cli_repair_refusal_with_env(
+    root: &Path,
+    finding_id: &str,
+    seam_limit: &str,
+) -> Result<Option<String>, String> {
+    let output = worktree_ripr()
+        .args(["repair", finding_id, "--root"])
+        .arg(root)
+        .env("RIPR_REPO_EXPOSURE_SEAM_LIMIT", seam_limit)
+        .output()
+        .map_err(|error| format!("spawn ripr repair: {error}"))?;
+    if output.status.success() {
+        return Ok(None);
+    }
+    Ok(Some(String::from_utf8_lossy(&output.stderr).into_owned()))
 }
 
 /// #8847: literal producer totals survive both gap routes and refreshes.

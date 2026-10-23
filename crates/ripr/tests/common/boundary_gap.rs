@@ -12,6 +12,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[path = "printed_words.rs"]
+mod printed_words;
+
 pub(crate) const LIB_CLOSED: &str = r#"pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {
     if amount >= discount_threshold {
         amount - 10
@@ -673,7 +676,10 @@ fn count_after(line: &str, unit: &str) -> u64 {
 }
 
 pub(crate) fn split_printed_ripr_command(command: &str) -> Result<Vec<String>, String> {
-    let tokens = split_posix_tokens(command)?;
+    let tokens = printed_words::printed_words(command)?;
+    if tokens.is_empty() {
+        return Err("printed command was empty".to_string());
+    }
     if tokens.first().map(String::as_str) != Some("ripr") {
         return Err(format!(
             "printed command must start with installed `ripr`, got `{command}`"
@@ -710,54 +716,6 @@ pub(crate) fn run_printed_ripr(
         &args,
         &[(OsStr::new("PATH"), path.as_os_str())],
     )
-}
-
-fn split_posix_tokens(command: &str) -> Result<Vec<String>, String> {
-    let mut tokens = Vec::new();
-    let mut chars = command.chars().peekable();
-    loop {
-        while chars.peek().is_some_and(|ch| ch.is_whitespace()) {
-            chars.next();
-        }
-        if chars.peek().is_none() {
-            break;
-        }
-        let mut token = String::new();
-        loop {
-            match chars.peek().copied() {
-                None => break,
-                Some(ch) if ch.is_whitespace() => break,
-                Some('\'') => {
-                    chars.next();
-                    loop {
-                        match chars.next() {
-                            Some('\'') => break,
-                            Some(inner) => token.push(inner),
-                            None => {
-                                return Err(format!("unterminated quote in `{command}`"));
-                            }
-                        }
-                    }
-                }
-                Some('\\') => {
-                    chars.next();
-                    let escaped = chars
-                        .next()
-                        .ok_or_else(|| format!("trailing backslash in `{command}`"))?;
-                    token.push(escaped);
-                }
-                Some(ch) => {
-                    chars.next();
-                    token.push(ch);
-                }
-            }
-        }
-        tokens.push(token);
-    }
-    if tokens.is_empty() {
-        return Err("printed command was empty".to_string());
-    }
-    Ok(tokens)
 }
 
 fn run_program(
@@ -824,8 +782,12 @@ mod tests {
 
     #[test]
     fn split_printed_command_round_trips_quoted_root() -> Result<(), String> {
-        let printed =
-            "ripr agent repair --root '/tmp/gap fixture' --attempt repair-attempt-aa --phase after";
+        // The root is quoted in this host's `shell_arg` form (#7729).
+        let printed = if cfg!(windows) {
+            r#"ripr agent repair --root "/tmp/gap fixture" --attempt repair-attempt-aa --phase after"#
+        } else {
+            "ripr agent repair --root '/tmp/gap fixture' --attempt repair-attempt-aa --phase after"
+        };
         let tokens = split_printed_ripr_command(printed)?;
         if tokens
             != [

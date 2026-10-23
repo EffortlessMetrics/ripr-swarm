@@ -90,6 +90,7 @@ cache_layers! {
     CompactClassifiedSeamsSharded => "repo-compact-classified-seams-sharded",
     CorpusFingerprint => "repo-corpus-fingerprint",
     FileFacts => "repo-file-facts",
+    ScopedClassifiedSeams => "repo-scoped-classified-seams",
     // Test-only producer: `RepoSeamCountCache` is constructed only under
     // `#[cfg(test)]`. It stays registered so `cache clear` still removes
     // count caches left by earlier builds and test runs.
@@ -127,39 +128,27 @@ fn cache_layer_dir(workspace_root: &Path, layer: CacheLayer) -> PathBuf {
 /// resolved cache `base`, each with whether publishing there also creates
 /// subdirectories (sharded generations do). `ripr doctor` probes these for
 /// writability, so they must match each cache's `at` constructor; a test
-/// pins that.
+/// pins that. The subdirectory flags come from each cache's own
+/// `entry_dirs`/`entry_dir` (the impl that publishes there), never from a
+/// second hand-written copy, so a store that starts creating
+/// subdirectories moves doctor's probe with it (#6707).
 pub(crate) fn production_entry_dirs(base: &Path) -> Vec<(PathBuf, bool)> {
-    let classified = |family: ClassifiedCacheFamily, schema_version: &str| {
-        let (layer, sharded_layer) = family.layers();
-        [
-            (base.join(layer.name()).join(schema_version), false),
-            (
-                base.join(sharded_layer.name())
-                    .join(schema_version)
-                    .join(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION),
-                true,
-            ),
-        ]
-    };
     let mut dirs = Vec::new();
-    dirs.extend(classified(
-        ClassifiedCacheFamily::SeamFacts,
-        CACHE_SCHEMA_VERSION,
-    ));
-    dirs.extend(classified(
-        ClassifiedCacheFamily::CompactClassifiedSeams,
-        COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION,
-    ));
-    dirs.push((
-        base.join(CacheLayer::CorpusFingerprint.name())
-            .join(CORPUS_FINGERPRINT_CACHE_SCHEMA_VERSION),
-        false,
-    ));
-    dirs.push((
-        base.join(CacheLayer::FileFacts.name())
-            .join(FILE_FACT_CACHE_SCHEMA_VERSION),
-        false,
-    ));
+    dirs.extend(
+        RepoSeamFactCache::at_base(base, ClassifiedCacheFamily::SeamFacts, CACHE_SCHEMA_VERSION)
+            .entry_dirs(),
+    );
+    dirs.extend(
+        RepoSeamFactCache::at_base(
+            base,
+            ClassifiedCacheFamily::CompactClassifiedSeams,
+            COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION,
+        )
+        .entry_dirs(),
+    );
+    dirs.push(RepoCorpusFingerprintCache::at_base(base).entry_dir());
+    dirs.push(RepoFileFactCache::at_base(base).entry_dir());
+    dirs.push(RepoScopedInventoryCache::at_base(base).entry_dir());
     dirs
 }
 
@@ -482,7 +471,35 @@ pub(crate) struct CachedSeamLimitInfo {
 /// (#4680). Old entries preserve the wrong target kind or oracle credit.
 /// `1.88`: a `debug_assert_eq!` owner pin withholds the gap under
 /// `rust_debug_assertion_profile_unresolved` (#8051). Old entries keep it.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.88";
+/// `1.89`: a mockall `times(N)` on the one method a first-statement guard's
+/// block calls, with test inputs on both sides of the edge, discriminates
+/// the guard (RIPR-SPEC-0305). Old entries keep it weakly exposed.
+/// `1.90`: an assertion in `tokio::spawn(async { .. })` joined by
+/// `.await.unwrap()` or `.expect(..)` pins the owner (RIPR-SPEC-0197). Old
+/// entries keep the async-block refusal.
+/// `1.91`: a table loop that opens with `if SKIPPED.contains(&key) {
+/// continue; }` over a literal `const` list lends the rows it lets through
+/// to an arm selection (RIPR-SPEC-0229 decision 7). Old entries keep the
+/// loop unread.
+/// `1.92`: a match arm fed by a bounded caller loop inside an `Iterator::next`
+/// and checked by a collect-and-compare test is withheld as
+/// `rust_caller_loop_selector_unresolved` (RIPR-SPEC-0240, #5503). Old entries
+/// keep the weak gap.
+/// `1.93`: a write-only `Display::fmt` pinned by an exact `to_string()`
+/// assertion is credited (RIPR-SPEC-0297, #9608). Old entries keep the weak gap.
+/// `1.94`: a closure tail pinned on a helper-built receiver and a field of a
+/// hand-written recording double are withheld as
+/// `rust_framework_oracle_unresolved` (RIPR-SPEC-0240, #9609, #9610). Old
+/// entries keep the weak gap.
+/// `1.95`: a same-file assertion wrapper beside a proximity-only oracle names
+/// `rust_macro_wrapped_assertion_unresolved` (RIPR-SPEC-0120, #7089). Old
+/// entries keep the weak gap.
+/// `1.96`: an exact pin on a closure tail, returned-receiver effect or
+/// let-else exit withholds the gap under `rust_pinned_shape_unresolved`
+/// (#9440). Old entries keep it weakly exposed.
+/// `1.97`: effect-family assertions share execution admission (#8927). Old
+/// entries credit an assertion that provably never runs.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.97";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -617,7 +634,16 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.88";
 /// `0.93`: same module-motion target and private relation evidence as full `1.87`.
 /// `0.94`: the cache body carries `statically_contradicted_related_tests`.
 /// `0.95`: same `debug_` assertion limit as full `1.88` (#8051).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.95";
+/// `0.96`: same mock call-count evidence as full `1.89`.
+/// `0.97`: same spawned-task assertion pins as full `1.90`.
+/// `0.98`: same skip-guarded table rows as full `1.91`.
+/// `0.99`: same caller-loop selector limit as full `1.92`.
+/// `0.100`: same Display string pin as full `1.93`.
+/// `0.101`: same fixture-receiver and recording-double limits as full `1.94`.
+/// `0.102`: same local-macro wrapper limit as full `1.95`.
+/// `0.103`: same pinned-shape limit as full `1.96` (#9440).
+/// `0.104`: same effect-assertion execution admission as full `1.97` (#8927).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.104";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -754,7 +780,16 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.95";
 /// `0.93`: same module-motion target and private relation evidence as full `1.87`.
 /// `0.94`: the cache body carries `statically_contradicted_related_tests`.
 /// `0.95`: same `debug_` assertion limit as full `1.88` (#8051).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.95";
+/// `0.96`: same mock call-count evidence as full `1.89`.
+/// `0.97`: same spawned-task assertion pins as full `1.90`.
+/// `0.98`: same skip-guarded table rows as full `1.91`.
+/// `0.99`: same caller-loop selector limit as full `1.92`.
+/// `0.100`: same Display string pin as full `1.93`.
+/// `0.101`: same fixture-receiver and recording-double limits as full `1.94`.
+/// `0.102`: same local-macro wrapper limit as full `1.95`.
+/// `0.103`: same pinned-shape limit as full `1.96` (#9440).
+/// `0.104`: same effect-assertion execution admission as full `1.97` (#8927).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.104";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -961,8 +996,14 @@ const SHARDED_ENVELOPE_DIGEST_DOMAIN: &str = "ripr-cache:ShardedCacheEnvelope:v1
 const SHARDED_MANIFEST_DIGEST_DOMAIN: &str = "ripr-cache:ShardedCacheManifest:v1";
 
 mod export;
+mod scoped_inventory;
 mod store;
 pub(crate) use export::export_current;
+#[cfg(test)]
+pub(crate) use scoped_inventory::SCOPED_INVENTORY_CACHE_SCHEMA_VERSION;
+pub(crate) use scoped_inventory::{
+    PersistedScopedInventory, PersistedSeamLimit, RepoScopedInventoryCache,
+};
 
 /// Environment variable that relocates the cache base directory. When set
 /// to a non-empty path, all cache reads and writes use that path as the
@@ -1213,7 +1254,7 @@ fn classified_seam_cache_encoded_shard_ceiling_from_env(
 
 /// Aggregate cache key — every field that, when changed, must invalidate
 /// the workspace-level classified seam cache.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub(crate) struct RepoSeamCacheKey {
     pub(crate) schema_version: String,
     pub(crate) analyzer_version: String,
@@ -1732,6 +1773,22 @@ impl RepoCorpusFingerprintCache {
         }
     }
 
+    /// Construct at an already resolved cache `base` (doctor's probe list).
+    fn at_base(base: &Path) -> Self {
+        Self {
+            dir: base
+                .join(CacheLayer::CorpusFingerprint.name())
+                .join(CORPUS_FINGERPRINT_CACHE_SCHEMA_VERSION),
+        }
+    }
+
+    /// The entry directory this cache writes into, with whether storing
+    /// there also creates subdirectories. `store` writes entry files
+    /// directly in `dir` and creates no subdirectory, hence `false`.
+    pub(crate) fn entry_dir(&self) -> (PathBuf, bool) {
+        (self.dir.clone(), false)
+    }
+
     /// Construct a cache at an explicit directory (tests use this to
     /// avoid touching the real workspace).
     #[cfg(test)]
@@ -1881,6 +1938,27 @@ impl RepoSeamFactCache {
                 .join(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION),
             base,
         )
+    }
+
+    /// Construct at an already resolved cache `base` (doctor's probe list).
+    fn at_base(base: &Path, family: ClassifiedCacheFamily, schema_version: &str) -> Self {
+        let (layer, sharded_layer) = family.layers();
+        Self::rooted_at(
+            base.join(layer.name()).join(schema_version),
+            base.join(sharded_layer.name())
+                .join(schema_version)
+                .join(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION),
+            base.to_path_buf(),
+        )
+    }
+
+    /// The entry directories this cache writes into, each with whether
+    /// publishing there also creates subdirectories. Single entries are
+    /// files written directly in `dir`; sharded publication creates a
+    /// per-key directory and a generation directory under `sharded_dir`
+    /// (see `publish_sharded_generation`), hence `true` only there.
+    pub(crate) fn entry_dirs(&self) -> [(PathBuf, bool); 2] {
+        [(self.dir.clone(), false), (self.sharded_dir.clone(), true)]
     }
 
     pub(crate) fn rooted_at(dir: PathBuf, sharded_dir: PathBuf, base: PathBuf) -> Self {
@@ -2440,6 +2518,24 @@ impl RepoFileFactCache {
             dir,
             unusable_base_reason: OnceLock::new(),
         }
+    }
+
+    /// Construct at an already resolved cache `base` (doctor's probe list).
+    fn at_base(base: &Path) -> Self {
+        Self {
+            base: base.to_path_buf(),
+            dir: base
+                .join(CacheLayer::FileFacts.name())
+                .join(FILE_FACT_CACHE_SCHEMA_VERSION),
+            unusable_base_reason: OnceLock::new(),
+        }
+    }
+
+    /// The entry directory this cache writes into, with whether storing
+    /// there also creates subdirectories. `store_file_facts` writes entry
+    /// files directly in `dir` and creates no subdirectory, hence `false`.
+    pub(crate) fn entry_dir(&self) -> (PathBuf, bool) {
+        (self.dir.clone(), false)
     }
 
     #[cfg(test)]
@@ -3052,6 +3148,7 @@ impl ShardedCacheEnvelope {
 std::thread_local! {
     // Thread-owned counters observe real codec work without interference from parallel tests.
     static INTEGRITY_WORK: std::cell::Cell<(usize, usize, usize)> = const { std::cell::Cell::new((0, 0, 0)) };
+    static INTEGRITY_HASH_UPDATES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static INTEGRITY_VEC_HIGH_WATER: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
@@ -3142,11 +3239,13 @@ fn encode_checksummed_pretty_to_writer<T: serde::Serialize, W: std::io::Write>(
 /// Unkeyed checksum integrity does not authenticate a writer who can recompute the digest.
 fn semantic_body_digest<T: serde::Serialize>(domain: &str, body: &T) -> Result<String, String> {
     use sha2::{Digest, Sha256};
-    // The serializer feeds SHA-256 directly: warm admission never buffers a second body.
+    // The serializer streams into SHA-256: warm admission never retains a second body.
     struct ChecksumWriter(Sha256);
     impl std::io::Write for ChecksumWriter {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
             self.0.update(bytes);
+            #[cfg(test)]
+            INTEGRITY_HASH_UPDATES.with(|count| count.set(count.get().saturating_add(1)));
             Ok(bytes.len())
         }
 
@@ -3157,7 +3256,13 @@ fn semantic_body_digest<T: serde::Serialize>(domain: &str, body: &T) -> Result<S
     let mut writer = ChecksumWriter(Sha256::new());
     writer.0.update(domain.as_bytes());
     writer.0.update([0]);
+    // Coalesce tiny serializer fragments before SHA updates. Scratch stays
+    // fixed-size; draining before finalization preserves every trailing byte.
+    let mut writer = std::io::BufWriter::with_capacity(8 * 1024, writer);
     serde_json::to_writer(&mut writer, body)
+        .map_err(|err| format!("encode integrity body failed: {err}"))?;
+    let writer = writer
+        .into_inner()
         .map_err(|err| format!("encode integrity body failed: {err}"))?;
     #[cfg(test)]
     INTEGRITY_WORK.with(|work| {
@@ -3261,6 +3366,8 @@ impl CorpusFingerprintEnvelope {
 }
 
 /// Codec module owns serialization format and integrity emission.
+#[cfg(test)]
+mod digest_tests;
 mod related_test_table;
 
 mod codec {
@@ -4360,6 +4467,7 @@ mod tests {
         let corpus = RepoCorpusFingerprintCache::at(root);
         let files = RepoFileFactCache::at(root);
         let counts = RepoSeamCountCache::at(root);
+        let scoped = RepoScopedInventoryCache::at(root);
         let produced = [
             &full.dir,
             &full.sharded_dir,
@@ -4368,6 +4476,7 @@ mod tests {
             &corpus.dir,
             &files.dir,
             &counts.dir,
+            &scoped.dir,
         ];
         let actual: BTreeSet<_> = produced
             .into_iter()
@@ -4643,7 +4752,16 @@ mod tests {
         // 1.85 -> 1.86: cached observed-value test file (#8948).
         // 1.86 -> 1.87: module-motion target identity and private relation evidence (#4680).
         // 1.87 -> 1.88: the `debug_assert_eq!` profile limit (#8051).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.88");
+        // 1.88 -> 1.89: mock call counts observe a guard's side flip (RIPR-SPEC-0305).
+        // 1.89 -> 1.90: joined `tokio::spawn` assertions pin the owner (RIPR-SPEC-0197).
+        // 1.90 -> 1.91: a literal skip list lends the rows its guard lets through (RIPR-SPEC-0229).
+        // 1.91 -> 1.92: caller-loop selector limit (RIPR-SPEC-0240, #5503).
+        // 1.92 -> 1.93: write-only `Display::fmt` pinned by `to_string()` (RIPR-SPEC-0297, #9608).
+        // 1.93 -> 1.94: fixture-receiver and recording-double limits (RIPR-SPEC-0240, #9609, #9610).
+        // 1.94 -> 1.95: local macro wrapper beside a proximity oracle (RIPR-SPEC-0120, #7089).
+        // 1.95 -> 1.96: pinned-shape limit (RIPR-SPEC-0240, #9440).
+        // 1.96 -> 1.97: effect assertions require execution admission (#8927).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.97");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4720,8 +4838,17 @@ mod tests {
         // 0.92 -> 0.93: same module-motion evidence as full 1.87 (#4680).
         // 0.93 -> 0.94: the cache body carries `statically_contradicted_related_tests`.
         // 0.94 -> 0.95: same `debug_` assertion limit as full 1.88 (#8051).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.95");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.95");
+        // 0.95 -> 0.96: same mock call-count evidence as full 1.89.
+        // 0.96 -> 0.97: same spawned-task assertion pins as full 1.90.
+        // 0.97 -> 0.98: same skip-guarded table rows as full 1.91.
+        // 0.98 -> 0.99: same caller-loop selector limit as full 1.92.
+        // 0.99 -> 0.100: same Display string pin as full 1.93.
+        // 0.100 -> 0.101: same fixture-receiver and recording-double limits as full 1.94.
+        // 0.101 -> 0.102: same local-macro wrapper limit as full 1.95.
+        // 0.102 -> 0.103: same pinned-shape limit as full 1.96.
+        // 0.103 -> 0.104: same effect assertion admission as full 1.97 (#8927).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.104");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.104");
     }
 
     #[test]
@@ -6168,6 +6295,76 @@ mod tests {
         match outcome {
             CacheLoad::CorruptIgnored { reason } if reason.contains("tracked by Git") => Ok(()),
             other => Err(format!("tracked entry must be refused, got {other:?}")),
+        }
+    }
+
+    fn scoped_sample_inventory() -> PersistedScopedInventory {
+        PersistedScopedInventory {
+            classified: Vec::new(),
+            classified_seams_considered: 0,
+            total_rust_files: 1,
+            total_production_files: 1,
+            scoped_production_files: Vec::new(),
+            changed_production_files: Vec::new(),
+            parser_declined_files: Vec::new(),
+            immediate_caller_files: Vec::new(),
+            unevaluated_seams: 0,
+            repo_seam_limit: PersistedSeamLimit::NotComputed,
+        }
+    }
+
+    #[test]
+    fn given_scoped_inventory_entries_tracked_by_git_when_load_or_store_runs_then_both_refuse()
+    -> Result<(), String> {
+        let (root, cache_dir) = work_tree_with_cache_dir("tracked-scoped")?;
+        let key = empty_state().cache_key();
+        let untracked = RepoScopedInventoryCache::at_dir(cache_dir.clone());
+        untracked.store(&key, b"id", scoped_sample_inventory())?;
+        // Control: untracked, the same entry is served.
+        if !matches!(untracked.load(&key, b"id"), CacheLoad::Hit(_)) {
+            return Err("untracked control entry must be a hit".to_owned());
+        }
+        track_cache_dir(&root, &cache_dir)?;
+        let tracked = RepoScopedInventoryCache::at_dir(cache_dir.clone());
+        let loaded = tracked.load(&key, b"id");
+        let stored = tracked.store(&key, b"id", scoped_sample_inventory());
+        ignore_remove_dir_all(&root);
+        match loaded {
+            CacheLoad::CorruptIgnored { reason } if reason.contains("tracked by Git") => {}
+            other => return Err(format!("tracked entry must be refused, got {other:?}")),
+        }
+        match stored {
+            Err(reason) if reason.contains("tracked by Git") => Ok(()),
+            other => Err(format!(
+                "store into a tracked root must fail, got {other:?}"
+            )),
+        }
+    }
+
+    #[test]
+    fn given_cache_base_is_a_regular_file_when_scoped_inventory_runs_then_both_refuse()
+    -> Result<(), String> {
+        let dir = isolated_dir("scoped-base-is-file");
+        ignore_remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|err| format!("fixture setup failed: {err}"))?;
+        let base = dir.join("cache-is-a-file");
+        std::fs::write(&base, "not a directory\n")
+            .map_err(|err| format!("fixture setup failed: {err}"))?;
+        let cache = RepoScopedInventoryCache::at_dir(base.clone());
+        let key = empty_state().cache_key();
+        let expected = format!("cache dir is not a directory: {}", base.display());
+        let loaded = cache.load(&key, b"id");
+        let stored = cache.store(&key, b"id", scoped_sample_inventory());
+        ignore_remove_dir_all(&dir);
+        match loaded {
+            CacheLoad::CorruptIgnored { reason } if reason == expected => {}
+            other => return Err(format!("expected the base-is-file reason, got {other:?}")),
+        }
+        match stored {
+            Err(reason) if reason == expected => Ok(()),
+            other => Err(format!(
+                "store must fail with the same reason, got {other:?}"
+            )),
         }
     }
 
@@ -9593,16 +9790,34 @@ mod generation_transition_tests {
         let root = Path::new("/ws");
         let full = RepoSeamFactCache::at(root);
         let compact = RepoSeamFactCache::at_compact_classified(root);
-        // Only the sharded caches publish generation subdirectories.
-        let constructed = vec![
-            (full.dir, false),
-            (full.sharded_dir, true),
-            (compact.dir, false),
-            (compact.sharded_dir, true),
+        // Independent expectation, hand-written here: only the two
+        // sharded caches create subdirectories (a per-key directory and
+        // a generation directory under `sharded_dir`); the single-entry,
+        // corpus-fingerprint and file-fact caches write files directly
+        // in their entry directory. Production derives its flags from
+        // each constructor's `entry_dirs`/`entry_dir` (#6707), so this
+        // table must not: flipping a constructor flag changes the
+        // production side only and fails this test.
+        let expected = vec![
+            (full.dir.clone(), false),
+            (full.sharded_dir.clone(), true),
+            (compact.dir.clone(), false),
+            (compact.sharded_dir.clone(), true),
             (RepoCorpusFingerprintCache::at(root).dir, false),
             (RepoFileFactCache::at(root).dir, false),
+            (RepoScopedInventoryCache::at(root).dir, false),
         ];
-        assert_eq!(production_entry_dirs(&cache_base_dir(root)), constructed);
+        assert_eq!(production_entry_dirs(&cache_base_dir(root)), expected);
+        // The constructors doctor's list is derived from must carry the
+        // same flags, so a flag flipped in `entry_dirs`/`entry_dir`
+        // alone (without touching `production_entry_dirs`) also fails.
+        let mut constructed = Vec::new();
+        constructed.extend(full.entry_dirs());
+        constructed.extend(compact.entry_dirs());
+        constructed.push(RepoCorpusFingerprintCache::at(root).entry_dir());
+        constructed.push(RepoFileFactCache::at(root).entry_dir());
+        constructed.push(RepoScopedInventoryCache::at(root).entry_dir());
+        assert_eq!(constructed, expected);
     }
 
     /// Analyzer identities another build of this same package version could

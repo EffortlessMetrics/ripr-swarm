@@ -479,7 +479,7 @@ fn repair_explicit_ineligible_seam_refuses_without_attempt_or_lock() -> Result<(
         "refusal must name the seam:\n{stderr}"
     );
     assert!(
-        stderr.contains("not a headline repair target"),
+        stderr.contains("its class is not a repair target under the current policy"),
         "refusal must name the ineligibility reason:\n{stderr}"
     );
     assert_no_repair_attempt_side_effects(root);
@@ -3246,6 +3246,14 @@ fn continue_on_unsuccessful_terminal_attempts_refuses_without_completion() -> Re
             "the refusal must name the attempt:\n{stderr}"
         );
         assert!(
+            stderr.contains("ripr: repair attempt"),
+            "the refusal must carry exactly one top-level `ripr:` prefix:\n{stderr}"
+        );
+        assert!(
+            !stderr.contains("ripr: ripr:"),
+            "the top-level handler already prefixes the refusal, so the message must not repeat it:\n{stderr}"
+        );
+        assert!(
             !stderr.contains("already complete"),
             "a {state} attempt is never already complete:\n{stderr}"
         );
@@ -3387,6 +3395,14 @@ fn continue_on_unconfirmed_ready_to_finish_refuses_without_completion() -> Resul
     assert!(
         !stderr.contains("already complete"),
         "an unconfirmed finish is never already complete:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("ripr: repair attempt"),
+        "the refusal must carry exactly one top-level `ripr:` prefix:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("ripr: ripr:"),
+        "the top-level handler already prefixes the refusal, so the message must not repeat it:\n{stderr}"
     );
     assert!(
         !stdout_text(&refused).contains("already complete"),

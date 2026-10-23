@@ -1276,7 +1276,9 @@ fn enforce_changed_rust_line_limit(
          limit ({line_limit}); analysis was not run to protect runner memory before \
          probe expansion. Repair route: reduce the diff scope, split the extraction \
          PR, run a narrower diff, or raise the limit via \
-         {DIFF_CHANGED_RUST_LINE_LIMIT_ENV}=<number>."
+         {DIFF_CHANGED_RUST_LINE_LIMIT_ENV}=<number>. To analyze a subset, pass \
+         `--path <glob>` and/or `--exclude <glob>` to `ripr check` (repeatable, \
+         repository-relative; files left out are reported as not analyzed)."
     ))
 }
 
@@ -1347,6 +1349,17 @@ fn apply_probe_and_oracle_limits(
     // environment-activated branch, a mock closure, an expect-test debug
     // literal, an unredacted insta field) is not a missing assertion.
     classify::withhold_framework_oracle_gap(finding, index);
+    // RIPR-SPEC-0240 / #9440: an exact pin on a direct call whose changed
+    // tail is a closure, a returned-receiver effect or a let-else exit is a
+    // shape the owner pin does not read, not a missing assertion.
+    classify::withhold_pinned_shape_gap(finding, index);
+    // RIPR-SPEC-0240: an operator, `Drop`, iterator or dyn call a test makes
+    // may run the owner without naming it.
+    classify::withhold_implicit_call_gap(finding, index);
+    // RIPR-SPEC-0240 / #5503: a changed arm fed by a bounded caller loop in an
+    // iterator's `next`, checked by a test that collects the iterator, is a
+    // selector domain ripr reads but does not run.
+    classify::withhold_caller_loop_selector_gap(finding, index);
     // RIPR-SPEC-0240 runs last so a producer-named limit keeps its finding.
     classify::withhold_unsupported_gap(finding);
 }
@@ -1659,7 +1672,13 @@ pub(crate) fn is_generated_rust_file(path: &Path) -> bool {
             "gen" | "generated" | "out"
         )
     });
-    conventional_name || generated_directory
+    // A committed Cargo `target/` at the repository root is build output, not
+    // source (#9277). Only the first component counts: a nested `target`
+    // module or crate directory is ordinary hand-written layout.
+    let build_output_root = path.components().next().is_some_and(
+        |component| matches!(component, std::path::Component::Normal(value) if value == "target"),
+    );
+    conventional_name || generated_directory || build_output_root
 }
 
 pub(crate) fn is_generated_rust_file_with_patterns(
@@ -2183,6 +2202,14 @@ impl RustAdapter {
             index.tests().iter(),
         );
         let transitive_reach = classify::TransitiveReachIndex::new(&index);
+        // #9278: the scope's shared full-selection index and the lookups
+        // derived from it, built once for every finding that searches it.
+        let shared_reach_index: std::sync::OnceLock<std::sync::Arc<RustIndex>> =
+            std::sync::OnceLock::new();
+        let shared_reach_lookups: std::sync::OnceLock<(
+            oracles::PropertyMacroMentionIndex<'_>,
+            classify::TransitiveReachIndex<'_>,
+        )> = std::sync::OnceLock::new();
 
         let rust_changed_for_presence = analyzable_changed_files
             .iter()
@@ -2288,6 +2315,16 @@ impl RustAdapter {
                 })
                 .map(|file| file.path.as_path()),
         )?;
+        // #9308: a file outside the diff that a parse budget declined also
+        // loses its probe shapes and its tests, so the related-test search for
+        // the changed code can miss evidence there. One aggregate limitation
+        // keeps the run from reading complete by omission.
+        limitations.extend(declined_unchanged_file_limitation(
+            &index,
+            analyzable_changed_files
+                .iter()
+                .map(|file| file.path.as_path()),
+        )?);
 
         // Files whose probes became findings: only their evidence can be
         // missing a related test, so only they earn an unresolved-route
@@ -2397,6 +2434,15 @@ impl RustAdapter {
             };
             match builder.build() {
                 Ok(pool) => pool.install(|| {
+                    // #9211: the first probe to need the workspace macro-site
+                    // scan would run it in line on one worker while the rest
+                    // sleep on the memo lock. Pay it here, before any probe
+                    // is queued, so it fans out over this pool.
+                    cancellation::with_optional_token(token.as_ref(), || {
+                        committed_source::with_overlay(overlay.clone(), || {
+                            related_test_candidate_index.prime_workspace_macro_scan(&index);
+                        });
+                    });
                     seeded_probes
                         .par_iter()
                         .map_init(crate::analysis::syntax::run_memo::enter, |_, probe| {
@@ -2450,7 +2496,9 @@ impl RustAdapter {
                             || needs_mixed_macro_reach_limit(&finding) =>
                     {
                         match owner_name_from_id(&probe.owner, &probe.location.file) {
-                            Some(owner) => scope.reach_index(&owner, &index, narrow_limit)?,
+                            Some(owner) => {
+                                scope.reach_index(&owner, &index, narrow_limit, scope_limit)?
+                            }
                             None => dependent_scope::ReachIndex::Main,
                         }
                     }
@@ -2464,6 +2512,29 @@ impl RustAdapter {
                         &property_macro_mentions,
                         &transitive_reach,
                     ),
+                    dependent_scope::ReachIndex::Shared => {
+                        if let Some(shared) = dependent_scope
+                            .as_ref()
+                            .and_then(dependent_scope::NarrowedScope::shared_reach)
+                        {
+                            let shared = shared_reach_index.get_or_init(|| shared);
+                            let (mentions, reach) = shared_reach_lookups.get_or_init(|| {
+                                (
+                                    oracles::PropertyMacroMentionIndex::new(shared, &options.root),
+                                    classify::TransitiveReachIndex::new(shared),
+                                )
+                            });
+                            apply_rust_no_static_path_limit(
+                                &mut finding,
+                                &probe,
+                                shared,
+                                mentions,
+                                reach,
+                            );
+                        } else {
+                            return Err("shared reach index reported but not held".to_string());
+                        }
+                    }
                     dependent_scope::ReachIndex::Widened(reach_index) => {
                         // A withheld file that spells the owner can hold the
                         // unresolved property macro that mentions it.
@@ -2775,6 +2846,71 @@ fn lexical_fallback_limitations<'a>(
     Ok(limitations)
 }
 
+/// One aggregate limitation for Rust files outside the diff that a typed
+/// static limit declined (#9308). Changed files already carry their own
+/// per-file limitation from [`lexical_fallback_limitations`].
+fn declined_unchanged_file_limitation<'a>(
+    index: &RustIndex,
+    changed_paths: impl Iterator<Item = &'a Path>,
+) -> Result<Option<crate::analysis_outcome::AnalysisLimitation>, String> {
+    use crate::analysis_outcome::{
+        AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
+        AnalysisStage,
+    };
+    let portable = |path: &Path| path.to_string_lossy().replace('\\', "/");
+    let changed = changed_paths
+        .map(portable)
+        .collect::<std::collections::BTreeSet<_>>();
+    let declined = rust_index::declined_rust_files(index)
+        .into_iter()
+        .filter(|file| !changed.contains(&portable(&file.path)))
+        .collect::<Vec<_>>();
+    if declined.is_empty() {
+        return Ok(None);
+    }
+    const MAX_NAMED: usize = 3;
+    let mut listed = declined
+        .iter()
+        .take(MAX_NAMED)
+        .map(|file| {
+            let token = file
+                .reason
+                .strip_prefix("static limit ")
+                .and_then(|reason| reason.split(':').next())
+                .unwrap_or("parse_declined");
+            format!(
+                "{} ({token})",
+                file.path.to_string_lossy().replace('\\', "/")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    if declined.len() > MAX_NAMED {
+        listed.push_str(&format!(" and {} more", declined.len() - MAX_NAMED));
+    }
+    let detail = format!(
+        "{} Rust file(s) outside the diff were declined by a parse limit and read lexically: \
+         {listed}; lexical fallback emits no probe shapes and can lose these files' tests, so \
+         related-test evidence for the changed code may be incomplete.",
+        declined.len()
+    )
+    .chars()
+    .take(crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS)
+    .collect::<String>();
+    Ok(Some(
+        AnalysisLimitation::new(
+            AnalysisLimitationKind::ProducerFailure,
+            AnalysisStage::LanguageAdapter,
+            AnalysisRecovery::new(
+                AnalysisRecoveryKind::InspectFailure,
+                "Split the listed file(s) below the parse budget, or save them as UTF-8, then re-run the analysis.",
+            )?,
+        )
+        .with_affected_items(declined.len() as u64)?
+        .with_detail(detail)?,
+    ))
+}
+
 impl LanguageAdapter for RustAdapter {
     fn accepts_path(&self, path: &Path) -> bool {
         matches!(route(path), Some(LanguageId::Rust))
@@ -2998,6 +3134,7 @@ impl RustAdapter {
             production_files: production_files.len(),
             skipped_files,
             partial_reason: None,
+            file_accounting: Default::default(),
             rust_diagnostic_origins,
             rust_consumed_sources,
         })
@@ -3831,6 +3968,112 @@ mod tests {
             &root.join("e/tests/e_tests.rs"),
             "#[test]\nfn e_holds() {\n    assert_eq!(scope_e::unrelated(), 1);\n}\n",
         )
+    }
+
+    /// #9278: past the reach-index cache capacity the run shares one
+    /// full-selection index, so four owners with distinct caller closures
+    /// build three indexes instead of four, with the findings unchanged.
+    #[test]
+    fn distinct_owner_closures_share_one_full_index_past_the_cache() -> Result<(), String> {
+        use dependent_scope::DependentScopeMode;
+        let root = temp_root("dependent-scope-shared-reach")?;
+        let manifest = |name: &str, dep: Option<&str>| {
+            let mut text = format!(
+                "[package]\nname = \"scope_{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n"
+            );
+            if let Some(dep) = dep {
+                text.push_str(&format!(
+                    "\n[dependencies]\nscope_{dep} = {{ path = \"../{dep}\" }}\n"
+                ));
+            }
+            text
+        };
+        write(
+            &root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"a\", \"b1\", \"b2\", \"b3\", \"b4\", \"d\"]\nresolver = \"2\"\n",
+        )?;
+        write(&root.join("a/Cargo.toml"), &manifest("a", None))?;
+        write(&root.join("d/Cargo.toml"), &manifest("d", None))?;
+        write(
+            &root.join("d/src/lib.rs"),
+            "pub fn island() -> u8 {\n    2\n}\n",
+        )?;
+        let mut owners = String::new();
+        let mut diff = String::from(
+            "diff --git a/a/src/lib.rs b/a/src/lib.rs\nnew file mode 100644\n--- /dev/null\n+++ b/a/src/lib.rs\n@@ -0,0 +1,12 @@\n",
+        );
+        for n in 1..=4 {
+            let body = format!(
+                "pub fn gauge_{n}(flag: bool) -> bool {{\n    if flag {{ true }} else {{ false }}\n}}\n"
+            );
+            for line in body.lines() {
+                diff.push_str(&format!("+{line}\n"));
+            }
+            owners.push_str(&body);
+            let dependent = format!("b{n}");
+            write(
+                &root.join(&dependent).join("Cargo.toml"),
+                &manifest(&dependent, Some("a")),
+            )?;
+            write(
+                &root.join(&dependent).join("src/lib.rs"),
+                &format!(
+                    "pub fn relay_{n}(flag: bool) -> bool {{\n    scope_a::gauge_{n}(flag)\n}}\n"
+                ),
+            )?;
+            write(
+                &root.join(&dependent).join("tests/relay_tests.rs"),
+                &format!(
+                    "#[test]\nfn relay_{n}_holds() {{\n    assert!(scope_{dependent}::relay_{n}(true));\n}}\n"
+                ),
+            )?;
+        }
+        write(&root.join("a/src/lib.rs"), &owners)?;
+        let changed = diff::parse_unified_diff(&diff);
+        let run = |mode| {
+            dependent_scope::with_forced_mode(mode, || {
+                let result = RustAdapter.analyze_diff(
+                    &diff_options(root.clone(), AnalysisMode::Draft),
+                    &OraclePolicy::default(),
+                    &changed,
+                )?;
+                let unreached = result
+                    .findings
+                    .iter()
+                    .filter(|finding| finding.class == ExposureClass::NoStaticPath)
+                    .count();
+                if unreached < 4 {
+                    return Err(format!(
+                        "every changed owner must be a no_static_path finding, got {unreached}"
+                    ));
+                }
+                Ok::<_, String>((
+                    format!("{:?}", result.findings),
+                    dependent_scope::observed_reach_builds(),
+                ))
+            })
+        };
+        let (full, _) = run(DependentScopeMode::Full)?;
+        // A full selection past the hard index limit keeps the bounded
+        // per-closure cache: four closure builds, no shared index.
+        let (capped, capped_builds) =
+            dependent_scope::with_forced_hard_limit(1, || run(DependentScopeMode::NameAdmitted))?;
+        assert_eq!(
+            capped, full,
+            "the hard-limit fallback must not change a finding"
+        );
+        assert_eq!(
+            capped_builds, 4,
+            "an oversized selection must not be indexed whole"
+        );
+        let (named, builds) = run(DependentScopeMode::NameAdmitted)?;
+        assert_eq!(named, full, "the shared index must not change a finding");
+        assert_eq!(
+            builds, 3,
+            "two cached closure indexes plus one shared full index, not one build per owner"
+        );
+        fs::remove_dir_all(&root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
     }
 
     const UNRELATED_E_SOURCE: &str = "pub fn unrelated() -> u8 {\n    1\n}\n";
@@ -5491,6 +5734,8 @@ fn absent_delimiter_boundary_returns_head() {
             "3 changed Rust lines across 1 Rust files",
             "RIPR_MAX_DIFF_CHANGED_RUST_LINES",
             "split the extraction PR",
+            "--path <glob>",
+            "--exclude <glob>",
         ] {
             if !message.contains(needle) {
                 return Err(format!("missing `{needle}` in message: {message}"));
@@ -6696,6 +6941,20 @@ fn absent_delimiter_boundary_returns_head() {
     }
 
     #[test]
+    fn committed_root_target_is_build_output_but_a_nested_target_module_is_not() {
+        // #9277: only the repository-root `target/` is Cargo build output.
+        assert!(is_generated_rust_file(Path::new(
+            "target/debug/build/x/out.rs"
+        )));
+        assert!(is_generated_rust_file(Path::new("target/lib.rs")));
+        assert!(!is_generated_rust_file(Path::new("src/target/mod.rs")));
+        assert!(!is_generated_rust_file(Path::new(
+            "crates/target/src/lib.rs"
+        )));
+        assert!(!is_generated_rust_file(Path::new("targets/lib.rs")));
+    }
+
+    #[test]
     fn custom_generated_rust_patterns_are_additive_to_builtin_rules() {
         let patterns = vec!["src/custom/**/*.rs".to_string()];
         assert!(is_generated_rust_file_with_patterns(
@@ -6768,6 +7027,7 @@ fn absent_delimiter_boundary_returns_head() {
     fn no_path_finding_with_infection_summary(summary: &str, evidence: Vec<String>) -> Finding {
         let stage = |state| StageEvidence::new(state, Confidence::Low, "stage");
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_lib.rs:predicate:test".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -7790,6 +8050,89 @@ fn absent_delimiter_boundary_returns_head() {
             "a test autotests=false leaves unbuilt must not relate: {related:?}"
         );
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_discloses_an_unchanged_file_a_parse_limit_declined() -> Result<(), String> {
+        // #9308: `src/deep.rs` is over the nesting budget and outside the
+        // diff. The changed file analyzes normally, but the run must not read
+        // complete: lexical fallback gave the declined file no probe shapes.
+        let root = temp_root("declined-unchanged-file")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n",
+        )?;
+        write(&root.join("src/lib.rs"), "pub mod used;\npub mod deep;\n")?;
+        write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+        write(
+            &root.join("src/deep.rs"),
+            &format!(
+                "pub fn deep() -> i32 {{ {}1{} }}\n",
+                "(".repeat(5_000),
+                ")".repeat(5_000)
+            ),
+        )?;
+
+        let result = module_graph_diff(&root, &predicate_change_diff("src/used.rs"))?;
+
+        let declined = result
+            .limitations
+            .iter()
+            .filter(|limitation| {
+                limitation
+                    .bounded_detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains("declined by a parse limit"))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(declined.len(), 1, "{:?}", result.limitations);
+        let detail = declined[0].bounded_detail.as_deref().unwrap_or_default();
+        assert!(
+            detail.contains("src/deep.rs (rust_nesting_budget)"),
+            "{detail}"
+        );
+        assert!(!detail.contains("src/used.rs"), "{detail}");
+        assert_eq!(
+            declined[0].kind,
+            crate::analysis_outcome::AnalysisLimitationKind::ProducerFailure
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_gives_a_declined_changed_file_only_its_own_limitation() -> Result<(), String> {
+        // The changed declined file already carries the per-file #4722
+        // limitation, so the unchanged-file aggregate must not name it again.
+        let root = temp_root("declined-changed-file")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n",
+        )?;
+        write(&root.join("src/lib.rs"), "pub mod deep;\n")?;
+        let deep = format!(
+            "pub fn deep(total: u32) -> u32 {{\n    if total > 100 {{ {}1{} }} else {{ 0 }}\n}}\n",
+            "(".repeat(5_000),
+            ")".repeat(5_000)
+        );
+        write(&root.join("src/deep.rs"), &deep)?;
+        let diff = "diff --git a/src/deep.rs b/src/deep.rs\n\
+                    --- a/src/deep.rs\n\
+                    +++ b/src/deep.rs\n\
+                    @@ -2,1 +2,1 @@\n\
+                    -    if total >= 100 { 1 } else { 0 }\n\
+                    +    if total > 100 { 1 } else { 0 }\n";
+
+        let result = module_graph_diff(&root, diff)?;
+
+        assert!(
+            !result.limitations.iter().any(|limitation| limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("outside the diff"))),
+            "{:?}",
+            result.limitations
+        );
         Ok(())
     }
 

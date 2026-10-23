@@ -447,12 +447,12 @@ fn activation_controlled_python_tests_do_not_credit_their_assertions() -> Result
     for decorator in [
         "unittest.skip('disabled')",
         "unittest.skipIf(True, 'disabled')",
-        "unittest.skipIf(False, 'runtime condition not evaluated')",
+        "unittest.skipIf(DISABLED, 'runtime condition not evaluated')",
         "unittest.skipUnless(False, 'disabled')",
         "unittest.expectedFailure",
         "pytest.mark.skip(reason='disabled')",
         "pytest.mark.skipif(True, reason='disabled')",
-        "pytest.mark.skipif(False, reason='runtime condition not evaluated')",
+        "pytest.mark.skipif(DISABLED, reason='runtime condition not evaluated')",
         "pytest.mark.xfail(strict=False)",
     ] {
         let test = if decorator == "unittest.expectedFailure" {
@@ -484,6 +484,31 @@ fn activation_controlled_python_tests_do_not_credit_their_assertions() -> Result
                 .any(|line| line.contains("test activation")),
             "{decorator}"
         );
+    }
+    Ok(())
+}
+
+// A boolean-literal condition that never triggers the skip leaves the test
+// running, so its exact oracle credits the edit (#9271 trap controls).
+#[test]
+fn an_inert_literal_skip_condition_keeps_oracle_credit() -> Result<(), String> {
+    for decorator in [
+        "pytest.mark.skipif(False, reason='never')",
+        "pytest.mark.xfail(False, reason='never')",
+        "unittest.skipIf(False, 'never')",
+        "unittest.skipUnless(True, 'never')",
+    ] {
+        let tests = format!(
+            "import unittest\nimport pytest\nfrom src.subject import score\n@{decorator}\ndef test_score():\n    assert score(0) == 8\n"
+        );
+        let finding = classify_case(
+            "def score(value):\n    return 8\n",
+            &tests,
+            2,
+            "    return 7",
+            "    return 8",
+        )?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{decorator}");
     }
     Ok(())
 }
@@ -1610,6 +1635,145 @@ fn fallthrough_return_ignores_early_exit_text_inside_a_docstring() -> Result<(),
     Ok(())
 }
 
+// #9184: an `else` arm runs only for inputs that fail every condition of its
+// `if`/`elif` chain. When every strong related call satisfies one of them,
+// the changed `else` line never runs and the exact-value oracle cannot
+// discriminate its change.
+const SIGN_SOURCE: &str =
+    "def sign(x):\n    if x > 0:\n        return 1\n    else:\n        return -2\n";
+
+#[test]
+fn else_arm_return_no_strong_call_enters_is_weakly_exposed() -> Result<(), String> {
+    let finding = classify_added_case(
+        SIGN_SOURCE,
+        "from src.subject import sign\n\ndef test_sign():\n    assert sign(5) == 1\n",
+        5,
+        "        return -2",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    let reason = missing_boundary(&finding, "not (x > 0)")
+        .ok_or_else(|| format!("missing discriminator absent: {finding:?}"))?;
+    assert!(
+        reason.contains("`else` arm of an `if`/`elif` chain (`x > 0`) that is entered only when none of them hold"),
+        "{reason}"
+    );
+    assert!(observed(&finding, "x = 5"), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn else_arm_return_with_an_entering_call_stays_exposed() -> Result<(), String> {
+    let finding = classify_added_case(
+        SIGN_SOURCE,
+        "from src.subject import sign\n\ndef test_sign():\n    assert sign(5) == 1\n    assert sign(-3) == -2\n",
+        5,
+        "        return -2",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn else_arm_after_an_elif_chain_names_every_chain_condition() -> Result<(), String> {
+    // grade(95) takes the `if` arm and grade(85) the `elif` arm: neither
+    // condition holds for every call, so the reason words "at least one".
+    let finding = classify_added_case(
+        "def grade(s):\n    if s >= 90:\n        return \"A\"\n    elif s >= 80:\n        return \"B\"\n    else:\n        return \"D\"\n",
+        "from src.subject import grade\n\ndef test_grade():\n    assert grade(95) == \"A\"\n    assert grade(85) == \"B\"\n",
+        7,
+        "        return \"D\"",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    let reason = missing_boundary(&finding, "not (s >= 90) and not (s >= 80)")
+        .ok_or_else(|| format!("missing discriminator absent: {finding:?}"))?;
+    assert!(
+        reason.contains("`else` arm of an `if`/`elif` chain (`s >= 90`, `s >= 80`)"),
+        "{reason}"
+    );
+    // A call that fails both conditions enters the `else` arm.
+    let entered = classify_added_case(
+        "def grade(s):\n    if s >= 90:\n        return \"A\"\n    elif s >= 80:\n        return \"B\"\n    else:\n        return \"D\"\n",
+        "from src.subject import grade\n\ndef test_grade():\n    assert grade(95) == \"A\"\n    assert grade(10) == \"D\"\n",
+        7,
+        "        return \"D\"",
+    )?;
+    assert_eq!(entered.class, ExposureClass::Exposed, "{entered:?}");
+    Ok(())
+}
+
+#[test]
+fn else_text_inside_a_docstring_is_not_an_else_arm() -> Result<(), String> {
+    // The `else:` line lives in a docstring inside the real `if` arm, so the
+    // changed return belongs to that arm and `f(5)` runs it: it stays exposed.
+    let finding = classify_added_case(
+        "def f(x):\n    if x > 0:\n        \"\"\"\n    else:\n        \"\"\"\n        return 2\n    return 0\n",
+        "from src.subject import f\n\ndef test_f():\n    assert f(5) == 2\n",
+        6,
+        "        return 2",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn nested_else_reason_does_not_claim_the_inner_chain_excluded_an_outer_guard_row()
+-> Result<(), String> {
+    // f(-1, -1) fails the outer guard `x > 0` and never reaches the inner
+    // chain; the reason must not say the input satisfies an inner condition.
+    let finding = classify_added_case(
+        "def f(x, y):\n    if x > 0:\n        if y > 0:\n            return 1\n        else:\n            return 2\n    return 0\n",
+        "from src.subject import f\n\ndef test_f():\n    assert f(-1, -1) == 0\n",
+        6,
+        "            return 2",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    let reason = missing_boundary(&finding, "not (y > 0) and x > 0")
+        .ok_or_else(|| format!("missing discriminator absent: {finding:?}"))?;
+    assert!(
+        !reason.contains("satisfies at least one condition"),
+        "{reason}"
+    );
+    assert!(
+        reason.contains("by this chain or an enclosing guard"),
+        "{reason}"
+    );
+    Ok(())
+}
+
+#[test]
+fn else_arm_that_does_not_close_an_if_chain_stays_exposed() -> Result<(), String> {
+    // `for`/`else`, an unreadable `or` condition and an unreadable row all
+    // fail open.
+    for (source, tests, line, after) in [
+        (
+            "def f(xs):\n    for x in xs:\n        if x > 0:\n            return 1\n    else:\n        return 0\n",
+            "from src.subject import f\n\ndef test_f():\n    assert f([5]) == 1\n",
+            6,
+            "        return 0",
+        ),
+        (
+            "def f(x, force):\n    if x > 0 or force:\n        return 1\n    else:\n        return 0\n",
+            "from src.subject import f\n\ndef test_f():\n    assert f(5, False) == 1\n",
+            5,
+            "        return 0",
+        ),
+        (
+            "def f(x):\n    if x > limit():\n        return 1\n    else:\n        return 0\n",
+            "from src.subject import f\n\ndef test_f():\n    assert f(5) == 1\n",
+            5,
+            "        return 0",
+        ),
+    ] {
+        let finding = classify_added_case(source, tests, line, after)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{source}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
 // The gate's premise is "EVERY strong related call provably fails the
 // guard". Each of the following shapes leaves that premise unprovable, so
 // the gate must fail open and keep the oracle verdict rather than
@@ -2403,5 +2567,256 @@ fn value_preserving_wrapper_around_owner_call_keeps_exposed() -> Result<(), Stri
         )?;
         assert_eq!(finding.class, ExposureClass::Exposed, "{body}");
     }
+    Ok(())
+}
+
+/// Changed-line classification with both the old line and the new-side source
+/// threaded in, matching the production diff path.
+fn classify_edit_case(
+    source: &str,
+    tests: &str,
+    line: usize,
+    before: &str,
+    after: &str,
+) -> Result<Finding, String> {
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(Path::new("tests/test_subject.py"), tests);
+    classify_change_with_source(
+        file,
+        line,
+        after,
+        Some(before),
+        &owners,
+        &tests,
+        Some(source),
+    )
+    .ok_or_else(|| "behavioral fixture must produce a finding".to_string())
+}
+
+// #9426: a reversing flip (`>` -> `<`) differs for every unequal pair, so a
+// strong exact call on unequal literals discriminates it; the `a == b`
+// boundary is not what changed.
+#[test]
+fn reversing_flip_with_unequal_inputs_is_not_a_boundary_gap() -> Result<(), String> {
+    let finding = classify_edit_case(
+        "def biggest(a, b):\n    return a if a < b else b\n",
+        "from src.subject import biggest\n\ndef test_biggest():\n    assert biggest(2, 9) == 9\n",
+        2,
+        "    return a if a > b else b",
+        "    return a if a < b else b",
+    )?;
+    assert_owner(&finding, "biggest");
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(finding.activation.missing_discriminators.is_empty());
+    Ok(())
+}
+
+// Discriminating negative: an adjacent flip (`>` -> `>=`) keeps the boundary
+// requirement even with unequal inputs.
+#[test]
+fn adjacent_flip_with_unequal_inputs_stays_a_boundary_gap() -> Result<(), String> {
+    let finding = classify_edit_case(
+        "def biggest(a, b):\n    return a if a >= b else b\n",
+        "from src.subject import biggest\n\ndef test_biggest():\n    assert biggest(2, 9) == 9\n",
+        2,
+        "    return a if a > b else b",
+        "    return a if a >= b else b",
+    )?;
+    assert_owner(&finding, "biggest");
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert!(
+        missing_boundary(&finding, "a == b").is_some(),
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+// #9426: `start` is rebound in the loop body, so the argument 3 reaches 0
+// inside the owner; the boundary is unknown, not missing.
+#[test]
+fn rebound_loop_operand_declines_the_boundary_gap() -> Result<(), String> {
+    let finding = classify_edit_case(
+        "def countdown(start):\n    while start >= 0:\n        yield start\n        start -= 1\n",
+        "from src.subject import countdown\n\ndef test_countdown():\n    assert list(countdown(3)) == [3, 2, 1]\n",
+        2,
+        "    while start > 0:",
+        "    while start >= 0:",
+    )?;
+    assert_owner(&finding, "countdown");
+    assert!(
+        missing_boundary(&finding, "start == 0").is_none(),
+        "{finding:?}"
+    );
+    assert_ne!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    Ok(())
+}
+
+// Discriminating negative: a parameter named only in `if ...:` headers (the
+// trailing `:` is not an annotation) is not rebound and keeps the gap.
+#[test]
+fn parameter_in_condition_headers_keeps_the_boundary_gap() -> Result<(), String> {
+    let finding = classify_edit_case(
+        "def apply_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n",
+        "from src.subject import apply_discount\n\ndef test_apply_discount():\n    assert apply_discount(150, 100) == 140\n",
+        2,
+        "    if amount > threshold:",
+        "    if amount >= threshold:",
+    )?;
+    assert_owner(&finding, "apply_discount");
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    Ok(())
+}
+
+// Discriminating negative: a local assigned once from a parameter is not a
+// call-bound operand, so its assignment must not decline the boundary gap.
+#[test]
+fn derived_local_operand_keeps_the_boundary_gap() -> Result<(), String> {
+    let finding = classify_edit_case(
+        "def parse_age(text):\n    age = int(text)\n    if age <= 0:\n        raise ValueError('bad')\n    return age\n",
+        "import pytest\nfrom src.subject import parse_age\n\ndef test_parse_age():\n    assert parse_age('5') == 5\n    with pytest.raises(ValueError):\n        parse_age('-1')\n",
+        3,
+        "    if age < 0:",
+        "    if age <= 0:",
+    )?;
+    assert_owner(&finding, "parse_age");
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    Ok(())
+}
+
+// Discriminating negative: the same adjacent flip with the operand never
+// rebound keeps the gap.
+#[test]
+fn unrebound_loop_operand_keeps_the_boundary_gap() -> Result<(), String> {
+    let finding = classify_edit_case(
+        "def gate(start):\n    while start >= 0:\n        return start\n    return 0\n",
+        "from src.subject import gate\n\ndef test_gate():\n    assert gate(3) == 3\n",
+        2,
+        "    while start > 0:",
+        "    while start >= 0:",
+    )?;
+    assert_owner(&finding, "gate");
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert!(
+        missing_boundary(&finding, "start == 0").is_some(),
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+// #9185: a message-only change to a `raise` is discriminated by a `match=`
+// pattern only when the pattern accepts one message and rejects the other.
+const CHECK_SOURCE: &str = "def check(x):\n    if x < 0:\n        raise ValueError(\"negative value: must be at most zero\")\n    return x\n";
+const CHECK_OLD_LINE: &str = "        raise ValueError(\"negative value: must be at least zero\")";
+const CHECK_NEW_LINE: &str = "        raise ValueError(\"negative value: must be at most zero\")";
+
+fn classify_message_change(source: &str, tests: &str) -> Result<Finding, String> {
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(Path::new("tests/test_subject.py"), tests);
+    classify_change_with_source(
+        file,
+        3,
+        CHECK_NEW_LINE,
+        Some(CHECK_OLD_LINE),
+        &owners,
+        &tests,
+        Some(source),
+    )
+    .ok_or_else(|| "message change must produce a finding".to_string())
+}
+
+#[test]
+fn message_only_change_under_a_pattern_that_fits_both_messages_is_weakly_exposed()
+-> Result<(), String> {
+    for tests in [
+        "import pytest\nfrom src.subject import check\n\ndef test_negative():\n    with pytest.raises(ValueError, match=\"negative value\"):\n        check(-1)\n",
+        "import unittest\nfrom src.subject import check\n\nclass T(unittest.TestCase):\n    def test_negative(self):\n        with self.assertRaisesRegex(ValueError, \"negative value\"):\n            check(-1)\n",
+        // `.` is the regex wildcard and still matches both messages.
+        "import pytest\nfrom src.subject import check\n\ndef test_negative():\n    with pytest.raises(ValueError, match=\"negative.value: must be at\"):\n        check(-1)\n",
+    ] {
+        let finding = classify_message_change(CHECK_SOURCE, tests)?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+        let reason = missing_boundary(&finding, "message \"negative value: must be at most zero\"")
+            .ok_or_else(|| format!("missing discriminator absent: {finding:?}"))?;
+        assert!(
+            reason.contains("matches the old message \"negative value: must be at least zero\""),
+            "{reason}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn message_only_change_stays_exposed_when_a_pattern_rejects_the_old_message() -> Result<(), String>
+{
+    // One pattern that tells the messages apart is enough to discriminate.
+    for tests in [
+        "import pytest\nfrom src.subject import check\n\ndef test_negative():\n    with pytest.raises(ValueError, match=\"at most zero\"):\n        check(-1)\n",
+        "import pytest\nfrom src.subject import check\n\ndef test_a():\n    with pytest.raises(ValueError, match=\"negative value\"):\n        check(-1)\n\ndef test_b():\n    with pytest.raises(ValueError, match=\"at most\"):\n        check(-2)\n",
+    ] {
+        let finding = classify_message_change(CHECK_SOURCE, tests)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{tests}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn message_only_change_fails_open_on_unreadable_patterns_and_assertions() -> Result<(), String> {
+    for tests in [
+        // Regex syntax is not evaluated.
+        "import pytest\nfrom src.subject import check\n\ndef test_negative():\n    with pytest.raises(ValueError, match=\"negative.*value\"):\n        check(-1)\n",
+        // A non-literal pattern.
+        "import pytest\nfrom src.subject import check\n\nPATTERN = build()\n\ndef test_negative():\n    with pytest.raises(ValueError, match=PATTERN):\n        check(-1)\n",
+        // A comparison of the whole message is read by other rules.
+        "import pytest\nfrom src.subject import check\n\ndef test_negative():\n    with pytest.raises(ValueError) as exc:\n        check(-1)\n    assert str(exc.value) == \"negative value: must be at most zero\"\n",
+    ] {
+        let finding = classify_message_change(CHECK_SOURCE, tests)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{tests}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn message_only_change_stays_exposed_when_a_bound_comparison_rejects_the_old_message()
+-> Result<(), String> {
+    // The pattern fits both messages, but the joined `str(exc.value) == ...`
+    // comparison (rule 14) pins the new text: the gate must fail open.
+    let finding = classify_message_change(
+        CHECK_SOURCE,
+        "import pytest\nfrom src.subject import check\n\ndef test_negative():\n    with pytest.raises(ValueError, match=\"negative value\") as exc:\n        check(-1)\n    assert str(exc.value) == \"negative value: must be at most zero\"\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn exception_class_change_is_not_a_message_only_change() -> Result<(), String> {
+    let file = Path::new("src/subject.py");
+    let source = "def check(x):\n    if x < 0:\n        raise TypeError(\"negative value: must be at most zero\")\n    return x\n";
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(
+        Path::new("tests/test_subject.py"),
+        "import pytest\nfrom src.subject import check\n\ndef test_negative():\n    with pytest.raises(TypeError, match=\"negative value\"):\n        check(-1)\n",
+    );
+    let finding = classify_change_with_source(
+        file,
+        3,
+        "        raise TypeError(\"negative value: must be at most zero\")",
+        Some(CHECK_OLD_LINE),
+        &owners,
+        &tests,
+        Some(source),
+    )
+    .ok_or_else(|| "class change must produce a finding".to_string())?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }

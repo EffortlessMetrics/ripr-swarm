@@ -1,0 +1,22 @@
+{
+  "case_id": "py-idioms-approx-constant-within-tolerance",
+  "subject_id": "authored-py-pytest-idioms",
+  "origin": "authored",
+  "anchor": "idioms/geometry.py:2",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "pytest_approx_tolerance_absorbs_edit",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

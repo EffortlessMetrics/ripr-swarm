@@ -115,6 +115,9 @@ suite('Extension Smoke', () => {
         canonical_gap_id: 'gap:rust:pricing:discount:threshold-boundary',
         gap_id: 'gap:pr:pricing:threshold-boundary'
       }, async () => {
+        if (await repairPacketRefusedInUntrustedHost()) {
+          return;
+        }
         await vscode.commands.executeCommand('ripr.copyFirstPrRepairPacket');
         const repairPacket = await waitForClipboardText((text) =>
           text.includes('RIPR first-pr repair packet') &&
@@ -292,6 +295,9 @@ suite('Extension Smoke', () => {
         canonical_gap_id: 'gap:rust:pricing:discount:threshold-boundary',
         gap_id: 'gap:pr:pricing:threshold-boundary'
       }, async () => {
+        if (await repairPacketRefusedInUntrustedHost()) {
+          return;
+        }
         await vscode.commands.executeCommand('ripr.copyFirstPrRepairPacket');
         const repairPacket = await waitForClipboardText((text) =>
           text.includes('RIPR first-pr repair packet') &&
@@ -757,6 +763,139 @@ suite('Extension Smoke', () => {
     } finally {
       await updateDiagnosticProfile(config, previousProfile);
       await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+    }
+  });
+
+  test('real server rejects an invalid setting through the activated client and clears it on correction (#9917)', async function (this: Mocha.Context) {
+    this.timeout(180000);
+    skipUnlessTrustedTestHost(this);
+    if (!process.env.RIPR_TEST_SERVER_PATH) {
+      this.skip();
+    }
+
+    // Observe the activated controller (real LanguageClient, real server, real
+    // status model) without supplying a runtime, client or status producer.
+    const extension = vscode.extensions.getExtension('EffortlessMetrics.ripr');
+    assert.ok(extension, 'extension should be present');
+    await extension.activate();
+    const clientModule = requireActivatedExtensionModule(extension.extensionPath, 'out/src/client') as typeof import('../../src/client');
+    const prototype = clientModule.RiprClientController.prototype;
+    const originalShowStatus = prototype.showStatus;
+    let observed: { status: { kind: string; summary?: string; detail?: string; nextStep?: string } } | undefined;
+    prototype.showStatus = function (this: unknown) {
+      observed = this as typeof observed;
+      return Reflect.apply(originalShowStatus, this, []);
+    };
+    try {
+      await vscode.commands.executeCommand('ripr.showStatus');
+    } finally {
+      prototype.showStatus = originalShowStatus;
+    }
+    assert.ok(observed && typeof observed.status.kind === 'string', 'failed to observe the activated controller');
+    const controller = observed as unknown as {
+      status: { kind: string; summary?: string; detail?: string; nextStep?: string };
+      client?: { isRunning(): boolean };
+      statusBar?: { text: string; tooltip?: unknown; backgroundColor?: unknown; color?: unknown };
+      handleAnalysisStatus(params: unknown): void;
+    };
+    assert.ok(controller.statusBar, 'the activated controller owns the real status item');
+    const statusItem = controller.statusBar;
+    const startedClient = controller.client;
+    if (!startedClient || !startedClient.isRunning()) {
+      throw new Error('a real client must be running before the journey');
+    }
+
+    // Pass-through observation of the real `ripr/analysisStatus` frames: the
+    // wrapper records each frame and then runs the production handler.
+    interface PullFrame { state?: string; pull?: string; failureKind?: string }
+    const frames: PullFrame[] = [];
+    const originalHandle = controller.handleAnalysisStatus;
+    controller.handleAnalysisStatus = function (this: unknown, params: unknown) {
+      const frame = (params ?? {}) as {
+        state?: string;
+        input_authority?: { configuration_pull?: { state?: string; failure?: { kind?: string } | null } };
+      };
+      frames.push({
+        state: frame.state,
+        pull: frame.input_authority?.configuration_pull?.state,
+        failureKind: frame.input_authority?.configuration_pull?.failure?.kind
+      });
+      return Reflect.apply(originalHandle, this, [params]);
+    };
+
+    const isRejection = () => controller.status.kind === 'analysisFailed'
+      && (controller.status.summary ?? '').includes('rejected your latest settings');
+    const itemText = () => `${statusItem.text}\n${String(statusItem.tooltip ?? '')}`;
+    const colorIds = () => `bg=${(statusItem.backgroundColor as { id?: string } | undefined)?.id} fg=${(statusItem.color as { id?: string } | undefined)?.id}`;
+    const describe = () => `status=${JSON.stringify(controller.status)} colors=${colorIds()} item=${JSON.stringify(itemText())} frames=${JSON.stringify(frames.slice(-8))}`;
+    const waitUntil = async (predicate: () => boolean, label: string, timeoutMs = 60000): Promise<void> => {
+      const deadline = Date.now() + timeoutMs;
+      while (!predicate()) {
+        assert.ok(Date.now() < deadline, `timed out: ${label}; ${describe()}`);
+        await sleep(50);
+      }
+    };
+    // A decided pull of the given kind that arrived after `since`.
+    const pullAfter = (since: number, pull: string, failureKind?: string) =>
+      frames.slice(since).some((frame) => frame.pull === pull
+        && (failureKind === undefined || frame.failureKind === failureKind));
+
+    const uri = workspaceFileUri('src/lib.rs');
+    const config = vscode.workspace.getConfiguration('ripr', uri);
+    const previous = config.inspect<boolean>('includeUnchangedTests')?.workspaceValue;
+    const update = (value: unknown) =>
+      config.update('includeUnchangedTests', value, vscode.ConfigurationTarget.Workspace);
+    // Always a real change from whatever the workspace held, so every update
+    // emits a configuration event and a pull.
+    const accepted = previous === false ? true : false;
+    try {
+      // An accepted non-default value, established by a real applied pull, so
+      // correction returns to a previously effective value.
+      let mark = frames.length;
+      await update(accepted);
+      await waitUntil(() => pullAfter(mark, 'applied'), 'baseline pull applied');
+      assert.ok(!isRejection(), `baseline shows no rejection: ${describe()}`);
+
+      mark = frames.length;
+      await update('not-a-boolean');
+      await waitUntil(() => pullAfter(mark, 'failed', 'config_pull_invalid') && isRejection(),
+        'invalid type is rejected and shown');
+      assert.ok(/includeUnchangedTests|include_unchanged_tests/i.test(controller.status.detail ?? ''),
+        `rejection names the offending setting: ${describe()}`);
+      assert.ok(!/default settings/i.test(controller.status.detail ?? ''), 'no default-settings claim');
+      assert.ok((controller.status.nextStep ?? '').includes('Restart Server'), 'names a recovery action');
+      assert.ok(statusItem.text.includes('failed'), `the real item shows the failure: ${describe()}`);
+      assert.strictEqual((statusItem.backgroundColor as { id?: string } | undefined)?.id, 'statusBarItem.errorBackground', 'the real item carries the error background');
+      assert.strictEqual((statusItem.color as { id?: string } | undefined)?.id, 'statusBarItem.errorForeground', 'the real item carries the error foreground');
+
+      // A second, decided rejection stays visible.
+      mark = frames.length;
+      await update(7);
+      await waitUntil(() => pullAfter(mark, 'failed', 'config_pull_invalid'), 'second invalid pull decided');
+      assert.ok(isRejection(), `re-rejection stays visible: ${describe()}`);
+
+      // Restoring the previously accepted value is a new applied pull that
+      // clears the item with the same client, and no restart, save or refresh.
+      mark = frames.length;
+      await update(accepted);
+      await waitUntil(() => pullAfter(mark, 'applied'), 'correction pull applied');
+      await waitUntil(() => !isRejection(), 'rejection cleared after the applied pull');
+      assert.strictEqual(controller.client, startedClient, 'correction must not replace the client');
+      assert.ok(startedClient.isRunning(), 'the same client keeps running');
+      assert.ok(!['serverFailed', 'noWorkspace', 'serverUnavailable', 'analysisFailed'].includes(controller.status.kind),
+        `recovery is a healthy status, not an unrelated failure: ${describe()}`);
+      assert.ok(!/includeUnchangedTests/i.test(itemText()), `the real item dropped the rejection: ${describe()}`);
+      assert.ok(!statusItem.text.includes('failed'), `the real item text is no longer failed: ${describe()}`);
+      const recoveredBackground = (statusItem.backgroundColor as { id?: string } | undefined)?.id;
+      assert.notStrictEqual(recoveredBackground, 'statusBarItem.errorBackground',
+        `the error background is cleared (a legitimate warning state may remain): ${describe()}`);
+      const recoveredForeground = (statusItem.color as { id?: string } | undefined)?.id;
+      assert.notStrictEqual(recoveredForeground, 'statusBarItem.errorForeground',
+        `the error foreground is cleared (a legitimate warning pair may remain): ${describe()}`);
+    } finally {
+      controller.handleAnalysisStatus = originalHandle;
+      await config.update('includeUnchangedTests', previous, vscode.ConfigurationTarget.Workspace);
+      await sleep(500);
     }
   });
 
@@ -1577,14 +1716,217 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('a rejected configuration pull is cleared by an accepted pull while analysis is stopped (#9917)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      const pull = (state: string, extra: Record<string, unknown> = {}) => ({
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'stopped',
+        input_authority: { configuration_pull: { state, ...extra } }
+      });
+
+      context.client.emitNotification('ripr/analysisStatus', pull('failed', {
+        failure: { kind: 'config_pull_invalid', message: 'workspace/configuration value for `gitTimeoutMs` has an invalid type or literal: 2500.5' }
+      }));
+      assert.ok(context.status.text.includes('ripr: failed'));
+      const rejected = String(context.status.tooltip);
+      assert.ok(rejected.includes('`gitTimeoutMs`'));
+      assert.ok(rejected.includes('last accepted configuration'));
+      assert.ok(!rejected.includes('default settings'), 'a rejected pull keeps the last accepted configuration, not defaults');
+
+      // The server publishes `pending` before the corrective response
+      // arrives; that must not claim acceptance or drop the rejection.
+      context.client.emitNotification('ripr/analysisStatus', pull('pending'));
+      assert.ok(context.status.text.includes('ripr: failed'));
+      assert.ok(String(context.status.tooltip).includes('`gitTimeoutMs`'));
+      assert.ok(!String(context.status.tooltip).includes('accepted the workspace configuration'));
+
+      // Correcting back to the effective value publishes `stopped` with an
+      // applied pull and schedules no analysis, so nothing else repaints.
+      context.client.emitNotification('ripr/analysisStatus', pull('applied'));
+      assert.ok(!context.status.text.includes('ripr: failed'));
+      assert.ok(!String(context.status.tooltip).includes('gitTimeoutMs'));
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('a rejected pull that is retried and rejected again stays visible (#9917)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      const pull = (state: string, extra: Record<string, unknown> = {}) => ({
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'stopped',
+        input_authority: { configuration_pull: { state, ...extra } }
+      });
+      const failure = { failure: { kind: 'config_pull_invalid', message: 'bad key `gitTimeoutMs`' } };
+      context.client.emitNotification('ripr/analysisStatus', pull('failed', failure));
+      context.client.emitNotification('ripr/analysisStatus', pull('pending'));
+      context.client.emitNotification('ripr/analysisStatus', pull('failed', failure));
+      assert.ok(context.status.text.includes('ripr: failed'));
+      assert.ok(String(context.status.tooltip).includes('`gitTimeoutMs`'));
+
+      // A later accepted pull still clears it.
+      context.client.emitNotification('ripr/analysisStatus', pull('applied'));
+      assert.ok(!context.status.text.includes('ripr: failed'));
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('a rejected pull stays visible while its corrective pull is pending after a completed analysis (#9917)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      const succeeded = (state: string, extra: Record<string, unknown> = {}) => ({
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'succeeded',
+        run_status: 'completed', attempt_id: 'run-1', snapshot_id: 'snapshot:run-1',
+        input_authority: { configuration_pull: { state, ...extra } }
+      });
+      const failure = { failure: { kind: 'config_pull_invalid', message: 'bad key `includeUnchangedTests`' } };
+
+      context.client.emitNotification('ripr/analysisStatus', succeeded('applied'));
+      assert.ok(!context.status.text.includes('ripr: failed'));
+
+      context.client.emitNotification('ripr/analysisStatus', succeeded('failed', failure));
+      context.client.emitNotification('ripr/analysisStatus', succeeded('pending'));
+      assert.ok(context.status.text.includes('ripr: failed'), 'pending must not repaint the completed analysis over the rejection');
+      assert.ok(String(context.status.tooltip).includes('`includeUnchangedTests`'));
+
+      // Re-rejection keeps it visible through the pending interval too.
+      context.client.emitNotification('ripr/analysisStatus', succeeded('failed', failure));
+      context.client.emitNotification('ripr/analysisStatus', succeeded('pending'));
+      assert.ok(context.status.text.includes('ripr: failed'));
+
+      context.client.emitNotification('ripr/analysisStatus', succeeded('applied'));
+      assert.ok(!context.status.text.includes('ripr: failed'));
+      assert.ok(!String(context.status.tooltip).includes('includeUnchangedTests'));
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('a rejection received during post-start setup reads survives the startup paint (#9917)', async () => {
+    let releaseRead: (() => void) | undefined;
+    let sawPostStartRead: (() => void) | undefined;
+    const readGate = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    const postStartReadStarted = new Promise<void>((resolve) => {
+      sawPostStartRead = resolve;
+    });
+    let holder: { client: { startCalls: number } } | undefined;
+    let held = false;
+    const context = createControllerTestContext({
+      beforeReadFile: async () => {
+        if (held || !holder || holder.client.startCalls === 0) {
+          return;
+        }
+        held = true;
+        sawPostStartRead?.();
+        await readGate;
+      }
+    });
+    holder = context;
+    try {
+      const starting = context.controller.start();
+      await postStartReadStarted;
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'stopped',
+        input_authority: { configuration_pull: { state: 'failed', failure: { kind: 'config_pull_invalid', message: 'bad `gitTimeoutMs`' } } }
+      });
+      assert.ok(context.status.text.includes('ripr: failed'));
+      assert.ok(String(context.status.tooltip).includes('`gitTimeoutMs`'));
+
+      releaseRead?.();
+      await starting;
+      assert.ok(context.status.text.includes('ripr: failed'), `startup must not hide the rejection: ${context.status.text}`);
+      assert.ok(String(context.status.tooltip).includes('`gitTimeoutMs`'));
+
+      // A later applied pull still clears it.
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'stopped',
+        input_authority: { configuration_pull: { state: 'applied' } }
+      });
+      assert.ok(!context.status.text.includes('ripr: failed'));
+      assert.ok(!String(context.status.tooltip).includes('gitTimeoutMs'));
+    } finally {
+      releaseRead?.();
+      await context.dispose();
+    }
+  });
+
+  test('a rejected configuration pull survives dirty edits, save and close until a pull is applied (#9917)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      const rejected = {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'stopped',
+        input_authority: { configuration_pull: { state: 'failed', failure: { kind: 'config_pull_invalid', message: 'bad `gitTimeoutMs`' } } }
+      };
+      context.client.emitNotification('ripr/analysisStatus', rejected);
+      assert.ok(context.status.text.includes('ripr: failed'));
+
+      const doc = await vscode.workspace.openTextDocument(workspaceFileUri('src/lib.rs'));
+      context.controller.markWorkspaceStale(doc);
+      assert.ok(context.status.text.includes('ripr: failed'), `dirty edit must not hide the rejection: ${context.status.text}`);
+      assert.ok(String(context.status.tooltip).includes('`gitTimeoutMs`'));
+
+      context.controller.markWorkspaceClosed(doc);
+      assert.ok(context.status.text.includes('ripr: failed'), `close must not restore ready over the rejection: ${context.status.text}`);
+
+      context.controller.markWorkspaceStale(doc);
+      context.client.emitNotification('ripr/analysisStatus', { ...rejected, input_authority: { configuration_pull: { state: 'pending' } } });
+      assert.ok(context.status.text.includes('ripr: failed'), 'pending keeps the rejection');
+      context.client.emitNotification('ripr/analysisStatus', { ...rejected, input_authority: { configuration_pull: { state: 'applied' } } });
+      assert.ok(!String(context.status.tooltip).includes('gitTimeoutMs'), 'an applied pull clears the rejection');
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('startup without a rejection still paints the queued placeholder (#9917)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      assert.ok(context.status.text.includes('queued'), `no-failure startup is queued: ${context.status.text}`);
+      assert.ok(!context.status.text.includes('ripr: failed'));
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('an accepted pull does not mask a real analysis failure after a rejected pull (#9917)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'stopped',
+        input_authority: { configuration_pull: { state: 'failed', failure: { kind: 'config_pull_invalid', message: 'bad key' } } }
+      });
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
+        failure: { kind: 'analysis_error', message: 'temporary timeout' },
+        input_authority: { configuration_pull: { state: 'applied' } }
+      });
+      assert.ok(context.status.text.includes('ripr: failed'));
+      assert.ok(String(context.status.tooltip).includes('temporary timeout'));
+      assert.ok(!String(context.status.tooltip).includes('bad key'));
+    } finally {
+      await context.dispose();
+    }
+  });
+
   test('refresh failures suggest editor recovery without restarting the server', async () => {
     const context = createControllerTestContext({});
     try {
       await context.controller.start();
+      // The free-text log line never selects the baseRef step by wording.
       context.client.emitNotification('window/logMessage', {
         message: 'ripr analysis refresh failed: the base `origin/main` does not resolve to a commit'
       });
-      assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
+      assert.ok(!String(context.status.tooltip).includes('Set ripr.baseRef'));
+      assert.ok(String(context.status.tooltip).includes('Show Output'));
 
       context.client.emitNotification('ripr/analysisStatus', {
         schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
@@ -1596,7 +1938,7 @@ suite('Extension Smoke', () => {
       context.client.emitNotification('ripr/analysisStatus', {
         schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
         retry_command: 'ripr.refresh',
-        failure: { kind: 'analysis_error', message: 'the base `origin/main` does not resolve to a commit. Fetch the ref or pass --base <ref>.' }
+        failure: { kind: 'base_unresolvable', message: 'a reworded server diagnostic that names no ref' }
       });
       assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
       assert.ok(String(context.status.tooltip).includes('ripr: Refresh Diagnostics'));
@@ -1604,7 +1946,32 @@ suite('Extension Smoke', () => {
       context.client.emitNotification('ripr/analysisStatus', {
         schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
         retry_command: 'ripr.refresh',
-        failure: { kind: 'analysis_error', message: 'could not resolve a default base (no origin/main, origin/master, or local main/master found). Pass `--base <ref>`.' }
+        failure: { kind: 'base_unresolvable', message: 'could not resolve a default base (no origin/main, origin/master, or local main/master found). Pass `--base <ref>`.' }
+      });
+      assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
+
+      // Legacy servers send analysis_error for a missing base: only that
+      // kind keeps the old wording fallback (documented in client.ts).
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
+        retry_command: 'ripr.refresh',
+        failure: { kind: 'analysis_error', message: 'the base `origin/main` does not resolve to a commit' }
+      });
+      assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
+
+      // Wording under any other kind is never reclassified.
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
+        retry_command: 'ripr.refresh',
+        failure: { kind: 'deadline_exceeded', message: 'the base `origin/main` does not resolve to a commit' }
+      });
+      assert.ok(!String(context.status.tooltip).includes('Set ripr.baseRef'));
+      assert.ok(String(context.status.tooltip).includes('Run ripr: Refresh Diagnostics to retry'));
+
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
+        retry_command: 'ripr.refresh',
+        failure: { kind: 'base_unresolvable', message: 'x' }
       });
       assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
 
@@ -4721,7 +5088,7 @@ suite('Extension Smoke', () => {
         ),
         agentLoopCommandTarget(
           'after_snapshot',
-          `ripr check --root ${rootArg} --base 'origin/main with space' --mode ready --format repo-exposure-json > ${anchored('target/ripr/pilot/after.repo-exposure.json')}`,
+          `ripr check --root ${rootArg} --base ${serverShellArg('origin/main with space')} --mode ready --format repo-exposure-json > ${anchored('target/ripr/pilot/after.repo-exposure.json')}`,
           'target/ripr/pilot/after.repo-exposure.json',
           { base: 'origin/main with space', mode: 'ready' }
         ),
@@ -4836,6 +5203,77 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('serverShellArg and the metacharacter check mirror the Windows console quoting (#2769)', () => {
+    // crates/ripr/src/agent/loop_commands.rs: shell_arg_for(value, windows = true).
+    assert.strictEqual(serverShellArg('origin/main', true), 'origin/main');
+    assert.strictEqual(serverShellArg('HEAD~1', true), '"HEAD~1"');
+    assert.strictEqual(serverShellArg('a"b', true), '"a""b"');
+    assert.strictEqual(serverShellArg('sub\\dir\\', true), '"sub\\dir\\\\"');
+    // `$` and backtick are expanded inside double quotes by PowerShell and Git
+    // Bash, so the server keeps the single-quote form for them.
+    assert.strictEqual(serverShellArg('a$b', true), "'a$b'");
+    assert.strictEqual(serverShellArg('a`b', true), "'a`b'");
+    assert.strictEqual(serverShellArg('HEAD~1', false), "'HEAD~1'");
+
+    const body = (arg: string) => `ripr check --root . --base ${arg} --mode draft --format repo-exposure-json`;
+    assert.ok(!hasUnsafeShellMetacharacter(body('"HEAD~1"'), true));
+    assert.ok(!hasUnsafeShellMetacharacter(body('"origin/main with space"'), true));
+    assert.ok(!hasUnsafeShellMetacharacter(body('"a""b"'), true));
+    assert.ok(!hasUnsafeShellMetacharacter(body('"it\'s"'), true));
+    assert.ok(!hasUnsafeShellMetacharacter(body('""'), true));
+    assert.ok(!hasUnsafeShellMetacharacter(body('"sub\\dir\\\\"'), true));
+    // `%` and `!` are literal in PowerShell, Git Bash and native argv; cmd.exe
+    // expansion is the console form's documented limit, the same decision the
+    // CLI makes (#9659). A `^` inside a span is literal too.
+    assert.ok(!hasUnsafeShellMetacharacter(body('"100% done!"'), true));
+    assert.ok(!hasUnsafeShellMetacharacter(body('"HEAD^"'), true));
+    assert.ok(!hasUnsafeShellMetacharacter(body('"%PATH%"'), true));
+    // A redirect between two single-quote spans is outside both (#9738).
+    assert.ok(!hasUnsafeShellMetacharacter(`${body("'a$b'")} > 'out$.json'`, true));
+    // An even run then `""`, and adjacent spans, stay one quoted word.
+    assert.ok(!hasUnsafeShellMetacharacter(body('"a\\\\""b"'), true));
+    assert.ok(!hasUnsafeShellMetacharacter(body(`"a"'b'`), true));
+    // A backslash run not followed by a quote is literal mid-span.
+    assert.ok(!hasUnsafeShellMetacharacter(body('"a\\\\\\b\\\\"'), true));
+    // Not Windows: a double quote is refused, as before.
+    assert.ok(hasUnsafeShellMetacharacter(body('"HEAD~1"')));
+    assert.ok(hasUnsafeShellMetacharacter(body('"HEAD~1"'), false));
+    // Not Windows: `>` inside single quotes stays literal, as before.
+    assert.ok(!hasUnsafeShellMetacharacter(body("'gap:a>b'")));
+    // Windows: only a complete console-quoted span passes.
+    for (const bad of [
+      body('"HEAD~1'),
+      body('"a"b"'),
+      body('"$(calc)"'),
+      body('"`calc`"'),
+      // cmd.exe's escape character outside every span.
+      body('HEAD^'),
+      `${body('"HEAD~1"')} ^& calc`,
+      body('"a\u201db"'),
+      body('"a\nb"'),
+      `${body('"HEAD~1"')} ; calc`,
+      `${body('"HEAD~1"')} & calc`,
+      `${body('"HEAD~1"')} | calc`,
+      body('"a" ; "b"') + ' --x "c',
+      body('abc\\def'),
+      // A `"` inside a single-quoted span cannot pair with a later `"`.
+      body(`'a" & calc & "b$'`),
+      // An odd backslash run escapes the quote for native argv and Git Bash,
+      // so the "span" would end elsewhere and `; calc ;` runs unquoted.
+      body('"\\" x " ; calc ; \\"'),
+      body('"a\\"'),
+      body('"a\\\\\\"'),
+      body('"a\\""b"'),
+      // cmd.exe does not quote with `'`, so `>`/`<` in the single-quote form
+      // redirect there (#9738).
+      body("'$x > /srv/evil/y'"),
+      body("'$x < in'"),
+      body("'a$' --x 'b > c'")
+    ]) {
+      assert.ok(hasUnsafeShellMetacharacter(bad, true), JSON.stringify(bad));
+    }
+  });
+
   test('redirectTargetMatches mirrors the server redirect quoting (#4220)', () => {
     const artifact = 'target/ripr/agent/agent-packet.json';
     const root = path.resolve('/work/repo');
@@ -4854,6 +5292,17 @@ suite('Extension Smoke', () => {
     assert.ok(!redirectTargetMatches(`${slash(root)}/sub/../${artifact}`, artifact, [root]));
     assert.ok(!redirectTargetMatches(`${slash(root)}/${artifact} extra`, artifact, [root]));
     assert.ok(!redirectTargetMatches('target/ripr/agent/../agent/agent-packet.json', artifact, [root]));
+
+    // The server's console double-quoted tail on Windows (#9659), only when
+    // the caller says the server quotes for Windows.
+    const consoleTail = `"${slash(spaced)}/${artifact}"`;
+    assert.ok(redirectTargetMatches(consoleTail, artifact, [spaced], true));
+    assert.ok(!redirectTargetMatches(consoleTail, artifact, [spaced]));
+    assert.ok(!redirectTargetMatches(`"${slash(spaced)}/$x/${artifact}"`, artifact, [spaced], true));
+    assert.ok(!redirectTargetMatches(`"${slash(spaced)}/${artifact}`, artifact, [spaced], true));
+    // cmd.exe expands `%NAME%` and `!NAME!` inside quotes.
+    assert.ok(!redirectTargetMatches(`"${slash(spaced)}/%x%/${artifact}"`, artifact, [spaced], true));
+    assert.ok(!redirectTargetMatches(`"${slash(spaced)}/!x!/${artifact}"`, artifact, [spaced], true));
   });
 
   test('redirectStaysInWorkspace keeps every redirect inside the workspace (#4265)', () => {
@@ -4885,6 +5334,20 @@ suite('Extension Smoke', () => {
     ]) {
       assert.ok(!accepts(command), command);
     }
+
+    // Windows console quoting (#9659): a double-quoted span is literal, so its
+    // `>` is an argument and a double-quoted in-root tail is accepted; the
+    // POSIX reading still refuses the double-quoted tail.
+    const acceptsWindows = (command: string) => redirectStaysInWorkspace(command, [root], true);
+    assert.ok(acceptsWindows(`ripr agent verify --root . --json > "${inRoot}"`));
+    assert.ok(acceptsWindows('ripr agent packet --gap-id "gap:a>b" --json > target/ripr/agent-packet.json'));
+    assert.ok(!accepts(`ripr agent verify --root . --json > "${inRoot}"`));
+    assert.ok(!acceptsWindows(`ripr first-pr --json > "${path.resolve('/work/repo-other').replace(/\\/g, '/')}/out.json"`));
+    assert.ok(!acceptsWindows('ripr first-pr --json > "target/../../outside.json"'));
+    assert.ok(!acceptsWindows('ripr first-pr --json > "%TEMP%/out.json"'));
+    assert.ok(!acceptsWindows('ripr first-pr --json > "!TEMP!/out.json"'));
+    assert.ok(!acceptsWindows("ripr first-pr --json > '%TEMP%/out.json'"));
+    assert.ok(!acceptsWindows('ripr first-pr --json > "target/ripr/out.json'));
   });
 
   test('agent loop commands must equal the body the server renders from the payload (#4225)', () => {
@@ -4956,13 +5419,15 @@ suite('Extension Smoke', () => {
     assert.ok(!accepts(agentLoopCommandTarget('gap_verify', `ripr agent verify --root ${otherRoot} --json`)));
     assert.ok(!accepts(agentLoopCommandTarget('gap_verify', `ripr agent verify --root ${commandRoot} --json; touch pwned`)));
     assert.ok(!accepts(agentLoopCommandTarget('gap_verify', `ripr agent verify --root ${commandRoot}x --json`)));
-    // The double-quoted base the client used to expect, and a base the payload
-    // does not carry.
-    assert.ok(!accepts(snapshot(' --base "HEAD~1"', 'HEAD~1')));
+    // The Windows console spelling of the base is the server's form on Windows
+    // only; elsewhere a double quote stays refused. And a base the payload does
+    // not carry.
+    assert.strictEqual(accepts(snapshot(' --base "HEAD~1"', 'HEAD~1')), process.platform === 'win32');
     assert.ok(!accepts(snapshot(' --base origin/main', null)));
     assert.ok(!accepts(snapshot(' --base other', 'origin/main')));
     // `'\\''` needs a backslash, which fish reads differently: still refused.
-    assert.ok(!accepts(snapshot(` --base ${serverShellArg("it's")}`, "it's")));
+    // On Windows the server writes `"it's"` instead, which has none.
+    assert.strictEqual(accepts(snapshot(` --base ${serverShellArg("it's")}`, "it's")), process.platform === 'win32');
     // The quoted redirect span may not carry a line break, a backslash, or a
     // typographic quote that PowerShell reads as the end of the span.
     for (const bad of ['\n', '\\', '\u2019']) {
@@ -5709,6 +6174,23 @@ function firstPrReadFile(
     }
     return value;
   };
+}
+
+/**
+ * In the untrusted host the repair actions must stay refused: the clipboard keeps
+ * its previous text for each diagnostic-scoped copy. Returns true when that was asserted, so the caller skips the
+ * copy expectations that only hold for a trusted workspace (#2769).
+ */
+async function repairPacketRefusedInUntrustedHost(): Promise<boolean> {
+  if (!shouldSkipTrustedTestHost(process.env.RIPR_TEST_WORKSPACE_TRUST)) {
+    return false;
+  }
+  await writeClipboardText('untrusted-repair-sentinel');
+  for (const command of ['ripr.copyFirstPrRepairPacket', 'ripr.copyFirstPrVerifyCommand', 'ripr.copyFirstPrReceiptCommand']) {
+    await vscode.commands.executeCommand(command);
+    assert.strictEqual(await currentClipboardText(), 'untrusted-repair-sentinel', command);
+  }
+  return true;
 }
 
 async function withCurrentFirstPrDiagnostic(
@@ -6511,6 +6993,14 @@ async function waitForHoverText(
     await sleep(150);
   }
   throw new Error(`timed out waiting for ripr seam hover. Last hover:\n${lastHoverText}`);
+}
+
+function requireActivatedExtensionModule(extensionPath: string, relative: string): unknown {
+  // The instance must be the one the running controller was constructed from;
+  // a Windows host can spell the path with another drive-letter case.
+  const resolved = require.resolve(path.join(extensionPath, relative));
+  const cached = Object.keys(require.cache).find((key) => key.toLowerCase() === resolved.toLowerCase());
+  return (cached ? require.cache[cached]?.exports : undefined) ?? require(resolved);
 }
 
 function sleep(ms: number): Promise<void> {

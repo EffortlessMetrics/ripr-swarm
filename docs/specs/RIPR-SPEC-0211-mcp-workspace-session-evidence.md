@@ -150,17 +150,19 @@ official SDK transport:
   the stored selection by conjunction before paging; they never re-run
   analysis or widen the shared budget. File matching removes a leading `./`
   and accepts exact paths, segment-bounded prefixes, and trailing segments.
-  Class/language are exact wire tokens. An unknown `language` is Invalid
-  Params (`-32602`) listing the allowed wire strings, because an empty page
-  would read as "no gaps in that language"; a known language with no match
-  produces an empty page.
+  Class/language are exact wire tokens. An unknown `class` is Invalid
+  Params (`-32602`) naming the seven exposure-class tokens, with the echoed
+  token truncated so the error stays bounded; an unknown `language` is
+  Invalid Params (`-32602`) listing the allowed wire strings, because an
+  empty page would read as "no gaps in that language"; a known value with
+  no match, and an unknown `file`, produce an empty disclosed page.
   `selected` remains the stored-selection count; `filtered` is the narrowed
   count. `filters` echoes all four dimensions, with null for omitted values.
   Summaries carry `repair_packet_ready` and `repair_ineligibility` (null when
   ready; otherwise the typed first failing gate), matching `ripr_get_gap`.
   `continuation.next_page.arguments` pins the snapshot, filters, and explicit
   limit; replay cannot cross a completed refresh that replaced the snapshot.
-- Gap-list success and refusal documents use `ripr-mcp-gap-list-v2`.
+- Gap-list success and refusal documents use `ripr-mcp-gap-list-v3`.
   The former v1 success schema closed its top level with
   `additionalProperties: false`, so adding `filtered` and `filters` cannot
   retain strict v1 compatibility. Clients must rediscover `tools/list`, accept
@@ -245,6 +247,12 @@ official SDK transport:
   a root resolved unavailable at startup fail closed with
   `workspace_unavailable` and the same restart-with-root recovery as
   `ripr_refresh`; the adapter does not discover or recheck the root again.
+  A root resolved unavailable at startup also prints exactly one
+  operator-facing warning line on stderr before serving, naming the root
+  error code, its specific cause and a concrete next step (#9895; no path; stdout
+  stays protocol-only, and a usable root stays silent). The write is
+  fallible and ignored: an unwritable stderr never aborts startup, and the typed
+  `workspace_unavailable` replies still arrive.
   On a usable root, reads before the first successful refresh fail closed
   with `no_snapshot`; reads during an
   attempt report `analysis_in_flight`; unknown item ids fail closed with
@@ -404,6 +412,15 @@ is not evidence that a resource with a particular identity exists.
   same literal recovery contract through the official SDK lifecycles,
   preserving the SDK-owned negotiated resource-miss code.
 
+- `crates/ripr/tests/mcp_stdio.rs::unusable_root_warns_once_on_stderr_and_keeps_stdout_clean`
+  — nonexistent, file and non-git roots each print exactly one stderr warning
+  with empty stdout; a usable root stays silent. The unavailable-root session
+  tests (`unavailable_workspace_evidence_names_restart_before_any_refresh`,
+  `current_discovery_requires_metadata_and_rejects_legacy_ping`) assert stderr
+  is exactly that one warning while keeping every protocol assertion.
+- `crates/ripr/tests/mcp_stdio.rs::unwritable_stderr_does_not_abort_unusable_root_session`
+  — stderr failing every write (`/dev/full`), unusable root: startup survives and typed
+  `workspace_unavailable` replies still arrive over stdout.
 - `crates/ripr/tests/mcp_stdio.rs::refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation`
   — actual committed multi-item analysis over raw stdio: literal IDs, counts,
   class/language/readiness exclusion, conjunction, known-value empty sets,
@@ -416,10 +433,15 @@ is not evidence that a resource with a particular identity exists.
   — direct stored-fact narrowing/readiness and continuation controls.
 - `crates/ripr/src/mcp/server_tests.rs::list_gaps_accepts_filters_at_the_dispatch_edge`
   — argument admission before refresh; this is not successful narrowing proof.
+- `crates/ripr/tests/mcp_stdio.rs::list_gaps_rejects_unknown_class_tokens_with_the_vocabulary`
+  + `list_gaps_bounds_the_echoed_unknown_class_token` — unknown class is
+  `-32602` naming the vocabulary; valid classes after a real refresh return
+  exactly their filtered gaps; near-cap, escape-heavy and multibyte tokens
+  yield a bounded, id-correlated `-32602`, not `-32603`.
 - `crates/ripr/tests/mcp_stdio.rs::empty_gap_pages_keep_structured_outcomes_at_the_response_bound`
   — real committed analysis with nonempty subjects before filtering, fitting
   empty pages, independently sized structured-envelope overflow below the
-  raw-document ceiling, raw-document overflow, all three string filters,
+  raw-document ceiling, raw-document overflow, the `file` and `language` filters,
   typed refusals bound to the current snapshot, and same-session recovery.
 - `crates/ripr/tests/mcp_stdio.rs::oversized_request_id_is_rejected_with_null_id_and_the_session_survives`
   — a request id whose serialized form exceeds 16384 bytes (including one
