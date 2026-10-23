@@ -690,3 +690,82 @@ fn live_definitions_are_owners_exactly_once_in_every_arm_shape() -> Check {
     );
     Ok(())
 }
+
+#[test]
+fn review_9861_workspace_reader_replacement_withholds_credit() -> Check {
+    let test = "import app.main\nfrom hostile.settings import over_limit\n\ndef test_it():\n    assert over_limit(11)\n";
+    for source in [
+        "from hostile import settings\nsettings.over_limit = lambda n: True\n",
+        "from hostile import settings\nsetattr(settings, 'over_limit', lambda n: True)\n",
+    ] {
+        let finding = classify_in_workspace(&[("app/main.py", source)], false, false, test)?;
+        assert_abstains(&finding);
+    }
+    Ok(())
+}
+
+#[test]
+fn review_9861_walrus_reader_replacement_withholds_credit() -> Check {
+    let source = format!("{SETTINGS}\n(over_limit := lambda n: True)\n");
+    assert_abstains(&classify_edit(
+        &source,
+        1,
+        SETTINGS_NEW,
+        SETTINGS_OLD,
+        &[("tests/test_settings.py", PINNING_TEST)],
+        true,
+    )?);
+    Ok(())
+}
+
+#[test]
+fn review_9861_replaced_version_guard_or_callable_keeps_module_abstention() -> Check {
+    let original = "import sys\n\nif sys.version_info >= (3, 0):\n    def versioned():\n        return 'newer'\nelse:\n    def versioned():\n        return 'new'\n";
+    let test = "from hostile.settings import versioned\n\ndef test_it():\n    assert versioned() == 'new'\n";
+    for source in [
+        original.replace("import sys\n", "import sys\nsys.version_info = (2, 7)\n"),
+        original.replace(
+            "import sys\n",
+            "import sys\nsys.version_info: tuple = (2, 7)\n",
+        ),
+        format!("{original}\n(versioned := lambda: 'new')\n"),
+        original.replace("import sys\n", "import sys\n(sys := replacement)\n"),
+    ] {
+        let line = source
+            .lines()
+            .position(|line| line.contains("return 'newer'"))
+            .ok_or_else(|| "changed return must be present".to_string())?
+            + 1;
+        let finding = classify_edit(
+            &source,
+            line,
+            "        return 'newer'",
+            "        return 'new'",
+            &[("tests/test_settings.py", test)],
+            true,
+        )?;
+        assert_abstains(&finding);
+    }
+    Ok(())
+}
+
+#[test]
+fn continuation_lines_cannot_hide_a_return_before_the_assertion() -> Check {
+    for body in [
+        "    value = (\n        1); return\n    assert over_limit(11)",
+        "    value = \\\n        1; return\n    assert over_limit(11)",
+    ] {
+        let source = limit_test(body);
+        let tests = tests_of(&[("tests/test_settings.py", &source)]);
+        assert_eq!(tests.len(), 1, "the fixture must extract a test");
+        assert_eq!(tests[0].assertions.len(), 1, "keep the target assertion");
+        assert_abstains(&classify_limit(&source)?);
+    }
+    for body in [
+        "    value = (\n        1)\n    assert over_limit(11)",
+        "    value = \\\n        1\n    assert over_limit(11)",
+    ] {
+        assert_credited(&classify_limit(&limit_test(body))?);
+    }
+    Ok(())
+}

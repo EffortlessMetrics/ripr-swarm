@@ -47,39 +47,22 @@ pub(super) fn module_literal_constants(
     source: &SourceText<'_>,
     statements: &[Stmt],
 ) -> Vec<PythonModuleConstant> {
-    let mut bindings = ScopeBindings::default();
-    collect_scope_bindings(statements, &mut bindings);
-    if bindings.opaque || writes_namespace_dynamically(source) {
-        return Vec::new();
-    }
-    let mut globals = Vec::new();
-    collect_global_declarations(statements, &mut globals);
-    // `alias.NAME = ...` can rebind the constant through a self-import.
-    let globals: std::collections::HashSet<&str> = globals.iter().map(String::as_str).collect();
-    let attributes = assigned_attributes(source);
-    let attributes: std::collections::HashSet<&str> =
-        attributes.iter().map(String::as_str).collect();
-    let walrus = walrus_target_names(source);
-    let counts = bindings.counts();
+    let facts = ModuleBindingFacts::of(source, statements);
     statements
         .iter()
         .filter_map(|stmt| literal_assignment(source, stmt))
-        .filter(|constant| {
-            counts.get(constant.name.as_str()) == Some(&1)
-                && !globals.contains(constant.name.as_str())
-                && !attributes.contains(constant.name.as_str())
-                && !walrus.contains(constant.name.as_str())
-        })
+        .filter(|constant| facts.bound_once(&constant.name))
         .collect()
 }
 
 /// How a module binds its names, for the conditional-definition and
 /// module-value reads (#9423): whether a name is bound exactly once, with no
-/// `global` declaration, no star import and no dynamic namespace writer that
-/// could rebind it behind the walk's back.
+/// `global`, walrus or attribute replacement, no star import and no dynamic
+/// namespace writer that could rebind it behind the walk's back.
 pub(super) struct ModuleBindingFacts {
     counts: std::collections::HashMap<String, usize>,
-    globals: std::collections::HashSet<String>,
+    rebound: std::collections::HashSet<String>,
+    attributes: std::collections::HashSet<String>,
     opaque: bool,
 }
 
@@ -96,7 +79,11 @@ impl ModuleBindingFacts {
         }
         Self {
             counts,
-            globals: globals.into_iter().collect(),
+            rebound: globals
+                .into_iter()
+                .chain(walrus_target_names(source).into_iter().map(str::to_string))
+                .collect(),
+            attributes: assigned_attributes(source).into_iter().collect(),
             opaque: bindings.opaque || writes_namespace_dynamically(source),
         }
     }
@@ -104,7 +91,15 @@ impl ModuleBindingFacts {
     /// Whether `name` is bound exactly once at module scope and nothing in
     /// the module can rebind it.
     pub(super) fn bound_once(&self, name: &str) -> bool {
-        !self.opaque && !self.globals.contains(name) && self.counts.get(name) == Some(&1)
+        !self.opaque
+            && !self.rebound.contains(name)
+            && !self.may_assign_attribute(name)
+            && self.counts.get(name) == Some(&1)
+    }
+
+    /// Whether an attribute may be replaced, even with its receiver still bound.
+    pub(super) fn may_assign_attribute(&self, name: &str) -> bool {
+        self.opaque || self.attributes.contains(name)
     }
 }
 
@@ -337,8 +332,8 @@ fn writes_namespace_dynamically(source: &str) -> bool {
         || source.contains("sys.modules")
 }
 
-/// Attribute names assigned as `<expr>.NAME = ...` or `<expr>.NAME += ...`
-/// anywhere in `source`.
+/// Attribute targets assigned as `<expr>.NAME = ...`, `+= ...` or `: T = ...`
+/// anywhere in `source`. A value-less attribute annotation also stays uncertain.
 pub(super) fn assigned_attributes(source: &str) -> Vec<String> {
     let mut attributes = Vec::new();
     for (dot, _) in source.match_indices('.') {
@@ -346,12 +341,16 @@ pub(super) fn assigned_attributes(source: &str) -> Vec<String> {
         let end = rest
             .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
             .unwrap_or(rest.len());
-        // `=` or an augmented `+=`; a comparison such as `<=` also matches,
-        // which only fails closed.
-        let after = rest[end..]
-            .trim_start()
-            .trim_start_matches(|ch: char| "+-*/%&|^@<>".contains(ch));
-        let assigns = after.starts_with('=') && !after.starts_with("==");
+        // Keep comparison reads (`>=`, `<=`, `==`) distinct from actual
+        // assignment operators, including shifts and exponentiation.
+        let after = rest[end..].trim_start();
+        let assigns = after.starts_with(':')
+            || (after.starts_with('=') && !after.starts_with("=="))
+            || [
+                "+=", "-=", "*=", "**=", "/=", "//=", "%=", "&=", "|=", "^=", "@=", ">>=", "<<=",
+            ]
+            .iter()
+            .any(|operator| after.starts_with(operator));
         if end > 0 && assigns {
             attributes.push(rest[..end].to_string());
         }

@@ -364,3 +364,23 @@ fn walrus_target_names_match_walrus_targets_for_every_name() {
     }
     assert!(compared > 40, "{compared}");
 }
+
+#[test]
+fn attribute_write_facts_distinguish_assignments_from_version_comparisons() {
+    assert!(super::assigned_attributes(
+        "if sys.version_info >= (3, 0):\n    pass\nif sys.version_info <= (2, 7):\n    pass\nassert sys.version_info == (3, 0)\n"
+    ).is_empty());
+    for source in [
+        "sys.version_info = (2, 7)",
+        "sys.version_info: tuple = (2, 7)",
+        "sys.version_info += (0,)",
+        "receiver.version_info >>= 1",
+        "receiver.version_info **= 2",
+    ] {
+        assert_eq!(
+            super::assigned_attributes(source),
+            ["version_info"],
+            "{source}"
+        );
+    }
+}

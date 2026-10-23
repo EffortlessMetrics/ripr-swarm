@@ -3532,6 +3532,10 @@ id = "RIPR-SPEC-0028"
 name = "Python preview static facts"
 spec = "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/module_value_tests.rs::review_9861_workspace_reader_replacement_withholds_credit",
+  "crates/ripr/src/analysis/language/python/module_value_tests.rs::review_9861_walrus_reader_replacement_withholds_credit",
+  "crates/ripr/src/analysis/language/python/module_value_tests.rs::review_9861_replaced_version_guard_or_callable_keeps_module_abstention",
+  "crates/ripr/src/analysis/language/python/module_value_tests.rs::continuation_lines_cannot_hide_a_return_before_the_assertion",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::unittest_list_equal_observes_whole_return_including_short_elements",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::unittest_list_equal_preserves_ast_call_identity",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::unittest_list_equal_withholds_unresolved_or_nonobserving_calls",
@@ -3639,6 +3643,12 @@ tests = [
   "crates/ripr/tests/python_parse_nesting.rs::unbalanced_bracket_string_literals_do_not_trip_the_nesting_budget",
 ]
 fixtures = [
+  "fixtures/python_module_reader_replacement",
+  "fixtures/python_conditional_version_attribute_write",
+  "fixtures/python_conditional_walrus_replacement",
+  "fixtures/python_module_continuation_return",
+  "fixtures/python_module_backslash_return",
+  "fixtures/python_conditional_version_annotated_write",
   "fixtures/benches_harness_evidence",
   "fixtures/python/basic",
   "fixtures/python_boundary_gap",

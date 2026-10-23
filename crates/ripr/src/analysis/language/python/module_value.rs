@@ -270,7 +270,10 @@ fn credits<'a>(
             && owner.decorators.is_empty()
             && owner.name != name
     }) {
-        if !new_facts.bound_once(&owner.name) || !old_facts.bound_once(&owner.name) {
+        if !new_facts.bound_once(&owner.name)
+            || !old_facts.bound_once(&owner.name)
+            || module_owner.foreign_writes.may_rebind(&owner.name, file)
+        {
             continue;
         }
         let (Some(new_reader), Some(old_reader)) = (
@@ -669,17 +672,17 @@ fn straight_line_assertion(test: &PythonTest, assertion: &PythonAssertion) -> bo
         if !statement(line) {
             return true;
         }
-        // Every `;`-joined statement of a base-indent line is a statement of
-        // the body (`x = 1; return`).
-        let guarding = indent(line) == base
-            && trimmed.split(';').any(|part| {
-                let first_word: String = part
-                    .trim_start()
-                    .chars()
-                    .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
-                    .collect();
-                GUARDING_STATEMENTS.contains(&first_word.as_str())
-            });
+        // A continuation line can finish a base-suite statement and then
+        // return (`value = (\n        1); return`). Its physical indentation
+        // does not make the trailing statement a nested suite.
+        let guarding = trimmed.split(';').any(|part| {
+            let first_word: String = part
+                .trim_start()
+                .chars()
+                .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
+                .collect();
+            GUARDING_STATEMENTS.contains(&first_word.as_str())
+        });
         !guarding
             && !LEAVING_CALLS
                 .iter()

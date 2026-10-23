@@ -25,7 +25,8 @@ pub(super) fn live_conditional_functions<'a>(source: &str, module: &'a [Stmt]) -
     }
     let facts = ModuleBindingFacts::of(source, module);
     // `sys` must be the module's single plain `import sys`, so the condition
-    // reads the real interpreter version and nothing shadows it.
+    // reads the real interpreter version: neither its receiver nor the
+    // version_info attribute may be replaced.
     let plain_sys = module.iter().any(|stmt| match stmt {
         Stmt::Import(import) => import
             .names
@@ -33,7 +34,7 @@ pub(super) fn live_conditional_functions<'a>(source: &str, module: &'a [Stmt]) -
             .any(|alias| alias.name.as_str() == "sys" && alias.asname.is_none()),
         _ => false,
     });
-    if !plain_sys || !facts.bound_once("sys") {
+    if !plain_sys || !facts.bound_once("sys") || facts.may_assign_attribute("version_info") {
         return Vec::new();
     }
     let mut view: Vec<Stmt> = Vec::new();
