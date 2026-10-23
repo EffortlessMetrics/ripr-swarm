@@ -32,8 +32,8 @@
 //! - the tokens parse cleanly as complete `fn` items, at least one with a
 //!   literal `#[test]`.
 //!
-//! A non-test `fn` declared in the invocation's module (or inside any
-//! item-position macro call there) shadows a glob-imported callee that the
+//! Any file-level binding of a mentioned identifier other than the file-root
+//! item, and any other item-position macro call, could shadow a callee the
 //! isolated expansion cannot see, so the proof is refused.
 //!
 //! The expansion is the invocation's own text, so the ordinary file-fact
@@ -108,6 +108,17 @@ fn identity_invocations(
         return Vec::new();
     }
     let imported = imported_names(root);
+    // Any other item-position macro call may expand to an unseen binding.
+    let foreign_macro = root
+        .descendants()
+        .filter_map(ast::MacroCall::cast)
+        .filter(|other| is_item_position(other.syntax()))
+        .any(|other| {
+            other
+                .path()
+                .map(|path| path.syntax().text().to_string())
+                .is_none_or(|path| !definitions.contains_key(&path))
+        });
     let mut accepted = Vec::new();
     for call in root.descendants().filter_map(ast::MacroCall::cast) {
         if !is_item_position(call.syntax()) {
@@ -133,7 +144,7 @@ fn identity_invocations(
         else {
             continue;
         };
-        if shadowed_by_local_fn(&call, &text) {
+        if shadowed_by_local_fn(&call, &name, &text, foreign_macro) {
             continue;
         }
         accepted.push((call, name, text));
@@ -152,74 +163,133 @@ fn is_test_fn(function: &ast::Fn) -> bool {
     })
 }
 
-fn non_test_fn_names(text: &str, names: &mut BTreeSet<String>) {
-    let Some(parse) = parse_clean_source_file(text) else {
-        return;
-    };
-    for item in parse.tree().items() {
-        if let ast::Item::Fn(function) = item
-            && !is_test_fn(&function)
-            && let Some(name) = function.name()
+/// Names a file-level item or import binds, other than the one non-test `fn`
+/// per name that sits directly at the file root (the probed owner's usual
+/// home, reached from a test module through `use super::*`). A glob import
+/// other than `super::*` contributes the sentinel `*`.
+fn collect_bindings(node: &SyntaxNode, at_file_root: bool, names: &mut BTreeSet<String>) {
+    for descendant in node.descendants() {
+        // Bindings inside a function body are scoped to it; the expansion's
+        // own summary already sees those.
+        if descendant
+            .ancestors()
+            .skip(1)
+            .any(|ancestor| ast::Fn::can_cast(ancestor.kind()))
         {
-            names.insert(name.text().to_string());
+            continue;
+        }
+        if let Some(function) = ast::Fn::cast(descendant.clone()) {
+            let direct_root = at_file_root
+                && descendant
+                    .parent()
+                    .is_some_and(|parent| ast::SourceFile::can_cast(parent.kind()));
+            if !direct_root
+                && !is_test_fn(&function)
+                && let Some(name) = function.name()
+            {
+                names.insert(name.text().to_string());
+            }
+        } else if let Some(name) = declared_name(&descendant) {
+            names.insert(name);
+        } else if let Some(tree) = ast::UseTree::cast(descendant.clone()) {
+            use_tree_names(&tree, names);
         }
     }
 }
 
-/// Whether a non-test `fn` declared in the invocation's own module (directly
-/// or inside any item-position macro call there, this one included) is named
-/// like something the wrapped tests mention. Such an item shadows a glob
-/// import of the real callee, but the expansion is summarised alone and never
-/// sees it, so the proof is refused instead of promoting a call to the wrong
-/// function.
-fn shadowed_by_local_fn(call: &ast::MacroCall, text: &str) -> bool {
-    let items: Vec<ast::Item> = match call
-        .syntax()
-        .ancestors()
-        .skip(1)
-        .find_map(ast::Module::cast)
-    {
-        Some(module) => module
-            .item_list()
-            .map(|list| list.items().collect())
-            .unwrap_or_default(),
-        None => call
-            .syntax()
-            .ancestors()
-            .last()
-            .and_then(ast::SourceFile::cast)
-            .map(|file| file.items().collect())
-            .unwrap_or_default(),
+fn declared_name(node: &SyntaxNode) -> Option<String> {
+    let name = if let Some(item) = ast::Const::cast(node.clone()) {
+        item.name()
+    } else if let Some(item) = ast::Static::cast(node.clone()) {
+        item.name()
+    } else if let Some(item) = ast::Struct::cast(node.clone()) {
+        item.name()
+    } else if let Some(item) = ast::Enum::cast(node.clone()) {
+        item.name()
+    } else if let Some(item) = ast::Union::cast(node.clone()) {
+        item.name()
+    } else if let Some(item) = ast::TypeAlias::cast(node.clone()) {
+        item.name()
+    } else if let Some(item) = ast::Trait::cast(node.clone()) {
+        item.name()
+    } else if let Some(item) = ast::Module::cast(node.clone()) {
+        item.name()
+    } else {
+        None
     };
-    let mut declared = BTreeSet::new();
-    non_test_fn_names(text, &mut declared);
-    for item in items {
-        match item {
-            ast::Item::Fn(function) if !is_test_fn(&function) => {
-                if let Some(name) = function.name() {
-                    declared.insert(name.text().to_string());
+    name.map(|name| name.text().to_string())
+}
+
+fn use_tree_names(tree: &ast::UseTree, names: &mut BTreeSet<String>) {
+    if tree.star_token().is_some() {
+        let super_only = tree
+            .path()
+            .is_some_and(|path| path.syntax().text().to_string() == "super");
+        if !super_only {
+            names.insert("*".to_string());
+        }
+    } else if tree.use_tree_list().is_none() {
+        if let Some(rename) = tree.rename() {
+            match rename.name() {
+                Some(name) => {
+                    names.insert(name.text().to_string());
+                }
+                None => {
+                    names.insert("*".to_string());
                 }
             }
-            ast::Item::MacroCall(other) => {
-                if let Some(tree) = other.token_tree() {
-                    let full = tree.syntax().text().to_string();
-                    if let Some(inner) = full.get(1..full.len().saturating_sub(1)) {
-                        non_test_fn_names(inner, &mut declared);
-                    }
-                }
-            }
-            _ => {}
+        } else if let Some(segment) = tree.path().and_then(|path| path.segment()) {
+            names.insert(segment.syntax().text().to_string());
         }
     }
-    if declared.is_empty() {
-        return false;
+}
+
+/// Whether anything in the file could bind an identifier the wrapped tests
+/// mention to something other than the glob-imported file-root item: any
+/// non-root `fn`, `const`, `static`, type, module or import of that name
+/// (here or inside a pass-through invocation's own tokens), a glob other than
+/// `super::*`, or any unexpanded item-position macro call, whose expansion is
+/// unseen. The expansion is summarised alone, so this file-level refusal is
+/// the only shadow authority for pass-through tests.
+fn shadowed_by_local_fn(
+    call: &ast::MacroCall,
+    name: &str,
+    text: &str,
+    foreign_macro: bool,
+) -> bool {
+    if foreign_macro {
+        return true;
+    }
+    let Some(root) = call.syntax().ancestors().last() else {
+        return true;
+    };
+    let mut bound = BTreeSet::new();
+    collect_bindings(&root, true, &mut bound);
+    for other in root.descendants().filter_map(ast::MacroCall::cast) {
+        let same = other
+            .path()
+            .is_some_and(|path| path.syntax().text().to_string() == name);
+        if same
+            && is_item_position(other.syntax())
+            && let Some(tree) = other.token_tree()
+        {
+            let full = tree.syntax().text().to_string();
+            if let Some(inner) = full.get(1..full.len().saturating_sub(1))
+                && let Some(parse) = parse_clean_source_file(inner)
+            {
+                collect_bindings(parse.tree().syntax(), false, &mut bound);
+            }
+        }
+    }
+    if bound.contains("*") {
+        return true;
     }
     parse_clean_source_file(text).is_some_and(|parse| {
         parse
             .syntax_node()
             .descendants_with_tokens()
             .filter_map(|element| element.into_token())
-            .any(|token| token.kind() == SyntaxKind::IDENT && declared.contains(token.text()))
+            .any(|token| token.kind() == SyntaxKind::IDENT && bound.contains(token.text()))
     })
 }
 
@@ -447,13 +517,28 @@ mod tests {
         let test = "#[test] fn a() { assert_eq!(gate(10), true); }";
         // Beside the test inside the same invocation.
         assert!(expand(&format!("suite! {{ {shadow} {test} }}\n")).is_empty());
-        // Hand-written in the same module.
-        assert!(expand(&format!("{shadow}\nsuite! {{ {test} }}\n")).is_empty());
+        // Hand-written beside the invocation, below the file root.
+        assert!(expand(&format!("mod t {{ {shadow}\nsuite! {{ {test} }} }}\n")).is_empty());
         // In a second invocation of the same module.
         assert!(expand(&format!("suite! {{ {shadow} }}\nsuite! {{ {test} }}\n")).is_empty());
-        // A fn in an unrelated enclosing module does not shadow.
+        // In an enclosing module, a named import, a qualified call's module,
+        // a generated item and a non-super glob.
+        for extra in [
+            format!("mod o {{ {shadow} mod i {{ use super::*; suite! {{ {test} }} }} }}\n"),
+            format!("mod h {{ pub {shadow} }}\nuse h::gate;\nsuite! {{ {test} }}\n"),
+            format!("mod h {{ pub {shadow} }}\nuse other::*;\nsuite! {{ {test} }}\n"),
+            format!("mk!();\nsuite! {{ {test} }}\n"),
+            format!("suite! {{ {test} }}\nmk!();\n"),
+            "mod helper { pub fn gate(_x: u32) -> bool { true } }\nsuite! { #[test] fn a() { assert_eq!(helper::gate(10), true); } }\n".to_string(),
+        ] {
+            assert!(expand(&extra).is_empty(), "{extra}");
+        }
+        // The file-root item reached through `use super::*` is the owner.
         assert_eq!(
-            expand(&format!("{shadow}\nmod tests {{ suite! {{ {test} }} }}\n")).len(),
+            expand(&format!(
+                "{shadow}\nmod tests {{ use super::*; suite! {{ {test} }} }}\n"
+            ))
+            .len(),
             1
         );
         // Control.

@@ -294,13 +294,21 @@ An invocation whose tokens contain `use`, `extern`, `macro_use` or
 expanded, but keeps counting as a possible macro-binding site, so an assertion
 mention in it stays ambiguous instead of being credited.
 
-A non-test `fn` declared in the invocation's own module (directly, or inside
-any item-position macro call there, the invocation included) is refused
-outright: the expansion is summarised alone, so a local `fn gate` would shadow
-the glob-imported callee unseen. The expansion is the invocation's own text,
-indexed with the same pinning and assertion admission as a generated test;
-file-level shadowing is enforced by that refusal, not by the generated-test
-path. Macros defined in
+The expansion is summarised alone, so it never sees the file's other items.
+The proof is therefore refused, over-conservatively, when the file contains any
+of the following that a wrapped test's identifiers could resolve to instead of
+the glob-imported file-root item: a `fn` (other than a file-root one),
+`const`, `static`, `struct`, `enum`, `union`, type alias, trait, module or
+`use` binding of such a name, whether at module level or inside a pass-through
+invocation's own tokens; a glob import other than `super::*`; or any other
+item-position macro call, whose expansion is unseen. Bindings scoped inside a
+function body are left to the expansion's own summary. The boundary is
+name-based and file-wide, not a resolver: it does not model visibility or
+`#[path]`/out-of-line modules beyond refusing across them, and it refuses
+legitimate nested-owner layouts. The expansion is the invocation's own text,
+indexed with the same pinning and assertion admission as a generated test; the
+refusal above is the only shadow authority for these tests, because the
+generated-test path does not provide one (#9967). Macros defined in
 another file, imported or `#[macro_use]` macros (`tokio`-style `cfg_*!`
 wrappers, `proptest!`, `rstest` macros) stay unindexed.
 
@@ -444,7 +452,7 @@ end of the file, which is an approximation for an edit in progress.
 - `crates/ripr/tests/macro_generated_tests.rs::literal_tests_in_a_macro_that_is_not_the_identity_add_no_test`
 - `crates/ripr/tests/macro_generated_tests.rs::a_function_local_weak_alias_in_a_wrapped_test_is_never_stronger_than_by_hand`
 - `crates/ripr/tests/macro_generated_tests.rs::an_import_alias_after_the_identity_definition_adds_no_test`
-- `crates/ripr/tests/macro_generated_tests.rs::a_local_fn_shadowing_the_callee_never_promotes_a_wrapped_test`
+- `crates/ripr/tests/macro_generated_tests.rs::a_binding_that_could_shadow_the_callee_never_promotes_a_wrapped_test`
 - `crates/ripr/tests/helper_wrapper_reach.rs::exact_pin_through_a_local_macro_argument_abstains_as_not_forwarded`
 - `crates/ripr/tests/helper_wrapper_reach.rs::any_exact_oracle_on_a_macro_argument_caller_abstains`
 - `crates/ripr/tests/helper_wrapper_reach.rs::macro_argument_without_the_owner_or_an_exact_pin_keeps_the_gap`
