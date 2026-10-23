@@ -311,7 +311,7 @@ fn retain_manifest(
                 reference.path
             ));
         }
-        let bytes = read_owned(&root, &reference.path, remaining_bytes)?;
+        let bytes = read_owned(root, &reference.path, remaining_bytes)?;
         remaining_bytes -= bytes.len() as u64;
         if digest(&bytes) != reference.sha256 {
             return Err(format!(
