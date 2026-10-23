@@ -1066,9 +1066,12 @@ pub(crate) fn push_typescript_repair_packet_field_note(out: &mut String, finding
             // Blocked — name the limitation, never emit a partial packet.
             // Only render this subsection if we have at least some preview
             // actionability data to surface (otherwise stay silent).
-            let why = evidence_value(finding, "why_not_actionable: ")
+            let raw_why = evidence_value(finding, "why_not_actionable: ")
                 .or_else(|| evidence_value(finding, "gap_state: "))
                 .unwrap_or("TypeScript preview; repair packet not yet complete");
+            let why =
+                crate::output::preview_actionability::scope_qualified_why(finding, Some(raw_why))
+                    .unwrap_or_else(|| raw_why.to_string());
             let next_capability = evidence_value(finding, "evidence_needed_to_promote: ")
                 .unwrap_or("no further capability information");
             out.push_str("\nTypeScript repair packet (advisory)\n");

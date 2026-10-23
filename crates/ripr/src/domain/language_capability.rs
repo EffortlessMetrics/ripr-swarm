@@ -377,6 +377,29 @@ pub(crate) fn state_establishes_capability(state: SupportState) -> bool {
     )
 }
 
+/// Scope-specific reason a repo-mode finding carries no repair route (#5531),
+/// derived from the capability registry instead of a hardcoded copy. `None`
+/// when the registry establishes repo-mode `repair_routing` for `language`,
+/// so a future promotion cannot leave this text stale.
+pub(crate) fn repo_mode_no_repair_routing_reason(language: LanguageId) -> Option<String> {
+    let state = cell_state(
+        language,
+        AnalysisMode::Repo,
+        CapabilityFamily::RepairRouting,
+    );
+    if state_establishes_capability(state) {
+        return None;
+    }
+    Some(format!(
+        "repo-mode findings have no repair routing ({}/{}/{}/{} is {})",
+        language.as_str(),
+        FRAMEWORK_ANY,
+        AnalysisMode::Repo.as_str(),
+        CapabilityFamily::RepairRouting.as_str(),
+        state.as_str()
+    ))
+}
+
 /// Whether any registered cell, whatever its framework (`any`, `pytest`,
 /// `unittest`, ...), establishes `family` for `language` in `mode`. A
 /// combination with no registered cell is `not_proven` and never implied by a
@@ -485,6 +508,26 @@ pub(crate) fn semantic_digest(cells: &[CapabilityCell]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repo_mode_no_repair_routing_reason_is_registry_derived() {
+        for (language, name) in [
+            (LanguageId::Python, "python"),
+            (LanguageId::TypeScript, "typescript"),
+            (LanguageId::JavaScript, "javascript"),
+        ] {
+            assert_eq!(
+                cell_state(language, Repo, CapabilityFamily::RepairRouting),
+                NotProven
+            );
+            assert_eq!(
+                repo_mode_no_repair_routing_reason(language),
+                Some(format!(
+                    "repo-mode findings have no repair routing ({name}/any/repo/repair_routing is not_proven)"
+                ))
+            );
+        }
+    }
 
     #[test]
     fn absent_repo_repair_routing_cells_are_not_proven_and_fail_closed() {
