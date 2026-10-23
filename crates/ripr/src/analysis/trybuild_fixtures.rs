@@ -114,7 +114,10 @@ fn manifest_declares_trybuild(path: &Path) -> bool {
             table
                 .get(*name)
                 .and_then(toml::Value::as_table)
-                .is_some_and(|deps| deps.contains_key("trybuild"))
+                .is_some_and(|deps| {
+                    deps.iter()
+                        .any(|(key, value)| is_trybuild_dependency(key, value))
+                })
         })
     };
     if in_tables(&manifest) {
@@ -129,6 +132,18 @@ fn manifest_declares_trybuild(path: &Path) -> bool {
                 .filter_map(toml::Value::as_table)
                 .any(in_tables)
         })
+}
+
+/// Whether one dependency entry resolves to the `trybuild` package. An explicit
+/// `package` key decides: `foo = { package = "trybuild" }` is trybuild and
+/// `trybuild = { package = "other" }` is not. Without `package` the key is the
+/// package name. Limit: an inherited `workspace = true` entry is judged by its
+/// local key only; the workspace table's own `package` rename is not resolved.
+fn is_trybuild_dependency(key: &str, value: &toml::Value) -> bool {
+    match value.as_table().and_then(|table| table.get("package")) {
+        Some(package) => package.as_str() == Some("trybuild"),
+        None => key == "trybuild",
+    }
 }
 
 #[cfg(test)]
@@ -275,7 +290,6 @@ mod tests {
             "tests/ui/notes.txt",
             "tests/uix/a.rs",
             "tests/other/ui/a.rs",
-            "src/tests/ui/a.rs",
             "ui/a.rs",
         ] {
             assert_eq!(
@@ -284,6 +298,24 @@ mod tests {
                 "{path}"
             );
         }
+        // Path shape alone: with a trybuild manifest in every candidate owner,
+        // `src/tests/ui/a.rs` is a fixture of the `src` directory, so it is
+        // named only when that owner declares trybuild.
+        assert_eq!(
+            trybuild_fixture_disclosure_message(&root, &[changed("src/tests/ui/a.rs")]),
+            None,
+            "src has no manifest"
+        );
+        write(&root.join("src/Cargo.toml"), TRYBUILD_MANIFEST)?;
+        assert!(
+            trybuild_fixture_disclosure_message(&root, &[changed("src/tests/ui/a.rs")]).is_some(),
+            "ownership follows the directory holding tests/ui"
+        );
+        assert_eq!(fixture_crate_dir(Path::new("ui/a.rs")), None);
+        assert_eq!(
+            fixture_crate_dir(Path::new("src/tests/ui/a.rs")).as_deref(),
+            Some("src")
+        );
         let nested =
             trybuild_fixture_disclosure_message(&root, &[changed("tests/ui/sub/dir/a.stdout")]);
         assert!(
@@ -358,12 +390,52 @@ mod tests {
     }
 
     #[test]
-    fn deleted_and_renamed_fixture_paths_are_named_by_their_diff_path() -> Result<(), String> {
+    fn dependency_package_key_decides_whether_an_entry_is_trybuild() -> Result<(), String> {
+        let root = temp_root("package")?;
+        let files = vec![changed("tests/ui/a.rs")];
+        let manifest =
+            |deps: &str| format!("[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n{deps}\n");
+        let named = |deps: &str| -> Result<bool, String> {
+            write(&root.join("Cargo.toml"), &manifest(deps))?;
+            Ok(trybuild_fixture_disclosure_message(&root, &files).is_some())
+        };
+        // Positive: the actual package, with and without an explicit key.
+        assert!(named(
+            "[dev-dependencies]\ntrybuild = { version = \"1\", package = \"trybuild\" }"
+        )?);
+        // Negative: trybuild is only a local alias of an unrelated package.
+        assert!(!named(
+            "[dev-dependencies]\ntrybuild = { package = \"other_harness\", path = \"..\" }"
+        )?);
+        // Positive: a renamed real trybuild.
+        assert!(named(
+            "[dev-dependencies]\nfoo = { version = \"1\", package = \"trybuild\" }"
+        )?);
+        // Target-specific tables honor the same rule.
+        assert!(!named(
+            "[target.'cfg(unix)'.dev-dependencies]\ntrybuild = { package = \"other\", version = \"1\" }"
+        )?);
+        assert!(named(
+            "[target.'cfg(unix)'.dev-dependencies]\nfoo = { package = \"trybuild\", version = \"1\" }"
+        )?);
+        // Limit: inherited entries are judged by their local key only.
+        assert!(named(
+            "[dev-dependencies]\ntrybuild = { workspace = true }"
+        )?);
+        assert!(!named("[dev-dependencies]\nfoo = { workspace = true }")?);
+        Ok(())
+    }
+
+    #[test]
+    fn helper_names_any_changed_path_it_is_given_without_reading_the_fixture() -> Result<(), String>
+    {
         let root = temp_root("deleted")?;
         write(&root.join("Cargo.toml"), TRYBUILD_MANIFEST)?;
-        // A deleted fixture (removed lines only) and a rename's new path are
-        // each one changed file; the disclosure names the path the diff
-        // reports and does not require the file to exist on disk.
+        // Path-only invariant of this helper: whatever ChangedFile paths the
+        // diff intake supplies are named, and the file need not exist on disk.
+        // Real deletions never reach it (diff intake omits `deleted file`
+        // sections) and a pure rename supplies only the new path; see the
+        // spec's Non-goals.
         let files = vec![
             changed("tests/ui/gone.rs"),
             changed("tests/ui/renamed.stderr"),

@@ -97,15 +97,15 @@ fn trybuild_fixture_diff_is_named_on_stderr_without_changing_the_report() -> Res
     assert_eq!(named.status.code(), control.status.code());
     // The scratch root differs per run and is echoed in several fields;
     // everything else must match.
-    let normalize = |output: &Output, scratch: &Scratch| -> Result<serde_json::Value, String> {
-        let text = String::from_utf8_lossy(&output.stdout)
-            .replace(scratch.0.to_string_lossy().as_ref(), "<root>");
-        serde_json::from_str(&text).map_err(|error| format!("report is not JSON: {error}"))
+    let normalize = |output: &Output, scratch: &Scratch| -> String {
+        String::from_utf8_lossy(&output.stdout)
+            .replace(scratch.0.to_string_lossy().as_ref(), "<root>")
     };
+    assert!(!normalize(&named, &with_trybuild).is_empty());
     assert_eq!(
-        normalize(&named, &with_trybuild)?,
-        normalize(&control, &without_trybuild)?,
-        "the disclosure must not change the machine-readable report"
+        normalize(&named, &with_trybuild),
+        normalize(&control, &without_trybuild),
+        "the disclosure must not change the report bytes"
     );
     Ok(())
 }

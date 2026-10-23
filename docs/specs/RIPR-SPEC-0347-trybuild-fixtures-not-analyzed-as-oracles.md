@@ -55,10 +55,20 @@ silence for "reviewed and clean".
    `stderr` or `stdout`, and the manifest of the crate that owns the `tests`
    directory (the path prefix before it; the repository root for a bare
    `tests/ui/..`) declares `trybuild` in `[dependencies]`,
-   `[dev-dependencies]`, `[build-dependencies]` or a `[target.*]` form of them.
+   `[dev-dependencies]`, `[build-dependencies]` or a `[target.*]` form of them. An explicit `package`
+   key decides: `foo = { package = "trybuild" }` counts and
+   `trybuild = { package = "other" }` does not. An inherited
+   `workspace = true` entry is judged by its local key only; a rename in the
+   workspace table is not resolved.
    A path alone is not enough: a `tests/ui` directory in a crate that does not
    depend on trybuild is never named. A missing, oversized or unparseable
-   manifest names nothing.
+   manifest names nothing, and a path with more than one `tests/ui` pair is
+   ambiguous and names nothing. Only files in the diff intake's changed-file
+   list are considered: a deleted-file section is omitted by intake and a pure
+   rename supplies only its new path, so deleted fixtures are not disclosed.
+   Known under-naming limits: a rename declared only in `[workspace.dependencies]`
+   and inherited under another local key, and the underscore spelling
+   `dev_dependencies`, are not detected (the disclosure only ever under-names).
 2. When a diff changes at least one such fixture, `ripr check` writes one stderr
    line: `ripr: N changed trybuild fixture file(s) under tests/ui were not
    analyzed as test oracles: <first three paths> and K more. ...`. It states
@@ -67,7 +77,8 @@ silence for "reviewed and clean".
 3. The line is advisory text only. It changes no finding, class, stop reason,
    limitation, analysis outcome kind, completeness, gate result or exit code,
    and no machine-readable output. The report for a diff is byte-identical
-   whether or not the crate depends on trybuild, apart from the root path.
+   whether or not the crate depends on trybuild, apart from the root path
+   (compared as raw stdout bytes after replacing the scratch root).
 4. Fixture files are not treated as unanalyzable in any other sense: the line
    neither suppresses a finding on the code the fixtures exercise nor credits
    the runner test.
@@ -107,7 +118,12 @@ silence for "reviewed and clean".
   `target_specific_and_build_dependency_tables_count`,
   `trybuild_named_only_outside_dependency_tables_does_not_count`,
   `only_fixture_files_below_tests_ui_count`,
-  `long_fixture_lists_are_bounded`.
+  `long_fixture_lists_are_bounded`,
+  `nested_crate_path_uses_the_directory_owning_tests_ui`,
+  `ambiguous_multiple_tests_ui_pairs_fail_closed`,
+  `oversized_manifest_fails_closed`,
+  `dependency_package_key_decides_whether_an_entry_is_trybuild`,
+  `helper_names_any_changed_path_it_is_given_without_reading_the_fixture`.
 - `crates/ripr/tests/trybuild_fixture_disclosure.rs`:
   `trybuild_fixture_diff_is_named_on_stderr_without_changing_the_report`.
 
@@ -121,3 +137,5 @@ silence for "reviewed and clean".
 ## Metrics
 
 - `unit_test_pass_rate`: the tests above are required Rust tests.
+- Disclosing deleted fixture files or the old path of a rename: diff intake does not
+  supply them, and changing intake is out of scope here.
