@@ -29,14 +29,23 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let bytes = input::read_owned(&root, relative, input::MAX_RETAINED_BYTES)?;
     // This returns validated input custody, never an admitted snapshot. No
     // producer-computed digest is used as an independent acceptance decision.
-    let manifest = retain_manifest(&root, get("--version")?, relative, bytes)?.manifest;
+    let retained = retain_manifest(&root, get("--version")?, relative, bytes)?;
+    let evidence_bytes: u64 = retained
+        .raw
+        .iter()
+        .filter(|(path, _)| path.as_str() != relative)
+        .map(|(_, bytes)| bytes.len() as u64)
+        .sum();
+    let manifest = retained.manifest;
     let json = format!(
         "{}\n",
         serde_json::to_string_pretty(&manifest)
             .map_err(|error| format!("serialize manifest proposal: {error}"))?
     );
-    if json.len() as u64 > input::MAX_INPUT_BYTES {
-        return Err("serialized manifest proposal exceeds the 16 MiB input budget".to_string());
+    if json.len() as u64 > input::MAX_INPUT_BYTES
+        || evidence_bytes + json.len() as u64 > input::MAX_RETAINED_BYTES
+    {
+        return Err("serialized manifest proposal exceeds retained-input budget (16 MiB per file, 64 MiB aggregate)".to_string());
     }
     // The entire typed serialization is the handoff. Choose a fence that no
     // input string can close, including a non-claim containing Markdown.
@@ -66,10 +75,13 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     // Exclusivity preserves all earlier proposals and inputs. A partial write
     // is an error with its directory retained, not a successful transaction.
     fs::create_dir(&output).map_err(|error| format!("create new proposal directory: {error}"))?;
-    for (name, bytes) in [
-        ("manifest.json", json.as_bytes()),
-        ("manifest.md", markdown.as_bytes()),
-    ] {
+    write_files(&output, json.as_bytes(), markdown.as_bytes())?;
+    println!("Manifest proposal written; independent #1609 acceptance is not established.");
+    Ok(())
+}
+
+fn write_files(output: &Path, json: &[u8], markdown: &[u8]) -> Result<(), String> {
+    for (name, bytes) in [("manifest.json", json), ("manifest.md", markdown)] {
         let result = OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -82,7 +94,6 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             )
         })?;
     }
-    println!("Manifest proposal written; independent #1609 acceptance is not established.");
     Ok(())
 }
 

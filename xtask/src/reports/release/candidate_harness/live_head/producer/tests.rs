@@ -43,7 +43,7 @@ fn proposal_dispatch_serializes_the_complete_typed_manifest_without_accepting_it
         markdown.contains("````json\n"),
         "input Markdown cannot close the handoff fence"
     );
-    assert!(markdown.contains("independent") || markdown.contains("Independent"));
+    assert!(markdown.contains("Independent #1609 acceptance is not established."));
     assert!(markdown.contains(&super::super::digest(&bytes)));
     assert!(
         LiveHeadSnapshot::admit(
@@ -162,5 +162,97 @@ fn proposal_dispatch_refuses_unsafe_and_existing_destinations() -> Result<(), St
         assert!(produce(&fixture, "escape/proposal").is_err());
         assert!(!outside.root.join("proposal").exists());
     }
+    Ok(())
+}
+
+#[test]
+fn proposal_dispatch_refuses_serialization_growth_past_the_aggregate_input_budget()
+-> Result<(), String> {
+    let mut fixture = Fixture::new()?;
+    let cap = input::MAX_INPUT_BYTES as usize;
+    let block = vec![b'x'; cap];
+    for (owner, file) in [
+        ("selected_claims", "selection.json"),
+        ("denominator", "denominator.json"),
+        ("audit", "audit.json"),
+    ] {
+        fs::write(fixture.root.join(file), &block).map_err(|e| e.to_string())?;
+        let hash = super::super::digest(&block);
+        fixture.document["prerequisites"][owner]["packet"]["sha256"] = json!(&hash);
+        fixture.document["prerequisites"][owner]["acceptance"]["reviewed_packet_sha256"] =
+            json!(hash);
+    }
+    drop(block);
+    fixture.write()?;
+    let original_len = fs::metadata(fixture.root.join("manifest.json"))
+        .map_err(|e| e.to_string())?
+        .len();
+    let mut other_bytes = 0;
+    for file in [
+        "selection.json",
+        "denominator.json",
+        "audit.json",
+        "pin-remote.sha",
+        "ruleset.json",
+        "blind-contract.json",
+    ] {
+        other_bytes += fs::metadata(fixture.root.join(file))
+            .map_err(|e| format!("{file}: {e}"))?
+            .len();
+    }
+    let remaining = input::MAX_RETAINED_BYTES - original_len - other_bytes;
+    assert!(remaining > 0 && remaining <= input::MAX_INPUT_BYTES);
+    let harness = vec![b'h'; remaining as usize];
+    fs::write(fixture.root.join("harness.json"), &harness).map_err(|e| e.to_string())?;
+    fixture.document["qualification"]["proof_inputs"][0]["sha256"] =
+        json!(super::super::digest(&harness));
+    drop(harness);
+    let accepted = fixture.write()?;
+    assert_eq!(
+        fs::metadata(fixture.root.join("manifest.json"))
+            .map_err(|e| e.to_string())?
+            .len(),
+        original_len,
+        "fixed-width digest update must preserve boundary"
+    );
+    // The exact input really fits the existing consumer. Production adds a
+    // final LF, so emission must refuse rather than produce inadmissible bytes.
+    let admitted = LiveHeadSnapshot::admit(
+        &fixture.root,
+        "0.11.0",
+        Path::new("manifest.json"),
+        &accepted,
+    )?;
+    drop(admitted);
+    match produce(&fixture, "proposal") {
+        Err(error) if error.contains("64 MiB aggregate") => {}
+        Err(error) => return Err(format!("wrong boundary refusal: {error}")),
+        Ok(()) => {
+            return Err("producer emitted a manifest beyond admission's aggregate cap".to_string());
+        }
+    }
+    assert!(!fixture.root.join("proposal").exists());
+    Ok(())
+}
+
+#[test]
+fn proposal_partial_write_retains_the_incomplete_directory_and_existing_bytes() -> Result<(), String>
+{
+    let fixture = Fixture::new()?;
+    let output = fixture.root.join("partial");
+    fs::create_dir(&output).map_err(|e| e.to_string())?;
+    fs::write(output.join("manifest.md"), b"existing evidence").map_err(|e| e.to_string())?;
+    match write_files(&output, b"proposed json", b"new markdown") {
+        Err(error) if error.contains("retain incomplete") => {}
+        _ => return Err("partial output must report an incomplete directory".to_string()),
+    }
+    assert_eq!(
+        fs::read(output.join("manifest.json")).map_err(|e| e.to_string())?,
+        b"proposed json"
+    );
+    assert_eq!(
+        fs::read(output.join("manifest.md")).map_err(|e| e.to_string())?,
+        b"existing evidence"
+    );
     Ok(())
 }
