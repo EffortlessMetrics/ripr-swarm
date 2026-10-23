@@ -532,3 +532,25 @@ fn a_crate_qualified_owner_call_is_still_a_boundary_input() -> Result<(), String
 }
 
 const FAR_ONLY_QUALIFIED: &str = "#[test]\nfn low() {\n    assert!(!thr::thr(50));\n}\n\n#[test]\nfn high() {\n    assert!(thr::thr(500));\n}\n";
+
+#[test]
+fn an_import_bound_owner_crate_path_is_still_a_boundary_input() -> Result<(), String> {
+    // #9218: `use thr as t; t::thr(101)` is the owner through a renamed
+    // import of its crate, so it keeps clearing the gap; the same spelling
+    // of an unbound module keeps it.
+    let bound = findings(
+        NEW,
+        OLD,
+        &format!(
+            "use thr as t;\n\n{FAR_ONLY_QUALIFIED}\n#[test]\nfn at() {{\n    assert!(!t::thr(101));\n}}\n"
+        ),
+    )?;
+    assert_gap_named(&bound, false)?;
+    let unbound = findings(
+        NEW,
+        OLD,
+        &format!("{FAR_ONLY_QUALIFIED}\n#[test]\nfn at() {{\n    assert!(!t::thr(101));\n}}\n"),
+    )?;
+    assert_gap_named(&unbound, true)?;
+    Ok(())
+}

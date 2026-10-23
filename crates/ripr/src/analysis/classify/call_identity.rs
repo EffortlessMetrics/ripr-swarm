@@ -94,6 +94,9 @@ pub(crate) struct CallIdentityMemos {
     /// scope parses then serve every probe and every pin of the run instead
     /// of dying with each construction.
     identities: Mutex<SharedIdentities>,
+    /// #9218: the same per owner, built even when the owner has no
+    /// same-named rival, for resolving a qualified call's spelled path.
+    solo_identities: Mutex<SharedIdentities>,
     /// RIPR-SPEC-0035: every workspace `const`/`static` by name with its
     /// file and masked initializer, built once per index on first use by
     /// the owner-return pin's self-computed expected-value check.
@@ -278,6 +281,30 @@ pub(in crate::analysis) fn shared_owner_call_identity(
     built
 }
 
+/// [`shared_owner_call_identity`] for an owner that may have no rival
+/// (#9218): the identity used to settle a qualified call's spelled path.
+fn shared_solo_owner_call_identity(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+) -> Option<std::sync::Arc<OwnerCallIdentity>> {
+    let key = owner.id.0.clone();
+    if let Some(memo) = index
+        .call_identity_memos
+        .solo_identities
+        .lock()
+        .ok()
+        .and_then(|identities| identities.get(&key).cloned())
+    {
+        return memo;
+    }
+    let built = OwnerCallIdentity::new_with(owner, index.functions().iter(), index, true)
+        .map(std::sync::Arc::new);
+    if let Ok(mut identities) = index.call_identity_memos.solo_identities.lock() {
+        return identities.entry(key).or_insert(built).clone();
+    }
+    built
+}
+
 /// The owner and its same-named, same-package module-level rivals.
 pub(in crate::analysis) struct OwnerCallIdentity {
     name: String,
@@ -346,6 +373,19 @@ impl OwnerCallIdentity {
         same_named: impl IntoIterator<Item = &'a FunctionSummary>,
         index: &RustIndex,
     ) -> Option<Self> {
+        Self::new_with(owner, same_named, index, false)
+    }
+
+    /// [`Self::new`], or with `solo` an identity of the owner alone when it
+    /// has no rival (#9218): every spelled path then settles on the owner
+    /// exactly when it names the owner's module, and stays unsettled
+    /// otherwise.
+    fn new_with<'a>(
+        owner: &FunctionSummary,
+        same_named: impl IntoIterator<Item = &'a FunctionSummary>,
+        index: &RustIndex,
+        solo: bool,
+    ) -> Option<Self> {
         if owner.item.container != FunctionContainer::Free {
             return None;
         }
@@ -369,7 +409,9 @@ impl OwnerCallIdentity {
                 rivals.push(function);
             }
         }
-        if rivals.is_empty() || package_remaps_module_paths(index, owner_package.as_deref()) {
+        if (rivals.is_empty() && !solo)
+            || package_remaps_module_paths(index, owner_package.as_deref())
+        {
             return None;
         }
         let layout = CrateLayout::new(index, owner_package.as_deref());
@@ -396,7 +438,7 @@ impl OwnerCallIdentity {
                 _ => {}
             }
         }
-        if definitions.len() < 2 {
+        if definitions.len() < 2 && !solo {
             return None;
         }
         Some(Self {
@@ -1310,16 +1352,30 @@ fn names_a_type(qualifier: &[String]) -> bool {
     })
 }
 
-/// Whether no other indexed function shares the owner's name, so a path
-/// anchored at the owner's crate can only reach the owner (directly or
-/// through a re-export such as `pub use internal::inner;`).
-fn only_definition_of_name(index: &RustIndex, owner: &FunctionSummary) -> bool {
-    index
-        .functions()
-        .iter()
-        .filter(|function| function.name == owner.name)
-        .count()
-        == 1
+/// Whether `owner`'s crate re-exports it into the module `module`
+/// (`pub use internal::inner;` in the crate root), read from a `use` item
+/// of that module's file that names the owner or globs its module.
+fn module_reexports_owner(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    owner_path: &[String],
+    module: &[String],
+) -> bool {
+    let owner_package = package_key(&owner.file);
+    let last = owner_path.last();
+    index.files().iter().any(|(file, facts)| {
+        package_key(file) == owner_package
+            && file_module_segments(file).is_some_and(|segments| segments == module)
+            && {
+                let masked = mask_comments_and_strings(&facts.data().source);
+                use_item_ranges(&masked).into_iter().any(|range| {
+                    let item = &masked[range];
+                    mentions_word(item, &owner.name)
+                        || (item.contains('*')
+                            && last.is_some_and(|last| mentions_word(item, last)))
+                })
+            }
+    })
 }
 
 fn qualified_call_names_owner(
@@ -1328,9 +1384,20 @@ fn qualified_call_names_owner(
     test: &TestSummary,
     qualifier: &[String],
 ) -> bool {
+    // The owner's spelled path must settle on the owner: through the
+    // same-named-rival identity when there are rivals (any other answer
+    // declines), else the owner-alone identity, which reads `use`-bound and
+    // in-file module paths, `crate`/`self`/`super` and the crate's own name.
     if let Some(identity) = shared_owner_call_identity(index, owner) {
         return identity.resolve_call(test, index, qualifier) == CallTarget::Owner;
     }
+    if let Some(identity) = shared_solo_owner_call_identity(index, owner)
+        && identity.resolve_call(test, index, qualifier) == CallTarget::Owner
+    {
+        return true;
+    }
+    // A path anchored at the owner's crate through a verified re-export
+    // (`crate_name::inner` for `pub use internal::inner;`).
     let owner_package = package_key(&owner.file);
     if package_remaps_module_paths(index, owner_package.as_deref()) {
         return false;
@@ -1342,36 +1409,30 @@ fn qualified_call_names_owner(
     let CrateClass::Crate(owner_crate) = layout.classify(&owner.file) else {
         return false;
     };
-    match qualifier {
-        // `owner_crate::module::thr(..)` from another crate's test: the
-        // owner library's import name, not rebound by a local `mod`.
-        [first, rest @ ..]
-            if own_crate_names_of(
-                &owner.file,
-                owner_package.as_deref(),
-                Some(&owner_crate),
-                test,
-                index,
-            )
-            .contains(first)
+    let names = own_crate_names_of(
+        &owner.file,
+        owner_package.as_deref(),
+        Some(&owner_crate),
+        test,
+        index,
+    );
+    let (anchored, rest) = match qualifier.split_first() {
+        Some((first, rest)) if first == "crate" => (
+            package_key(&test.file) == owner_package
+                && !under_tests_dir(&test.file)
+                && !under_tests_dir(&owner.file),
+            rest,
+        ),
+        Some((first, rest)) => (
+            names.contains(first)
                 && !index.files().get(&test.file).is_some_and(|facts| {
                     mentions_word(&facts.data().source, &format!("mod {first}"))
-                }) =>
-        {
-            rest == owner_path.as_slice() || only_definition_of_name(index, owner)
-        }
-        [first, rest @ ..] if first == "crate" => {
-            (rest == owner_path.as_slice() || only_definition_of_name(index, owner))
-                && package_key(&test.file) == owner_package
-                && !under_tests_dir(&test.file)
-                && !under_tests_dir(&owner.file)
-        }
-        [only] if only == "super" => {
-            test.file == owner.file
-                && file_module_segments(&owner.file).is_some_and(|file| file == owner_path)
-        }
-        _ => false,
-    }
+                }),
+            rest,
+        ),
+        None => (false, qualifier),
+    };
+    anchored && module_reexports_owner(index, owner, &owner_path, rest)
 }
 
 /// The spelled module path of every mention of `name` in `body` that is no
@@ -2897,13 +2958,15 @@ mod tests {
         assert_eq!(settle(&index, "src/lib.rs::a::render", "doubles_two"), None);
     }
 
-    /// #9218: a qualified call feeds the owner's inputs only when it
-    /// resolves to the owner's module (no-rival path).
+    /// #9218: a qualified call feeds the owner's inputs only when its
+    /// spelled path resolves to the owner's module (no-rival path).
     #[test]
     fn qualified_calls_lend_inputs_only_when_they_resolve_to_the_owner() {
         let lib = "pub mod pricing {\n    pub fn thr(x: i32) -> bool { x > 1 }\n}\n\
+                   pub mod other {\n    pub fn thr2(x: i32) -> bool { x > 1 }\n}\n\
                    pub fn root(x: i32) -> bool { x > 1 }\n\
-                   #[test]\nfn unit() { assert!(pricing::thr(1)); }\n";
+                   #[cfg(test)]\nmod tests {\n    use super::*;\n    use crate::other as alias;\n    use crate::pricing as pm;\n    \
+                   #[test]\n    fn unit() { assert!(pricing::thr(1)); }\n}\n";
         let index = index(&[("src/lib.rs", lib)]);
         let owner_of = |suffix: &str| {
             index
@@ -2928,19 +2991,23 @@ mod tests {
         // Bare and type-path spellings keep their reading.
         assert!(resolves(&thr, "assert!(thr(1));"));
         assert!(resolves(&thr, "assert!(Type::thr(1));"));
-        // The owner's own module path resolves; a different one declines.
+        // The owner's module path resolves, spelled absolutely or through
+        // an in-file module name; a different module or an unbound one
+        // declines.
         assert!(resolves(&thr, "assert!(crate::pricing::thr(1));"));
+        assert!(resolves(&thr, "assert!(pricing::thr(1));"));
+        assert!(resolves(&thr, "assert!(pm::thr(1));"));
         assert!(!resolves(&thr, "assert!(crate::other::thr(1));"));
+        assert!(!resolves(&thr, "assert!(alias::thr(1));"));
         assert!(!resolves(&thr, "assert!(rival::thr(1));"));
-        assert!(!resolves(&thr, "assert!(pricing::thr(1));"));
         assert!(!resolves(&thr, "assert!(thr(1) + rival::thr(2));"));
         assert!(!resolves(&thr, "assert!(<T as R>::thr(1));"));
-        // A root-level owner resolves `crate::root` but not a module path.
+        // A root-level owner resolves `crate::root`/`super::root` but not
+        // another module's path.
         assert!(resolves(&root, "assert!(crate::root(1));"));
+        assert!(resolves(&root, "assert!(super::root(1));"));
         assert!(!resolves(&root, "assert!(rival::root(1));"));
         assert!(!resolves(&root, "assert!(crate::pricing::root(1));"));
-        // `super::root` from a test beside a file-level owner.
-        assert!(resolves(&root, "assert!(super::root(1));"));
         assert!(!resolves(&thr, "assert!(super::thr(1));"));
     }
 }

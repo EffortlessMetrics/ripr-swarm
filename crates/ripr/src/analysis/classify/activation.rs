@@ -2136,11 +2136,6 @@ fn adaptor_element_runs(
                 test,
                 &entry.caller.name,
                 call.line,
-            ) && super::call_identity::qualified_owner_calls_resolve(
-                index,
-                &entry.caller,
-                test,
-                &call.text,
             )
         },
     )?;
