@@ -188,27 +188,31 @@ pub fn discover_rust_files(root: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(out)
 }
 
-/// Discover production files in the workspace that route to a preview-language
+/// Discover files in the workspace that route to a preview-language
 /// adapter (TypeScript/JavaScript, Python, or Perl), by path extension only.
 ///
 /// Routing is `analysis::language::route`, the same predicate adapter dispatch
 /// uses. This does not require the adapter to be enabled; it is used so the
 /// repo pipeline can disclose preview-language files in scope even when the
-/// adapter is not enabled (RIPR-SPEC-0082, #1111). Test files and excluded
-/// directories are skipped the same way as Rust discovery.
+/// adapter is not enabled (RIPR-SPEC-0082, #1111). Only `DEFAULT_IGNORED_DIRS` are skipped; test,
+/// vendor, example and generated files are counted, so a result is a presence
+/// signal and may include non-production files (fail-closed).
 pub(crate) fn discover_preview_language_files(root: &Path) -> Vec<(LanguageId, PathBuf)> {
+    let mut out = discover_routed_language_files(root);
+    out.retain(|(language, _)| *language != LanguageId::Rust);
+    out
+}
+
+/// Every file in the workspace that routes to any adapter language, Rust
+/// included, from one walk. [`discover_preview_language_files`] is this walk
+/// without Rust; the repo pipeline uses this form so a Rust tree the language
+/// set did not select is disclosed instead of vanishing. Only
+/// `DEFAULT_IGNORED_DIRS` are skipped: test, vendor, example and generated
+/// files (Rust included) are counted, so the Rust count is a presence signal
+/// that may include non-production files (fail-closed).
+pub(crate) fn discover_routed_language_files(root: &Path) -> Vec<(LanguageId, PathBuf)> {
     let mut out: Vec<(LanguageId, PathBuf)> = Vec::new();
-    visit_classified(root, root, &mut out, &|path| {
-        route(path).filter(|language| {
-            matches!(
-                language,
-                LanguageId::TypeScript
-                    | LanguageId::JavaScript
-                    | LanguageId::Python
-                    | LanguageId::Perl
-            )
-        })
-    });
+    visit_classified(root, root, &mut out, &route);
     out.sort_by(|a, b| a.1.cmp(&b.1));
     out
 }

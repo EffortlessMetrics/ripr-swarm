@@ -1296,6 +1296,10 @@ fn own_crate_names_of(
     test: &TestSummary,
     index: &RustIndex,
 ) -> BTreeSet<String> {
+    let Some(owner_root) = super::owner_pin::target_root(owner_file, index, &BTreeSet::new())
+    else {
+        return BTreeSet::new();
+    };
     let test_package = package_key(&test.file);
     let same_package = test_package.as_deref() == owner_package;
     let mut names = BTreeSet::new();
@@ -1307,9 +1311,7 @@ fn own_crate_names_of(
     if same_package && owner_package.is_none() && owner_crate == Some("lib") {
         names.extend(index.package_names.iter().cloned());
     }
-    if let Some(owner_root) = super::owner_pin::target_root(owner_file, index, &BTreeSet::new()) {
-        names.extend(index.member_crates.import_names(&test.file, &owner_root));
-    }
+    names.extend(index.member_crates.import_names(&test.file, &owner_root));
     names
 }
 
@@ -1749,6 +1751,7 @@ mod tests {
             index.extend_tests(facts.tests.iter().cloned());
             index.insert_file_only(PathBuf::from(path), facts);
         }
+        crate::analysis::facts::compose_fixture_source_roles(&mut index, Path::new(""));
         index
     }
 
