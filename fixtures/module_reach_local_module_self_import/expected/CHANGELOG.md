@@ -11,3 +11,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_local_module_self_import (2)
+
+Reason:
+RIPR-SPEC-0159: #8999 valid binary std max counterexample
+
+Command:
+`cargo xtask goldens bless module_reach_local_module_self_import --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

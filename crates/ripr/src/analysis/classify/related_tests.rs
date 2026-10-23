@@ -1919,12 +1919,6 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
     if declares_value_named(&facts.source, &caller.name) {
         return false;
     }
-    // An import of the entry's name through `self::`/`crate::`/`super::` must
-    // resolve far enough to an unambiguous library anchor: a `crate::` import
-    // from a unit test inside `src/`, `self::<lib>::..` with `extern crate
-    // <lib>;` and no other binding of the name, or `self::<module>::..` of an
-    // inline module that re-exports `<lib>::..`. Anything else binds a module
-    // of the test crate (or cannot be resolved) and refuses.
     let in_src_unit_test = !super::call_identity::under_tests_dir(&test.file);
     let binds_entry_locally = |source: &str| {
         super::reveal::flattened_use_paths(source)
@@ -1942,12 +1936,10 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
                 if !(local_root && names_entry) {
                     return false;
                 }
-                // Inside the library (a unit test under `src/`) these paths
-                // name library modules.
-                if in_src_unit_test {
-                    return false;
-                }
-                !local_import_reaches_library(&facts.source, &segments, crate_name)
+                // Known limit (RIPR-SPEC-0159): a relative-prefixed import of
+                // the entry is never resolved. Only `crate::` from a unit test
+                // inside the library's `src/` stays credited.
+                !(in_src_unit_test && segments.first() == Some(&"crate"))
             })
     };
     if binds_entry_locally(&facts.source) || binds_entry_locally(&test.body) {
@@ -1989,9 +1981,8 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
         && !rebinds(&test.body)
 }
 
-/// Whether the test file declares a `const` or `static` named `name` that can
-/// name a call in a test: at the file root or inside a function body, not
-/// inside an unrelated `mod` (whose items are not in scope unless imported).
+/// Whether the test file declares a `const` or `static` named `name` anywhere
+/// (fail-closed: scope-aware visibility is a documented known limit).
 fn declares_value_named(source: &str, name: &str) -> bool {
     use ra_ap_syntax::{AstNode, ast, ast::HasName};
     let name = name.strip_prefix("r#").unwrap_or(name);
@@ -2009,140 +2000,7 @@ fn declares_value_named(source: &str, name: &str) -> bool {
             return false;
         };
         named.as_deref() == Some(name)
-            && !node
-                .ancestors()
-                .skip(1)
-                .any(|ancestor| ast::Module::can_cast(ancestor.kind()))
     })
-}
-
-/// Resolve an import of the entry written `self::..`/`crate::..` in a test
-/// crate far enough to prove it names the library: through an `extern crate
-/// <lib>` item (with or without `as`), or through a root inline module whose
-/// own items bind the next segment exactly once, by a plain `use` of a
-/// `<lib>::..` path (no glob in the module, no cfg, no second binding). A
-/// foreign, conditional, glob, ambiguous or unresolvable anchor refuses.
-fn local_import_reaches_library(source: &str, segments: &[&str], crate_name: &str) -> bool {
-    use ra_ap_syntax::{AstNode, ast, ast::HasModuleItem, ast::HasName};
-    let unraw = |name: &str| name.strip_prefix("r#").unwrap_or(name).to_string();
-    if !matches!(segments.first(), Some(&("self" | "crate"))) {
-        return false;
-    }
-    let Some(second) = segments.get(1).map(|segment| unraw(segment)) else {
-        return false;
-    };
-    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
-        return false;
-    };
-    let root = parse.tree();
-    let root_items: Vec<ast::Item> = root.items().collect();
-    let named = |item: &ast::Item| -> Option<String> {
-        let name = match item {
-            ast::Item::Module(i) => i.name(),
-            ast::Item::Fn(i) => i.name(),
-            ast::Item::Struct(i) => i.name(),
-            ast::Item::Enum(i) => i.name(),
-            ast::Item::Union(i) => i.name(),
-            ast::Item::Trait(i) => i.name(),
-            ast::Item::TypeAlias(i) => i.name(),
-            ast::Item::Const(i) => i.name(),
-            ast::Item::Static(i) => i.name(),
-            ast::Item::MacroRules(i) => i.name(),
-            _ => None,
-        };
-        name.map(|n| n.text().trim_start_matches("r#").to_string())
-    };
-    // An `extern crate <lib> [as <second>]` item at the root.
-    let extern_binds_second = root_items.iter().any(|item| {
-        let ast::Item::ExternCrate(extern_crate) = item else {
-            return false;
-        };
-        let target = extern_crate
-            .name_ref()
-            .map(|n| n.text().trim_start_matches("r#").to_string());
-        let alias = extern_crate
-            .rename()
-            .and_then(|rename| rename.name())
-            .map(|n| n.text().trim_start_matches("r#").to_string());
-        target.as_deref() == Some(crate_name)
-            && alias.as_deref().unwrap_or(crate_name) == second
-            && !super::owner_pin::has_cfg_attr(extern_crate)
-    });
-    let second_declared_elsewhere = root_items
-        .iter()
-        .filter(|item| !matches!(item, ast::Item::ExternCrate(_)))
-        .any(|item| named(item).as_deref() == Some(second.as_str()))
-        || super::reveal::flattened_use_paths(source)
-            .iter()
-            .any(|import| {
-                import
-                    .alias
-                    .as_deref()
-                    .or_else(|| import.path.rsplit("::").next())
-                    .map(unraw)
-                    .as_deref()
-                    == Some(second.as_str())
-                    || import.path.ends_with('*')
-            });
-    if extern_binds_second {
-        return !second_declared_elsewhere;
-    }
-    // A root inline module whose own items bind the next segment once.
-    let Some(next) = segments.get(2).map(|segment| unraw(segment)) else {
-        return false;
-    };
-    let mut modules = root_items.iter().filter_map(|item| match item {
-        ast::Item::Module(module) if named(item).as_deref() == Some(second.as_str()) => {
-            Some(module)
-        }
-        _ => None,
-    });
-    let (Some(module), None) = (modules.next(), modules.next()) else {
-        return false;
-    };
-    let Some(items) = module.item_list() else {
-        return false;
-    };
-    if super::owner_pin::has_cfg_attr(module) || super::owner_pin::has_cfg_attr(&items) {
-        return false;
-    }
-    let mut bindings = 0usize;
-    let mut from_library = false;
-    for item in items.items() {
-        if let ast::Item::Use(use_item) = &item {
-            if super::owner_pin::has_cfg_attr(use_item) {
-                return false;
-            }
-            for import in super::reveal::flattened_use_paths(&use_item.syntax().text().to_string())
-            {
-                if import.path.ends_with('*') {
-                    return false;
-                }
-                let bound = import
-                    .alias
-                    .as_deref()
-                    .or_else(|| import.path.rsplit("::").next())
-                    .map(unraw);
-                if bound.as_deref() == Some(next.as_str()) {
-                    bindings += 1;
-                    from_library = import
-                        .path
-                        .trim_start_matches("::")
-                        .split("::")
-                        .next()
-                        .map(unraw)
-                        .as_deref()
-                        == Some(crate_name);
-                }
-            }
-        } else if named(&item).as_deref() == Some(next.as_str()) {
-            bindings += 1;
-            from_library = false;
-        } else if matches!(item, ast::Item::MacroCall(_) | ast::Item::MacroRules(_)) {
-            return false;
-        }
-    }
-    bindings == 1 && from_library
 }
 
 /// Whether `text` invokes the owner through the dependency's declared name,

@@ -292,13 +292,19 @@ can only hint that a caller "may lead here" without changing anything.
   refused too when the test file imports a path starting with the library's
   name and the file aliases, imports, globs or declares that name, or
   invokes an `include`-family macro (the prefix then may not name the
-  library), or imports the entry's name through `self::`/`crate::`/`super::` without
-  resolving to the library (an `extern crate <lib> [as x]` item, or a root
-  inline module whose own items bind the next segment exactly once by a plain
-  `use <lib>::..`; a foreign, glob, `cfg`-gated, ambiguous or unresolvable
-  anchor refuses, and a unit test under `src/` is inside the library), or when
-  a `const`/`static` of that name is in scope of the test (file root or a
-  function body, not an unrelated `mod`). A bare call is read from the masked file at
+  library), imports the entry's name through any `self::`/`crate::`/`super::` path
+  (only `crate::` from a unit test under `src/` is credited), or when any
+  `const`/`static` of that name appears anywhere in the test file.
+
+  Known limits (a proper path resolver is a follow-up to #8999): the bare-call
+  route credits only a direct `use <lib>::..` import (list imports included)
+  where nothing in the test file can shadow the library name. Valid but
+  refused routes: an extern-crate alias, a re-export through a test-crate
+  module (`pub use ::<lib>::..`, including beside a same-named local module),
+  `super::public_api::..` and nested `self::` re-exports; the const/static
+  veto is file-wide, so a same-named value inside an unrelated module also
+  refuses. The package-wide macro-definition and item-position-macro scan on
+  the library side is deliberately coarse and fail-closed. A bare call is read from the masked file at
   its own line, so a spelling only in a string or comment is not a call.
   The qualified spelling is refused for a path longer or shorter than
   the entry's own, another crate name, a test file that declares any item, `let`, closure

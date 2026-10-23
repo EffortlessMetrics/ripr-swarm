@@ -820,29 +820,49 @@ fn bare_spelling_in_non_code_text_does_not_admit_an_import() -> Result<(), Strin
     Ok(())
 }
 
-/// Importing the entry through `self::`/`crate::` binds it to a module of the
-/// test crate unless it resolves to the library: unrelated, with rendered
-/// classification. The local module declares no second entry function (a
-/// second function would hide the bug behind a uniqueness refusal). Supported
-/// anchors still link, and an unrelated local import never suppresses an exact
-/// qualified call.
+/// Known limit (RIPR-SPEC-0159): a relative-prefixed import of the entry
+/// (`self::`, `crate::`, `super::` in an integration test), an inline-module
+/// route, an extern-crate alias or a re-export is never resolved, even when it
+/// is valid. Each refuses, with rendered classification; the direct list
+/// import is the supported control.
 #[test]
-fn a_local_module_import_of_the_entry_name_does_not_link() -> Result<(), String> {
+fn relative_and_reexport_import_routes_are_refused() -> Result<(), String> {
     let local = "mod qual_reach {\n    pub mod inner {\n        pub use std::cmp::max as order_discount;\n    }\n}\n";
-    // The imported suffix is followed through the module's own bindings: a
-    // foreign re-export beside a library one, a library re-export in an
-    // unrelated child module, and a glob all refuse.
     for (module, import) in [
+        (local, "use self::qual_reach::inner::order_discount;\n"),
+        (local, "use crate::qual_reach::inner::order_discount;\n"),
+        (local, "use self::qual_reach::inner::{order_discount};\n"),
         (
             "mod api {\n    pub use qual_reach::inner;\n    pub use std::cmp as foreign;\n}\n",
             "use self::api::foreign::order_discount;\n",
         ),
         (
-            "mod api {\n    pub use std::cmp as foreign;\n    pub mod other {\n        pub use qual_reach::inner as foreign;\n    }\n}\n",
-            "use self::api::foreign::order_discount;\n",
+            "mod api {\n    pub use qual_reach::inner;\n    pub use std::cmp::*;\n}\n",
+            "use self::api::inner::order_discount;\n",
         ),
         (
-            "mod api {\n    pub use qual_reach::inner;\n    pub use std::cmp::*;\n}\n",
+            "extern crate qual_reach;\nmod checks {\n    mod qual_reach {\n        pub use std::cmp::max as order_discount;\n    }\n    use self::qual_reach::order_discount;\n}\n",
+            "use self::checks::qual_reach::order_discount;\n",
+        ),
+        (
+            "mod checks {\n    extern crate core as lib_alias;\n}\n",
+            "use self::checks::lib_alias::cmp::max as order_discount;\n",
+        ),
+        // Valid routes that the minimal boundary refuses (known limits).
+        (
+            "extern crate qual_reach;\n",
+            "use self::qual_reach::inner::order_discount;\n",
+        ),
+        (
+            "extern crate qual_reach as lib_alias;\n",
+            "use crate::lib_alias::inner::order_discount;\n",
+        ),
+        (
+            "mod api {\n    pub use ::qual_reach::inner;\n}\n",
+            "use self::api::inner::order_discount;\n",
+        ),
+        (
+            "mod api {\n    pub use qual_reach::inner;\n}\n",
             "use self::api::inner::order_discount;\n",
         ),
     ] {
@@ -851,47 +871,19 @@ fn a_local_module_import_of_the_entry_name_does_not_link() -> Result<(), String>
         assert_eq!(package.relation()?, None, "{module}{import}");
         assert_ne!(package.classification()?, "exposed", "{module}{import}");
     }
-    for import in [
-        "use self::qual_reach::inner::order_discount;\n",
-        "use crate::qual_reach::inner::order_discount;\n",
-        "use self::qual_reach::inner::{order_discount};\n",
-    ] {
-        let tests = format!("{local}{import}{}", test_file(BARE));
-        let package = module_package("src/inner.rs", MODULE_LIB, tests, vec![]);
-        assert_eq!(package.relation()?, None, "{import}");
-        assert_ne!(package.classification()?, "exposed", "{import}");
-    }
-    // Supported anchors: an explicit extern crate, a local re-export of the
-    // library, and the plain list import.
-    for (positive, import) in [
-        (
-            "extern crate qual_reach;\n",
-            "use self::qual_reach::inner::order_discount;\n",
-        ),
-        (
-            "mod api {\n    pub use qual_reach::inner;\n}\n",
-            "use self::api::inner::order_discount;\n",
-        ),
-        ("", "use qual_reach::inner::{order_discount, other};\n"),
-        (
-            "extern crate qual_reach as lib_alias;\n",
-            "use crate::lib_alias::inner::order_discount;\n",
-        ),
-        (
-            "mod api {\n    pub use ::qual_reach::inner;\n}\n",
-            "use crate::api::inner::order_discount;\n",
-        ),
-        (
-            "mod api {\n    pub use ::qual_reach::inner;\n}\n",
-            "use self::api::inner::order_discount;\n",
-        ),
-    ] {
-        let tests = format!("{positive}{import}{}", test_file(BARE));
-        let package = module_package("src/inner.rs", MODULE_LIB, tests, vec![]);
-        assert_eq!(package.relation()?.as_deref(), LINKED, "{positive}{import}");
-        assert_eq!(package.classification()?, "exposed", "{positive}{import}");
-    }
-    // An unrelated local import does not suppress an exact qualified call.
+    // The direct list import still links, and an unrelated relative import
+    // never suppresses an exact qualified call.
+    let list = format!(
+        "use qual_reach::inner::{{order_discount, other}};\n{}",
+        test_file(BARE)
+    );
+    let package = module_package("src/inner.rs", MODULE_LIB, list, vec![]);
+    assert_eq!(
+        package.relation()?.as_deref(),
+        LINKED,
+        "list import control"
+    );
+    assert_eq!(package.classification()?, "exposed");
     let tests = format!(
         "mod arbitrary {{\n    pub mod cmp {{}}\n}}\nuse self::arbitrary::cmp::order_discount;\n{}",
         spelled("qual_reach::inner::order_discount")
@@ -917,13 +909,25 @@ fn a_nearer_binding_or_same_line_non_code_does_not_admit_a_bare_call() -> Result
         assert_eq!(package.relation()?, None, "{binding}");
         assert_ne!(package.classification()?, "exposed", "{binding}");
     }
-    // A same-named const inside an unrelated module is not in scope.
-    let tests = format!(
-        "mod unrelated {{\n    pub const order_discount: u32 = 7;\n}}\n{import}{}",
-        test_file(BARE)
+    // Known limit: the const/static scan is file-wide and fail-closed, so a
+    // same-named value in a module or the test body refuses too.
+    for extra in [
+        "mod unrelated {\n    pub const order_discount: u32 = 7;\n}\n",
+        "mod checks {\n    pub static order_discount: u32 = 7;\n}\n",
+    ] {
+        let tests = format!("{import}{extra}{}", test_file(BARE));
+        let package = module_package("src/inner.rs", MODULE_LIB, tests, vec![]);
+        assert_eq!(package.relation()?, None, "{extra}");
+        assert_ne!(package.classification()?, "exposed", "{extra}");
+    }
+    let body_const = format!(
+        "{import}{}",
+        test_file(&format!(
+            "    const order_discount: fn(u32) -> u32 = other::order_discount;\n{BARE}"
+        ))
     );
-    let package = module_package("src/inner.rs", MODULE_LIB, tests, vec![]);
-    assert_eq!(package.relation()?.as_deref(), LINKED, "unrelated const");
+    let package = module_package("src/inner.rs", MODULE_LIB, body_const, vec![]);
+    assert_eq!(package.relation()?, None, "body const");
     for body in [
         "    let _t = \"order_discount(10)\"; assert_eq!(foreign::order_discount(10), 5);",
         "    /* order_discount(10) */ assert_eq!(foreign::order_discount(10), 5);",
