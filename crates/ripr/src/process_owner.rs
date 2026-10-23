@@ -969,7 +969,7 @@ mod tests {
             .map_err(|err| format!("terminate_tree: {err}"))?;
         if !unix_liveness_probe(descendant) {
             return Err(format!(
-                "terminate_tree killed unrelated descendant {descendant}"
+                "terminate_tree took down unrelated descendant {descendant}"
             ));
         }
         // The sentinel tree is in the test's own group; clean it up by pid.
