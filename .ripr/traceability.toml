@@ -18144,6 +18144,28 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0288"
+name = "Agent stub rewrite clarity contract"
+spec = "docs/specs/RIPR-SPEC-0288-agent-stub-rewrite-clarity.md"
+tests = [
+  "crates/ripr/src/analysis/test_stub/tests.rs::recomputed_stub_for_the_same_seam_is_flagged_already_present",
+  "crates/ripr/src/analysis/test_stub/tests.rs::same_named_but_different_test_still_suffixes",
+  "crates/ripr/src/cli/commands/agent_stub.rs::tests::second_write_for_the_same_seam_reports_already_written",
+  "crates/ripr/src/cli/commands/agent_stub.rs::tests::strongly_gripped_stub_names_the_real_reason",
+  "crates/ripr/src/cli/commands/agent_stub.rs::tests::config_disabled_class_stub_keeps_the_configured_off_wording",
+  "crates/ripr/tests/agent_stub_at_disclosure.rs::second_write_reports_already_written_instead_of_a_duplicate",
+  "crates/ripr/tests/agent_stub_compiles.rs::at_kind_stub_discloses_strongly_gripped_classification",
+  "crates/ripr/tests/agent_stub_at_disclosure.rs::off_line_predicate_note_precedes_the_grip_class_warning",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/test_stub.rs",
+  "crates/ripr/src/cli/commands/agent_stub.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0288-agent-stub-rewrite-clarity.md",
+  "docs/OUTPUT_SCHEMA.md",
+  "docs/AGENT_WORKFLOWS.md",
 id = "RIPR-SPEC-0289"
 name = "Edit-cage parse-error refusal leads with the plain fix-the-syntax-error hint"
 spec = "docs/specs/RIPR-SPEC-0289-edit-cage-parse-error-hint.md"
@@ -18482,6 +18504,42 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0310-check-findings-artifact-verifies-by-gap-id.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0347"
+name = "Changed trybuild fixtures are named on stderr as not analyzed as test oracles"
+spec = "docs/specs/RIPR-SPEC-0347-trybuild-fixtures-not-analyzed-as-oracles.md"
+tests = [
+  "crates/ripr/tests/trybuild_fixture_disclosure.rs::trybuild_fixture_diff_is_named_on_stderr_without_changing_the_report",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::trybuild_crate_fixtures_are_named_with_their_paths",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::member_crate_manifest_owns_its_fixtures",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::ui_directory_in_a_crate_without_trybuild_is_not_named",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::missing_or_unparseable_manifest_names_nothing",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::target_specific_and_build_dependency_tables_count",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::trybuild_named_only_outside_dependency_tables_does_not_count",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::only_fixture_files_below_tests_ui_count",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::long_fixture_lists_are_bounded",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::nested_crate_path_uses_the_directory_owning_tests_ui",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::ambiguous_multiple_tests_ui_pairs_fail_closed",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::oversized_manifest_fails_closed",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::non_regular_manifest_path_fails_closed",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::nested_fixture_tree_is_owned_by_its_own_directory_not_an_ancestor",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::inherited_workspace_entries_never_name_fixtures",
+  "crates/ripr/tests/trybuild_fixture_disclosure.rs::inherited_workspace_trybuild_never_names_and_direct_forms_still_do",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::dependency_package_key_decides_whether_an_entry_is_trybuild",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::helper_names_any_changed_path_it_is_given_without_reading_the_fixture",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/trybuild_fixtures.rs",
+  "crates/ripr/src/analysis/pipeline.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0347-trybuild-fixtures-not-analyzed-as-oracles.md",
 ]
 metrics = [
   "unit_test_pass_rate",
