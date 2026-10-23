@@ -505,6 +505,12 @@ export class RiprClientController {
    * start. Reset whenever the session stops.
    */
   private lastCompletedStatus: RiprStatusState | undefined;
+  /**
+   * True while the main status shows a rejected configuration pull (#9917).
+   * An accepted pull in a state that paints no status of its own (`stopped`)
+   * must clear that paint, so the flag marks it as ours to clear.
+   */
+  private configurationFailurePainted = false;
   private workspaceRoot: string | undefined;
   /**
    * Session-scoped workspace folder picked through `ripr: Select Workspace
@@ -1096,6 +1102,7 @@ export class RiprClientController {
     this.firstUsefulAction = undefined;
     this.dirtyRiprDocuments.clear();
     this.lastCompletedStatus = undefined;
+    this.configurationFailurePainted = false;
     this.clearAttemptStatusBar();
     this.updateStatus(config.enabled
       ? {
@@ -1886,9 +1893,12 @@ export class RiprClientController {
     }
     const pullFailure = configurationPullFailureStatus(status);
     if (pullFailure) {
+      this.configurationFailurePainted = true;
       this.updateStatus(pullFailure);
       return;
     }
+    const clearConfigurationFailure = this.configurationFailurePainted;
+    this.configurationFailurePainted = false;
     const failure = status.failure && typeof status.failure === 'object'
       ? status.failure as Record<string, unknown>
       : undefined;
@@ -1963,6 +1973,16 @@ export class RiprClientController {
         return;
       }
       default:
+        // An accepted pull while analysis is `stopped` publishes no analysis
+        // transition, so restore the status the rejection replaced (#9917).
+        if (clearConfigurationFailure) {
+          this.updateStatus(this.lastCompletedStatus ?? {
+            kind: 'ready',
+            summary: 'ripr accepted the workspace configuration.',
+            detail: analysisStatusDetail(status),
+            nextStep: 'Open or save a Rust or enabled preview-language file to refresh diagnostics.'
+          });
+        }
         return;
     }
   }
@@ -4071,10 +4091,12 @@ function analysisStatusPayload(params: unknown): RiprAnalysisStatusPayload | und
 
 /**
  * A rejected `workspace/configuration` pull is fail-closed on the server: none
- * of the pulled ripr settings apply and every governed value falls back to its
- * default (#2031). Without this the editor keeps showing a healthy-looking
- * status while the user's settings are ignored (#9917). The server's message
- * names the offending key; the recovery route is a corrected configuration.
+ * of the rejected response's settings apply, and the server keeps the last
+ * accepted configuration (or its initialization/repository fallback when none
+ * was accepted yet) rather than resetting to defaults (#2031). Without this
+ * the editor keeps showing a healthy-looking status while the user's new
+ * settings are ignored (#9917). The server's message names the offending key;
+ * the recovery route is a corrected configuration.
  */
 export function configurationPullFailureStatus(
   status: Pick<RiprAnalysisStatusPayload, 'input_authority'>
@@ -4088,8 +4110,8 @@ export function configurationPullFailureStatus(
     : 'The language server rejected the workspace configuration.';
   return {
     kind: 'analysisFailed',
-    summary: 'ripr ignored your settings: the workspace configuration was rejected.',
-    detail: `${message}\nUntil a valid configuration is pulled, ripr uses default settings.`,
+    summary: 'ripr rejected your latest settings: the workspace configuration was invalid.',
+    detail: `${message}\nripr keeps using the last accepted configuration, or its fallback settings if none was accepted yet.`,
     nextStep: 'Correct the setting named above in your VS Code settings (saving them re-sends the configuration), or run ripr: Restart Server.'
   };
 }

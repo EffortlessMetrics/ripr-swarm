@@ -1583,6 +1583,55 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('a rejected configuration pull is cleared by an accepted pull while analysis is stopped (#9917)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      const pull = (state: string, extra: Record<string, unknown> = {}) => ({
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'stopped',
+        input_authority: { configuration_pull: { state, ...extra } }
+      });
+
+      context.client.emitNotification('ripr/analysisStatus', pull('failed', {
+        failure: { kind: 'config_pull_invalid', message: 'workspace/configuration value for `gitTimeoutMs` has an invalid type or literal: 2500.5' }
+      }));
+      assert.ok(context.status.text.includes('ripr: failed'));
+      const rejected = String(context.status.tooltip);
+      assert.ok(rejected.includes('`gitTimeoutMs`'));
+      assert.ok(rejected.includes('last accepted configuration'));
+      assert.ok(!rejected.includes('default settings'), 'a rejected pull keeps the last accepted configuration, not defaults');
+
+      // Correcting back to the effective value publishes `stopped` with an
+      // applied pull and schedules no analysis, so nothing else repaints.
+      context.client.emitNotification('ripr/analysisStatus', pull('applied'));
+      assert.ok(!context.status.text.includes('ripr: failed'));
+      assert.ok(!String(context.status.tooltip).includes('gitTimeoutMs'));
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('an accepted pull does not mask a real analysis failure after a rejected pull (#9917)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'stopped',
+        input_authority: { configuration_pull: { state: 'failed', failure: { kind: 'config_pull_invalid', message: 'bad key' } } }
+      });
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
+        failure: { kind: 'analysis_error', message: 'temporary timeout' },
+        input_authority: { configuration_pull: { state: 'applied' } }
+      });
+      assert.ok(context.status.text.includes('ripr: failed'));
+      assert.ok(String(context.status.tooltip).includes('temporary timeout'));
+      assert.ok(!String(context.status.tooltip).includes('bad key'));
+    } finally {
+      await context.dispose();
+    }
+  });
+
   test('refresh failures suggest editor recovery without restarting the server', async () => {
     const context = createControllerTestContext({});
     try {

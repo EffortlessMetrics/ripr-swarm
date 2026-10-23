@@ -21,6 +21,7 @@ suite('Configuration pull failure status (#9917)', () => {
     assert.strictEqual(status.kind, 'analysisFailed');
     assert.ok(status.detail?.includes('`gitTimeoutMs`'), 'names the offending key');
     assert.ok(status.nextStep?.includes('Restart Server'), 'names a recovery action');
+    assert.ok(!/default/i.test(`${status.summary} ${status.detail}`), 'retained last-known-good config is not described as defaults');
   });
 
   test('applied, absent, or missing pull state produces no status', () => {
