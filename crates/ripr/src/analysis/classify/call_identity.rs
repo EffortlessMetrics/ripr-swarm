@@ -1353,8 +1353,8 @@ fn names_a_type(qualifier: &[String]) -> bool {
 }
 
 /// One `use` leaf: its full path (the last segment is a name or `*`) and
-/// whether it is renamed.
-type UseLeaf = (Vec<String>, bool);
+/// the name it is renamed to, if any.
+type UseLeaf = (Vec<String>, Option<String>);
 
 /// Expand a masked `use` tree (`a::{b, c::d}`, `a::b as c`, `a::*`) into its
 /// leaves. A group whose braces do not balance yields nothing.
@@ -1362,8 +1362,8 @@ fn expand_use_tree(tree: &str, prefix: &[String], out: &mut Vec<UseLeaf>) {
     let tree = tree.trim();
     let Some(open) = tree.find('{') else {
         let (path, renamed) = match tree.split_once(" as ") {
-            Some((path, _)) => (path, true),
-            None => (tree, false),
+            Some((path, alias)) => (path, Some(alias.trim().to_string())),
+            None => (tree, None),
         };
         let mut segments = prefix.to_vec();
         segments.extend(
@@ -1409,53 +1409,97 @@ fn expand_use_tree(tree: &str, prefix: &[String], out: &mut Vec<UseLeaf>) {
 }
 
 /// Whether `owner`'s crate re-exports it into the module `module`
-/// (`pub use internal::inner;` in the crate root): a `use` leaf of that
-/// module's file, not renamed, that names the owner (or globs) through a
-/// path resolving to the owner's own module. A dependency's path, an
-/// undeclared first segment or an unreadable tree does not qualify.
+/// (`pub use internal::inner;` in the crate root). Only the module's own
+/// file in the owner's crate target counts (a `main.rs`, `src/bin` or
+/// `tests` file is another crate), and only its top-level `pub use` items
+/// (a `use` inside a nested module or function binds there, and resolves
+/// against that scope). A leaf must not be renamed, must end in the owner's
+/// name or `*`, and its path must resolve to the owner's own module:
+/// `crate`/`self`/`super` against `module`, or a first segment that is a
+/// module the file declares itself. A dependency's path, an undeclared
+/// first segment or an unparseable file does not qualify.
 fn module_reexports_owner(
     index: &RustIndex,
     owner: &FunctionSummary,
     owner_path: &[String],
+    owner_crate: &str,
     module: &[String],
 ) -> bool {
+    use ra_ap_syntax::ast::{HasModuleItem, HasName, HasVisibility};
+    use ra_ap_syntax::{AstNode, ast};
     let owner_package = package_key(&owner.file);
+    let layout = CrateLayout::new(index, owner_package.as_deref());
     index.files().iter().any(|(file, facts)| {
         if package_key(file) != owner_package
+            || under_tests_dir(file)
+            || layout.class(file).as_deref() != Some(owner_crate)
             || file_module_segments(file).is_none_or(|segments| segments != module)
         {
             return false;
         }
-        let masked = mask_comments_and_strings(&facts.data().source);
-        use_item_ranges(&masked).into_iter().any(|range| {
-            let item = masked[range].trim().trim_end_matches(';');
-            let Some(tree) = item.strip_prefix("use") else {
-                return false;
-            };
-            let mut leaves = Vec::new();
-            expand_use_tree(tree, &[], &mut leaves);
-            leaves.into_iter().any(|(path, renamed)| {
-                let Some((last, target)) = path.split_last() else {
-                    return false;
-                };
-                if renamed || (last != "*" && *last != owner.name) {
-                    return false;
-                }
-                let Some(first) = target.first() else {
-                    return false;
-                };
-                let resolved = match first.as_str() {
-                    "crate" | "self" | "super" => keyword_module(target, module),
-                    // A module declared in this file; any other first
-                    // segment may be a dependency.
-                    _ if mentions_word(&masked, &format!("mod {first}")) => {
-                        Some(join(module, target))
-                    }
-                    _ => None,
-                };
-                resolved.is_some_and(|resolved| resolved == owner_path)
+        let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&facts.data().source)
+        else {
+            return false;
+        };
+        let tree = parse.tree();
+        let declared: BTreeSet<String> = tree
+            .items()
+            .filter_map(|item| match item {
+                ast::Item::Module(module) => module.name().map(|name| name.text().to_string()),
+                _ => None,
             })
-        })
+            .collect();
+        // Every top-level `pub use` leaf that binds the owner's name, or a
+        // glob that might: explicit leaves beat globs, so the answer is the
+        // explicit binding when there is one, else the globs together.
+        let mut explicit = Vec::new();
+        let mut globs = Vec::new();
+        for item in tree.items() {
+            let ast::Item::Use(use_item) = item else {
+                continue;
+            };
+            let Some(use_tree) = use_item.use_tree() else {
+                continue;
+            };
+            if use_item.visibility().is_none() {
+                continue;
+            }
+            let text = mask_comments_and_strings(&use_tree.syntax().text().to_string());
+            // A leading `::` (also inside a group) names an extern crate.
+            let external = text.match_indices("::").any(|(at, _)| {
+                matches!(
+                    text[..at].trim_end().chars().next_back(),
+                    None | Some('{' | ',')
+                )
+            });
+            let mut leaves = Vec::new();
+            expand_use_tree(&text, &[], &mut leaves);
+            for (path, alias) in leaves {
+                let Some((last, target)) = path.split_last() else {
+                    continue;
+                };
+                let owns = !external
+                    && alias.is_none()
+                    && target.first().is_some_and(|first| {
+                        let resolved = match first.as_str() {
+                            "crate" | "self" | "super" => keyword_module(target, module),
+                            _ if declared.contains(first) => Some(join(module, target)),
+                            _ => None,
+                        };
+                        resolved.is_some_and(|resolved| resolved == owner_path)
+                    });
+                if last == "*" {
+                    globs.push(owns);
+                } else if alias.as_deref().unwrap_or(last) == owner.name {
+                    explicit.push(owns);
+                }
+            }
+        }
+        if explicit.is_empty() {
+            !globs.is_empty() && globs.iter().all(|owns| *owns)
+        } else {
+            explicit.iter().all(|owns| *owns)
+        }
     })
 }
 
@@ -1513,7 +1557,7 @@ fn qualified_call_names_owner(
         ),
         None => (false, qualifier),
     };
-    anchored && module_reexports_owner(index, owner, &owner_path, rest)
+    anchored && module_reexports_owner(index, owner, &owner_path, &owner_crate, rest)
 }
 
 /// The spelled module path of every mention of `name` in `body` that is no

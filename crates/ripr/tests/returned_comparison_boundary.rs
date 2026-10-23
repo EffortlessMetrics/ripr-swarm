@@ -560,6 +560,7 @@ fn an_import_bound_owner_crate_path_is_still_a_boundary_input() -> Result<(), St
 /// also defines a `thr`).
 fn findings_in_internal(
     lib_rs: &str,
+    extra: &[(&str, &str)],
     new: &str,
     old: &str,
     test: &str,
@@ -589,9 +590,12 @@ fn findings_in_internal(
     )?;
     write(
         "other_dep/src/lib.rs",
-        "pub fn thr(x: i32) -> bool {\n    x > 0\n}\n",
+        "pub fn thr(x: i32) -> bool {\n    x > 0\n}\n\npub fn other() {}\n",
     )?;
     write("src/lib.rs", lib_rs)?;
+    for (path, text) in extra {
+        write(path, text)?;
+    }
     write(
         "src/internal.rs",
         &format!("pub fn thr(x: i32) -> bool {{\n{new}\n}}\n"),
@@ -621,8 +625,13 @@ fn findings_in_internal(
 const INTERNAL_FAR_ONLY: &str = "#[test]\nfn low() {\n    assert!(!thr::internal::thr(50));\n}\n\n#[test]\nfn high() {\n    assert!(thr::internal::thr(500));\n}\n";
 
 fn reexport_case(lib_rs: &str) -> Result<Vec<Finding>, String> {
+    reexport_case_with(lib_rs, &[])
+}
+
+fn reexport_case_with(lib_rs: &str, extra: &[(&str, &str)]) -> Result<Vec<Finding>, String> {
     findings_in_internal(
         lib_rs,
+        extra,
         NEW,
         OLD,
         &format!("{INTERNAL_FAR_ONLY}\n#[test]\nfn at() {{\n    assert!(!thr::thr(101));\n}}\n"),
@@ -634,7 +643,7 @@ fn a_genuine_reexport_of_the_owner_still_supplies_the_boundary_input() -> Result
     // #9218: `pub use internal::thr;` makes `thr::thr(101)` the owner.
     for lib_rs in [
         "pub mod internal;\npub use internal::thr;\n",
-        "pub mod internal;\npub use internal::{thr, other};\n",
+        "pub mod internal;\npub use internal::{thr, helper};\n",
         "pub mod internal;\npub use crate::internal::*;\n",
     ] {
         let found = reexport_case(lib_rs)?;
@@ -657,6 +666,81 @@ fn a_dependency_export_of_a_same_named_function_is_not_the_owner() -> Result<(),
         assert_gap_named(&found, true).map_err(|error| format!("{lib_rs:?}: {error}"))?;
         let owner = family(&found, "return_value")?;
         assert_ne!(owner.class, ExposureClass::Exposed, "{lib_rs:?} {owner:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_reexport_outside_the_crate_roots_top_level_is_not_a_root_export() -> Result<(), String> {
+    // #9218: the dependency's `thr` is what the root exports.
+    let cases: Vec<(&str, Vec<(&str, &str)>)> = vec![
+        // A glob of the owner's module inside a nested `mod tests`.
+        (
+            "pub mod internal;\npub use other_dep::thr;\n#[cfg(test)]\nmod tests {\n    pub use crate::internal::*;\n}\n",
+            vec![],
+        ),
+        // A named import of the owner inside an unrelated nested module.
+        (
+            "pub mod internal;\npub use other_dep::thr;\nmod unrelated {\n    pub use crate::internal::thr;\n}\n",
+            vec![],
+        ),
+        // The binary root imports the owner's module.
+        (
+            "pub mod internal;\npub use other_dep::thr;\n",
+            vec![(
+                "src/main.rs",
+                "mod internal;\nuse internal::thr;\nfn main() {\n    let _ = thr(1);\n}\n",
+            )],
+        ),
+        // An explicit dependency export beats the owner's glob.
+        (
+            "pub mod internal;\npub use crate::internal::*;\npub use other_dep::thr;\n",
+            vec![],
+        ),
+        // A dependency glob beside an owner glob is ambiguous.
+        (
+            "pub mod internal;\npub use crate::internal::*;\npub use other_dep::*;\n",
+            vec![],
+        ),
+        // A leading `::` names an extern crate, never the local module.
+        ("pub mod internal;\npub use ::internal::thr;\n", vec![]),
+        // Another item renamed to `thr`.
+        (
+            "pub mod internal;\npub use other_dep::other as thr;\n",
+            vec![],
+        ),
+        // A private import is no export.
+        ("pub mod internal;\nuse internal::thr;\n", vec![]),
+    ];
+    for (lib_rs, extra) in cases {
+        let found = reexport_case_with(lib_rs, &extra)?;
+        let owner = family(&found, "return_value")?;
+        // With two crate roots naming `internal` the owner's module is
+        // ambiguous, so even the far owner calls decline and the boundary
+        // reads unresolved instead of missing: only not-Exposed holds.
+        assert!(
+            !extra.is_empty()
+                || owner
+                    .ripr
+                    .infect
+                    .summary
+                    .contains("equality-boundary discriminator is missing"),
+            "{lib_rs:?} {extra:?}: {owner:?}"
+        );
+        assert_ne!(owner.class, ExposureClass::Exposed, "{lib_rs:?} {owner:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn an_explicit_owner_export_beats_a_dependency_glob() -> Result<(), String> {
+    // #9218 control: the explicit named export wins over the glob.
+    for lib_rs in [
+        "pub mod internal;\npub use other_dep::*;\npub use internal::thr;\n",
+        "pub mod internal;\npub use internal::{helper, thr};\npub use other_dep::*;\n",
+    ] {
+        let found = reexport_case(lib_rs)?;
+        assert_gap_named(&found, false).map_err(|error| format!("{lib_rs:?}: {error}"))?;
     }
     Ok(())
 }
