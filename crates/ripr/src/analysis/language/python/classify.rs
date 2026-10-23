@@ -1096,7 +1096,8 @@ pub(super) fn classify_change_for_owner(
         let test = candidate.test;
         evidence.push(format!(
             "test_framework: {} ({})",
-            test.framework, test.name
+            test.framework.as_str(),
+            test.name
         ));
         if !test.fixtures.is_empty() {
             evidence.push(format!(

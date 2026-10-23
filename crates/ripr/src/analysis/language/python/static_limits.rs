@@ -1,3 +1,4 @@
+use super::PythonFramework;
 use super::admission::PythonAssertionAdmission;
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::related_tests::{
@@ -687,7 +688,7 @@ fn related_candidates_have_unresolved_pytest_fixture_limit(
 }
 
 fn test_has_unresolved_pytest_fixture_inputs(test: &PythonTest, owner: &PythonOwner) -> bool {
-    test.framework == "pytest"
+    test.framework == PythonFramework::Pytest
         && !test.parametrized
         && body_calls_owner(&test.body_text, owner)
         && test

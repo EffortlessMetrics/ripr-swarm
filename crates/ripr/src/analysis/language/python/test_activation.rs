@@ -3,7 +3,7 @@
 //! Conditions and runtime rebinding are not evaluated. Recognized controls
 //! therefore withhold credit even when a conditional skip might be inactive.
 
-use super::{PythonImport, PythonTest, expr_full_name};
+use super::{PythonFramework, PythonImport, PythonTest, expr_full_name};
 use rustpython_parser::ast::{Expr, Stmt};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,7 +27,7 @@ pub(super) fn activation_control(test: &PythonTest) -> Option<&str> {
             | (
                 "unittest.skip" | "unittest.skipIf" | "unittest.skipUnless",
                 DeclarationSite::Class,
-            ) => test.framework == "unittest",
+            ) => test.framework == PythonFramework::Unittest,
             _ => true,
         })
         .map(|control| control.name.as_str())
