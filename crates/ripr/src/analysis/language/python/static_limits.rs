@@ -1199,6 +1199,7 @@ mod tests {
     /// getter only classifies on related-test evidence (#6585).
     fn related_decorator_limit(owner: &PythonOwner) -> Option<StaticLimitKind> {
         let test = PythonTest {
+            setup_receivers: Vec::new(),
             activation_controls: Vec::new(),
             fixture_defs: Vec::new(),
             direct_parametrized: Vec::new(),
