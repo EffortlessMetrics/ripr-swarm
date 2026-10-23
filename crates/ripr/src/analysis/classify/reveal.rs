@@ -217,6 +217,7 @@ fn reveal_evidence_proximity_reach(
         &ReturnOracleAdmission {
             owner_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
+            assertion_has_known_implicit_observer: &|_, _| None,
             sibling_exclusion_admitted: &|_, _| true,
             proximity_may_reach_owner,
             owner_parameters: &[],
