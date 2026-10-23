@@ -353,3 +353,76 @@ fn a_write_after_a_backtick_in_a_regex_literal_is_still_seen() -> Result<(), Str
     }
     Ok(())
 }
+
+/// A native TypeScript number-array operand can contain executable template
+/// interpolation. A following division slash does not turn it into a regex.
+#[test]
+fn review_9936_division_template_interpolation_write_is_seen() -> Result<(), String> {
+    let tail = "const n: number = 4; const q = n /[+`${(test = null, 2)}`][0] / 2;";
+    let source = tape_test("var test = require('tape');", tail);
+    assert_eq!(
+        class_for_file("masker-division-interpolation", "test/k.test.ts", &source)?,
+        ExposureClass::NoStaticPath,
+        "{tail}"
+    );
+    Ok(())
+}
+
+#[test]
+fn review_9936_later_regex_backtick_write_is_seen() -> Result<(), String> {
+    let tail = "const n = true; const s = ''; if (n) /a`/.test(s);\ntest = null;";
+    let source = tape_test("var test = require('tape');", tail);
+    assert_eq!(
+        class_for_file("masker-later-regex-backtick", "test/k.test.ts", &source)?,
+        ExposureClass::NoStaticPath,
+        "{tail}"
+    );
+    Ok(())
+}
+
+#[test]
+fn review_9936_comparison_regex_write_is_seen() -> Result<(), String> {
+    let tail = "const n: any = 4; const s = ''; const b = n</`/.test(s);\ntest = null;";
+    let source = tape_test("var test = require('tape');", tail);
+    assert_eq!(
+        class_for_file("masker-comparison-regex", "test/k.test.ts", &source)?,
+        ExposureClass::NoStaticPath,
+        "{tail}"
+    );
+    Ok(())
+}
+
+#[test]
+fn review_9936_no_write_controls_retain_runner_credit() -> Result<(), String> {
+    for tail in [
+        "const n = 4; const q = n /[+`${2}`][0] / 2;",
+        "const n = true; const s = ''; if (n) /a`/.test(s);",
+        "const n: any = 4; const s = ''; const b = n</`/.test(s);",
+    ] {
+        let source = tape_test("var test = require('tape');", tail);
+        assert_eq!(
+            class_for_file("masker-no-write-review-control", "test/k.test.ts", &source)?,
+            ExposureClass::Exposed,
+            "{tail}"
+        );
+    }
+    Ok(())
+}
+
+/// The classifier mask preserves characters; parser consumers must use its
+/// byte-preserving adapter when comparing the mask with source spans.
+#[test]
+fn review_9936_mask_adapter_preserves_unicode_source_offsets() -> Result<(), String> {
+    for source in [
+        "if (n) /`é/.test(s);\ntest = null;",
+        "const s = 'é'; test = null;",
+        "const s = `é${2}`; test = null;",
+        "/* é */ test = null;",
+    ] {
+        let code = super::super::tests_extract::byte_preserving_code_mask(source)
+            .ok_or_else(|| format!("could not mask {source}"))?;
+        assert_eq!(code.len(), source.len(), "{source}");
+        assert_eq!(code.find("test = null"), source.find("test = null"));
+    }
+    Ok(())
+}
