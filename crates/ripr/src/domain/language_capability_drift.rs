@@ -160,6 +160,61 @@ fn drift_violations(doc: &str, cells: &[CapabilityCell], bindings: &[&Binding]) 
     violations
 }
 
+const REGISTRY_BEGIN: &str = "<!-- capability-registry:begin (generated from domain::language_capability::CAPABILITY_CELLS; do not edit) -->";
+const REGISTRY_END: &str = "<!-- capability-registry:end -->";
+
+/// The generated registry projection, markers included. One row per cell, in
+/// table order; state and ceiling come straight from the cell.
+fn render_registry_block(cells: &[CapabilityCell]) -> String {
+    let mut out = String::new();
+    out.push_str(REGISTRY_BEGIN);
+    out.push_str("\n\n| Cell (language/framework/mode/family) | Support state | Tier ceiling |\n| --- | --- | --- |\n");
+    for cell in cells {
+        out.push_str(&format!(
+            "| `{}` | `{}` | `{}` |\n",
+            cell_id(cell),
+            cell.state.as_str(),
+            cell.tier_ceiling.as_str()
+        ));
+    }
+    out.push('\n');
+    out.push_str(REGISTRY_END);
+    out
+}
+
+/// The marker block as written in the doc, or why it cannot be read.
+fn documented_registry_block(doc: &str) -> Result<&str, String> {
+    let begin = doc.matches("<!-- capability-registry:begin").count();
+    let end = doc.matches(REGISTRY_END).count();
+    if begin != 1 || end != 1 {
+        return Err(format!(
+            "expected exactly one capability-registry begin/end marker pair, found {begin}/{end}"
+        ));
+    }
+    let start = doc
+        .find("<!-- capability-registry:begin")
+        .ok_or_else(|| "begin marker missing".to_string())?;
+    let stop = doc
+        .find(REGISTRY_END)
+        .ok_or_else(|| "end marker missing".to_string())?
+        + REGISTRY_END.len();
+    doc.get(start..stop)
+        .filter(|_| start < stop)
+        .ok_or_else(|| "end marker precedes begin marker".to_string())
+}
+
+/// Empty when the documented block equals the rendering of the table.
+fn registry_block_violations(doc: &str, cells: &[CapabilityCell]) -> Vec<String> {
+    let expected = render_registry_block(cells);
+    match documented_registry_block(doc) {
+        Err(reason) => vec![reason],
+        Ok(actual) if actual == expected => Vec::new(),
+        Ok(_) => vec![format!(
+            "the generated capability-registry block in docs/status/SUPPORT_TIERS.md is stale; replace it with:\n{expected}"
+        )],
+    }
+}
+
 fn current_support_tiers() -> String {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/status/SUPPORT_TIERS.md");
@@ -172,6 +227,57 @@ mod tests {
 
     fn all_bindings() -> Vec<&'static Binding> {
         BINDINGS.iter().collect()
+    }
+
+    #[test]
+    fn the_generated_registry_block_matches_the_table() {
+        assert_eq!(
+            registry_block_violations(&current_support_tiers(), CAPABILITY_CELLS),
+            Vec::<String>::new()
+        );
+    }
+
+    fn synthetic_doc() -> String {
+        format!(
+            "# Doc\n\nprose\n\n{}\n\nmore prose\n",
+            render_registry_block(CAPABILITY_CELLS)
+        )
+    }
+
+    #[test]
+    fn a_changed_cell_state_makes_the_registry_block_stale() {
+        let doc = synthetic_doc();
+        assert_eq!(
+            registry_block_violations(&doc, CAPABILITY_CELLS),
+            Vec::<String>::new()
+        );
+        let mut cells = CAPABILITY_CELLS.to_vec();
+        cells[0].state = super::super::language_capability::SupportState::Stale;
+        assert_ne!(cells[0].state, CAPABILITY_CELLS[0].state);
+        let violations = registry_block_violations(&doc, &cells);
+        assert!(
+            violations.iter().any(|v| v.contains("stale")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_hand_edited_or_missing_registry_block_is_drift() {
+        let doc = synthetic_doc();
+        let edited = doc.replacen("| `supported", "| `edited", 1);
+        assert_ne!(edited, doc);
+        assert!(
+            registry_block_violations(&edited, CAPABILITY_CELLS)
+                .iter()
+                .any(|v| v.contains("stale"))
+        );
+        let removed = doc.replace(REGISTRY_END, "");
+        assert_ne!(removed, doc);
+        assert!(
+            registry_block_violations(&removed, CAPABILITY_CELLS)
+                .iter()
+                .any(|v| v.contains("marker"))
+        );
     }
 
     #[test]

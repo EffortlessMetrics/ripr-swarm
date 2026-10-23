@@ -1,6 +1,6 @@
 # ripr
 
-`ripr` finds static mutation-exposure gaps before expensive mutation testing.
+`ripr` is a static check for Rust changes: does your test suite notice if the behavior in a diff were wrong?
 The **PyPI distribution name is `ripr-rs`**, while the installed executable and
 product name remain `ripr`.
 

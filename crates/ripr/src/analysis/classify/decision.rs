@@ -1,5 +1,6 @@
 use super::super::rust_index::{FunctionSummary, TestSummary};
 use super::boundary_pairing::SAME_TEST_PAIRING_MISSING;
+use super::mask_pin::MASK_BITS_UNEXERCISED;
 use super::operand_pin::FIELD_PINNED_EQUAL_TO_OPERAND;
 use super::reveal::wrapper_error_seam_expression;
 use crate::domain::*;
@@ -165,6 +166,7 @@ pub(in crate::analysis) fn missing_evidence(
             missing.push("No exact error variant discriminator was detected".to_string());
         } else if discriminate.summary.contains(SAME_TEST_PAIRING_MISSING)
             || discriminate.summary.contains(FIELD_PINNED_EQUAL_TO_OPERAND)
+            || discriminate.summary.contains(MASK_BITS_UNEXERCISED)
         {
             missing.push(discriminate.summary.clone());
         } else {
@@ -398,7 +400,7 @@ fn uncertainty_next_step(
         crate::domain::ASSERTION_SHAPED_INFECTION_UNKNOWN_NEXT_STEP.to_string()
     } else {
         match class {
-            ExposureClass::InfectionUnknown => "Trace the related test input through the local or computed operand, including default/empty cases, to check whether the change matters. ripr.toml does not support fixture/builder value mappings.",
+            ExposureClass::InfectionUnknown => "Open the related test and trace its input through the local or computed operand (including default and empty cases) to see which side of the changed condition it exercises, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings.",
             ExposureClass::PropagationUnknown => "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes.",
             _ => "Inspect the changed behavior and its existing tests; ripr has not established a test gap.",
         }.to_string()
@@ -520,6 +522,46 @@ mod tests {
                 &"No detected assertion observes the changed value, error, field, or effect"
                     .to_string()
             )
+        );
+    }
+
+    // #9244 item 5: the infection_unknown next step names a concrete action
+    // (open the test, find the side of the condition it exercises, name an
+    // input for the other side) instead of an open-ended "trace" instruction.
+    #[test]
+    fn infection_unknown_next_step_names_a_concrete_action() {
+        let step = recommended_next_step(
+            &probe(ProbeFamily::Predicate, "amount >= threshold"),
+            &ExposureClass::InfectionUnknown,
+            false,
+            &[],
+        )
+        .unwrap_or_default();
+        assert!(
+            step.starts_with(
+                "Open the related test and trace its input through the local or computed operand"
+            ),
+            "{step}"
+        );
+        assert!(
+            step.contains("then name an input that would exercise the other side"),
+            "{step}"
+        );
+        assert!(
+            !step.contains("to check whether the change matters"),
+            "{step}"
+        );
+        // The assertion-shaped owner reframing is unchanged.
+        let shaped = recommended_next_step(
+            &probe(ProbeFamily::Predicate, "amount >= threshold"),
+            &ExposureClass::InfectionUnknown,
+            true,
+            &[],
+        )
+        .unwrap_or_default();
+        assert!(
+            shaped.starts_with("The changed owner is an assertion helper"),
+            "{shaped}"
         );
     }
 

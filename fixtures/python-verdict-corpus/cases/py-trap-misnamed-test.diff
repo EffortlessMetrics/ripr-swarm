@@ -1,0 +1,12 @@
+diff --git a/trapkit/core.py b/trapkit/core.py
+--- a/trapkit/core.py
++++ b/trapkit/core.py
+@@ -38,7 +38,7 @@
+ 
+ 
+ def misnamed_test(a, b):
+-    return a * b
++    return b * a
+ 
+ 
+ def named_test(a, b):

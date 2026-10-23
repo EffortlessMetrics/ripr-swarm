@@ -23,6 +23,11 @@ Start here:
     implementations with a focused run using the project's configured test runner (`cargo test` for
     ordinary Cargo tests). Static classification may remain unknown
   Evidence: reach yes · infection yes · propagation unknown · observation yes · discriminator not established
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: Related tests appear to reach split_after: absent_delimiter_boundary_returns_head, present_delimiter_returns_prefix
     - infection yes: Detected related test input at the changed boundary
     - 13 more detail line(s) in --format human-full
@@ -30,7 +35,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/binding_predicate_equality_boundary/input --diff <cwd>/fixtures/binding_predicate_equality_boundary/diff.patch --mode fast probe:src_lib.rs:predicate:5290fd4d
   ripr context --root <cwd>/fixtures/binding_predicate_equality_boundary/input --diff <cwd>/fixtures/binding_predicate_equality_boundary/diff.patch --mode fast --at probe:src_lib.rs:predicate:5290fd4d
-  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:predicate:5290fd4d --root <cwd>/fixtures/binding_predicate_equality_boundary/input` for the full gate's answer
+  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: boundary_value; incomplete evidence stage: activation); run `ripr repair probe:src_lib.rs:predicate:5290fd4d --root <cwd>/fixtures/binding_predicate_equality_boundary/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/binding_predicate_equality_boundary/input --at src/lib.rs:4 --kind predicate
 

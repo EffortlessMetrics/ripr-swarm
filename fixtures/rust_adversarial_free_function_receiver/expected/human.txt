@@ -20,6 +20,11 @@ Start here:
     existing tests, doctests and examples before changing assertions; they may already constrain the
     changed behavior. Add or strengthen a test only if that inspection finds a gap
   Evidence: reach weak · infection yes · propagation yes · observation yes · discriminator not established
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach weak: No test is seen calling parse; tests share only its file or a name token: config_strict_parse_reports_length
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 6 more detail line(s) in --format human-full
@@ -27,7 +32,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_adversarial_free_function_receiver/input --diff <cwd>/fixtures/rust_adversarial_free_function_receiver/diff.patch --mode fast probe:src_lib.rs:return_value:5518343a
   ripr context --root <cwd>/fixtures/rust_adversarial_free_function_receiver/input --diff <cwd>/fixtures/rust_adversarial_free_function_receiver/diff.patch --mode fast --at probe:src_lib.rs:return_value:5518343a
-  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:return_value:5518343a --root <cwd>/fixtures/rust_adversarial_free_function_receiver/input` for the full gate's answer
+  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: return_value; incomplete evidence stage: activation); run `ripr repair probe:src_lib.rs:return_value:5518343a --root <cwd>/fixtures/rust_adversarial_free_function_receiver/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/rust_adversarial_free_function_receiver/input --at src/lib.rs:16 --kind return_value
 

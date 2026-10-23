@@ -542,20 +542,13 @@ mod tests {
                 fingerprint.get("schema_version")
             ));
         }
-        // The fingerprint names the build, not only the package version:
-        // `<version>+<commit>` for a clean build (#4536).
+        // This clean-build example includes the compiled language features,
+        // independently of the feature set used to execute this test.
         let analyzer_version = fingerprint
             .get("analyzer_version")
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default();
-        let commit = analyzer_version
-            .strip_prefix(concat!(env!("CARGO_PKG_VERSION"), "+"))
-            .unwrap_or_default();
-        if commit.len() != 40 || !commit.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return Err(format!(
-                "input_fingerprint.analyzer_version must be CARGO_PKG_VERSION+<commit>, got {analyzer_version:?}"
-            ));
-        }
+        validate_clean_analyzer_example(analyzer_version)?;
 
         let follow_on = prose_after_json_example(&doc, "targeted-rerun receipt shape:")?;
         if !(follow_on.contains("cache.schema_version")
@@ -568,6 +561,77 @@ mod tests {
             ));
         }
         Ok(())
+    }
+
+    fn validate_clean_analyzer_example(identity: &str) -> Result<(), String> {
+        let invalid =
+            || format!("invalid clean-build analyzer identity in rerun example: {identity:?}");
+        let (commit, languages) = identity
+            .strip_prefix(concat!(env!("CARGO_PKG_VERSION"), "+"))
+            .and_then(|source| source.split_once("+languages:"))
+            .ok_or_else(invalid)?;
+        if !crate::build_commit_record::is_full_commit_id(commit) {
+            return Err(invalid());
+        }
+        let mut fields = languages.split(',');
+        for name in ["rust", "typescript", "python", "perl"] {
+            let bit = fields
+                .next()
+                .and_then(|field| field.strip_prefix(name))
+                .and_then(|field| field.strip_prefix('='));
+            if !matches!(bit, Some("0" | "1")) {
+                return Err(invalid());
+            }
+        }
+        if fields.next().is_some() {
+            return Err(invalid());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rerun_example_analyzer_identity_accepts_language_feature_sets() -> Result<(), String> {
+        for commit in ["a".repeat(40), "b".repeat(64)] {
+            for bits in 0u8..16 {
+                let identity = format!(
+                    "{}+{commit}+languages:rust={},typescript={},python={},perl={}",
+                    env!("CARGO_PKG_VERSION"),
+                    bits & 1,
+                    (bits >> 1) & 1,
+                    (bits >> 2) & 1,
+                    (bits >> 3) & 1,
+                );
+                validate_clean_analyzer_example(&identity)?;
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rerun_example_analyzer_identity_rejects_malformed_formats() {
+        let source = format!("{}+{}", env!("CARGO_PKG_VERSION"), "a".repeat(40));
+        for suffix in [
+            "",
+            "+languages:",
+            "+languages:rust=1,typescript=1,python=1",
+            "+languages:rust=1,typescript=1,python=1,perl=2",
+            "+languages:rust=1,typescript=1,python=1,perl=true",
+            "+languages:rust=1,typescript=1,python=1,perl=01",
+            "+languages:typescript=1,rust=1,python=1,perl=0",
+            "+languages:rust=1,typescript=1,python=1,perl=0,perl=1",
+            "+languages:rust=1,typescript=1,python=1,perl=0,",
+            "+languages:rust=1,typescript=1,python=1,perl=0+extra",
+        ] {
+            assert!(validate_clean_analyzer_example(&format!("{source}{suffix}")).is_err());
+        }
+        let suffix = "+languages:rust=1,typescript=1,python=1,perl=0";
+        for source in [
+            "wrong-package-version+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+            format!("{}+abc123", env!("CARGO_PKG_VERSION")),
+            format!("{}+{}", env!("CARGO_PKG_VERSION"), "g".repeat(40)),
+        ] {
+            assert!(validate_clean_analyzer_example(&format!("{source}{suffix}")).is_err());
+        }
     }
 
     #[test]

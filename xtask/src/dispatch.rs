@@ -217,6 +217,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckIdentityRegistry => super::identity_registry::check_identity_registry(),
         XtaskCommand::CheckDocArtifacts => super::check_doc_artifacts(),
         XtaskCommand::CheckSupportTiers => super::check_support_tiers(),
+        XtaskCommand::CheckCapabilityProducers(args) => {
+            super::policy::check_capability_producers(&args)
+        }
         XtaskCommand::CheckDocIndex => super::check_doc_index(),
         XtaskCommand::CheckChangelogFragments(args) => {
             super::policy::check_changelog_fragments_with_args(&args)
@@ -249,6 +252,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::PackageQualificationGate(args) => super::package_qualification::run(&args),
         XtaskCommand::TerminationQualification(args) => {
             super::termination_qualification::run(&args)
+        }
+        XtaskCommand::TerminationRemovalBuilds(args) => {
+            super::termination_qualification::run_removal_builds(&args)
         }
         XtaskCommand::QualifyPythonWheelhouse(args) => super::qualify_python_wheelhouse(&args),
         XtaskCommand::VscodeCompile => super::vscode_compile(),

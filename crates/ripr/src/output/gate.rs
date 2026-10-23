@@ -220,6 +220,22 @@ pub(crate) fn build_gate_decision_report(
     } else {
         Vec::new()
     };
+    // Issue #9301 F2: disclose which files the candidate source analyzed. A
+    // diff-scoped review-comments document evaluates only the changed files,
+    // so a baseline entry elsewhere is not evidence of resolution.
+    let analysis_scope = if config_errors.is_empty() {
+        match gap_ledger.as_ref() {
+            Some(records) => {
+                Some(crate::output::review_comments::gap_ledger_analysis_scope_json(records))
+            }
+            None => pr_guidance
+                .get("analysis_scope")
+                .filter(|scope| scope.is_object())
+                .cloned(),
+        }
+    } else {
+        None
+    };
     let policy = GatePolicy {
         mode: input.mode,
         threshold: DEFAULT_THRESHOLD.to_string(),
@@ -325,6 +341,7 @@ pub(crate) fn build_gate_decision_report(
         causal_delta,
         causal_projection,
         exception_policy,
+        analysis_scope,
     })
 }
 
@@ -969,12 +986,13 @@ fn fallback_identity_for(
     static_class: Option<&str>,
 ) -> Option<String> {
     match (path, line) {
-        // Normalize exactly like the baseline writers
-        // (`baseline_update.rs` / `baseline_delta.rs`): a candidate reported
-        // as `./src/x.rs` or `src\x.rs` must still match the legacy entry.
+        // Normalize through the baseline stored-string owner
+        // (`baseline::normalize_fallback_path`): a candidate reported as
+        // `./src/x.rs` or `src\x.rs` must still match the legacy entry. A
+        // missing static class renders as `unknown` (gate-only behavior).
         (Some(path), Some(line)) => Some(format!(
             "{}:{line}:{}",
-            path.replace('\\', "/").trim_start_matches("./"),
+            crate::output::baseline::normalize_fallback_path(path),
             static_class.unwrap_or("unknown")
         )),
         _ => None,
@@ -1656,7 +1674,8 @@ fn resolve_root_path(root: &Path, path: &Path) -> PathBuf {
 }
 
 fn display_path(path: &Path) -> String {
-    let value = path.display().to_string().replace('\\', "/");
+    let value =
+        crate::output::path::fold_verbatim_on_host(path.display().to_string().replace('\\', "/"));
     if value.is_empty() {
         ".".to_string()
     } else {
