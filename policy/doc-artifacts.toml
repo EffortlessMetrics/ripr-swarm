@@ -1739,13 +1739,13 @@ status = "proposed"
 owner = "agent-loop"
 standalone_reason = "Issue #8991 records the edit-cage parse-error refusal clarity contract: when the inline test region reports the selected file unparseable after the attempt's edit, the after-phase refusal narration leads with the plain fix-the-syntax-error statement and the existing refused-path listing and CRLF-aware undo route follow verbatim below it; the wording is owned by the one refusal renderer so every surface that renders the refusal carries it, so the behavior sits inside the spec-test-code chain."
 
+[[artifact]]
 id = "RIPR-SPEC-0291"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0291-agent-brief-root-display.md"
 status = "proposed"
 owner = "product-output"
 standalone_reason = "Issue #8995 records the agent-brief start-command root-display contract: every paste-able command the agent brief renders (the next block's inspect_packet and verify_after_edit and each top seam's before_snapshot_command, after_snapshot_command, and verify_command) renders the workspace root with root_path_display before bound_root, so a Unix checkout whose path contains a literal backslash produces a pasted command that targets the user's checkout; the shared rule stays owned by #4287 and the pilot surfaces are dispositioned to in-flight #8994, so the behavior sits inside the spec-test-code chain."
-
 
 [[artifact]]
 id = "RIPR-SPEC-0297"
