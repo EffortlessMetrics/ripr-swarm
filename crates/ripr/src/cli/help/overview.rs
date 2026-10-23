@@ -51,6 +51,13 @@ More:
   ripr help --all        Every command, grouped by area.
   ripr help --json       Versioned machine-readable command catalog.
 
+Exit codes: 0 completed, 2 could not complete (usage, configuration, or
+operational error), 3 blocking decision or typed refusal, 130 interrupted
+standalone check. Full contract: docs/EXIT_CODES.md.
+Global flags: -v, --verbose   Extra pipeline diagnostics on stderr: analyzed
+languages, mode, and probe/finding counts (any position, except on
+`ripr help --json`).
+
 ripr is static and advisory. It reads changed code, builds mutation-shaped
 probes, and estimates whether tests reach, infect, propagate, and reveal the
 changed behavior. It does not run mutants and does not report runtime mutation

@@ -1,0 +1,78 @@
+# Golden Output Changes
+
+## Pending — effect_assertion_after_return (1)
+
+Reason:
+RIPR-SPEC-0197: effect-family assertion that never runs stays reachable_unrevealed (#8927)
+
+Command:
+`cargo xtask goldens bless effect_assertion_after_return --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — effect_assertion_after_return (2)
+
+Reason:
+RIPR-SPEC-0197: add human-full projection for the effect-assertion honesty corpus (#8927)
+
+Command:
+`cargo xtask goldens bless effect_assertion_after_return --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — effect_assertion_after_return (3)
+
+Reason:
+RIPR-SPEC-0197: aligned semicolon effect stimulus and qualified/compact live controls (#8927)
+
+Command:
+`cargo xtask goldens bless effect_assertion_after_return --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — effect_assertion_after_return (4)
+
+Reason:
+RIPR-SPEC-0197: human-full related-test line adopts main #8747 no-oracle wording (merge of main into #8927)
+
+Command:
+`cargo xtask goldens bless effect_assertion_after_return --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — effect_assertion_after_return (5)
+
+Reason:
+RIPR-SPEC-0197: follow main's no-oracle wording in the human-full evidence path (#8927)
+
+Command:
+`cargo xtask goldens bless effect_assertion_after_return --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — effect_assertion_after_return (6)
+
+Reason:
+RIPR-SPEC-0197: follow main's route-not-ready missing-evidence wording; the human hint names the refused assertion macro (#8927)
+
+Command:
+`cargo xtask goldens bless effect_assertion_after_return --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

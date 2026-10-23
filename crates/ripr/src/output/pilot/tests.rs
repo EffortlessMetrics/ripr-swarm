@@ -3117,6 +3117,87 @@ fn pilot_terminal_next_follows_the_python_repair_card_route() -> Result<(), Stri
     Ok(())
 }
 
+/// #9857: the scope line names the seam owners the recommendation below it
+/// actually is. A Python-only run (empty Rust ranking, Python repair card
+/// leading) must not claim only Rust seams ranked; a ranked Rust seam keeps
+/// the historical wording even when a Python card exists.
+#[test]
+fn pilot_scope_line_names_the_language_actually_ranked() {
+    let artifacts = pilot_artifacts();
+    let python = python_first_use();
+    let change = changed("pricing.py", 2);
+
+    // Empty Rust ranking + a leading Python repair card: Python ranked.
+    let context = PilotSummaryContext {
+        current_change: Some(&change),
+        ..pilot_context_with_python(&artifacts, &python)
+    };
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(
+        terminal.contains(
+            "  scope: change-first (python (preview) seams on lines changed since origin/main rank first)\n"
+        ),
+        "Python-only scope must name python, not Rust:\n{terminal}"
+    );
+    let md = render_pilot_summary_md(&[], context);
+    assert!(
+        md.contains(
+            "- Scope: change-first (python (preview) seams on lines changed since `origin/main` rank first)\n"
+        ),
+        "Python-only scope must name python, not Rust:\n{md}"
+    );
+
+    // A ranked Rust seam owns the recommendation: the scope keeps the
+    // historical Rust label even though a Python card also exists.
+    let entries = [classified_with(
+        SeamGripClass::WeaklyGripped,
+        "src/pricing.rs",
+        88,
+        vec![missing()],
+        vec![related_test()],
+    )];
+    let context = PilotSummaryContext {
+        current_change: Some(&change),
+        ..pilot_context_with_python(&artifacts, &python)
+    };
+    let terminal = render_pilot_terminal(&entries, context);
+    assert!(
+        terminal.contains(
+            "  scope: change-first (Rust seams on lines changed since origin/main rank first)\n"
+        ),
+        "a ranked Rust seam keeps the Rust scope label:\n{terminal}"
+    );
+    let md = render_pilot_summary_md(&entries, context);
+    assert!(
+        md.contains(
+            "- Scope: change-first (Rust seams on lines changed since `origin/main` rank first)\n"
+        ),
+        "a ranked Rust seam keeps the Rust scope label:\n{md}"
+    );
+
+    // No Python card (no Python findings): an empty Rust ranking keeps the
+    // historical label, which the none-explanation lines below still use.
+    let no_python = PilotPythonFirstUse {
+        status: super::types::PilotPythonFirstUseStatus::NoPythonFindings,
+        findings_total: 0,
+        repair_cards_total: 0,
+        limitation_count: 0,
+        analysis_error: None,
+        top_repair_card: None,
+    };
+    let context = PilotSummaryContext {
+        current_change: Some(&change),
+        ..pilot_context_with_python(&artifacts, &no_python)
+    };
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(
+        terminal.contains(
+            "  scope: change-first (Rust seams on lines changed since origin/main rank first)\n"
+        ),
+        "no Python card keeps the Rust scope label:\n{terminal}"
+    );
+}
+
 /// A `-U0` unified diff that changes `line` of `file`, as the default
 /// `ripr check` diff loader produces it.
 fn one_line_diff(file: &str, line: usize) -> String {

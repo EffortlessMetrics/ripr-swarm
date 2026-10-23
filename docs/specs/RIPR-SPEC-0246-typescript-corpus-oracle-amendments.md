@@ -319,6 +319,19 @@ hook that returns, awaits or takes `done` and a hook behind a helper are not
 read, and nothing here decides whether the test that reads the hook's state
 discriminates the change; that credit is deferred (Decision 9).
 
+**Rule 8. A counted-loop header change read only through a mock call count is
+unknown.** (Added 2026-10-22, #9496.) When the old and the new changed line are
+both counted `for (init; test; update)` headers that differ, and a related
+oracle-eligible test asserts a mock's call count (`callCount()` or
+`calls.length` in the observed expression), a ladder result of
+`weakly_exposed` with a strong oracle reads `static_unknown` with stop reason
+`gap_evidence_unresolved`. The predicate-boundary witness does not apply to a
+loop header, and the adapter does not model how many iterations the loop
+runs, so neither a gap nor a credit is established. `for...of`, `for...in`,
+`while` and `if` changes are not read. Rule 8 only moves `weakly_exposed` to
+`static_unknown`; it credits nothing. The credit, which needs an iteration
+count model, is tracked in #9874.
+
 ### Decisions
 
 The owner delegated these choices on 2026-10-04 ("make reasonable
@@ -515,6 +528,8 @@ and the rejected alternative.
   `unresolved_assertions_only`, `body_asserts_in_unmodeled_callback` (rule 4).
 - `crates/ripr/src/analysis/language/typescript/catch_arm_guard.rs`,
   `classifier.rs`: `ts_catch_arm_unreached` (rule 6).
+- `crates/ripr/src/analysis/language/typescript/loop_count_guard.rs`,
+  `classifier.rs`: `ts_loop_count_unmodeled` (rule 8).
 - `crates/ripr/src/analysis/language/typescript/table_rows.rs`:
   `callback_case_assertions`, shared with RIPR-SPEC-0243 rule 11.
 - `crates/ripr/src/analysis/language/typescript/literal_matcher_guard.rs`:

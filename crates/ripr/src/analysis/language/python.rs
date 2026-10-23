@@ -63,6 +63,7 @@ mod boundary;
 mod classify;
 mod deleted_lines;
 mod guard_activation;
+mod message_pin;
 mod wrapped_call;
 use classify::{PythonNoBehaviorContext, classify_change_with_context};
 #[cfg(test)]
@@ -1210,6 +1211,9 @@ mod bool_oracle_tests;
 
 #[cfg(test)]
 mod conftest_admission_tests;
+
+#[cfg(test)]
+mod source_facts_tests;
 
 #[cfg(test)]
 mod deleted_lines_tests;

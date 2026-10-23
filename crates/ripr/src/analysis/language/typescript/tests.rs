@@ -17546,6 +17546,7 @@ fn undercredit_4103_owner_extraction_records_default_export_fact() {
 mod boolean_pin_tests;
 mod catch_arm_tests;
 mod changed_field_tests;
+mod class_entry_tests;
 mod committed_snapshot_tests;
 mod commonjs_export_tests;
 mod custom_matcher_tests;
@@ -17560,6 +17561,7 @@ mod instance_class_tests;
 mod issue7507_shadow_tests;
 mod literal_matcher_tests;
 mod lookup_table_tests;
+mod loop_count_tests;
 mod loop_declared_tests;
 mod match_object_tests;
 mod mocha_hook_owner_tests;
@@ -17587,6 +17589,7 @@ mod table_case_tests;
 mod table_loop_tests;
 mod typed_loose_equality_tests;
 mod value_hiding_tests;
+mod var_runner_binding_tests;
 
 /// #4769: an unresolved import of a workspace package by name is a package
 /// manifest question. The limitation names that manifest instead of telling
