@@ -878,13 +878,6 @@ fn command_first_line(program: &str, args: &[&str]) -> String {
         .unwrap_or_else(|| "unavailable".to_owned())
 }
 
-/// The stubborn leg pins GNU `timeout`'s group SIGKILL escalation. Hosted
-/// images that ship another `timeout` (for example uutils) do not provide it:
-/// there the TERM-ignoring descendant outlives the killed shell.
-fn timeout_is_gnu() -> bool {
-    command_first_line("timeout", &["--version"]).contains("GNU coreutils")
-}
-
 /// Runner facts that explain a termination failure (hosted images change
 /// their coreutils and Bash builds).
 fn runner_diagnostics() -> String {
@@ -895,8 +888,24 @@ fn runner_diagnostics() -> String {
                 .find_map(|line| line.strip_prefix("PRETTY_NAME=").map(str::to_owned))
         })
         .unwrap_or_else(|| "unavailable".to_owned());
+    // Resolve `timeout` the way the fixture does (PATH order), without another
+    // process, and report where any symlink chain ends.
+    let resolved = std::env::var_os("PATH")
+        .and_then(|path| {
+            std::env::split_paths(&path)
+                .map(|dir| dir.join("timeout"))
+                .find(|candidate| candidate.is_file())
+        })
+        .map(|candidate| {
+            let target = fs::canonicalize(&candidate).map_or_else(
+                |_| "unresolvable".to_owned(),
+                |path| path.display().to_string(),
+            );
+            format!("{} -> {target}", candidate.display())
+        })
+        .unwrap_or_else(|| "not found on PATH".to_owned());
     format!(
-        "os={os}, timeout={}, bash={}",
+        "os={os}, timeout={resolved} [{}], bash={}",
         command_first_line("timeout", &["--version"]),
         command_first_line("bash", &["--version"])
     )
@@ -964,20 +973,6 @@ fn timeout_terminates_shell_descendants() -> TestResult {
         // Assert only after the witness is no longer live. An orphan zombie may
         // await PID 1; this test promises termination, not that we reaped it.
         let output = output?;
-        if stubborn && !timeout_is_gnu() {
-            // Capability absent, not a regression: without GNU `timeout` there
-            // is no group SIGKILL escalation to pin. The TERM leg above still
-            // proves cleanup, and the command must still return promptly.
-            eprintln!(
-                "stubborn-descendant leg not applicable: {}",
-                runner_diagnostics()
-            );
-            assert!(
-                elapsed < std::time::Duration::from_secs(3),
-                "timeout observation waited for natural witness expiry: {elapsed:?}"
-            );
-            continue;
-        }
         assert!(
             !failed_termination,
             "timeout left a live owned descendant (stubborn={stubborn}); {}",
