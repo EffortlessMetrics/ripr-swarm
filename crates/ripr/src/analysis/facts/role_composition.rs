@@ -2382,8 +2382,8 @@ mod tests {
 
         // A root that is itself an ambiguous module child has no context.
         // Defense in depth: today the dual directory anchors of such an owner
-        // already mark the child ambiguous, so the `ambiguous` owner guard is
-        // not independently mutation-isolated by this layout.
+        // already mark the child ambiguous before the helper is reached, so
+        // the `ambiguous` owner guard is not reached by this layout.
         let root = temp_dir("ambiguous-root-owner")?;
         write_manifest(&root)?;
         let files = vec![
