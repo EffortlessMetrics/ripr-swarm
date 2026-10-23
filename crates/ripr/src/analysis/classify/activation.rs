@@ -3176,9 +3176,14 @@ fn reads_owner_result_field(body: &str, assertion: &str, read: &str, owner: &str
         if before.ends_with(')') {
             return call_before_is_owner(before, owner);
         }
+        // Step past the whole non-identifier character: `index + 1` lands
+        // inside a multi-byte one (a CJK path in a preceding string) and
+        // panics the slice.
         let receiver_start = before
-            .rfind(|ch: char| !is_ident(ch))
-            .map_or(0, |index| index + 1);
+            .char_indices()
+            .rev()
+            .find(|(_, ch)| !is_ident(*ch))
+            .map_or(0, |(index, ch)| index + ch.len_utf8());
         let receiver = &before[receiver_start..];
         !receiver.is_empty()
             && binds_from_owner_call(body, receiver, &owner_call)
@@ -9336,6 +9341,15 @@ assert_eq!(input.amount, 100);"#
         assert!(!has_observed_boundary_equality(&after_false.activation));
         let decides = adaptor_boundary(all, "d > 30", &["assert!(!score(&[40, 30]));"]);
         assert!(has_observed_boundary_equality(&decides.activation));
+    }
+
+    #[test]
+    fn owner_result_field_read_after_a_multibyte_character_does_not_panic() {
+        let assertion = "assert_eq!(\n    \"before with spaces/前\".len() , r.total)";
+        // The read follows a multi-byte character; it must classify, not panic.
+        let _ = reads_owner_result_field(assertion, assertion, ".total", "price");
+        let tight = "assert_eq!(前.total, 1)";
+        let _ = reads_owner_result_field(tight, tight, ".total", "price");
     }
 
     #[test]
