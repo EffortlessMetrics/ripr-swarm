@@ -1349,8 +1349,10 @@ pub(crate) fn resolve_commit_rev(root: &Path, rev: &str) -> Result<String, Strin
         return Err(format!("`{rev}` is not a revision ripr can resolve"));
     }
     let spec = format!("{rev}^{{commit}}");
-    let resolved = git_output(root, &["rev-parse", "--verify", "--quiet", &spec])
-        .map_err(|_| format!("revision `{rev}` does not name a commit in the selected root"))?;
+    let resolved =
+        git_output(root, &["rev-parse", "--verify", "--quiet", &spec]).map_err(|error| {
+            format!("revision `{rev}` does not name a commit in the selected root: {error}")
+        })?;
     let resolved = resolved.trim();
     if !is_full_sha(resolved) {
         return Err(format!(
