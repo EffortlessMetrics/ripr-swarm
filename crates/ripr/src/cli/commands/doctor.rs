@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 
 pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
     let mut json_output = false;
+    let mut timings = false;
     let mut profile = output::doctor::DoctorProfile::Analysis;
     let mut root: Option<String> = None;
     let mut arguments = args.iter();
@@ -28,6 +29,10 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
                 return Ok(());
             }
             "--json" => json_output = true,
+            // #9807: timing fields are volatile, so the default `--json`
+            // document omits them and stays byte-stable across runs;
+            // `--timings` restores the pre-#9807 projection.
+            "--timings" => timings = true,
             "--profile" => {
                 profile = match arguments.next().map(String::as_str) {
                     Some("analysis") => output::doctor::DoctorProfile::Analysis,
@@ -51,7 +56,7 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
                     // directory named after the flag (#4318 review). The
                     // pre-#4318 parser answered `missing value for --root`
                     // here. Other dash-prefixed paths stay legitimate values.
-                    Some("--help" | "-h" | "--json" | "--profile" | "--root") => {
+                    Some("--help" | "-h" | "--json" | "--timings" | "--profile" | "--root") => {
                         return Err(CommandError::from("missing value for --root".to_string()));
                     }
                     Some(value) => value,
@@ -96,6 +101,7 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
             &detected,
             run_started,
             language_detection_elapsed,
+            timings,
         );
     }
 
@@ -167,6 +173,7 @@ fn doctor_json(
     detected: &[LanguageId],
     run_started: std::time::Instant,
     language_detection_elapsed: std::time::Duration,
+    timings: bool,
 ) -> Result<(), CommandError> {
     let evaluation =
         output::doctor::evaluate_doctor_core_with_config_for_profile(root, detected, profile);
@@ -198,7 +205,14 @@ fn doctor_json(
     }
     report.attach_canonical_next_action(root);
     report.elapsed_ms = Some(run_started.elapsed().as_millis() as u64);
-    println!("{}", report.render_json()?);
+    // #9807: timing fields are volatile, so the default `--json` document
+    // renders without them and stays byte-stable across runs that changed
+    // nothing; `--timings` restores the full projection.
+    if timings {
+        println!("{}", report.render_json()?);
+    } else {
+        println!("{}", report.render_json_stable()?);
+    }
     // #5102: a rendered report with failed checks is a completed typed
     // answer (exit 3); render failures above stay could-not-complete (2).
     output::doctor::doctor_report_result(&report).map_err(CommandError::Decision)
@@ -641,6 +655,10 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
                         defaults.lsp_seam_diagnostics
                     ));
                 }
+                // A missing root cannot have a config; reporting "using
+                // built-in defaults" under a passing Workspace line would
+                // read as a healthy root.
+                None if !root.is_dir() => {}
                 None => workspace.push("Config: not found; using built-in defaults".to_string()),
             }
         } else {
@@ -712,11 +730,22 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
     } else {
         cache.cache_dir.clone()
     };
-    lines.push(format!(
-        "✓ Cache: {} ({})",
-        display_text(&cache_loc),
-        cache.size_display
-    ));
+    let cache_skip_reason = if cache.relocated_by_env {
+        None
+    } else {
+        output::doctor::root_unusable_skip_reason(root)
+    };
+    if let Some(reason) = cache_skip_reason {
+        // The default cache lives under the unusable root; a ✓ would claim
+        // a usable cache for a root that cannot hold one.
+        lines.push(format!("- Cache check skipped: {reason}"));
+    } else {
+        lines.push(format!(
+            "✓ Cache: {} ({})",
+            display_text(&cache_loc),
+            cache.size_display
+        ));
+    }
     // Keep the historical `- Cache location:` / `- Cache size:` spellings on
     // verbose so JSON/human parity still names the same words.
     if !cache.relocated_by_env && !root.is_dir() {
@@ -6971,7 +7000,7 @@ mod tests {
     /// The report must not run against a path named after a flag.
     #[test]
     fn doctor_reports_a_missing_root_value_when_a_known_flag_follows() {
-        for flag in ["--json", "--profile", "--root", "--help", "-h"] {
+        for flag in ["--json", "--timings", "--profile", "--root", "--help", "-h"] {
             assert_eq!(
                 doctor(&args(&["--root", flag])),
                 Err(CommandError::Failure(
@@ -7243,6 +7272,7 @@ mod tests {
                 &detect_languages(&dir),
                 std::time::Instant::now(),
                 std::time::Duration::ZERO,
+                false,
             ),
             Err(CommandError::Decision("doctor found issues".to_string()))
         );
@@ -7284,6 +7314,17 @@ mod tests {
     #[test]
     fn doctor_json_flag_accepts_explicit_root() -> Result<(), String> {
         doctor(&args(&["--json", "--root", "."])).map_err(|error| error.message().to_string())
+    }
+
+    /// #9807: `--timings` is a documented flag in every position doctor
+    /// accepts flags: alongside `--json` it opts into the volatile timing
+    /// fields, and alone it leaves the human output (which already prints
+    /// its run-time summary) unchanged.
+    #[test]
+    fn doctor_timings_flag_is_accepted_with_and_without_json() -> Result<(), String> {
+        doctor(&args(&["--json", "--timings", "--root", "."]))
+            .map_err(|error| error.message().to_string())?;
+        doctor(&args(&["--timings"])).map_err(|error| error.message().to_string())
     }
 
     // --- preview_language_enable_suggestions tests ---
