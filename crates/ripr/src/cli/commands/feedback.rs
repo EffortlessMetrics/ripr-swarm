@@ -4,6 +4,7 @@ use crate::app::feedback::{
     ExportFeedbackOptions, RecordFeedbackOptions, RecordStatus, export_feedback_join,
     record_feedback, record_result_json,
 };
+use crate::cli::help;
 use crate::cli::parse::expect_value;
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::domain::{
@@ -15,7 +16,10 @@ use std::path::PathBuf;
 pub(in crate::cli) fn run_feedback(args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
         None | Some("--help" | "-h") => {
-            print!("{FEEDBACK_HELP}");
+            print!(
+                "{}",
+                help::render_command_help(FEEDBACK_HELP, &["feedback record", "feedback export"])
+            );
             Ok(())
         }
         Some("record") => run_record(&args[1..]),
@@ -30,7 +34,7 @@ pub(in crate::cli) fn run_feedback(args: &[String]) -> Result<(), String> {
 
 fn run_record(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        print!("{FEEDBACK_RECORD_HELP}");
+        print!("{}", help::render_command_help(FEEDBACK_RECORD_HELP, &[]));
         return Ok(());
     }
     let (options, json) = parse_record_options(args)?;
@@ -54,7 +58,7 @@ fn run_record(args: &[String]) -> Result<(), String> {
 
 fn run_export(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        print!("{FEEDBACK_EXPORT_HELP}");
+        print!("{}", help::render_command_help(FEEDBACK_EXPORT_HELP, &[]));
         return Ok(());
     }
     let (options, json, out) = parse_export_options(args)?;

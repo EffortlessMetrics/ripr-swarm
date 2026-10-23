@@ -292,6 +292,14 @@ is invalid for `snapshot_id`, `offset`, `limit`, `file`, `class`,
 `language`, and `repair_ready` (#7314). The server
 returns `-32602` Invalid Params naming the field with the same request ID;
 correct the argument or omit it and retry on the same connection.
+`offset` and `limit` must be whole JSON integers (no fraction or exponent
+form) in `0..=M` and `1..=M`, where `M` is the platform's `usize` width
+(64-bit builds: `18446744073709551615`; 32-bit builds: `4294967295`), and
+`data.maximum`, the message and `data.recovery` all name that one effective
+bound; the `ripr_list_repair_attempts` limit is capped at 256. Each refusal
+names why the value missed (negative, not a number, fractional, larger than the largest
+accepted integer) and carries `data.argument`, `data.minimum`, `data.maximum`
+and `data.recovery` with the accepted range (#9895).
 When the whole selection cannot fit one wire response, the default call
 returns the first wire-fitting page and `continuation.next_page` names the
 `ripr_list_gaps` call that resumes the walk — pinned to the snapshot
@@ -461,7 +469,7 @@ item_not_found         result_too_large    attempt_not_found
 config_invalid         workspace_ambiguous static_limitation
 cancelled              superseded          attempt_invalid
 seam_not_found         policy_omitted      witness_unavailable
-identity_unnameable    budget_overflow
+identity_unnameable    budget_overflow     incomplete_inventory
 ```
 
 Before the first successful refresh the evidence tools fail with
@@ -471,9 +479,12 @@ bound to a snapshot that is no longer current, while superseded tombstones
 older than the 64-entry session bound read `attempt_not_found` instead
 (oldest-first eviction); `attempt_invalid` reports a
 durable manifest that fails canonical validation; `seam_not_found`,
-`identity_unnameable`, and `budget_overflow` are reachable on the repair-card
-read (an item no seam owner-discriminated binds, an unnameable portable
-workspace identity, a card over its detail budget); `policy_omitted` and
+`identity_unnameable`, `budget_overflow`, and `incomplete_inventory` are
+reachable on the repair-card read (an item no seam owner-discriminated binds,
+an unnameable portable workspace identity, a card over its detail budget, a
+truncated or unverified repo-wide seam inventory). The card uses the CLI-pinned
+`incomplete_inventory` code, while the list/get/prepare readiness fields keep
+`seam_inventory_truncated`. `policy_omitted` and
 `witness_unavailable` stay named for wire stability even though this adapter
 cannot reach them; the rest stay reserved for the slices that own those
 states (they are named now so the wire contract
@@ -567,4 +578,6 @@ unsupported or discovery-only requested version is answered with
 `io.modelcontextprotocol/clientCapabilities` in `params._meta` and an
 unsupported version is refused. After `initialize`, `ping` returns an empty
 result even when `params._meta` carries that handshake shape; after
-`server/discover`, `ping` remains method-not-found.
+`server/discover`, `ping` remains method-not-found. A second `initialize` on an
+initialized session is answered `-32600` (invalid request) with a message saying
+the session is already initialized; the session keeps serving.

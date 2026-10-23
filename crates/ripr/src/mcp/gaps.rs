@@ -670,6 +670,7 @@ pub(crate) fn test_finding() -> Result<Finding, String> {
     };
     let stage = || StageEvidence::new(StageState::Unknown, Confidence::Unknown, "test");
     Ok(Finding {
+        analysis_scope: crate::domain::AnalysisScope::Diff,
         id: "finding:test:1".to_string(),
         canonical_gap: Some(crate::domain::FindingCanonicalGap {
             id: "gap:test:1".to_string(),
