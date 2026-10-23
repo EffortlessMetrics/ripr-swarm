@@ -5544,6 +5544,7 @@ pub(crate) fn classify_change(
 /// normalizing compare remains the fallback for divergent spellings (`\`
 /// vs `/`, a leading `./`). The hot per-line driver instead resolves the
 /// owner against a per-file index and calls [`classify_resolved_owner`].
+#[cfg(test)]
 #[allow(
     clippy::too_many_arguments,
     reason = "10 structurally-distinct context tokens; bundling forces heap allocation; count is stable"
@@ -5567,6 +5568,7 @@ pub(crate) fn classify_change_with_alias_state(
             owner.file.as_path() == file || normalized_path(&owner.file) == changed_file
         })
         .find(|owner| line >= owner.start_line && line <= owner.end_line)?;
+    let context = owner_line_context(owner, all_tests, workspace_root, reexport_index, alias_map);
     classify_resolved_owner(
         file,
         line,
@@ -5574,12 +5576,55 @@ pub(crate) fn classify_change_with_alias_state(
         old_line_text,
         owner,
         owners,
+        &context,
         all_tests,
         workspace_root,
         reexport_index,
         alias_map,
         alias_unavailable,
     )
+}
+
+/// Per-owner memoization of the four workspace-wide `all_tests` scans the
+/// changed-line classifier performs for an owner (#10021): related test
+/// candidates, related mock paths, and the two named-limitation scans. The
+/// scans depend on the owner and the workspace state, never on the changed
+/// line, so a per-file driver that classifies many lines of the same owner
+/// computes them once instead of once per line. In a test-heavy workspace
+/// (thousands of test files) each scan was ~0.15 s per call, so an owner
+/// with many changed lines paid a multiplicative cost per line.
+pub(crate) struct OwnerLineContext<'a> {
+    pub(crate) related_candidates: Vec<TypeScriptRelatedCandidate<'a>>,
+    pub(crate) mock_paths: Vec<String>,
+    pub(crate) named_limitations_from_ownership: Vec<TypeScriptNamedLimitation>,
+    pub(crate) named_limitations_from_spy: Vec<TypeScriptNamedLimitation>,
+}
+
+pub(crate) fn owner_line_context<'a>(
+    owner: &TypeScriptOwner,
+    all_tests: &'a [TypeScriptTest],
+    workspace_root: Option<&Path>,
+    reexport_index: &ReExportIndex,
+    alias_map: Option<&TsAliasMap>,
+) -> OwnerLineContext<'a> {
+    let related_candidates =
+        related_test_candidates(owner, all_tests, workspace_root, reexport_index, alias_map);
+    let mock_paths =
+        collect_related_mock_paths(owner, all_tests, workspace_root, reexport_index, alias_map);
+    let named_limitations_from_ownership: Vec<TypeScriptNamedLimitation> =
+        if let Some(root) = workspace_root {
+            named_limitations_for_unresolved_ownership(owner, all_tests, root, &related_candidates)
+        } else {
+            Vec::new()
+        };
+    let named_limitations_from_spy: Vec<TypeScriptNamedLimitation> =
+        named_limitations_for_spy_fabrication(owner, all_tests);
+    OwnerLineContext {
+        related_candidates,
+        mock_paths,
+        named_limitations_from_ownership,
+        named_limitations_from_spy,
+    }
 }
 
 /// Classify a changed line whose owning production owner was already
@@ -5590,7 +5635,7 @@ pub(crate) fn classify_change_with_alias_state(
 /// for the deleted-lines closure and the test-only wrapper.
 #[allow(
     clippy::too_many_arguments,
-    reason = "11 structurally-distinct context tokens; bundling forces heap allocation; count is stable"
+    reason = "12 structurally-distinct context tokens; bundling forces heap allocation; count is stable"
 )]
 pub(crate) fn classify_resolved_owner(
     file: &Path,
@@ -5599,14 +5644,14 @@ pub(crate) fn classify_resolved_owner(
     old_line_text: Option<&str>,
     owner: &TypeScriptOwner,
     owners: &[TypeScriptOwner],
+    context: &OwnerLineContext<'_>,
     all_tests: &[TypeScriptTest],
     workspace_root: Option<&Path>,
     reexport_index: &ReExportIndex,
     alias_map: Option<&TsAliasMap>,
     alias_unavailable: Option<&TsAliasMapLoadGap>,
 ) -> Option<Finding> {
-    let related_candidates =
-        related_test_candidates(owner, all_tests, workspace_root, reexport_index, alias_map);
+    let related_candidates = &context.related_candidates;
     // The changed line's probe family selects which assertion of each
     // related test the public row shows (#5525, RIPR-SPEC-0224): the same
     // `ts_oracle_kind_matches_seam` filter that `strongest_family_matching_oracle`
@@ -5641,7 +5686,7 @@ pub(crate) fn classify_resolved_owner(
             ts_arm_change_witnessed(
                 &change,
                 owner,
-                &related_candidates,
+                related_candidates,
                 reexport_index,
                 alias_map,
                 workspace_root,
@@ -5656,7 +5701,7 @@ pub(crate) fn classify_resolved_owner(
             ts_loop_bound_witnessed(
                 &change,
                 owner,
-                &related_candidates,
+                related_candidates,
                 alias_map,
                 workspace_root,
             )
@@ -5669,7 +5714,7 @@ pub(crate) fn classify_resolved_owner(
             ts_threshold_move_witnessed(
                 &change,
                 owner,
-                &related_candidates,
+                related_candidates,
                 alias_map,
                 workspace_root,
             )
@@ -5682,7 +5727,7 @@ pub(crate) fn classify_resolved_owner(
         && !returns_changed_state
         && ts_field_update_change(owner, line_text, old_line_text).is_some_and(|change| {
             !ts_field_has_accessor(&change, owner, owners)
-                && ts_field_update_witnessed(&change, owner, &related_candidates)
+                && ts_field_update_witnessed(&change, owner, related_candidates)
         });
     let probe_shape = if lookup_change.is_some()
         || returns_changed_state
@@ -5695,28 +5740,20 @@ pub(crate) fn classify_resolved_owner(
     } else {
         probe_shape
     };
-    let mut related = related_tests_for_candidates(&related_candidates, Some(&probe_shape.family));
-    let bun_array_buffer_facts = collect_related_bun_array_buffer_facts(&related_candidates);
+    let mut related = related_tests_for_candidates(related_candidates, Some(&probe_shape.family));
+    let bun_array_buffer_facts = collect_related_bun_array_buffer_facts(related_candidates);
     let bun_bridge_hints = collect_related_bun_bridge_hints(&bun_array_buffer_facts);
-    let mock_paths =
-        collect_related_mock_paths(owner, all_tests, workspace_root, reexport_index, alias_map);
-    let mut static_limit = static_limit_for_change(line_text, owner, &mock_paths);
+    let mut static_limit = static_limit_for_change(line_text, owner, &context.mock_paths);
     // Ownership-resolution limitations (RIPR-SPEC-0085 §PR6):
     // Emitted when a cross-package test references the owner by name but is
     // excluded by the package-local filter — the target is unresolvable.
     // Only active when workspace_root is supplied (i.e. in the live pipeline).
-    let named_limitations_from_ownership: Vec<TypeScriptNamedLimitation> =
-        if let Some(root) = workspace_root {
-            named_limitations_for_unresolved_ownership(owner, all_tests, root, &related_candidates)
-        } else {
-            Vec::new()
-        };
+    let named_limitations_from_ownership = &context.named_limitations_from_ownership;
     // Spy-fabrication limitation (#4103 shape 4): a test that spies on the
     // owner and fabricates its return value observes the fabrication, not the
     // changed sink. Additive disclosure; the relation gate separately refuses
     // the trusted relation for such tests.
-    let named_limitations_from_spy: Vec<TypeScriptNamedLimitation> =
-        named_limitations_for_spy_fabrication(owner, all_tests);
+    let named_limitations_from_spy = &context.named_limitations_from_spy;
 
     // Path-alias unresolved disclosure (RIPR-SPEC-0099 always-on honesty):
     // When a test has a non-relative, name-matched import that was NOT credited
@@ -5753,7 +5790,7 @@ pub(crate) fn classify_resolved_owner(
     // there is no static_limit. We always compute them; they are empty when there
     // are no oracle-eligible candidates or no qualifying assertions.
     let named_limitations_from_oracle =
-        named_limitations_for_oracle_candidates(owner, &related_candidates);
+        named_limitations_for_oracle_candidates(owner, related_candidates);
     // Oracle metadata evidence lines (RIPR-SPEC-0085 §PR5).
     // Emitted from the strongest owner-call-observing assertion across
     // candidates. ADDITIVE: does not change oracle_kind, oracle_strength,
@@ -5761,7 +5798,7 @@ pub(crate) fn classify_resolved_owner(
     // metadata is emitted (the strongest, by oracle_strength rank) to avoid
     // redundant evidence.
     let oracle_metadata_lines: Vec<String> =
-        collect_oracle_metadata_evidence_lines(&probe_shape.family, &related_candidates);
+        collect_oracle_metadata_evidence_lines(&probe_shape.family, related_candidates);
     let has_oracle_eligible_relation = related_candidates
         .iter()
         .any(|candidate| candidate.relation.uses_oracle());
@@ -5855,13 +5892,13 @@ pub(crate) fn classify_resolved_owner(
         );
     }
     if reads_mock_payload {
-        project_credited_mock_rows(&mut related, &related_candidates, &mock_facts);
+        project_credited_mock_rows(&mut related, related_candidates, &mock_facts);
     }
     let mut pin_facts = ts_instance_class_facts(
         &probe_shape.family,
         line_text,
         owner,
-        &related_candidates,
+        related_candidates,
         alias_map,
         workspace_root,
     );
@@ -5869,29 +5906,29 @@ pub(crate) fn classify_resolved_owner(
         &probe_shape.family,
         line_text,
         owner,
-        &related_candidates,
+        related_candidates,
         alias_map,
         workspace_root,
     ));
     pin_facts.extend(ts_typed_loose_number_facts(
         owner,
-        &related_candidates,
+        related_candidates,
         alias_map,
         workspace_root,
     ));
     pin_facts.extend(ts_boolean_pin_facts(
         &probe_shape.family,
         owner,
-        &related_candidates,
+        related_candidates,
         alias_map,
         workspace_root,
     ));
     if !pin_facts.is_empty() {
-        project_credited_pin_rows(&mut related, &related_candidates, &pin_facts);
+        project_credited_pin_rows(&mut related, related_candidates, &pin_facts);
     }
     let (strongest_strength, strongest_kind) = strongest_family_matching_oracle(
         &probe_shape.family,
-        &related_candidates,
+        related_candidates,
         &error_facts,
         &mock_facts,
         &pin_facts,
@@ -5969,13 +6006,7 @@ pub(crate) fn classify_resolved_owner(
     // RIPR-SPEC-0254 rule 2: some strong assertion calls the owner with a
     // changed key.
     let lookup_witnessed = lookup_change.as_ref().is_none_or(|change| {
-        ts_lookup_table_witnessed(
-            change,
-            owner,
-            &related_candidates,
-            alias_map,
-            workspace_root,
-        )
+        ts_lookup_table_witnessed(change, owner, related_candidates, alias_map, workspace_root)
     });
     let returned_expression_unexercised = strong_oracle_present
         && ts_returned_expression_unexercised(
@@ -5983,7 +6014,7 @@ pub(crate) fn classify_resolved_owner(
             line_text,
             old_line_text,
             owner,
-            &related_candidates,
+            related_candidates,
             alias_map,
             workspace_root,
             !pin_facts.is_empty() || lookup_change.is_some(),
@@ -5997,7 +6028,7 @@ pub(crate) fn classify_resolved_owner(
                 &probe_shape,
                 line_text,
                 owner,
-                &related_candidates,
+                related_candidates,
                 alias_map,
                 workspace_root,
                 CreditFacts {
@@ -6041,7 +6072,7 @@ pub(crate) fn classify_resolved_owner(
         // The strong oracle must observe a computed value: a constant exact
         // assertion in the same test says nothing about the entry's result.
         let entry_oracle_is_strong = strongest_strength >= OracleStrength::Strong.rank()
-            && ts_entry_result_is_asserted(&related_candidates);
+            && ts_entry_result_is_asserted(related_candidates);
         let (class, observe, discriminate) = if entry_oracle_is_strong {
             (
                 ExposureClass::StaticUnknown,
@@ -6062,7 +6093,7 @@ pub(crate) fn classify_resolved_owner(
             discriminate,
             vec![module_entry_reach_summary(
                 owner,
-                &related_candidates,
+                related_candidates,
                 reexport_index,
                 alias_map,
                 workspace_root,
@@ -6118,7 +6149,7 @@ pub(crate) fn classify_resolved_owner(
             StageState::Weak,
             vec![named_limitation],
         )
-    } else if unresolved_assertions_only(&related_candidates, &owner.name) {
+    } else if unresolved_assertions_only(related_candidates, &owner.name) {
         // Every oracle-eligible test holds assertion-like code the extractor
         // could not resolve, so "no discriminator" is not established. Say
         // unknown, not an actionable gap (RIPR-SPEC-0246 examples 7 and 9).
@@ -6171,7 +6202,7 @@ pub(crate) fn classify_resolved_owner(
             line_text,
             old_line_text,
             owner,
-            candidates: &related_candidates,
+            candidates: related_candidates,
             ladder: Rule8LadderFacts {
                 boundary: &predicate_boundary,
                 activations: &predicate_activations,
@@ -6180,7 +6211,7 @@ pub(crate) fn classify_resolved_owner(
                 pin_facts: &pin_facts,
                 changed_field: changed_field.as_ref(),
             },
-            mock_paths: &mock_paths,
+            mock_paths: &context.mock_paths,
             alias_map,
             workspace_root,
         },
@@ -6195,7 +6226,7 @@ pub(crate) fn classify_resolved_owner(
         && matches!(verdict.class, ExposureClass::WeaklyExposed)
         && matches!(probe_shape.family, ProbeFamily::SideEffect)
         && super::hook_owner_guard::setup_hook_calls_owner(
-            &related_candidates,
+            related_candidates,
             owner,
             reexport_index,
             alias_map,
@@ -6218,7 +6249,7 @@ pub(crate) fn classify_resolved_owner(
         && super::loop_count_guard::ts_loop_count_unmodeled(
             old_line_text,
             line_text,
-            &related_candidates,
+            related_candidates,
         );
     if loop_count_unknown {
         verdict.class = ExposureClass::StaticUnknown;
@@ -6335,7 +6366,7 @@ pub(crate) fn classify_resolved_owner(
                 changed_field: changed_field.as_ref(),
             },
         },
-        &related_candidates,
+        related_candidates,
         &predicate_activations,
         &mut related,
     );

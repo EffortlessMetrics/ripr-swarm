@@ -651,6 +651,15 @@ impl TypeScriptAdapter {
             // lines, so the first containing owner is the same one the old
             // scan found (the outer owner of a nested line included).
             let changed_norm = normalized_path(&changed.path);
+            // #10021 (memoization half): the four per-owner `all_tests` scans
+            // in the classifier depend on the owner, never on the changed
+            // line. Key them by the owner's identity (file, name, span) so a
+            // file with many changed lines — and the deleted-lines pass —
+            // computes each scan once per owner instead of once per line.
+            let mut owner_contexts: std::collections::HashMap<
+                (String, String, usize, usize),
+                OwnerLineContext<'_>,
+            > = std::collections::HashMap::new();
             let mut file_owners: Vec<TypeScriptOwner> = all_owners
                 .iter()
                 .filter(|owner| normalized_path(&owner.file) == changed_norm)
@@ -718,13 +727,30 @@ impl TypeScriptAdapter {
                 let resolved_finding =
                     owner_index_for_line(&file_owners, &owner_end_prefix_max, added.line).and_then(
                         |owner_idx| {
+                            let owner = &file_owners[owner_idx];
+                            let key = (
+                                changed_norm.clone(),
+                                owner.name.clone(),
+                                owner.start_line,
+                                owner.end_line,
+                            );
+                            let context = owner_contexts.entry(key).or_insert_with(|| {
+                                owner_line_context(
+                                    owner,
+                                    &all_tests,
+                                    Some(&options.root),
+                                    &reexport_index,
+                                    alias_map_ref,
+                                )
+                            });
                             classify_resolved_owner(
                                 &changed.path,
                                 added.line,
                                 &added.text,
                                 old_line_text,
-                                &file_owners[owner_idx],
+                                owner,
                                 &file_owners,
+                                context,
                                 &all_tests,
                                 Some(&options.root),
                                 &reexport_index,
@@ -800,14 +826,38 @@ impl TypeScriptAdapter {
                 &all_owners,
                 &findings,
                 |line, text, owner| {
-                    // Only the resolved owner is offered, so the classifier's
-                    // owner lookup cannot land on a different one.
-                    classify_change_with_alias_state(
+                    // The wrapper's owner lookup is the span check only: the
+                    // caller already resolved the sole owner this closure
+                    // receives (its file matched by normalized path), so a
+                    // line outside the owner's span classified nothing. Keep
+                    // that guard, then share the memoized per-owner context
+                    // with the added-lines pass above (#10021).
+                    if line < owner.start_line || line > owner.end_line {
+                        return None;
+                    }
+                    let key = (
+                        changed_norm.clone(),
+                        owner.name.clone(),
+                        owner.start_line,
+                        owner.end_line,
+                    );
+                    let context = owner_contexts.entry(key).or_insert_with(|| {
+                        owner_line_context(
+                            owner,
+                            &all_tests,
+                            Some(&options.root),
+                            &reexport_index,
+                            alias_map_ref,
+                        )
+                    });
+                    classify_resolved_owner(
                         &changed.path,
                         line,
                         text,
                         None,
+                        owner,
                         std::slice::from_ref(owner),
+                        context,
                         &all_tests,
                         Some(&options.root),
                         &reexport_index,
