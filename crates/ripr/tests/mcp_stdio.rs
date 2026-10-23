@@ -1182,6 +1182,80 @@ fn malformed_params_of_a_served_method_answer_invalid_params_and_the_session_rec
 }
 
 #[test]
+fn non_object_params_keep_the_request_id_and_the_session_recovers() -> Result<(), String> {
+    let root = workspace_root()?;
+    let mut request_bytes = line(json!({
+        "jsonrpc": "2.0", "id": "discover", "method": "server/discover",
+        "params": { "_meta": current_meta() }
+    }))?;
+    let mut expected: Vec<Value> = Vec::new();
+    let shapes = [
+        json!("oops"),
+        json!(7),
+        json!([1, 2]),
+        json!(true),
+        json!(1.5),
+    ];
+    let methods = ["tools/list", "tools/call", "resources/read"];
+    for (index, shape) in shapes.iter().enumerate() {
+        let method = methods[index % methods.len()];
+        let id = if index % 2 == 0 {
+            json!(100 + index)
+        } else {
+            json!(format!("req-{index}"))
+        };
+        request_bytes.extend(line(json!({
+            "jsonrpc": "2.0", "id": id, "method": method, "params": shape
+        }))?);
+        expected.push(id);
+    }
+    request_bytes.extend(line(json!({
+        "jsonrpc": "2.0", "id": "recovered-status", "method": "resources/read",
+        "params": { "_meta": current_meta(), "uri": "ripr://workspace/status" }
+    }))?);
+    let output = run_mcp(&root, &[&request_bytes])?;
+    let responses = response_lines(&output)?;
+    if responses.len() != expected.len() + 2 {
+        return Err(format!(
+            "expected {} MCP responses, got {}: {responses:?}",
+            expected.len() + 2,
+            responses.len()
+        ));
+    }
+    if responses[0].get("id") != Some(&json!("discover")) {
+        return Err(format!(
+            "first response must answer the discover request: {}",
+            responses[0]
+        ));
+    }
+    for (index, id) in expected.iter().enumerate() {
+        let response = &responses[index + 1];
+        if response.get("id") != Some(id) {
+            return Err(format!(
+                "non-object params rejection must echo request id {id}: {response}"
+            ));
+        }
+        // A frame the SDK cannot type is Invalid Request (docs/interop/mcp.md),
+        // and it keeps the request id (#8725) so the client can correlate it.
+        if response.pointer("/error/code").and_then(Value::as_i64) != Some(-32600) {
+            return Err(format!(
+                "non-object params rejection for {id} must use -32600: {response}"
+            ));
+        }
+    }
+    let last = &responses[expected.len() + 1];
+    if last.get("id") != Some(&json!("recovered-status")) {
+        return Err(format!(
+            "last response must answer the recovered-status request: {last}"
+        ));
+    }
+    if last.get("result").is_none() {
+        return Err(format!("session must recover after rejections: {last}"));
+    }
+    Ok(())
+}
+
+#[test]
 fn rejection_arms_survive_the_stdio_transport() -> Result<(), String> {
     let root = workspace_root()?;
     let request_bytes = [
