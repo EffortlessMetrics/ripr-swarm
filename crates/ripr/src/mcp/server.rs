@@ -759,6 +759,32 @@ fn optional_integer_argument_for_platform(
     })
 }
 
+/// Protocol-level list pagination (#9895): these catalog lists are static and
+/// small, so the server returns the complete list in one response and never
+/// issues a `nextCursor`. A client-supplied cursor can only be stale or
+/// fabricated; ignoring it would let an agent believe paging worked, so the
+/// request fails closed with the recovery spelled out.
+fn reject_pagination_cursor(
+    params: Option<PaginatedRequestParams>,
+    method: &str,
+) -> Result<(), ErrorData> {
+    if params
+        .as_ref()
+        .is_some_and(|params| params.cursor.is_some())
+    {
+        return Err(ErrorData::invalid_params(
+            format!(
+                "{method} does not paginate: this server returns the complete list in one response and never issues a nextCursor; drop the cursor argument"
+            ),
+            Some(serde_json::json!({
+                "argument": "cursor",
+                "expected": "omit; the complete list fits one page",
+            })),
+        ));
+    }
+    Ok(())
+}
+
 /// A paging limit with a typed row cap: a JSON integer `>= 1` and `<= max`.
 /// A request above the cap stays invalid params at the dispatch edge instead
 /// of being silently clamped, so the typed `page.limit` echo always names a
@@ -941,23 +967,37 @@ impl ServerHandler for McpServer {
     }
     async fn list_tools(
         &self,
-        _: Option<PaginatedRequestParams>,
+        params: Option<PaginatedRequestParams>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
+        reject_pagination_cursor(params, "tools/list")?;
         Ok(self.tools.clone())
+    }
+    async fn list_prompts(
+        &self,
+        params: Option<PaginatedRequestParams>,
+        _: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, ErrorData> {
+        // #9895: the SDK default returns an empty catalog and would silently
+        // ignore a client-supplied cursor; the static catalog rule is the
+        // same one tools/list and resources/list enforce.
+        reject_pagination_cursor(params, "prompts/list")?;
+        Ok(ListPromptsResult::default())
     }
     async fn list_resources(
         &self,
-        _: Option<PaginatedRequestParams>,
+        params: Option<PaginatedRequestParams>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
+        reject_pagination_cursor(params, "resources/list")?;
         Ok(self.resources.clone())
     }
     async fn list_resource_templates(
         &self,
-        _: Option<PaginatedRequestParams>,
+        params: Option<PaginatedRequestParams>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListResourceTemplatesResult, ErrorData> {
+        reject_pagination_cursor(params, "resources/templates/list")?;
         Ok(self.resource_templates.clone())
     }
     async fn call_tool(
