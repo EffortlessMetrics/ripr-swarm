@@ -960,9 +960,12 @@ mod tests {
         let base = std::env::temp_dir().join(format!("ripr-pilot-root-{}", std::process::id()));
         let empty = base.join("readme-only");
         let cargo = base.join("cargo");
+        let python = base.join("python-only");
         let io = |error: std::io::Error| error.to_string();
         std::fs::create_dir_all(&empty).map_err(io)?;
         std::fs::create_dir_all(&cargo).map_err(io)?;
+        std::fs::create_dir_all(&python).map_err(io)?;
+        std::fs::write(python.join("app.py"), "def f():\n    return 1\n").map_err(io)?;
         std::fs::write(empty.join("README.md"), "hi\n").map_err(io)?;
         std::fs::write(cargo.join("Cargo.toml"), "[package]\nname = \"x\"\n").map_err(io)?;
 
@@ -974,6 +977,7 @@ mod tests {
         );
         assert!(message.contains("nothing was written"), "{message}");
         assert_eq!(pilot_root_without_workspace(&cargo), None);
+        assert_eq!(pilot_root_without_workspace(&python), None);
 
         let result = pilot(&args(&["--root", &empty.to_string_lossy()]));
         assert!(result.is_err());
