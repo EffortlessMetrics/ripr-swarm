@@ -1856,6 +1856,35 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('a rejected configuration pull survives dirty edits, save and close until a pull is applied (#9917)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      const rejected = {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'stopped',
+        input_authority: { configuration_pull: { state: 'failed', failure: { kind: 'config_pull_invalid', message: 'bad `gitTimeoutMs`' } } }
+      };
+      context.client.emitNotification('ripr/analysisStatus', rejected);
+      assert.ok(context.status.text.includes('ripr: failed'));
+
+      const doc = await vscode.workspace.openTextDocument(workspaceFileUri('src/lib.rs'));
+      context.controller.markWorkspaceStale(doc);
+      assert.ok(context.status.text.includes('ripr: failed'), `dirty edit must not hide the rejection: ${context.status.text}`);
+      assert.ok(String(context.status.tooltip).includes('`gitTimeoutMs`'));
+
+      context.controller.markWorkspaceClosed(doc);
+      assert.ok(context.status.text.includes('ripr: failed'), `close must not restore ready over the rejection: ${context.status.text}`);
+
+      context.controller.markWorkspaceStale(doc);
+      context.client.emitNotification('ripr/analysisStatus', { ...rejected, input_authority: { configuration_pull: { state: 'pending' } } });
+      assert.ok(context.status.text.includes('ripr: failed'), 'pending keeps the rejection');
+      context.client.emitNotification('ripr/analysisStatus', { ...rejected, input_authority: { configuration_pull: { state: 'applied' } } });
+      assert.ok(!String(context.status.tooltip).includes('gitTimeoutMs'), 'an applied pull clears the rejection');
+    } finally {
+      await context.dispose();
+    }
+  });
+
   test('startup without a rejection still paints the queued placeholder (#9917)', async () => {
     const context = createControllerTestContext({});
     try {

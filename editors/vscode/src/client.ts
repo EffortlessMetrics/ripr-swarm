@@ -1131,6 +1131,14 @@ export class RiprClientController {
       return;
     }
     this.dirtyRiprDocuments.add(document.uri.toString());
+    // An unresolved configuration rejection outranks the unsaved-buffer
+    // presentation: typing in a file must not hide why the user's settings
+    // were ignored. Dirty tracking above still runs, and a decided pull
+    // clears the rejection through handleAnalysisStatus.
+    if (this.configurationFailureStatus) {
+      this.updateStatus(this.configurationFailureStatus);
+      return;
+    }
     this.updateStatus({
       kind: 'stale',
       summary: 'ripr analysis is stale until the file is saved.',
