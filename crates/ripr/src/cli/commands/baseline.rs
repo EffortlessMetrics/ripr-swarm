@@ -125,6 +125,10 @@ fn baseline_diff(args: &[String]) -> Result<(), String> {
         "Items: {}",
         output::baseline_delta::baseline_delta_item_count(&report)
     );
+    // Missing-input warnings ride stderr like every other advisory surface
+    // (#9856): a run that routed from nothing must not look like a healthy
+    // "no debt movement" run in the terminal or in `2>&1` CI logs.
+    super::emit_report_warnings(output::baseline_delta::baseline_delta_warnings(&report));
     Ok(())
 }
 
@@ -397,6 +401,66 @@ mod tests {
             ),
             r"chosen baseline.json already exists; rerun `ripr baseline create --from 'gate $it'\''s.json' --out 'chosen baseline.json' --force` to overwrite it"
         );
+    }
+
+    #[test]
+    fn baseline_diff_missing_inputs_complete_with_warnings() -> Result<(), String> {
+        // #9856 contract: two missing inputs keep the documented exit-0
+        // contract (the typed answer completed) while the warnings that were
+        // previously report-only become visible on stderr; the report itself
+        // is unchanged.
+        let dir = unique_command_test_dir("baseline-diff-missing-inputs");
+        std::fs::create_dir_all(&dir).map_err(|error| format!("create dir: {error}"))?;
+        let missing_a = dir.join("missing-a.json");
+        let missing_b = dir.join("missing-b.json");
+        let out = dir.join("baseline-debt-delta.json");
+        let out_md = dir.join("baseline-debt-delta.md");
+        baseline(&args(&[
+            "diff",
+            "--baseline",
+            &missing_a.display().to_string(),
+            "--current",
+            &missing_b.display().to_string(),
+            "--out",
+            &out.display().to_string(),
+            "--out-md",
+            &out_md.display().to_string(),
+        ]))
+        .map_err(|error| format!("missing-input baseline diff must complete (exit 0): {error}"))?;
+        let json = std::fs::read_to_string(&out)
+            .map_err(|error| format!("read baseline delta JSON: {error}"))?;
+        let value: serde_json::Value = serde_json::from_str(&json)
+            .map_err(|error| format!("baseline delta JSON must parse: {error}"))?;
+        let warnings = value
+            .get("warnings")
+            .and_then(serde_json::Value::as_array)
+            .ok_or("baseline delta JSON must carry a warnings array")?;
+        assert!(!warnings.is_empty(), "warnings must not be empty: {json}");
+        for missing in [&missing_a, &missing_b] {
+            let missing_display = output::baseline_delta::display_path(missing);
+            assert!(
+                warnings.iter().any(|warning| warning
+                    .as_str()
+                    .is_some_and(|text| text.contains(&missing_display))),
+                "warnings must name the missing input {missing_display}: {json}"
+            );
+        }
+        // The stderr surface renders the same warnings: non-empty and naming
+        // the missing inputs.
+        let rendered = super::super::render_report_warnings(
+            &warnings
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>(),
+        );
+        assert!(!rendered.is_empty(), "stderr warnings must be non-empty");
+        assert!(
+            rendered.contains(&output::baseline_delta::display_path(&missing_a)),
+            "{rendered}"
+        );
+        std::fs::remove_dir_all(&dir).map_err(|error| format!("remove dir: {error}"))?;
+        Ok(())
     }
 
     #[test]
