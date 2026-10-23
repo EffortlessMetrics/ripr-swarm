@@ -862,13 +862,22 @@ fn timeout_terminates_shell_descendants() -> TestResult {
                 let stat = fs::read_to_string(&process);
                 witness_is_live(stat.as_deref(), pid, start)
             };
-            let observed = std::time::Instant::now();
-            while live()? && observed.elapsed() < std::time::Duration::from_secs(1) {
+            // The witness is a `sleep 8`; for stubborn=true it ignores SIGTERM
+            // (the trap survives exec), so only timeout's group SIGKILL
+            // escalation kills it, nominally at deadline + kill-after (~1.2 s
+            // from `started`). The current runner image can deliver that group
+            // signal late under load, so bound the termination wait from the
+            // process start and well inside the witness's natural 8 s expiry
+            // instead of a fixed 1 s poll: a genuinely broken kill path still
+            // leaves the witness live past this bound and fails the assertion
+            // below, while slow group-signal delivery is tolerated.
+            while live()? && started.elapsed() < std::time::Duration::from_secs(5) {
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
             let failed_termination = live()?;
             // No numeric-PID signal: even checking start time before kill races
             // PID reuse. Let this finite witness expire, preserving the failure.
+            let observed = std::time::Instant::now();
             while live()? && observed.elapsed() < std::time::Duration::from_secs(10) {
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }

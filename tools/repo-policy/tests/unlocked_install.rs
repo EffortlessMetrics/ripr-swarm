@@ -242,17 +242,34 @@ fn unlocked_prerequisite_failure_unavailable_and_timeout_never_reach_later_comma
                 37,
                 vec!["package", "pkgid", "tar", "generate-lockfile", "check"],
             ),
-            ("unavailable", 127, vec![]),
+            // The exit code for `unavailable` is asserted as 126-or-127 below
+            // (bash bad-interpreter drift across runner images); the literal
+            // here is inert.
+            ("unavailable", 0, vec![]),
             ("timeout", 124, vec!["package"]),
         ] {
             let fixture = Fixture::new(case)?;
             let output = fixture.run(&script, case, pipefail)?;
             let trace = fixture.trace()?;
-            assert_eq!(
-                output.status.code(),
-                Some(exit),
-                "case={case}, pipefail={pipefail}, trace={trace:?}, {output:?}"
-            );
+            if case == "unavailable" {
+                // The stub's shebang names a deliberately missing interpreter.
+                // Bash has changed the exit status for that exec failure across
+                // versions: 126 = "found but not executable", 127 = "command
+                // not found". Both honestly mean "the stub could not run", and
+                // the trace assertion below still pins that no command reached
+                // the trace. Only this case accepts both; every other case
+                // keeps its single exact code.
+                assert!(
+                    matches!(output.status.code(), Some(126 | 127)),
+                    "case={case}, pipefail={pipefail}, trace={trace:?}, {output:?}"
+                );
+            } else {
+                assert_eq!(
+                    output.status.code(),
+                    Some(exit),
+                    "case={case}, pipefail={pipefail}, trace={trace:?}, {output:?}"
+                );
+            }
             let commands: Vec<_> = trace
                 .iter()
                 .filter_map(|line| line.split('|').next())
