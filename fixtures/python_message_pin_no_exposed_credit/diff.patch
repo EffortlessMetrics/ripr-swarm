@@ -1,0 +1,9 @@
+diff --git a/src/check.py b/src/check.py
+--- a/src/check.py
++++ b/src/check.py
+@@ -1,4 +1,4 @@
+ def check(x):
+     if x < 0:
+-        raise ValueError("negative value: must be at least zero")
++        raise ValueError("negative value: must be at most zero")
+     return x

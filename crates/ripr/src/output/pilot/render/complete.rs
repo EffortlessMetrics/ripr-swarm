@@ -13,7 +13,8 @@ use crate::output::json::escape as json_escape;
 use crate::output::markdown::{PowershellForm, code_span, powershell_form};
 use crate::output::path::{display_path, display_path_text, human_path};
 use crate::output::pilot::commands::{
-    PilotCommands, python_card_first_pr_command, repair_edit_scope, repair_start_command,
+    PilotCommands, python_card_first_pr_command, repair_edit_scope, repair_inline_target_file,
+    repair_start_command,
 };
 use crate::output::pilot::ranking::{
     actionable_in_change, actionable_in_owner, actionable_total, top_actionable_seams,
@@ -250,7 +251,8 @@ pub(crate) fn render_pilot_summary_md(
         Some(path) => out.push_str(&format!("- Config: loaded `{}`\n", human_path(path))),
         None => out.push_str("- Config: missing; using built-in defaults\n"),
     }
-    if let Some(scope) = scope_line(context, true) {
+    let ranked = scope_rank_label(context, top.is_empty());
+    if let Some(scope) = scope_line(context, true, ranked) {
         out.push_str(&format!("- Scope: {scope}\n"));
     }
     push_changed_file_limitations(&mut out, context.current_change, true);
@@ -451,8 +453,19 @@ pub(crate) fn render_pilot_summary_md(
                 .first()
                 .map(|entry| repair_edit_scope(entry))
                 .unwrap_or_default();
+            if context
+                .current_change
+                .is_some_and(crate::output::pilot::PilotCurrentChange::is_uncommitted)
+                && let Some(file) = top
+                    .first()
+                    .and_then(|entry| repair_inline_target_file(entry))
+            {
+                out.push_str(&format!(
+                    "Before starting the repair: if `{file}` has uncommitted edits, commit or stash them; the repair start refuses a target file that differs from HEAD.\n\n",
+                ));
+            }
             out.push_str(&format!(
-                "Start the repair transaction for the top seam, add one focused test {scope}, then run the `--attempt ... --phase after` command it prints:\n\n",
+                "Start the repair transaction for the top seam, add one focused test {scope}, then run the `continue --attempt ...` command it prints:\n\n",
             ));
             vec![command]
         }
@@ -599,7 +612,8 @@ pub(crate) fn render_pilot_terminal(
         None => out.push_str("  config: missing, using built-in defaults\n"),
     }
     out.push_str(&format!("  timeout: {} ms\n", context.timeout_ms));
-    if let Some(scope) = scope_line(context, false) {
+    let ranked = scope_rank_label(context, top.is_empty());
+    if let Some(scope) = scope_line(context, false, ranked) {
         out.push_str(&format!("  scope: {scope}\n"));
     }
     push_changed_file_limitations(&mut out, context.current_change, false);
@@ -684,7 +698,7 @@ pub(crate) fn render_pilot_terminal(
         if let Some(value) = outline.candidate_value.as_ref() {
             out.push_str(&format!("  candidate value: {value}\n"));
         }
-        out.push_str(&format!("  assertion: {}\n", outline.assertion_shape));
+        push_assertion_shape(&mut out, &outline.assertion_shape);
         // Only a seam that passes the fail-closed repair-packet flip gets the
         // paste-ready command. Route readiness alone is weaker: a ready seam
         // can still be ineligible, and offering a repair transaction there
@@ -779,6 +793,16 @@ pub(crate) fn render_pilot_terminal(
         .and_then(|entry| repair_start_command(context.root, entry))
     {
         out.push_str("Next, in order:\n");
+        if context
+            .current_change
+            .is_some_and(crate::output::pilot::PilotCurrentChange::is_uncommitted)
+            && let Some(file) = top
+                .first()
+                .and_then(|entry| repair_inline_target_file(entry))
+        {
+            out.push_str(&dirty_target_precondition(&file));
+            out.push('\n');
+        }
         out.push_str(&format!("  1. {command}\n"));
         if let Some(form) = crate::output::markdown::powershell_text_variant(&command) {
             out.push_str(&format!("     (PowerShell) {form}\n"));
@@ -789,7 +813,7 @@ pub(crate) fn render_pilot_terminal(
                 .map(|entry| repair_edit_scope(entry))
                 .unwrap_or_default()
         ));
-        out.push_str("  3. run the `--attempt ... --phase after` command that step 1 prints\n");
+        out.push_str("  3. run the `continue --attempt ...` command that step 1 prints\n");
         out.push_str(
             "  (do not redirect these commands' output into the checkout, for example `> packet.json`: the edit cage counts that file as an edit; use target/ripr/ or a directory outside the repository)\n",
         );
@@ -877,30 +901,55 @@ pub(crate) fn render_pilot_terminal(
     out
 }
 
+/// Precondition printed ahead of the repair steps when the change is
+/// uncommitted and the repair edits an inline test module in `file`: the
+/// repair start refuses that file when its worktree or index copy differs
+/// from HEAD.
+fn dirty_target_precondition(file: &str) -> String {
+    format!(
+        "  Before step 1: if `{file}` has uncommitted edits, commit or stash them; the repair start refuses a target file that differs from HEAD."
+    )
+}
+
 /// Terminal note for a top seam whose focused test is named but that fails the
 /// repair-packet eligibility flip, so no `ripr agent repair` command is printed.
 const NO_REPAIR_START_LINE: &str = "not available for this seam (static evidence does not admit a repair target); add the focused test by hand";
 
 /// What pilot's ranking covers: change-first when there is a current change,
 /// else the whole repository (with the reason when the change could not be
-/// loaded). `None` when change data was not collected.
-fn scope_line(context: PilotSummaryContext<'_>, code: bool) -> Option<String> {
+/// loaded). `None` when change data was not collected. `ranked` names the
+/// seam owners the scope line claims were ranked; it must match what the
+/// recommendation below actually is (#9857).
+fn scope_line(context: PilotSummaryContext<'_>, code: bool, ranked: &str) -> Option<String> {
     let change = context.current_change?;
     Some(if change.is_changed() {
         match change.base() {
             Some(base) if code => {
-                format!("change-first (Rust seams on lines changed since `{base}` rank first)")
+                format!("change-first ({ranked} on lines changed since `{base}` rank first)")
             }
             Some(base) => {
-                format!("change-first (Rust seams on lines changed since {base} rank first)")
+                format!("change-first ({ranked} on lines changed since {base} rank first)")
             }
-            None => "change-first (Rust seams on changed lines rank first)".to_string(),
+            None => format!("change-first ({ranked} on changed lines rank first)"),
         }
     } else if let Some(reason) = change.unavailable_reason() {
         format!("whole repository (current change unavailable: {reason})")
     } else {
         "whole repository".to_string()
     })
+}
+
+/// The seam owners the scope line names. Pilot's Rust seam ranking owns the
+/// recommendation whenever it ranked anything; its Python first-use card
+/// leads only when the Rust ranking is empty, and only then is Python what
+/// this run ranked. Every other empty ranking keeps the historical "Rust
+/// seams" wording, which the none-explanation lines below still use.
+fn scope_rank_label(context: PilotSummaryContext<'_>, rust_ranking_empty: bool) -> &'static str {
+    if rust_ranking_empty && python_top_repair_card(context.python_first_use).is_some() {
+        "python (preview) seams"
+    } else {
+        "Rust seams"
+    }
 }
 
 /// Whether the top recommendation is part of the current change.
@@ -1936,5 +1985,45 @@ fn repair_action_label(action: &str) -> &'static str {
     match action {
         "strengthen_existing_test" => "strengthen",
         _ => "add or strengthen",
+    }
+}
+
+/// #9244 item 3: the suggested assertion carries `/* ... */` placeholders for
+/// the values only the developer knows. Labelled "assertion:" they read like
+/// unfilled template text, so a shape with a placeholder names itself a shape
+/// and says what to do with it; any other assertion text keeps its label.
+fn push_assertion_shape(out: &mut String, shape: &str) {
+    if shape.contains("/*") {
+        out.push_str(&format!("  assertion shape: {shape}\n"));
+        out.push_str(
+            "    (replace each /* ... */ comment with a real value from your test before using it)\n",
+        );
+    } else {
+        out.push_str(&format!("  assertion: {shape}\n"));
+    }
+}
+
+#[cfg(test)]
+mod assertion_shape_tests {
+    use super::push_assertion_shape;
+
+    #[test]
+    fn placeholder_shape_is_labelled_a_shape_with_a_fill_in_note() {
+        let mut out = String::new();
+        push_assertion_shape(
+            &mut out,
+            "assert_eq!(total(/* boundary input where a >= b */), /* expected */)",
+        );
+        assert_eq!(
+            out,
+            "  assertion shape: assert_eq!(total(/* boundary input where a >= b */), /* expected */)\n    (replace each /* ... */ comment with a real value from your test before using it)\n"
+        );
+    }
+
+    #[test]
+    fn concrete_assertion_keeps_its_label_and_gets_no_note() {
+        let mut out = String::new();
+        push_assertion_shape(&mut out, "assert!(quote.total > Money::zero())");
+        assert_eq!(out, "  assertion: assert!(quote.total > Money::zero())\n");
     }
 }

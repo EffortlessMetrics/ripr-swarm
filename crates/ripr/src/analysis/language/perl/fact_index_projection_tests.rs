@@ -27,7 +27,14 @@ fn digest(packet: &PerlFactPacket) -> (String, usize) {
     let findings = packet_to_findings_with_currentness(packet, &BTreeMap::new(), |_, _| {
         crate::domain::SourceCurrentness::UnresolvedSubject
     });
-    let rendered = format!("{findings:#?}");
+    // `analysis_scope` was added to `Finding` after the digests were recorded
+    // (#9941). Every Perl finding is diff-scoped, so dropping that one line
+    // renders exactly the field set the pre-index implementation produced.
+    let rendered = format!("{findings:#?}")
+        .lines()
+        .filter(|line| line.trim_start() != "analysis_scope: Diff,")
+        .collect::<Vec<_>>()
+        .join("\n");
     let mut hasher = Sha256::new();
     hasher.update(rendered.as_bytes());
     (hex_bytes(&hasher.finalize()), findings.len())
