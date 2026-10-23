@@ -18444,10 +18444,11 @@ fn pilot_projects_python_repair_card_for_git_diff() -> Result<(), String> {
 /// the packet directory the run actually wrote. The default packet dir is
 /// `root/target/ripr/pilot` for every spelled root; an explicit bare
 /// `--out target/ripr/pilot` with a non-dot root resolves against the
-/// process cwd, and the note must stay silent there rather than claim the
-/// root's `target/ripr` is uncovered when the artifacts landed outside the
-/// repository. Each child command gets an explicit cwd; the test process
-/// cwd never changes.
+/// process cwd, and an out_dir that lexically starts with `target/ripr`
+/// but climbs out via `..` lands elsewhere — both must stay silent rather
+/// than claim the root's `target/ripr` is uncovered when the artifacts
+/// landed outside the artifact root. Each child command gets an explicit
+/// cwd; the test process cwd never changes.
 #[test]
 #[cfg(feature = "lang-python")]
 fn pilot_artifact_note_uses_the_selected_root_at_the_cli() -> Result<(), String> {
@@ -18517,7 +18518,7 @@ fn pilot_artifact_note_uses_the_selected_root_at_the_cli() -> Result<(), String>
 
     // (label, child cwd relative to sandbox, args after `pilot`, expected
     // packet dir relative to sandbox, whether the ignore note must fire)
-    let rows: [(&str, &str, Vec<String>, &str, bool); 4] = [
+    let rows: [(&str, &str, Vec<String>, &str, bool); 5] = [
         (
             "dot-root",
             "repo",
@@ -18543,6 +18544,18 @@ fn pilot_artifact_note_uses_the_selected_root_at_the_cli() -> Result<(), String>
                 "target/ripr/pilot".to_string(),
             ],
             "target/ripr/pilot",
+            false,
+        ),
+        (
+            "dotdot-out",
+            "",
+            vec![
+                "--root".to_string(),
+                "repo".to_string(),
+                "--out".to_string(),
+                "repo/target/ripr/../reports".to_string(),
+            ],
+            "repo/target/reports",
             false,
         ),
     ];

@@ -484,6 +484,13 @@ fn artifact_root_ignore_note(root: &Path, out_dir: &Path) -> Option<String> {
     } else {
         out_dir.strip_prefix(root).ok()?
     };
+    // Lexically resolve `.`/`..` before the prefix decision (#9858 review
+    // follow-up): `--out target/ripr/../reports` starts with the artifact
+    // root component-wise yet lands outside it, and the note must not claim
+    // an ignore fact about a directory the run did not write. A path that
+    // climbs above the root cannot be anchored repository-relative, so it
+    // stays silent like every other unestablishable case.
+    let repo_relative_out = normalize_parent_components(repo_relative_out)?;
     if !repo_relative_out.starts_with(&artifact_root) {
         return None;
     }
@@ -497,6 +504,27 @@ fn artifact_root_ignore_note(root: &Path, out_dir: &Path) -> Option<String> {
          not commit ripr's own reports.",
         uncovered.join(", ")
     ))
+}
+
+/// Lexically resolve `.` and `..` components in a repository-relative path
+/// without touching the filesystem (the packet directory may not exist yet).
+/// `None` when a `..` would climb above the root — the path cannot be
+/// anchored repository-relative, so callers stay silent rather than guess.
+fn normalize_parent_components(path: &Path) -> Option<PathBuf> {
+    use std::path::Component;
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    return None;
+                }
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    Some(normalized)
 }
 
 /// Classify the current change's Rust files on their own when the
@@ -1036,6 +1064,20 @@ mod tests {
         // `pilot_artifact_note_uses_the_selected_root_at_the_cli`.
         let bare_out = Path::new("target").join("ripr").join("pilot");
         assert!(artifact_root_ignore_note(&root, &bare_out).is_none());
+
+        // Parent components resolve before the prefix decision: an out_dir
+        // that starts with `target/ripr` component-wise but lands outside
+        // it must stay silent (#9858 review follow-up), while a harmless
+        // `.` component still resolves into the artifact root.
+        let parent_escape = root.join("target").join("ripr").join("..").join("reports");
+        assert!(artifact_root_ignore_note(&root, &parent_escape).is_none());
+        let dotted = root.join("target").join(".").join("ripr").join("pilot");
+        let note = artifact_root_ignore_note(&root, &dotted)
+            .ok_or("note must survive a no-op `.` component")?;
+        assert!(note.contains("target/ripr"), "{note}");
+        // A `..` that climbs above the root cannot be anchored: silent.
+        let above_root = root.join("..").join("elsewhere").join("pilot");
+        assert!(artifact_root_ignore_note(&root, &above_root).is_none());
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
