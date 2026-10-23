@@ -7739,6 +7739,11 @@ fn protocol_entry_receiver_read_in_bracketed_call_arguments_is_still_credited() 
         "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    items = [r]\n    assert ((r)) in items\n    assert list(reversed(r)) == []\n",
         "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    items = [r]\n    for x in items:\n        assert ((r)) in items\n    assert list(reversed(r)) == []\n",
         // A dict-value or annotation colon is not a compound-statement header.
+        "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    if {\"\"\" \" } \" \"\"\": (r), \"b\": 2}: pass\n    assert list(reversed(r)) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    if {''' \" } \" ''': (r), \"b\": 2}: pass\n    assert list(reversed(r)) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    if {\"\"\" \" } \" \"\"\": [r], \"b\": 2}: pass\n    assert list(reversed(r)) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    if {\"a\\\" }\": (r), \"b\": 2}: pass\n    assert list(reversed(r)) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    if {\"#\": (r), \"b\": 2}: pass\n    assert list(reversed(r)) == []\n",
         "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    if \")\" in {\"k\": (r), \"b\": 2}:\n        pass\n    assert list(reversed(r)) == []\n",
         "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    if \"]\" in {\"k\": (r), \"b\": 2}:\n        pass\n    assert list(reversed(r)) == []\n",
         "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    if \"}\" in {\"k\": [r], \"b\": 2}:\n        pass\n    assert list(reversed(r)) == []\n",
@@ -7823,6 +7828,8 @@ fn protocol_entry_stays_uncredited_without_a_bound_owner_receiver() -> Result<()
         "from src.nr import numeric_range\n\n\ndef test_split_nested():\n    r = numeric_range(0)\n    ((\n        r\n    ), x) = [1], 2\n    assert list(reversed(r)) == [1]\n",
         "from src.nr import numeric_range\n\n\ndef test_quoted_closer_header():\n    r = numeric_range(0)\n    if \")\": ( r), x = [1], 2\n    assert list(reversed(r)) == [1]\n",
         "from src.nr import numeric_range\n\n\ndef test_quoted_opener_header():\n    r = numeric_range(0)\n    if \"(\": ( r), x = [1], 2\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_triple_quoted_header():\n    r = numeric_range(0)\n    if \"\"\" } \"\"\": ( r), x = [1], 2\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_escaped_quote_header():\n    r = numeric_range(0)\n    if \"\\\" (\": ( r), x = [1], 2\n    assert list(reversed(r)) == [1]\n",
         // Test-local shadowing of the entry or a wrapper by a tuple or annotated binding.
         "from src.nr import numeric_range\n\n\ndef test_tuple_entry():\n    a, reversed = 1, f\n    assert list(reversed(numeric_range(0))) == []\n",
         "from src.nr import numeric_range\n\n\ndef test_annotated_wrapper():\n    list: Callable = f\n    assert list(reversed(numeric_range(0))) == []\n",

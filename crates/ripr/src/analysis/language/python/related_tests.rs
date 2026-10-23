@@ -860,31 +860,52 @@ fn is_compound_header_colon(head: &str) -> bool {
             | "def"
             | "class"
             | "async"
+            | "match"
+            | "case"
     );
     header && brackets_balanced_outside_strings(head)
 }
 
 /// Whether every bracket opened in `text` is closed by its own kind, ignoring
-/// string-literal contents (`")"`, `'}'`) and a trailing `#` comment. A
-/// mismatch, an unmatched closer or an unterminated string is not balanced, so
-/// the caller fails closed.
+/// string-literal contents (`")"`, `'}'`, `""" } """`) and a trailing `#`
+/// comment. A mismatch, an unmatched closer or an unterminated string is not
+/// balanced, so the caller does not treat the head as a compound-statement
+/// header and the receiver keeps its credit.
 fn brackets_balanced_outside_strings(text: &str) -> bool {
+    let chars: Vec<char> = text.chars().collect();
     let mut stack: Vec<char> = Vec::new();
-    let mut chars = text.chars();
-    while let Some(ch) = chars.next() {
+    let mut index = 0;
+    while index < chars.len() {
+        let ch = chars[index];
+        index += 1;
         match ch {
             '(' => stack.push(')'),
             '[' => stack.push(']'),
             '{' => stack.push('}'),
             ')' | ']' | '}' if stack.pop() != Some(ch) => return false,
             '"' | '\'' => {
+                // A tripled quote opens a string closed only by the same
+                // complete delimiter; otherwise one quote delimits it.
+                let width = if chars.get(index..index + 2) == Some(&[ch, ch][..]) {
+                    3
+                } else {
+                    1
+                };
+                index += width - 1;
                 let mut closed = false;
-                while let Some(inner) = chars.next() {
+                while index < chars.len() {
+                    let inner = chars[index];
                     if inner == '\\' {
-                        chars.next();
-                    } else if inner == ch {
+                        index += 2;
+                    } else if inner == ch
+                        && chars[index..].iter().take(width).all(|c| *c == ch)
+                        && chars.len() - index >= width
+                    {
+                        index += width;
                         closed = true;
                         break;
+                    } else {
+                        index += 1;
                     }
                 }
                 if !closed {
