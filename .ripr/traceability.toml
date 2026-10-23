@@ -14570,6 +14570,8 @@ tests = [
   "crates/ripr/src/mcp/repair_card.rs::tests::repair_card_resource_uri_parsing_is_strict",
   "crates/ripr/src/mcp/repair_card.rs::tests::card_read_fails_closed_on_every_missing_producer_fact",
   "crates/ripr/src/mcp/repair_card.rs::tests::stale_snapshot_and_in_flight_read_fail_closed",
+  "crates/ripr/src/mcp/repair_card.rs::tests::card_read_refuses_truncated_or_unverified_inventory",
+  "crates/ripr/tests/mcp_stdio.rs::truncated_seam_inventory_refuses_repair_card_over_stdio",
   "crates/ripr/src/mcp/repair_card.rs::tests::witness_bound_card_projects_the_shared_handoff_card",
   "crates/ripr/src/mcp/repair_card.rs::tests::refusal_kinds_travel_under_their_pinned_wire_spellings",
   "crates/ripr/src/mcp/repair_card.rs::tests::seam_binding_requires_the_gap_owner_match",
