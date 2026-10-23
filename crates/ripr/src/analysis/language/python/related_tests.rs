@@ -803,7 +803,7 @@ fn construction_is_whole_value(body: &str, idx: usize, construct: &str) -> bool 
 /// Whether the test rebinds the builtin `name` (an import, an assignment,
 /// a `def`/`class`/`for`/`as`/walrus target, or a parameter), so a call spelled
 /// `name(...)` is no longer the builtin.
-fn builtin_is_shadowed(test: &PythonTest, name: &str) -> bool {
+pub(super) fn builtin_is_shadowed(test: &PythonTest, name: &str) -> bool {
     test.imports.iter().any(|import| import.alias == name)
         || test_rebinds_import_alias(test, name)
         || test.constant_rebinding.rebinds(name)

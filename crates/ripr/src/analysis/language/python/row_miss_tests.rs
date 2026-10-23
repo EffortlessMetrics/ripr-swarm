@@ -289,6 +289,110 @@ fn boundary_input_row_makes_the_finding_exposed_with_no_row_miss() -> Result<(),
     Ok(())
 }
 
+/// Producer-level shadowing and receiver-identity cases (#5491 review): the
+/// `subject` row beside a strong direct `control` row. The control keeps
+/// `missing_input`; the subject must not claim it.
+fn assert_subject_withheld(imports: &str, subject: &str, label: &str) -> Result<(), String> {
+    let finding = reserve_case(&format!(
+        "{imports}def test_control():\n    assert can_reserve(5, 3) == True\n\n{subject}"
+    ))?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+    assert_eq!(
+        miss_of(&finding, "test_control"),
+        Some(RelatedTestMiss::MissingInput),
+        "{label}: control row {:?}",
+        misses(&finding)
+    );
+    assert_eq!(
+        miss_of(&finding, "test_subject"),
+        None,
+        "{label}: subject row {:?}",
+        misses(&finding)
+    );
+    Ok(())
+}
+
+#[test]
+fn rebound_builtin_or_foreign_receiver_api_never_gets_missing_input() -> Result<(), String> {
+    let body = "def test_subject():\n    assert can_reserve(5, 3) == True\n    ";
+    for (label, imports, subject) in [
+        (
+            "imported alias shadows a builtin",
+            "from src.helpers import boundary_probe as list\n",
+            format!("{body}list([1])\n"),
+        ),
+        (
+            "local rebind of a builtin",
+            "from src.helpers import boundary_probe\n",
+            format!("{body}list = boundary_probe\n    list([1])\n"),
+        ),
+        (
+            "module def shadows a builtin",
+            "from src.helpers import boundary_probe\n\ndef list(values):\n    return boundary_probe(values)\n\n",
+            format!("{body}list([1])\n"),
+        ),
+        (
+            "approx on a project receiver",
+            "import src.helpers as receiver\n",
+            format!("{body}receiver.approx([1])\n"),
+        ),
+        (
+            "assertEqual on a project receiver",
+            "import src.helpers as receiver\n",
+            format!("{body}receiver.assertEqual([1])\n"),
+        ),
+        (
+            "raises on a project receiver",
+            "import src.helpers as receiver\n",
+            format!("{body}receiver.raises([1])\n"),
+        ),
+        (
+            "approx on a pytest name that is rebound",
+            "import pytest\nimport src.helpers\n\npytest = src.helpers\n\n",
+            format!("{body}pytest.approx([1])\n"),
+        ),
+    ] {
+        assert_subject_withheld(imports, &subject, label)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn genuine_framework_and_builtin_calls_keep_the_claim() -> Result<(), String> {
+    for (label, imports, tests) in [
+        (
+            "plain builtins",
+            "",
+            "def test_a():\n    assert can_reserve(5, 3) == True\n    assert sum([1]) == 1\n    assert len(list([1])) == 1\n",
+        ),
+        (
+            "pytest.approx via the real import",
+            "import pytest\n\n",
+            "def test_a():\n    assert can_reserve(5, 3) == True\n    assert 0.5 == pytest.approx(0.5)\n",
+        ),
+        (
+            "pytest.raises via the real import",
+            "import pytest\n\n",
+            "def test_a():\n    assert can_reserve(5, 3) == True\n    with pytest.raises(ValueError):\n        int('x')\n",
+        ),
+        (
+            "self.assertEqual on a unittest.TestCase",
+            "import unittest\n\n",
+            "class T(unittest.TestCase):\n    def test_a(self):\n        self.assertEqual(can_reserve(5, 3), True)\n        self.assertTrue(sum([1]))\n",
+        ),
+    ] {
+        let finding = reserve_case(&format!("{imports}{tests}"))?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+        assert_eq!(
+            miss_of(&finding, "test_a"),
+            Some(RelatedTestMiss::MissingInput),
+            "{label}: {:?}",
+            misses(&finding)
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn medium_strength_mock_row_keeps_no_miss_in_a_weak_finding() -> Result<(), String> {
     let finding = score_case(

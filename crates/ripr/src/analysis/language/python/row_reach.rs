@@ -7,6 +7,7 @@
 //! call, any call to a callee it cannot vouch for, and any dynamic construct
 //! return `false`.
 
+use super::related_tests::builtin_is_shadowed;
 use super::{PythonOwner, PythonTest};
 use crate::domain::OwnerKind;
 
@@ -220,18 +221,53 @@ pub(super) fn row_reaches_owner_only_by_direct_calls(
         if !is_call {
             continue;
         }
+        // An after-dot API name is trusted only on an established receiver, and
+        // a bare builtin only while the test does not rebind it.
         let safe = if after_dot {
-            // The real unittest.TestCase / pytest API only; a helper defined in
-            // the test module or class is withheld by `module_implicit_reach`.
-            UNITTEST_API.contains(&ident) || matches!(ident, "raises" | "warns" | "approx")
+            after_dot_api_is_trusted(&code, start, ident, test)
         } else {
-            SAFE_BARE_CALLS.contains(&ident)
+            SAFE_BARE_CALLS.contains(&ident) && !builtin_is_shadowed(test, ident)
         };
         if !safe {
             return false;
         }
     }
     true
+}
+
+/// A framework API call on a receiver whose identity is established:
+/// `self.assert*` inside a `unittest.TestCase` class (the module's non-test
+/// methods and assertion-named helpers are already withheld), or
+/// `raises`/`warns`/`approx` on a name that is the real `pytest` import and is
+/// not rebound. Any other receiver is unknown.
+fn after_dot_api_is_trusted(code: &str, name_start: usize, ident: &str, test: &PythonTest) -> bool {
+    let before = code[..name_start].trim_end();
+    let Some(before) = before.strip_suffix('.') else {
+        return false;
+    };
+    let before = before.trim_end();
+    let receiver_start = before
+        .rfind(|ch: char| !(ch == '_' || ch.is_ascii_alphanumeric()))
+        .map_or(0, |idx| idx + 1);
+    let receiver = &before[receiver_start..];
+    // A longer chain (`a.b.approx`), a call or a subscript result is unknown.
+    if receiver.is_empty() || before[..receiver_start].ends_with(['.', ')', ']']) {
+        return false;
+    }
+    if receiver == "self" {
+        return test.framework == "unittest"
+            && UNITTEST_API.contains(&ident)
+            && !test.constant_rebinding.rebinds(ident)
+            && !test.constant_rebinding.module_rebinds(ident);
+    }
+    matches!(ident, "raises" | "warns" | "approx")
+        && test.imports.iter().any(|import| {
+            import.alias == receiver
+                && import.source_module.is_empty()
+                && import.imported == "pytest"
+        })
+        && !test.constant_rebinding.rebinds(receiver)
+        && !test.constant_rebinding.module_rebinds(receiver)
 }
 
 fn owner_class_name(owner: &PythonOwner) -> String {
