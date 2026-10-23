@@ -4540,6 +4540,107 @@ mod tests {
         assert!(!rendered.contains("complete the missing repair-packet fields"));
     }
 
+    /// #5531: a repo-scoped Python finding with no repair card is held by the
+    /// missing repo-mode repair_routing cell, so the safe action says that
+    /// (registry-derived) instead of blaming test placement; the diff-mode
+    /// control keeps the placement reason byte-for-byte.
+    #[test]
+    fn repo_scoped_python_no_card_names_scope_not_placement() {
+        let mut diff = python_preview_finding(5, false);
+        diff.activation.missing_discriminators.clear();
+        let mut with_disc = diff.clone();
+        with_disc.activation.missing_discriminators =
+            vec![crate::domain::MissingDiscriminatorFact {
+                value: "amount == 100".to_string(),
+                reason: "boundary".to_string(),
+                flow_sink: None,
+            }];
+        assert!(crate::output::python_repair_card::python_repair_card(&diff).is_none());
+        let scope_reason = "repo-mode findings have no repair routing (python/any/repo/repair_routing is not_proven)";
+        for diff_finding in [diff, with_disc] {
+            let placement = render(&single_finding_output(diff_finding.clone()));
+            assert!(!placement.contains(scope_reason), "{placement}");
+            let mut repo = diff_finding;
+            repo.mark_repo_scoped();
+            let rendered = render(&single_finding_output(repo));
+            assert!(
+                rendered.contains(&format!("has no repair card ({scope_reason})")),
+                "{rendered}"
+            );
+            assert!(!rendered.contains("test placement or related-test evidence is incomplete"));
+            assert!(!rendered.contains("names no concrete missing discriminator"));
+        }
+        // Diff-mode placement text is unchanged.
+        let mut placed = python_preview_finding(5, false);
+        placed.activation.missing_discriminators = vec![crate::domain::MissingDiscriminatorFact {
+            value: "amount == 100".to_string(),
+            reason: "boundary".to_string(),
+            flow_sink: None,
+        }];
+        assert!(render(&single_finding_output(placed)).contains(
+            "has no repair card (its test placement or related-test evidence is incomplete)"
+        ));
+    }
+
+    /// #5531: a repo-scoped no-path Python finding keeps its test-gap reason;
+    /// scope text only replaces the placement/discriminator reasons.
+    #[test]
+    fn repo_scoped_python_no_static_path_keeps_test_gap_reason() {
+        let mut finding = unknown_finding();
+        finding.class = ExposureClass::NoStaticPath;
+        finding.language = Some(LanguageId::Python);
+        finding.language_status = Some(LanguageStatus::Preview);
+        finding.probe.location = SourceLocation::new("pricing/__init__.py", 11, 1);
+        finding.mark_repo_scoped();
+        let rendered = render(&single_finding_output(finding));
+        assert!(
+            rendered.contains("no Python test reaches this code"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("repo-mode findings have no repair routing"));
+    }
+
+    /// #5531: repo-scoped TypeScript/JavaScript findings name the scope; the
+    /// diff control, and a contradictory legacy-line-only finding (no typed
+    /// repo scope, which fails closed), do not.
+    #[test]
+    fn repo_scoped_typescript_closed_packet_names_scope() {
+        for (language, cell) in [
+            (LanguageId::TypeScript, "typescript"),
+            (LanguageId::JavaScript, "javascript"),
+        ] {
+            let scope_reason = format!(
+                "repo-mode findings have no repair routing ({cell}/any/repo/repair_routing is not_proven)"
+            );
+            let mut diff = typescript_preview_finding(true);
+            diff.language = Some(language);
+            let diff_text = render(&single_finding_output(diff.clone()));
+            assert!(!diff_text.contains("repo-mode findings"), "{diff_text}");
+
+            let mut repo = diff.clone();
+            repo.mark_repo_scoped();
+            let why = crate::output::preview_actionability::preview_actionability_for(&repo)
+                .map(|a| a.why_not_actionable);
+            assert_eq!(why.as_deref(), Some(scope_reason.as_str()));
+            let rendered = render(&single_finding_output(repo));
+            assert!(
+                rendered.contains(&format!("repair packet is not ready ({scope_reason})")),
+                "{rendered}"
+            );
+
+            let mut legacy = diff;
+            legacy
+                .evidence
+                .push(crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
+            let why = crate::output::preview_actionability::preview_actionability_for(&legacy)
+                .map(|a| a.why_not_actionable);
+            assert!(
+                !why.is_some_and(|w| w.contains("repo-mode findings")),
+                "typed scope, not the evidence line, selects the reason"
+            );
+        }
+    }
+
     fn single_finding_output(finding: Finding) -> CheckOutput {
         CheckOutput {
             harness_projections: Vec::new(),

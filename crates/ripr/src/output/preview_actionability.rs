@@ -100,6 +100,11 @@ pub(crate) fn preview_actionability_for(finding: &Finding) -> Option<PreviewActi
                 format!("{base}; validator: {reason}")
             }
         }
+    } else if let Some(reason) = repo_scope_no_repair_reason(finding) {
+        // #5531: a repo-scoped finding projects no packet because the
+        // capability registry has no repo-mode repair_routing cell, not
+        // because of its evidence; say so instead of a placement reason.
+        reason
     } else {
         evidence_value(finding, "why_not_actionable: ")
             .unwrap_or("TypeScript preview lacks a complete repair packet contract")
@@ -152,6 +157,16 @@ pub(crate) fn preview_actionability_for(finding: &Finding) -> Option<PreviewActi
         evidence_needed_to_promote: resolved_evidence_needed,
         raw_evidence_refs,
     })
+}
+
+/// Typed-scope reason for a repo-scoped finding with no repair route (#5531).
+/// Reads `Finding::analysis_mode()`, never the evidence line.
+pub(crate) fn repo_scope_no_repair_reason(finding: &Finding) -> Option<String> {
+    use crate::domain::language_capability::{AnalysisMode, repo_mode_no_repair_routing_reason};
+    if finding.analysis_mode() != Some(AnalysisMode::Repo) {
+        return None;
+    }
+    repo_mode_no_repair_routing_reason(finding.language?)
 }
 
 /// Build the actionable repair-route line for a complete TypeScript packet.
