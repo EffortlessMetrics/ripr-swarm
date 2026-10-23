@@ -25,6 +25,7 @@ use super::boundary::{
     CallRow, canonical_decimal, literals_equal, resolve_operand, simple_comparison_operands,
     strong_owner_call_rows_with_gaps, unrebound_constants,
 };
+use super::discriminators::python_string_literal_value;
 use super::module_constants::PythonModuleConstant;
 use super::related_tests::PythonRelatedCandidate;
 use crate::domain::{ValueContext, ValueFact};
@@ -309,13 +310,21 @@ fn walk_guards(owner: &PythonOwner, owner_source: &str, changed_line: usize) -> 
     let mut conditions = Vec::new();
     let mut else_chains = Vec::new();
     // Docstring text that reads like `else:` / `if X:` is not a branch.
-    let in_string = lines_inside_triple_quotes(&lines);
+    let scan = scan_triple_quotes(&lines);
     for index in (owner.start_line..changed_index).rev() {
-        if in_string[index] {
-            continue;
-        }
+        let (masked, starts_in_code) = scan[index];
         let raw = lines[index];
         let trimmed = raw.trim();
+        // A header that opens a multi-line string cannot be read or skipped:
+        // stepping over it would attach an earlier sibling's guard.
+        if masked_header_opens_string(trimmed, masked, starts_in_code)
+            && leading_whitespace(raw) < threshold
+        {
+            return None;
+        }
+        if masked {
+            continue;
+        }
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
@@ -384,15 +393,23 @@ fn else_chain_conditions(
     else_index: usize,
     owner: &PythonOwner,
 ) -> Option<Vec<(usize, String)>> {
-    let in_string = lines_inside_triple_quotes(lines);
+    let scan = scan_triple_quotes(lines);
+    let in_string: Vec<bool> = scan.iter().map(|(inside, _)| *inside).collect();
     let else_indent = leading_whitespace(lines.get(else_index)?);
     let mut chain = Vec::new();
     for index in (owner.start_line..else_index).rev() {
+        let raw = lines[index];
+        let trimmed = raw.trim();
+        // A sibling header that opens a multi-line string (a `for`/`while`
+        // whose `else` this is) is unreadable and must not be stepped over.
+        if masked_header_opens_string(trimmed, scan[index].0, scan[index].1)
+            && leading_whitespace(raw) <= else_indent
+        {
+            return None;
+        }
         if in_string[index] {
             continue;
         }
-        let raw = lines[index];
-        let trimmed = raw.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
@@ -445,9 +462,31 @@ fn header_opens_deeper_block(
 /// code. A line that closes a string and then holds code counts as inside;
 /// the callers only skip such lines, which fails open.
 fn lines_inside_triple_quotes(lines: &[&str]) -> Vec<bool> {
+    scan_triple_quotes(lines)
+        .into_iter()
+        .map(|(inside, _)| inside)
+        .collect()
+}
+
+/// A masked line that begins in code (not inside a string a prior line opened)
+/// and starts with a block keyword: a header whose own line opens a
+/// multi-line string. Its condition is unreadable and masking skips it, so a
+/// walk must fail open rather than step over it (#9919).
+fn masked_header_opens_string(trimmed: &str, masked: bool, starts_in_code: bool) -> bool {
+    masked
+        && starts_in_code
+        && (is_block_opener(trimmed)
+            || ["if ", "elif ", "else", "while "]
+                .iter()
+                .any(|prefix| trimmed.starts_with(prefix)))
+}
+
+/// Per line: whether it is masked, and whether it begins in code.
+fn scan_triple_quotes(lines: &[&str]) -> Vec<(bool, bool)> {
     let mut open: Option<&str> = None;
     let mut mask = Vec::with_capacity(lines.len());
     for line in lines {
+        let starts_in_code = open.is_none();
         let mut inside = open.is_some();
         let mut rest: &str = line;
         loop {
@@ -483,7 +522,7 @@ fn lines_inside_triple_quotes(lines: &[&str]) -> Vec<bool> {
                 }
             }
         }
-        mask.push(inside);
+        mask.push((inside, starts_in_code));
     }
     mask
 }
@@ -970,6 +1009,15 @@ fn is_integer_literal(text: &str) -> bool {
 /// string against a number is unreadable, which fails open).
 pub(super) fn compare_literal_values(left: &str, op: &str, right: &str) -> Option<bool> {
     let (left_text, right_text) = (left, right);
+    // Equality excludes a call, so both sides must be read exactly: a hex /
+    // octal / binary / exponent number or an escaped string is compared on its
+    // source text, not its decoded value (`0x10` vs `16`, `"\x41"` vs `"A"`),
+    // so it fails open (#9919).
+    if matches!(op, "==" | "!=")
+        && !(guard_literal_is_readable(left) && guard_literal_is_readable(right))
+    {
+        return None;
+    }
     match op {
         "==" => Some(guard_literals_equal(left, right)),
         "!=" => Some(!guard_literals_equal(left, right)),
@@ -1007,6 +1055,14 @@ pub(super) fn compare_literal_values(left: &str, op: &str, right: &str) -> Optio
         }
         _ => None,
     }
+}
+
+/// Whether a literal's source text equals its decoded value: a plain decimal,
+/// `True`/`False`/`None`, or a string with no escape sequence.
+fn guard_literal_is_readable(text: &str) -> bool {
+    canonical_decimal(text).is_some()
+        || matches!(text, "True" | "False" | "None")
+        || python_string_literal_value(text).is_some_and(|body| !body.contains('\\'))
 }
 
 /// Equality as Python evaluates it for scalar literals. The shared
@@ -1196,6 +1252,41 @@ mod tests {
         // A number against a string is unreadable, which fails open.
         assert_eq!(compare_literal_values("100", ">", "\"a\""), None);
         assert_eq!(compare_literal_values("\"a\"", "<", "\"b\""), None);
+    }
+
+    #[test]
+    fn compare_literal_values_fails_open_on_undecoded_literals() {
+        // Hex / escaped text compares on its source, not its value (#9919).
+        assert_eq!(compare_literal_values("0x10", "==", "16"), None);
+        assert_eq!(compare_literal_values("16", "!=", "0x10"), None);
+        assert_eq!(compare_literal_values("0x10", "==", "0x10"), None);
+        assert_eq!(compare_literal_values("1e3", "==", "1000"), None);
+        assert_eq!(compare_literal_values("\"\\x41\"", "==", "\"A\""), None);
+        assert_eq!(compare_literal_values("\"A\"", "!=", "'\\x41'"), None);
+        // Plain decimals and plain strings still evaluate.
+        assert_eq!(compare_literal_values("16", "==", "16.0"), Some(true));
+        assert_eq!(compare_literal_values("\"A\"", "==", "'A'"), Some(true));
+        assert_eq!(compare_literal_values("\"A\"", "==", "\"B\""), Some(false));
+        assert_eq!(compare_literal_values("None", "!=", "0"), Some(true));
+    }
+
+    #[test]
+    fn walks_fail_open_on_a_header_that_opens_a_multiline_string() -> Result<(), String> {
+        let owner = quote_owner("def quote(total):\n    return total\n")?;
+        // for/else after an `if`: the `for` header line is masked string text.
+        let source = "def quote(total):\n    if total > 1:\n        y = 1\n    for s in (\"\"\"\na\"\"\", \"b\"):\n        pass\n    else:\n        return 3\n";
+        let lines: Vec<&str> = source.lines().collect();
+        assert_eq!(else_chain_conditions(&lines, 6, &owner), None);
+        assert!(walk_guards(&owner, source, 7).is_none());
+        // Control: a plain `if`/`else` chain is still read.
+        let plain =
+            "def quote(total):\n    if total > 1:\n        return 1\n    else:\n        return 3\n";
+        let lines: Vec<&str> = plain.lines().collect();
+        assert!(else_chain_conditions(&lines, 3, &owner).is_some());
+        // A loop body under a string-opening header is not under the `if`.
+        let body = "def quote(total):\n    if total > 1:\n        return 1\n    for s in (\"\"\"\na\"\"\", \"b\"):\n        return 2\n";
+        assert!(walk_guards(&owner, body, 6).is_none());
+        Ok(())
     }
 
     #[test]
