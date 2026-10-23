@@ -2770,7 +2770,7 @@ mod tests {
         // sits exactly at the document ceiling.
         let (mut low, mut high) = (0usize, 70_000usize);
         while low < high {
-            let mid = (low + high + 1) / 2;
+            let mid = (low + high).div_ceil(2);
             if refuses_at_offset_zero(mid)? {
                 high = mid - 1;
             } else {
