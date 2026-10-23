@@ -280,8 +280,24 @@ fn run_mcp_with_input_custody(
     })
 }
 
-/// Expected single operator warning for an unusable root (RIPR-SPEC-0211).
-const UNUSABLE_ROOT_WARNING: &str = "ripr mcp: warning: workspace root unavailable (not a usable repository root); tools will fail closed with workspace_unavailable. Restart with `--root <repository>`.\n";
+/// Expected single operator warning for an unusable root (RIPR-SPEC-0211),
+/// naming the concrete cause so the warning is actionable (#9895). The
+/// fixture roots are always passed via `--root`, so the marker-missing cause
+/// names "the configured root".
+fn unusable_root_warning(root_error: &str) -> Result<String, String> {
+    let cause = match root_error {
+        "root_missing" => "the configured root does not exist".to_string(),
+        "repository_marker_missing" => "no repository marker (.git, Cargo.toml, package.json, \
+             pyproject.toml, setup.py, setup.cfg, requirements.txt, Makefile.PL, Build.PL, \
+             cpanfile) was found at the configured root"
+            .to_string(),
+        other => return Err(format!("no expected warning cause for root error {other}")),
+    };
+    Ok(format!(
+        "ripr mcp: warning: workspace root unavailable: {cause}; tools will fail closed \
+         with workspace_unavailable. Restart with `--root <repository>`.\n"
+    ))
+}
 
 fn response_lines(output: &Output) -> Result<Vec<Value>, String> {
     response_lines_expecting_stderr(output, "")
@@ -289,8 +305,11 @@ fn response_lines(output: &Output) -> Result<Vec<Value>, String> {
 
 /// Like `response_lines`, but for a session started on an unusable root: stderr
 /// must be exactly the one startup warning, nothing more.
-fn response_lines_with_root_warning(output: &Output) -> Result<Vec<Value>, String> {
-    response_lines_expecting_stderr(output, UNUSABLE_ROOT_WARNING)
+fn response_lines_with_root_warning(
+    output: &Output,
+    root_error: &str,
+) -> Result<Vec<Value>, String> {
+    response_lines_expecting_stderr(output, &unusable_root_warning(root_error)?)
 }
 
 fn response_lines_expecting_stderr(
@@ -457,6 +476,49 @@ fn json_rpc_rejections_are_answered_with_spec_codes_and_the_session_survives() -
         || !messages[9].contains("perl")
     {
         return Err(format!("rejection messages drifted: {messages:?}"));
+    }
+    Ok(())
+}
+
+/// The MCP contract allows exactly one `initialize` per connection. A
+/// well-formed repeat must be refused as Invalid Request with a message that
+/// says the session is already initialized (not a bare method-not-found and
+/// not a duplicate result), and the session must stay usable (#9895).
+#[test]
+fn second_initialize_is_rejected_with_reason_and_session_survives() -> Result<(), String> {
+    const REPLY_TIMEOUT: Duration = Duration::from_secs(30);
+    let root = workspace_root()?;
+    let mut session = SequentialStdio::spawn(&root)?;
+    let initialize = |id: &str| {
+        line(json!({
+            "jsonrpc": "2.0", "id": id, "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25", "capabilities": {},
+                "clientInfo": { "name": "second-init-test", "version": "1" }
+            }
+        }))
+    };
+    let first = session.raw_exchange(&initialize("init")?, REPLY_TIMEOUT)?;
+    if first.get("id") != Some(&json!("init")) || first.get("error").is_some() {
+        return Err(format!("first initialize failed: {first}"));
+    }
+    let second = session.raw_exchange(&initialize("init-again")?, REPLY_TIMEOUT)?;
+    if second.get("id") != Some(&json!("init-again"))
+        || second.pointer("/error/code").and_then(Value::as_i64) != Some(-32600)
+        || second
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .is_none_or(|message| !message.contains("already initialized"))
+        || second.pointer("/error/data/method").and_then(Value::as_str) != Some("initialize")
+    {
+        return Err(format!(
+            "second initialize must say the session is already initialized: {second}"
+        ));
+    }
+    // The refusal must not reset the negotiated session: calls still answer.
+    let alive = session.call("alive", "tools/list", json!({}), REPLY_TIMEOUT)?;
+    if alive.get("id") != Some(&json!("alive")) || alive.pointer("/result/tools").is_none() {
+        return Err(format!("the session did not survive the refusal: {alive}"));
     }
     Ok(())
 }
@@ -1318,7 +1380,7 @@ fn current_discovery_requires_metadata_and_rejects_legacy_ping() -> Result<(), S
     ]
     .concat();
     let output = run_mcp(&root, &[&request_bytes])?;
-    let responses = response_lines_with_root_warning(&output)?;
+    let responses = response_lines_with_root_warning(&output, "root_missing")?;
     if responses.len() != 5 {
         return Err(format!(
             "cancellation notification must not emit a response; got {} lines",
@@ -1518,7 +1580,7 @@ fn unavailable_workspace_evidence_names_restart_before_any_refresh() -> Result<(
             "params": { "_meta": current_meta(), "name": "ripr_workspace_status", "arguments": {} }
         }))?);
         let output = run_mcp(root, &[&requests.concat()])?;
-        let responses = response_lines_with_root_warning(&output)?;
+        let responses = response_lines_with_root_warning(&output, root_error)?;
         if responses.len() != 19 {
             return Err(format!(
                 "expected 19 replies for {root_error}, got {}",

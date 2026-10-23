@@ -415,12 +415,27 @@ pub(super) async fn serve_stdio(explicit_root: Option<PathBuf>) -> Result<(), St
 }
 /// One operator-facing line when the workspace root did not resolve, so the
 /// failure is not visible only as `workspace_unavailable` in tool output.
-/// Carries no path: the status document never exposes an absolute path.
-fn startup_warning(status: &WorkspaceStatus) -> Option<&'static str> {
-    (status.workspace_state == WorkspaceState::Unavailable).then_some(
-        "ripr mcp: warning: workspace root unavailable (not a usable repository root); \
-         tools will fail closed with workspace_unavailable. Restart with `--root <repository>`.",
-    )
+/// Names the concrete cause from the root error code — a bare
+/// "not a usable repository root" restated the failure without saying why
+/// (#9895). Carries no path: the status document never exposes an absolute
+/// path.
+fn startup_warning(status: &WorkspaceStatus) -> Option<String> {
+    if status.workspace_state != WorkspaceState::Unavailable {
+        return None;
+    }
+    let cause = status
+        .root
+        .error_code
+        .map(|code| code.cause(status.root.source));
+    Some(match cause {
+        Some(cause) => format!(
+            "ripr mcp: warning: workspace root unavailable: {cause}; tools will fail closed \
+             with workspace_unavailable. Restart with `--root <repository>`."
+        ),
+        None => "ripr mcp: warning: workspace root unavailable; tools will fail closed with \
+                 workspace_unavailable. Restart with `--root <repository>`."
+            .to_string(),
+    })
 }
 async fn serve<R, W>(
     reader: R,

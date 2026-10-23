@@ -29,6 +29,11 @@ pub(super) struct McpServer {
     analysis_root: Option<PathBuf>,
     root_identity: Option<String>,
     session: Arc<Mutex<workspace::WorkspaceSession>>,
+    /// One `McpServer` instance serves exactly one live session, so a
+    /// first-successful-`initialize` flag distinguishes the handshake from a
+    /// forbidden repeat. The SDK pre-sets `peer_info` before dispatching the
+    /// first `initialize`, so peer state cannot make that call (#9895).
+    session_initialized: std::sync::atomic::AtomicBool,
 }
 
 impl McpServer {
@@ -54,6 +59,7 @@ impl McpServer {
             analysis_root,
             status,
             session: Arc::new(Mutex::new(session)),
+            session_initialized: std::sync::atomic::AtomicBool::new(false),
         };
         // Domain JSON carries status/catalog data, not version-dependent SDK
         // result metadata. SDK constructors supply current result fields and
@@ -801,6 +807,30 @@ impl ServerHandler for McpServer {
         )
         .with_instructions(protocol::INSTRUCTIONS)
         .with_server_info(Implementation::new("ripr", env!("CARGO_PKG_VERSION")))
+    }
+    /// The MCP contract allows exactly one `initialize` per connection; a
+    /// repeat is an Invalid Request, not a fresh handshake. Answer with the
+    /// reason instead of a bare method-not-found or a duplicate result
+    /// (#9895). The flag is instance-bound: the SDK pre-sets `peer_info`
+    /// from the request before dispatching even the first `initialize`, so
+    /// peer state cannot distinguish handshake from repeat.
+    async fn initialize(
+        &self,
+        request: InitializeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<InitializeResult, ErrorData> {
+        if self
+            .session_initialized
+            .swap(true, std::sync::atomic::Ordering::AcqRel)
+        {
+            return Err(ErrorData::new(
+                ErrorCode::INVALID_REQUEST,
+                "session is already initialized; `initialize` may only be sent once per connection",
+                Some(serde_json::json!({ "method": "initialize" })),
+            ));
+        }
+        context.peer.set_peer_info(request.clone());
+        self.negotiate_initialize(&request)
     }
     /// The SDK decodes a request whose params fail typed validation as a
     /// custom request and the default answers `-32601` with only the method
