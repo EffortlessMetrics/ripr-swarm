@@ -100,15 +100,17 @@ pub(crate) fn preview_actionability_for(finding: &Finding) -> Option<PreviewActi
                 format!("{base}; validator: {reason}")
             }
         }
-    } else if let Some(reason) = repo_scope_no_repair_reason(finding) {
-        // #5531: a repo-scoped finding projects no packet because the
-        // capability registry has no repo-mode repair_routing cell, not
-        // because of its evidence; say so instead of a placement reason.
-        reason
     } else {
-        evidence_value(finding, "why_not_actionable: ")
-            .unwrap_or("TypeScript preview lacks a complete repair packet contract")
-            .to_string()
+        let specific = evidence_value(finding, "why_not_actionable: ");
+        // #5531: a repo-scoped finding projects no packet because the
+        // capability registry has no repo-mode repair_routing cell; lead with
+        // that and keep the specific per-finding reason.
+        match scope_qualified_why(finding, specific) {
+            Some(why) => why,
+            None => specific
+                .unwrap_or("TypeScript preview lacks a complete repair packet contract")
+                .to_string(),
+        }
     };
 
     // §1.3 / RIPR-SPEC-0088 §PR8: flip gap_state + actionability_category when
@@ -167,6 +169,17 @@ pub(crate) fn repo_scope_no_repair_reason(finding: &Finding) -> Option<String> {
         return None;
     }
     repo_mode_no_repair_routing_reason(finding.language?)
+}
+
+/// `"{scope reason}; {specific}"` (or the scope reason alone) for a repo-scoped
+/// finding, `None` otherwise (#5531). Shared by every surface that prints the
+/// raw `why_not_actionable:` evidence line so they cannot disagree.
+pub(crate) fn scope_qualified_why(finding: &Finding, specific: Option<&str>) -> Option<String> {
+    let scope = repo_scope_no_repair_reason(finding)?;
+    Some(match specific.filter(|s| !s.trim().is_empty()) {
+        Some(specific) => format!("{scope}; {specific}"),
+        None => scope,
+    })
 }
 
 /// Build the actionable repair-route line for a complete TypeScript packet.

@@ -4582,6 +4582,21 @@ mod tests {
         ));
     }
 
+    /// #5531: a contradictory Python finding (typed `Diff` plus the legacy
+    /// `analysis_scope: repo` evidence line) fails closed in the capability
+    /// gate and must not borrow the scope reason: the typed scope selects it.
+    #[test]
+    fn contradictory_python_finding_does_not_get_scope_reason() {
+        let mut finding = python_preview_finding(5, false);
+        finding
+            .evidence
+            .push(crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
+        assert_eq!(finding.analysis_mode(), None);
+        let rendered = render(&single_finding_output(finding));
+        assert!(!rendered.contains("repo-mode findings"), "{rendered}");
+        assert!(rendered.contains("has no repair card ("), "{rendered}");
+    }
+
     /// #5531: a repo-scoped no-path Python finding keeps its test-gap reason;
     /// scope text only replaces the placement/discriminator reasons.
     #[test]
@@ -4619,14 +4634,23 @@ mod tests {
 
             let mut repo = diff.clone();
             repo.mark_repo_scoped();
+            // The specific per-finding reason is kept after the scope reason.
+            let specific = "TypeScript preview lacks a complete repair packet contract";
             let why = crate::output::preview_actionability::preview_actionability_for(&repo)
                 .map(|a| a.why_not_actionable);
-            assert_eq!(why.as_deref(), Some(scope_reason.as_str()));
-            let rendered = render(&single_finding_output(repo));
+            assert_eq!(why, Some(format!("{scope_reason}; {specific}")));
+            let rendered = render(&single_finding_output(repo.clone()));
             assert!(
-                rendered.contains(&format!("repair packet is not ready ({scope_reason})")),
+                rendered.contains(&format!("repair packet is not ready ({scope_reason}; ")),
                 "{rendered}"
             );
+            // The `limitation:` row uses the same scope-qualified reason.
+            let card = render_finding(&repo);
+            assert!(
+                card.contains(&format!("limitation: {scope_reason}; {specific}")),
+                "{card}"
+            );
+            assert!(!render_finding(&diff).contains("repo-mode findings"));
 
             let mut legacy = diff;
             legacy

@@ -298,7 +298,11 @@ analysis. Repo-mode analysis differs per adapter:
   registry has no repo-mode `repair_routing` cell for these languages (#5531);
   repair routing stays diff-mode only. The closed-packet reason shown for such
   a finding names that scope (`repo-mode findings have no repair routing
-  (typescript/any/repo/repair_routing is not_proven)`), from the typed scope.
+  (typescript/any/repo/repair_routing is not_proven)`), from the typed scope,
+  followed by `; ` and the finding's specific `why_not_actionable` reason when
+  one exists. This scope-led text is the `why_not_actionable` value in JSON,
+  SARIF, LSP diagnostics/hover, the TypeScript preview card and the human
+  `limitation:` row for repo-scoped TS/JS findings; diff-mode text is unchanged.
 
 Consumption boundary: the repo-scoped CLI formats (`repo-exposure-*`,
 `repo-seams-*`, `repo-badge-*`, `agent-seam-packets-json`) render the

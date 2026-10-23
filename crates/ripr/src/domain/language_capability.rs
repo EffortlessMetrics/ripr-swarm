@@ -507,6 +507,7 @@ pub(crate) fn semantic_digest(cells: &[CapabilityCell]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
 
     #[test]
     fn repo_mode_no_repair_routing_reason_is_registry_derived() {
@@ -520,17 +521,13 @@ mod tests {
                 NotProven
             );
             assert_eq!(
-                repo_mode_no_repair_routing_reason(language).as_deref(),
-                Some(
-                    format!(
-                        "repo-mode findings have no repair routing ({name}/any/repo/repair_routing is not_proven)"
-                    )
-                    .as_str()
-                )
+                repo_mode_no_repair_routing_reason(language),
+                Some(format!(
+                    "repo-mode findings have no repair routing ({name}/any/repo/repair_routing is not_proven)"
+                ))
             );
         }
     }
-    use super::*;
 
     #[test]
     fn absent_repo_repair_routing_cells_are_not_proven_and_fail_closed() {
