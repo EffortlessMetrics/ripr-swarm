@@ -147,7 +147,7 @@ jobs:
           echo "status=success" >> "$GITHUB_OUTPUT"
           echo "message=ok" >> "$GITHUB_OUTPUT"
 
-      - uses: dtolnay/rust-toolchain@v1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: 1.95.0
           components: llvm-tools-preview
@@ -157,13 +157,13 @@ jobs:
         run: cargo fmt --check
 
       - name: Install CI tools
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2
         with:
           tool: ${{ inputs.use-scratch && 'sccache,nextest' || 'nextest' }}
 
       - name: Restore hosted Rust cache
         if: ${{ !inputs.use-scratch }}
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: ripr-swarm-rust-small-${{ runner.os }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -365,6 +365,30 @@ jobs:
           cargo xtask ripr-annotations
           cargo xtask ripr-annotations --check
 
+      # Published schema vs real producer bytes on the candidate (#9505, #3920).
+      # Corpus rows read committed bytes via `git archive HEAD`; the runtime-only
+      # rows are fed this run's own producer output: doctor from the freshly
+      # built binary, plus (pull requests and merge groups) the pr-evidence and review-comments
+      # bytes the PR evidence step just wrote. A missing artifact file fails the
+      # step, so a producer that stops writing cannot silently turn a row into
+      # `not_run`. Producer-only rows (repair-attempt, execution_result) carry a
+      # reviewed narrower authority instead (#9561); see docs/verification/schema-producer-audit.md.
+      - name: Schema producer sweep
+        id: schema_producer_sweep
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          mkdir -p target/ripr/sweep
+          cargo run --quiet -p ripr -- doctor --json > target/ripr/sweep/doctor.json
+          artifacts=(--artifact schemas/ripr/doctor.schema.json=target/ripr/sweep/doctor.json)
+          if [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "merge_group" ]; then
+            artifacts+=(
+              --artifact schemas/ripr/pr-evidence.schema.json=target/ripr/pr/repo-exposure.json
+              --artifact schemas/ripr/review-comments.schema.json=target/ripr/review/comments.json
+            )
+          fi
+          cargo xtask schema-producer-sweep "${artifacts[@]}"
+
       - name: Proof route dry-run (advisory)
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         env:
@@ -408,6 +432,7 @@ jobs:
           FIXTURES_RESULT: ${{ steps.fixtures.outcome }}
           VERDICT_CORPUS_RESULT: ${{ steps.verdict_corpus.outcome }}
           PR_EVIDENCE_RESULT: ${{ steps.pr_evidence.outcome }}
+          SCHEMA_SWEEP_RESULT: ${{ steps.schema_producer_sweep.outcome }}
         run: |
           {
             echo "## Rust gate outcomes"
@@ -431,6 +456,7 @@ jobs:
             printf '| fixtures | %s |\n' "${FIXTURES_RESULT:-not_reported}"
             printf '| verdict_corpus | %s |\n' "${VERDICT_CORPUS_RESULT:-not_reported}"
             printf '| pr_evidence | %s |\n' "${PR_EVIDENCE_RESULT:-not_reported}"
+            printf '| schema_producer_sweep | %s |\n' "${SCHEMA_SWEEP_RESULT:-not_reported}"
             echo ""
             echo "Step timings are available in the Actions job view and workflow-jobs API."
             echo "The first failed step is authoritative. Skipped, cancelled, and not_reported are not passes."

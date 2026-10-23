@@ -11,6 +11,11 @@ use std::path::{Path, PathBuf};
 #[cfg(test)]
 mod verify_command_tests;
 
+mod dunder_entries;
+pub(super) use dunder_entries::{
+    PythonClassFacts, apply_class_facts, operator_entry_in_text, with_entry,
+};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PythonRelationKind {
     SyntacticCall,
@@ -863,6 +868,9 @@ pub(super) fn oracle_operand_protocol_entry(
     test: &PythonTest,
     owner: &PythonOwner,
 ) -> bool {
+    if operator_entry_in_text(text, test, owner) {
+        return true;
+    }
     let Some(depth) = oracle_operand_depth(text) else {
         return false;
     };
@@ -917,7 +925,7 @@ fn dunder_method_relation(
     if local_binding_calls_owner(test, owner) {
         return Some(PythonRelationKind::LocalBinding);
     }
-    if protocol_entry_in_body(test, owner) {
+    if protocol_entry_in_body(test, owner) || with_entry(test, owner).is_some() {
         return Some(PythonRelationKind::ProtocolEntryCall);
     }
     if test_constructs_class(test, owner, class) {
@@ -942,6 +950,14 @@ fn dunder_method_relation(
         return Some(PythonRelationKind::FixtureName);
     }
     None
+}
+
+/// Whether the test imports the owner's module, or anything from it or a
+/// package above it. Importing the module runs its top-level statements.
+pub(super) fn test_imports_owner_module(test: &PythonTest, owner: &PythonOwner) -> bool {
+    test.imports.iter().any(|import| {
+        imports_owner_module(import, owner) || module_contains_owner(&import.source_module, owner)
+    })
 }
 
 /// Whether the test references the owner's `class` through an import that
@@ -1926,11 +1942,21 @@ pub(super) fn strong_test_imports_owner_from_module(
         all_tests.matching(related_test).any(|test| {
             super::test_activation::activation_control(test).is_none()
                 && test.imports.iter().any(|import| {
-                    import.imported == owner.name
+                    import_binds_owner_name(import, owner)
                         && import_source_module_matches_owner(import, owner, &test.file)
                 })
         })
     })
+}
+
+/// Whether `import` brings the owner's own name into the test: the named
+/// import, or `from module import *` for a public owner the module's
+/// `__all__` exports. A leading underscore keeps a name out of a star import,
+/// and a module whose `__all__` omits the name (or is unresolved) does not
+/// export it, so neither binds this way.
+fn import_binds_owner_name(import: &PythonImport, owner: &PythonOwner) -> bool {
+    import.imported == owner.name
+        || (import.imported == "*" && !owner.name.starts_with('_') && owner.star_exported)
 }
 
 fn api_client_route_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
@@ -2258,7 +2284,35 @@ pub(super) fn owner_method_bound_locals(
             locals.push(var);
         }
     }
+    for path in setup_bound_receivers(test, owner, class, method) {
+        if !locals.contains(&path) {
+            locals.push(path);
+        }
+    }
     locals
+}
+
+/// Attribute paths (`self.stock`) the test's class binds once, in a setup hook,
+/// to a construction of the owner's class, and that the test calls the owner
+/// `method` on without rebinding them (#9417). A rebinding in the test body, a
+/// second assignment anywhere in the class or a subclassed class reads none.
+pub(super) fn setup_bound_receivers(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    class: &str,
+    method: &str,
+) -> Vec<String> {
+    if test.setup_receivers.is_empty() {
+        return Vec::new();
+    }
+    let class_locals = owner_class_locals(test, owner, class);
+    test.setup_receivers
+        .iter()
+        .filter(|receiver| class_locals.contains(&receiver.callee))
+        .filter(|receiver| !super::setup_receivers::rebinds_path(&test.body_text, &receiver.path))
+        .filter(|receiver| contains_attribute_call(&test.body_text, &receiver.path, method))
+        .map(|receiver| receiver.path.clone())
+        .collect()
 }
 
 /// Whether the assertion text calls `.method(` only on receivers that are not
@@ -2345,9 +2399,9 @@ pub(super) fn strong_test_calls_owner_method_on_bound_receiver(
     strong_tests.iter().any(|related_test| {
         all_tests.matching(related_test).any(|test| {
             super::test_activation::activation_control(test).is_none()
-                && owner_class_locals(test, owner, class).iter().any(|local| {
+                && (owner_class_locals(test, owner, class).iter().any(|local| {
                     body_calls_method_on_owner_bound_receiver(&test.body_text, local, method)
-                })
+                }) || !setup_bound_receivers(test, owner, class, method).is_empty())
         })
     })
 }

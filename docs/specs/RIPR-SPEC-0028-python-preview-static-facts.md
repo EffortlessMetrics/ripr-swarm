@@ -91,8 +91,11 @@ placements retain a related pointer but cannot contribute an oracle or boundary
 input. Function-level unittest skip wraps the function under either runner;
 unittest class skip flags and expected-failure metadata qualify only TestCase
 tests. Those flags do not suppress ordinary pytest assertions. The relation is
-`test_activation_unestablished`. Conditions are not evaluated: even a visible
-false conditional skip remains uncertain within this bounded static contract.
+`test_activation_unestablished`. Conditions are not evaluated: a visible false
+conditional skip on a name or comparison remains uncertain within this bounded
+static contract. The exception is a condition that is the boolean literal that
+never triggers the mark (`skipif(False)`), which leaves the test active
+(RIPR-SPEC-0238 rule 24).
 Imported decorator aliases use the last explicit binding in the declaration-time
 module/class scope, before test-body imports or later imports can shadow them.
 A canonical-looking name explicitly imported from another module is not a
@@ -191,6 +194,10 @@ status-code and exit-code assertions, broad smoke assertions, reach-only tests,
 mock expectations, and custom `assert_*` helpers.
 
 - bare `assert expr` â†’ smoke oracle
+  - exception (#9542): a bare `assert f(lit, ..)` / `assert not f(lit, ..)` whose
+    single resolved workspace function owner provably returns `bool` is an
+    exact pin, read as `f(lit, ..) == True` / `== False`; any ambiguity, patching
+    or non-literal argument stays smoke
 - `assert a == b` â†’ exact-value oracle; `assert a != b` and other
   non-equality comparisons â†’ relational check, weak
 - `assert isinstance(value, SomeType)` â†’ relational check, weak

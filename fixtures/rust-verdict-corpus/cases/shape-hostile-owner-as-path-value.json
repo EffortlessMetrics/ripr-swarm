@@ -1,0 +1,55 @@
+{
+  "case_id": "shape-hostile-owner-as-path-value",
+  "subject_id": "authored-shape-kit",
+  "diff": "cases/shape-hostile-owner-as-path-value.diff",
+  "anchor": {
+    "file": "src/hostile.rs",
+    "line": 47
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "owner_passed_as_function_path_to_map",
+  "hard_case": "The test never writes `inc(..)`; it passes the bare path `inc` to `Iterator::map`.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "x + 2",
+        "mutated_line": "x + 2",
+        "outcome": "tests_failed",
+        "failing_test": "hostile::tests::owner_as_a_path_value",
+        "equivalence_review": "not equivalent: `1 + x` becomes `x + 2`"
+      },
+      {
+        "replacement": "x - 1",
+        "mutated_line": "x - 1",
+        "outcome": "tests_failed",
+        "failing_test": "hostile::tests::owner_as_a_path_value",
+        "equivalence_review": "not equivalent: `1 + x` becomes `x - 1`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "owner_as_a_path_value compares the mapped list [2, 3], so both mutants fail. Hostile input: owner reached as a function value.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "axes": [
+    "hostile_input"
+  ]
+}

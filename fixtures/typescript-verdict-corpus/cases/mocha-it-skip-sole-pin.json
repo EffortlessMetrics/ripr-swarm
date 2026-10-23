@@ -1,0 +1,47 @@
+{
+  "case_id": "mocha-it-skip-sole-pin",
+  "subject_id": "authored-ts-mocha-hooks",
+  "diff": "cases/mocha-it-skip-sole-pin.diff",
+  "anchor": {
+    "file": "src/rank.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "mocha_chai_it_skip_only_pin",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx mocha",
+    "toolchain": "Node.js v22.22.0, mocha 12.0.3, chai 6.3, tsx 4.23, typescript 5.9, x86_64-linux; edit applied by hand to the whole package",
+    "mutants": [
+      {
+        "replacement": "return score >= 90 ? \"gold\" : \"bronze\";",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: The silver result is only asserted by it.skip, which mocha reports as pending."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The silver result is only asserted by it.skip, which mocha reports as pending. The edited package's test command still passes, so no test notices the change and a gap is the honest verdict.",
+  "labeling_observation": {
+    "ripr_commit": "3b4ac1e",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0243#40"
+  ]
+}

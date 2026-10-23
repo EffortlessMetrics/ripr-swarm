@@ -7,6 +7,14 @@ dir = "target/nextest"
 retries = 0
 failure-output = "immediate-final"
 
+# #9272: the sharded Windows advisory lane. A test that never finishes must show
+# up as a named TIMEOUT row instead of cancelling the whole shard and losing its
+# log (shard 3 of run 39800081622 was cancelled with no evidence).
+[profile.windows-advisory]
+retries = 0
+failure-output = "immediate-final"
+slow-timeout = { period = "120s", terminate-after = 3 }
+
 [profile.ci.junit]
 path = "junit.xml"
 
