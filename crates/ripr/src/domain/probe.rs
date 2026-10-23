@@ -770,14 +770,14 @@ impl Finding {
     /// evidence line `analysis_scope: repo` (disclosed in
     /// `docs/LANGUAGE_ADAPTER_PREVIEW.md`) from it; idempotent.
     pub fn mark_repo_scoped(&mut self) {
+        use crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE;
         self.analysis_scope = AnalysisScope::Repo;
         if !self
             .evidence
             .iter()
-            .any(|line| line == crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE)
+            .any(|line| line == REPO_SCOPE_EVIDENCE_LINE)
         {
-            self.evidence
-                .push(crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
+            self.evidence.push(REPO_SCOPE_EVIDENCE_LINE.to_string());
         }
     }
 

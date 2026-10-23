@@ -1618,20 +1618,21 @@ mod tests {
     /// whose typed scope is `Diff` (contradictory) fails closed too.
     #[test]
     fn typed_scope_is_authority_and_contradiction_fails_closed() {
+        use crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE;
         let mut typed_only = complete_finding();
         typed_only.analysis_scope = crate::domain::AnalysisScope::Repo;
         assert!(
             typed_only
                 .evidence
                 .iter()
-                .all(|l| l != "analysis_scope: repo")
+                .all(|l| l != REPO_SCOPE_EVIDENCE_LINE)
         );
         assert!(typescript_gap_record_for(&typed_only).is_none());
 
         let mut legacy_line_only = complete_finding();
         legacy_line_only
             .evidence
-            .push("analysis_scope: repo".to_string());
+            .push(REPO_SCOPE_EVIDENCE_LINE.to_string());
         assert!(legacy_line_only.analysis_mode().is_none());
         assert!(typescript_gap_record_for(&legacy_line_only).is_none());
 
@@ -1642,7 +1643,7 @@ mod tests {
             marked
                 .evidence
                 .iter()
-                .filter(|l| *l == "analysis_scope: repo")
+                .filter(|l| *l == REPO_SCOPE_EVIDENCE_LINE)
                 .count(),
             1,
             "the compatibility evidence line is derived once"

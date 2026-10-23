@@ -2426,7 +2426,9 @@ mod tests {
         typed_only.analysis_scope = crate::domain::AnalysisScope::Repo;
         assert!(crate::output::python_repair_card::python_repair_card(&typed_only).is_none());
         let mut legacy = carded.clone();
-        legacy.evidence.push("analysis_scope: repo".to_string());
+        legacy
+            .evidence
+            .push(crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
         assert!(crate::output::python_repair_card::python_repair_card(&legacy).is_none());
         assert!(crate::output::python_repair_card::python_repair_card(&carded).is_some());
     }
