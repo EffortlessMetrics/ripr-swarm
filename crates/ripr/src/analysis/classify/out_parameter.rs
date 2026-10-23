@@ -122,6 +122,7 @@ fn owner_out_parameters(owner: &FunctionSummary) -> Option<Vec<(usize, String)>>
                     mentions_token(body.syntax(), name.text())
                         && !name_rebound_in(body.syntax(), name.text())
                         && name_written_in(body.syntax(), name.text())
+                        && !name_overwritten_after_write(body.syntax(), name.text())
                 })
         })
         .filter_map(|(at, parameter)| match parameter.pat() {
@@ -191,6 +192,26 @@ fn is_clearly_nonempty(expected: &str) -> bool {
         return false;
     };
     nonempty_expr(&initializer)
+}
+
+/// The local starts as a recognized empty collection, so a clearly non-empty
+/// expected value cannot equal its initial state.
+fn is_empty_constructor(initial: &str) -> bool {
+    const EMPTY: &[&str] = &[
+        "String::new()",
+        "String::default()",
+        "Vec::new()",
+        "Vec::default()",
+        "VecDeque::new()",
+        "BTreeMap::new()",
+        "BTreeSet::new()",
+        "HashMap::new()",
+        "HashSet::new()",
+    ];
+    EMPTY.contains(&initial)
+        || (initial.ends_with(')')
+            && (initial.starts_with("String::with_capacity(")
+                || initial.starts_with("Vec::with_capacity(")))
 }
 
 fn nonempty_expr(expression: &ast::Expr) -> bool {
@@ -276,6 +297,67 @@ fn arguments_are_empty(call: &ast::MethodCallExpr) -> bool {
 /// dereference, field or index of it. Passing it onward or only reading it is
 /// not a write (fail closed).
 fn name_written_in(body: &SyntaxNode, name: &str) -> bool {
+    !write_offsets(body, name).is_empty()
+}
+
+/// Whether a destructive operation on `name` (`clear`, `truncate`, `drain`,
+/// `retain`, a deref/field/index assignment, `mem::take`/`replace`/`swap`)
+/// follows an earlier write in straight source order, so the written value
+/// may never reach the caller. Conservative: any such order refuses.
+fn name_overwritten_after_write(body: &SyntaxNode, name: &str) -> bool {
+    const KILLERS: &[&str] = &[
+        "clear",
+        "truncate",
+        "drain",
+        "retain",
+        "remove",
+        "pop",
+        "resize",
+        "replace_range",
+        "take",
+        "swap",
+        "fill",
+        "sort",
+    ];
+    let Some(first_write) = write_offsets(body, name).into_iter().min() else {
+        return false;
+    };
+    let is_name = |text: String| strip_raw(&compact(&text)) == name;
+    let writes = write_offsets(body, name);
+    body.descendants().any(|node| {
+        let at = usize::from(node.text_range().start());
+        if at <= first_write {
+            return false;
+        }
+        if let Some(call) = ast::MethodCallExpr::cast(node.clone()) {
+            return call
+                .name_ref()
+                .is_some_and(|method| KILLERS.contains(&strip_raw(method.text())))
+                && call
+                    .receiver()
+                    .is_some_and(|receiver| is_name(receiver.syntax().text().to_string()));
+        }
+        if let Some(call) = ast::CallExpr::cast(node.clone()) {
+            let callee = call
+                .expr()
+                .map(|callee| compact(&callee.syntax().text().to_string()))
+                .unwrap_or_default();
+            let leaf = callee.rsplit("::").next().unwrap_or_default().to_string();
+            return matches!(leaf.as_str(), "take" | "replace" | "swap")
+                && call.arg_list().is_some_and(|args| {
+                    args.args().any(|argument| {
+                        let text = compact(&argument.syntax().text().to_string());
+                        let text = text.trim_start_matches("&mut").trim_start_matches('*');
+                        strip_raw(text) == name
+                    })
+                });
+        }
+        // A later deref/field/index assignment is itself a write offset.
+        writes.contains(&at) && ast::BinExpr::can_cast(node.kind())
+    })
+}
+
+fn write_offsets(body: &SyntaxNode, name: &str) -> Vec<usize> {
     const WRITERS: &[&str] = &[
         "push",
         "push_str",
@@ -292,7 +374,8 @@ fn name_written_in(body: &SyntaxNode, name: &str) -> bool {
         "write",
     ];
     let is_name = |text: String| strip_raw(&compact(&text)) == name;
-    body.descendants().any(|node| {
+    let is_write = |node: &SyntaxNode| -> bool {
+        let node = node.clone();
         if let Some(call) = ast::MethodCallExpr::cast(node.clone()) {
             return call
                 .name_ref()
@@ -330,7 +413,11 @@ fn name_written_in(body: &SyntaxNode, name: &str) -> bool {
                 });
         }
         false
-    })
+    };
+    body.descendants()
+        .filter(|node| is_write(node))
+        .map(|node| usize::from(node.text_range().start()))
+        .collect()
 }
 
 fn local_written_by_owner_call(
@@ -389,7 +476,7 @@ fn local_written_by_owner_call(
             _ => None,
         })
         .map(|initializer| compact(&initializer.syntax().text().to_string()))?;
-    if expected == initial || !is_clearly_nonempty(expected) {
+    if !is_empty_constructor(&initial) || expected == initial || !is_clearly_nonempty(expected) {
         return None;
     }
     let call = &items[*call_at];

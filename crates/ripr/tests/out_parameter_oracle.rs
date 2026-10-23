@@ -410,3 +410,66 @@ fn no_op_writers_are_not_credited() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn a_callee_overwrite_of_the_changed_output_is_not_confirmed() -> Result<(), String> {
+    let old = "        out.push(if minutes < 0 { '-' } else { '~' });";
+    let new = "        out.push(if minutes < 0 { '-' } else { '+' });";
+    let test = format!("{BUILD}        assert_eq!(s, \"fixed\");");
+    for tail in [
+        "        out.clear();\n        out.push_str(\"fixed\");",
+        "        *out = String::from(\"fixed\");",
+        "        std::mem::take(out);\n        out.push_str(\"fixed\");",
+    ] {
+        let owner = format!(
+            "    pub fn format(&self, out: &mut String, minutes: i32) {{\n{new}\n{tail}\n    }}"
+        );
+        let finding = finding_custom(&owner, old, new, &test)?;
+        assert_uncredited(&finding, tail);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_fmt_write_owner_and_a_non_empty_initial_local_behave_as_specified() -> Result<(), String> {
+    let old = "        write!(out, \"{}\", if minutes < 0 { '-' } else { '~' }).unwrap();";
+    let new = "        write!(out, \"{}\", if minutes < 0 { '-' } else { '+' }).unwrap();";
+    let owner = format!(
+        "    pub fn format(&self, out: &mut String, minutes: i32) {{\n        use std::fmt::Write;\n{new}\n    }}"
+    );
+    let healthy = finding_custom(
+        &owner,
+        old,
+        new,
+        &format!("{BUILD}        assert_eq!(s, \"+\");"),
+    )?;
+    assert_eq!(healthy["classification"], "exposed", "{healthy}");
+    assert_eq!(healthy["ripr"]["discriminate"]["state"], "yes", "{healthy}");
+    // A local that starts non-empty may already equal the expected value.
+    for build in [
+        "        let mut s = String::from(\"+\");\n        OffsetFormat.format(&mut s, 570);\n",
+        "        let mut s = String::from(\"x\");\n        OffsetFormat.format(&mut s, 570);\n",
+    ] {
+        let finding = finding(&format!("{build}        assert_eq!(s, \"x\");"))?;
+        assert_uncredited(&finding, build);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_clear_before_the_changed_write_stays_credited() -> Result<(), String> {
+    let old = "        out.push(if minutes < 0 { '-' } else { '~' });";
+    let new = "        out.push(if minutes < 0 { '-' } else { '+' });";
+    let owner = format!(
+        "    pub fn format(&self, out: &mut String, minutes: i32) {{\n        out.clear();\n{new}\n    }}"
+    );
+    let finding = finding_custom(
+        &owner,
+        old,
+        new,
+        &format!("{BUILD}        assert_eq!(s, \"+\");"),
+    )?;
+    assert_eq!(finding["classification"], "exposed", "{finding}");
+    assert_eq!(finding["ripr"]["discriminate"]["state"], "yes", "{finding}");
+    Ok(())
+}

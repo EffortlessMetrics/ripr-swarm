@@ -2192,7 +2192,8 @@ fn analyze_related_assertions(
             // RIPR-SPEC-0351: an `assert_eq!` on the local a direct owner
             // call wrote through as `&mut` reads the call's output. It is a
             // candidate oracle for any probe, and confirms observation only
-            // when the changed line itself names that parameter.
+            // when the changed expression itself writes through that
+            // parameter (a name mention alone is not a write).
             let out_parameter = if credits_oracle
                 && *reason == RelationReason::DirectOwnerCall
                 && !import_defeats_owner

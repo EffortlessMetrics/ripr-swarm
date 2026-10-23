@@ -58,8 +58,9 @@ method when every link is syntactic and exact:
 2. One operand of the assertion is a bare local. The other operand does not
    mention it.
 3. In the same test body, that local is bound exactly once by
-   `let mut local = <call or record literal>;` (no borrow in the
-   initializer, no `let ... else`), and no statement between that binding and
+   `let mut local = <recognized empty constructor>;` (`String::new()`,
+   `Vec::new()`, `default()`/`with_capacity(..)` of those and the std maps
+   and sets; no `let ... else`), and no statement between that binding and
    the call mentions it.
 4. The next mention is a top-level statement that calls the method, possibly
    through `?`, `.unwrap()` or `.expect(..)`, passing exactly `&mut local` at
@@ -68,9 +69,10 @@ method when every link is syntactic and exact:
    order, and the call's receiver resolves to the owner's impl type by the
    existing relation-layer receiver rules. No new receiver type inference is
    added.
-6. When the changed line itself names that parameter, the assertion also
-   confirms observation of the change; otherwise it is only a candidate
-   oracle.
+6. When the changed expression itself writes through that parameter (the
+   same write rule as item 1) and no destructive overwrite of it follows the
+   first write in the owner, the assertion also confirms observation;
+   otherwise it is only a candidate oracle.
 
 Anything else (a rebinding or shadow, a second pass of the local, a use
 inside a loop, closure or macro, an assertion before the call, a call in
@@ -100,6 +102,10 @@ assertion reads the call's out-parameter; it grants no strength or reach.
   `truncate`, `drain`, `retain` and similar are not writers, and a writer
   called with only empty arguments is not a write. A writer given an empty
   value held in a local (`out.extend(empty_local)`) is not detected.
+- An out-parameter overwritten after a write (`clear`, `truncate`,
+  `drain`, `retain`, a deref/field/index assignment, `mem::take`/`replace`/
+  `swap`) in straight source order is refused: the written value may never
+  reach the caller.
 - Observation is confirmed only when the changed expression itself writes
   through the parameter; a mention of its name on an unrelated line is not
   confirmation.
