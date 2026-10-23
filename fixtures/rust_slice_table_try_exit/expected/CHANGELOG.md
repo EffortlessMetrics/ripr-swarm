@@ -141,3 +141,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_slice_table_try_exit (12)
+
+Reason:
+RIPR-SPEC-0122: infection_unknown next step names a concrete action (#9244 item 5); wording only, no classification change
+
+Command:
+`cargo xtask goldens bless rust_slice_table_try_exit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

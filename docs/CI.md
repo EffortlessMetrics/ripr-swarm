@@ -2339,6 +2339,31 @@ updated when repository settings change.
 
 Release workflows handle extension publishing and server binary releases.
 
+## Capability Producer Inventory
+
+`cargo xtask check-capability-producers [--registry-json <path>]` compares the
+binary-resident language capability registry (`ripr capabilities --json`, #5531)
+with repository inventory the in-crate tests cannot enumerate. It builds `ripr`
+and fails when:
+
+- a `LanguageId` variant declared in `domain/language.rs` is not exported by the
+  registry (an omitted `LanguageId::ALL` entry);
+- a registered language has no cell, or a cell names an unregistered language;
+- a `lang-*` Cargo feature, a registry `required_feature` and an adapter
+  directory under `analysis/language/` do not name the same producer set;
+- a cell `proof_refs` entry has no `docs/specs/RIPR-SPEC-NNNN-*.md`.
+
+It is separate from `check-capabilities`, which validates
+`metrics/capabilities.toml` against `docs/CAPABILITY_MATRIX.md` and does not read
+the registry. Limits: it does not check cell states, tier ceilings or docs text
+(in-crate tests and `check-support-tiers`), framework-level producers (the
+per-language disposition tests), the registry's relation to
+`metrics/capabilities.toml`, or non-default feature builds. `--registry-json`
+reads a saved registry without building and can be stale; the report says so.
+It is not part of `precommit`, `check-pr` or any required lane (it requires a
+`ripr` build), so it reports failures only when run; hosted wiring is a
+follow-up on #5531.
+
 ## Principles
 
 - Fast gates first: formatting, check, clippy, and tests should fail early.

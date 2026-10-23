@@ -274,3 +274,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — match_arm_controls (24)
+
+Reason:
+RIPR-SPEC-0122: infection_unknown next step names a concrete action (#9244 item 5); wording only, no classification change
+
+Command:
+`cargo xtask goldens bless match_arm_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

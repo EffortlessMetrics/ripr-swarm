@@ -15,7 +15,9 @@ use super::classify::{
 use super::expectations::{expected_sinks, required_oracles};
 use super::family::delta_for_family;
 use super::ids::diff_probe_id;
-use super::lexical::{classify_changed_line, is_accumulator_rewrite_of};
+use super::lexical::{
+    classify_changed_line, classify_changed_line_against, is_accumulator_rewrite_of,
+};
 use super::macro_definition::MacroMap;
 use crate::analysis::diagnostic_origin::ParserByteSpan;
 use crate::analysis::extract::mask_comments_and_strings;
@@ -493,7 +495,7 @@ pub(crate) fn probes_for_file_with_relations(
             }
             continue;
         }
-        let families = classify_changed_line(text)
+        let families = classify_changed_line_against(text, removed_counterpart.as_deref())
             .into_iter()
             .filter(|family| propagation_subject.is_none() || *family != ProbeFamily::ErrorPath)
             .collect::<Vec<_>>();

@@ -288,20 +288,78 @@ const SNAPSHOT_OVERRIDES: [&str; 7] = [
     "snapshotFormat",
 ];
 
+/// Assignment operators that rewrite a member (`config.key = x`,
+/// `config.key ||= x`, `config.key += x`). `==`, `===` and `=>` are not.
+const ASSIGNMENT_OPERATORS: [&str; 16] = [
+    "||=", "??=", "&&=", "**=", "<<=", ">>>=", ">>=", "+=", "-=", "*=", "/=", "%=", "&=", "|=",
+    "^=", "=",
+];
+
+/// `before` without trailing whitespace and `/* */` comments, so a comment
+/// between a member dot or an opening bracket and the key does not hide it.
+fn trim_trivia_end(mut before: &str) -> &str {
+    loop {
+        before = before.trim_end();
+        match before
+            .strip_suffix("*/")
+            .and_then(|inner| inner.rsplit_once("/*"))
+        {
+            Some((rest, _)) => before = rest,
+            None => return before,
+        }
+    }
+}
+
+/// `true` when `after` (text following a member key) starts an assignment.
+fn starts_assignment(after: &str) -> bool {
+    ASSIGNMENT_OPERATORS.iter().any(|operator| {
+        after
+            .strip_prefix(operator)
+            .is_some_and(|rest| *operator != "=" || !rest.starts_with(['=', '>']))
+    })
+}
+
 /// `true` when `text` holds `key` as an object key (`key:`, `key :`,
-/// `"key":`, `'key':`, or JS shorthand `{ key }` / `{ key, ... }`). A
-/// longer identifier (`rootDir`, `roots`) does not match `root`.
+/// `"key":`, `'key':`, a computed `["key"]:` / `['key']:` / `` [`key`]: ``, or
+/// JS shorthand `{ key }` / `{ key, ... }`) or as a member assignment
+/// (`config.key = ...`, `config["key"] = ...`, and the compound forms
+/// `||=`, `??=`, `&&=`, `+=`). Whitespace and comments may sit between the
+/// tokens (`projects /* x */ :`, `config.key /* x */ = ...`). A longer
+/// identifier (`rootDir`, `roots`) does not match `root`, and a plain
+/// `const root = ...` declaration is not a key.
 fn mentions_named_key(text: &str, key: &str) -> bool {
     text.match_indices(key).any(|(index, matched)| {
-        let preceded_by_ident = text
-            .get(..index)
-            .and_then(|before| before.chars().next_back())
+        let before = text.get(..index).unwrap_or_default();
+        let preceded_by_ident = before
+            .chars()
+            .next_back()
             .is_some_and(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '$'));
-        !preceded_by_ident
-            && text.get(index + matched.len()..).is_some_and(|rest| {
-                let rest = rest.strip_prefix(['"', '\'']).unwrap_or(rest).trim_start();
-                rest.starts_with(':') || rest.starts_with([',', '}'])
-            })
+        if preceded_by_ident {
+            return false;
+        }
+        let Some(rest) = text.get(index + matched.len()..) else {
+            return false;
+        };
+        let (quoted, after_quote) = match rest.strip_prefix(['"', '\'', '`']) {
+            Some(after) => (true, after),
+            None => (false, rest),
+        };
+        let trimmed = skip_trivia(after_quote);
+        // A computed key (`["key"]`) or bracket member (`config["key"]`)
+        // closes its bracket after the quote.
+        let (closed, after) = match trimmed.strip_prefix(']') {
+            Some(after) if quoted => (true, skip_trivia(after)),
+            _ => (false, trimmed),
+        };
+        // Whitespace and comments may separate the opening bracket from the
+        // quote (`config[ "key" ]`) and a member dot from its key.
+        let bracket_open = before
+            .strip_suffix(['"', '\'', '`'])
+            .is_some_and(|opener| trim_trivia_end(opener).ends_with('['));
+        let member = trim_trivia_end(before).ends_with('.') || (closed && bracket_open);
+        after.starts_with(':')
+            || (!closed && after.starts_with([',', '}']))
+            || (member && starts_assignment(after))
     })
 }
 
@@ -320,13 +378,40 @@ fn delegates_to_other_config(text: &str) -> bool {
         .any(|key| mentions_named_key(text, key))
 }
 
-/// `true` when `text` holds the short update flag after any whitespace
-/// (`jest -u`, `jest\t-u`). `"-u"` is in [`SNAPSHOT_OVERRIDES`].
+/// JSON string escapes for the whitespace and quotes a `package.json`
+/// script may put around a flag (`"jest\t-u"`, `"jest \"-u\""`).
+const JSON_ESCAPES: [&str; 11] = [
+    "\\t", "\\n", "\\r", "\\f", "\\v", "\\u0020", "\\u0009", "\\u000a", "\\u000d", "\\\"", "\\'",
+];
+
+/// `text` with each JSON escape for whitespace or a quote read as a space,
+/// so a script's flags split the way the shell sees them.
+fn unescape_json_separators(text: &str) -> String {
+    JSON_ESCAPES
+        .iter()
+        .fold(text.to_string(), |acc, escape| acc.replace(escape, " "))
+}
+
+/// `true` when `text` holds the short update flag, alone or inside a
+/// combined cluster, after whitespace, a shell quote or a JSON escape of
+/// either: `jest -u`, `jest\t-u`, `jest '-u'`, `jest \"-u\"`, `jest -iu`.
+/// A single dash only: `--ci` and `eslint-plugin-unicorn` do not match.
+/// Over-matching a cluster that merely contains `u` only refuses.
 fn mentions_short_update_flag(text: &str) -> bool {
-    text.match_indices("-u").any(|(index, _)| {
-        text.get(..index)
-            .and_then(|before| before.chars().next_back())
-            .is_some_and(char::is_whitespace)
+    let text = unescape_json_separators(text);
+    text.match_indices('-').any(|(index, _)| {
+        let before = text.get(..index).unwrap_or_default();
+        let boundary = before
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch.is_whitespace() || matches!(ch, '"' | '\'' | '`'));
+        let cluster = text
+            .get(index + 1..)
+            .unwrap_or_default()
+            .chars()
+            .take_while(char::is_ascii_alphabetic)
+            .collect::<String>();
+        boundary && cluster.contains('u')
     })
 }
 
@@ -351,7 +436,7 @@ const CONFIG_FLAGS: [&str; 7] = [
 fn passes_config_by_path(text: &str) -> bool {
     text.contains("\"projects\"")
         || text.contains("\"rootDir\"")
-        || text
+        || unescape_json_separators(text)
             .split(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ',' | '[' | ']'))
             .any(|token| {
                 let flag = token.split('=').next().unwrap_or(token);
@@ -431,12 +516,12 @@ const ABOVE_ROOT_LIMIT: usize = 16;
 /// `None` makes the caller refuse rather than guess.
 pub(super) fn directories_above_root(root: &Path, limit: usize) -> Option<Vec<PathBuf>> {
     let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-    if root.join(".git").exists() {
+    if is_repository_boundary(&root) {
         return Some(Vec::new());
     }
     let all: Vec<&Path> = root.ancestors().skip(1).collect();
     let above: Vec<&Path> = all.iter().copied().take(limit).collect();
-    match above.iter().position(|dir| dir.join(".git").exists()) {
+    match above.iter().position(|dir| is_repository_boundary(dir)) {
         Some(boundary) => Some(
             above
                 .into_iter()
@@ -447,6 +532,49 @@ pub(super) fn directories_above_root(root: &Path, limit: usize) -> Option<Vec<Pa
         None if all.len() <= limit => Some(above.into_iter().map(Path::to_path_buf).collect()),
         None => None,
     }
+}
+
+/// `true` when `directory` holds a `.git` entry that ends the repository
+/// walk. A submodule's `.git` file (`gitdir: ../.git/modules/x`) does not: the
+/// superproject above it owns the runner configs that reach the submodule's
+/// tests, so the walk continues to the superproject's own marker. A worktree
+/// pointer (`gitdir: .../worktrees/x`), a `.git` directory and an unreadable
+/// entry are boundaries; a `.git` directory nested in a larger repository
+/// (a vendored clone) cannot be told from the top and stays one (RIPR-SPEC-0258
+/// known limits).
+fn is_repository_boundary(directory: &Path) -> bool {
+    let marker = directory.join(".git");
+    if !marker.exists() {
+        return false;
+    }
+    !is_submodule_pointer(&marker)
+}
+
+/// `true` when `marker` is a regular `.git` file whose `gitdir:` target is a
+/// submodule's module directory (a `modules` path component).
+fn is_submodule_pointer(marker: &Path) -> bool {
+    const POINTER_CAP: u64 = 4096;
+    let Ok(metadata) = std::fs::symlink_metadata(marker) else {
+        return false;
+    };
+    if !metadata.file_type().is_file() || metadata.len() > POINTER_CAP {
+        return false;
+    }
+    let Ok(text) = std::fs::read_to_string(marker) else {
+        return false;
+    };
+    let Some(target) = text.trim().strip_prefix("gitdir:") else {
+        return false;
+    };
+    let target = target.trim();
+    let mut components = target.split(['/', '\\']).filter(|part| !part.is_empty());
+    // A `worktrees` component is not evidence of a worktree here: Git names a
+    // submodule's directory after its path, so `.git/modules/worktrees` is a
+    // legitimate submodule. A target with a `modules` component always reads as
+    // a submodule, which keeps the walk going to the superproject; the
+    // ambiguous worktree-of-a-submodule spelling errs the same way, since
+    // reading more configs can only withhold credit.
+    components.any(|part| part == "modules")
 }
 
 /// The runner configs and `package.json` files in the test's directory and
