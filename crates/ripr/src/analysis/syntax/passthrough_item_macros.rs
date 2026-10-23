@@ -168,6 +168,23 @@ fn identity_invocations(
     accepted
 }
 
+/// Attributes that cannot replace the item they annotate: the exact built-in
+/// test attributes, `allow` lints, and attributes the shared authority proves
+/// source-preserving.
+fn inert_item_attribute(attr: &ast::Attr) -> bool {
+    let text = attr.syntax().text().to_string();
+    if crate::analysis::facts::cfg_predicates::attribute_preserves_source_items(&text) {
+        return true;
+    }
+    attr.excl_token().is_none()
+        && attr
+            .path()
+            .map(|path| path.syntax().text().to_string())
+            .is_some_and(|name| {
+                matches!(name.as_str(), "test" | "ignore" | "should_panic" | "allow")
+            })
+}
+
 fn is_test_fn(function: &ast::Fn) -> bool {
     function.attrs().any(|attr| {
         attr.syntax()
@@ -493,6 +510,11 @@ fn literal_test_items(tree: &SyntaxNode, local_macros: &BTreeSet<String>) -> Opt
             return None;
         };
         items += 1;
+        // Allowlist: any other attribute (a proc-macro attribute can rewrite
+        // the emitted item into a binding such as `fn gate`) refuses the proof.
+        if function.attrs().any(|attr| !inert_item_attribute(&attr)) {
+            return None;
+        }
         has_test |= function.attrs().any(|attr| {
             attr.syntax()
                 .text()
@@ -604,6 +626,8 @@ mod tests {
             ),
             // An attribute-bearing sibling invocation may be replaced wholesale.
             format!("{second}suite! {{ {test} }}\n#[shadow]\nsecond! {{ {shadow} }}\n"),
+            // An attribute on an item emitted inside an identity invocation.
+            format!("{second}suite! {{ {test} #[shadow] fn decoy() {{}} }}\n"),
             // Nested item macros stay opaque.
             format!("suite! {{ {test} }}\nsuite! {{ suite! {{ {shadow} }} }}\n"),
             format!("{second}suite! {{ {test} }}\nsecond! {{ second! {{ {shadow} }} }}\n"),
@@ -627,6 +651,13 @@ mod tests {
         }
         // Control: a second identity macro that only wraps unrelated items
         // beside the test is harmless only when it binds nothing mentioned.
+        let inert = format!(
+            "{second}suite! {{ #[allow(unused)] #[test] #[ignore] #[should_panic(expected = \"x\")] fn a() {{ assert_eq!(gate(10), true); }} }}\n"
+        );
+        assert_eq!(
+            expand_local_test_macros(&format!("{SUITE}{inert}")).len(),
+            1
+        );
         let harmless = format!("{second}suite! {{ {test} }}\nsecond! {{ fn other() {{}} }}\n");
         assert_eq!(
             expand_local_test_macros(&format!("{SUITE}{harmless}")).len(),
