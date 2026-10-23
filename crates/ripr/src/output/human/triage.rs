@@ -1612,12 +1612,18 @@ mod tests {
             ));
         }
 
-        // Verbatim Windows prefix: separators unify to the #5996 `//?/`
-        // shape instead of leaking `\\?\` into JSON identity.
+        // Verbatim Windows prefix: never `\\?\` in JSON identity (#5996). On
+        // Windows it folds to the plain drive spelling, as every printed path
+        // does (#9660); on Unix `\` is a filename byte, so the text only
+        // slash-unifies.
         let mut verbatim = test_output(Vec::new());
         verbatim.root = PathBuf::from(["\\\\?", "C:", "tmp", "probe"].join(r"\"));
         let verbatim_raw = verbatim.root.display().to_string();
-        let verbatim_expected = ["//?", "C:", "tmp", "probe"].join("/");
+        let verbatim_expected = if cfg!(windows) {
+            ["C:", "tmp", "probe"].join("/")
+        } else {
+            ["//?", "C:", "tmp", "probe"].join("/")
+        };
         if verbatim_raw == verbatim_expected {
             return Err(format!(
                 "verbatim fixture lost its discriminator: raw {verbatim_raw:?} already matches {verbatim_expected:?}"

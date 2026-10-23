@@ -1,0 +1,12 @@
+diff --git a/src/hostile.rs b/src/hostile.rs
+--- a/src/hostile.rs
++++ b/src/hostile.rs
+@@ -38,7 +38,7 @@
+ }
+ 
+ pub fn commented_tail(x: u32) -> u32 {
+-    x + 1 // assert_eq!(commented_tail(1), 3);
++    1 + x // assert_eq!(commented_tail(1), 3);
+ }
+ 
+ pub fn minified(x: u32) -> u32 { x + 1 }

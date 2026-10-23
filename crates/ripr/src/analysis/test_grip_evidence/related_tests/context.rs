@@ -93,13 +93,12 @@ pub(crate) struct CompactGripContext<'a> {
     /// repo walk re-paid the first full-index pass O(seams) times and a
     /// ripr-swarm-sized scan never converged. Every cache inside is keyed
     /// by the immutable index this context borrows, so one seam's
-    /// answers cannot alias another's. `Mutex` because `EvidencePass`
-    /// serves seams from the rayon pool: the walk locks it per syntax
-    /// query, so the `RefCell` interiority the #8262 per-run single-pass
-    /// bounds rely on stays single-threaded while parse-heavy segments
-    /// between queries run in parallel. Not window-cleared: nothing in
+    /// answers cannot alias another's. Its memos are `SyncMemo`s, so the
+    /// rayon workers of `EvidencePass` read it directly; an outer lock
+    /// would hold every worker behind one syntax query (the first scan
+    /// ran in line while holding it). Not window-cleared: nothing in
     /// here derives from bytes a window can change, only from the index.
-    pin_syntax: Mutex<crate::analysis::classify::OwnerPinSyntax>,
+    pin_syntax: crate::analysis::classify::OwnerPinSyntax,
 }
 
 /// Candidate generation only: the existing `contains` and `same_module`
@@ -267,21 +266,25 @@ impl<'a> CompactGripContext<'a> {
     }
 
     /// The run-scoped owner-pin syntax every seam of this context shares
-    /// (#8282). Callers pass the mutex down the evidence stages and lock
-    /// it per syntax query; the parse-heavy segments between queries run
-    /// outside the lock, so the shared instance bounds the walk without
-    /// serializing it.
-    pub(in crate::analysis::test_grip_evidence) fn pin_syntax_mutex(
+    /// (#8282).
+    pub(in crate::analysis::test_grip_evidence) fn pin_syntax(
         &self,
-    ) -> &Mutex<crate::analysis::classify::OwnerPinSyntax> {
+    ) -> &crate::analysis::classify::OwnerPinSyntax {
         &self.pin_syntax
+    }
+
+    /// Pay the whole-index macro-site scan once, before the seam workers
+    /// start, so it fans out over the pool instead of running in line on
+    /// the first worker that needs it while the others wait (#9211).
+    pub(in crate::analysis::test_grip_evidence) fn prime_pin_syntax_scan(&self) {
+        self.pin_syntax.prime_workspace_macro_scan(self.index);
     }
 
     /// #8282 test witness: full-index macro-site passes the shared
     /// seam-walk instance paid.
     #[cfg(test)]
     pub(in crate::analysis) fn workspace_scan_passes(&self) -> u32 {
-        memo(&self.pin_syntax).workspace_scan_passes()
+        self.pin_syntax.workspace_scan_passes()
     }
 
     /// Number of indexed functions with exactly `name`; 0 for unknown or
@@ -651,7 +654,7 @@ impl<'a> CompactGripContext<'a> {
             unresolved_reach: Mutex::new(BTreeMap::new()),
             unseen_reach_names: OnceLock::new(),
             shared_grips: Mutex::new(SharedGrips::default()),
-            pin_syntax: Mutex::new(crate::analysis::classify::OwnerPinSyntax::default()),
+            pin_syntax: crate::analysis::classify::OwnerPinSyntax::default(),
         })
     }
 

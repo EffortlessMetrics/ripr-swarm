@@ -2388,7 +2388,7 @@ fn main() -> ExitCode {
     /// runs a command when pasted untranslated.
     #[test]
     fn powershell_translation_binds_hostile_paths_as_one_argument() -> Result<(), String> {
-        use crate::agent::loop_commands::shell_arg;
+        use crate::agent::loop_commands::{shell_arg, shell_arg_for};
 
         let root = native_proof_root("quotes")?;
         let _cleanup = RemoveOnDrop(root.clone());
@@ -2425,9 +2425,27 @@ fn main() -> ExitCode {
             return Err("the translated injection payload ran a command".to_string());
         }
 
+        // The Windows console form is what Windows users paste unchanged, so
+        // it must bind the payload as one literal argument with no command run.
+        let console = format!("ripr --root {}", shell_arg_for(injection, true));
+        if let Some((count, args)) = pwsh_recorded_argv(&console, &root)?
+            && (count != 2 || args != ["--root", injection])
+        {
+            return Err(format!(
+                "the Windows console form bound {count} arguments {args:?} (line {console:?})"
+            ));
+        }
+        if root.join("injected-marker").exists() {
+            return Err("the Windows console form of the payload ran a command".to_string());
+        }
+
         // Negative control: the untranslated bash form of the same payload does
         // run the command, which proves this instrument can observe the break.
-        let raw = format!("ripr --root {}", shell_arg(injection));
+        // The control pins the bash (single-quote) form on every host: the
+        // Windows console form `shell_arg` prints there double-quotes the
+        // payload, which PowerShell already binds literally (#9272), so it
+        // cannot exercise the break this control exists to observe.
+        let raw = format!("ripr --root {}", shell_arg_for(injection, false));
         let Some(_) = pwsh_recorded_argv(&raw, &root)? else {
             return Ok(());
         };
