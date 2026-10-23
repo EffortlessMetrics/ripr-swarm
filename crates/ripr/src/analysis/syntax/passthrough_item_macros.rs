@@ -112,6 +112,7 @@ fn identity_invocations(
     // call is exempt only when its name has an identity definition in textual
     // scope before it and no import mentions the name: a same-spelled call
     // elsewhere may resolve to a different macro.
+    let all_names: BTreeSet<String> = definitions.keys().cloned().collect();
     let foreign_macro = root
         .descendants()
         .filter_map(ast::MacroCall::cast)
@@ -123,9 +124,12 @@ fn identity_invocations(
             match definitions.get(&path) {
                 Some(definition) => {
                     imported.contains(&path)
+                        || other.attrs().next().is_some()
+                        || !supported_item_context(other.syntax())
                         || !in_definition_scope(&other, definition)
                         || other.syntax().text_range().start()
                             < definition.syntax().text_range().end()
+                        || shadowed_between(root, definition, &other, &all_names)
                 }
                 None => true,
             }
@@ -146,7 +150,7 @@ fn identity_invocations(
             || imported.contains(&name)
             || call.attrs().next().is_some()
             || !supported_item_context(call.syntax())
-            || shadowed_between(root, definition, &call, &name)
+            || shadowed_between(root, definition, &call, &BTreeSet::from([name.clone()]))
         {
             continue;
         }
@@ -337,7 +341,7 @@ fn shadowed_between(
     root: &SyntaxNode,
     definition: &ast::MacroRules,
     call: &ast::MacroCall,
-    name: &str,
+    exempt: &BTreeSet<String>,
 ) -> bool {
     let from = definition.syntax().text_range().end();
     let to = call.syntax().text_range().start();
@@ -599,6 +603,8 @@ mod tests {
             format!(
                 "mod unrelated {{ macro_rules! second {{ ($($i:item)*) => {{ $($i)* }}; }} }}\nsuite! {{ {test} }}\nsecond! {{ {shadow} }}\n"
             ),
+            // An attribute-bearing sibling invocation may be replaced wholesale.
+            format!("{second}suite! {{ {test} }}\n#[shadow]\nsecond! {{ {shadow} }}\n"),
             // Nested item macros stay opaque.
             format!("suite! {{ {test} }}\nsuite! {{ suite! {{ {shadow} }} }}\n"),
             format!("{second}suite! {{ {test} }}\nsecond! {{ second! {{ {shadow} }} }}\n"),

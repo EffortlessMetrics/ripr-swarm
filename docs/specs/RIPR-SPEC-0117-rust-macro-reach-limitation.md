@@ -301,7 +301,13 @@ the glob-imported file-root item: a `fn` (other than a file-root one),
 `const`, `static`, `struct`, `enum`, `union`, type alias, trait, module or
 `use` binding of such a name, whether at module level or inside a pass-through
 invocation's own tokens; a glob import other than `super::*`; or any other
-item-position macro call, whose expansion is unseen. Bindings scoped inside a
+item-position macro call, whose expansion is unseen (a sibling call to another
+identity macro is exempt only when it passes the same admission as the wrapper:
+no attribute, supported item context, definition in textual scope before it, no
+import of its name, no unseen item macro between). A local item spelled like
+the invocation's macro name (`fn suite`, `struct suite`) is refused too: the
+macro and value namespaces are separate, but the name collision is treated as a
+possible rebinding, which is a support restriction, not a Rust rule. Bindings scoped inside a
 function body are left to the expansion's own summary. The boundary is
 name-based and file-wide, not a resolver: it does not model visibility or
 `#[path]`/out-of-line modules beyond refusing across them, and it refuses

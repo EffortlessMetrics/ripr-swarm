@@ -259,10 +259,11 @@ fn a_function_local_weak_alias_in_a_wrapped_test_is_never_stronger_than_by_hand(
     // `assert_eq` is rebound to a weak helper inside the test body. By hand
     // the rebinding is visible; wrapped, it must not let the exemption turn
     // the call into a recognized strong oracle.
-    let body = "fn weak_alias() {\n            use crate::weak::weak as assert_eq;\n            assert_eq!(gate(10), true);\n        }\n";
-    let hand_written = TempRepo::create(&format!("    #[test]\n    {body}"))?.predicate()?;
+    let weak = "    #[macro_export]\n    macro_rules! weak {\n        ($left:expr, $right:expr) => {\n            let _ = ($left, $right);\n        };\n    }\n\n";
+    let body = "fn weak_alias() {\n            use crate::weak as assert_eq;\n            assert_eq!(gate(10), true);\n        }\n";
+    let hand_written = TempRepo::create(&format!("{weak}    #[test]\n    {body}"))?.predicate()?;
     let wrapped = TempRepo::create(&format!(
-        "{IDENTITY}    suite! {{\n        #[test]\n        {body}    }}\n"
+        "{IDENTITY}{weak}    suite! {{\n        #[test]\n        {body}    }}\n"
     ))?
     .predicate()?;
     for finding in [&hand_written, &wrapped] {
