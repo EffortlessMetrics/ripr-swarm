@@ -159,6 +159,13 @@ pub(crate) fn workspace_unanalyzed_source_languages(root: &Path) -> Vec<(&'stati
     counts.into_iter().collect()
 }
 
+/// Whether the root holds any regular source file ripr reads, routes to a
+/// preview adapter or names as an unanalyzed language, in one short-circuiting
+/// walk; see `workspace::has_inspectable_source_file`.
+pub(crate) fn workspace_has_inspectable_source(root: &Path) -> bool {
+    workspace::has_inspectable_source_file(root)
+}
+
 /// Re-export workspace Rust file discovery for the output layer so it can
 /// check whether a workspace has any Rust source.
 pub(crate) fn workspace_rust_files(root: &Path) -> Vec<PathBuf> {
