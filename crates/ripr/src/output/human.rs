@@ -2405,6 +2405,18 @@ mod tests {
         finding
     }
 
+    /// #5531: the same carded finding stamped as repo-scoped gets no repair
+    /// card (no repo-mode Python repair_routing cell); unstamped keeps it.
+    #[test]
+    fn repo_scoped_python_finding_gets_no_repair_card() {
+        let carded = python_preview_finding(11, true);
+        assert!(crate::output::python_repair_card::python_repair_card(&carded).is_some());
+        let mut repo = carded.clone();
+        repo.evidence
+            .push(crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
+        assert!(crate::output::python_repair_card::python_repair_card(&repo).is_none());
+    }
+
     /// #7587: a deleted or moved Python line is base-side evidence and names
     /// a line the candidate no longer has, so it gets no repair card, while
     /// the same finding on the candidate side keeps its card.
@@ -5450,6 +5462,64 @@ mod tests {
         ));
         assert!(rendered.contains("Next step\n"));
         assert!(rendered.contains("Add assertion for disabled path result"));
+    }
+
+    /// #9165: a related test whose oracle spans lines (a closure body, a
+    /// snapshot) is one evidence row, and a single-line oracle is unchanged.
+    #[test]
+    fn render_finding_keeps_a_multi_line_oracle_on_one_row() {
+        let mut finding = sample_finding();
+        finding.related_tests[0].oracle =
+            Some("scope(|scope| {\n    scope.spawn(f);\n})\n.unwrap();".to_string());
+        let related_path = finding.related_tests[0].file.display().to_string();
+
+        let rendered = render_finding(&finding);
+
+        assert!(
+            rendered.contains(&format!(
+                "{related_path}:22 test_handles_disabled uses strong exact value oracle: scope(|scope| {{ scope.spawn(f); }}) .unwrap();"
+            )),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("scope.spawn(f);\n"), "{rendered}");
+
+        // Negative control: the single-line oracle row is unchanged.
+        let single = render_finding(&sample_finding());
+        assert!(single.contains(&format!(
+            "{related_path}:22 test_handles_disabled uses strong exact value oracle: assert_eq!(actual, expected)"
+        )));
+    }
+
+    /// #9165: a multi-line observed value is one human row in both the
+    /// single-file (`at line N`) and mixed-file (`at path:N`) spellings.
+    #[test]
+    fn render_finding_keeps_a_multi_line_observed_value_on_one_row() {
+        let fact = |file: &str, line: usize, value: &str| ValueFact {
+            file: Some(std::path::PathBuf::from(file)),
+            line,
+            text: "assert!(true);".to_string(),
+            value: value.to_string(),
+            context: ValueContext::AssertionArgument,
+        };
+        let mut finding = sample_finding();
+        finding.activation.observed_values = vec![fact("tests/pricing.rs", 7, "a\nb")];
+        let rendered = render_finding(&finding);
+        assert!(
+            rendered.contains("source assertion argument value a b at line 7"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("value a\nb"), "{rendered}");
+
+        finding.activation.observed_values = vec![
+            fact("tests/pricing.rs", 7, "a\nb"),
+            fact("tests/other.rs", 9, "c"),
+        ];
+        let rendered = render_finding(&finding);
+        assert!(
+            rendered.contains("source assertion argument value a b at tests/pricing.rs:7"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("value a\nb"), "{rendered}");
     }
 
     /// #8744: `unknown sink` is the one unglossed internal term in the
