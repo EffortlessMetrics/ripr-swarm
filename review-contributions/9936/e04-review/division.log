@@ -1,0 +1,33 @@
+'x = y++ / 2 / 3; z = 1;'
+"x = y++ / 2 / 3; z = 1;"
+[]
+
+'i++ / 2; module.exports = 0;'
+"i++ / 2; module.exports = 0;"
+[]
+
+'i-- / 2; module.exports = 0;'
+"i-- / 2; module.exports = 0;"
+[]
+
+'let n = t! / 2; module.exports = 0;'
+"let n = t! / 2; module.exports = 0;"
+[]
+
+'let a = {} / 2; module.exports = 0;'
+"let a = {} / 2; module.exports = 0;"
+[]
+
+'var of = 4; var q = of / 2; module.exports = 0;'
+"var of = 4; var q = of / 2; module.exports = 0;"
+[]
+
+'const s="é"; module.exports = 0;'
+"const s=\"  \"; module.exports = 0;"
+[]
+
+'const q = /module.exports = 0/; const t = `x`;'
+"const q = /module.exports = 0/; const t = ` `;"
+[]
+
+8 controls passed; AST/lexical independence negative passed.

@@ -1,0 +1,22 @@
+[
+  [
+    "ts",
+    "const n = 1, s = ''; const a = <any>s; const q = n</a`/.test(s); test = null;"
+  ],
+  [
+    "ts",
+    "const n = 1, s = ''; 1<<n; const q = n</a`/.test(s); test = null;"
+  ],
+  [
+    "tsx",
+    "const n = 1, s = ''; const a = <Foo a={1} />; const q = n</a`/.test(s); test = null;"
+  ],
+  [
+    "tsx",
+    "const n = 1, s = ''; function f() { return <p>x</p>; test = null; } const q = n</a`/.test(s); test = null;"
+  ],
+  [
+    "ts",
+    "async function f() { const s = ''; for await (const x of []) /a`/.test(s); test = null; }"
+  ]
+]

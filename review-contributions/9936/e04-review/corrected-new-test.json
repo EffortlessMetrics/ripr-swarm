@@ -1,0 +1,47 @@
+[
+  {
+    "i": 0,
+    "kind": "ts",
+    "tsc_exit": 0,
+    "diagnostics": "",
+    "source": "const n = 1, s = ''; const a = <any>s; const q = n</a`/.source.length; test = null;",
+    "detect_current": true,
+    "detect_bdd0": false
+  },
+  {
+    "i": 1,
+    "kind": "ts",
+    "tsc_exit": 0,
+    "diagnostics": "",
+    "source": "const n = 1, s = ''; 1<<n; const q = n</a`/.source.length; test = null;",
+    "detect_current": true,
+    "detect_bdd0": false
+  },
+  {
+    "i": 2,
+    "kind": "tsx",
+    "tsc_exit": 0,
+    "diagnostics": "",
+    "source": "const n = 1, s = ''; const a = <Foo a={1} />; const q = n < /a`/.source.length; test = null;",
+    "detect_current": true,
+    "detect_bdd0": false
+  },
+  {
+    "i": 3,
+    "kind": "tsx",
+    "tsc_exit": 0,
+    "diagnostics": "",
+    "source": "const n = 1, s = ''; function f() { return <p>x</p>; test = null; } const q = n < /a`/.source.length; test = null;",
+    "detect_current": true,
+    "detect_bdd0": false
+  },
+  {
+    "i": 4,
+    "kind": "ts",
+    "tsc_exit": 0,
+    "diagnostics": "",
+    "source": "async function f() { const s = ''; for await (const x of []) /a`/.test(s); test = null; }",
+    "detect_current": true,
+    "detect_bdd0": false
+  }
+]

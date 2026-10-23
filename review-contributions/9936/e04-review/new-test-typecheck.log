@@ -1,0 +1,1 @@
+../9936-canonical-e04/new-test-0.ts(5,50): error TS2365: Operator '<' cannot be applied to types 'number' and 'boolean'.

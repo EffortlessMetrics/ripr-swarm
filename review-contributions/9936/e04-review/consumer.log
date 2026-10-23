@@ -1,0 +1,165 @@
+private_if_call: expected=True actual=True
+"class C { #if(x: number) { return x; } f() { return this.#if(8) /(+`${(test = null, 2)}`) / 2; } }"
+[("test", 71)]
+
+private_else_field: expected=True actual=True
+"class C { #else = 8; f() { return this.#else /(+`${(test = null, 2)}`) / 2; } }"
+[("test", 52)]
+
+for_await_write: expected=True actual=True
+"async function f(xs: number[]) { for await (const n of xs) /  /.test(''); test = null; }"
+[("test", 74)]
+
+for_await_fake_write: expected=False actual=False
+"async function f(xs: number[]) { for await (const n of xs) /            /.test(''); }"
+[]
+
+ambiguous_as_ts: expected=False actual=False
+"const v = <div>x</                               / ;"
+[]
+
+ambiguous_as_tsx: expected=True actual=True
+"const v =  div    div ; test = null; const y = a /g;"
+[("test", 24)]
+
+jsx_quote: expected=True actual=True
+"const node =  div        div ; test = null;"
+[("test", 31)]
+
+jsx_tick: expected=True actual=True
+"const node =  div        div ; test = null;"
+[("test", 31)]
+
+jsx_control_text: expected=True actual=True
+"const node =  div           {test = null}  div ;"
+[("test", 29)]
+
+jsx_comment_text: expected=True actual=True
+"const node =  div         {test = null}  div ;"
+[("test", 27)]
+
+jsx_fake_write_text: expected=False actual=False
+"const node =  div              div ;"
+[]
+
+jsx_unicode_attribute_child: expected=True actual=True
+"const node =  div                         span   {test = null}  div ;"
+[("test", 50)]
+
+jsx_generic_self_closing: expected=True actual=True
+"const node =  Component      ; test = null;"
+[("test", 31)]
+
+jsx_generic_paired: expected=True actual=True
+"const node =  Component          Component ; test = null;"
+[("test", 45)]
+
+jsx_generic_function: expected=True actual=True
+"const node =  Component                          ; test = null;"
+[("test", 51)]
+
+jsx_generic_nested: expected=True actual=True
+"const node =  Component                 {1}   ; test = null;"
+[("test", 48)]
+
+jsx_attribute_fake_write: expected=False actual=False
+"const node =  div               ;"
+[]
+
+jsx_attribute_reference: expected=False actual=False
+"const node =  div      {test}   ;"
+[]
+
+jsx_attribute_real_write: expected=True actual=True
+"const node =  div      {test = null}   ;"
+[("test", 24)]
+
+unicode_literal: expected=True actual=True
+"const s='  '; test = null;"
+[("test", 14)]
+
+unicode_regex: expected=True actual=True
+"if(n) /   /.test(s); test = null;"
+[("test", 21)]
+
+shift_compare: expected=True actual=True
+"const q = a <<b > c; test = null;"
+[("test", 21)]
+
+generic_arrow: expected=True actual=True
+"const f = <T extends unknown>(x: T) => x; test = null;"
+[("test", 42)]
+
+member_for_await: expected=True actual=True
+"async function f() { const obj = { for: 0 }; obj.for\nawait(8) /(+`${(test = null, 2)}`) / 2; }"
+[("test", 69)]
+
+nested_no_write: expected=False actual=False
+"const node =  Outer      { Inner                                  Inner }   ;"
+[]
+
+nested_real_write: expected=True actual=True
+"const node =  Outer      { Inner                         {test = null}  Inner }   ;"
+[("test", 58)]
+
+spread_attr_write: expected=True actual=True
+"const node =  Outer {...(test = null, {})}   ;"
+[("test", 25)]
+
+spread_child_write: expected=True actual=True
+"const node =  Outer {...(test = null, [])}  Outer ;"
+[("test", 25)]
+
+direct_element_write: expected=True actual=True
+"const node =  Outer       Inner                     {test = null}  Inner    ;"
+[("test", 53)]
+
+direct_element_no_write: expected=False actual=False
+"const node =  Outer       Inner                                  Inner    ;"
+[]
+
+direct_fragment_write: expected=True actual=True
+"const node =  Outer                   {test = null}      ;"
+[("test", 39)]
+
+direct_fragment_no_write: expected=False actual=False
+"const node =  Outer                         ;"
+[]
+
+nested_regex_write: expected=True actual=True
+"const node =  Outer      { Inner {/            /.test(s)}{test = null}  Inner }   ;"
+[("test", 58)]
+
+nested_regex_no_write: expected=False actual=False
+"const node =  Outer      { Inner {/            /.test(s)}  Inner }   ;"
+[]
+
+unicode_component_write: expected=True actual=True
+"const node =  C\u{301}       C\u{301} ; test = null;"
+[("test", 30)]
+
+unicode_component_no_write: expected=False actual=False
+"const node =  C\u{301}                                  C\u{301} ;"
+[]
+
+regex_operand_division: expected=True actual=True
+"const q = / /.source.length /(+`${(test = null, 2)}`) /2;"
+[("test", 35)]
+
+unicode_regex_operand_division: expected=True actual=True
+"const q = /   /.source.length /(+`${(test = null, 2)}`) /2;"
+[("test", 37)]
+
+jsx_operand_division: expected=True actual=True
+"const q =  Outer    /(+`${(test = null, 2)}`) /2;"
+[("test", 27)]
+
+template_jsx_write: expected=True actual=True
+"const q = `${ Outer {test = null}  Outer }`;"
+[("test", 21)]
+
+template_jsx_no_write: expected=False actual=False
+"const q = `${ Outer              Outer }`;"
+[]
+
+Fresh rerun against unchanged exact production bytes:41 controls; failures=[]

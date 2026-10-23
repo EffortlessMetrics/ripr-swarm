@@ -1,0 +1,59 @@
+[
+  {
+    "i": 0,
+    "kind": "ts",
+    "diagnostics": []
+  },
+  {
+    "i": 1,
+    "kind": "ts",
+    "diagnostics": []
+  },
+  {
+    "i": 2,
+    "kind": "tsx",
+    "diagnostics": [
+      {
+        "code": 1005,
+        "start": 221,
+        "message": "',' expected."
+      },
+      {
+        "code": 1160,
+        "start": 249,
+        "message": "Unterminated template literal."
+      },
+      {
+        "code": 1005,
+        "start": 224,
+        "message": "',' expected."
+      }
+    ]
+  },
+  {
+    "i": 3,
+    "kind": "tsx",
+    "diagnostics": [
+      {
+        "code": 1005,
+        "start": 243,
+        "message": "',' expected."
+      },
+      {
+        "code": 1160,
+        "start": 271,
+        "message": "Unterminated template literal."
+      },
+      {
+        "code": 1005,
+        "start": 246,
+        "message": "',' expected."
+      }
+    ]
+  },
+  {
+    "i": 4,
+    "kind": "ts",
+    "diagnostics": []
+  }
+]

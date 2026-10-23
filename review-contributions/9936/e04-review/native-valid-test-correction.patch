@@ -1,0 +1,27 @@
+--- a/crates/ripr/src/analysis/language/typescript/tests/var_runner_binding_tests.rs
++++ b/crates/ripr/src/analysis/language/typescript/tests/var_runner_binding_tests.rs
+@@ -743,7 +743,8 @@
+ 
+ #[test]
+ fn review_9936_comparison_regex_after_angle_shapes_keeps_the_write_visible() -> Result<(), String> {
+-    let regex = "const q = n</a`/.test(s); test = null;";
++    let regex = "const q = n</a`/.source.length; test = null;";
++    let tsx_regex = "const q = n < /a`/.source.length; test = null;";
+     let cases = [
+         (
+             "test/k.test.ts",
+@@ -755,12 +756,12 @@
+         ),
+         (
+             "test/k.test.tsx",
+-            format!("const n = 1, s = ''; const a = <Foo a={{1}} />; {regex}"),
++            format!("const n = 1, s = ''; const a = <Foo a={{1}} />; {tsx_regex}"),
+         ),
+         (
+             "test/k.test.tsx",
+             format!(
+-                "const n = 1, s = ''; function f() {{ return <p>x</p>; test = null; }} {regex}"
++                "const n = 1, s = ''; function f() {{ return <p>x</p>; test = null; }} {tsx_regex}"
+             ),
+         ),
+         (

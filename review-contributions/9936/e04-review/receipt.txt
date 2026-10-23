@@ -1,0 +1,44 @@
+Independent adopted-canonical review
+UTC: 2026-10-23T20:43:45.058586+00:00
+Head: e04f482bb13f559e01f8216294ecd4a9a10acc9c
+Tree: 7a31224bc4687bceb2059ba61a579104141940b7
+Parents: bdd0d8f45aa86901dd2b1f7370463550c050b64c 017df5f102194b398c9f9879df8becda9efdc45b
+Prior independently reviewed integration commit: 017df5f102194b398c9f9879df8becda9efdc45b
+Verified full tree delta: one new test,39 added lines, only crates/ripr/src/analysis/language/typescript/tests/var_runner_binding_tests.rs. Production, helper, SourceType wiring, Cargo.toml and Cargo.lock blobs byte-identical.
+Disposition: production/source acceptance carries forward. Final review remains incomplete: added-test native-oracle repair and separately owned feature-only validation classification remain pending; no Ready, qualification request or merge clearance.
+Production/helper/dependency SHA256 identity proof:
+cb3f27a96da4ba43d3a1051d5aefc64938728cf7920cad867bc12ddeafeee782  crates/ripr/src/analysis/language/typescript/classifier.rs
+6c2259f5d7a90b5fce6995a982cddfa2fc71f66df5fc874533b3264186ab5d7e  crates/ripr/src/analysis/language/typescript/literal_mask.rs
+f2a21cd9a11a5ed7c4ee3dc97d1a7c401ced65fb1bd47a29d197e7610bfdc95e  crates/ripr/src/analysis/language/typescript/tests_extract.rs
+e000c2a9570eb04c8f9baf5624ade009f5e42c0161aaa441e59060da3c6fccbd  crates/ripr/src/analysis/language/typescript/admission.rs
+cd809c2ecfdfa5f4d708bab443756412a502de62d871a52b01cc1540454e5528  crates/ripr/src/analysis/language/typescript/mock_payload_guard.rs
+5069284ffccee92dc9c21a3ef2971730faa626c09f51cd675ac47cbabb1d5842  crates/ripr/src/analysis/language/typescript/mock_payload_guard/spy.rs
+891525e5f94ef074de686551e32d5be7cda9906d57de1926445cd0d0cb73acc6  crates/ripr/Cargo.toml
+c21754696866c2ff84f9cd6d4c6c8bdc822234a8055b2f160e9be3e3985e7d21  Cargo.lock
+Execution: fresh rerun of41 typed/normal and8 division compatibility controls on hash-verified unchanged exact integration executable; all pass, including byte-width assertions and independent division interpretation negative. No compilation/Cargo/CI launched in this review. Prior standalone evidence is reused by unchanged production-source identity, not relabelled as a new full product build.
+New test review:5 exact tail cases distinguish old bdd0 masker from adopted production in raw producer->consumer checks. But native TS5.9.3 parse finds6 errors across TSX cases2/3; cases0/1 have syntactically valid TS but the shared number < boolean expression fails semantic check TS2365. Native parser/typechecker outcomes are retained, not called passes. No claim that the full adapter actually rejects these solely for parse failure (not executed here).
+Repair verified independently: TS cases0/1 retain glued n</a`/ but use .source.length; TSX cases2/3 use n < /a`/.source.length; for-await case unchanged. With standard ambient test/Foo/JSX declarations, corrected5/5 pass native --noEmit --jsx preserve --target ES2022 --skipLibCheck and all5 still reject bdd0 while adopted production detects actual writes. corrected-new-test.json retains source, native status and oracle results.
+Context-free parse ambiguity remains the documented fallback limitation; no universal source-kind claim. Main independent division-only lexical path remains intact.
+Feature-only compile failure ra_ap_syntax: author-reported and independently unclassified here; root owns baseline/candidate attribution before any repair. No opinion that this source review establishes it inherited or resolved.
+Author-reported1730 TypeScript unit tests/full gates were not independently run/inspected here. Prior root/native98 receipts retain their original inputs/scope; unchanged production supports their applicability, but the added5 test tails are an additional dimension and do not inherit native validity.
+No source/candidate checkout mutation, canonical mutation, Cargo, CI, classic-protection retry, evidence deletion or publication performed. Root checkout remained017df. Own evidence directory retained for author handoff.
+Artifact SHA256s:
+36d6603139ec28f1b67a899352a644685f9907525b9c85a6c5195f4ad76898ea  consumer.log
+bd6e9c8c323e655d29e87bb9a70b8c11e90fe39f74f81a40f0e7027c6022c433  corrected-new-test.json
+370715b3ae0f7d3951097de64b591dab15bfbe2c969ae13d48ec1958f63b9b6e  corrected-test-0.ts
+508da6456a622380ad96edd3f37f4cf43e6e1408fbcc0643e05ecfcb4a890471  corrected-test-1.ts
+51e6531b899cc7298be5229c799bd12d0e75ad8e17b73e22ce28d1cfc6872bc2  corrected-test-2.tsx
+b088aded99f4286cd7d2af80a460f1c31f73f48ba6b0d5476f4faa2dbc641f8b  corrected-test-3.tsx
+3aab10220cc1187f1f7a07a8993fb80903f8cec1978b59de9f159a851b166bd3  corrected-test-4.ts
+e6556610516471139cab43b8266014a81b68cc9a2568f22ea8d0902df2b2bde3  division.log
+f2f8f0d1aa0b454d6a2da23ece293bc720b4d76bc127c7c5d1b6b8a6941c1c58  new-test-0.ts
+62f9a7c3f16f64fab507cffce430f79998ad5e72d5cc091f5d2fed49fb65d33e  new-test-1.ts
+06274432a2d5f4166778a21b01ea8c322c45f722c474fcd2d75689a3022d84c4  new-test-2.tsx
+bac3b6ae03bb0819ece61bc5febd77ccecbc061d0329ef13af63723578698b2d  new-test-3.tsx
+3aab10220cc1187f1f7a07a8993fb80903f8cec1978b59de9f159a851b166bd3  new-test-4.ts
+9c3ef86826e708871298783738699c0e60f261be82eabecea40a8bdd157a5298  new-test-cases.json
+0deccf93bc439b1bbceb63c200af4a72240a69d526e84baa9eb64c87c892c63a  new-test-native-syntax-details.json
+840038ca84158ad85012cfe16e0857d7a8308844b417e2a79800e88d8f3e666f  new-test-native-syntax.log
+68dd78e45f4ad06a1c06dd1398a19997514bffdf6129acfe6ae4de80d9f488d7  new-test-oracle.log
+2906b6292368f3bde5990ff779ca8760acdb5abfc956850e07d913165c330752  new-test-typecheck.log
+e55f7f11e4ce07f41f408057ba17b557c861b2abed4072e8f87ef4f48b5f0dd4  source-identity.txt
