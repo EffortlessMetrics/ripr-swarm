@@ -13,6 +13,9 @@ Linked issues:
 
 - #7314 (optional tool arguments reject explicit null consistently with
   their advertised non-null input types)
+- #9895 (a SIGTERM (or SIGINT) arriving mid-refresh must not leave the
+  in-flight git child behind: the server entry installs cooperative
+  process-lifetime interrupts on Unix)
 - #3089 (this slice: status, refresh, bounded gap list, and evidence
   resources)
 - #5267 (every pre-initialize typed-shape violation recovers with the
@@ -81,6 +84,20 @@ official SDK transport:
   session for one message; a normal `initialize` still completes afterwards,
   and stdin EOF remains the clean exit. Each attempt consumes at least one
   inbound frame, so recovery always makes progress and never spins.
+- External termination requests settle instead of orphaning children
+  (#9895, Unix). The server entry installs process-lifetime cooperative
+  interrupts for SIGINT and SIGTERM before serving: the first signal of
+  either kind requests cancellation of the in-flight bounded attempt — the
+  child waits (git probes, the Perl exporter, cat-file batch reads)
+  observe the flag at their poll cadence, terminate the owned process
+  tree, and unwind, so no git child outlives an interrupted `ripr_refresh`
+  — and the refresh settles with a typed failure on the same session.
+  A repeated signal restores native termination as the escape; process
+  exit itself stays transport-owned (stdin EOF). On non-Unix targets the
+  install is a no-op: containment there is the job-object ownership in
+  `process_owner`, whose std API cannot express kill-on-job-close, so an
+  abrupt external termination can still outlive a git child (recorded
+  residual).
 - After a successful `initialize` handshake, `ping` is routed by method
   name. A request whose `params._meta` carries the handshake fields this
   server requires pre-init (`io.modelcontextprotocol/protocolVersion`,
@@ -483,6 +500,14 @@ is not evidence that a resource with a particular identity exists.
 - `crates/ripr/tests/mcp_stdio.rs::optional_tool_arguments_reject_null_and_recover_over_stdio`
   — the #7314 schema/dispatch contract for all six optional argument
   positions, with omission, valid-type, wrong-type and recovery controls.
+- `crates/ripr/tests/mcp_stdio.rs::sigterm_mid_refresh_terminates_the_git_tree_and_settles_typed`
+  (Linux) — a `git` shim blocks the refresh's uncommitted-diff read; an
+  external SIGTERM terminates the owned git child, the server survives,
+  the refresh settles with a typed `isError` failure carrying a failure
+  code, and the session still answers ping (#9895).
+  `crates/ripr/src/cli/interrupt.rs::tests` — the SIGTERM cooperative-first
+  contract, one shared flag pair across SIGINT+SIGTERM, and idempotent
+  process-lifetime installation.
 - `crates/ripr/src/mcp/protocol.rs::tests` + `server_tests.rs` —
   descriptor and dispatch contracts.
 - `crates/ripr/tests/mcp_sdk.rs`, `crates/ripr/tests/mcp_stdio.rs` —

@@ -183,6 +183,15 @@ pub fn run(args: &[String]) -> Result<(), String> {
         &mut std::io::stderr().lock(),
     );
 
+    // #9895: an external SIGTERM (or SIGINT) mid-refresh must not leave the
+    // in-flight git tree behind. Installing the process-lifetime cooperative
+    // interrupts lets the bounded child waits observe cancellation, terminate
+    // their owned process, and unwind cleanly. On non-Unix targets this is a
+    // no-op (Windows containment is the job-object ownership in
+    // `process_owner`).
+    crate::cli::interrupt::install_server_interrupts()
+        .map_err(|error| format!("install MCP interrupt containment: {error}"))?;
+
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()

@@ -1396,30 +1396,55 @@ pub(crate) fn run_check(
         git_timeout: Some(crate::app::default_cli_git_timeout()),
         ..Default::default()
     };
-    let output = crate::app::check_workspace_with_config_typed(input, &config)
-        .map_err(|error| check_failure(&error, base))?;
-    // The seam inventory is gathered once inside this bounded attempt and
-    // feeds both consumers: the shared repair validator that decides each
-    // item's repair readiness (#8717) and the repair-card seam bindings
-    // (RIPR-SPEC-0215). Readiness is projected before the snapshot identity
-    // is computed, so the identity binds the admission decision.
-    let inventory = super::repair_card::gather_seam_inventory(root, &config, &output.findings)?;
-    let admission = super::repair_admission::SeamAdmission::evaluate(
-        &output.findings,
-        &inventory.candidate_seams,
-        crate::app::agent_brief::AgentBriefPolicy::from_config(&config),
-        &inventory.completeness,
-    );
-    let mut snapshot = Snapshot::from_output_admitted(&output, root_identity, &admission)?;
-    snapshot.base = base.map(str::to_string);
-    // Bind the repair-card producers inside the same bounded attempt, after
-    // the shared check authority completed: the snapshot commits complete —
-    // items, findings, head, and card seams — or not at all (RIPR-SPEC-0215).
-    // The card producers consume the same resolved workspace configuration
-    // as the findings (#6825 review), so one committed snapshot cannot
-    // disagree with itself across the two producers.
-    super::repair_card::bind_snapshot_card_producers(root, inventory, &mut snapshot)?;
-    Ok(snapshot)
+    // #9895: when the server entry installed process-lifetime interrupt
+    // flags, the bounded attempt observes them through its cancellation
+    // token: a first SIGINT/SIGTERM requests cooperative settlement, the
+    // bounded child waits (git probes, the Perl exporter, cat-file batch
+    // reads) observe the flag at their poll cadence, terminate the owned
+    // process tree, and unwind — so no git child outlives an interrupted
+    // refresh. Without installed flags the token-free path preserves the
+    // embedder-managed signal policy.
+    let attempt = |config: &_| -> Result<Snapshot, AttemptFailure> {
+        let output = crate::app::check_workspace_with_config_typed(input, config)
+            .map_err(|error| check_failure(&error, base))?;
+        // The seam inventory is gathered once inside this bounded attempt and
+        // feeds both consumers: the shared repair validator that decides each
+        // item's repair readiness (#8717) and the repair-card seam bindings
+        // (RIPR-SPEC-0215). Readiness is projected before the snapshot identity
+        // is computed, so the identity binds the admission decision.
+        let inventory = super::repair_card::gather_seam_inventory(root, config, &output.findings)?;
+        let admission = super::repair_admission::SeamAdmission::evaluate(
+            &output.findings,
+            &inventory.candidate_seams,
+            crate::app::agent_brief::AgentBriefPolicy::from_config(config),
+            &inventory.completeness,
+        );
+        let mut snapshot = Snapshot::from_output_admitted(&output, root_identity, &admission)?;
+        snapshot.base = base.map(str::to_string);
+        // Bind the repair-card producers inside the same bounded attempt, after
+        // the shared check authority completed: the snapshot commits complete —
+        // items, findings, head, and card seams — or not at all (RIPR-SPEC-0215).
+        // The card producers consume the same resolved workspace configuration
+        // as the findings (#6825 review), so one committed snapshot cannot
+        // disagree with itself across the two producers.
+        super::repair_card::bind_snapshot_card_producers(root, inventory, &mut snapshot)?;
+        Ok(snapshot)
+    };
+    #[cfg(unix)]
+    let snapshot = match crate::cli::interrupt::server_interrupt_flags() {
+        Some((interrupted, native)) => {
+            let token =
+                crate::analysis::cancellation::AnalysisCancellationToken::with_interrupt_flags(
+                    interrupted,
+                    native,
+                );
+            crate::analysis::cancellation::with_token(&token, || attempt(&config))
+        }
+        None => attempt(&config),
+    };
+    #[cfg(not(unix))]
+    let snapshot = attempt(&config);
+    snapshot
 }
 
 /// Project a shared-check refusal into the attempt failure. The recovery
