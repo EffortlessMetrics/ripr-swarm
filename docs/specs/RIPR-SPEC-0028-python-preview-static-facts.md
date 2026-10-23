@@ -320,13 +320,16 @@ next line break, which may be CRLF, so a quoted `"""` on the continuation line
 opens nothing and a call there stays hidden. The `{...}` replacement fields of
 a triple-quoted f-string (prefix `f`, `F`, `rf`, `fr`, any case) are code: a
 call on a line of a multiline field is visible, while the string's own text, a
-`{{` escape, a string nested in a field, and a field not closed before the
-string ends stay hidden (#8787). Known limits, all hide-only (a real call is
-missed, never invented): a replacement field on the same line as the opening
-quote or on any line of a single-line f-string is hidden by the line-prefix
-quote check, a triple-quoted f-string with nested same-type quotes
-(Python 3.12) mis-lexes, and a format-spec fill character that is a quote ends
-a field early.
+`{{` escape, a string nested in a field (single-line or a complete
+different-delimiter triple-quoted literal, newlines and braces included), the
+literal format-spec text after a field's top-level `:` (only a nested `{...}`
+inside the spec is code again), and a field not closed before the string ends
+stay hidden (#8787). A colon that may or may not be the spec colon hides.
+Known limits, all hide-only (a real call is missed, never invented): a
+replacement field on the same line as the opening quote or on any line of a
+single-line f-string is hidden by the line-prefix quote check, a triple-quoted
+f-string with nested same-type quotes (Python 3.12) mis-lexes, and a `#`
+comment inside a Python 3.12 multiline field is not skipped (#9230).
 
 A pytest test that names a module-level `@pytest.fixture` function (in its own
 module or a `conftest.py` up its directory chain, nearest wins) as a parameter

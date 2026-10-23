@@ -333,6 +333,82 @@ fn given_text_outside_an_f_string_field_then_a_call_shaped_mention_stays_hidden(
 }
 
 #[test]
+fn given_literal_format_spec_text_then_a_call_shaped_mention_stays_hidden() {
+    for body in [
+        "assert f\"\"\"value:\n{1:\n    helper(1)\n}\n\"\"\" == x\n",
+        "assert f'''value:\n{1:\n    helper(1)\n}\n''' == x\n",
+        "assert f\"\"\"{x:>\n helper(1)\n}\"\"\" == x\n",
+        "assert f\"\"\"{x!r:\n helper(1)\n}\"\"\" == x\n",
+        // Literal text after a nested field inside the spec.
+        "assert f\"\"\"{x:{w}\n helper(1)\n}\"\"\" == x\n",
+        // Unsure whether a colon is the spec colon: hide.
+        "assert f\"\"\"{x:=\n helper(1)\n}\"\"\" == x\n",
+    ] {
+        assert!(!sees_call(body), "{body:?}");
+    }
+}
+
+#[test]
+fn given_a_nested_triple_quoted_literal_in_a_field_then_its_text_stays_hidden() {
+    for body in [
+        "assert f\"\"\"v\n{\n    '''\n    helper(1)\n    '''\n}\"\"\" == x\n",
+        "assert f'''v\n{\n    \"\"\"\n    helper(1)\n    \"\"\"\n}''' == x\n",
+        // Literal braces inside the nested literal do not unbalance the field.
+        "assert f\"\"\"v\n{ len('''\n  { helper(1) }\n  }''') }\"\"\" == x\n",
+        // Unterminated nested literal: the field never closes, hide the rest.
+        "assert f\"\"\"v\n{\n    '''\n    helper(1)\n}\"\"\" == x\n",
+    ] {
+        assert!(!sees_call(body), "{body:?}");
+    }
+    // A call after the nested literal in the same field stays visible.
+    assert!(sees_call(
+        "assert f\"\"\"v\n{\n    '''\n    text\n    '''\n    + str(helper(1))\n}\"\"\" == x\n"
+    ));
+}
+
+#[test]
+fn given_real_field_expressions_then_calls_in_them_stay_visible() {
+    for body in [
+        "assert f\"\"\"v\n{\n    helper(1)\n}\"\"\" == x\n",
+        "assert f\"\"\"v\n{helper(1):>10}\"\"\" == x\n",
+        "assert f\"\"\"v\n{\n    helper(1)!r:>10}\"\"\" == x\n",
+        "assert f\"\"\"v\n{x:{\n    helper(1)\n}}\"\"\" == x\n",
+        "assert f\"\"\"v\n{x:>{helper(1)}}\"\"\" == x\n",
+        "assert f\"\"\"v\n{ {1: helper(1)}[1] }\"\"\" == x\n",
+        "assert f\"\"\"v\n{\n    data[1:helper(1)]\n}\"\"\" == x\n",
+        "assert f\"\"\"v\n{ (lambda: helper(1))() }\"\"\" == x\n",
+        "assert f\"\"\"v\n{ 1 if x else helper(1) }\"\"\" == x\n",
+    ] {
+        assert!(sees_call(body), "{body:?}");
+    }
+}
+
+#[test]
+fn given_crlf_inside_a_triple_quoted_f_string_then_fields_and_text_are_classified() {
+    assert!(sees_call(
+        "assert f\"\"\"value: {\r\n    helper(1)\r\n}\"\"\" == x\r\n"
+    ));
+    assert!(!sees_call(
+        "assert f\"\"\"value:\r\n    helper(1) is text\r\n{y}\"\"\" == x\r\n"
+    ));
+    assert!(!sees_call(
+        "assert f\"\"\"value:\r\n{1:\r\n    helper(1)\r\n}\r\n\"\"\" == x\r\n"
+    ));
+    assert!(sees_call("x = f\"\"\"{y}\r\n\"\"\"\r\nhelper(1)\r\n"));
+}
+
+#[test]
+fn given_mixed_case_raw_f_prefixes_then_fields_are_code_and_text_is_hidden() {
+    for prefix in ["fr", "Fr", "rF", "FR", "rf", "Rf", "fR", "RF"] {
+        let field = format!("assert {prefix}\"\"\"value: {{\n    helper(1)\n}}\"\"\" == x\n");
+        assert!(sees_call(&field), "{field:?}");
+        let text =
+            format!("assert {prefix}\"\"\"value:\n    helper(1) is text\n{{y}}\"\"\" == x\n");
+        assert!(!sees_call(&text), "{text:?}");
+    }
+}
+
+#[test]
 fn given_a_backslash_continued_string_containing_triple_quotes_then_later_calls_are_kept() {
     for body in [
         "x = 'begin \\\n\"\"\"'\nassert helper(1)\n",

@@ -2783,46 +2783,132 @@ struct FStringField {
     target_hidden: bool,
 }
 
+/// Where the scanner is inside one replacement field.
+enum FieldMode {
+    /// Expression text; the count is the open `(`, `[` and dict/set `{` depth.
+    Code(usize),
+    /// Literal format-spec text after the field's top-level `:`.
+    Spec,
+}
+
 /// Scan the replacement field that begins at `rest` inside a triple-quoted
-/// f-string closed by `delimiter`, balancing braces and skipping nested
-/// single-line string literals. `None` when the field is not closed before the
-/// string's own closing delimiter, so the `{` stays literal text and the string
-/// keeps hiding its content. `target` is a byte offset into `rest`; the result
-/// records whether a nested string literal covers it.
+/// f-string closed by `delimiter`, balancing braces and skipping nested string
+/// literals. The text after a field's top-level `:` is literal format-spec text
+/// (hidden) except for nested `{...}` replacement fields, which are code again.
+/// A colon that is unsure to be the spec colon hides (a miss, never a false
+/// call). `None` when the field is not closed before the string's own closing
+/// delimiter (or a nested triple-quoted literal is unterminated), so the `{`
+/// stays literal text and the string keeps hiding its content. `target` is a
+/// byte offset into `rest`; the result records whether a nested string literal
+/// or spec text covers it.
 fn fstring_field_scan(rest: &str, delimiter: &str, target: usize) -> Option<FStringField> {
     let bytes = rest.as_bytes();
-    let mut depth = 0usize;
+    let mut stack: Vec<FieldMode> = Vec::new();
     let mut index = 0;
     while index < bytes.len() {
-        match bytes[index] {
-            b'{' => {
-                depth += 1;
-                index += 1;
+        let byte = bytes[index];
+        let hidden = |len: usize| {
+            Some(FStringField {
+                len,
+                target_hidden: true,
+            })
+        };
+        let Some(mode) = stack.last_mut() else {
+            // Only the opening `{` starts a field.
+            if byte != b'{' {
+                return None;
             }
-            b'}' => {
-                depth = depth.saturating_sub(1);
-                index += 1;
-                if depth == 0 {
-                    return Some(FStringField {
-                        len: index,
-                        target_hidden: false,
-                    });
+            stack.push(FieldMode::Code(0));
+            index += 1;
+            continue;
+        };
+        match mode {
+            FieldMode::Spec => match byte {
+                b'{' => {
+                    stack.push(FieldMode::Code(0));
+                    index += 1;
                 }
-            }
-            b'"' | b'\'' => {
-                if rest[index..].starts_with(delimiter) {
-                    return None;
+                b'}' => {
+                    stack.pop();
+                    index += 1;
+                    if stack.is_empty() {
+                        return Some(FStringField {
+                            len: index,
+                            target_hidden: false,
+                        });
+                    }
                 }
-                let len = single_line_string_len(&rest[index..]);
-                if target >= index && target < index + len {
-                    return Some(FStringField {
-                        len: index + len,
-                        target_hidden: true,
-                    });
+                b'"' | b'\'' if rest[index..].starts_with(delimiter) => return None,
+                _ => {
+                    if index == target {
+                        return hidden(index + 1);
+                    }
+                    index += 1;
                 }
-                index += len;
-            }
-            _ => index += 1,
+            },
+            FieldMode::Code(nest) => match byte {
+                b'{' | b'(' | b'[' => {
+                    *nest += 1;
+                    index += 1;
+                }
+                b')' | b']' => {
+                    *nest = nest.saturating_sub(1);
+                    index += 1;
+                }
+                b'}' => {
+                    index += 1;
+                    if *nest == 0 {
+                        stack.pop();
+                        if stack.is_empty() {
+                            return Some(FStringField {
+                                len: index,
+                                target_hidden: false,
+                            });
+                        }
+                    } else {
+                        *nest -= 1;
+                    }
+                }
+                b':' if *nest == 0 => {
+                    *mode = FieldMode::Spec;
+                    index += 1;
+                }
+                b'"' | b'\'' => {
+                    if rest[index..].starts_with(delimiter) {
+                        return None;
+                    }
+                    let literal = &rest[index..];
+                    let len = match ["\"\"\"", "'''"]
+                        .into_iter()
+                        .find(|triple| literal.starts_with(triple))
+                    {
+                        Some(triple) => triple_literal_len(literal, triple)?,
+                        None => single_line_string_len(literal),
+                    };
+                    if target >= index && target < index + len {
+                        return hidden(index + len);
+                    }
+                    index += len;
+                }
+                _ => index += 1,
+            },
+        }
+    }
+    None
+}
+
+/// Byte length of the complete triple-quoted literal at the start of `rest`
+/// (opened by `triple`), newlines included; `None` when it is unterminated.
+fn triple_literal_len(rest: &str, triple: &str) -> Option<usize> {
+    let bytes = rest.as_bytes();
+    let mut index = triple.len();
+    while index < bytes.len() {
+        if bytes[index] == b'\\' {
+            index += 2;
+        } else if bytes[index..].starts_with(triple.as_bytes()) {
+            return Some(index + triple.len());
+        } else {
+            index += 1;
         }
     }
     None
