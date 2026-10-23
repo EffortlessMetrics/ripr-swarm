@@ -471,6 +471,228 @@ fn json_rpc_rejections_are_answered_with_spec_codes_and_the_session_survives() -
     Ok(())
 }
 
+/// #9895: an external SIGTERM while a refresh is blocked on a git child must
+/// not leave the git child — or any pipe-inheriting descendant of it —
+/// behind. The server entry installs cooperative SIGINT+SIGTERM interrupts;
+/// the bounded child waits observe cancellation at their poll cadence and
+/// terminate the owned tree (Unix: the child's whole process group, so
+/// grandchildren a direct-child kill cannot reach die too), the refresh
+/// settles as a completed document whose `attempt` block carries the typed
+/// failure (`isError` stays false, the #5254 commit contract), and the
+/// session keeps serving — the first signal settles, only a repeated signal
+/// is the native-death escape. Linux-only: it needs `nix` for the owned
+/// signal and liveness probes.
+#[cfg(target_os = "linux")]
+#[test]
+fn sigterm_mid_refresh_terminates_the_git_tree_and_settles_typed() -> Result<(), String> {
+    use nix::sys::signal::{Signal, kill};
+    use nix::unistd::Pid;
+
+    let root = install_b4_repair_ready_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    // A `git` shim that passes every probe through but turns the refresh's
+    // uncommitted-diff read into a blocking child: it records its pid,
+    // spawns a pipe-inheriting descendant that records its own pid (the
+    // shape a direct-child kill cannot reach — pre-#9895 it outlived the
+    // server), then execs a long sleep (same pid), so the refresh sits
+    // inside the bounded git wait until the interrupt machinery terminates
+    // the owned tree.
+    let real_git = std::process::Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .map_err(|error| format!("locate real git: {error}"))
+        .and_then(|output| {
+            if output.status.success() {
+                String::from_utf8(output.stdout)
+                    .map(|text| text.trim().to_string())
+                    .map_err(|error| error.to_string())
+            } else {
+                Err("git is required for this witness".to_string())
+            }
+        })?;
+    if real_git.contains('\'') {
+        return Err(format!("real git path is not script-safe: {real_git}"));
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("clock before Unix epoch: {error}"))?
+        .as_nanos();
+    let fake_dir =
+        std::env::temp_dir().join(format!("ripr-fake-git-{}-{stamp}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&fake_dir);
+    std::fs::create_dir_all(&fake_dir).map_err(|error| error.to_string())?;
+    let pid_file = fake_dir.join("fake-git.pid");
+    let descendant_pid_file = fake_dir.join("fake-git-descendant.pid");
+    std::fs::write(
+        fake_dir.join("git"),
+        format!(
+            "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = \"diff\" ]; then\n    printf '%s' \"$$\" > \"$FAKE_GIT_PID_FILE\"\n    sh -c 'printf \"%s\" \"$$\" > \"$FAKE_GIT_DESCENDANT_PID_FILE\"; exec sleep 3000' &\n    exec /bin/sleep 3000\n  fi\ndone\nexec '{real_git}' \"$@\"\n"
+        ),
+    )
+    .map_err(|error| error.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(fake_dir.join("git"))
+            .map_err(|error| error.to_string())?
+            .permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(fake_dir.join("git"), permissions)
+            .map_err(|error| error.to_string())?;
+    }
+    let original_path = std::env::var("PATH").map_err(|error| format!("read PATH: {error}"))?;
+    let pid_file_text = pid_file
+        .to_str()
+        .ok_or_else(|| "pid file path is not UTF-8".to_string())?
+        .to_string();
+    let descendant_pid_file_text = descendant_pid_file
+        .to_str()
+        .ok_or_else(|| "descendant pid file path is not UTF-8".to_string())?
+        .to_string();
+    let fake_path = format!("{}:{original_path}", fake_dir.display());
+    let env_pairs = [
+        ("PATH", fake_path.as_str()),
+        ("FAKE_GIT_PID_FILE", pid_file_text.as_str()),
+        (
+            "FAKE_GIT_DESCENDANT_PID_FILE",
+            descendant_pid_file_text.as_str(),
+        ),
+    ];
+    let mut session = SequentialStdio::spawn_with_env(&root, &env_pairs)?;
+    let server_pid = session.child.id();
+
+    // Handshake, then a refresh whose uncommitted-diff read blocks on the shim.
+    let init = session.raw_exchange(
+        &line(json!({
+            "jsonrpc": "2.0", "id": "init", "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25", "capabilities": {},
+                "clientInfo": { "name": "ripr-sigterm-test", "version": "1" }
+            }
+        }))?,
+        Duration::from_secs(30),
+    )?;
+    if init.get("id") != Some(&json!("init")) || init.get("error").is_some() {
+        return Err(format!("initialize failed: {init}"));
+    }
+    session.send_raw(&line(
+        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+    )?)?;
+    session.send_raw(&line(json!({
+        "jsonrpc": "2.0", "id": "refresh-1", "method": "tools/call",
+        "params": { "name": "ripr_refresh", "arguments": {} }
+    }))?)?;
+
+    // Wait until the refresh is demonstrably inside the blocking git child.
+    let fake_git_pid = {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            if let Ok(text) = std::fs::read_to_string(&pid_file) {
+                if let Ok(pid) = text.trim().parse::<i32>() {
+                    if pid > 0 {
+                        break pid;
+                    }
+                }
+            }
+            if Instant::now() >= deadline {
+                return Err("the refresh never reached the blocking git child".to_string());
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    // The shim's pipe-inheriting descendant must exist before the signal so
+    // the post-signal check below certifies tree containment, not absence.
+    let descendant_pid = {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            if let Ok(text) = std::fs::read_to_string(&descendant_pid_file) {
+                if let Ok(pid) = text.trim().parse::<i32>() {
+                    if pid > 0 {
+                        break pid;
+                    }
+                }
+            }
+            if Instant::now() >= deadline {
+                return Err("the shim never spawned its pipe-inheriting descendant".to_string());
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    let probe = |pid: i32| kill(Pid::from_raw(pid), None).is_ok();
+    if !probe(fake_git_pid) {
+        return Err(format!("fake git child {fake_git_pid} was never alive"));
+    }
+    if !probe(descendant_pid) {
+        return Err(format!("git descendant {descendant_pid} was never alive"));
+    }
+
+    // The defect under test: SIGTERM used to kill the server outright and
+    // orphan the git child. Now the first signal cooperatively settles the
+    // attempt: the bounded wait terminates the owned tree — the direct
+    // child AND its pipe-inheriting descendant (a direct-child kill cannot
+    // reach the latter; only group containment can).
+    kill(Pid::from_raw(server_pid as i32), Signal::SIGTERM)
+        .map_err(|error| format!("send SIGTERM to the server: {error}"))?;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while probe(fake_git_pid) {
+        if Instant::now() >= deadline {
+            let _ = kill(Pid::from_raw(fake_git_pid), Signal::SIGKILL);
+            return Err(format!(
+                "the git child {fake_git_pid} outlived SIGTERM mid-refresh (#9895)"
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let descendant_deadline = Instant::now() + Duration::from_secs(20);
+    while probe(descendant_pid) {
+        if Instant::now() >= descendant_deadline {
+            let _ = kill(Pid::from_raw(descendant_pid), Signal::SIGKILL);
+            return Err(format!(
+                "the git descendant {descendant_pid} outlived SIGTERM mid-refresh; tree containment not established (#9895)"
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    if !probe(server_pid as i32) {
+        return Err("the server must survive the first SIGTERM (cooperative settle)".to_string());
+    }
+
+    // The refresh settles per the #5254 commit contract: a failed attempt
+    // still answers as a completed document — `isError` stays false and the
+    // typed failure rides under `attempt` (mirrors the
+    // `refresh_attempt_failure_code` helper in mcp_workspace_config.rs).
+    let reply = session.next_reply(Duration::from_secs(30))?;
+    if reply.get("id") != Some(&json!("refresh-1")) {
+        return Err(format!(
+            "the interrupted refresh answer lost its id: {reply}"
+        ));
+    }
+    if reply.pointer("/result/isError") != Some(&json!(false)) {
+        return Err(format!(
+            "the interrupted refresh must stay a completed document: {reply}"
+        ));
+    }
+    let settled = reply
+        .pointer("/result/structuredContent")
+        .cloned()
+        .ok_or_else(|| "the interrupted refresh lost its structured content".to_string())?;
+    if settled["schema_version"] != json!("ripr-mcp-refresh-v1")
+        || settled["attempt"]["state"] != json!("failed")
+        || settled["attempt"]["failure"]["code"] != json!("analysis_failed")
+    {
+        return Err(format!(
+            "the interrupted refresh must settle as a typed failed attempt: {reply}"
+        ));
+    }
+    let alive = session.call("alive", "ping", json!({}), Duration::from_secs(10))?;
+    if alive.get("id") != Some(&json!("alive")) || alive.get("result") != Some(&json!({})) {
+        return Err(format!(
+            "the session did not survive the interrupted refresh: {alive}"
+        ));
+    }
+    Ok(())
+}
+
 /// A client-supplied pagination cursor on the static catalog lists used to
 /// parse fine and then be silently dropped, so an agent could believe paging
 /// worked while always re-reading page one (#9895). The lists are static and
@@ -732,6 +954,7 @@ fn malformed_catalog_cursors_preserve_protocol_validation_and_recover() -> Resul
     }
     Ok(())
 }
+
 /// Optional tool fields may be omitted, but their advertised string/integer
 /// types do not accept explicit null. Pin the schemas and dispatch separately
 /// against literal expectations, through the actual stdio process (#7314).

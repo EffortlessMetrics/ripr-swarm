@@ -13,6 +13,9 @@ Linked issues:
 
 - #7314 (optional tool arguments reject explicit null consistently with
   their advertised non-null input types)
+- #9895 (a SIGTERM (or SIGINT) arriving mid-refresh must not leave the
+  in-flight git child behind: the server entry installs cooperative
+  process-lifetime interrupts on Unix)
 - #9895 (a client-supplied pagination cursor on the static catalog lists
   fails closed instead of being accepted and silently ignored)
 - #3089 (this slice: status, refresh, bounded gap list, and evidence
@@ -97,6 +100,22 @@ official SDK transport:
   session for one message; a normal `initialize` still completes afterwards,
   and stdin EOF remains the clean exit. Each attempt consumes at least one
   inbound frame, so recovery always makes progress and never spins.
+- External termination requests settle instead of orphaning children
+  (#9895, Unix). The server entry installs process-lifetime cooperative
+  interrupts for SIGINT and SIGTERM before serving: the first signal of
+  either kind requests cancellation of the in-flight bounded attempt — the
+  child waits (git probes, the Perl exporter, cat-file batch reads)
+  observe the flag at their poll cadence, terminate the owned process
+  tree, and unwind, so no git child outlives an interrupted `ripr_refresh`
+  — and the refresh settles on the same session with the typed failure in
+  its `attempt` block (a completed document, `isError` false per the #5254
+  commit contract).
+  A repeated signal restores native termination as the escape; process
+  exit itself stays transport-owned (stdin EOF). On non-Unix targets the
+  install is a no-op: containment there is the job-object ownership in
+  `process_owner`, whose std API cannot express kill-on-job-close, so an
+  abrupt external termination can still outlive a git child (recorded
+  residual).
 - After a successful `initialize` handshake, `ping` is routed by method
   name. A request whose `params._meta` carries the handshake fields this
   server requires pre-init (`io.modelcontextprotocol/protocolVersion`,
@@ -525,6 +544,15 @@ unknown route into a recognized one.
 - `crates/ripr/tests/mcp_stdio.rs::optional_tool_arguments_reject_null_and_recover_over_stdio`
   — the #7314 schema/dispatch contract for all six optional argument
   positions, with omission, valid-type, wrong-type and recovery controls.
+- `crates/ripr/tests/mcp_stdio.rs::sigterm_mid_refresh_terminates_the_git_tree_and_settles_typed`
+  (Linux) — a `git` shim blocks the refresh's uncommitted-diff read; an
+  external SIGTERM terminates the owned git child, the server survives,
+  the refresh settles as a completed document (`isError` stays false,
+  #5254) whose `attempt` block carries the typed `analysis_failed` failure,
+  and the session still answers ping (#9895).
+  `crates/ripr/src/cli/interrupt.rs::tests` — the SIGTERM cooperative-first
+  contract, one shared flag pair across SIGINT+SIGTERM, and idempotent
+  process-lifetime installation.
 - `crates/ripr/tests/mcp_stdio.rs::catalog_list_cursors_fail_closed_over_stdio`
   — a `cursor` on `tools/list`, `prompts/list`, `resources/list`, or
   `resources/templates/list` is a `-32602` whose message explains the list
