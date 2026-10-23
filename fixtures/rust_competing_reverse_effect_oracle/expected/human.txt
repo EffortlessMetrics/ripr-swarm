@@ -19,6 +19,11 @@ Start here:
   Related test (1 of 3 matched rows): src/lib.rs:19 direct_smoke (has no assertion)
   Next step: Strengthen the related assertion so it discriminates the changed behavior
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: Related tests appear to reach record: direct_smoke
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 9 more detail line(s) in --format human-full
