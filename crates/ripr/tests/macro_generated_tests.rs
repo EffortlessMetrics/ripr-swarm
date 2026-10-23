@@ -323,6 +323,8 @@ fn shadow_cases() -> Vec<(&'static str, String, String)> {
     let helper_call =
         "    #[test]\n    fn ten_is_open() {\n        assert_eq!(helper::gate(10), true);\n    }\n";
     let helper = "    mod helper {\n        pub fn gate(_input: u32) -> bool {\n            true\n        }\n    }\n\n";
+    let second = "    macro_rules! second {\n        ($($i:item)*) => { $($i)* };\n    }\n\n";
+    let both = format!("{IDENTITY}{second}");
     let wrap = |body: &str| format!("{IDENTITY}    suite! {{\n{body}    }}\n");
     vec![
         (
@@ -369,6 +371,37 @@ fn shadow_cases() -> Vec<(&'static str, String, String)> {
             format!("{mk}{GATE_TEST}\n    mk!();\n"),
         ),
         (
+            "fn in a different identity macro after the suite",
+            format!("{both}    suite! {{\n{GATE_TEST}    }}\n    second! {{\n{SHADOW_FN}    }}\n"),
+            format!("{GATE_TEST}\n{SHADOW_FN}"),
+        ),
+        (
+            "module in a different identity macro under a qualified call",
+            format!("{both}    suite! {{\n{helper_call}    }}\n    second! {{\n{helper}    }}\n"),
+            format!("{helper_call}\n{helper}"),
+        ),
+        (
+            "fn in a nested invocation of the same identity macro",
+            format!(
+                "{IDENTITY}    suite! {{\n{GATE_TEST}    }}\n    suite! {{\n        suite! {{\n{SHADOW_FN}        }}\n    }}\n"
+            ),
+            format!("{GATE_TEST}\n{SHADOW_FN}"),
+        ),
+        (
+            "fn in a nested invocation of a different identity macro",
+            format!(
+                "{both}    suite! {{\n{GATE_TEST}    }}\n    second! {{\n        second! {{\n{SHADOW_FN}        }}\n    }}\n"
+            ),
+            format!("{GATE_TEST}\n{SHADOW_FN}"),
+        ),
+        (
+            "alias to a non-identity macro under an identity name",
+            format!(
+                "{IDENTITY}{mk}    use mk as second;\n    mod unrelated {{\n        macro_rules! second {{\n            ($($i:item)*) => {{ $($i)* }};\n        }}\n    }}\n\n    suite! {{\n{GATE_TEST}    }}\n    second!();\n"
+            ),
+            format!("{mk}{GATE_TEST}\n    mk!();\n"),
+        ),
+        (
             "path-qualified call into a local module",
             format!("{IDENTITY}{helper}    suite! {{\n{helper_call}    }}\n"),
             format!("{helper}{helper_call}"),
@@ -389,20 +422,31 @@ fn a_binding_that_could_shadow_the_callee_never_promotes_a_wrapped_test() -> Res
         ExposureClass::NoStaticPath,
         ExposureClass::Exposed,
         ExposureClass::Exposed,
+        ExposureClass::StaticUnknown,
+        ExposureClass::NoStaticPath,
+        ExposureClass::StaticUnknown,
+        ExposureClass::StaticUnknown,
+        ExposureClass::Exposed,
         ExposureClass::NoStaticPath,
     ];
     let cases = shadow_cases();
     assert_eq!(cases.len(), expected_twin.len());
+    let mut failures = Vec::new();
     for ((label, wrapped_source, twin_source), twin_class) in cases.into_iter().zip(expected_twin) {
         let twin = TempRepo::create(&twin_source)?.predicate()?;
         let wrapped = TempRepo::create(&wrapped_source)?.predicate()?;
-        assert_eq!(twin.class, twin_class, "{label}: twin {twin:?}");
-        assert_eq!(
-            wrapped.class,
-            ExposureClass::NoStaticPath,
-            "{label}: wrapped {wrapped:?}"
-        );
-        assert!(wrapped.related_tests.is_empty(), "{label}: {wrapped:?}");
+        if twin.class != twin_class
+            || wrapped.class != ExposureClass::NoStaticPath
+            || !wrapped.related_tests.is_empty()
+        {
+            failures.push(format!(
+                "{label}: wrapped {:?} (tests {}) twin {:?}, expected twin {twin_class:?}",
+                wrapped.class,
+                wrapped.related_tests.len(),
+                twin.class
+            ));
+        }
     }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
     Ok(())
 }

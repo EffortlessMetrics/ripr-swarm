@@ -108,17 +108,29 @@ fn identity_invocations(
         return Vec::new();
     }
     let imported = imported_names(root);
-    // Any other item-position macro call may expand to an unseen binding.
+    // Any other item-position macro call may expand to an unseen binding. A
+    // call is exempt only when its name has an identity definition in textual
+    // scope before it and no import mentions the name: a same-spelled call
+    // elsewhere may resolve to a different macro.
     let foreign_macro = root
         .descendants()
         .filter_map(ast::MacroCall::cast)
         .filter(|other| is_item_position(other.syntax()))
         .any(|other| {
-            other
-                .path()
-                .map(|path| path.syntax().text().to_string())
-                .is_none_or(|path| !definitions.contains_key(&path))
+            let Some(path) = other.path().map(|path| path.syntax().text().to_string()) else {
+                return true;
+            };
+            match definitions.get(&path) {
+                Some(definition) => {
+                    imported.contains(&path)
+                        || !in_definition_scope(&other, definition)
+                        || other.syntax().text_range().start()
+                            < definition.syntax().text_range().end()
+                }
+                None => true,
+            }
         });
+    let identity_names: BTreeSet<String> = definitions.keys().cloned().collect();
     let mut accepted = Vec::new();
     for call in root.descendants().filter_map(ast::MacroCall::cast) {
         if !is_item_position(call.syntax()) {
@@ -144,7 +156,7 @@ fn identity_invocations(
         else {
             continue;
         };
-        if shadowed_by_local_fn(&call, &name, &text, foreign_macro) {
+        if shadowed_by_local_fn(&call, &identity_names, &text, foreign_macro) {
             continue;
         }
         accepted.push((call, name, text));
@@ -253,7 +265,7 @@ fn use_tree_names(tree: &ast::UseTree, names: &mut BTreeSet<String>) {
 /// the only shadow authority for pass-through tests.
 fn shadowed_by_local_fn(
     call: &ast::MacroCall,
-    name: &str,
+    identity_names: &BTreeSet<String>,
     text: &str,
     foreign_macro: bool,
 ) -> bool {
@@ -265,23 +277,47 @@ fn shadowed_by_local_fn(
     };
     let mut bound = BTreeSet::new();
     collect_bindings(&root, true, &mut bound);
+    // Every identity invocation in the file, whatever its macro name, is
+    // inspected: its tokens are items in this file. A nested item-position
+    // macro call inside them has an unseen expansion, so refuse.
     for other in root.descendants().filter_map(ast::MacroCall::cast) {
-        let same = other
+        let identity = other
             .path()
-            .is_some_and(|path| path.syntax().text().to_string() == name);
-        if same
-            && is_item_position(other.syntax())
-            && let Some(tree) = other.token_tree()
-        {
-            let full = tree.syntax().text().to_string();
-            if let Some(inner) = full.get(1..full.len().saturating_sub(1))
-                && let Some(parse) = parse_clean_source_file(inner)
-            {
-                collect_bindings(parse.tree().syntax(), false, &mut bound);
-            }
+            .is_some_and(|path| identity_names.contains(&path.syntax().text().to_string()));
+        if !identity || !is_item_position(other.syntax()) {
+            continue;
         }
+        let Some(tree) = other.token_tree() else {
+            return true;
+        };
+        let full = tree.syntax().text().to_string();
+        let Some(parse) = full
+            .get(1..full.len().saturating_sub(1))
+            .and_then(parse_clean_source_file)
+        else {
+            return true;
+        };
+        let inner = parse.syntax_node();
+        if inner
+            .descendants()
+            .filter_map(ast::MacroCall::cast)
+            .any(|nested| is_item_position(nested.syntax()))
+        {
+            return true;
+        }
+        collect_bindings(&inner, false, &mut bound);
     }
     if bound.contains("*") {
+        return true;
+    }
+    // A local item spelled like the macro may be a rebinding of its name.
+    if let Some(macro_name) = call.path().map(|path| path.syntax().text().to_string())
+        && (bound.contains(&macro_name)
+            || root
+                .descendants()
+                .filter_map(ast::Fn::cast)
+                .any(|function| function.name().is_some_and(|n| n.text() == macro_name)))
+    {
         return true;
     }
     parse_clean_source_file(text).is_some_and(|parse| {
@@ -543,6 +579,54 @@ mod tests {
         );
         // Control.
         assert_eq!(expand(&format!("suite! {{ {test} }}\n")).len(), 1);
+    }
+
+    #[test]
+    fn other_identity_macros_nested_calls_cfg_modules_and_macro_named_items_block_the_proof() {
+        let test = "#[test] fn a() { assert_eq!(gate(10), true); }";
+        let second = "macro_rules! second { ($($i:item)*) => { $($i)* }; }\n";
+        let shadow = "fn gate(_x: u32) -> bool { true }";
+        for source in [
+            // A different identity macro emitting the binding, before or after.
+            format!("{second}suite! {{ {test} }}\nsecond! {{ {shadow} }}\n"),
+            format!("{second}second! {{ {shadow} }}\nsuite! {{ {test} }}\n"),
+            format!("{second}suite! {{ {test} }}\nsecond! {{ mod helper {{ pub {shadow} }} }}\n"),
+            // An alias to a non-identity macro under an identity name, while an
+            // unrelated module defines the identity one.
+            format!(
+                "{second}use crate::actual as second;\nmod unrelated {{ macro_rules! second {{ ($($i:item)*) => {{ $($i)* }}; }} }}\nsuite! {{ {test} }}\nsecond! {{ {shadow} }}\n"
+            ),
+            format!(
+                "mod unrelated {{ macro_rules! second {{ ($($i:item)*) => {{ $($i)* }}; }} }}\nsuite! {{ {test} }}\nsecond! {{ {shadow} }}\n"
+            ),
+            // Nested item macros stay opaque.
+            format!("suite! {{ {test} }}\nsuite! {{ suite! {{ {shadow} }} }}\n"),
+            format!("{second}suite! {{ {test} }}\nsecond! {{ second! {{ {shadow} }} }}\n"),
+            // A cfg-disabled enclosing module around the definition.
+            format!("#[cfg(any())]\nmod m {{ {SUITE} suite! {{ {test} }} }}\n"),
+            // An item spelled like the macro.
+            format!("fn suite() {{}}\nsuite! {{ {test} }}\n"),
+            format!("struct suite;\nsuite! {{ {test} }}\n"),
+        ] {
+            let full = if source.contains("macro_rules! suite") {
+                source.clone()
+            } else {
+                format!("{SUITE}{source}")
+            };
+            assert!(
+                expand_local_test_macros(&full)
+                    .into_iter()
+                    .all(|expansion| !expansion.text.contains("assert_eq")),
+                "{source}"
+            );
+        }
+        // Control: a second identity macro that only wraps unrelated items
+        // beside the test is harmless only when it binds nothing mentioned.
+        let harmless = format!("{second}suite! {{ {test} }}\nsecond! {{ fn other() {{}} }}\n");
+        assert_eq!(
+            expand_local_test_macros(&format!("{SUITE}{harmless}")).len(),
+            1
+        );
     }
 
     #[test]
