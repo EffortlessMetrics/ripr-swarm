@@ -15,8 +15,7 @@
 //!   The only flip gate is `validate_agent_gap_record_packet(..) == Ok(())`.
 
 use crate::domain::language_capability::{
-    AnalysisMode, CapabilityFamily, cell_state, finding_is_repo_scoped,
-    state_establishes_capability,
+    CapabilityFamily, cell_state, state_establishes_capability,
 };
 use crate::domain::{Finding, OracleStrength, ProbeFamily, StageState};
 use crate::output::gap_decision_ledger::{
@@ -1159,11 +1158,7 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
     // `repair_routing` cell for TypeScript/JavaScript (absent = `not_proven`),
     // so a repo-scoped finding never becomes a repair packet, however complete
     // the diff-shaped evidence looks.
-    let mode = if finding_is_repo_scoped(&finding.evidence) {
-        AnalysisMode::Repo
-    } else {
-        AnalysisMode::Diff
-    };
+    let mode = finding.analysis_mode()?;
     // A finding with no language cannot be matched to a cell: fail closed.
     let language = finding.language?;
     if !state_establishes_capability(cell_state(language, mode, CapabilityFamily::RepairRouting)) {
@@ -1490,6 +1485,7 @@ mod tests {
 
     fn complete_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_discount.ts:typescript_preview:a1b2c3d4".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -1602,8 +1598,7 @@ mod tests {
                 "{language:?} diff control must keep its record"
             );
             let mut repo = diff.clone();
-            repo.evidence
-                .push(crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
+            repo.mark_repo_scoped();
             assert!(
                 typescript_gap_record_for(&repo).is_none(),
                 "{language:?} repo-scoped finding must fail closed"
@@ -1614,6 +1609,43 @@ mod tests {
         assert!(
             typescript_gap_record_for(&unlabeled).is_none(),
             "a finding with no language must fail closed"
+        );
+    }
+
+    /// #5531 negative experiments: the typed scope alone drives the gate. A
+    /// typed `Repo` finding with the evidence line removed still projects
+    /// nothing, and a legacy `analysis_scope: repo` evidence line on a finding
+    /// whose typed scope is `Diff` (contradictory) fails closed too.
+    #[test]
+    fn typed_scope_is_authority_and_contradiction_fails_closed() {
+        let mut typed_only = complete_finding();
+        typed_only.analysis_scope = crate::domain::AnalysisScope::Repo;
+        assert!(
+            typed_only
+                .evidence
+                .iter()
+                .all(|l| l != "analysis_scope: repo")
+        );
+        assert!(typescript_gap_record_for(&typed_only).is_none());
+
+        let mut legacy_line_only = complete_finding();
+        legacy_line_only
+            .evidence
+            .push("analysis_scope: repo".to_string());
+        assert!(legacy_line_only.analysis_mode().is_none());
+        assert!(typescript_gap_record_for(&legacy_line_only).is_none());
+
+        let mut marked = complete_finding();
+        marked.mark_repo_scoped();
+        marked.mark_repo_scoped();
+        assert_eq!(
+            marked
+                .evidence
+                .iter()
+                .filter(|l| *l == "analysis_scope: repo")
+                .count(),
+            1,
+            "the compatibility evidence line is derived once"
         );
     }
 

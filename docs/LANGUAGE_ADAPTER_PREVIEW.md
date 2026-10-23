@@ -247,7 +247,10 @@ analysis. Repo-mode analysis differs per adapter:
   findings and discloses a partial language run on the shared
   `language_runs` channel, which gates fail closed on: a capped or partial
   Python repo run can never back a full-denominator, all-clear, badge, or
-  baseline claim. Repo-mode Python findings carry the evidence line
+  baseline claim. The scope is the typed `Finding.analysis_scope` (set only via
+  `Finding::mark_repo_scoped`, which also derives the compatibility evidence
+  line; consumers read the typed field and fail closed if the two disagree).
+  Repo-mode Python findings carry the evidence line
   `analysis_scope: repo` and never get a `python_repair_card` or repair
   routing: the capability registry has no repo-mode `repair_routing` cell for
   Python (absent = `not_proven`, #5531), so they differ from diff-mode

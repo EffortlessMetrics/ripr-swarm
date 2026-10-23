@@ -108,10 +108,10 @@ pub(crate) use probe::{
     input_boundary_fact, is_unselected_input_reason,
 };
 pub use probe::{
-    ActivationEvidence, DeltaKind, Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind,
-    MissingDiscriminatorFact, ORACLE_ALIGNMENT_VALUES, Probe, ProbeFamily, RelatedTest,
-    RelatedTestMiss, SOURCE_CURRENTNESS_VALUES, SourceCurrentness, StopReason, ValueContext,
-    ValueFact,
+    ActivationEvidence, AnalysisScope, DeltaKind, Finding, FindingCanonicalGap, FlowSinkFact,
+    FlowSinkKind, MissingDiscriminatorFact, ORACLE_ALIGNMENT_VALUES, Probe, ProbeFamily,
+    RelatedTest, RelatedTestMiss, SOURCE_CURRENTNESS_VALUES, SourceCurrentness, StopReason,
+    ValueContext, ValueFact,
 };
 pub use repair_card::{
     AgentCardRefusalKind, CardCurrentnessGoal, DEFAULT_REPAIR_CARD_MAX_DETAIL_ITEMS,

@@ -599,6 +599,34 @@ pub struct Finding {
     /// Neither is a candidate edit target.
     #[serde(default)]
     pub source_currentness: SourceCurrentness,
+    /// Typed analysis scope of the run that produced this finding (#5531).
+    /// Required in every construction (no `Default` is applied by struct
+    /// literals), so a producer must state its scope; repo-mode producers
+    /// set it through [`Finding::mark_repo_scoped`]. Consumers read it via
+    /// [`Finding::analysis_mode`], never from the free-text evidence line.
+    /// Omitted from serialized `Finding` when `diff`; a missing field in an
+    /// older artifact deserializes as `diff`, which `analysis_mode` still
+    /// refuses if the legacy evidence line says otherwise.
+    #[serde(default, skip_serializing_if = "AnalysisScope::is_diff")]
+    pub analysis_scope: AnalysisScope,
+}
+
+/// Analysis scope a [`Finding`] was produced under (#5531). Repo-mode
+/// capability cells are looked up from this, never defaulted from a neighbor.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalysisScope {
+    /// Produced from a diff (the only scope Rust and the diff adapters use).
+    #[default]
+    Diff,
+    /// Produced by a repo-mode run (#9896 TypeScript/JavaScript, #9923 Python).
+    Repo,
+}
+
+impl AnalysisScope {
+    fn is_diff(&self) -> bool {
+        matches!(self, Self::Diff)
+    }
 }
 
 /// Typed source-currentness disposition for a [`Finding`] (#3212 / #3280).
@@ -735,6 +763,35 @@ impl Finding {
     /// upgrade a non-current finding.
     pub fn is_candidate_actionable(&self) -> bool {
         self.source_currentness.permits_candidate_action()
+    }
+
+    /// Mark this finding as produced by a repo-mode run (#5531). The single
+    /// place that sets the typed scope and derives the compatibility
+    /// evidence line `analysis_scope: repo` (disclosed in
+    /// `docs/LANGUAGE_ADAPTER_PREVIEW.md`) from it; idempotent.
+    pub fn mark_repo_scoped(&mut self) {
+        self.analysis_scope = AnalysisScope::Repo;
+        if !self
+            .evidence
+            .iter()
+            .any(|line| line == crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE)
+        {
+            self.evidence
+                .push(crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
+        }
+    }
+
+    /// Capability-table mode for this finding, fail closed (#5531): `None`
+    /// when the typed scope says `diff` but the legacy evidence line says
+    /// repo (a hand-stamped or pre-typed artifact finding), because the
+    /// scope is then contradictory and no capability cell may be borrowed.
+    pub(crate) fn analysis_mode(&self) -> Option<crate::domain::language_capability::AnalysisMode> {
+        use crate::domain::language_capability::{AnalysisMode, finding_is_repo_scoped};
+        match self.analysis_scope {
+            AnalysisScope::Repo => Some(AnalysisMode::Repo),
+            AnalysisScope::Diff if finding_is_repo_scoped(&self.evidence) => None,
+            AnalysisScope::Diff => Some(AnalysisMode::Diff),
+        }
     }
 }
 

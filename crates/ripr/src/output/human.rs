@@ -2412,9 +2412,23 @@ mod tests {
         let carded = python_preview_finding(11, true);
         assert!(crate::output::python_repair_card::python_repair_card(&carded).is_some());
         let mut repo = carded.clone();
-        repo.evidence
-            .push(crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
+        repo.mark_repo_scoped();
         assert!(crate::output::python_repair_card::python_repair_card(&repo).is_none());
+    }
+
+    /// #5531 negative experiments: typed `Repo` scope without the evidence
+    /// line, and a legacy evidence line on a typed `Diff` finding, both get no
+    /// repair card.
+    #[test]
+    fn typed_scope_is_authority_for_python_repair_card() {
+        let carded = python_preview_finding(11, true);
+        let mut typed_only = carded.clone();
+        typed_only.analysis_scope = crate::domain::AnalysisScope::Repo;
+        assert!(crate::output::python_repair_card::python_repair_card(&typed_only).is_none());
+        let mut legacy = carded.clone();
+        legacy.evidence.push("analysis_scope: repo".to_string());
+        assert!(crate::output::python_repair_card::python_repair_card(&legacy).is_none());
+        assert!(crate::output::python_repair_card::python_repair_card(&carded).is_some());
     }
 
     /// #7587: a deleted or moved Python line is base-side evidence and names
@@ -6784,6 +6798,7 @@ mod tests {
 
     pub(super) fn sample_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:sample.rs:7:predicate".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -6859,6 +6874,7 @@ mod tests {
 
     fn unknown_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_lib_rs:1:static_unknown".to_string(),
             canonical_gap: None,
             probe: Probe {
