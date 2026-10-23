@@ -447,12 +447,12 @@ fn activation_controlled_python_tests_do_not_credit_their_assertions() -> Result
     for decorator in [
         "unittest.skip('disabled')",
         "unittest.skipIf(True, 'disabled')",
-        "unittest.skipIf(False, 'runtime condition not evaluated')",
+        "unittest.skipIf(DISABLED, 'runtime condition not evaluated')",
         "unittest.skipUnless(False, 'disabled')",
         "unittest.expectedFailure",
         "pytest.mark.skip(reason='disabled')",
         "pytest.mark.skipif(True, reason='disabled')",
-        "pytest.mark.skipif(False, reason='runtime condition not evaluated')",
+        "pytest.mark.skipif(DISABLED, reason='runtime condition not evaluated')",
         "pytest.mark.xfail(strict=False)",
     ] {
         let test = if decorator == "unittest.expectedFailure" {
@@ -484,6 +484,31 @@ fn activation_controlled_python_tests_do_not_credit_their_assertions() -> Result
                 .any(|line| line.contains("test activation")),
             "{decorator}"
         );
+    }
+    Ok(())
+}
+
+// A boolean-literal condition that never triggers the skip leaves the test
+// running, so its exact oracle credits the edit (#9271 trap controls).
+#[test]
+fn an_inert_literal_skip_condition_keeps_oracle_credit() -> Result<(), String> {
+    for decorator in [
+        "pytest.mark.skipif(False, reason='never')",
+        "pytest.mark.xfail(False, reason='never')",
+        "unittest.skipIf(False, 'never')",
+        "unittest.skipUnless(True, 'never')",
+    ] {
+        let tests = format!(
+            "import unittest\nimport pytest\nfrom src.subject import score\n@{decorator}\ndef test_score():\n    assert score(0) == 8\n"
+        );
+        let finding = classify_case(
+            "def score(value):\n    return 8\n",
+            &tests,
+            2,
+            "    return 7",
+            "    return 8",
+        )?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{decorator}");
     }
     Ok(())
 }

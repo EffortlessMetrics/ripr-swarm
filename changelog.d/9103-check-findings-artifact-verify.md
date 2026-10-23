@@ -1,2 +1,0 @@
-<!-- section: Added -->
-- `ripr check --format check-findings-json` emits a producer-identified, unbounded diff-scoped findings artifact, and `agent verify` / `agent receipt` accept it through the same identity and commitment validator as `repo-exposure-json`, so a TypeScript gap's movement is verified by canonical gap id and an edited, unenveloped, incomplete or reversed snapshot is rejected (#9103).

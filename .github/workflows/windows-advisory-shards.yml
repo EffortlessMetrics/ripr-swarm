@@ -50,6 +50,15 @@ jobs:
       - name: Prepare locked JSON owner-return fixture dependencies
         run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
 
+      # The policy tests spawn `cargo test --no-run -p xtask` themselves. That
+      # invocation unifies features differently from `nextest --workspace`, so on a
+      # cold runner it rebuilds about six minutes of dependencies inside a test
+      # (and the 6-minute kill fires). Running the same spawns here warms them.
+      - name: Warm the cargo builds the policy tests spawn
+        timeout-minutes: 30
+        shell: bash
+        run: cargo xtask check-covered-by
+
       # File redirect, not `| tee`: see windows-advisory.yml. The shard's real
       # cargo status is recorded and replayed so a failed test still fails the
       # job, and the log is uploaded even when it does.

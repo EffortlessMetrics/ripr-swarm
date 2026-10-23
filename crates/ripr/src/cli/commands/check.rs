@@ -375,7 +375,7 @@ pub(super) fn resolve_implicit_workspace_root(input: &mut CheckInput) -> Result<
         "{}",
         terminal_safe(format!(
             "ripr: resolved workspace root to {} ({})",
-            root.display(),
+            crate::output::path::human_path(&root),
             reason.disclosure()
         ))
     );
