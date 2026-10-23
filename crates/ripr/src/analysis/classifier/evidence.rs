@@ -328,40 +328,65 @@ impl ClassifiedProbeEvidence {
         // grades the finding as a gap ("tests miss the boundary") that the
         // computed argument makes unreadable — a claim this seam must not
         // make. Infection abstains with the same reason.
+        let chain_tests = context
+            .related_tests
+            .iter()
+            .map(|(test, _)| *test)
+            .collect::<Vec<_>>();
         let chain_computed_inputs = match (context.owner_fn, context.helper_chain.as_ref()) {
-            (Some(owner), Some(chain)) => {
-                let chain_tests = context
-                    .related_tests
-                    .iter()
-                    .map(|(test, _)| *test)
-                    .collect::<Vec<_>>();
-                !crate::analysis::classify::computed_input_parameters(
-                    owner,
-                    &owner_parameter_names(owner),
-                    &chain_tests,
-                    Some(chain),
-                )
-                .is_empty()
-            }
+            (Some(owner), Some(chain)) => !crate::analysis::classify::computed_input_parameters(
+                owner,
+                &owner_parameter_names(owner),
+                &chain_tests,
+                Some(chain),
+            )
+            .is_empty(),
             _ => false,
+        };
+        // #9889: a chain-edge argument that is no literal or caller
+        // parameter (`wide_x(input.trim())`) stops row transfer even when it
+        // is no arithmetic. What the owner receives is unreadable, so
+        // observation through the chain can be neither confirmed nor
+        // refuted, the same as for a computed argument above.
+        let chain_row_stop = match (context.owner_fn, context.helper_chain.as_ref()) {
+            (Some(owner), Some(chain))
+                if !chain_computed_inputs
+                    && !matches!(context.probe.family, ProbeFamily::Predicate)
+                    && matches!(infect.state, StageState::Yes | StageState::Weak)
+                    && helper_only_reach(&context.related_tests) =>
+            {
+                crate::analysis::classify::chain_row_transfer_stop(
+                    owner,
+                    &chain_tests,
+                    chain,
+                    context.index,
+                )
+            }
+            _ => None,
         };
         let infect = match (context.owner_fn, context.helper_chain.as_ref()) {
             (Some(owner), Some(_))
                 if !matches!(context.probe.family, ProbeFamily::Predicate)
-                    && chain_computed_inputs
+                    && (chain_computed_inputs || chain_row_stop.is_some())
                     && helper_only_reach(&context.related_tests)
                     && matches!(infect.state, StageState::Yes | StageState::Weak) =>
             {
                 StageEvidence::new(
                     StageState::Unknown,
                     Confidence::Low,
-                    format!(
-                        "Infection unknown: a related test passes a computed argument for `{}`, so ripr cannot tell whether the changed boundary is activated",
-                        owner_parameter_names(owner)
-                            .first()
-                            .cloned()
-                            .unwrap_or_else(|| "the changed input".to_string())
-                    ),
+                    match &chain_row_stop {
+                        Some(argument) => format!(
+                            "Infection unknown: the call chain hands `{}` the argument `{argument}`, which is not an exact input value, so ripr cannot tell whether the changed behavior is activated",
+                            owner.name
+                        ),
+                        None => format!(
+                            "Infection unknown: a related test passes a computed argument for `{}`, so ripr cannot tell whether the changed boundary is activated",
+                            owner_parameter_names(owner)
+                                .first()
+                                .cloned()
+                                .unwrap_or_else(|| "the changed input".to_string())
+                        ),
+                    },
                 )
             }
             _ => infect,

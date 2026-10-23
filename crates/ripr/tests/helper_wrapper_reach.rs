@@ -1194,3 +1194,71 @@ fn unindexed_same_named_test_module_fn_is_caught_by_shadow_fallback() -> Result<
     assert!(!has_boundary_row(&finding, "qty == 10"), "{finding}");
     Ok(())
 }
+
+const WIDE_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n fn wide_x(input: &str) -> bool {\n-    input.len() > 3\n+    3 < input.len()\n }\n";
+
+/// RIPR-SPEC-0159 example 9 (#9889): the private helper `wide_x` is reached
+/// through `classify_trimmed`, whose call hands it `argument`.
+fn wide_source(argument: &str) -> String {
+    format!(
+        "fn wide_x(input: &str) -> bool {{\n    3 < input.len()\n}}\n\npub fn classify_trimmed(input: &str) -> &'static str {{\n    if wide_x({argument}) {{\n        \"wide\"\n    }} else {{\n        \"narrow\"\n    }}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn rows_straddle_four() {{\n        assert_eq!(classify_trimmed(\" abcd \"), \"wide\");\n        assert_eq!(classify_trimmed(\" abc \"), \"narrow\");\n    }}\n}}\n"
+    )
+}
+
+// #9889: a computed argument on the chain edge (`input.trim()`) stops row
+// transfer, so observation through the chain can be neither confirmed nor
+// refuted. The return_value probe abstains like its predicate sibling and
+// never claims a gap.
+#[test]
+fn return_value_behind_a_computed_chain_argument_abstains() -> Result<(), String> {
+    for argument in ["input.trim()", "input.trim_start()", "&input[1..]"] {
+        let source = wide_source(argument);
+        let predicate = predicate_finding(&source, WIDE_DIFF)?;
+        assert_eq!(
+            relation_of(&predicate, "rows_straddle_four"),
+            Some("helper_owner_call"),
+            "{argument}: {predicate}"
+        );
+        assert_eq!(
+            predicate["classification"], "infection_unknown",
+            "{argument}: {predicate}"
+        );
+        let finding = family_finding(&source, WIDE_DIFF, "return_value")?;
+        assert_eq!(
+            relation_of(&finding, "rows_straddle_four"),
+            Some("helper_owner_call"),
+            "{argument}: {finding}"
+        );
+        assert!(
+            matches!(
+                finding["classification"].as_str(),
+                Some("static_unknown" | "propagation_unknown" | "infection_unknown")
+            ),
+            "{argument}: {finding}"
+        );
+    }
+    Ok(())
+}
+
+// Control for #9889: where the chain transfers the rows (the entry hands the
+// helper its own parameter), the return_value probe keeps its ordinary
+// reading, not the computed-argument abstention.
+#[test]
+fn return_value_behind_a_row_transferring_chain_keeps_its_reading() -> Result<(), String> {
+    let finding = family_finding(&wide_source("input"), WIDE_DIFF, "return_value")?;
+    assert_eq!(
+        relation_of(&finding, "rows_straddle_four"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
+    assert!(
+        !finding["ripr"]["infect"]["summary"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("computed argument"),
+        "{finding}"
+    );
+    assert_eq!(finding["classification"], "weakly_exposed", "{finding}");
+    assert_eq!(finding["ripr"]["infect"]["state"], "yes", "{finding}");
+    Ok(())
+}

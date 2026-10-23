@@ -4021,40 +4021,7 @@ fn helper_transferred_rows(
     if chain.hops.iter().any(|hop| hop.through_macro) {
         return Vec::new();
     }
-    let Some(entry) = chain.hops.last() else {
-        return Vec::new();
-    };
-    let entry_parameters = function_parameters(&entry.caller);
-    // #6780 Devin review: an entry call shadowed by a test-local closure or
-    // nested fn never reaches the helper, so it binds no row (the same
-    // shadow authority that denies its `helper_owner_call` relation).
-    // #9329: the entry hop's method receiver (`b` of `b.to_string_as(si)`)
-    // is the one parameter whose cell is a constructed receiver string.
-    let receiver_reader =
-        |argument: &str| super::helper_transfer::receiver_cell_value(argument, index);
-    let receivers = ReceiverParameters {
-        names: entry.receiver.iter().cloned().collect(),
-        value: Some(&receiver_reader),
-    };
-    let mut rows = owner_call_parameter_values_where(
-        related_tests,
-        &entry.caller.name,
-        is_free(&entry.caller),
-        &entry_parameters,
-        |test, call| {
-            !super::helper_transfer::test_call_is_shadowed(
-                index,
-                test,
-                &entry.caller.name,
-                call.line,
-            ) && !constructor_names(&call.text).any(|name| {
-                // #9329 Devin review: a test-local `let Size = |n| ..` makes
-                // `Size(1024)` something other than the tuple constructor.
-                super::helper_transfer::test_body_shadows_name(index, test, name, call.line)
-            })
-        },
-        &receivers,
-    );
+    let mut rows = chain_entry_rows(chain, related_tests, index);
     if rows.is_empty() {
         return Vec::new();
     }
@@ -4127,6 +4094,84 @@ fn helper_transferred_rows(
         rows = bound_rows;
     }
     rows
+}
+
+/// #9889: the first chain-edge argument that stops row transfer, when the
+/// tests call the chain's entry with exact rows yet no row reaches the owner.
+/// A hop argument that is neither a strict literal, the caller's own
+/// parameter, nor a receiver projection (`input.trim()`, a local, a
+/// constant) cannot be bound to a value, so what the owner receives is
+/// unreadable: observation through the chain can be neither confirmed nor
+/// refuted. A macro hop, a rebound parameter and an entry with no exact rows
+/// stop elsewhere and are not named here.
+pub(in crate::analysis) fn chain_row_transfer_stop(
+    owner: &FunctionSummary,
+    related_tests: &[&TestSummary],
+    chain: &super::helper_transfer::HelperChain,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Option<String> {
+    if chain.hops.iter().any(|hop| hop.through_macro)
+        || chain_entry_rows(chain, related_tests, index).is_empty()
+        || !helper_transferred_rows(&function_parameters(owner), chain, related_tests, index)
+            .is_empty()
+    {
+        return None;
+    }
+    chain.hops.iter().rev().find_map(|hop| {
+        let caller_parameters = function_parameters(&hop.caller);
+        hop.arguments.iter().find_map(|argument| {
+            let trimmed = argument.trim();
+            let bindable = super::helper_transfer::strict_literal(argument).is_some()
+                || trimmed.starts_with("self.")
+                || caller_parameters
+                    .iter()
+                    .any(|parameter| parameter == trimmed);
+            (!bindable).then(|| trimmed.to_string())
+        })
+    })
+}
+
+/// The entry function's exact rows from the tests' direct calls, before any
+/// hop binds them down the chain.
+fn chain_entry_rows(
+    chain: &super::helper_transfer::HelperChain,
+    related_tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Vec<Vec<ParameterValue>> {
+    let Some(entry) = chain.hops.last() else {
+        return Vec::new();
+    };
+    let entry_parameters = function_parameters(&entry.caller);
+    // #6780 Devin review: an entry call shadowed by a test-local closure or
+    // nested fn never reaches the helper, so it binds no row (the same
+    // shadow authority that denies its `helper_owner_call` relation).
+    // #9329: the entry hop's method receiver (`b` of `b.to_string_as(si)`)
+    // is the one parameter whose cell is a constructed receiver string.
+    let receiver_reader =
+        |argument: &str| super::helper_transfer::receiver_cell_value(argument, index);
+    let receivers = ReceiverParameters {
+        names: entry.receiver.iter().cloned().collect(),
+        value: Some(&receiver_reader),
+    };
+    owner_call_parameter_values_where(
+        related_tests,
+        &entry.caller.name,
+        is_free(&entry.caller),
+        &entry_parameters,
+        |test, call| {
+            !super::helper_transfer::test_call_is_shadowed(
+                index,
+                test,
+                &entry.caller.name,
+                call.line,
+            ) && !constructor_names(&call.text).any(|name| {
+                // #9329 Devin review: a test-local `let Size = |n| ..` makes
+                // `Size(1024)` something other than the tuple constructor.
+                super::helper_transfer::test_body_shadows_name(index, test, name, call.line)
+            })
+        },
+        &receivers,
+    )
 }
 
 /// One bound argument: a literal, or the caller's own parameter
