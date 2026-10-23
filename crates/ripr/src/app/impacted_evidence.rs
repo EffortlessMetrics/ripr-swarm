@@ -117,7 +117,10 @@ fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a
 }
 
 fn print_help() {
-    println!("{IMPACTED_EVIDENCE_HELP}");
+    println!(
+        "{}",
+        crate::cli::help::render_command_help(IMPACTED_EVIDENCE_HELP, &[])
+    );
 }
 
 /// Help body for `ripr impacted-evidence`. Also the flag source for

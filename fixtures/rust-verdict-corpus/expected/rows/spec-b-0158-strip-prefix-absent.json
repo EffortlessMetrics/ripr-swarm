@@ -1,0 +1,23 @@
+{
+  "case_id": "spec-b-0158-strip-prefix-absent",
+  "subject_id": "authored-spec-b-value",
+  "origin": "authored",
+  "anchor": "src/v_strip.rs:6",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "computed_local_boundary_strip_prefix_none_arm",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed",
+    "infection_unknown"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

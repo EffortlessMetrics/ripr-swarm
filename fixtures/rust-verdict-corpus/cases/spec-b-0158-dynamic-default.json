@@ -1,0 +1,49 @@
+{
+  "case_id": "spec-b-0158-dynamic-default",
+  "subject_id": "authored-spec-b-value",
+  "diff": "cases/spec-b-0158-dynamic-default.diff",
+  "anchor": {
+    "file": "src/v_dynamic.rs",
+    "line": 7
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "computed_local_boundary_dynamic_default",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "end >= start",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "v_dynamic::tests::present_delimiter_misses_the_boundary_v_dynamic",
+        "equivalence_review": "the edit itself: end >= start is also true when the delimiter sits after the boundary"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The map_or default is a local computed from the input, not a literal or a bound input. The tests still pin the absent row and both present rows, so widening to >= fails the abx row. Spec cells: RIPR-SPEC-0158#5.",
+  "labeling_observation": {
+    "ripr_commit": "f88e3952",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown",
+      "propagation_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0158#5"
+  ]
+}

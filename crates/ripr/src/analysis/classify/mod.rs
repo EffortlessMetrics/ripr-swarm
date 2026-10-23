@@ -39,8 +39,8 @@ mod variant_field_pattern;
 
 pub(in crate::analysis) use activation::{
     LocalBoundary, TestValueFacts, activation_and_boundary_input, call_parameter_names,
-    comparison_operands, computed_input_parameters, literal_operand_value, local_boundary,
-    signature_parameters,
+    chain_row_transfer_stop, comparison_operands, computed_input_parameters, literal_operand_value,
+    local_boundary, signature_parameters,
 };
 pub(in crate::analysis) use arm_selection::{ArmSelector, unresolved_parameter_field_selector};
 pub(in crate::analysis) use boundary_pairing::{
@@ -73,9 +73,9 @@ pub(in crate::analysis) use gap_admission::{
 pub(in crate::analysis) use helper_transfer::{FieldProjectionReceipt, field_projection_receipt};
 pub(in crate::analysis) use helper_transfer::{
     HELPER_RESULT_NOT_FORWARDED, HelperChain, ReturnedLedger,
-    ambiguous_helper_entry_called_by_tests, callee_is_unique, chain_forwards_to_observed_hops,
-    chain_passes_effect_target_to_observed_hops, helper_only_reach,
-    hop_reach_keeps_weak_oracle_gap, resolve_chain, returned_ledger,
+    ambiguous_helper_entry_called_by_tests, callee_is_unique, chain_entry_pin_admits,
+    chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops,
+    helper_only_reach, hop_reach_keeps_weak_oracle_gap, resolve_chain, returned_ledger,
     returned_ledger_caller_is_observed, selected_inherent_calls,
 };
 pub(in crate::analysis) use implicit_call::withhold_implicit_call_gap;
