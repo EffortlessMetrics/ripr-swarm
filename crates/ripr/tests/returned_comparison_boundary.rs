@@ -26,6 +26,18 @@ fn findings(new: &str, old: &str, test: &str) -> Result<Vec<Finding>, String> {
 /// [`findings`] with `prefix` (whole lines) ahead of the changed line, which
 /// then sits on line `2 + prefix lines`.
 fn findings_after(prefix: &str, new: &str, old: &str, test: &str) -> Result<Vec<Finding>, String> {
+    findings_wrapped(prefix, "", new, old, test)
+}
+
+/// [`findings_after`] with `suffix` (whole lines) after the changed line, for
+/// a comparison nested in a block opened by `prefix`.
+fn findings_wrapped(
+    prefix: &str,
+    suffix: &str,
+    new: &str,
+    old: &str,
+    test: &str,
+) -> Result<Vec<Finding>, String> {
     let changed_line = 2 + prefix.lines().count();
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
@@ -47,13 +59,17 @@ fn findings_after(prefix: &str, new: &str, old: &str, test: &str) -> Result<Vec<
     )?;
     write(
         "src/lib.rs",
-        &format!("pub fn thr(x: i32) -> bool {{\n{prefix}{new}\n}}\n"),
+        &format!("pub fn thr(x: i32) -> bool {{\n{prefix}{new}\n{suffix}}}\n"),
     )?;
     write("tests/it.rs", test)?;
     let diff = format!(
-        "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,{n} +1,{n} @@\n pub fn thr(x: i32) -> bool {{\n{ctx}-{old}\n+{new}\n }}\n",
-        n = changed_line + 1,
+        "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,{n} +1,{n} @@\n pub fn thr(x: i32) -> bool {{\n{ctx}-{old}\n+{new}\n{post} }}\n",
+        n = changed_line + 1 + suffix.lines().count(),
         ctx = prefix
+            .lines()
+            .map(|line| format!(" {line}\n"))
+            .collect::<String>(),
+        post = suffix
             .lines()
             .map(|line| format!(" {line}\n"))
             .collect::<String>(),
@@ -583,6 +599,9 @@ fn a_rebound_parameter_makes_the_predicate_boundary_unresolved_not_a_named_gap()
         "    let x = x * 2;\n",
         "    let mut x = x;\n    x += 5;\n",
         "    let mut x = x;\n    x = x + 5;\n",
+        // A char literal holding a quote must not hide the rebinding.
+        "    let _quote = '\"';\n    let x = x + 5;\n",
+        "    let _quote = b'\"';\n    let mut x = x;\n    x += 5;\n",
     ] {
         let (class, missing) = read(prefix)?;
         assert_eq!(class, ExposureClass::InfectionUnknown, "{prefix:?}");
@@ -590,5 +609,83 @@ fn a_rebound_parameter_makes_the_predicate_boundary_unresolved_not_a_named_gap()
     }
     let (control, _) = read("    let y = 7;\n")?;
     assert_ne!(control, ExposureClass::InfectionUnknown);
+    Ok(())
+}
+
+#[test]
+fn a_match_binding_split_across_lines_makes_the_boundary_unresolved() -> Result<(), String> {
+    // #9197: `x` is bound by the arm pattern `x\n =>` (a value of `y`), not the
+    // caller's argument, so the observed 101 must not satisfy `x > 101`.
+    let findings = findings_wrapped(
+        "    match y {\n        x\n        =>\n",
+        "    }\n",
+        "            if x > 101 { true } else { false }",
+        "            if x > 100 { true } else { false }",
+        AT_NEW_THRESHOLD,
+    )?;
+    let predicate = family(&findings, "predicate")?;
+    assert_eq!(
+        predicate.class,
+        ExposureClass::InfectionUnknown,
+        "{predicate:?}"
+    );
+    assert!(predicate.activation.missing_discriminators.is_empty());
+    // Control: the same shape with the scrutinee read, not bound, keeps the
+    // equality credit (`x` stays the caller's argument).
+    let control = findings_wrapped(
+        "    match x {\n        0 =>\n            false,\n        _ =>\n",
+        "    }\n",
+        "            if x > 101 { true } else { false }",
+        "            if x > 100 { true } else { false }",
+        AT_NEW_THRESHOLD,
+    )?;
+    let predicate = family(&control, "predicate")?;
+    assert_ne!(
+        predicate.class,
+        ExposureClass::InfectionUnknown,
+        "{predicate:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_quote_char_literal_without_a_rebinding_keeps_the_equality_credit() -> Result<(), String> {
+    // Control: the quote is lexed as a char, and `x` is never rebound, so
+    // `thr(101)` still satisfies `x > 101` by value.
+    let findings = findings_after(
+        "    let _quote = '\"';\n",
+        "    if x > 101 { true } else { false }",
+        "    if x > 100 { true } else { false }",
+        AT_NEW_THRESHOLD,
+    )?;
+    let predicate = family(&findings, "predicate")?;
+    assert_ne!(
+        predicate.class,
+        ExposureClass::InfectionUnknown,
+        "{predicate:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_multiline_tuple_or_array_binding_makes_the_boundary_unresolved() -> Result<(), String> {
+    for opening in [
+        "    let _ = x;\n    match (y, 0) {\n        (\n            x,\n            _\n        )\n        =>\n",
+        "    let _ = x;\n    match [y, 0] {\n        [\n            x,\n            _\n        ]\n        =>\n",
+    ] {
+        let findings = findings_wrapped(
+            opening,
+            "    }\n",
+            "            if x > 101 { true } else { false }",
+            "            if x > 100 { true } else { false }",
+            AT_NEW_THRESHOLD,
+        )?;
+        let predicate = family(&findings, "predicate")?;
+        assert_eq!(
+            predicate.class,
+            ExposureClass::InfectionUnknown,
+            "{opening:?} {predicate:?}"
+        );
+    }
     Ok(())
 }

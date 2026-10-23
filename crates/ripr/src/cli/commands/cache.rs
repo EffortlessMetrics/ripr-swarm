@@ -2,6 +2,7 @@ use crate::analysis::seam_cache::{
     CACHE_DIR_ENV, CACHE_LAYER_NAMES, CacheStatus, cache_base_dir_from_env, inspect_cache_dir,
     inspect_cache_root,
 };
+use crate::cli::help;
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
 use serde_json::json;
@@ -10,7 +11,7 @@ use std::path::{Component, Path, PathBuf};
 
 const CACHE_STATUS_SCHEMA_VERSION: &str = "0.2";
 
-const CACHE_USAGE: &str = "Inspect, export or clear the disposable analysis cache.\n\nUsage:\n  ripr cache status [--json]\n  ripr cache export [--root PATH] --out NEW_DIRECTORY\n  ripr cache clear [--dry-run] [--force]";
+const CACHE_USAGE: &str = "Inspect, export or clear the disposable analysis cache.\n\nUsage:\n  ripr cache status [--root PATH] [--json]\n  ripr cache export [--root PATH] --out NEW_DIRECTORY\n  ripr cache clear [--root PATH] [--dry-run] [--force]";
 
 pub(in crate::cli) const CACHE_EXPORT_HELP: &str = r#"Usage: ripr cache export [--root PATH] --out NEW_DIRECTORY
 
@@ -34,11 +35,15 @@ this cooperative-filesystem contract. No live-cache history is deleted.
 /// Help body for `ripr cache status`. Also the flag source for unknown-argument
 /// suggestions, so `--json` has to appear as an option-list line, not only
 /// inside the usage brackets.
-pub(in crate::cli) const CACHE_STATUS_HELP: &str = r#"Usage: ripr cache status [--json]
+pub(in crate::cli) const CACHE_STATUS_HELP: &str = r#"Usage: ripr cache status [--root PATH] [--json]
 
 Report the resolved analysis cache directory (RIPR_CACHE_DIR when set,
 otherwise target/ripr/cache under the Cargo workspace root).
 
+  --root PATH   Analyzed root, as passed to `ripr check --root PATH`. Selects
+                <PATH>/target/ripr/cache regardless of the current directory.
+                RIPR_CACHE_DIR still wins when set. Default: the workspace
+                root resolved from the current directory.
   --json    Print machine-readable status JSON. Its `schema_version` is the
             version of this status report, not of the on-disk cache layers
             (those carry their own version in their directory names).
@@ -56,12 +61,15 @@ The cache is disposable: deleting it only costs a slower next run. Use
 "#;
 /// Help body for `ripr cache clear`. Also the flag source for unknown-argument
 /// suggestions; keep accepted flags on option-list lines.
-pub(in crate::cli) const CACHE_CLEAR_HELP: &str = r#"Usage: ripr cache clear [--dry-run] [--force]
+pub(in crate::cli) const CACHE_CLEAR_HELP: &str = r#"Usage: ripr cache clear [--root PATH] [--dry-run] [--force]
 
 Removes only recognized ripr cache layers under the resolved cache directory
 (RIPR_CACHE_DIR when set, otherwise target/ripr/cache under the Cargo workspace
 root). The cache root and unrelated sibling files or directories are preserved.
 
+  --root PATH Analyzed root, as passed to `ripr check --root PATH`. Selects
+              <PATH>/target/ripr/cache regardless of the current directory.
+              RIPR_CACHE_DIR still wins when set.
   --dry-run   Report what would be removed and remove nothing.
   --force     Required to remove cache layers that hold entries.
 "#;
@@ -94,15 +102,42 @@ struct ClearPlan {
     entry_count: usize,
 }
 
-fn parse_status_args(args: &[String]) -> Result<bool, String> {
+/// Parse the shared `--root PATH` flag for `cache status` and `cache clear`
+/// (#9503). Returns the root and the remaining arguments in order.
+fn split_root_arg(
+    command: &str,
+    args: &[String],
+) -> Result<(Option<PathBuf>, Vec<String>), String> {
+    let mut root = None;
+    let mut rest = Vec::new();
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        if arg == "--root" {
+            if root.is_some() {
+                return Err(format!("{command} repeats --root"));
+            }
+            let value = iter
+                .next()
+                .filter(|value| !value.is_empty() && !value.starts_with("--"))
+                .ok_or_else(|| format!("{command} --root requires a path"))?;
+            root = Some(PathBuf::from(value));
+        } else {
+            rest.push(arg.clone());
+        }
+    }
+    Ok((root, rest))
+}
+
+fn parse_status_args(args: &[String]) -> Result<(Option<PathBuf>, bool), String> {
+    let (root, rest) = split_root_arg("cache status", args)?;
     let mut is_json = false;
-    for arg in args {
+    for arg in &rest {
         match arg.as_str() {
             "--json" => is_json = true,
             other => return Err(unknown_argument("cache status", other)),
         }
     }
-    Ok(is_json)
+    Ok((root, is_json))
 }
 
 fn cache_dir_for_root(
@@ -110,6 +145,42 @@ fn cache_dir_for_root(
     env_value: Result<String, std::env::VarError>,
 ) -> PathBuf {
     cache_base_dir_from_env(workspace_root, env_value)
+}
+
+/// Resolve the cache directory for an explicit `--root` (#9503): the same
+/// `<root>/target/ripr/cache` (or `RIPR_CACHE_DIR`) that `ripr check --root`
+/// writes. Without an env override the root is canonicalized so the reported
+/// directory is absolute and `cache clear` can act on it from any cwd.
+fn cache_dir_for_explicit_root(
+    root: &Path,
+    env_value: Result<String, std::env::VarError>,
+) -> Result<PathBuf, String> {
+    let explicit_cache_dir = matches!(&env_value, Ok(value) if !value.trim().is_empty());
+    // A --root that is not a directory is an error whether or not
+    // RIPR_CACHE_DIR governs the cache location.
+    if !std::fs::metadata(root).is_ok_and(|metadata| metadata.is_dir()) {
+        return Err(format!(
+            "cache root {} is not an existing directory",
+            root.display()
+        ));
+    }
+    // Keep the caller's spelling (made absolute, lexically) so a symlinked
+    // root reaches the same alias refusal `check --root` and `clear` already
+    // own; only a `..` spelling is resolved, since the clear boundary rejects
+    // parent-directory components.
+    let workspace_root = if explicit_cache_dir {
+        root.to_path_buf()
+    } else if root
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        std::fs::canonicalize(root)
+            .map_err(|error| format!("resolve cache root {} failed: {error}", root.display()))?
+    } else {
+        std::path::absolute(root)
+            .map_err(|error| format!("resolve cache root {} failed: {error}", root.display()))?
+    };
+    Ok(cache_dir_for_root(&workspace_root, env_value))
 }
 
 fn cache_dir_for_current_dir(
@@ -241,16 +312,29 @@ fn render_status_for_host(
     }
 }
 
-fn parse_clear_args(args: &[String]) -> Result<ClearOptions, String> {
+fn parse_clear_args(args: &[String]) -> Result<(Option<PathBuf>, ClearOptions), String> {
+    let (root, rest) = split_root_arg("cache clear", args)?;
     let mut options = ClearOptions::default();
-    for arg in args {
+    for arg in &rest {
         match arg.as_str() {
             "--dry-run" => options.dry_run = true,
             "--force" => options.force = true,
             other => return Err(unknown_argument("cache clear", other)),
         }
     }
-    Ok(options)
+    Ok((root, options))
+}
+
+fn resolve_cache_dir(root: Option<&Path>) -> Result<PathBuf, String> {
+    let env_value = std::env::var(CACHE_DIR_ENV);
+    match root {
+        Some(root) => cache_dir_for_explicit_root(root, env_value),
+        None => {
+            let current_dir = std::env::current_dir()
+                .map_err(|error| format!("failed to get current dir: {error}"))?;
+            cache_dir_for_current_dir(&current_dir, env_value)
+        }
+    }
 }
 
 fn normal_components(path: &Path) -> Vec<&OsStr> {
@@ -566,14 +650,12 @@ fn run_status(args: &[String]) -> Result<(), String> {
     // Help is positional-free like every sibling command family (#5024):
     // `ripr cache status --json --help` prints this help and exits 0.
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        println!("{CACHE_STATUS_HELP}");
+        println!("{}", help::render_command_help(CACHE_STATUS_HELP, &[]));
         return Ok(());
     }
 
-    let is_json = parse_status_args(args)?;
-    let current_dir =
-        std::env::current_dir().map_err(|error| format!("failed to get current dir: {error}"))?;
-    let cache_dir = cache_dir_for_current_dir(&current_dir, std::env::var(CACHE_DIR_ENV))?;
+    let (root, is_json) = parse_status_args(args)?;
+    let cache_dir = resolve_cache_dir(root.as_deref())?;
     let (inspect_dir, real_dir) = resolve_status_base(&cache_dir);
     let status = inspect_cache_root(&inspect_dir);
     println!(
@@ -581,30 +663,63 @@ fn run_status(args: &[String]) -> Result<(), String> {
         render_status(&cache_dir, real_dir.as_deref(), &status, is_json)?
     );
     if !is_json {
-        eprintln!("{CLEANUP_HINT}");
+        let env_governs = std::env::var(CACHE_DIR_ENV).is_ok_and(|value| !value.trim().is_empty());
+        eprintln!("{}", cleanup_hint(&cache_dir, root.as_deref(), env_governs));
     }
 
     Ok(())
 }
 
 /// Names the published cleanup command (#4383). `ripr cache clear` resolves
-/// the same directory from the same working directory and `RIPR_CACHE_DIR`,
-/// so the hint needs no path to retype; `cargo xtask cache gc` is repository
-/// automation that users of the published crate do not have.
-const CLEANUP_HINT: &str = "The cache is disposable; ripr rebuilds it on the next run. To clear it, run `ripr cache clear --dry-run` to preview, then `ripr cache clear --force`.";
+/// the same directory from the same working directory (or `--root`) and
+/// `RIPR_CACHE_DIR`; `cargo xtask cache gc` is repository automation that
+/// users of the published crate do not have.
+///
+/// The hint is conditional on whether `clear` would accept this root (#9503):
+/// when `clear` would refuse (relative, symlinked, near-root, ...), the hint
+/// carries the actual refusal reason instead of recommending a command that
+/// fails.
+fn cleanup_hint(cache_dir: &Path, root: Option<&Path>, env_governs: bool) -> String {
+    // The nonmutating dry-run of the real clear path owns every refusal
+    // (root shape, symlinks, unowned-only roots, impostor layers).
+    let dry_run = ClearOptions {
+        dry_run: true,
+        force: false,
+    };
+    if let Err(reason) = clear_cache_dir(cache_dir, dry_run) {
+        return format!(
+            "The cache is disposable; ripr rebuilds it on the next run. `ripr cache clear` \
+             would refuse to clear it: {}.",
+            reason
+                .trim_start_matches("refusing to clear ")
+                .trim_end_matches('.')
+        );
+    }
+    // RIPR_CACHE_DIR governs the location regardless of --root, so the printed
+    // commands carry --root only when it actually selects the directory.
+    let root_flag = match root {
+        Some(root) if !env_governs => format!(
+            " --root {}",
+            crate::agent::loop_commands::shell_arg(&root.to_string_lossy())
+        ),
+        _ => String::new(),
+    };
+    format!(
+        "The cache is disposable; ripr rebuilds it on the next run. To clear it, run \
+         `ripr cache clear{root_flag} --dry-run` to preview, then `ripr cache clear{root_flag} --force`."
+    )
+}
 
 fn run_clear(args: &[String]) -> Result<(), String> {
     // Help is positional-free like every sibling command family (#5024):
     // `ripr cache clear --dry-run --help` prints this help and exits 0.
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        println!("{CACHE_CLEAR_HELP}");
+        println!("{}", help::render_command_help(CACHE_CLEAR_HELP, &[]));
         return Ok(());
     }
 
-    let options = parse_clear_args(args)?;
-    let current_dir =
-        std::env::current_dir().map_err(|error| format!("failed to get current dir: {error}"))?;
-    let cache_dir = cache_dir_for_current_dir(&current_dir, std::env::var(CACHE_DIR_ENV))?;
+    let (root, options) = parse_clear_args(args)?;
+    let cache_dir = resolve_cache_dir(root.as_deref())?;
     println!("{}", cache_dir_human_line(&cache_dir));
     println!("{}", clear_cache_dir(&cache_dir, options)?);
 
@@ -616,12 +731,24 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     // matching siblings); subcommand-level argv keeps its own help handling
     // in `run_status`/`run_clear` (#5024).
     if matches!(args.first(), Some(arg) if arg == "--help" || arg == "-h") {
-        println!("{CACHE_USAGE}");
+        println!(
+            "{}",
+            help::render_command_help(
+                CACHE_USAGE,
+                &["cache status", "cache export", "cache clear"]
+            )
+        );
         return Ok(());
     }
 
     let Some((subcommand, rest)) = args.split_first() else {
-        println!("{CACHE_USAGE}");
+        println!(
+            "{}",
+            help::render_command_help(
+                CACHE_USAGE,
+                &["cache status", "cache export", "cache clear"]
+            )
+        );
         return Ok(());
     };
 
@@ -664,7 +791,7 @@ fn parse_export_args(args: &[String]) -> Result<(Option<PathBuf>, PathBuf), Stri
 
 fn run_export(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        println!("{CACHE_EXPORT_HELP}");
+        println!("{}", help::render_command_help(CACHE_EXPORT_HELP, &[]));
         return Ok(());
     }
     let (root, output) = parse_export_args(args)?;
@@ -968,7 +1095,7 @@ mod tests {
         {
             return Err("cache status typo did not fail with the expected suggestion".to_string());
         }
-        let parsed = parse_clear_args(&["--dry-run".to_string(), "--force".to_string()])?;
+        let (_, parsed) = parse_clear_args(&["--dry-run".to_string(), "--force".to_string()])?;
         if parsed
             != (ClearOptions {
                 dry_run: true,
@@ -1161,6 +1288,77 @@ mod tests {
                 "nested workspace cache resolved to {default:?}, expected {expected:?}"
             ));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_root_resolves_the_checked_cache_and_hint_follows_the_refusal_reason()
+    -> Result<(), String> {
+        let root = temp_dir("explicit-root");
+        fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let absolute = std::path::absolute(&root).map_err(|error| error.to_string())?;
+        let expected = absolute.join("target").join("ripr").join("cache");
+        let resolved = cache_dir_for_explicit_root(&root, Err(std::env::VarError::NotPresent))?;
+        if resolved != expected {
+            return Err(format!(
+                "--root resolved {resolved:?}, expected {expected:?}"
+            ));
+        }
+        // An explicit RIPR_CACHE_DIR still wins over --root.
+        let relocated = temp_dir("explicit-root-env");
+        let env_resolved = cache_dir_for_explicit_root(&root, Ok(relocated.display().to_string()))?;
+        if env_resolved != relocated {
+            return Err(format!("env override lost to --root: {env_resolved:?}"));
+        }
+        if cache_dir_for_explicit_root(&root.join("missing"), Err(std::env::VarError::NotPresent))
+            .is_ok()
+        {
+            return Err("a missing --root must be an error".to_string());
+        }
+        // Hint: clearable root keeps the generic command (with --root echoed);
+        // a refused root names the reason and no longer recommends --force.
+        let generic = cleanup_hint(&expected, Some(&root), false);
+        if !generic.contains("`ripr cache clear --root ") || generic.contains("would refuse") {
+            return Err(format!("generic hint drifted: {generic}"));
+        }
+        // RIPR_CACHE_DIR governs: the hint must not echo --root.
+        let governed = cleanup_hint(&expected, Some(&root), true);
+        if governed.contains("--root") {
+            return Err(format!("env-governed hint echoed --root: {governed}"));
+        }
+        // A root with spaces is quoted by the shared shell-argument renderer.
+        let spaced = cleanup_hint(&expected, Some(Path::new("/tmp/a b")), false);
+        if !spaced.contains("--root '/tmp/a b'") && !spaced.contains("--root \"/tmp/a b\"") {
+            return Err(format!("spaced root not quoted: {spaced}"));
+        }
+        // Refusals the dry-run clear owns beyond the root shape: an absolute
+        // root holding only unowned files, and a layer that is a regular file.
+        let unowned = temp_dir("hint-unowned");
+        fs::create_dir_all(&unowned).map_err(|error| error.to_string())?;
+        fs::write(unowned.join("unowned.txt"), b"x").map_err(|error| error.to_string())?;
+        let unowned_hint = cleanup_hint(&unowned, None, false);
+        let impostor = temp_dir("hint-impostor");
+        fs::create_dir_all(&impostor).map_err(|error| error.to_string())?;
+        fs::write(impostor.join("repo-file-facts"), b"x").map_err(|error| error.to_string())?;
+        let impostor_hint = cleanup_hint(&impostor, None, false);
+        remove_base(&unowned)?;
+        remove_base(&impostor)?;
+        for (label, hint) in [("unowned", &unowned_hint), ("impostor", &impostor_hint)] {
+            if !hint.contains("would refuse to clear it")
+                || hint.contains("cache clear --force`")
+                || hint.contains("..")
+            {
+                return Err(format!("{label} root hint must carry the refusal: {hint}"));
+            }
+        }
+        let refused = cleanup_hint(Path::new("relative/cache"), None, false);
+        if !refused.contains("would refuse to clear it")
+            || !refused.contains("absolute path")
+            || refused.contains("`ripr cache clear --force`")
+        {
+            return Err(format!("refusal hint drifted: {refused}"));
+        }
+        remove_base(&root)?;
         Ok(())
     }
 

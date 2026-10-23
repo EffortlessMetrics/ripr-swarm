@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0175-expect-response-downcast-pin",
+  "subject_id": "authored-spec-results",
+  "origin": "authored",
+  "anchor": "src/lib.rs:50",
+  "behavior_family": "error_path",
+  "test_shape": "guarded_match_downcast_variant_pin",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

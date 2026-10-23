@@ -162,7 +162,7 @@ official SDK transport:
   ready; otherwise the typed first failing gate), matching `ripr_get_gap`.
   `continuation.next_page.arguments` pins the snapshot, filters, and explicit
   limit; replay cannot cross a completed refresh that replaced the snapshot.
-- Gap-list success and refusal documents use `ripr-mcp-gap-list-v2`.
+- Gap-list success and refusal documents use `ripr-mcp-gap-list-v3`.
   The former v1 success schema closed its top level with
   `additionalProperties: false`, so adding `filtered` and `filters` cannot
   retain strict v1 compatibility. Clients must rediscover `tools/list`, accept
@@ -248,7 +248,8 @@ official SDK transport:
   `workspace_unavailable` and the same restart-with-root recovery as
   `ripr_refresh`; the adapter does not discover or recheck the root again.
   A root resolved unavailable at startup also prints exactly one
-  operator-facing warning line on stderr before serving (no path; stdout
+  operator-facing warning line on stderr before serving, naming the root
+  error code, its specific cause and a concrete next step (#9895; no path; stdout
   stays protocol-only, and a usable root stays silent). The write is
   fallible and ignored: an unwritable stderr never aborts startup, and the typed
   `workspace_unavailable` replies still arrive.

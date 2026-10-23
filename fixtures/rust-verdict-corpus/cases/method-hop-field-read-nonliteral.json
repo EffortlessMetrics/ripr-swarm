@@ -1,0 +1,48 @@
+{
+  "case_id": "method-hop-field-read-nonliteral",
+  "subject_id": "authored-method-hop",
+  "diff": "cases/method-hop-field-read-nonliteral.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 72
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "helper_wrapped_assert",
+  "hard_case": "The constructor argument is a let-bound name (`Size::kib(count)`), not a literal, so no receiver value is built.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "bytes <= unit",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests::nonliteral_formats_one_binary_unit",
+        "equivalence_review": "the edit itself: exactly one unit formats as the raw byte count instead of one unit"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The test builds the boundary receiver from `count`, a let-bound 1. The receiver reader accepts only literal arguments, so every row is withdrawn and the boundary stays unresolved. 1 of 1 listed mutants fails cargo test. Spec cells: RIPR-SPEC-0158, RIPR-SPEC-0159.",
+  "labeling_observation": {
+    "ripr_commit": "da433a6",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0158#16"
+  ]
+}

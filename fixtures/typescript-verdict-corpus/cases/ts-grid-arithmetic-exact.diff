@@ -1,0 +1,10 @@
+diff --git a/src/arithmetic.ts b/src/arithmetic.ts
+--- a/src/arithmetic.ts
++++ b/src/arithmetic.ts
+@@ -1,5 +1,5 @@
+ export function lineTotal(qty: number, price: number): number {
+-  return qty * price;
++  return price * qty;
+ }
+ 
+ export function area(width: number, height: number): number {

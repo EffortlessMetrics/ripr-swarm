@@ -554,8 +554,8 @@ fn is_visible_module_declaration(text: &str) -> bool {
         })
 }
 
-/// An `impl` header (`impl Tr for K where Self: Sized {`; other item headers
-/// such as `trait` or `struct` are not covered) holds no expression:
+/// An `impl`, `struct`, `enum`, `union` or `trait` header (`impl Tr for K where
+/// Self: Sized {`, `enum Op<Q: Ord> {`) holds no expression:
 /// its `Self: Sized` text only looks like a field `name: Type`, so a
 /// constructed-field probe on it reports a gap that does not exist (#8389).
 /// The header itself stays probed as `static_unknown`, so a changed bound is
@@ -588,14 +588,90 @@ pub(crate) fn is_item_header(text: &str) -> bool {
         ';' => depth == 0,
         _ => false,
     });
-    if text.contains("fn ") || body_semicolon {
+    if body_semicolon {
         return false;
     }
     // Text after the opening `{` is a one-line body, not a header.
     if text.contains('{') && !text.ends_with('{') {
         return false;
     }
-    word_after("impl") && (text.ends_with('{') || text.contains(" where"))
+    // A one-line `impl` body holding a `fn` is not a header. A type header's
+    // `fn` is a fn-pointer bound (`T: Fn(fn(u8))`) and stays a header.
+    if word_after("impl")
+        && !text.contains("fn ")
+        && (text.ends_with('{') || text.contains(" where"))
+    {
+        return true;
+    }
+    // #9170: a `struct`/`enum`/`union`/`trait` header declares generic bounds
+    // (`enum Op<Q: Ord + Copy> {`) and runs nothing; the bound only looks
+    // like a field `name: Type`. Only a header that opens its body on this
+    // line counts, so a one-line `struct A { x: u8 }` stays probed.
+    let declared = super::diff::strip_visibility(text);
+    let declared = declared
+        .strip_prefix("unsafe")
+        .filter(|rest| rest.starts_with(char::is_whitespace))
+        .map_or(declared, str::trim_start);
+    ["struct", "enum", "union", "trait"].iter().any(|word| {
+        declared.strip_prefix(word).is_some_and(|rest| {
+            // `union` is a contextual keyword: `union = Bits {` is an
+            // expression, so a declaration needs an identifier next.
+            rest.starts_with(char::is_whitespace)
+                && rest
+                    .trim_start()
+                    .starts_with(|c: char| c.is_alphabetic() || c == '_')
+                && text.ends_with('{')
+                && !generics_hold_expression(rest)
+        })
+    })
+}
+
+/// A const-generic default (`<const N: usize = { capacity() }>`) or an array
+/// length in a generic default is an expression that runs at compile time and
+/// can call code, so a header carrying one keeps its call probe instead of
+/// reading as declaration-only. `rest` ends with the header's own `{`.
+fn generics_hold_expression(rest: &str) -> bool {
+    let generics = rest.strip_suffix('{').unwrap_or(rest);
+    let masked = mask_comments_and_strings(generics);
+    // A block expression, or a macro invocation, in the header.
+    let bang_macro = masked
+        .match_indices('!')
+        .any(|(i, _)| masked[i + 1..].trim_start().starts_with(['(', '[', '{']));
+    // An array length call: `(` after a `;` (`[u8; cap()]`), not `[u8; 4]`.
+    let array_len_call = array_length_texts(&masked).any(|len| len.contains('('));
+    masked.contains('{') || bang_macro || array_len_call
+}
+
+/// The array-length text of each `[elem; len]` in `text`: the text after the
+/// `;` that belongs to that bracket's own frame, so a `;` inside a nested
+/// element (`[([u8; 4], fn()); 3]`) is not the outer length's separator.
+fn array_length_texts(text: &str) -> impl Iterator<Item = &str> {
+    // Each open bracket: (kind, byte index, its own `;` if it is a `[`).
+    let mut frames: Vec<(char, usize, Option<usize>)> = Vec::new();
+    let mut lengths = Vec::new();
+    for (i, c) in text.char_indices() {
+        match c {
+            '[' | '(' | '{' => frames.push((c, i, None)),
+            ';' => {
+                if let Some(frame) = frames.last_mut()
+                    && frame.0 == '['
+                    && frame.2.is_none()
+                {
+                    frame.2 = Some(i);
+                }
+            }
+            ']' | ')' | '}' => {
+                if let Some((kind, _, semi)) = frames.pop()
+                    && kind == '['
+                    && let Some(semi) = semi
+                {
+                    lengths.push(&text[semi + 1..i]);
+                }
+            }
+            _ => {}
+        }
+    }
+    lengths.into_iter()
 }
 
 /// A line that only opens or closes a block (`}`, `});`, `} else {`,
@@ -637,6 +713,19 @@ mod tests {
             "unsafe\timpl Tr for K where [u8; 4]: Copy {",
             "unsafe impl Send for K {",
             "impl<T: Iterator<Item = u32>> Tr for K<T> {",
+            // #9170: type declaration headers with generic bounds.
+            "enum Operator<P1, P2, Q: Ord + Copy> {",
+            "pub(crate) struct Wrapper<T: Clone + Send> {",
+            "pub struct Pair<A, B: Default> where A: Copy {",
+            "unsafe trait Marker<T: Sized>: Send {",
+            "union Bits<T: Copy> {",
+            "pub struct Arr<T> where [u8; 4]: Copy {",
+            "enum Op<T> where [([u8; 4], fn()); 3]: Copy {",
+            "enum É<T: Copy> {",
+            "struct Δ<T: Copy> {",
+            "struct r#async<T: Copy> {",
+            "struct Callback<T: Fn(fn (u8))> {",
+            "struct Wrapper<T> where [u8; 4]: Copy, T: Fn() {",
         ] {
             assert!(is_item_header(header), "`{header}`");
             assert_eq!(
@@ -660,9 +749,43 @@ mod tests {
             "impl K where Self: Sized { const A: u32 = 1; }",
             "impl K where Self: Sized { Foo { a: 1 } }",
             "T: Debug + Clone,",
+            // #9170: one-line bodies, constructions and lookalike words.
+            "struct A { x: u8 }",
+            "enum E { A = 1 }",
+            "let enum_len: usize = 3;",
+            "structure.field: Foo {",
+            "traitor: Foo {",
+            "pub fn enum_of<T: Clone>(t: T) -> T {",
+            // Contextual keyword `union` and other non-declaration uses.
+            "union = Bits {",
+            "union |= Bits {",
+            "union => Bits {",
+            "union : Foo {",
+            "union .map(|x| {",
+            // Const-generic defaults and macros are expressions that can
+            // call code: they keep their call probe.
+            "struct Buffer<const N: usize = { capacity() }> {",
+            "struct Buffer<T = [u8; cap()]> {",
+            "struct Tagged<const N: usize = { len!() }> {",
+            "struct S<T = m!()> {",
+            "struct S<T = [[u8; cap()]; 2]> {",
+            "struct = Foo {",
+            "enum : Foo {",
         ] {
             assert!(!is_item_header(behavior), "`{behavior}`");
         }
+    }
+
+    #[test]
+    fn array_length_texts_follow_bracket_nesting() {
+        fn lengths(text: &str) -> Vec<&str> {
+            array_length_texts(text).collect()
+        }
+        assert_eq!(lengths("[u8; 4]"), [" 4"]);
+        assert_eq!(lengths("[([u8; 4], fn()); 3]"), [" 4", " 3"]);
+        assert_eq!(lengths("[[u8; cap()]; 2]"), [" cap()", " 2"]);
+        assert!(lengths("[u8]").is_empty());
+        assert!(lengths("f(a; b)").is_empty());
     }
 
     /// #9033: a visibility-qualified `mod name;` declaration has no behavior;

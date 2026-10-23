@@ -31,6 +31,9 @@ behind `ripr pilot` picks that real cargo-mutants runs refuted, each case
 naming the refuted picks in its reasoning; `authored-mined-wire` and
 `authored-mined-codec` for test shapes mined from real crates, each case naming
 the real-crate shape it mirrors, or its twin, without copying code;
+`authored-spec-results` for the Result-returning owners of RIPR-SPEC-0106
+(`unwrap_err` variant binding) and RIPR-SPEC-0175 (guarded Result matches,
+boxed `Box<dyn Error>` owners, routed matches and Ok-payload observation);
 `authored-spec-confirm` for spec cells that had no runtime-truth case:
 oracle confirmation (RIPR-SPEC-0094), non-escaping sinks (0096), owner-result
 field bindings and same-name owner resolution (0005) and owner-return
@@ -56,6 +59,14 @@ named after the id it holds. The expected state is one
 its own contradiction counts, so the aggregate rates are derived from the
 rows when they are read; no summary file is committed. Adding a case
 therefore adds files and changes no line another case PR changes.
+
+`authored-grid-constants` fills the constant row of the operator grid (exact,
+table, property, helper and no-assertion styles; the property case is the
+partially discriminated cell).
+
+The `[grid]` table of `spec-coverage.toml` gates the operator grid (seven
+operator classes by credited, gap and partial truth) and the false-credit trap
+table; `check` prints and reports both (`verdict_corpus_grid.rs`).
 
 ## When
 
@@ -83,6 +94,14 @@ examples as unmeasured, and records `floor`. The report's
 examples and the uncovered example numbers per spec; `validate` and `check`
 fail when covered falls below `floor`; in CI the xtask test
 `committed_ledger_is_valid_and_meets_its_floor` enforces it.
+
+A case may also carry `axes`, tags for the coverage axes declared as `[[axis]]`
+in `spec-coverage.toml` (`test_library_idiom`, `language_shape`,
+`hostile_input`). `validate` and `check` fail when a tag is not declared or an
+axis holds fewer cases than its `floor`, so a side of the language or the test
+ecosystem cannot lose its cases silently. `authored-shape-kit` carries the
+language-shape and hostile-input cases: one owner and one isolated test per
+case, so a verdict never rests on a neighbour's test.
 
 A case may also carry `expected_oracle` (`kind`, `strength`, optional
 `test`, `spec`): the related-test oracle kind and strength a spec adopts.

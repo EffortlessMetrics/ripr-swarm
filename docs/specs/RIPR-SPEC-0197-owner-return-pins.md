@@ -92,6 +92,71 @@ combination produces `reachable_unrevealed` with Observe `no` and Discriminate
 can never execute. Other owner-specific pin failures retain the existing token
 rule only for an assertion whose context was admitted.
 
+The same execution/macro-context admission applies to `assert_eq!` and `assert!`
+oracles for `side_effect` and `call_deletion` probes (#8927). Calling the changed
+owner before `return`, a literal-false block or an uncalled closure establishes
+reach without establishing that an assertion inside the skipped context runs.
+Refuse that assertion through the shared admission decision and retain the
+SPEC-0197 refusal note with its actual macro name. An independently admitted
+effect assertion in the same test still supplies its existing observation and
+discriminator; a refused sibling does not remove it. This does not change effect
+identity, propagation or observer matching.
+
+An effect oracle whose fact text is a compound statement rather than the macro
+invocation (`loop { break; assert_eq!(..); }`, a labeled block, a `macro_rules!`
+body, a cfg-dropped `let`) names no invocation to admit, so it is gated by the
+assertion macro it contains and refused. The oracle's macro path must be the
+start of its text (optionally `std::` / `::core::` qualified); a one-line
+`if <macro-cond> { assert_eq!(..); }` (`if matches!(..)`, `if !cfg!(test)`,
+`if cfg!(any())`, `if vec![..].is_empty()`) begins with a prefix token, so it is
+compound and takes the same gate rather than reading as a plain macro path.
+More generally an effect oracle is ungated only when its text starts with an
+`assert_eq!` / `assert!` invocation; any other leading shape (`matches!(..) && { A }`,
+`!true && { A }`, `cfg!(..).then(|| { A })`) is compound and gated by the
+assertion macro in its tail. A root `loop` with no `break` and a root
+`std::process::exit` / `abort` call end the test like an earlier `return`, for every
+family that reads this admission. Not covered: `assert_ne!` and `debug_assert*!`
+(#8983), and `process::exit` reached through a `use` alias.
+
+Residual fail-open contexts. The admission is a syntactic reading, not a control
+flow proof. These contexts still credit a plain `assert_eq!` / `assert!` as
+`exposed` for `side_effect` and `call_deletion` (non-blocking, disclosed by
+review of #8934; tracked with the #8983 follow-up unless a separate issue says
+otherwise):
+
+- An infinite outer loop hidden by a nested exit: `loop { for _ in 0..1 { break; } }`
+  or `loop { let _c = || { loop { break; } }; }` before the assertion. Root
+  divergence detection treats any descendant `break` as an exit of the root loop.
+  The return family credits these too.
+- A non-root `{ std::process::exit(0); }` block, `while true {}`, and
+  `use std::process::exit; exit(0);` before the assertion. Only the `use` alias
+  is named above; the other two are equally undetected.
+
+Reachable-oracle preservation (#8927, review of #8934). A `std::` / `core::`
+qualified `assert!` is admitted exactly like a qualified `assert_eq!`: the root
+must be provably unrebound and the invocation on an eager path, so an unconditional
+`std::assert!(.. == Vec::from([..]))` keeps its `weakly_exposed` effect credit,
+while the same assertion after `return`, in a literal-false block or in an
+uncalled closure is still refused. Identical assertion spellings on one line
+(`assert_eq!(..); return; assert_eq!(..);`) share one admission key: the key is
+admitted when some invocation of it provably runs and refused when none does, so
+the first assertion keeps its `exposed` credit and a pair that cannot run
+(`return; A A`) stays uncredited. A dead copy beside a live one adds no credit the
+live copy does not already carry. This live-duplicate exception applies only to
+effect families; the return family retains its ambiguous-coordinate refusal.
+
+Compound oracles, including an invoked macro that swallows an assertion in its
+arguments, take the context gate above. When the retained compound text does not
+establish the assertion macro's identity, refusal provenance and Human guidance
+refer to the assertion generically rather than naming its outer macro.
+
+The admission also over-refuses, failing closed and matching the return family:
+qualified `std::` / `core::` assertions whose arguments contain a nested `vec!`
+(or other macro) read `static_unknown` even in direct position, and `if true { assert_eq!(..) }`,
+a called nested fn, a conditional `return` before the assertion and a called
+closure containing `return` are uncredited. These are missed advisories, not
+wrong credits.
+
 1. Oracle shape. The assertion is one plain `assert_eq!`, or that
    `assert_eq!` qualified through a `std` or `core` root (`std::assert_eq!`,
    `::core::assert_eq!`) when the root cannot be rebound (#7857). The test's
@@ -2556,6 +2621,39 @@ existing owner-call argument pin is unavailable; this leaf does not relax that
 authority. Withheld diff-index source bindings receive the same constructor scan.
 Full frozen consumer replay is separate from fixture admission and never clears
 consumer gates, missing IDs or unrelated propagation residuals by absence.
+
+### Changes the asserted inputs cannot tell apart (#8659)
+
+An exact pin shows the test checks the owner's value, not that the checked
+input reaches the change. `base * 2u64.pow(attempt)` changed to
+`3u64.pow(attempt)` with `assert_eq!(backoff_ms(0, 100), 100)` passes on both
+versions (`3^0 == 2^0`), as does `attempt.min(5)` raised to `min(6)` with
+`assert_eq!(capped(3), 3)`. A `return_value` probe's infection stage therefore
+reads `weak` instead of `yes` when all of the following hold, and every
+unmet condition keeps today's reading:
+
+1. The owner is a free function the integer constant fold can evaluate (the
+   #6026 fold, which also evaluates `.pow(n)`, `.min(n)` and `.max(n)` on
+   integer values), the probe carries its `before` text, and that text
+   replaces the current text exactly once in the owner's body.
+2. No other function calls the owner by name (the same guard the `&&`/`||`
+   skipped-operand reading uses).
+3. At least one related test names the owner, and every such test is a plain
+   test (no case table, no local shadow of the owner's name) whose
+   assertions are all equality assertions whose first operand is one bare
+   owner call with literal arguments that fold.
+4. At every such call the owner folds to the same value under the current and
+   the baseline body, while a small grid of integer arguments (each parameter
+   over `0, 1, 2, 3, 5, 6, 7, 10`, at most three parameters) finds a call at
+   which the two bodies fold to different values. An equivalent rewrite
+   (`x * 3` to `3 * x`) has no such call and keeps today's reading: asking for
+   a test that tells the versions apart would name one that cannot exist.
+
+A related test that never names the owner is ignored: a helper that calls the
+owner would already make condition 2 fail. The reading only downgrades; a
+fold that fails, overflows the declared width or meets a float, an unsupported
+method or a `let` is not evaluable and changes nothing. It asks nothing of
+the oracle's strength and is not a runtime claim.
 
 ### A returned bare comparison is read at its boundary (#9094)
 
