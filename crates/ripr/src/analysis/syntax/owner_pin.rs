@@ -1054,10 +1054,82 @@ fn macro_binding_sites_in_tree(
             // and is caught by `drop_in_shadowed`.
             let root_imported = || plain_import_names().contains(root);
             let standard_root = matches!(root, "std" | "core" | "alloc") && !root_imported();
+            // #9676: a path in module M resolves its first segment only against
+            // M's own items and the extern prelude, never an enclosing module's
+            // (`mod core { pub use core::*; }` globs the real `core` although a
+            // module named `core` exists in the file). Admit a glob that is a
+            // direct item of an inline module when that module's own items
+            // cannot bind the root name; any macro-emitted or ambiguous item
+            // keeps the whole-file refusal.
+            let module_local_standard_root = || {
+                let Some(list) = import
+                    .syntax()
+                    .parent()
+                    .and_then(ast::ItemList::cast)
+                    .filter(|list| {
+                        list.syntax()
+                            .parent()
+                            .is_some_and(|p| ast::Module::can_cast(p.kind()))
+                    })
+                else {
+                    return false;
+                };
+                let named = |name: Option<ast::Name>| {
+                    name.is_some_and(|name| name.text().trim_start_matches("r#") == root)
+                };
+                matches!(root, "std" | "core" | "alloc")
+                    && !packages
+                        .iter()
+                        .any(|package| package.replace('-', "_") == root)
+                    && !list.syntax().children().any(|child| {
+                        if child == *import.syntax() {
+                            return false;
+                        }
+                        if let Some(module) = ast::Module::cast(child.clone()) {
+                            return named(module.name());
+                        }
+                        if let Some(krate) = ast::ExternCrate::cast(child.clone()) {
+                            return krate.name_ref().is_some_and(|n| n.text() == root)
+                                || named(krate.rename().and_then(|r| r.name()));
+                        }
+                        if let Some(other) = ast::Use::cast(child.clone()) {
+                            return other
+                                .syntax()
+                                .descendants()
+                                .filter_map(ast::UseTree::cast)
+                                .any(|leaf| {
+                                    if leaf.star_token().is_some() {
+                                        return false;
+                                    }
+                                    if let Some(rename) = leaf.rename() {
+                                        return named(rename.name());
+                                    }
+                                    let last = leaf
+                                        .path()
+                                        .and_then(|path| path.segment())
+                                        .and_then(|segment| segment.name_ref());
+                                    match leaf.use_tree_list() {
+                                        None => last.is_some_and(|n| n.text() == root),
+                                        Some(inner) => {
+                                            last.is_some_and(|n| n.text() == root)
+                                                && inner.use_trees().any(|t| {
+                                                    t.syntax().text().to_string().trim() == "self"
+                                                })
+                                        }
+                                    }
+                                });
+                        }
+                        // Item-position macro calls may emit any binding.
+                        ast::MacroCall::can_cast(child.kind())
+                            || ast::AnyHasName::cast(child.clone())
+                                .is_some_and(|item| named(item.name()))
+                    })
+            };
             for item in tree.syntax().descendants().filter_map(ast::UseTree::cast) {
                 if item.star_token().is_some()
-                    && standard_root
-                    && !drop_in_shadowed(root, external)
+                    && matches!(root, "std" | "core" | "alloc")
+                    && (standard_root && !drop_in_shadowed(root, external)
+                        || module_local_standard_root())
                     && drop_in_verified(root)
                 {
                     continue;
