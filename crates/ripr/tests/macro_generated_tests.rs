@@ -199,3 +199,56 @@ fn a_cfg_gated_invocation_adds_no_test() -> Result<(), String> {
     assert_ne!(gated.class, ExposureClass::Exposed, "{gated:?}");
     Ok(())
 }
+
+const IDENTITY: &str = "    macro_rules! suite {\n        ($($t:tt)*) => { $($t)* };\n    }\n\n";
+const SUITE_BODY: &str = "        #[test]\n        fn nine_is_closed() {\n            assert_eq!(gate(9), false);\n        }\n\n        #[test]\n        fn ten_is_open() {\n            assert_eq!(gate(10), true);\n        }\n";
+
+#[test]
+fn literal_tests_in_an_identity_macro_read_like_the_hand_written_tests() -> Result<(), String> {
+    let hand_written = TempRepo::create(
+        "    #[test]\n    fn nine_is_closed() {\n        assert_eq!(gate(9), false);\n    }\n\n    #[test]\n    fn ten_is_open() {\n        assert_eq!(gate(10), true);\n    }\n",
+    )?
+    .predicate()?;
+    assert_eq!(
+        hand_written.class,
+        ExposureClass::Exposed,
+        "{hand_written:?}"
+    );
+
+    let wrapped =
+        TempRepo::create(&format!("{IDENTITY}    suite! {{\n{SUITE_BODY}    }}\n"))?.predicate()?;
+    assert_eq!(state(&wrapped.ripr.reach.state), "Yes", "{wrapped:?}");
+    assert_eq!(wrapped.class, hand_written.class, "{wrapped:?}");
+    let mut names: Vec<_> = wrapped
+        .related_tests
+        .iter()
+        .map(|test| test.name.as_str())
+        .collect();
+    names.sort_unstable();
+    assert_eq!(names, vec!["nine_is_closed", "ten_is_open"], "{wrapped:?}");
+    Ok(())
+}
+
+#[test]
+fn literal_tests_in_a_macro_that_is_not_the_identity_add_no_test() -> Result<(), String> {
+    // Controls for the same tokens: a macro that drops them, a macro
+    // defined in another file (here: not defined at all), and a gated
+    // invocation each leave the tests unindexed.
+    let cases = [
+        "    macro_rules! suite {\n        ($($t:tt)*) => {};\n    }\n\n    suite! {\n".to_string()
+            + SUITE_BODY
+            + "    }\n",
+        "    other_suite! {\n".to_string() + SUITE_BODY + "    }\n",
+        format!("{IDENTITY}    #[cfg(any())]\n    suite! {{\n{SUITE_BODY}    }}\n"),
+    ];
+    for tests in cases {
+        let finding = TempRepo::create(&tests)?.predicate()?;
+        assert!(finding.related_tests.is_empty(), "{tests}\n{finding:?}");
+        assert_ne!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{tests}\n{finding:?}"
+        );
+    }
+    Ok(())
+}

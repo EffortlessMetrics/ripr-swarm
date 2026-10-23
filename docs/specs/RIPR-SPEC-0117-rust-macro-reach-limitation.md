@@ -266,6 +266,31 @@ reach through them keeps the limitations above. A generated test whose
 transcriber calls a helper macro from another file is indexed for reach, but
 an assertion inside that helper is refused like any untrusted macro.
 
+## Literal Tests In A Pass-Through Item Macro
+
+A test file can also wrap hand-written tests in a same-file macro that only
+re-emits its input (`suite! { #[test] fn a() { .. } }`). An arbitrary
+item-position macro may drop, rename, gate or wrap its input, so ripr reads the
+invocation's own tokens as source only when the macro is provably the identity
+(#8999 item 5):
+
+- the macro is defined once in the file, directly in the file or an inline
+  module, before the invocation and in an enclosing scope, with no `use` of its
+  name and no cfg on the definition or any enclosing module;
+- the definition has exactly one arm, matcher `$($x:tt)*` or `$($x:item)*` and
+  transcriber `$($x)*` (a different binding name, a separator, another fragment,
+  a second arm or any wrapper refuses);
+- the invocation is at item position with no attribute, and its tokens contain
+  no `$` metavariable, raw identifier, `include!`, macro definition, call to a
+  file-local macro, or `cfg`/`cfg_attr` other than `cfg(test)`;
+- the tokens parse cleanly as complete `fn` items (any other item refuses the
+  whole invocation), at least one carrying a literal `#[test]`.
+
+The expansion is the invocation's own text, indexed with the same pinning,
+assertion admission and shadow rules as a generated test. Macros defined in
+another file, imported or `#[macro_use]` macros (`tokio`-style `cfg_*!`
+wrappers, `proptest!`, `rstest` macros) stay unindexed.
+
 ## Macro Definition Edits
 
 A changed line that lies wholly inside a `macro_rules!` definition (matcher or
@@ -393,6 +418,14 @@ end of the file, which is an approximation for an edit in progress.
 - `crates/ripr/tests/macro_generated_tests.rs::a_macro_generated_test_reads_like_the_hand_written_test`
 - `crates/ripr/tests/macro_generated_tests.rs::refused_shapes_and_uninvoked_generators_add_no_test`
 - `crates/ripr/tests/macro_generated_tests.rs::a_deferred_assertion_in_a_generated_test_is_refused_like_a_hand_written_one`
+- `crates/ripr/src/analysis/syntax/passthrough_item_macros.rs::tests::literal_tests_in_an_identity_macro_are_expanded_to_their_own_text`
+- `crates/ripr/src/analysis/syntax/passthrough_item_macros.rs::tests::a_macro_that_is_not_the_identity_expands_nothing`
+- `crates/ripr/src/analysis/syntax/passthrough_item_macros.rs::tests::an_unseen_item_macro_between_definition_and_call_blocks_the_proof`
+- `crates/ripr/src/analysis/syntax/passthrough_item_macros.rs::tests::unknown_imported_duplicate_late_and_pathed_macros_expand_nothing`
+- `crates/ripr/src/analysis/syntax/passthrough_item_macros.rs::tests::invocation_tokens_that_could_generate_gate_or_rename_items_expand_nothing`
+- `crates/ripr/src/analysis/facts/macro_generated_tests.rs::tests::literal_tests_in_an_identity_macro_are_indexed_at_the_invocation`
+- `crates/ripr/tests/macro_generated_tests.rs::literal_tests_in_an_identity_macro_read_like_the_hand_written_tests`
+- `crates/ripr/tests/macro_generated_tests.rs::literal_tests_in_a_macro_that_is_not_the_identity_add_no_test`
 - `crates/ripr/tests/helper_wrapper_reach.rs::exact_pin_through_a_local_macro_argument_abstains_as_not_forwarded`
 - `crates/ripr/tests/helper_wrapper_reach.rs::any_exact_oracle_on_a_macro_argument_caller_abstains`
 - `crates/ripr/tests/helper_wrapper_reach.rs::macro_argument_without_the_owner_or_an_exact_pin_keeps_the_gap`
@@ -418,6 +451,7 @@ end of the file, which is an approximation for an edit in progress.
 | Macro witness producer | `crates/ripr/src/analysis/classify/transitive_reach.rs` |
 | Same-file test generator expansion | `crates/ripr/src/analysis/syntax/local_test_macros.rs` |
 | Generated test indexing | `crates/ripr/src/analysis/facts/macro_generated_tests.rs` |
+| Pass-through item macro expansion | `crates/ripr/src/analysis/syntax/passthrough_item_macros.rs` |
 | Macro definition extents | `crates/ripr/src/analysis/probes/macro_definition.rs` |
 | Generated test assertion admission | `crates/ripr/src/analysis/classify/owner_pin.rs` |
 | Classifier export | `crates/ripr/src/analysis/classify/mod.rs` |

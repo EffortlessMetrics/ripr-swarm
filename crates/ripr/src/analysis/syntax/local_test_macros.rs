@@ -77,12 +77,13 @@ fn expand_local_test_macros_uncached(source: &str) -> Vec<ExpandedLocalTestMacro
     };
     let root = parse.tree();
     let (definitions, local_macros) = local_test_macro_definitions(root.syntax());
-    if definitions.is_empty() {
-        return Vec::new();
-    }
     let imported = imported_names(root.syntax());
     let lines = LineIndex::new(source);
-    let mut expanded = Vec::new();
+    let mut expanded = super::passthrough_item_macros::passthrough_item_expansions(
+        root.syntax(),
+        &lines,
+        &local_macros,
+    );
     for call in root.syntax().descendants().filter_map(ast::MacroCall::cast) {
         if !is_item_position(call.syntax()) {
             continue;
@@ -120,6 +121,7 @@ fn expand_local_test_macros_uncached(source: &str) -> Vec<ExpandedLocalTestMacro
             text,
         });
     }
+    expanded.sort_by_key(|expansion| (expansion.start_line, expansion.end_line));
     expanded
 }
 
@@ -216,7 +218,7 @@ fn has_test_attribute(tree: &ast::TokenTree) -> bool {
     })
 }
 
-fn code_tokens(node: &SyntaxNode) -> Vec<SyntaxToken> {
+pub(super) fn code_tokens(node: &SyntaxNode) -> Vec<SyntaxToken> {
     node.descendants_with_tokens()
         .filter_map(|element| element.into_token())
         .filter(|token| !token.kind().is_trivia())
@@ -427,7 +429,7 @@ fn invokes_local_macro(tree: &ast::TokenTree, local_macros: &BTreeSet<String>) -
     })
 }
 
-fn text_invokes_local_macro(text: &str, local_macros: &BTreeSet<String>) -> bool {
+pub(super) fn text_invokes_local_macro(text: &str, local_macros: &BTreeSet<String>) -> bool {
     let Some(parse) = parse_clean_source_file(text) else {
         return true;
     };
@@ -441,7 +443,7 @@ fn text_invokes_local_macro(text: &str, local_macros: &BTreeSet<String>) -> bool
 /// than `cfg(test)`. Whether a `#[cfg(any())] #[test] fn` or a cfg'd
 /// generated module exists in a test build is a configuration question
 /// this expander does not answer, so such an expansion indexes nothing.
-fn text_has_conditional_attribute(text: &str) -> bool {
+pub(super) fn text_has_conditional_attribute(text: &str) -> bool {
     let Some(parse) = parse_clean_source_file(text) else {
         return true;
     };
@@ -485,7 +487,7 @@ pub(super) fn local_macro_names(root: &SyntaxNode) -> (BTreeMap<String, usize>, 
 /// Names a `use` item in the file brings into scope. A named import of a
 /// generator's name makes the invocation ambiguous for rustc (E0659), so
 /// the expander does not guess which macro runs.
-fn imported_names(root: &SyntaxNode) -> BTreeSet<String> {
+pub(super) fn imported_names(root: &SyntaxNode) -> BTreeSet<String> {
     root.descendants()
         .filter_map(ast::UseTree::cast)
         .filter_map(|tree| {
