@@ -1,0 +1,1135 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index e11282236..9a627055f 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -980,6 +980,18 @@ dependencies = [
+  "syn 2.0.119",
+ ]
+ 
++[[package]]
++name = "oxc_ast_visit"
++version = "0.130.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "5d3ae3c0e89d2083c2f598b1d6c886657fdd86e7d5ec4dce5425f6756cfda348"
++dependencies = [
++ "oxc_allocator",
++ "oxc_ast",
++ "oxc_span",
++ "oxc_syntax",
++]
++
+ [[package]]
+ name = "oxc_data_structures"
+ version = "0.130.0"
+@@ -1535,6 +1547,7 @@ dependencies = [
+  "nix",
+  "oxc_allocator",
+  "oxc_ast",
++ "oxc_ast_visit",
+  "oxc_parser",
+  "oxc_span",
+  "process-wrap",
+diff --git a/changelog.d/9936-masker-context.md b/changelog.d/9936-masker-context.md
+new file mode 100644
+index 000000000..acf3c4bf8
+--- /dev/null
++++ b/changelog.d/9936-masker-context.md
+@@ -0,0 +1,4 @@
++<!-- section: Fixed -->
++- TypeScript runner admission keeps real writes after JSX closing tags and
++  backtick-bearing regex literals visible without mistaking division or
++  comparisons for regex or JSX syntax (#9936).
+diff --git a/crates/ripr/Cargo.toml b/crates/ripr/Cargo.toml
+index c24dacec6..de2ebdc8b 100644
+--- a/crates/ripr/Cargo.toml
++++ b/crates/ripr/Cargo.toml
+@@ -73,6 +73,7 @@ home = "=0.5.12"
+ pulldown-cmark = { version = "0.13.5", default-features = false }
+ oxc_allocator = { version = "0.130", optional = true }
+ oxc_ast = { version = "0.130", optional = true }
++oxc_ast_visit = { version = "=0.130.0", optional = true }
+ oxc_parser = { version = "0.130", optional = true }
+ oxc_span = { version = "0.130", optional = true }
+ ra_ap_syntax = { version = "0.0.349", optional = true }
+@@ -140,7 +141,7 @@ process-wrap = { version = "10.0.1", default-features = false, features = [
+ [features]
+ default = ["lang-rust", "lang-typescript", "lang-python"]
+ lang-rust = ["dep:ra_ap_syntax", "dep:unicode-ident"]
+-lang-typescript = ["dep:oxc_allocator", "dep:oxc_ast", "dep:oxc_parser", "dep:oxc_span"]
++lang-typescript = ["dep:oxc_allocator", "dep:oxc_ast", "dep:oxc_ast_visit", "dep:oxc_parser", "dep:oxc_span"]
+ lang-python = ["dep:rustpython-parser"]
+ lang-perl = []
+ 
+diff --git a/crates/ripr/src/analysis/language/typescript/admission.rs b/crates/ripr/src/analysis/language/typescript/admission.rs
+index aefbb214b..d7cde6160 100644
+--- a/crates/ripr/src/analysis/language/typescript/admission.rs
++++ b/crates/ripr/src/analysis/language/typescript/admission.rs
+@@ -147,7 +147,7 @@ impl TypeScriptAdmissionContext {
+                     if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const
+                         && declaration.declarations.iter().any(require_declarator))
+             })
+-            .then(|| BindingScan::of_source(program.source_text))
++            .then(|| BindingScan::of_source(program.source_text, program.source_type))
+             .flatten();
+         let mut context = Self {
+             block_functions_are_lexical,
+@@ -319,9 +319,10 @@ struct BindingScan {
+ }
+ 
+ impl BindingScan {
+-    fn of_source(source: &str) -> Option<Self> {
+-        let code = super::tests_extract::byte_preserving_code_mask(source)
+-            .filter(|code| !super::tests_extract::file_is_opaque(code))?;
++    fn of_source(source: &str, source_type: SourceType) -> Option<Self> {
++        let code =
++            super::tests_extract::byte_preserving_code_mask_for_source_type(source, source_type)
++                .filter(|code| !super::tests_extract::file_is_opaque(code))?;
+         Some(Self {
+             writes: super::tests_extract::strict_identifier_writes(&code),
+             functions: super::tests_extract::function_declaration_names(&code),
+@@ -403,7 +404,10 @@ fn verified_extended_registrations(
+     program: &oxc_ast::ast::Program<'_>,
+     imports: &[TypeScriptImport],
+ ) -> Vec<TypeScriptImport> {
+-    let Some(code) = super::tests_extract::byte_preserving_code_mask(program.source_text) else {
++    let Some(code) = super::tests_extract::byte_preserving_code_mask_for_source_type(
++        program.source_text,
++        program.source_type,
++    ) else {
+         return Vec::new();
+     };
+     if super::tests_extract::file_is_opaque(&code) {
+diff --git a/crates/ripr/src/analysis/language/typescript/classifier.rs b/crates/ripr/src/analysis/language/typescript/classifier.rs
+index 45cd07089..6f39efaa1 100644
+--- a/crates/ripr/src/analysis/language/typescript/classifier.rs
++++ b/crates/ripr/src/analysis/language/typescript/classifier.rs
+@@ -854,7 +854,26 @@ fn ts_mask_typeof_consumed_owner_names(
+ /// expected (at the start, or after an operator or opening punctuation);
+ /// elsewhere it is division.
+ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
+-    ts_mask_with(text, true)
++    let prepared = super::literal_mask::prepare(text, None);
++    ts_mask_lexically(
++        &prepared.code,
++        !prepared.regex_known,
++        &prepared.operand_ends,
++    )
++}
++
++/// Preserve the parser's syntax kind: identical bytes can mean JSX code in
++/// `.tsx` and a type assertion followed by a regex literal in `.ts`.
++pub(crate) fn ts_mask_literals_and_comments_for_source_type(
++    text: &str,
++    source_type: SourceType,
++) -> String {
++    let prepared = super::literal_mask::prepare(text, Some(source_type));
++    ts_mask_lexically(
++        &prepared.code,
++        !prepared.regex_known,
++        &prepared.operand_ends,
++    )
+ }
+ 
+ /// [`ts_mask_literals_and_comments`] with every `/` read as division, so a
+@@ -862,10 +881,22 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
+ /// runs on this mask. A real regex literal holding a quote can misread the rest
+ /// of its line here; callers require agreement of both masks.
+ pub(crate) fn ts_mask_literals_and_comments_division_only(text: &str) -> String {
+-    ts_mask_with(text, false)
++    ts_mask_lexically(text, false, &std::collections::BTreeSet::new())
+ }
+ 
+-fn ts_mask_with(text: &str, regex_allowed: bool) -> String {
++fn ts_mask_lexically(
++    text: &str,
++    regex_allowed: bool,
++    operand_ends: &std::collections::BTreeSet<usize>,
++) -> String {
++    fn next_char(
++        chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
++        offset: &mut usize,
++    ) -> Option<char> {
++        let c = chars.next()?;
++        *offset += c.len_utf8();
++        Some(c)
++    }
+     #[derive(Clone, Copy)]
+     enum Mode {
+         Code,
+@@ -946,7 +977,9 @@ fn ts_mask_with(text: &str, regex_allowed: bool) -> String {
+     // One entry per open `${`: the brace depth inside that interpolation.
+     let mut interpolations: Vec<usize> = Vec::new();
+     let mut chars = text.chars().peekable();
+-    while let Some(c) = chars.next() {
++    let mut source_offset = 0usize;
++    while let Some(c) = next_char(&mut chars, &mut source_offset) {
++        let at = source_offset - c.len_utf8();
+         if let Mode::RegexFlags = mode {
+             if c.is_ascii_alphabetic() {
+                 out.push(' ');
+@@ -969,12 +1002,12 @@ fn ts_mask_with(text: &str, regex_allowed: bool) -> String {
+                         out.push(c);
+                     }
+                     '/' if chars.peek() == Some(&'/') => {
+-                        chars.next();
++                        next_char(&mut chars, &mut source_offset);
+                         mode = Mode::LineComment;
+                         out.push_str("  ");
+                     }
+                     '/' if chars.peek() == Some(&'*') => {
+-                        chars.next();
++                        next_char(&mut chars, &mut source_offset);
+                         mode = Mode::BlockComment;
+                         out.push_str("  ");
+                     }
+@@ -1046,7 +1079,7 @@ fn ts_mask_with(text: &str, regex_allowed: bool) -> String {
+             }
+             Mode::Quote(quote) => {
+                 if c == '\\' {
+-                    chars.next();
++                    next_char(&mut chars, &mut source_offset);
+                     out.push_str("  ");
+                 } else if c == quote || c == '\n' {
+                     mode = Mode::Code;
+@@ -1058,14 +1091,14 @@ fn ts_mask_with(text: &str, regex_allowed: bool) -> String {
+             }
+             Mode::Template => {
+                 if c == '\\' {
+-                    chars.next();
++                    next_char(&mut chars, &mut source_offset);
+                     out.push_str("  ");
+                 } else if c == '`' {
+                     mode = Mode::Code;
+                     prev = Some(c);
+                     out.push(c);
+                 } else if c == '$' && chars.peek() == Some(&'{') {
+-                    chars.next();
++                    next_char(&mut chars, &mut source_offset);
+                     interpolations.push(0);
+                     mode = Mode::Code;
+                     prev = Some('{');
+@@ -1076,7 +1109,7 @@ fn ts_mask_with(text: &str, regex_allowed: bool) -> String {
+             }
+             Mode::Regex { in_class } => {
+                 if c == '\\' {
+-                    chars.next();
++                    next_char(&mut chars, &mut source_offset);
+                     out.push_str("  ");
+                 } else if c == '\n' {
+                     mode = Mode::Code;
+@@ -1107,7 +1140,7 @@ fn ts_mask_with(text: &str, regex_allowed: bool) -> String {
+             }
+             Mode::BlockComment => {
+                 if c == '*' && chars.peek() == Some(&'/') {
+-                    chars.next();
++                    next_char(&mut chars, &mut source_offset);
+                     mode = Mode::Code;
+                     out.push_str("  ");
+                 } else {
+@@ -1115,6 +1148,16 @@ fn ts_mask_with(text: &str, regex_allowed: bool) -> String {
+                 }
+             }
+         }
++        if operand_ends.contains(&at) {
++            mode = Mode::Code;
++            prev = Some(')');
++            word.clear();
++            word_after_dot = false;
++            after_space = false;
++            dots = 0;
++            postfix_op = false;
++            op_after_operand = false;
++        }
+     }
+     out
+ }
+@@ -5786,7 +5829,9 @@ pub(crate) fn classify_change_with_alias_state(
+             &owner.name,
+             &owner.params,
+             owner.start_line,
+-            module_source.as_deref(),
++            module_source
++                .as_deref()
++                .map(|source| (source, source_type_for(&owner.file))),
+         );
+         mock_facts.admit_spy_files(
+             related_candidates
+diff --git a/crates/ripr/src/analysis/language/typescript/literal_mask.rs b/crates/ripr/src/analysis/language/typescript/literal_mask.rs
+new file mode 100644
+index 000000000..cc6db4555
+--- /dev/null
++++ b/crates/ripr/src/analysis/language/typescript/literal_mask.rs
+@@ -0,0 +1,164 @@
++//! Parser-owned regex and JSX spans for the shared literal masker (#9936).
++
++use super::{Allocator, GetSpan, Parser, SourceType};
++use oxc_ast::ast::{
++    JSXAttributeItem, JSXAttributeValue, JSXClosingElement, JSXElement, JSXFragment,
++    JSXOpeningElement, JSXText, RegExpLiteral,
++};
++use oxc_ast_visit::{Visit, walk};
++use oxc_span::Span;
++use std::collections::BTreeSet;
++
++pub(super) struct Prepared {
++    pub(super) code: String,
++    pub(super) operand_ends: BTreeSet<usize>,
++    pub(super) regex_known: bool,
++}
++
++#[derive(PartialEq, Eq)]
++struct Plan {
++    blank: Vec<bool>,
++    operand_ends: BTreeSet<usize>,
++}
++
++impl Plan {
++    fn set(&mut self, span: Span, blank: bool) {
++        if let Some(bytes) = self.blank.get_mut(span.start as usize..span.end as usize) {
++            bytes.fill(blank);
++        }
++    }
++
++    fn finish_operand(&mut self, span: Span) {
++        if span.end > span.start {
++            self.operand_ends.insert(span.end as usize - 1);
++        }
++    }
++}
++
++impl<'a> Visit<'a> for Plan {
++    fn visit_reg_exp_literal(&mut self, node: &RegExpLiteral<'a>) {
++        let close = node.span.start + 1 + node.regex.pattern.text.len() as u32;
++        self.set(Span::new(node.span.start + 1, close), true);
++        self.set(Span::new(close + 1, node.span.end), true);
++        self.finish_operand(node.span);
++    }
++
++    fn visit_jsx_element(&mut self, node: &JSXElement<'a>) {
++        self.finish_operand(node.span);
++        walk::walk_jsx_element(self, node);
++    }
++
++    fn visit_jsx_opening_element(&mut self, node: &JSXOpeningElement<'a>) {
++        self.set(node.span, true);
++        self.set(node.name.span(), false);
++        for attribute in &node.attributes {
++            match attribute {
++                JSXAttributeItem::Attribute(attribute) => {
++                    if let Some(value) = &attribute.value
++                        && !matches!(value, JSXAttributeValue::StringLiteral(_))
++                    {
++                        self.set(value.span(), false);
++                    }
++                }
++                JSXAttributeItem::SpreadAttribute(attribute) => self.set(attribute.span, false),
++            }
++        }
++        // Restore executable containers before walking them: nested JSX and
++        // regex masks must override the enclosing attribute's restoration.
++        walk::walk_jsx_opening_element(self, node);
++    }
++
++    fn visit_jsx_closing_element(&mut self, node: &JSXClosingElement<'a>) {
++        self.set(node.span, true);
++        self.set(node.name.span(), false);
++    }
++
++    fn visit_jsx_fragment(&mut self, node: &JSXFragment<'a>) {
++        self.set(node.opening_fragment.span, true);
++        self.set(node.closing_fragment.span, true);
++        self.finish_operand(node.span);
++        walk::walk_jsx_fragment(self, node);
++    }
++
++    fn visit_jsx_text(&mut self, node: &JSXText<'a>) {
++        self.set(node.span, true);
++    }
++}
++
++fn parse_plan(text: &str, source_type: SourceType, prefix: &str, suffix: &str) -> Option<Plan> {
++    let source = format!("{prefix}{text}{suffix}");
++    let allocator = Allocator::default();
++    let parsed = Parser::new(&allocator, &source, source_type).parse();
++    if !parsed.errors.is_empty() {
++        return None;
++    }
++    let mut plan = Plan {
++        blank: vec![false; source.len()],
++        operand_ends: BTreeSet::new(),
++    };
++    plan.visit_program(&parsed.program);
++    let start = prefix.len();
++    let end = start + text.len();
++    Some(Plan {
++        blank: plan.blank[start..end].to_vec(),
++        operand_ends: plan
++            .operand_ends
++            .range(start..end)
++            .map(|at| at - start)
++            .collect(),
++    })
++}
++
++fn plan_for(text: &str, source_type: Option<SourceType>) -> Option<Plan> {
++    for (prefix, suffix) in [
++        ("", ""),
++        ("async function* __ripr_mask_body__() {\n", "\n}"),
++        ("class __RiprMaskOwner__ {\n", "\n}"),
++    ] {
++        if let Some(source_type) = source_type {
++            if let Some(plan) = parse_plan(text, source_type, prefix, suffix) {
++                return Some(plan);
++            }
++        } else {
++            match (
++                parse_plan(text, SourceType::ts(), prefix, suffix),
++                parse_plan(text, SourceType::tsx(), prefix, suffix),
++            ) {
++                (Some(ts), Some(tsx)) => return (ts == tsx).then_some(ts),
++                (Some(plan), None) | (None, Some(plan)) => return Some(plan),
++                (None, None) => {}
++            }
++        }
++    }
++    None
++}
++
++pub(super) fn prepare(text: &str, source_type: Option<SourceType>) -> Prepared {
++    let plan =
++        (text.contains('`') || text.contains("</") || text.contains("/>") || text.contains("<>"))
++            .then(|| plan_for(text, source_type))
++            .flatten();
++    let Some(plan) = plan else {
++        return Prepared {
++            code: text.to_string(),
++            operand_ends: BTreeSet::new(),
++            regex_known: false,
++        };
++    };
++    let mut prepared = Prepared {
++        code: String::with_capacity(text.len()),
++        operand_ends: BTreeSet::new(),
++        regex_known: true,
++    };
++    for (at, c) in text.char_indices() {
++        if plan.operand_ends.contains(&at) {
++            prepared.operand_ends.insert(prepared.code.len());
++        }
++        prepared.code.push(if plan.blank[at] && !c.is_whitespace() {
++            ' '
++        } else {
++            c
++        });
++    }
++    prepared
++}
+diff --git a/crates/ripr/src/analysis/language/typescript/mock_payload_guard.rs b/crates/ripr/src/analysis/language/typescript/mock_payload_guard.rs
+index 4b5721287..55ad72c84 100644
+--- a/crates/ripr/src/analysis/language/typescript/mock_payload_guard.rs
++++ b/crates/ripr/src/analysis/language/typescript/mock_payload_guard.rs
+@@ -99,7 +99,7 @@ impl MockCallFacts {
+         owner_name: &str,
+         owner_params: &[String],
+         owner_start_line: usize,
+-        module_source: Option<&str>,
++        module_source: Option<(&str, SourceType)>,
+     ) {
+         let (Some(owner_source), Some(module_source)) = (owner_source, module_source) else {
+             return;
+@@ -136,7 +136,9 @@ impl MockCallFacts {
+                 continue;
+             }
+             seen.push(&test.file);
+-            if !read_file(&test.file).is_some_and(|source| spy::spy_safe_test_file(&source)) {
++            if !read_file(&test.file)
++                .is_some_and(|source| spy::spy_safe_test_file(&source, source_type_for(&test.file)))
++            {
+                 continue;
+             }
+             // Importing a module runs its top level before the test body, so
+@@ -956,6 +958,10 @@ fn closing_offset(text: &str, open: char, close: char) -> Option<usize> {
+ /// to the first top-level `{` or `=>`), or `None` when no body opens.
+ pub(super) fn masked_owner_body(owner_source: &str) -> Option<String> {
+     let masked = ts_mask_literals_and_comments(owner_source);
++    owner_body_from_mask(&masked)
++}
++
++pub(super) fn owner_body_from_mask(masked: &str) -> Option<String> {
+     let mut parens = 0usize;
+     for (index, c) in masked.char_indices() {
+         match c {
+diff --git a/crates/ripr/src/analysis/language/typescript/mock_payload_guard/spy.rs b/crates/ripr/src/analysis/language/typescript/mock_payload_guard/spy.rs
+index 36f209e12..6266e5c74 100644
+--- a/crates/ripr/src/analysis/language/typescript/mock_payload_guard/spy.rs
++++ b/crates/ripr/src/analysis/language/typescript/mock_payload_guard/spy.rs
+@@ -66,15 +66,16 @@ pub(super) fn module_object_calls(
+     owner_name: &str,
+     owner_params: &[String],
+     owner_start_line: usize,
+-    module_source: &str,
++    module_source: (&str, SourceType),
+ ) -> Vec<ModuleObjectCall> {
++    let (module_source, source_type) = module_source;
+     if !runs_changed_line_once(owner_source, owner_name, line_text) {
+         return Vec::new();
+     }
+-    let Some(body) = masked_owner_body(owner_source) else {
++    let masked_owner = ts_mask_literals_and_comments_for_source_type(owner_source, source_type);
++    let Some(body) = owner_body_from_mask(&masked_owner) else {
+         return Vec::new();
+     };
+-    let masked_owner = ts_mask_literals_and_comments(owner_source);
+     let header = &masked_owner[..masked_owner.len().saturating_sub(body.len())];
+     // A non-ASCII name is no word the allowlist can read. A tagged
+     // template needs a callable tag, which no allowed word holds.
+@@ -85,7 +86,7 @@ pub(super) fn module_object_calls(
+     {
+         return Vec::new();
+     }
+-    let masked_module = ts_mask_literals_and_comments(module_source);
++    let masked_module = ts_mask_literals_and_comments_for_source_type(module_source, source_type);
+     // Module code that imports, or that names the object anywhere but its
+     // declaration and the owner's call, can leave a mock with calls on the
+     // method (`o.m = jest.fn(); o.m(...)`) before the test's spy installs.
+@@ -306,7 +307,7 @@ fn words_outside_members(text: &str) -> impl Iterator<Item = &str> {
+ /// escape could spell another, and the file holds no `each`,
+ /// `concurrent`, `retryTimes`, `mock`, `doMock`, module reset or
+ /// isolation, `require`, dynamic `import(` or `eval`.
+-pub(super) fn spy_safe_test_file(source: &str) -> bool {
++pub(super) fn spy_safe_test_file(source: &str, source_type: SourceType) -> bool {
+     const RUNS_OR_REPLACES: [&str; 12] = [
+         "each",
+         "concurrent",
+@@ -321,7 +322,7 @@ pub(super) fn spy_safe_test_file(source: &str) -> bool {
+         "requireActual",
+         "eval",
+     ];
+-    let masked = ts_mask_literals_and_comments(source);
++    let masked = ts_mask_literals_and_comments_for_source_type(source, source_type);
+     source.matches("spyOn").count() == 1
+         && one_test_after_imports(&masked)
+         && imports_bind_names(&masked)
+@@ -434,7 +435,8 @@ pub(super) fn credits_spy(
+     test_file: &Path,
+     test_body: &str,
+ ) -> bool {
+-    let masked_body = ts_mask_literals_and_comments(test_body);
++    let masked_body =
++        ts_mask_literals_and_comments_for_source_type(test_body, source_type_for(test_file));
+     let Some(range) = callback_scope_range(&masked_body) else {
+         return false;
+     };
+@@ -544,13 +546,71 @@ mod tests {
+             "export const mailer = {{ send(m: string) {{ return m; }} }};\nexport function wrap(mailer: Mailer) {{\n  {owner}\n}}\n"
+         );
+         assert_eq!(
+-            module_object_calls(line, owner, "announceMail", &id, 2, &top),
++            module_object_calls(
++                line,
++                owner,
++                "announceMail",
++                &id,
++                2,
++                (&top, SourceType::ts())
++            ),
+             vec![ModuleObjectCall {
+                 object: "mailer".to_string(),
+                 method: "send".to_string(),
+             }]
+         );
+-        assert!(module_object_calls(line, owner, "announceMail", &id, 3, &nested).is_empty());
+-        assert!(module_object_calls(line, owner, "announceMail", &id, 0, &top).is_empty());
++        assert!(
++            module_object_calls(
++                line,
++                owner,
++                "announceMail",
++                &id,
++                3,
++                (&nested, SourceType::ts())
++            )
++            .is_empty()
++        );
++        assert!(
++            module_object_calls(
++                line,
++                owner,
++                "announceMail",
++                &id,
++                0,
++                (&top, SourceType::ts())
++            )
++            .is_empty()
++        );
++    }
++
++    #[test]
++    fn review_9936_module_spy_guard_uses_the_native_source_kind() {
++        let owner =
++            "function announceMail(id: number): void {\n    mailer.send(\"order \" + id);\n  }";
++        let line = "    mailer.send(\"order \" + id);";
++        let module = format!(
++            "export const mailer = {{ send(m: string) {{ return m; }} }};\n{owner}\nconst a = 8, g = 2, x: any = 0; type div = any; const node = <div>x</div>; require('x'); const q = a /g;"
++        );
++        for (source_type, allowed) in [(SourceType::ts(), true), (SourceType::tsx(), false)] {
++            assert_eq!(
++                !module_object_calls(
++                    line,
++                    owner,
++                    "announceMail",
++                    &["id".to_string()],
++                    2,
++                    (&module, source_type)
++                )
++                .is_empty(),
++                allowed
++            );
++        }
++    }
++
++    #[test]
++    fn review_9936_spy_test_guard_uses_the_native_source_kind() {
++        let source = "import { test } from 'vitest'; test('one', () => { const obj: any = { m() {} }; const spy = jest.spyOn(obj, 'm'); const a = 8, g = 2, x: any = 0; type div = any; const node = <div>x</div>; require('x'); const q = a /g; });";
++        assert!(spy_safe_test_file(source, SourceType::ts()));
++        assert!(!spy_safe_test_file(source, SourceType::tsx()));
+     }
+ }
+diff --git a/crates/ripr/src/analysis/language/typescript/mod.rs b/crates/ripr/src/analysis/language/typescript/mod.rs
+index 712071b15..62791e54d 100644
+--- a/crates/ripr/src/analysis/language/typescript/mod.rs
++++ b/crates/ripr/src/analysis/language/typescript/mod.rs
+@@ -82,6 +82,7 @@ mod instance_class_guard;
+ #[cfg(test)]
+ mod line_index_tests;
+ mod literal_eval;
++mod literal_mask;
+ mod literal_matcher_guard;
+ mod lookup_table_guard;
+ mod loop_bound_guard;
+diff --git a/crates/ripr/src/analysis/language/typescript/tests/var_runner_binding_tests.rs b/crates/ripr/src/analysis/language/typescript/tests/var_runner_binding_tests.rs
+index 9a37e9baa..6321649e0 100644
+--- a/crates/ripr/src/analysis/language/typescript/tests/var_runner_binding_tests.rs
++++ b/crates/ripr/src/analysis/language/typescript/tests/var_runner_binding_tests.rs
+@@ -293,3 +293,450 @@ fn non_ascii_names_are_whole_identifiers_in_the_write_scan() {
+         "caf"
+     ));
+ }
++
++/// #9936 shape 1: in `.tsx` a closing tag `</div>` is not a regex start, so a
++/// write on the same line (or after it) is still seen.
++#[test]
++fn a_write_after_a_jsx_closing_tag_is_still_seen() -> Result<(), String> {
++    for tail in [
++        "const v = <p>x</p>; test = null;",
++        "const v = <div>a</div>;\ntest = function () {};",
++        "const v = <div><b>a</b></div>; test = null;",
++    ] {
++        let source = tape_test("var test = require('tape');", tail);
++        assert_eq!(
++            class_for_file("var-runner-jsx-close", "test/k.test.tsx", &source)?,
++            ExposureClass::NoStaticPath,
++            "{tail}"
++        );
++    }
++    // Negative control: the same shapes with no write keep the binding.
++    let control = tape_test(
++        "var test = require('tape');",
++        "const v = <div>a</div>; const w = <p>x</p>;",
++    );
++    assert_eq!(
++        class_for_file("var-runner-jsx-close-control", "test/k.test.tsx", &control)?,
++        ExposureClass::Exposed
++    );
++    Ok(())
++}
++
++/// #9936 shape 2: a backtick inside a regex literal that follows `)` or `}`
++/// (where `/` reads as division) does not open a template string.
++#[test]
++fn a_write_after_a_backtick_in_a_regex_literal_is_still_seen() -> Result<(), String> {
++    for tail in [
++        "if (n) /`/.test(s);\ntest = null;",
++        "if (n) /[`'\"]/.test(s);\ntest = null;",
++        "{}\n/`/.test(s);\ntest = function () {};",
++    ] {
++        let source = tape_test("var test = require('tape');", tail);
++        assert_eq!(
++            class_for("var-runner-regex-backtick", &source)?,
++            ExposureClass::NoStaticPath,
++            "{tail}"
++        );
++    }
++    // Negative controls: no write keeps the binding, and a real division by
++    // a template literal still masks the template text.
++    for tail in [
++        "if (n) /`/.test(s);\nconst s2 = 1;",
++        "const q = n /`test = null`;",
++    ] {
++        let source = tape_test("var test = require('tape');", tail);
++        assert_eq!(
++            class_for("var-runner-regex-backtick-control", &source)?,
++            ExposureClass::Exposed,
++            "{tail}"
++        );
++    }
++    Ok(())
++}
++
++/// A native TypeScript number-array operand can contain executable template
++/// interpolation. A following division slash does not turn it into a regex.
++#[test]
++fn review_9936_division_template_interpolation_write_is_seen() -> Result<(), String> {
++    let tail = "const n: number = 4; const q = n /[+`${(test = null, 2)}`][0] / 2;";
++    let source = tape_test("var test = require('tape');", tail);
++    assert_eq!(
++        class_for_file("masker-division-interpolation", "test/k.test.ts", &source)?,
++        ExposureClass::NoStaticPath,
++        "{tail}"
++    );
++    Ok(())
++}
++
++#[test]
++fn review_9936_later_regex_backtick_write_is_seen() -> Result<(), String> {
++    let tail = "const n = true; const s = ''; if (n) /a`/.test(s);\ntest = null;";
++    let source = tape_test("var test = require('tape');", tail);
++    assert_eq!(
++        class_for_file("masker-later-regex-backtick", "test/k.test.ts", &source)?,
++        ExposureClass::NoStaticPath,
++        "{tail}"
++    );
++    Ok(())
++}
++
++#[test]
++fn review_9936_comparison_regex_write_is_seen() -> Result<(), String> {
++    let tail = "const n: any = 4; const s = ''; const b = n</`/.test(s);\ntest = null;";
++    let source = tape_test("var test = require('tape');", tail);
++    assert_eq!(
++        class_for_file("masker-comparison-regex", "test/k.test.ts", &source)?,
++        ExposureClass::NoStaticPath,
++        "{tail}"
++    );
++    Ok(())
++}
++
++#[test]
++fn review_9936_no_write_controls_retain_runner_credit() -> Result<(), String> {
++    for tail in [
++        "const n = 4; const q = n /[+`${2}`][0] / 2;",
++        "const n = true; const s = ''; if (n) /a`/.test(s);",
++        "const n: any = 4; const s = ''; const b = n</`/.test(s);",
++    ] {
++        let source = tape_test("var test = require('tape');", tail);
++        assert_eq!(
++            class_for_file("masker-no-write-review-control", "test/k.test.ts", &source)?,
++            ExposureClass::Exposed,
++            "{tail}"
++        );
++    }
++    Ok(())
++}
++
++/// The classifier mask preserves characters; parser consumers must use its
++/// byte-preserving adapter when comparing the mask with source spans.
++#[test]
++fn review_9936_mask_adapter_preserves_unicode_source_offsets() -> Result<(), String> {
++    for source in [
++        "if (n) /`é/.test(s);\ntest = null;",
++        "const s = 'é'; test = null;",
++        "const s = `é${2}`; test = null;",
++        "/* é */ test = null;",
++    ] {
++        let code = super::super::tests_extract::byte_preserving_code_mask(source)
++            .ok_or_else(|| format!("could not mask {source}"))?;
++        assert_eq!(code.len(), source.len(), "{source}");
++        assert_eq!(code.find("test = null"), source.find("test = null"));
++    }
++    Ok(())
++}
++
++#[test]
++fn review_9936_genuine_division_and_comparison_controls() -> Result<(), String> {
++    for (tail, expected) in [
++        (
++            "const q = n /`2`.length; test = null; const r = 8 / 2;",
++            ExposureClass::NoStaticPath,
++        ),
++        (
++            "const q = n /`2`.length; test = null; // done",
++            ExposureClass::NoStaticPath,
++        ),
++        (
++            "const q = n /[+`2`][0]; test = null; const r = 8 / 2;",
++            ExposureClass::NoStaticPath,
++        ),
++        (
++            "const q = n /`${(test = null, 2)}`.length; const r = 8 / 2;",
++            ExposureClass::NoStaticPath,
++        ),
++        (
++            "const q = n /`x/ test = null`.length;",
++            ExposureClass::Exposed,
++        ),
++        (
++            "const q = n</`/.source.length; test = null;",
++            ExposureClass::NoStaticPath,
++        ),
++        (
++            "const q = n</x test = null/.source.length;",
++            ExposureClass::Exposed,
++        ),
++        ("const q = n /`test = null`.length;", ExposureClass::Exposed),
++        (
++            "const q = n++ /[+`${(test = null, 2)}`][0] / 2;",
++            ExposureClass::NoStaticPath,
++        ),
++        (
++            "const obj = { if(x: number) { return x; } }; const q = obj.if(n) /[+`${(test = null, 2)}`][0] / 2;",
++            ExposureClass::NoStaticPath,
++        ),
++    ] {
++        let source = tape_test(
++            "var test = require('tape');",
++            &format!("let n = 8; const s = 'sample'; {tail}"),
++        );
++        assert_eq!(
++            class_for_file("masker-division-review-control", "test/k.test.ts", &source)?,
++            expected,
++            "{tail}"
++        );
++    }
++    Ok(())
++}
++
++#[test]
++fn review_9936_control_head_regex_masks_escaped_and_later_backticks() -> Result<(), String> {
++    for head in [
++        "if ((n))",
++        "if /* comment */ (n)",
++        "while (false)",
++        "for (; false;)",
++    ] {
++        for regex in ["/a`/", "/[\\`]/", "/test = null`/", "/[/'\"`]/"] {
++            for written in [false, true] {
++                let tail = format!(
++                    "const n = true; const s = ''; {head} {regex}.test(s);{}",
++                    if written { " test = null;" } else { "" }
++                );
++                let source = tape_test("var test = require('tape');", &tail);
++                assert_eq!(
++                    class_for_file("masker-control-head-review", "test/k.test.ts", &source)?,
++                    if written {
++                        ExposureClass::NoStaticPath
++                    } else {
++                        ExposureClass::Exposed
++                    },
++                    "{tail}"
++                );
++            }
++        }
++    }
++    Ok(())
++}
++
++#[test]
++fn review_9936_nested_jsx_and_expression_braces_preserve_writes() -> Result<(), String> {
++    for jsx in [
++        "<div data-x={1 < 2 ? 1 : 0}>text<span /></div>",
++        "<><div /><p>text</p></>",
++        "<div>{true ? <span>text</span> : <b />}</div>",
++    ] {
++        for written in [false, true] {
++            let source = tape_test(
++                "var test = require('tape');",
++                &format!(
++                    "const node = {jsx};{}",
++                    if written { " test = null;" } else { "" }
++                ),
++            );
++            assert_eq!(
++                class_for_file("masker-nested-jsx-review", "test/k.test.tsx", &source)?,
++                if written {
++                    ExposureClass::NoStaticPath
++                } else {
++                    ExposureClass::Exposed
++                },
++                "{jsx}; written={written}"
++            );
++        }
++    }
++    Ok(())
++}
++
++#[test]
++fn review_9936_type_assertions_do_not_open_jsx_tags() -> Result<(), String> {
++    for (tail, expected) in [
++        (
++            "const b = n</T>`/.source.length; test = null;",
++            ExposureClass::NoStaticPath,
++        ),
++        (
++            "const b = n</T>test = null/.source.length;",
++            ExposureClass::Exposed,
++        ),
++    ] {
++        let tail = format!("type T = number; const n = 8; const typed = <T>n; {tail}");
++        let source = tape_test("var test = require('tape');", &tail);
++        assert_eq!(
++            class_for_file("masker-type-assertion-review", "test/k.test.ts", &source)?,
++            expected,
++            "{tail}"
++        );
++    }
++    Ok(())
++}
++
++#[test]
++fn review_9936_jsx_text_does_not_open_code_literals_or_comments() -> Result<(), String> {
++    for text in [
++        "if (n) /a",
++        "// text",
++        "/* text",
++        "`text",
++        "\"text",
++        "'text",
++    ] {
++        let source = tape_test(
++            "var test = require('tape');",
++            &format!("const node = <div>{text} {{test = null}}</div>;"),
++        );
++        assert_eq!(
++            class_for_file("masker-jsx-text-review", "test/k.test.tsx", &source)?,
++            ExposureClass::NoStaticPath,
++            "{text}"
++        );
++    }
++    Ok(())
++}
++
++#[test]
++fn review_9936_private_control_keyword_method_is_a_call() -> Result<(), String> {
++    for (operand, expected) in [
++        ("+`${(test = null, 2)}`", ExposureClass::NoStaticPath),
++        ("+`test = null`", ExposureClass::Exposed),
++    ] {
++        let tail = format!(
++            "class C {{ #if(x: number) {{ return x; }} f() {{ return this.#if(8) /({operand}) / 2; }} }} new C().f();"
++        );
++        let source = tape_test("var test = require('tape');", &tail);
++        assert_eq!(
++            class_for_file("masker-private-control-review", "test/k.test.ts", &source)?,
++            expected,
++            "{tail}"
++        );
++    }
++    Ok(())
++}
++
++#[test]
++fn review_9936_identical_source_uses_the_native_file_syntax() -> Result<(), String> {
++    let tail = "const a = 8, g = 2; const x: any = 0; type div = any; const v = <div>x</div>; test = null; const y = a /g;";
++    let source = tape_test("var test = require('tape');", tail);
++    for (file, expected) in [
++        ("test/k.test.ts", ExposureClass::Exposed),
++        ("test/k.test.tsx", ExposureClass::NoStaticPath),
++    ] {
++        assert_eq!(
++            class_for_file("masker-native-syntax-review", file, &source)?,
++            expected,
++            "{file}"
++        );
++    }
++    Ok(())
++}
++
++#[test]
++fn review_9936_jsx_text_is_not_an_executable_write() -> Result<(), String> {
++    let source = tape_test(
++        "var test = require('tape');",
++        "const node = <div>test = null</div>;",
++    );
++    assert_eq!(
++        class_for_file("masker-jsx-text-negative", "test/k.test.tsx", &source)?,
++        ExposureClass::Exposed
++    );
++    Ok(())
++}
++
++#[test]
++fn review_9936_for_await_body_regex_keeps_real_and_fake_writes_separate() -> Result<(), String> {
++    for written in [false, true] {
++        let tail = format!(
++            "async function f() {{ const s = ''; for await (const x of []) /test = null`/.test(s); }}{}",
++            if written { " test = null;" } else { "" }
++        );
++        let source = tape_test("var test = require('tape');", &tail);
++        assert_eq!(
++            class_for_file("masker-for-await-review", "test/k.test.ts", &source)?,
++            if written {
++                ExposureClass::NoStaticPath
++            } else {
++                ExposureClass::Exposed
++            }
++        );
++    }
++    Ok(())
++}
++
++#[test]
++fn review_9936_generic_jsx_and_attributes_preserve_only_executable_writes() -> Result<(), String> {
++    for (expression, written) in [
++        ("<Component<number> />", false),
++        (
++            "<Component<() => number>><Component<string> /></Component>",
++            false,
++        ),
++        ("<div test=\"text\" />", false),
++        ("<div test={test} />", false),
++        ("<div test={test = null} />", true),
++        ("<div data-x={<span>test = null `é</span>} />", false),
++        ("<div data-x={<span>{test = null}</span>} />", true),
++        ("<div data-x=<>test = null</> />", false),
++        ("<div data-x=<>{test = null}</> />", true),
++        ("<div {...{value: <span>test = null</span>}} />", false),
++        ("<div {...{value: <span>{test = null}</span>}} />", true),
++    ] {
++        for trailing_write in [false, true] {
++            let source = tape_test(
++                "var test = require('tape');",
++                &format!(
++                    "declare function Component<T>(props: any): any; const node = {expression};{}",
++                    if trailing_write { " test = null;" } else { "" }
++                ),
++            );
++            assert_eq!(
++                class_for_file("masker-jsx-attribute-review", "test/k.test.tsx", &source)?,
++                if written || trailing_write {
++                    ExposureClass::NoStaticPath
++                } else {
++                    ExposureClass::Exposed
++                },
++                "{expression}; trailing_write={trailing_write}"
++            );
++        }
++    }
++    Ok(())
++}
++
++#[test]
++fn review_9936_tsx_comparison_and_generic_arrow_are_code() -> Result<(), String> {
++    for expression in ["a <<b > c", "<T extends unknown>(x: T) => x"] {
++        for written in [false, true] {
++            let source = tape_test(
++                "var test = require('tape');",
++                &format!(
++                    "const a = 8, b = 1, c = 0; const q = {expression};{}",
++                    if written { " test = null;" } else { "" }
++                ),
++            );
++            assert_eq!(
++                class_for_file("masker-tsx-code-review", "test/k.test.tsx", &source)?,
++                if written {
++                    ExposureClass::NoStaticPath
++                } else {
++                    ExposureClass::Exposed
++                },
++                "{expression}; written={written}"
++            );
++        }
++    }
++    Ok(())
++}
++
++#[test]
++fn review_9936_for_member_then_await_is_division() -> Result<(), String> {
++    for (operand, expected) in [
++        ("+`${(test = null, 2)}`", ExposureClass::NoStaticPath),
++        ("+`test = null`", ExposureClass::Exposed),
++    ] {
++        let source = tape_test(
++            "var test = require('tape');",
++            &format!(
++                "async function f() {{ const obj = {{ for: 0 }}; obj.for\n await(8) /({operand}) /2; }} f();"
++            ),
++        );
++        assert_eq!(
++            class_for_file("masker-for-member-await-review", "test/k.test.ts", &source)?,
++            expected,
++            "{operand}"
++        );
++    }
++    Ok(())
++}
+diff --git a/crates/ripr/src/analysis/language/typescript/tests_extract.rs b/crates/ripr/src/analysis/language/typescript/tests_extract.rs
+index f71b4f8d5..2bad8d396 100644
+--- a/crates/ripr/src/analysis/language/typescript/tests_extract.rs
++++ b/crates/ripr/src/analysis/language/typescript/tests_extract.rs
+@@ -2964,7 +2964,12 @@ pub(crate) fn test_from_statement<'s, 'a>(
+             ),
+             None => source[call.span.start as usize..call.span.end as usize].to_string(),
+         },
+-        reach_body_text: unused_function_reach_body(call, referenced, source),
++        reach_body_text: unused_function_reach_body(
++            call,
++            referenced,
++            source,
++            source_type_for(file),
++        ),
+         assertions,
+         // Populated by `extract_tests` (the only public extractor) once
+         // per file before the test is returned to the caller.
+@@ -2989,21 +2994,26 @@ pub(crate) fn test_from_statement<'s, 'a>(
+ /// Unicode literals. Expand only its spaces back to the original byte widths
+ /// before comparing identifier offsets with parser spans.
+ pub(super) fn byte_preserving_code_mask(source: &str) -> Option<String> {
+-    byte_preserving_mask_of(
+-        source,
+-        super::classifier::ts_mask_literals_and_comments(source),
+-    )
++    let masked = super::classifier::ts_mask_literals_and_comments(source);
++    preserve_mask_byte_width(source, &masked)
++}
++
++pub(super) fn byte_preserving_code_mask_for_source_type(
++    source: &str,
++    source_type: SourceType,
++) -> Option<String> {
++    let masked =
++        super::classifier::ts_mask_literals_and_comments_for_source_type(source, source_type);
++    preserve_mask_byte_width(source, &masked)
+ }
+ 
+ /// [`byte_preserving_code_mask`] over the division-only mask.
+ pub(super) fn byte_preserving_division_mask(source: &str) -> Option<String> {
+-    byte_preserving_mask_of(
+-        source,
+-        super::classifier::ts_mask_literals_and_comments_division_only(source),
+-    )
++    let masked = super::classifier::ts_mask_literals_and_comments_division_only(source);
++    preserve_mask_byte_width(source, &masked)
+ }
+ 
+-fn byte_preserving_mask_of(source: &str, masked: String) -> Option<String> {
++fn preserve_mask_byte_width(source: &str, masked: &str) -> Option<String> {
+     if source.chars().count() != masked.chars().count() {
+         return None;
+     }
+@@ -3028,6 +3038,7 @@ fn unused_function_reach_body(
+     call: &oxc_ast::ast::CallExpression<'_>,
+     referenced: Option<&oxc_ast::ast::Function<'_>>,
+     source: &SourceText<'_>,
++    source_type: SourceType,
+ ) -> Option<String> {
+     let call_text = &source[call.span.start as usize..call.span.end as usize];
+     let (start, body, statements) = if let Some(function) = referenced {
+@@ -3046,7 +3057,7 @@ fn unused_function_reach_body(
+             .as_slice(),
+         )
+     };
+-    let code = byte_preserving_code_mask(body)?;
++    let code = byte_preserving_code_mask_for_source_type(body, source_type)?;
+     if file_is_opaque(&code) {
+         return None;
+     }
