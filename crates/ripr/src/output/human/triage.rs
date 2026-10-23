@@ -362,33 +362,46 @@ pub(crate) fn render_human_triage(
             // The refusal advisory is not gated on the static-limited state:
             // a static-limited finding whose seam the gate concretely
             // refused must name that refusal, not merge into the limitation.
-            match navigation.repair_route_for(&finding.id) {
-                Some(route) => {
-                    if !is_static_limited(finding) {
-                        let command = navigation.repair_command(&route.seam_id);
-                        if let Some(file) = route.uncommitted_target.as_deref() {
-                            // `ripr repair` would refuse this start: its
-                            // inline test module target begins from the
-                            // committed file. State the requirement instead
-                            // of a command that exits 2.
-                            let alternative = if stub_rendered {
-                                ", or use the test route below"
-                            } else {
-                                ""
-                            };
-                            out.push_str(&format!(
+            // #9103: a TypeScript finding with a validated repair packet gets
+            // a gap-bound start in place of the seam-bound line. Computed by
+            // the same pipeline step; static-limited findings never get one.
+            let gap_route = navigation.gap_repair_route_for(&finding.id);
+            if let Some(route) = gap_route {
+                if !is_static_limited(finding) {
+                    let command = navigation.gap_repair_command(route);
+                    out.push_str(&format!("  {command}\n"));
+                    super::push_powershell_variant(out, "  ", &command);
+                }
+            } else {
+                match navigation.repair_route_for(&finding.id) {
+                    Some(route) => {
+                        if !is_static_limited(finding) {
+                            let command = navigation.repair_command(&route.seam_id);
+                            if let Some(file) = route.uncommitted_target.as_deref() {
+                                // `ripr repair` would refuse this start: its
+                                // inline test module target begins from the
+                                // committed file. State the requirement instead
+                                // of a command that exits 2.
+                                let alternative = if stub_rendered {
+                                    ", or use the test route below"
+                                } else {
+                                    ""
+                                };
+                                out.push_str(&format!(
                                 "  Repair start (needs a committed `{file}`; it has uncommitted changes, so commit or stash it first{alternative}): {command}\n"
                             ));
-                        } else {
-                            out.push_str(&format!("  {command}\n"));
-                            super::push_powershell_variant(out, "  ", &command);
+                            } else {
+                                out.push_str(&format!("  {command}\n"));
+                                super::push_powershell_variant(out, "  ", &command);
+                            }
                         }
                     }
-                }
-                None => {
-                    if let Some(refusal) = navigation.repair_route_refusal() {
-                        let advisory = refusal.advisory(&navigation.repair_command(&finding.id));
-                        out.push_str(&format!("  {advisory}\n"));
+                    None => {
+                        if let Some(refusal) = navigation.repair_route_refusal() {
+                            let advisory =
+                                refusal.advisory(&navigation.repair_command(&finding.id));
+                            out.push_str(&format!("  {advisory}\n"));
+                        }
                     }
                 }
             }
@@ -1612,12 +1625,18 @@ mod tests {
             ));
         }
 
-        // Verbatim Windows prefix: separators unify to the #5996 `//?/`
-        // shape instead of leaking `\\?\` into JSON identity.
+        // Verbatim Windows prefix: never `\\?\` in JSON identity (#5996). On
+        // Windows it folds to the plain drive spelling, as every printed path
+        // does (#9660); on Unix `\` is a filename byte, so the text only
+        // slash-unifies.
         let mut verbatim = test_output(Vec::new());
         verbatim.root = PathBuf::from(["\\\\?", "C:", "tmp", "probe"].join(r"\"));
         let verbatim_raw = verbatim.root.display().to_string();
-        let verbatim_expected = ["//?", "C:", "tmp", "probe"].join("/");
+        let verbatim_expected = if cfg!(windows) {
+            ["C:", "tmp", "probe"].join("/")
+        } else {
+            ["//?", "C:", "tmp", "probe"].join("/")
+        };
         if verbatim_raw == verbatim_expected {
             return Err(format!(
                 "verbatim fixture lost its discriminator: raw {verbatim_raw:?} already matches {verbatim_expected:?}"

@@ -14,7 +14,8 @@ pub(crate) use super::super::{
 // can call `probes::expected_sinks` / `probes::required_oracles` via `super::probes`.
 use super::read_limit_disclosure::bounded_read_limit_limitations;
 pub(crate) use super::{
-    LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route,
+    LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, RepoCapFired,
+    RepoFileAccounting, RepoLimitingStage, route,
 };
 pub(super) use crate::analysis::probes;
 pub(crate) use crate::analysis_outcome::{
@@ -75,6 +76,7 @@ mod enum_member_guard;
 mod error_payload_guard;
 mod field_update_guard;
 mod guard_entry_guard;
+mod hook_owner_guard;
 mod instance_class_guard;
 #[cfg(test)]
 mod line_index_tests;
