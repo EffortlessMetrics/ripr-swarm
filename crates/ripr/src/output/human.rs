@@ -6813,6 +6813,26 @@ mod tests {
     }
 
     #[test]
+    fn plain_observation_wording_skips_backticked_spans_inside_the_summary() {
+        use super::evidence_lines::plain_observation_wording;
+        assert_eq!(
+            plain_observation_wording(
+                "missing `observation_unverified == threshold` and `check_observation_unverified_count == threshold` (observation_unverified)"
+            ),
+            "missing `observation_unverified == threshold` and `check_observation_unverified_count == threshold`"
+        );
+        assert_eq!(
+            plain_observation_wording("observation_unverified for `x` then observation_unverified"),
+            "the observation is unconfirmed for `x` then the observation is unconfirmed"
+        );
+        // An unpaired backtick leaves the rest as prose.
+        assert_eq!(
+            plain_observation_wording("`a` b ` observation_unverified"),
+            "`a` b ` the observation is unconfirmed"
+        );
+    }
+
+    #[test]
     fn plain_wording_leaves_backticked_source_literals_alone() {
         use crate::domain::{ExposureClass, MissingDiscriminatorFact};
         let mut finding = sample_finding();

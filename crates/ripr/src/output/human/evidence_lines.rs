@@ -65,8 +65,30 @@ pub(super) struct EvidenceEntry {
 /// the parenthetical and spells any bare remainder as plain prose. The JSON stage
 /// summary is untouched.
 pub(super) fn plain_observation_wording(text: &str) -> String {
-    text.replace(" (observation_unverified)", "")
-        .replace("observation_unverified", "the observation is unconfirmed")
+    // Text between paired backticks is a quoted source expression and stays
+    // exactly as written; an unpaired trailing backtick is prose.
+    let pieces: Vec<&str> = text.split('`').collect();
+    let paired_end = if pieces.len().is_multiple_of(2) {
+        pieces.len() - 1
+    } else {
+        pieces.len()
+    };
+    let mut out = String::with_capacity(text.len());
+    for (index, piece) in pieces.iter().enumerate() {
+        if index > 0 {
+            out.push('`');
+        }
+        if index % 2 == 1 && index < paired_end {
+            out.push_str(piece);
+        } else {
+            out.push_str(
+                &piece
+                    .replace(" (observation_unverified)", "")
+                    .replace("observation_unverified", "the observation is unconfirmed"),
+            );
+        }
+    }
+    out
 }
 
 /// The stage summary as the human window shows it. Only the producer's summary

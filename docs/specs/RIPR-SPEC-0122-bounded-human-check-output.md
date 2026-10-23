@@ -558,7 +558,11 @@ machine marker `(observation_unverified)`. The per-finding human evidence lines
 occurrence of the token is spelled "the observation is unconfirmed". The words
 before it ("Discriminator unconfirmed: no assertion text references this probe's
 changed expression") already say it in prose. Only the producer's summary is
-rewritten; backticked source literals the line adds around it are left as is.
+rewritten, and only outside paired backticks: a backticked source expression,
+whether the line adds it or the summary quotes it, is left as written. The TypeScript boundary-gap controls rename the
+parameter to `observation_unverified` and to `check_observation_unverified_count`
+and require the producer's `missing proof` expression to print unchanged in the
+human Evidence row.
 The JSON stage summaries and the shared discriminator evidence line keep the
 marker unchanged, because downstream consumers key on it. With two or more
 owner-bearing findings, `human-full` renders every evidence row through the shared
@@ -618,6 +622,10 @@ or the agent packet routes. Those, with the python `classify.rs:686` and
 - `crates/ripr/src/output/human.rs::tests::human_evidence_spells_the_unconfirmed_observation_in_words`
 - `crates/ripr/src/output/human.rs::tests::plain_observation_wording_handles_each_embedded_spelling`
 - `crates/ripr/src/output/human.rs::tests::plain_wording_leaves_backticked_source_literals_alone`
+- `crates/ripr/src/output/human.rs::tests::plain_observation_wording_skips_backticked_spans_inside_the_summary`
+- `crates/ripr/tests/observation_wording_source_literals.rs::renamed_parameter_equal_to_the_token_prints_as_written`
+- `crates/ripr/tests/observation_wording_source_literals.rs::renamed_parameter_containing_the_token_prints_as_written`
+- `crates/ripr/tests/observation_wording_source_literals.rs::ordinary_parameter_keeps_the_prose_free_of_the_raw_marker`
 - `crates/ripr/src/output/human.rs::tests::no_static_path_weakness_list_drops_restated_evidence` (a `no_static_path` finding's Weakness list and digest pointer omit the three generic entries its Evidence block already states as `no`; distinct entries and other classes are unchanged)
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_refusal_preserves_the_requested_probe_family`
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub`
