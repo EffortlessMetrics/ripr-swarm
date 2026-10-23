@@ -1,0 +1,47 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/type_header_bound_not_field/input
+
+Summary: 3 probes (0 exposed, 0 weak, 0 unrevealed, 0 no path, 3 unknown); 3 of 3 findings unsuppressed
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 5 changed line(s), 3 candidate line(s), 3 probe(s), 3 finding(s)
+
+Start here:
+  State: limited by static analysis
+  Safe next action: inspect the named static limitation before treating this as repair-ready
+  File: ./src/lib.rs:5
+  Static exposure: unknown (severity: note, confidence 0.50)
+  Why unknown: the analysis could not determine a static exposure state
+  Changed behavior: enum Operator<P, Q: Ord + Copy> {
+  Analyzer limit: No strong discriminator was detected
+  Related test: src/lib.rs:13 a_is_one (no call to the changed code found; linked by file location only)
+  Next step: Inspect the changed behavior and its existing tests; ripr has not established a test
+    gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place
+    this line inside an analyzed Rust function. Add or strengthen a test only if this inspection
+    finds a gap. Compare the original and changed implementations with a focused run using the
+    project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification
+    may remain unknown
+  Evidence: reach weak · infection unknown · propagation unknown · observation yes · discriminator unknown
+    - reach weak: No test is seen calling changed owner; tests share only its file or a name token: a_is_one
+    - infection unknown: Changed syntax is not mapped to a high-confidence probe family
+    - 6 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/type_header_bound_not_field/input --diff <cwd>/fixtures/type_header_bound_not_field/diff.patch --mode fast probe:src_lib.rs:static_unknown:7b804000
+  ripr context --root <cwd>/fixtures/type_header_bound_not_field/input --diff <cwd>/fixtures/type_header_bound_not_field/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:7b804000
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.rs:static_unknown:7b804000 --root <cwd>/fixtures/type_header_bound_not_field/input` for the full gate's answer
+
+Hidden:
+  2 lower-priority finding(s) omitted from default human output.
+    - ./src/lib.rs:6 (unknown)
+    - ./src/lib.rs:7 (unknown)
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+
+Note: ripr could not classify any of the 3 changed expression(s) in this diff well enough to
+  establish a static test path. Scope analyzed: 1 changed Rust file(s), 3 changed expression(s), and
+  1 statically linked related test(s). This is not a coverage assessment. A test may already
+  exercise these changes through macros, helper-call chains, or integration tests that ripr's static
+  model does not yet trace; if none does, add co-located tests that observe the changed behavior.
