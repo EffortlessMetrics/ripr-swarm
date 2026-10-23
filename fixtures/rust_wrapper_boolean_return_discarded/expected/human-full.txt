@@ -66,7 +66,7 @@ Evidence
   shared evidence: E1
   - infection yes: Reachable tests can plausibly activate this changed behavior
   shared evidence: E2, E3
-  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
   shared evidence: E4, E5, E6, E7, E8, E9, E10, E11
 Weakness
   - No clear propagation path from changed behavior to an observable sink
