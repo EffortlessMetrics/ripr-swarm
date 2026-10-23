@@ -155,3 +155,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — owner_parameter_token_coincidence (13)
+
+Reason:
+RIPR-SPEC-0122: human output drops the observation_unverified token
+
+Command:
+`cargo xtask goldens bless owner_parameter_token_coincidence --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

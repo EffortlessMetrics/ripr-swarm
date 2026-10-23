@@ -9905,6 +9905,15 @@ id = "RIPR-SPEC-0122"
 name = "bounded human check output"
 spec = "docs/specs/RIPR-SPEC-0122-bounded-human-check-output.md"
 tests = [
+  "crates/ripr/src/output/human.rs::tests::human_evidence_spells_the_unconfirmed_observation_in_words",
+  "crates/ripr/src/output/human.rs::tests::plain_observation_wording_handles_each_producer_form",
+  "crates/ripr/src/output/human.rs::tests::plain_wording_leaves_backticked_source_literals_alone",
+  "crates/ripr/src/output/human.rs::tests::plain_observation_wording_never_modifies_embedded_source_text",
+  "crates/ripr/tests/observation_wording_python_literals.rs::single_backtick_before_the_token_prints_as_written",
+  "crates/ripr/tests/observation_wording_python_literals.rs::bare_token_message_prints_as_written",
+  "crates/ripr/tests/observation_wording_source_literals.rs::renamed_parameter_equal_to_the_token_prints_as_written",
+  "crates/ripr/tests/observation_wording_source_literals.rs::renamed_parameter_containing_the_token_prints_as_written",
+  "crates/ripr/tests/observation_wording_source_literals.rs::ordinary_parameter_keeps_the_prose_free_of_the_raw_marker",
   "crates/ripr/src/output/human.rs::tests::no_static_path_weakness_list_drops_restated_evidence",
   "crates/ripr/src/output/human/hidden_locations_tests.rs::absolute_root_selected",
   "crates/ripr/src/output/human/hidden_locations_tests.rs::absolute_root_without_selection",
