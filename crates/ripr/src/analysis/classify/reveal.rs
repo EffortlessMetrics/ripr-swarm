@@ -4623,12 +4623,14 @@ fn retain_owner_calling_rows(
                 indices.push(index);
             }
         }
-        let moved: Vec<RelatedTest> = indices
+        // Remove from the highest index down so earlier indices stay valid,
+        // then restore the original relative order.
+        let mut moved: Vec<RelatedTest> = indices
             .iter()
             .rev()
             .map(|index| window.remove(*index))
-            .rev()
             .collect();
+        moved.reverse();
         window.splice(first_location..first_location, moved);
     }
     // Candidates are chosen by test identity, seeded with the tests already
@@ -6511,6 +6513,135 @@ mod tests {
         kept_rows.sort_by(|a, b| (&a.name, &a.oracle).cmp(&(&b.name, &b.oracle)));
         plain_rows.sort_by(|a, b| (&a.name, &a.oracle).cmp(&(&b.name, &b.oracle)));
         assert_eq!(kept_rows, plain_rows, "no row added, evicted or changed");
+    }
+
+    /// #9175 regression: several distinct signalled tests already in the
+    /// window behind location-only rows (one at the last index) move up
+    /// together, in their original relative order, without panicking or
+    /// changing the multiset of rows.
+    #[test]
+    fn owner_call_signal_repositions_several_windowed_tests_in_order() {
+        let mut input: Vec<_> = (0..6)
+            .map(|index| RelatedTest {
+                miss: Some(RelatedTestMiss::NoCallPath),
+                ..related(
+                    &format!("doc_{index:02}"),
+                    10 + index,
+                    Some(RelationReason::SameTestFile),
+                )
+            })
+            .collect();
+        for (name, line) in [("demoted_a", 40), ("demoted_b", 41)] {
+            input.push(RelatedTest {
+                miss: Some(RelatedTestMiss::NoCallPath),
+                ..related(name, line, Some(RelationReason::WeakTokenSubstring))
+            });
+        }
+        for (name, line) in [("zz_extra_a", 90), ("zz_extra_b", 91)] {
+            input.push(RelatedTest {
+                miss: Some(RelatedTestMiss::NoCallPath),
+                ..related(name, line, Some(RelationReason::WeakTokenSubstring))
+            });
+        }
+        let (plain, plain_total) = finalize_related_tests(input.clone(), None);
+        let names = |rows: &[RelatedTest]| -> Vec<String> {
+            rows.iter().map(|test| test.name.clone()).collect()
+        };
+        assert_eq!(
+            names(&plain),
+            [
+                "doc_00",
+                "doc_01",
+                "doc_02",
+                "doc_03",
+                "doc_04",
+                "doc_05",
+                "demoted_a",
+                "demoted_b"
+            ],
+            "setup: both signalled tests sit behind the location rows, one at the last index"
+        );
+        let calls: std::collections::BTreeSet<OwnerCallKey> = [
+            (PathBuf::from("tests/lib.rs"), 40, "demoted_a".to_string()),
+            (PathBuf::from("tests/lib.rs"), 41, "demoted_b".to_string()),
+        ]
+        .into_iter()
+        .collect();
+        let (kept, total) = finalize_related_tests_with_owner_calls(input, None, &calls);
+        assert_eq!((kept.len(), total), (plain.len(), plain_total));
+        assert_eq!(
+            names(&kept),
+            [
+                "doc_00",
+                "demoted_a",
+                "demoted_b",
+                "doc_01",
+                "doc_02",
+                "doc_03",
+                "doc_04",
+                "doc_05"
+            ]
+        );
+        let mut kept_rows = kept;
+        let mut plain_rows = plain;
+        kept_rows.sort_by(|a, b| a.name.cmp(&b.name));
+        plain_rows.sort_by(|a, b| a.name.cmp(&b.name));
+        assert_eq!(kept_rows, plain_rows, "no row added, evicted or changed");
+    }
+
+    /// #9175 regression: non-adjacent signalled tests (an unsignalled demoted
+    /// row between them) move up without moving the unsignalled row.
+    #[test]
+    fn owner_call_signal_repositions_non_adjacent_windowed_tests() {
+        let mut input: Vec<_> = (0..5)
+            .map(|index| RelatedTest {
+                miss: Some(RelatedTestMiss::NoCallPath),
+                ..related(
+                    &format!("doc_{index:02}"),
+                    10 + index,
+                    Some(RelationReason::SameTestFile),
+                )
+            })
+            .collect();
+        for (name, line) in [
+            ("demoted_a", 40),
+            ("demoted_b_plain", 41),
+            ("demoted_c", 42),
+        ] {
+            input.push(RelatedTest {
+                miss: Some(RelatedTestMiss::NoCallPath),
+                ..related(name, line, Some(RelationReason::WeakTokenSubstring))
+            });
+        }
+        for (name, line) in [("zz_extra_a", 90), ("zz_extra_b", 91)] {
+            input.push(RelatedTest {
+                miss: Some(RelatedTestMiss::NoCallPath),
+                ..related(name, line, Some(RelationReason::WeakTokenSubstring))
+            });
+        }
+        let (plain, plain_total) = finalize_related_tests(input.clone(), None);
+        let calls: std::collections::BTreeSet<OwnerCallKey> = [
+            (PathBuf::from("tests/lib.rs"), 40, "demoted_a".to_string()),
+            (PathBuf::from("tests/lib.rs"), 42, "demoted_c".to_string()),
+        ]
+        .into_iter()
+        .collect();
+        let (kept, total) = finalize_related_tests_with_owner_calls(input, None, &calls);
+        assert_eq!((kept.len(), total), (plain.len(), plain_total));
+        let names: Vec<&str> = kept.iter().map(|test| test.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "doc_00",
+                "demoted_a",
+                "demoted_c",
+                "doc_01",
+                "doc_02",
+                "doc_03",
+                "doc_04",
+                "demoted_b_plain"
+            ]
+        );
     }
 
     /// #9175 control: distinct signalled tests that tie are each retained,

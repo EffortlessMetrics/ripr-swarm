@@ -356,7 +356,7 @@ fn restore_reveal_misses(
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::analysis::classify::{recommended_next_step, stop_reasons};
     use crate::analysis::facts::{FunctionImplContext, FunctionSourceRole};
@@ -3587,7 +3587,11 @@ fn far_above_threshold_discounts() {
     /// owner (receiver type unresolved among same-named owners) must be
     /// visible within the first five human related-test rows, never primary,
     /// with its low-confidence disclosure intact.
-    fn retention_finding(docs: usize, demoted_call: &str, demoted_asserts: usize) -> Finding {
+    pub(in crate::analysis) fn retention_finding(
+        docs: usize,
+        demoted_call: &str,
+        demoted_asserts: usize,
+    ) -> Finding {
         let mut source = String::from(
             "pub struct Bytes { len: usize }\npub struct BytesMut { len: usize }\nimpl Bytes {\n    pub fn truncate(&mut self, len: usize) {\n        if len == 0 {\n            self.len = 0;\n        } else if len < self.len {\n            self.len = len;\n        }\n    }\n}\nimpl BytesMut {\n    pub fn truncate(&mut self, len: usize) {\n        self.len = len;\n    }\n}\n#[cfg(test)]\nmod tests {\n",
         );
@@ -3634,7 +3638,8 @@ fn far_above_threshold_discounts() {
     }
 
     #[test]
-    fn given_demoted_owner_calling_test_when_cap_overflows_then_it_is_visible_in_human_rows() {
+    fn given_demoted_owner_calling_test_when_cap_overflows_then_it_is_retained_within_the_first_five_rows()
+     {
         let finding = retention_finding(9, "truncated.truncate(0)", 1);
         let retained: Vec<_> = finding
             .related_tests
@@ -3679,8 +3684,8 @@ fn far_above_threshold_discounts() {
     }
 
     #[test]
-    fn given_demoted_test_already_in_the_window_when_cap_overflows_then_it_moves_up_in_human_rows()
-    {
+    fn given_demoted_test_already_in_the_window_when_cap_overflows_then_it_moves_within_the_first_five_rows()
+     {
         let finding = retention_finding(7, "truncated.truncate(0)", 3);
         assert_eq!(finding.related_tests_total(), 10);
         assert_eq!(finding.related_tests.len(), 8);

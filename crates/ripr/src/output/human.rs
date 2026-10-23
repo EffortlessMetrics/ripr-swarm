@@ -5479,6 +5479,71 @@ mod tests {
         );
     }
 
+    fn five_human_related_rows(finding: &Finding) -> Vec<String> {
+        render_finding(finding)
+            .lines()
+            .filter(|line| line.trim_start().starts_with("- related test "))
+            .map(str::to_string)
+            .collect()
+    }
+
+    const RETAINED: &str = "truncate_to_zero_releases_shared_reference";
+
+    /// #9175 producer to consumer: a parser-backed finding with seven
+    /// location tests and three distinct-text assertions of a demoted
+    /// owner-calling test (total 10, window 8, one identity, primary
+    /// protected) renders exactly five related-test rows including it.
+    #[test]
+    fn render_finding_from_parser_backed_demoted_test_lists_it_in_the_five_rows() {
+        let finding = crate::analysis::retention_fixture_finding(7, "truncated.truncate(0)", 3);
+        assert_eq!(finding.related_tests_total(), 10);
+        assert_eq!(finding.related_tests.len(), 8);
+        assert_eq!(
+            finding
+                .related_tests
+                .iter()
+                .filter(|test| test.name == RETAINED)
+                .count(),
+            1
+        );
+        assert_ne!(finding.related_tests[0].name, RETAINED, "primary protected");
+        let rows = five_human_related_rows(&finding);
+        assert_eq!(rows.len(), 5, "{rows:#?}");
+        let retained: Vec<_> = rows.iter().filter(|row| row.contains(RETAINED)).collect();
+        assert_eq!(retained.len(), 1, "{rows:#?}");
+        let demoted = finding
+            .related_tests
+            .iter()
+            .find(|test| test.name == RETAINED);
+        assert_eq!(
+            demoted.map(|test| test.relation_reason),
+            Some(Some(crate::domain::RelationReason::WeakTokenSubstring))
+        );
+        assert!(
+            retained[0].contains("no call to the changed code found; linked by name only"),
+            "disclosure stays visible: {}",
+            retained[0]
+        );
+    }
+
+    #[test]
+    fn render_finding_from_parser_backed_controls_do_not_list_a_wrong_call() {
+        let wrong = crate::analysis::retention_fixture_finding(9, "truncated.clear()", 1);
+        assert!(
+            five_human_related_rows(&wrong)
+                .iter()
+                .all(|row| !row.contains(RETAINED))
+        );
+        let no_overflow = crate::analysis::retention_fixture_finding(2, "truncated.truncate(0)", 1);
+        assert!(no_overflow.related_tests.len() <= 8);
+        assert!(
+            no_overflow
+                .related_tests
+                .iter()
+                .any(|test| test.name == RETAINED)
+        );
+    }
+
     #[test]
     fn render_finding_includes_ripr_evidence_related_tests_gap_and_next_step() {
         let finding = sample_finding();
