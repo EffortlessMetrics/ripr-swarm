@@ -2540,15 +2540,21 @@ fn empty_gap_pages_keep_structured_outcomes_at_the_response_bound() -> Result<()
                 .pointer("/result/structuredContent/failure/recovery")
                 .and_then(Value::as_str)
                 .ok_or("empty-page refusal omitted recovery")?;
-            if !recovery.contains("ripr://snapshot/{snapshot_id}")
-                || !recovery.contains("ripr_get_gap")
+            // #9895 discrimination: this overflow is the echoed filter's
+            // fault — the same shell with an empty echo fits — so the
+            // recovery must name the shrinkable cause (narrow the filter
+            // and retry ripr_list_gaps), not the snapshot identity route,
+            // and the refusal itself must stay inside the wire bound.
+            if !recovery.contains("narrow the file/class/language filter")
+                || !recovery.contains("retry ripr_list_gaps")
+                || recovery.contains("ripr://snapshot/")
                 || serde_json::to_vec(&refused)
                     .map_err(|error| error.to_string())?
                     .len()
                     > RESPONSE_BOUND
             {
                 return Err(format!(
-                    "empty {field} refusal lost its bounded identity recovery"
+                    "empty {field} refusal must name the filter, not the identity route: {recovery}"
                 ));
             }
         }
