@@ -3,6 +3,7 @@
 //! manifest digest accepted by #1609, independently of the file being read.
 pub(crate) mod handoff;
 mod input;
+pub(crate) mod producer;
 use super::safe_artifact_path;
 use input::{MAX_RETAINED_BYTES, read_owned};
 use serde::{Deserialize, Serialize};
@@ -151,65 +152,12 @@ impl LiveHeadSnapshot {
             .to_str()
             .ok_or_else(|| "direct manifest path must be UTF-8".to_string())?;
         let bytes = read_owned(&root, path, MAX_RETAINED_BYTES)?;
-        let mut remaining_bytes = MAX_RETAINED_BYTES - bytes.len() as u64;
         if digest(&bytes) != approved_digest {
             return Err(
                 "direct manifest differs from the independently accepted raw digest".to_string(),
             );
         }
-        let manifest: LiveHeadManifest = serde_json::from_slice(&bytes)
-            .map_err(|error| format!("parse direct #1609 manifest: {error}"))?;
-        validate_manifest(&manifest, version)?;
-        let mut raw = BTreeMap::from([(path.to_string(), bytes)]);
-        let prerequisites = manifest
-            .prerequisites
-            .as_ref()
-            .ok_or_else(|| "direct manifest has no accepted prerequisites".to_string())?;
-        let pin = manifest
-            .pin
-            .as_ref()
-            .ok_or_else(|| "direct manifest has no pin evidence".to_string())?;
-        let references = [
-            &prerequisites.selected_claims.packet,
-            &prerequisites.denominator.packet,
-            &prerequisites.audit.packet,
-            &pin.remote_ref_readback,
-            &pin.ruleset,
-        ];
-        for reference in references
-            .into_iter()
-            .chain(manifest.qualification.proof_inputs.iter())
-        {
-            if raw.contains_key(&reference.path) {
-                return Err(format!(
-                    "direct manifest repeats an evidence path: {}",
-                    reference.path
-                ));
-            }
-            let bytes = read_owned(&root, &reference.path, remaining_bytes)?;
-            remaining_bytes -= bytes.len() as u64;
-            if digest(&bytes) != reference.sha256 {
-                return Err(format!(
-                    "direct manifest evidence digest changed: {}",
-                    reference.path
-                ));
-            }
-            raw.insert(reference.path.clone(), bytes);
-        }
-        let candidate = manifest
-            .candidate
-            .as_ref()
-            .ok_or_else(|| "direct manifest has no candidate".to_string())?;
-        let readback = raw
-            .get(&pin.remote_ref_readback.path)
-            .ok_or_else(|| "direct manifest remote readback missing".to_string())?;
-        if readback.as_slice() != format!("{}\n", candidate.sha).as_bytes() {
-            return Err("direct manifest remote readback names another candidate".to_string());
-        }
-        validate_ruleset(
-            raw.get(&pin.ruleset.path)
-                .ok_or_else(|| "direct manifest ruleset bytes missing".to_string())?,
-        )?;
+        let ManifestInputs { manifest, raw } = retain_manifest(&root, version, path, bytes)?;
         Ok(Self {
             root,
             artifact_path: artifact_path.to_path_buf(),
@@ -318,6 +266,76 @@ impl LiveHeadSnapshot {
             "claim": "exact retained input custody; acceptance comes from #1609, not this producer; no authenticated or atomic provenance"
         })
     }
+}
+
+struct ManifestInputs {
+    manifest: LiveHeadManifest,
+    raw: BTreeMap<String, Vec<u8>>,
+}
+
+// Shared input custody has no acceptance authority. Only `admit` checks the
+// independently accepted raw manifest digest before entering this parser.
+fn retain_manifest(
+    root: &Path,
+    version: &str,
+    path: &str,
+    bytes: Vec<u8>,
+) -> Result<ManifestInputs, String> {
+    let mut remaining_bytes = MAX_RETAINED_BYTES - bytes.len() as u64;
+    let manifest: LiveHeadManifest = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("parse direct #1609 manifest: {error}"))?;
+    validate_manifest(&manifest, version)?;
+    let mut raw = BTreeMap::from([(path.to_string(), bytes)]);
+    let prerequisites = manifest
+        .prerequisites
+        .as_ref()
+        .ok_or_else(|| "direct manifest has no accepted prerequisites".to_string())?;
+    let pin = manifest
+        .pin
+        .as_ref()
+        .ok_or_else(|| "direct manifest has no pin evidence".to_string())?;
+    let references = [
+        &prerequisites.selected_claims.packet,
+        &prerequisites.denominator.packet,
+        &prerequisites.audit.packet,
+        &pin.remote_ref_readback,
+        &pin.ruleset,
+    ];
+    for reference in references
+        .into_iter()
+        .chain(manifest.qualification.proof_inputs.iter())
+    {
+        if raw.contains_key(&reference.path) {
+            return Err(format!(
+                "direct manifest repeats an evidence path: {}",
+                reference.path
+            ));
+        }
+        let bytes = read_owned(&root, &reference.path, remaining_bytes)?;
+        remaining_bytes -= bytes.len() as u64;
+        if digest(&bytes) != reference.sha256 {
+            return Err(format!(
+                "direct manifest evidence digest changed: {}",
+                reference.path
+            ));
+        }
+        raw.insert(reference.path.clone(), bytes);
+    }
+    let candidate = manifest
+        .candidate
+        .as_ref()
+        .ok_or_else(|| "direct manifest has no candidate".to_string())?;
+    let readback = raw
+        .get(&pin.remote_ref_readback.path)
+        .ok_or_else(|| "direct manifest remote readback missing".to_string())?;
+    if readback.as_slice() != format!("{}\n", candidate.sha).as_bytes() {
+        return Err("direct manifest remote readback names another candidate".to_string());
+    }
+    validate_ruleset(
+        raw.get(&pin.ruleset.path)
+            .ok_or_else(|| "direct manifest ruleset bytes missing".to_string())?,
+    )?;
+    Ok(ManifestInputs { manifest, raw })
 }
 
 fn validate_manifest(manifest: &LiveHeadManifest, version: &str) -> Result<(), String> {
