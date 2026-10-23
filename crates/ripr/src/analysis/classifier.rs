@@ -3595,6 +3595,7 @@ fn far_above_threshold_discounts() {
             assert!(!facts.used_lexical_fallback, "{path}");
             index.insert_file(PathBuf::from(path), facts, true);
         }
+        crate::analysis::facts::compose_fixture_source_roles(&mut index, std::path::Path::new(""));
         index
     }
 
