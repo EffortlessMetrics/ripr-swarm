@@ -58,16 +58,15 @@ silence for "reviewed and clean".
    `[dev-dependencies]`, `[build-dependencies]` or a `[target.*]` form of them. An explicit `package`
    key decides: `foo = { package = "trybuild" }` counts and
    `trybuild = { package = "other" }` does not. An inherited
-   `workspace = true` entry is judged by its local key only; a rename in the
-   workspace table is not resolved.
-   A path alone is not enough: a `tests/ui` directory in a crate that does not
+   `workspace = true` entry is resolved against the nearest enclosing
+   `[workspace.dependencies]` within the analysis root (its own `package` key
+   decides); when no such entry is found it does not count (fail closed). A path alone is not enough: a `tests/ui` directory in a crate that does not
    depend on trybuild is never named. A missing, non-regular (directory, FIFO, device), oversized or unparseable
    manifest names nothing, and a path with more than one `tests/ui` pair is
    ambiguous and names nothing. Only files in the diff intake's changed-file
    list are considered: a deleted-file section is omitted by intake and a pure
    rename supplies only its new path, so deleted fixtures are not disclosed.
-   Known under-naming limits: a rename declared only in `[workspace.dependencies]`
-   and inherited under another local key, and the underscore spelling
+   Known under-naming limits: a workspace root above the analysis root, and the underscore spelling
    `dev_dependencies`, are not detected (the disclosure only ever under-names).
 2. When a diff changes at least one such fixture, `ripr check` writes one stderr
    line: `ripr: N changed trybuild fixture file(s) under tests/ui were not
@@ -123,10 +122,12 @@ silence for "reviewed and clean".
   `ambiguous_multiple_tests_ui_pairs_fail_closed`,
   `oversized_manifest_fails_closed`,
   `non_regular_manifest_path_fails_closed`,
+  `inherited_workspace_entries_resolve_the_workspace_package_identity`,
   `dependency_package_key_decides_whether_an_entry_is_trybuild`,
   `helper_names_any_changed_path_it_is_given_without_reading_the_fixture`.
 - `crates/ripr/tests/trybuild_fixture_disclosure.rs`:
-  `trybuild_fixture_diff_is_named_on_stderr_without_changing_the_report`.
+  `trybuild_fixture_diff_is_named_on_stderr_without_changing_the_report`,
+  `inherited_workspace_trybuild_is_named_only_when_the_workspace_entry_is_trybuild`.
 
 ## Implementation Mapping
 

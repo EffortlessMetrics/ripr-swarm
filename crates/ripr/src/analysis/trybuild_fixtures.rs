@@ -39,9 +39,7 @@ pub(super) fn trybuild_fixture_disclosure_message(
         };
         let declares = *manifest_declares
             .entry(crate_dir.clone())
-            .or_insert_with(|| {
-                manifest_declares_trybuild(&root.join(&crate_dir).join("Cargo.toml"))
-            });
+            .or_insert_with(|| manifest_declares_trybuild(root, &crate_dir));
         if declares {
             fixtures.push(file.path.to_string_lossy().replace('\\', "/"));
         }
@@ -93,31 +91,52 @@ fn fixture_crate_dir(path: &Path) -> Option<String> {
     Some(components[..at].join("/"))
 }
 
-/// Whether the manifest at `path` declares `trybuild` in a dependency table,
-/// including target-specific tables. Missing, non-regular, oversized or unparseable
-/// manifests answer `false`: the disclosure only ever under-names.
-fn manifest_declares_trybuild(path: &Path) -> bool {
-    let Ok(metadata) = std::fs::metadata(path) else {
-        return false;
-    };
+/// Reads a manifest as a table. Missing, non-regular, oversized or unparseable
+/// manifests answer `None`: the disclosure only ever under-names.
+fn read_manifest(path: &Path) -> Option<toml::Table> {
+    let metadata = std::fs::metadata(path).ok()?;
     if !metadata.is_file() || metadata.len() > MAX_MANIFEST_BYTES {
-        return false;
+        return None;
     }
-    let Ok(text) = std::fs::read_to_string(path) else {
+    let text = std::fs::read_to_string(path).ok()?;
+    text.parse::<toml::Table>().ok()
+}
+
+/// Whether the crate at `crate_dir` (relative to `root`) declares `trybuild`
+/// in a dependency table, including target-specific tables. An inherited
+/// `workspace = true` entry is resolved against the nearest enclosing
+/// `[workspace.dependencies]` at or above the crate directory and no higher
+/// than `root`; when no such entry can be found the entry does not count
+/// (fail closed).
+fn manifest_declares_trybuild(root: &Path, crate_dir: &str) -> bool {
+    let Some(manifest) = read_manifest(&root.join(crate_dir).join("Cargo.toml")) else {
         return false;
     };
-    let Ok(manifest) = text.parse::<toml::Table>() else {
-        return false;
+    let mut workspace_deps: Option<Option<toml::Table>> = None;
+    let mut resolve = |key: &str, value: &toml::Value| -> bool {
+        let inherited = value.as_table().is_some_and(|table| {
+            table.get("workspace").and_then(toml::Value::as_bool) == Some(true)
+        });
+        if !inherited {
+            return is_trybuild_dependency(key, value);
+        }
+        if value
+            .as_table()
+            .is_some_and(|table| table.contains_key("package"))
+        {
+            return is_trybuild_dependency(key, value);
+        }
+        let deps = workspace_deps.get_or_insert_with(|| workspace_dependencies(root, crate_dir));
+        deps.as_ref()
+            .and_then(|deps| deps.get(key))
+            .is_some_and(|entry| is_trybuild_dependency(key, entry))
     };
-    let in_tables = |table: &toml::Table| {
+    let mut in_tables = |table: &toml::Table| {
         DEPENDENCY_TABLES.iter().any(|name| {
             table
                 .get(*name)
                 .and_then(toml::Value::as_table)
-                .is_some_and(|deps| {
-                    deps.iter()
-                        .any(|(key, value)| is_trybuild_dependency(key, value))
-                })
+                .is_some_and(|deps| deps.iter().any(|(key, value)| resolve(key, value)))
         })
     };
     if in_tables(&manifest) {
@@ -130,15 +149,37 @@ fn manifest_declares_trybuild(path: &Path) -> bool {
             targets
                 .values()
                 .filter_map(toml::Value::as_table)
-                .any(in_tables)
+                .any(&mut in_tables)
         })
+}
+
+/// The `[workspace.dependencies]` table of the nearest manifest at or above
+/// `crate_dir` (within `root`) that has a `[workspace]` table.
+fn workspace_dependencies(root: &Path, crate_dir: &str) -> Option<toml::Table> {
+    let mut parts: Vec<&str> = crate_dir
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect();
+    loop {
+        let dir = parts
+            .iter()
+            .fold(root.to_path_buf(), |acc, part| acc.join(part));
+        if let Some(manifest) = read_manifest(&dir.join("Cargo.toml"))
+            && let Some(workspace) = manifest.get("workspace").and_then(toml::Value::as_table)
+        {
+            return workspace
+                .get("dependencies")
+                .and_then(toml::Value::as_table)
+                .cloned();
+        }
+        parts.pop()?;
+    }
 }
 
 /// Whether one dependency entry resolves to the `trybuild` package. An explicit
 /// `package` key decides: `foo = { package = "trybuild" }` is trybuild and
 /// `trybuild = { package = "other" }` is not. Without `package` the key is the
-/// package name. Limit: an inherited `workspace = true` entry is judged by its
-/// local key only; the workspace table's own `package` rename is not resolved.
+/// package name. Inherited entries are resolved by the caller.
 fn is_trybuild_dependency(key: &str, value: &toml::Value) -> bool {
     match value.as_table().and_then(|table| table.get("package")) {
         Some(package) => package.as_str() == Some("trybuild"),
@@ -458,6 +499,42 @@ mod tests {
             .map_err(|err| format!("create dir failed: {err}"))?;
         let files = vec![changed("tests/ui/a.rs")];
         assert_eq!(trybuild_fixture_disclosure_message(&root, &files), None);
+        Ok(())
+    }
+
+    #[test]
+    fn inherited_workspace_entries_resolve_the_workspace_package_identity() -> Result<(), String> {
+        let root = temp_root("inherited")?;
+        let member = "[package]\nname = \"m\"\nversion = \"0.1.0\"\n\n[dev-dependencies]\ntrybuild = { workspace = true }\n";
+        let target_member = "[package]\nname = \"m\"\nversion = \"0.1.0\"\n\n[target.'cfg(unix)'.dev-dependencies]\ntrybuild = { workspace = true }\n";
+        let ws = |entry: &str| {
+            format!("[workspace]\nmembers = [\"m\"]\n\n[workspace.dependencies]\n{entry}\n")
+        };
+        let files = vec![changed("m/tests/ui/a.rs")];
+        write(&root.join("m/Cargo.toml"), member)?;
+        // Absent workspace table: fail closed.
+        assert_eq!(trybuild_fixture_disclosure_message(&root, &files), None);
+        // Inherited unrelated package aliased as trybuild: not named.
+        write(
+            &root.join("Cargo.toml"),
+            &ws("trybuild = { package = \"other_harness\", path = \"support/other\" }"),
+        )?;
+        assert_eq!(trybuild_fixture_disclosure_message(&root, &files), None);
+        // Inherited actual package: named.
+        write(&root.join("Cargo.toml"), &ws("trybuild = \"1\""))?;
+        assert!(trybuild_fixture_disclosure_message(&root, &files).is_some());
+        // Workspace entry missing for the inherited key: not named.
+        write(&root.join("Cargo.toml"), &ws("other = \"1\""))?;
+        assert_eq!(trybuild_fixture_disclosure_message(&root, &files), None);
+        // Target-specific inheritance follows the same rule.
+        write(&root.join("m/Cargo.toml"), target_member)?;
+        write(
+            &root.join("Cargo.toml"),
+            &ws("trybuild = { package = \"other_harness\", path = \"x\" }"),
+        )?;
+        assert_eq!(trybuild_fixture_disclosure_message(&root, &files), None);
+        write(&root.join("Cargo.toml"), &ws("trybuild = \"1\""))?;
+        assert!(trybuild_fixture_disclosure_message(&root, &files).is_some());
         Ok(())
     }
 }

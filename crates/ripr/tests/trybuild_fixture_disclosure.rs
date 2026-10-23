@@ -109,3 +109,69 @@ fn trybuild_fixture_diff_is_named_on_stderr_without_changing_the_report() -> Res
     );
     Ok(())
 }
+
+fn inherited_manifest(workspace_entry: &str, table: &str) -> String {
+    format!(
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[workspace]\n\n[workspace.dependencies]\n{workspace_entry}\n\n[{table}]\ntrybuild = {{ workspace = true }}\n"
+    )
+}
+
+#[test]
+fn inherited_workspace_trybuild_is_named_only_when_the_workspace_entry_is_trybuild()
+-> Result<(), String> {
+    let control = Scratch::create("inherit-control", PLAIN_MANIFEST)?;
+    let control_output = control.check()?;
+    let normalize = |output: &Output, scratch: &Scratch| {
+        String::from_utf8_lossy(&output.stdout)
+            .replace(scratch.0.to_string_lossy().as_ref(), "<root>")
+    };
+    let cases = [
+        (
+            "unrelated",
+            inherited_manifest(
+                "trybuild = { package = \"other_harness\", path = \"support/other\" }",
+                "dev-dependencies",
+            ),
+            false,
+        ),
+        (
+            "actual",
+            inherited_manifest("trybuild = \"1\"", "dev-dependencies"),
+            true,
+        ),
+        (
+            "target-unrelated",
+            inherited_manifest(
+                "trybuild = { package = \"other_harness\", path = \"support/other\" }",
+                "target.'cfg(unix)'.dev-dependencies",
+            ),
+            false,
+        ),
+        (
+            "target-actual",
+            inherited_manifest("trybuild = \"1\"", "target.'cfg(unix)'.dev-dependencies"),
+            true,
+        ),
+    ];
+    for (label, manifest, named) in cases {
+        let scratch = Scratch::create(label, &manifest)?;
+        let output = scratch.check()?;
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        assert_eq!(
+            stderr.contains("changed trybuild fixture file(s)"),
+            named,
+            "{label}: {stderr}"
+        );
+        assert_eq!(
+            output.status.code(),
+            control_output.status.code(),
+            "{label}"
+        );
+        assert_eq!(
+            normalize(&output, &scratch),
+            normalize(&control_output, &control),
+            "{label}: report bytes must not change"
+        );
+    }
+    Ok(())
+}
