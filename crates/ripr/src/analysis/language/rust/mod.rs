@@ -3136,6 +3136,7 @@ impl RustAdapter {
             production_files: production_files.len(),
             skipped_files,
             partial_reason: None,
+            file_accounting: Default::default(),
             rust_diagnostic_origins,
             rust_consumed_sources,
         })
@@ -7028,6 +7029,7 @@ fn absent_delimiter_boundary_returns_head() {
     fn no_path_finding_with_infection_summary(summary: &str, evidence: Vec<String>) -> Finding {
         let stage = |state| StageEvidence::new(state, Confidence::Low, "stage");
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_lib.rs:predicate:test".to_string(),
             canonical_gap: None,
             probe: Probe {

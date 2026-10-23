@@ -110,6 +110,7 @@ mod tests {
         missing_discriminators: &[&str],
     ) -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "finding:raw".to_string(),
             canonical_gap: canonical_gap_id.map(|id| FindingCanonicalGap {
                 id: id.to_string(),

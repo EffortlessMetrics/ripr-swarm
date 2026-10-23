@@ -264,6 +264,32 @@ call.
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::manifests_with_unindexed_files_names_partial_packages`
 - `crates/ripr/src/analysis/syntax/ra.rs::tests::impl_context_names_the_self_type_only_for_plain_named_impls`
 
+## Root build scripts relate no test by name (#9173)
+
+Cargo compiles and runs a package's root `build.rs` before the package, as a
+separate crate; no test of the package can call into it. A probe in a root
+`build.rs` (judged on the analysis-root-relative path, with no `src`, `tests`,
+`examples` or `benches` directory above it) therefore relates no test through a
+name, stem or substring token, unless an indexed source file of the script's own
+package mounts it. The package is the script's directory; a file belongs to it
+through a `src`, `tests`, `examples` or `benches` directory directly below, so
+a workspace member's or nested package's file does not count, while library,
+binary and test-helper files all do. A mount is an `include!` or `#[path]`
+whose arguments (read whole, across lines, after masking comments and string
+literals) hold a string-literal path with an exact `build.rs` component. Including the
+script's generated `OUT_DIR` output is not a mount (it is the script's output,
+not its functions). A comment, a string mention, `mybuild.rs` and
+`build.rs.bak` are not mounts. A `package.build = "tools/gen.rs"` script is not
+recognised and keeps the ordinary rules; a mount in a file the index does not
+hold is not seen. When a mount exists the ordinary rules apply and the
+standard next step is kept. When none does, the `no_static_path` next step (and
+the closing human-output note) does not ask for a co-located test: it names
+building the package and inspecting the script's output, or moving the logic
+into a callable library function. One helper, `root_build_script_unmounted`,
+decides both the relation gate and the wording. Repo-mode seams never come from
+a build script, so `test_grip_evidence` needs no guard. Fixture:
+`fixtures/rust_build_script_no_test_reach`.
+
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/classify/related_tests.rs` —

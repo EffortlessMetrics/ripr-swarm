@@ -165,6 +165,7 @@ pub struct ripr::lsp::diagnostic_budget::DiagnosticBudgetResult
 pub struct ripr::lsp::diagnostic_budget::DiagnosticSelectionKey
 pub struct ripr::lsp::diagnostic_budget::OmittedDiagnosticItem
 pub struct ripr::lsp::diagnostic_budget::SelectedDiagnosticItem
+pub use ripr::AnalysisScope
 pub use ripr::CheckInput
 pub use ripr::CheckOutput
 pub use ripr::CheckSuppressionOutcome
@@ -279,6 +280,7 @@ pub use ripr::config::TestHarnessRegistration
 pub use ripr::config::TypescriptConfig
 pub use ripr::domain::ActivationEvidence
 pub use ripr::domain::AgentCardRefusalKind
+pub use ripr::domain::AnalysisScope
 pub use ripr::domain::AttributionBasis
 pub use ripr::domain::CancellationPolicy
 pub use ripr::domain::CandidateRelation

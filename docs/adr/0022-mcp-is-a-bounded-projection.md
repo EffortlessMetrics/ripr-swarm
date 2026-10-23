@@ -275,8 +275,9 @@ The server remains a bounded adapter over shared RIPR authority:
   that moment. In-memory session transactions never ride a card.
 - Refusal kinds travel under the CLI-pinned `AgentCardRefusalKind` wire
   spellings (`seam_not_found`, `policy_omitted`, `witness_unavailable`,
-  `identity_unnameable`, `budget_overflow`), so one machine state names one
-  refusal on every transport; operational failures stay `analysis_failed`.
+  `identity_unnameable`, `budget_overflow`, `incomplete_inventory`), so one
+  machine state names one refusal on every transport; operational failures
+  stay `analysis_failed`.
 - The next-action display binds the portable root `.`; the host-local
   checkout path is intentionally not projected (this ADR's hashing posture)
   and the display string is presentation only, never execution authority.
