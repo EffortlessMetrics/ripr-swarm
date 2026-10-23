@@ -13364,6 +13364,7 @@ tests = [
   "crates/ripr/tests/returned_comparison_boundary.rs::a_quote_char_literal_without_a_rebinding_keeps_the_equality_credit",
   "crates/ripr/tests/returned_comparison_boundary.rs::a_multiline_tuple_or_array_binding_makes_the_boundary_unresolved",
   "crates/ripr/tests/returned_comparison_boundary.rs::guard_operators_ranges_and_struct_patterns_still_bind_the_name",
+  "crates/ripr/tests/returned_comparison_boundary.rs::a_bare_arm_after_a_nontrivial_earlier_result_still_binds_the_name",
   "crates/ripr/src/analysis/language/rust/probes.rs::tests::mask_reads_a_quote_char_literal_as_a_char_not_a_string_start",
   "crates/ripr/tests/returned_comparison_boundary.rs::an_unrelated_local_keeps_the_equality_boundary_credit",
   "crates/ripr/src/analysis/classify/activation.rs::tests::a_rebound_or_mutated_parameter_is_not_the_compared_value",

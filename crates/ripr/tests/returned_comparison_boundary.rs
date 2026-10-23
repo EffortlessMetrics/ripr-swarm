@@ -739,3 +739,32 @@ fn guard_operators_ranges_and_struct_patterns_still_bind_the_name() -> Result<()
     );
     Ok(())
 }
+
+#[test]
+fn a_bare_arm_after_a_nontrivial_earlier_result_still_binds_the_name() -> Result<(), String> {
+    // #9197: `x =>` re-binds `x` however the previous arm's result is spelled.
+    for result in [
+        "a + 1",
+        "-1",
+        "f(a)?",
+        "1_u8..2",
+        "if a { 1 } else { 2 }",
+        "match z { Z => 1, _ => 2 }",
+    ] {
+        let opening = format!("    match y {{\n        0 => {result},\n        x =>\n");
+        let findings = findings_wrapped(
+            &opening,
+            "    }\n",
+            "            if x > 101 { true } else { false }",
+            "            if x > 100 { true } else { false }",
+            AT_NEW_THRESHOLD,
+        )?;
+        let predicate = family(&findings, "predicate")?;
+        assert_eq!(
+            predicate.class,
+            ExposureClass::InfectionUnknown,
+            "{result:?} {predicate:?}"
+        );
+    }
+    Ok(())
+}

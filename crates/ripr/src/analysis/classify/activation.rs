@@ -1388,39 +1388,64 @@ fn in_match_arm_pattern(before: &str) -> bool {
     let chars: Vec<char> = before.chars().collect();
     let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
     let mut i = chars.len();
-    let mut separated = false;
+    // After a `,` or a skipped `{}` block at this level the text read back is
+    // the previous arm's result (or a tuple's earlier elements), which may be
+    // any expression: it is skipped without classification, and the name is a
+    // pattern if that read reaches the previous arm's `=>` or the match
+    // block's `{` without leaving the level through an unmatched `(` or `[`
+    // (a tuple or call comma, which resumes the strict read).
+    let mut tolerant = false;
     while i > 0 {
         i -= 1;
         let ch = chars[i];
-        match ch {
-            c if c.is_whitespace() => {}
-            ')' | ']' | '}' => {
-                let mut depth = 1usize;
-                while i > 0 && depth > 0 {
-                    i -= 1;
-                    match chars[i] {
-                        ')' | ']' | '}' => depth += 1,
-                        '(' | '[' | '{' => depth -= 1,
-                        _ => {}
-                    }
-                }
-                if depth > 0 {
-                    return false;
-                }
-                if ch == '}' {
-                    separated = true;
+        if ch.is_whitespace() {
+            continue;
+        }
+        if matches!(ch, ')' | ']' | '}') {
+            let mut depth = 1usize;
+            while i > 0 && depth > 0 {
+                i -= 1;
+                match chars[i] {
+                    ')' | ']' | '}' => depth += 1,
+                    '(' | '[' | '{' => depth -= 1,
+                    _ => {}
                 }
             }
-            '(' | '[' => separated = false,
+            if depth > 0 {
+                return false;
+            }
+            if ch == '}' {
+                tolerant = true;
+            }
+            continue;
+        }
+        if tolerant {
+            match ch {
+                '(' | '[' => tolerant = false,
+                '{' => {
+                    let head: String = chars[..i].iter().collect();
+                    let boundary = head.rfind([';', '{', '}']).map_or(0, |at| at + 1);
+                    if contains_word(&head[boundary..], "match") {
+                        return true;
+                    }
+                    tolerant = false;
+                }
+                ';' => return false,
+                '>' if i > 0 && chars[i - 1] == '=' => return true,
+                _ => {}
+            }
+            continue;
+        }
+        match ch {
+            '(' | '[' => {}
             '{' => {
                 let head: String = chars[..i].iter().collect();
                 let boundary = head.rfind([';', '{', '}']).map_or(0, |at| at + 1);
                 if contains_word(&head[boundary..], "match") {
                     return true;
                 }
-                separated = false;
             }
-            ',' => separated = true,
+            ',' => tolerant = true,
             '|' | '&' | ':' | '@' => {}
             '.' => {
                 if i == 0 || chars[i - 1] != '.' {
@@ -1431,12 +1456,6 @@ fn in_match_arm_pattern(before: &str) -> bool {
                 if !(i > 0 && chars[i - 1] == '.') {
                     return false;
                 }
-            }
-            '>' => {
-                if i > 0 && chars[i - 1] == '=' {
-                    return separated;
-                }
-                return false;
             }
             c if is_word(c) => {
                 let mut start = i;
@@ -1452,6 +1471,8 @@ fn in_match_arm_pattern(before: &str) -> bool {
                 }
                 i = start;
             }
+            // `=>` directly before the name is a body use; any other
+            // operator ends the pattern.
             _ => return false,
         }
     }
@@ -9836,6 +9857,23 @@ assert_eq!(input.amount, 100);"#
             "    let _ = foo(&mut x);",
             "    let _ = match Some(1) { Some(x) if x > 0 => x, _ => 0 };",
             "    (x, y) = (y, x);",
+            "    match y {\n        0 => a + 1,\n        x => 1,\n    };",
+            "    match y {\n        0 => -1,\n        x => 1,\n    };",
+            "    match y {\n        0 => a * b,\n        x => 1,\n    };",
+            "    match y {\n        0 => !a,\n        x => 1,\n    };",
+            "    match y {\n        0 => a < b,\n        x => 1,\n    };",
+            "    match y {\n        0 => a == b,\n        x => 1,\n    };",
+            "    match y {\n        0 => f(a)?,\n        x => 1,\n    };",
+            "    match y {\n        0 => a.b,\n        x => 1,\n    };",
+            "    match y {\n        0 => 1.5,\n        x => 1,\n    };",
+            "    match y {\n        0 => 1_u8..2,\n        x => 1,\n    };",
+            "    match y {\n        0 => vec![1],\n        x => 1,\n    };",
+            "    match y {\n        0 => return,\n        x => 1,\n    };",
+            "    match y {\n        0 => if a { 1 } else { 2 },\n        x => 1,\n    };",
+            "    match y {\n        0 => 5 - 1,\n        x => 1,\n    };",
+            "    match y {\n        0 => match z {\n            Z => 1,\n            _ => 2,\n        },\n        x => 1,\n    };",
+            "    match y {\n        0 => match z { Z => 1, _ => 2 },\n        x => 1,\n    };",
+            "    match y {\n        0 => a + 1\n        ,\n        x => 1,\n    };",
             "    match y {\n        Some(x) if x == 3 =>",
             "    match y {\n        Some(x) if x >= 3 =>",
             "    match y {\n        Some(\n            x\n        ) if y != 3 =>",
@@ -9871,6 +9909,9 @@ assert_eq!(input.amount, 100);"#
             "    let _ = x == 3;",
             "    let _ = Foo { x: x };",
             "    let _ = x >= y;",
+            "    match y {\n        _ => x + 1,\n    };",
+            "    match y {\n        0 => a + 1,\n        _ => x * 2,\n    };",
+            "    match y {\n        0 => a,\n        _ => foo(a, x),\n    };",
             "    match y {\n        Some(v) if v > x =>",
             "    match y {\n        Some(v) if foo(x, 1) =>",
             "    match y {\n        A => x,\n        B =>",
