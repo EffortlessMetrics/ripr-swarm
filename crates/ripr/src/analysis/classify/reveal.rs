@@ -4539,7 +4539,7 @@ fn finalize_related_tests(
 }
 
 /// Identity of a related-test row for the owner-call retention signal.
-type OwnerCallKey = (std::path::PathBuf, usize);
+type OwnerCallKey = (std::path::PathBuf, usize, String);
 
 /// #9175: tests whose relation was demoted to `weak_token_substring` (the
 /// receiver type is unresolved among same-named owners) but whose captured
@@ -4565,7 +4565,7 @@ fn owner_call_demoted_rows(
             *reason == RelationReason::WeakTokenSubstring
                 && test.calls.iter().any(|call| call.name == owner)
         })
-        .map(|(test, _)| (test.file.clone(), test.start_line))
+        .map(|(test, _)| (test.file.clone(), test.start_line, test.name.clone()))
         .collect()
 }
 
@@ -4580,12 +4580,17 @@ fn is_location_only_row(test: &RelatedTest) -> bool {
 
 /// #9175: when the render cap cut rows, let demoted rows whose test calls the
 /// owner replace the trailing file-location-only rows of the window, one for
-/// one. Everything else keeps its ranked position: no other row moves, the
-/// replaced rows still count in the total, the lifted rows keep their
-/// `weak_token_substring`/`low`/`no_call_path` disclosure, and a lifted row is
-/// inserted after the last non-location-only row and never at index 0, so
-/// the primary related test (and the fix site derived from it) is whatever it
-/// was without the signal.
+/// one. Row 0 never changes and the window length, the total, and the
+/// relative order of all remaining rows are unchanged. Rows after a displaced
+/// location-only row shift up one place (a medium non-location row at the
+/// window tail therefore moves up, and the displaced row is the last
+/// location-only row, not necessarily the last row). Lifted rows keep their
+/// `weak_token_substring`/`low`/`no_call_path` disclosure and are inserted
+/// after the last non-location-only row and never at index 0, so the primary
+/// related test (and the fix site derived from it) is what it was without the
+/// signal. Only rows in the oracle partition are lifted; an unmatched
+/// (`assertion_not_observing`) demoted row is still packed only into free
+/// slots. Rows are keyed by file, start line and test name.
 fn retain_owner_calling_rows(
     window: &mut Vec<RelatedTest>,
     ranked: &[RelatedTest],
@@ -4593,7 +4598,7 @@ fn retain_owner_calling_rows(
 ) {
     let signalled = |test: &RelatedTest| {
         test.relation_reason == Some(RelationReason::WeakTokenSubstring)
-            && owner_calls.contains(&(test.file.clone(), test.line))
+            && owner_calls.contains(&(test.file.clone(), test.line, test.name.clone()))
     };
     let lifted: Vec<RelatedTest> = ranked
         .iter()
@@ -6225,7 +6230,13 @@ mod tests {
     fn owner_call_rows(lines: &[usize]) -> std::collections::BTreeSet<OwnerCallKey> {
         lines
             .iter()
-            .map(|line| (PathBuf::from("tests/lib.rs"), *line))
+            .map(|line| {
+                (
+                    PathBuf::from("tests/lib.rs"),
+                    *line,
+                    "truncate_to_zero".to_string(),
+                )
+            })
             .collect()
     }
 
@@ -6294,6 +6305,89 @@ mod tests {
         );
     }
 
+    /// #9175 order pin: a medium non-location row at the window tail moves
+    /// up one place when the last location-only row is displaced; the lifted
+    /// row lands after it. Row 0 is unchanged.
+    #[test]
+    fn owner_call_signal_shifts_a_tail_medium_row_up_one_place() {
+        let mut input: Vec<_> = (0..6)
+            .map(|index| RelatedTest {
+                miss: Some(RelatedTestMiss::NoCallPath),
+                ..related(
+                    &format!("doc_{index:02}"),
+                    10 + index,
+                    Some(RelationReason::SameTestFile),
+                )
+            })
+            .collect();
+        input.push(related("direct", 1, Some(RelationReason::DirectOwnerCall)));
+        input.push(related(
+            "zzz_affinity",
+            2,
+            Some(RelationReason::AssertionTargetAffinity),
+        ));
+        input.push(RelatedTest {
+            miss: Some(RelatedTestMiss::NoCallPath),
+            ..related(
+                "truncate_to_zero",
+                40,
+                Some(RelationReason::WeakTokenSubstring),
+            )
+        });
+        let names = |rows: &[RelatedTest]| -> Vec<String> {
+            rows.iter().map(|test| test.name.clone()).collect()
+        };
+        let (plain, _) = finalize_related_tests(input.clone(), None);
+        assert_eq!(
+            names(&plain),
+            [
+                "direct",
+                "doc_00",
+                "doc_01",
+                "doc_02",
+                "doc_03",
+                "doc_04",
+                "doc_05",
+                "zzz_affinity"
+            ]
+        );
+        let calls = owner_call_rows(&[40]);
+        let (kept, total) = finalize_related_tests_with_owner_calls(input, None, &calls);
+        assert_eq!(total, 9);
+        assert_eq!(
+            names(&kept),
+            [
+                "direct",
+                "doc_00",
+                "doc_01",
+                "doc_02",
+                "doc_03",
+                "doc_04",
+                "zzz_affinity",
+                "truncate_to_zero"
+            ]
+        );
+    }
+
+    /// #9175: rows are keyed by file, start line and name, so an unsignalled
+    /// demoted test sharing a start line with a signalled one is not lifted.
+    #[test]
+    fn owner_call_signal_does_not_lift_a_sibling_sharing_a_start_line() {
+        let mut input = nine_file_location_rows_and_one_demoted_row();
+        input.push(RelatedTest {
+            miss: Some(RelatedTestMiss::NoCallPath),
+            ..related(
+                "sibling_same_line",
+                40,
+                Some(RelationReason::WeakTokenSubstring),
+            )
+        });
+        let calls = owner_call_rows(&[40]);
+        let (kept, _) = finalize_related_tests_with_owner_calls(input, None, &calls);
+        assert!(kept.iter().any(|test| test.name == "truncate_to_zero"));
+        assert!(kept.iter().all(|test| test.name != "sibling_same_line"));
+    }
+
     /// #9175 negative: with no file-location row to displace, nothing moves.
     #[test]
     fn owner_call_signal_displaces_nothing_without_file_location_rows() {
@@ -6354,7 +6448,11 @@ mod tests {
         ];
         assert_eq!(
             owner_call_demoted_rows(&probe, &related_tests),
-            owner_call_rows(&[1])
+            std::collections::BTreeSet::from([(
+                PathBuf::from("tests/lib.rs"),
+                1,
+                "calls_owner".to_string()
+            )])
         );
         probe.owner = None;
         assert!(owner_call_demoted_rows(&probe, &related_tests).is_empty());
