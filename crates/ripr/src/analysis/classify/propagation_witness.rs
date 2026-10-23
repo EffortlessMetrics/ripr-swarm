@@ -837,6 +837,9 @@ fn constructs_its_error_on_its_line(
     else {
         return false;
     };
+    // `Err(Box::new(E::V))` boxes the same variant for a `Box<dyn Error>`
+    // owner; the box is not a call that can drop the changed value.
+    let inner = super::text::unboxed_error_expression(inner);
     let call_free = !inner.trim().is_empty()
         && !inner.contains(['(', ')', '!', '|', '?', ';', '"', '\''])
         && inner.matches('{').count() <= 1
@@ -2960,6 +2963,47 @@ mod tests {
                 !complete(expression, "Result::Err(ConfigError::MissingEquals)", 10),
                 "{expression}"
             );
+        }
+    }
+
+    /// RIPR-SPEC-0175: a `Box<dyn Error>` owner returns `Err(Box::new(E::V))`;
+    /// the box is the same variant, so the on-line witness completes. A box
+    /// around a call, a `.into()` conversion and a box that does not span the
+    /// payload stay candidates.
+    #[test]
+    fn a_boxed_err_on_its_own_line_completes_the_error_witness() {
+        let complete = |expression: &str| {
+            current_path_witness_with(
+                &probe(ProbeFamily::ErrorPath, expression),
+                &[sink(
+                    FlowSinkKind::ErrorVariant,
+                    "Result::Err(ParseError::InvalidData)",
+                    10,
+                )],
+                &|_| true,
+            )
+            .is_some_and(|witness| {
+                witness.completeness == PathCompleteness::Complete
+                    && complete_direct_witness(
+                        &probe(ProbeFamily::ErrorPath, expression),
+                        Some(&witness),
+                    )
+            })
+        };
+        for expression in [
+            "return Err(Box::new(ParseError::InvalidData));",
+            "Err(Box::new(ParseError::InvalidData))",
+            "return Err(Box::new(ParseError::InvalidData { reason: why }));",
+        ] {
+            assert!(complete(expression), "{expression}");
+        }
+        for expression in [
+            "return Err(Box::new(make(ParseError::InvalidData)));",
+            "return Err(Box::new(ParseError::InvalidData).into());",
+            "return Err(Box::new(ParseError::InvalidData) as Box<dyn Error>);",
+            "return Err(ParseError::InvalidData.into());",
+        ] {
+            assert!(!complete(expression), "{expression}");
         }
     }
 
