@@ -5092,7 +5092,7 @@ fn item_nesting_with_impl(
 }
 
 /// Whether `node` carries a `cfg` or `cfg_attr` attribute, outer or inner.
-fn has_cfg_attr(node: &impl ast::HasAttrs) -> bool {
+pub(super) fn has_cfg_attr(node: &impl ast::HasAttrs) -> bool {
     // `cfg` and `cfg_attr` parse to their own metas, which have no `path`.
     node.attrs().any(|attr| {
         matches!(

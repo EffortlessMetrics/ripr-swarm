@@ -251,27 +251,44 @@ can only hint that a caller "may lead here" without changing anything.
   not the entry's module path, `crate::`/`self::`/bare `inner::` forms and
   a `use <lib>::inner;` module import are refused), only when no file of
   the package carries a `#[path]` attribute and no binary root also
-  declares the module. Imports of the entry (`use <lib>::inner::{entry, ..}`)
-  with a bare call were already related. Not reached, by design: an entry
-  whose changed helper is reached only through a method or trait-method call
-  on a generic receiver (for example `multispace0` calling
-  `input.split_at_position_complete(..)` in nom): that needs type
-  inference to pick the impl, and the method/associated-function chain is
-  owned by #8633 and #5352. It is refused for a path longer or shorter than
+  declares the module. A module-qualified entry is also refused when any
+  `src/` file of the package declares a module segment other than exactly
+  once, puts `cfg`/`cfg_attr` on that declaration, an enclosing inline
+  module or the entry's own file (read from parsed module items, so a
+  comment or string cannot hide the attribute), defines a macro, invokes a
+  macro in item position, or does not parse; and for any qualified spelling
+  when the test crate invokes an `include`-family macro however its tokens
+  are spaced or commented. Imports of the entry (`use <lib>::inner::{entry, ..}`)
+  with a bare call were already related; that bare-call route is now
+  refused too when the test file imports a path starting with the library's
+  name and the file aliases, imports, globs or declares that name, or
+  invokes an `include`-family macro (the prefix then may not name the
+  library).
+  The qualified spelling is refused for a path longer or shorter than
   the entry's own, another crate name, a test file that declares any item, `let`, closure
-  or typed parameter named like the crate, aliases anything to that name
-  (`use x as <lib>`), imports a path ending in it (raw `r#` spellings
-  included), or has any glob import or `include!`; a unit test inside
-  `src/`; a test module child (only `tests/<name>.rs` and
+  or typed parameter named like the crate, a module declared in the test
+  crate under the library's name (`mod <lib>;` or inline), aliases anything
+  to that name (`use x as <lib>`), imports a path ending in it (raw `r#`
+  spellings included), a raw `r#` module segment, or has any glob import or
+  an `include`-family macro however its tokens are spaced or commented; a
+  unit test inside `src/`; a test module child (only `tests/<name>.rs` and
   `tests/<name>/main.rs` roots qualify); a call spelled only in a string
-  or comment on the line; a workspace member's entry; a
-  `src/main.rs` entry, and an entry whose module path is not placed under
-  the library (a binary-shared module, a `#[path]` package). The edge
+  or comment, including a multiline raw string or block comment that ends
+  on a line holding a real call (the call is read from the masked file at
+  its own line); a workspace member's entry; a `src/main.rs` entry, and an
+  entry whose module path is not placed under the library (a
+  binary-shared module, a `#[path]` package, a module not declared exactly
+  once, or declared under `cfg`/`cfg_attr`). The edge
   carries relation only: argument rows and entry pairing still read a
   direct call site, so the qualified spelling adds no new value-credit
   path of its own (the argument reader may still read a qualified
   literal on its own terms). (A path-form guard for absolute paths exists in code as defense in
   depth; no test exercises it.)
+- Not reached, by design: an entry whose changed helper is reached only
+  through a method or trait-method call on a generic receiver (for example
+  `multispace0` calling `input.split_at_position_complete(..)` in nom):
+  that needs type inference to pick the impl, and the
+  method/associated-function chain is owned by #8633 and #5352.
 - Every unsupported edge is named, never silently dropped: non-unique
   callee, incomplete workspace index, recursion, multiple callers,
   multiple call sites, computed (non-literal, non-parameter)

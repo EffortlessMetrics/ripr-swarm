@@ -1066,8 +1066,13 @@ fn find_related_tests_with_candidates<'a>(
                             index,
                             test,
                             &hop.caller,
-                            &call.text,
+                            call.line,
                         ))
+                        && imported_own_crate_prefix_is_bound_to_the_library(
+                            index,
+                            test,
+                            &hop.caller,
+                        )
                         // #6780 Devin review: a test-local closure or nested
                         // fn named like the hop caller shadows it, so the
                         // call never reaches the helper.
@@ -1756,7 +1761,7 @@ fn own_crate_qualified_entry_call(
     index: &RustIndex,
     test: &TestSummary,
     caller: &FunctionSummary,
-    call_text: &str,
+    call_line: usize,
 ) -> bool {
     if !super::call_identity::under_tests_dir(&test.file)
         || path_is_absolute_form(&test.file)
@@ -1794,7 +1799,9 @@ fn own_crate_qualified_entry_call(
     let Some(facts) = index.files().get(&test.file) else {
         return false;
     };
-    if facts.source.contains("include!") {
+    if facts.source.contains("include!")
+        || super::call_identity::source_may_splice_items(&facts.source, false)
+    {
         return false;
     }
     // The one identifier the package's library is imported as: `[lib] name`
@@ -1821,19 +1828,75 @@ fn own_crate_qualified_entry_call(
     // The call fact's text is the whole source line: match the own-crate
     // spelling only in code, never in a string or comment beside a foreign
     // call of the same name.
-    let code_line = mask_comments_and_strings(call_text);
+    // The line is read from the comment/string-masked FULL file at the call's
+    // own location: a call path inside a multiline raw string or block
+    // comment that ends on a line holding a real call is masked out.
+    let masked_file = mask_comments_and_strings(&facts.source);
+    let Some(code_line) = call_line
+        .checked_sub(1)
+        .and_then(|line| masked_file.lines().nth(line))
+    else {
+        return false;
+    };
     let spelled_path: String = std::iter::once(crate_name)
         .chain(module.iter().map(String::as_str))
         .chain(std::iter::once(caller.name.as_str()))
         .collect::<Vec<_>>()
         .join("::");
-    is_qualified_owner_call(&code_line, &spelled_path)
+    is_qualified_owner_call(code_line, &spelled_path)
         && !file_may_bind_name(&stripped_file, crate_name)
         && !body_binds_owner_name(&test.body, crate_name)
         && !super::owner_pin::file_renames_to(&facts.source, crate_name)
         && !super::owner_pin::file_renames_to(&facts.source, &format!("r#{crate_name}"))
         && !may_rebind_crate_name(&facts.source)
         && !may_rebind_crate_name(&test.body)
+}
+
+/// #8999 review: a bare call of an imported entry trusts an own-looking
+/// import prefix (`use <lib>::inner::entry;`). When the test file imports a
+/// path whose first segment is the root library's name, that name must be the
+/// library: not aliased, imported, globbed or declared as a module/binding in
+/// the file or body, and no `include`-family macro may splice an unread
+/// binding. A file with no such import, or a caller outside the root package,
+/// is unaffected.
+fn imported_own_crate_prefix_is_bound_to_the_library(
+    index: &RustIndex,
+    test: &TestSummary,
+    caller: &FunctionSummary,
+) -> bool {
+    let Some(crate_name) = index.root_library_name.as_deref() else {
+        return true;
+    };
+    let Some(facts) = index.files().get(&test.file) else {
+        return true;
+    };
+    if package_prefix(&caller.file).is_some() {
+        return true;
+    }
+    let unraw = |name: &str| name.strip_prefix("r#").unwrap_or(name).to_string();
+    let uses_prefix = super::reveal::flattened_use_paths(&facts.source)
+        .iter()
+        .any(|import| import.path.split("::").next().map(unraw).as_deref() == Some(crate_name));
+    if !uses_prefix {
+        return true;
+    }
+    let rebinds = |source: &str| {
+        super::reveal::flattened_use_paths(source)
+            .iter()
+            .any(|import| {
+                import.path.ends_with('*')
+                    || import.path.rsplit("::").next().map(unraw).as_deref() == Some(crate_name)
+                    || import.alias.as_deref().map(unraw).as_deref() == Some(crate_name)
+            })
+    };
+    let stripped_file = strip_comments_and_strings(&facts.source);
+    !super::call_identity::source_may_splice_items(&facts.source, false)
+        && !file_may_bind_name(&stripped_file, crate_name)
+        && !body_binds_owner_name(&test.body, crate_name)
+        && !super::owner_pin::file_renames_to(&facts.source, crate_name)
+        && !super::owner_pin::file_renames_to(&facts.source, &format!("r#{crate_name}"))
+        && !rebinds(&facts.source)
+        && !rebinds(&test.body)
 }
 
 /// Whether `text` invokes the owner through the dependency's declared name,

@@ -118,6 +118,15 @@ impl<'a> Package<'a> {
     /// The relation reason of `discount_boundary` on the predicate finding,
     /// or `None` when the test is not a related test of it.
     fn relation(&self) -> Result<Option<String>, String> {
+        Ok(self.outcome()?.0)
+    }
+
+    /// The rendered classification of the predicate finding.
+    fn classification(&self) -> Result<String, String> {
+        Ok(self.outcome()?.1)
+    }
+
+    fn outcome(&self) -> Result<(Option<String>, String), String> {
         let scratch = Scratch::create()?;
         scratch.write("Cargo.toml", &self.manifest)?;
         for (path, content) in &self.files {
@@ -142,14 +151,19 @@ impl<'a> Package<'a> {
             .find(|finding| finding["probe"]["family"] == "predicate")
             .cloned()
             .ok_or_else(|| format!("no predicate finding: {json}"))?;
-        Ok(finding["related_tests"]
+        let classification = finding["classification"]
+            .as_str()
+            .ok_or("missing classification")?
+            .to_string();
+        let relation = finding["related_tests"]
             .as_array()
             .and_then(|related| {
                 related
                     .iter()
                     .find(|test| test["name"] == "discount_boundary")
             })
-            .and_then(|test| test["relation_reason"].as_str().map(str::to_string)))
+            .and_then(|test| test["relation_reason"].as_str().map(str::to_string));
+        Ok((relation, classification))
     }
 }
 
@@ -639,5 +653,138 @@ fn nested_cfg_and_shadowing_module_shapes_fail_closed() -> Result<(), String> {
         vec![("tests/qual_reach.rs", "pub mod inner {}\n".to_string())],
     );
     assert_eq!(package.relation()?, None);
+    Ok(())
+}
+
+/// Include macros spelled with token separation, an `include`-family macro,
+/// and an included module shadowing the library name all refuse; the same
+/// package without an include links and renders `exposed`.
+#[test]
+fn include_spellings_in_the_test_crate_or_library_fail_closed() -> Result<(), String> {
+    let qualified_path = spelled("qual_reach::inner::order_discount");
+    let control = module_package("src/inner.rs", MODULE_LIB, qualified_path.clone(), vec![]);
+    assert_eq!(control.relation()?.as_deref(), LINKED, "control links");
+    assert_eq!(control.classification()?, "exposed", "control renders");
+    let shadow = (
+        "tests/generated.inc",
+        "pub mod qual_reach {\n    pub mod inner {\n        pub fn order_discount(_: u32) -> u32 { 5 }\n    }\n}\n".to_string(),
+    );
+    for include in [
+        "include!(\"generated.inc\");",
+        "include /* c */ !(\"generated.inc\");",
+        "include\n!(\"generated.inc\");",
+        "include ! (\"generated.inc\");",
+        "core::include!(\"generated.inc\");",
+        "include_str!(\"generated.inc\");",
+    ] {
+        let tests = format!("{include}\n{qualified_path}");
+        let package = module_package("src/inner.rs", MODULE_LIB, tests, vec![shadow.clone()]);
+        assert_eq!(package.relation()?, None, "{include}");
+        assert_ne!(package.classification()?, "exposed", "{include}");
+    }
+    // An include (or an item-position macro) in a library file.
+    for lib in [
+        "pub mod inner;\ninclude /* c */ !(\"generated.inc\");\n",
+        "pub mod inner;\nmake_items!();\n",
+    ] {
+        let package = module_package("src/inner.rs", lib, qualified_path.clone(), vec![]);
+        assert_eq!(package.relation()?, None, "{lib}");
+        assert_ne!(package.classification()?, "exposed", "{lib}");
+    }
+    Ok(())
+}
+
+/// A cfg or cfg_attr on the module declaration, hidden or not by comments, and
+/// an alternate re-export spelled in a comment, refuse by parsed attributes.
+#[test]
+fn cfg_on_module_declarations_is_read_from_the_syntax_tree() -> Result<(), String> {
+    let qualified_path = spelled("qual_reach::inner::order_discount");
+    for lib in [
+        "#[cfg(any())]\npub mod inner;\n",
+        "#[cfg(any())]\n// {\npub mod inner;\n",
+        "#[cfg(any())]\n/* ; } */\npub mod inner;\n",
+        "#[cfg(feature = \"alt\")]\n/// note; a doc comment with a semicolon\npub mod inner;\n",
+        "#[doc = \"{\"]\n#[cfg(any())]\npub mod inner;\n",
+        "#[cfg(any())] // pub use other as inner;\npub mod inner;\n",
+        "#[cfg_attr(all(), cfg(any()))]\npub mod inner;\n",
+        "#[cfg(any())]\npub mod wrapper {\n    pub mod inner {}\n}\npub mod inner;\n",
+    ] {
+        let package = module_package("src/inner.rs", lib, qualified_path.clone(), vec![]);
+        assert_eq!(package.relation()?, None, "{lib}");
+        assert_ne!(package.classification()?, "exposed", "{lib}");
+    }
+    // An inner cfg in the module's own file.
+    let gated_file = Package {
+        files: vec![
+            ("src/lib.rs", MODULE_LIB.to_string()),
+            ("src/inner.rs", format!("#![cfg(any())]\n{MODULE_SRC}")),
+            ("tests/api.rs", qualified_path.clone()),
+        ],
+        ..module_package("src/inner.rs", MODULE_LIB, String::new(), vec![])
+    };
+    assert_eq!(gated_file.relation()?, None);
+    // A comment-only mention of cfg beside an unconditional module links.
+    let comment = "// #[cfg(any())] is not applied\npub mod inner;\n";
+    let package = module_package("src/inner.rs", comment, qualified_path, vec![]);
+    assert_eq!(package.relation()?.as_deref(), LINKED, "control");
+    assert_eq!(package.classification()?, "exposed", "control");
+    Ok(())
+}
+
+/// A qualified path that appears only inside a multiline raw string or block
+/// comment, on a line that ends with a real foreign call of the same name,
+/// does not link; the own-library positive control does.
+#[test]
+fn multiline_non_code_text_does_not_admit_a_foreign_call() -> Result<(), String> {
+    let control = module_package(
+        "src/inner.rs",
+        MODULE_LIB,
+        spelled("qual_reach::inner::order_discount"),
+        vec![],
+    );
+    assert_eq!(control.relation()?.as_deref(), LINKED, "control links");
+    for body in [
+        "    let _doc = r#\"\n    see qual_reach::inner::order_discount(10)\"#; foreign::order_discount(10);",
+        "    /*\n    qual_reach::inner::order_discount(10) */ foreign::order_discount(10);",
+    ] {
+        let package = module_package("src/inner.rs", MODULE_LIB, test_file(body), vec![]);
+        assert_eq!(package.relation()?, None, "{body}");
+        assert_ne!(package.classification()?, "exposed", "{body}");
+    }
+    Ok(())
+}
+
+/// An import whose first segment is the library name trusts that name: when
+/// the name is aliased, redeclared or bound through an included file, the
+/// bare call of the imported entry stays unrelated.
+#[test]
+fn an_own_looking_import_prefix_must_name_the_library() -> Result<(), String> {
+    let import = "use qual_reach::inner::order_discount;\n";
+    let control = module_package(
+        "src/inner.rs",
+        MODULE_LIB,
+        format!("{import}{}", test_file(BARE)),
+        vec![],
+    );
+    assert_eq!(control.relation()?.as_deref(), LINKED, "control links");
+    assert_eq!(control.classification()?, "exposed", "control renders");
+    for prefix in [
+        "use std as qual_reach;\n",
+        "use std as r#qual_reach;\n",
+        "mod qual_reach {\n    pub use std::cmp;\n    pub mod inner {\n        pub fn order_discount(_: u32) -> u32 { 5 }\n    }\n}\n",
+        "use some_dep::qual_reach;\n",
+        "use some_dep::*;\n",
+        "include ! (\"bindings.rs\");\n",
+    ] {
+        let tests = format!("{prefix}{import}{}", test_file(BARE));
+        let package = module_package(
+            "src/inner.rs",
+            MODULE_LIB,
+            tests,
+            vec![("tests/bindings.rs", "use std as qual_reach;\n".to_string())],
+        );
+        assert_eq!(package.relation()?, None, "{prefix}");
+        assert_ne!(package.classification()?, "exposed", "{prefix}");
+    }
     Ok(())
 }

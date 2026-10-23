@@ -999,9 +999,9 @@ pub(super) fn definition_module_path(function: &FunctionSummary) -> Option<Vec<S
 
 /// The module path of a root-package library item that an integration test
 /// may spell as `<lib>::<module>::..::item` (#8999): `definition_module_path`
-/// when the item composes into the root package's library (not a binary that
-/// shares the module, not a `src/` module neither or both roots declare) and
-/// no file of the root package carries a `#[path]` remap, which could move a
+/// when each module segment is declared exactly once across the package's
+/// `src/` files (so a binary that also declares the module, or neither
+/// root, refuses) and no file of the root package carries a `#[path]` remap, which could move a
 /// module file away from the layout the path is read from. A crate-root item
 /// has the empty path and needs neither check.
 pub(super) fn root_library_item_module_path(
@@ -1013,10 +1013,6 @@ pub(super) fn root_library_item_module_path(
         return Some(module);
     }
     if package_remaps_module_paths(index, None)
-        || CrateLayout::new(index, None)
-            .class(&function.file)
-            .as_deref()
-            != Some("lib")
         || module
             .iter()
             .any(|segment| module_declaration_is_ambiguous(index, segment))
@@ -1026,36 +1022,87 @@ pub(super) fn root_library_item_module_path(
     Some(module)
 }
 
+/// Whether `source` may splice or generate items this scan does not read: it
+/// does not parse cleanly, defines a macro, invokes an `include`-family macro
+/// (however its tokens are spaced or commented) or invokes any macro in item
+/// position (when `item_position_macros`). Read from the syntax tree, so `include /* c */ !(..)` counts.
+pub(super) fn source_may_splice_items(source: &str, item_position_macros: bool) -> bool {
+    use ra_ap_syntax::{AstNode, ast};
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return true;
+    };
+    parse.tree().syntax().descendants().any(|node| {
+        if ast::MacroRules::can_cast(node.kind()) || ast::MacroDef::can_cast(node.kind()) {
+            return true;
+        }
+        let Some(call) = ast::MacroCall::cast(node) else {
+            return false;
+        };
+        let include_like = call
+            .path()
+            .and_then(|path| path.segment())
+            .and_then(|segment| segment.name_ref())
+            .is_none_or(|name| name.text().trim_start_matches("r#").starts_with("include"));
+        include_like
+            || item_position_macros
+                && call.syntax().parent().is_some_and(|parent| {
+                    ast::SourceFile::can_cast(parent.kind())
+                        || ast::ItemList::can_cast(parent.kind())
+                        || ast::MacroItems::can_cast(parent.kind())
+                })
+    })
+}
+
 /// Whether the root package's `src/` files declare `mod <segment>` other than
-/// exactly once, or declare it under a `cfg`/`cfg_attr` attribute: a
-/// cfg-selected alternate definition, or a second declaration in another file,
-/// may make `<lib>::..::<segment>` name a different item than the layout does.
-/// A raw text scan; a match in a string or comment only refuses (fails closed).
+/// exactly once, declare it (or an enclosing inline module, or the item's own
+/// file) under a `cfg`/`cfg_attr`, or may splice unread items (macros,
+/// `include!`). Read from parsed module items, so an attribute hidden from a
+/// text scan by a comment or string is still seen; an unparsable file
+/// refuses.
 fn module_declaration_is_ambiguous(index: &RustIndex, segment: &str) -> bool {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
     let mut declarations = 0usize;
     for (path, facts) in index.files().iter() {
         if package_key(path).is_some() || under_tests_dir(path) {
             continue;
         }
-        let source: &str = &facts.data().source;
-        for (at, _) in source.match_indices("mod") {
-            if ident_char_before(source, at) {
-                continue;
-            }
-            let rest = source[at + 3..].trim_start();
-            let rest = rest.strip_prefix("r#").unwrap_or(rest);
-            let Some(tail) = rest.strip_prefix(segment) else {
-                continue;
-            };
-            if ident_char_at(tail, 0) {
+        if source_may_splice_items(&facts.source, true) {
+            return true;
+        }
+        let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&facts.source) else {
+            return true;
+        };
+        let is_lib_root = src_body(&super::related_tests::normalize_path(path)) == Some("lib.rs");
+        if !is_lib_root && super::owner_pin::has_cfg_attr(&parse.tree()) {
+            return true;
+        }
+        for module in parse
+            .tree()
+            .syntax()
+            .descendants()
+            .filter_map(ast::Module::cast)
+        {
+            let named = module
+                .name()
+                .is_some_and(|name| name.text().trim_start_matches("r#") == segment);
+            if !named {
                 continue;
             }
             declarations += 1;
-            let before = &source[..at];
-            let statement_start = before
-                .rfind([';', '{', '}'])
-                .map_or(0, |boundary| boundary + 1);
-            if before[statement_start..].contains("cfg") {
+            let gated = |module: &ast::Module| {
+                super::owner_pin::has_cfg_attr(module)
+                    || module
+                        .item_list()
+                        .is_some_and(|items| super::owner_pin::has_cfg_attr(&items))
+            };
+            if gated(&module)
+                || module
+                    .syntax()
+                    .ancestors()
+                    .skip(1)
+                    .filter_map(ast::Module::cast)
+                    .any(|a| gated(&a))
+            {
                 return true;
             }
         }
