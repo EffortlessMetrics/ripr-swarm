@@ -86,6 +86,35 @@ pub(in crate::analysis) struct AssertionRefusalNote {
     pub(in crate::analysis) is_analyzer_limit: bool,
 }
 
+/// #9871: reach for a changed constant whose same-file readers are called by
+/// tests. A call to a reader is not a call that executes the read, so the
+/// stage is `weak`, never `yes`, and the class stays `static_unknown`.
+fn const_reader_reach(context: &ProbeContext<'_>) -> StageEvidence {
+    let constant = context.probe.changed_const_name().unwrap_or("the constant");
+    let readers = context
+        .const_readers
+        .iter()
+        .take(3)
+        .map(|reader| format!("`{}`", reader.name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let tests = context
+        .related_tests
+        .iter()
+        .filter(|(_, reason)| crate::analysis::classify::relation_establishes_reach(*reason, true))
+        .take(3)
+        .map(|(test, _)| test.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    StageEvidence::new(
+        StageState::Weak,
+        Confidence::Low,
+        format!(
+            "Tests call {readers}, which reads the changed constant `{constant}`; whether the tested path executes that read is not established: {tests}"
+        ),
+    )
+}
+
 fn return_ledger_limit(
     owner: &str,
     ledger: &crate::analysis::classify::ReturnedLedger,
@@ -135,6 +164,11 @@ impl ClassifiedProbeEvidence {
                 .owner_fn
                 .is_none_or(|owner| context.owner_may_be_reached_unseen(owner))
         });
+        let reach = if context.const_readers.is_empty() {
+            reach
+        } else {
+            const_reader_reach(context)
+        };
         let flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
         let returned_ledger = match (context.owner_fn, context.helper_chain.as_ref()) {
             (Some(owner), Some(chain)) if helper_only_reach(&context.related_tests) => {
