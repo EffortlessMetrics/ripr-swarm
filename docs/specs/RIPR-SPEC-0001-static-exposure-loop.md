@@ -59,6 +59,13 @@ of the block carries a comment delimiter (`/*`, `*/`) or an odd number of `"`.
 Only `name: value,` field lines may cross an edited line, since they may move
 within their literal. Text is compared exactly apart from a trailing `\r`.
 
+A method of a trait the workspace itself declares is dispatched only through a
+call that names it. When no test calls it and no external doc is pulled in as a
+doctest, a test that only shares its file or a name token cannot reach it
+unseen: reach is `no` and the finding is `no_static_path`, carrying no oracle
+strength borrowed from tests of other functions (#9169). Impls of std or foreign
+traits (`Display::fmt`, operators) keep the possibly-reached-unseen allowance.
+
 An equal-sized replacement with no retained long identifier token does not
 seed a second historical finding when an emitted candidate probe of the same
 family already represents that exact old line (#7807). Pairing uses the Git

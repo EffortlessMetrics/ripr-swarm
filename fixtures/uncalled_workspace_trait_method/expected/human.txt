@@ -1,0 +1,47 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/uncalled_workspace_trait_method/input
+
+Summary: 2 probes (0 exposed, 0 weak, 0 unrevealed, 2 no path); 2 of 2 findings unsuppressed
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+
+Start here:
+  State: limited by static analysis
+  Safe next action: review the unresolved static path and existing tests before treating this as repair-ready
+  File: ./src/lib.rs:11
+  Static exposure: no path (severity: warning, confidence 0.43)
+  Why no path: no related test was found that reaches this change
+  Canonical gap: gap:rust:src/lib.rs:impl Step for Inc::process:match_arm:match_arm:none
+  Changed behavior: None =>
+  Missing discriminator (1 of 3): No relevant oracle was detected
+  Related test (1 of 2 matched rows): src/lib.rs:29 other_test (no call to the changed code found; linked by file location only)
+  Next step: ripr found no static test path to this change — this is not a coverage assessment. A
+    test may already exercise it through macros, helper-call chains, or integration tests that
+    ripr's static model does not yet trace. If none does, add a co-located test that reaches and
+    observes the changed behavior so a discriminator exists
+  Evidence: reach no · infection no · propagation yes · observation no · discriminator no
+    - reach no: No test is seen calling process; tests share only its file or a name token: other_test
+    - infection no: No test reaches the changed owner, so no test can activate this change
+    - 9 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/uncalled_workspace_trait_method/input --diff <cwd>/fixtures/uncalled_workspace_trait_method/diff.patch --mode fast probe:src_lib.rs:match_arm:c973c4dc
+  ripr context --root <cwd>/fixtures/uncalled_workspace_trait_method/input --diff <cwd>/fixtures/uncalled_workspace_trait_method/diff.patch --mode fast --at probe:src_lib.rs:match_arm:c973c4dc
+  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:match_arm:c973c4dc --root <cwd>/fixtures/uncalled_workspace_trait_method/input` for the full gate's answer
+Write a test for it:
+  ripr agent stub --root <cwd>/fixtures/uncalled_workspace_trait_method/input --at src/lib.rs:11 --kind match_arm
+
+Hidden:
+  1 lower-priority finding(s) omitted from default human output.
+    - ./src/lib.rs:11 (no path)
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+
+Note: ripr found no static test path for any of the 2 changed expression(s) in this diff. Scope
+  analyzed: 1 changed Rust file(s), 2 changed expression(s), and 1 statically linked related
+  test(s). This is not a coverage assessment. A test may already exercise these changes through
+  macros, helper-call chains, or integration tests that ripr's static model does not yet trace; if
+  none does, add co-located tests that observe the changed behavior.

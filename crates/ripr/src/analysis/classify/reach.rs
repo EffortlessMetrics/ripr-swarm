@@ -132,11 +132,92 @@ pub(in crate::analysis) fn owner_may_be_reached_unseen(
     owner: &FunctionSummary,
     index: &RustIndex,
 ) -> bool {
+    // #9169: a method of a trait this workspace defines is dispatched only
+    // through a call that names it, so a test that never calls it, and a
+    // workspace with no external docs, cannot reach it unseen. Std and
+    // foreign traits (`Display::fmt`, operators) run through syntax that
+    // never spells the method name and keep the allowance.
+    if is_trait_impl_method(owner)
+        && workspace_defines_impl_trait(owner, index)
+        && !some_test_calls_name(index, &owner.name)
+    {
+        return index
+            .files()
+            .values()
+            .any(|file| includes_external_docs(&file.source));
+    }
     is_trait_impl_method(owner)
         || index.files().values().any(|file| {
             names_identifier_outside_fn_definition(&file.source, &owner.name)
                 || includes_external_docs(&file.source)
         })
+}
+
+/// The trait of `impl .. Trait<..> for Type` in the owner id.
+fn impl_trait_name(owner: &FunctionSummary) -> Option<String> {
+    let segment = owner
+        .id
+        .0
+        .split("::impl ")
+        .skip(1)
+        .find(|s| s.contains(" for "))?;
+    let mut rest = segment.trim_start();
+    if rest.starts_with('<') {
+        let mut depth = 0usize;
+        let mut end = None;
+        for (i, c) in rest.char_indices() {
+            match c {
+                '<' => depth += 1,
+                '>' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(i + 1);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        rest = rest[end?..].trim_start();
+    }
+    let head = rest.split(" for ").next()?;
+    let head = head.split('<').next()?.trim();
+    let name = head.rsplit("::").next()?.trim();
+    (!name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_'))
+        .then(|| name.to_string())
+}
+
+/// Whether any indexed test calls something named `name`. A test that calls
+/// `.render()` may dispatch to the owner even when its relation is only
+/// proximity (a shadowing trait, a blanket impl), so reach stays undecided.
+fn some_test_calls_name(index: &RustIndex, name: &str) -> bool {
+    let calls = |test: &crate::analysis::facts::TestFact| {
+        test.calls
+            .iter()
+            .any(|call| call.name == name && !call.text.contains(&format!("fn {name}")))
+    };
+    index.tests().iter().any(calls) || index.files().values().any(|f| f.tests.iter().any(calls))
+}
+
+/// Every identifier directly after the `trait` keyword in `source`.
+fn declared_trait_names(source: &str) -> impl Iterator<Item = &str> {
+    source.lines().filter_map(|line| {
+        let is_ident = |c: char| !(c.is_alphanumeric() || c == '_');
+        let mut words = line.split(is_ident).filter(|w| !w.is_empty());
+        words.find(|w| *w == "trait")?;
+        words.next()
+    })
+}
+
+/// Whether some indexed source declares the trait the owner implements.
+fn workspace_defines_impl_trait(owner: &FunctionSummary, index: &RustIndex) -> bool {
+    let Some(name) = impl_trait_name(owner) else {
+        return false;
+    };
+    index
+        .files()
+        .values()
+        .any(|file| declared_trait_names(&file.source).any(|declared| declared == name))
 }
 
 /// [`owner_may_be_reached_unseen`] answered from one scan of the workspace,
@@ -148,13 +229,31 @@ pub(in crate::analysis) struct UnseenReachNames {
     named: std::collections::HashSet<String>,
     /// Some file pulls external docs in as doctests.
     external_docs: bool,
+    /// Every trait some source declares (#9169).
+    traits: std::collections::HashSet<String>,
+    /// Every name some indexed test calls (#9169).
+    test_called: std::collections::HashSet<String>,
 }
 
 impl UnseenReachNames {
     pub(in crate::analysis) fn build(index: &RustIndex) -> Self {
         let mut names = Self::default();
+        names.test_called.extend(
+            index
+                .tests()
+                .iter()
+                .flat_map(|test| test.calls.iter().map(|call| call.name.clone())),
+        );
         for file in index.files().values() {
             names.external_docs |= includes_external_docs(&file.source);
+            names
+                .traits
+                .extend(declared_trait_names(&file.source).map(str::to_string));
+            names.test_called.extend(
+                file.tests
+                    .iter()
+                    .flat_map(|test| test.calls.iter().map(|call| call.name.clone())),
+            );
             names
                 .named
                 .extend(identifiers_outside_fn_definition(&file.source).map(str::to_string));
@@ -163,6 +262,12 @@ impl UnseenReachNames {
     }
 
     pub(in crate::analysis) fn may_reach_unseen(&self, owner: &FunctionSummary) -> bool {
+        if is_trait_impl_method(owner)
+            && impl_trait_name(owner).is_some_and(|name| self.traits.contains(&name))
+            && !self.test_called.contains(&owner.name)
+        {
+            return self.external_docs;
+        }
         is_trait_impl_method(owner)
             || self.external_docs
             || (!owner.name.is_empty() && self.named.contains(&owner.name))
@@ -586,6 +691,63 @@ mod tests {
         assert!(names.may_reach_unseen(&function("fragile_fee")));
         assert!(!names.may_reach_unseen(&function("lonely")));
         assert!(UnseenReachNames::build(&docs_index).may_reach_unseen(&function("lonely")));
+    }
+
+    /// #9169: a method of a workspace-defined trait is reached only by a call
+    /// that names it; std-trait impls keep the unseen allowance. Both the
+    /// per-owner scan and the one-pass scan agree.
+    #[test]
+    fn workspace_trait_impl_method_is_not_reached_unseen() {
+        let file = |source: &str| {
+            let path = PathBuf::from("src/lib.rs");
+            BTreeMap::from([(
+                path.clone(),
+                FileFacts {
+                    path,
+                    source: source.into(),
+                    ..FileFacts::default()
+                },
+            )])
+        };
+        let owner = |id: &str, name: &str| {
+            let mut owner = function(name);
+            owner.id = SymbolId(id.to_string());
+            owner
+        };
+        let source = "pub trait Step { fn process(&self); }\nimpl Step for Inc { fn process(&self) { self.process(); } }\n";
+        let index = |source: &str, owner: FunctionSummary| {
+            RustIndex::from_owned(OwnedRustIndex {
+                files: file(source),
+                functions: vec![owner],
+                ..Default::default()
+            })
+        };
+        let workspace = owner("src/lib.rs::impl Step for Inc::process", "process");
+        let generic = owner("src/lib.rs::impl Step<I, E> for Inc<I>::process", "process");
+        let foreign = owner("src/lib.rs::impl Display for Money::fmt", "fmt");
+        let with_generic_trait = "pub trait Step<I, E> { fn process(&self); }\n";
+        for (src, subject, expected) in [
+            (source, workspace, false),
+            (with_generic_trait, generic, false),
+            (source, foreign, true),
+        ] {
+            let index = index(src, subject.clone());
+            assert_eq!(owner_may_be_reached_unseen(&subject, &index), expected);
+            assert_eq!(
+                UnseenReachNames::build(&index).may_reach_unseen(&subject),
+                expected
+            );
+        }
+        // An undeclared trait (defined in another crate) keeps the allowance.
+        let other = owner("src/lib.rs::impl Parser for Inc::process", "process");
+        assert!(owner_may_be_reached_unseen(
+            &other,
+            &index(source, other.clone())
+        ));
+        assert_eq!(
+            impl_trait_name(&owner("x::impl a::Tr<T> for K<T>::f", "f")).as_deref(),
+            Some("Tr")
+        );
     }
 
     #[test]
