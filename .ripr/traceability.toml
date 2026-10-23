@@ -1376,6 +1376,8 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::init_refuses_existing_config_without_force",
   "crates/ripr/tests/cli_smoke.rs::init_force_overwrites_existing_config",
   "crates/ripr/tests/cli_smoke.rs::init_warns_when_the_root_is_not_a_git_work_tree",
+  "crates/ripr/src/cli/commands/init.rs::tests::init_roots_drop_the_trailing_current_dir_segment",
+  "crates/ripr/src/cli/commands/init.rs::tests::current_dir_suffix_is_kept_where_stripping_changes_the_target",
   "crates/ripr/src/cli/commands/init.rs::tests::non_git_root_warning_stays_quiet_inside_a_work_tree",
   "crates/ripr/src/cli/commands/init.rs::tests::non_git_root_warning_names_only_the_established_outside",
   "crates/ripr/src/config.rs::tests::generated_init_config_matches_builtin_defaults",
