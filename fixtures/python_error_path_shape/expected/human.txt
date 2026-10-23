@@ -21,7 +21,7 @@ Start here:
   Canonical gap: gap:python:src/validation.py:require_positive:exception_path:error_path:valueerror_positive_required
   Changed behavior: raise ValueError("positive required")
   Missing discriminator (1 of 2): Related Python test reaches `require_positive` but the strongest extracted oracle is `broad_error`; add or strengthen a focused assertion for the exact exception type/message
-  Related test: tests/test_validation.py:6 test_rejects_zero_value
+  Related test: tests/test_validation.py:6 test_rejects_zero_value (assertion too weak to tell the old behavior from the new)
   Suggested test file: tests/test_validation.py
   Suggested test: test_rejects_zero_value
   Test node: tests/test_validation.py::test_rejects_zero_value
@@ -35,7 +35,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_error_path_shape/input --diff <cwd>/fixtures/python_error_path_shape/diff.patch --mode fast probe:src_validation.py:python_preview:82db397b
   ripr context --root <cwd>/fixtures/python_error_path_shape/input --diff <cwd>/fixtures/python_error_path_shape/diff.patch --mode fast --at probe:src_validation.py:python_preview:82db397b
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_validation.py:python_preview:82db397b --root <cwd>/fixtures/python_error_path_shape/input` for the full gate's answer
+  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/validation.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
 
 More:
   Full evidence: rerun with --format human-full

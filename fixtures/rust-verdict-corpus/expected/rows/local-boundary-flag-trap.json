@@ -1,0 +1,22 @@
+{
+  "case_id": "local-boundary-flag-trap",
+  "subject_id": "authored-local-boundary",
+  "origin": "authored",
+  "anchor": "src/lib.rs:13",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "false_credit_trap",
+  "hard_case": true,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

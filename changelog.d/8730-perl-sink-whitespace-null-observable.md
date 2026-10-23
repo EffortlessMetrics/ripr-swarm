@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- Perl: a sink that differs from the changed observable only in whitespace outside a quoted literal now aligns (`exposed`, RIPR-SPEC-0235 rule 9), and a strong oracle on a change whose packet carries `changed_observable: null` reads `static_unknown` with no repair gap instead of `weakly_exposed` (rule 18). Packets that omit the field, and sinks that merely differ, are unchanged (#8730).

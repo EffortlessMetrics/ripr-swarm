@@ -107,7 +107,7 @@ Updated:
 ## Pending — rust_slice_table_zero_elements (9)
 
 Reason:
-RIPR-SPEC-0240: a same-file test that cannot reach the owner is labeled no_call_path instead of an input/observation miss beside a reaching test (#9167)
+RIPR-SPEC-0122: route-not-ready refusal names its missing evidence (#9604 batch C)
 
 Command:
 `cargo xtask goldens bless rust_slice_table_zero_elements --reason "..."`

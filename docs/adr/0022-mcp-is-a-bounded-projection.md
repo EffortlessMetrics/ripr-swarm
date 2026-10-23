@@ -117,8 +117,9 @@ completed after resolving the new graph.
 | uuid 1.26.0 | Apache-2.0 OR MIT | 1.85.0 |
 
 Compatibility follows the SDK: unsupported or discovery-only initialize
-versions negotiate `2025-11-25`; syntax-invalid JSON is ignored, invalid typed
-shapes recover with Invalid Request, and unknown error IDs may be omitted.
+versions negotiate `2025-11-25`; syntax-invalid JSON is answered with Parse
+error (`-32700`, null id), invalid typed shapes recover with Invalid Request
+(`-32600`), and unknown error IDs in SDK-dispatched responses may be omitted.
 Readable IDs are never silently replaced, but a request ID whose serialized
 form exceeds 16 KiB is rejected at receive with `-32600` and `id: null` (the
 ID is never echoed) and the session continues; a response/fallback that still
@@ -148,7 +149,7 @@ mapping specifies successor proof; it does not claim that it has run.
 | Prior control | Successor owner / disposition |
 | --- | --- |
 | CLI argument rejection | Existing `mcp::tests::parser_rejects_unknown_and_ambiguous_root_arguments`, unchanged |
-| Invalid JSON produces parse error | SDK syntax-ignore policy; typed-shape/recovery transport control replaces manual parse-error assertion |
+| Invalid JSON produces parse error | Transport answers syntax-invalid JSON with `-32700` (the SDK would drop it silently); typed-shape/recovery transport control covers `-32600` |
 | Unsupported initialize chooses default | Official client initialize-version control; handshake default corrected to SDK `LATEST_WITH_INITIALIZE` |
 | Repeated initialize stability | SDK lifecycle owner; no retained application session state or custom renegotiation gate |
 | Malformed discovery metadata | Public stdio discovery negative control through actual SDK |
@@ -156,7 +157,7 @@ mapping specifies successor proof; it does not claim that it has run.
 | Legacy resource miss | Official-client and public wire rejection controls; SDK maps resource-not-found code by negotiated version |
 | Discovery ping with older selected version | SDK lifecycle owner; public discovery ping rejection control |
 | Discovery exposes read-only surfaces | Official client exactly-one-tool/resource, status equality and authority-none controls |
-| Unknown tool | Official-client and public stdio Method Not Found with same request ID and available-tool data |
+| Unknown tool | Official-client and public stdio Invalid Params (-32602) with same request ID and available-tool data |
 | Nonempty status arguments | Official-client and public stdio Invalid Params |
 | Current resource miss | Same real-client/wire rejection; SDK performs version-dependent error mapping |
 | Initialize after discovery | SDK lifecycle owner; custom lifecycle-switch gate retired |

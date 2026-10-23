@@ -112,6 +112,29 @@ checks receipt binding plus incomplete-argument refusals. That parser/control
 proof does not execute the authored installed-language fixture or establish blind
 acceptance; the real candidate-bound installed journey remains separate.
 
+A Python finding with a complete gap (canonical gap id, test node, verify
+command) has no seam to start a delegated repair from: the seam inventory
+behind `ripr repair` and `ripr agent repair --phase before` is built from the
+Rust index only, and binding a Python finding would need a parallel Python
+seam owner (#9102). The product therefore states that precise terminal reason
+instead of the generic "no seam in the finding's file binds this finding" or a
+stale-id message: `ripr check` prints "no repair start offered: the seam
+inventory ... covers Rust files only, so this Python finding in `<file>` has no
+seam", and `ripr repair` / `ripr agent repair --seam-id` given the Python gap
+id or `probe:<file>:python_preview:<hash>` finding id state the same reason.
+The gap, test node and verify command remain the manual route. Ids that are
+not a non-Rust gap or preview finding keep the stale-id guidance. The
+actionability flip is unchanged and stays fail-closed: no repair start is
+offered.
+
+`cargo xtask check-fixture-contracts` also rebuilds the snapshot repository
+from `repository/<snapshot>/` using the manifest `construction_recipe` (offline,
+a handful of local git calls in one scratch repository, with the user and system
+git configuration, host identity and index environment, global ignore file,
+signing and hooks all neutralized; the variant commit dates and messages follow
+the recipe's documented derivation) and refuses any recorded commit or tree id the recipe does not
+reproduce, so a well-formed but hand-edited id cannot pass (#9235).
+
 ## Required Evidence
 
 - `cargo xtask check-fixture-contracts` recomputes every snapshot digest and
@@ -182,6 +205,14 @@ acceptance; the real candidate-bound installed journey remains separate.
 
 ## Test Mapping
 
+- `xtask/src/fixture_contracts/installed_journey_recipe.rs`
+  (`installed_journey_recipe_tests`): the committed fixtures reproduce every
+  recorded commit and tree id from `construction_recipe`; a forged but
+  well-formed commit id is refused; a changed snapshot byte changes the
+  rebuilt ids and is refused; a recipe without the base and head steps fails
+  closed; inherited git repository selectors do not redirect the rebuild; a
+  snapshot carrying `.git` is refused; a recipe that no longer states the
+  variant derivation is refused.
 - `xtask/src/fixture_contracts/general_validators.rs`
   (`installed_python_fixture_tests`): committed manifest binds the snapshot
   bytes; committed scenarios exist in the executor corpus; an unknown
@@ -192,6 +223,14 @@ acceptance; the real candidate-bound installed journey remains separate.
 - `xtask/src/reports/blind_journey_execute.rs` gate tests: the enlarged
   committed corpus and receipt validate against the live executor and the
   required-scenario coverage cannot be dropped.
+- `crates/ripr/tests/installed_python_typescript_journeys.rs`
+  (`python_flat_layout_journey_stays_in_selected_root_and_ends_in_named_terminal_reason`):
+  the built binary's `check`, `repair <probe>`, `repair <gap>` and
+  `agent repair --phase before --seam-id <gap>` state the Rust-only terminal
+  reason for the Python gap, and an unrelated stale id keeps the stale-id
+  guidance. Unit pins: `task_first::tests::non_rust_item_language_*`,
+  `unknown_repair_item_names_terminal_reason_only_for_non_rust_items`, and the
+  navigation advisory test.
 - `cargo xtask blind-journey-execute` and `cargo xtask check-fixture-contracts`
   are themselves the CI-executable proof; hosted CI is the execution
   authority for every step that would need a built binary.

@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 
 pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
     let mut json_output = false;
+    let mut timings = false;
     let mut profile = output::doctor::DoctorProfile::Analysis;
     let mut root: Option<String> = None;
     let mut arguments = args.iter();
@@ -28,6 +29,10 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
                 return Ok(());
             }
             "--json" => json_output = true,
+            // #9807: timing fields are volatile, so the default `--json`
+            // document omits them and stays byte-stable across runs;
+            // `--timings` restores the pre-#9807 projection.
+            "--timings" => timings = true,
             "--profile" => {
                 profile = match arguments.next().map(String::as_str) {
                     Some("analysis") => output::doctor::DoctorProfile::Analysis,
@@ -51,7 +56,7 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
                     // directory named after the flag (#4318 review). The
                     // pre-#4318 parser answered `missing value for --root`
                     // here. Other dash-prefixed paths stay legitimate values.
-                    Some("--help" | "-h" | "--json" | "--profile" | "--root") => {
+                    Some("--help" | "-h" | "--json" | "--timings" | "--profile" | "--root") => {
                         return Err(CommandError::from("missing value for --root".to_string()));
                     }
                     Some(value) => value,
@@ -96,6 +101,7 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
             &detected,
             run_started,
             language_detection_elapsed,
+            timings,
         );
     }
 
@@ -167,6 +173,7 @@ fn doctor_json(
     detected: &[LanguageId],
     run_started: std::time::Instant,
     language_detection_elapsed: std::time::Duration,
+    timings: bool,
 ) -> Result<(), CommandError> {
     let evaluation =
         output::doctor::evaluate_doctor_core_with_config_for_profile(root, detected, profile);
@@ -198,7 +205,14 @@ fn doctor_json(
     }
     report.attach_canonical_next_action(root);
     report.elapsed_ms = Some(run_started.elapsed().as_millis() as u64);
-    println!("{}", report.render_json()?);
+    // #9807: timing fields are volatile, so the default `--json` document
+    // renders without them and stays byte-stable across runs that changed
+    // nothing; `--timings` restores the full projection.
+    if timings {
+        println!("{}", report.render_json()?);
+    } else {
+        println!("{}", report.render_json_stable()?);
+    }
     // #5102: a rendered report with failed checks is a completed typed
     // answer (exit 3); render failures above stay could-not-complete (2).
     output::doctor::doctor_report_result(&report).map_err(CommandError::Decision)
@@ -695,6 +709,14 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
     if !verbose
         && let Some(line) =
             ignored_perl_executable_compact_line(environment.facts.perl_preview.as_ref())
+    {
+        lines.push(line);
+    }
+    // Same rule for a refused PATH exporter: a security refusal stays
+    // visible on the default screen (#5349 finding 1).
+    if !verbose
+        && let Some(line) =
+            perl_exporter_refused_compact_line(environment.facts.perl_preview.as_ref())
     {
         lines.push(line);
     }
@@ -2082,6 +2104,23 @@ fn ignored_perl_executable_compact_line(
         .map(|refused| format!("- {}", ignored_perl_executable_disclosure(refused)))
 }
 
+/// Compact-screen line for a refused PATH exporter (#5349 finding 1).
+/// The full Perl preview is verbose-only, but a security refusal must
+/// not be hidden behind `--verbose`.
+fn perl_exporter_refused_compact_line(
+    preview: Option<&output::doctor::DoctorPerlPreview>,
+) -> Option<String> {
+    let preview = preview?;
+    if preview.exporter.state != output::doctor::DoctorPerlExporterState::Refused {
+        return None;
+    }
+    Some(format!(
+        "- exporter: refused `{}` (not run): resolved path is inside the analyzed checkout; set {}=1 to trust it",
+        display_text(preview.exporter.executable.as_deref().unwrap_or_default()),
+        crate::config::PERL_EXECUTABLE_OPT_IN_ENV
+    ))
+}
+
 /// The Perl preview lines, in the order the human screen prints them. Rendered
 /// from the same typed value the JSON `perl_preview` object serializes, so the
 /// two surfaces cannot drift.
@@ -2201,7 +2240,7 @@ fn probe_perl_preview(
     let producer_configured = perl_producer_configured(config);
     let refused_executable =
         config.and_then(|config| config.perl().refused_executable().map(Path::to_path_buf));
-    let exporter = probe_perl_exporter(config);
+    let exporter = probe_perl_exporter(root, config);
     let adapter_compiled = cfg!(feature = "lang-perl");
     Some(output::doctor::DoctorPerlPreview {
         pm_files: pm_count,
@@ -2239,6 +2278,9 @@ fn exporter_typed(exporter: &PerlExporterProbe) -> output::doctor::DoctorPerlExp
             (Some(bin.clone()), Some(version.clone())),
         ),
         PerlExporterProbe::NotFound => (DoctorPerlExporterState::NotFound, (None, None)),
+        PerlExporterProbe::Refused { bin } => {
+            (DoctorPerlExporterState::Refused, (Some(bin.clone()), None))
+        }
     };
     DoctorPerlExporter {
         state,
@@ -2281,6 +2323,9 @@ enum PerlExporterProbe {
     Incompatible { bin: String, version: String },
     /// No candidate answered `--version`.
     NotFound,
+    /// A PATH hit canonicalized inside the analyzed root and was not run
+    /// (#5349). Carries the resolved program path for the report.
+    Refused { bin: String },
 }
 
 impl PerlExporterProbe {
@@ -2309,13 +2354,98 @@ const PERL_EXPORTER_PROBE_OUTPUT_LIMIT: usize = 64 * 1024;
 /// run under the configured `[perl].timeout_ms` deadline with bounded
 /// capture and a null stdin, so an LSP server that waits on stdin cannot
 /// hang the doctor. Packet validity is still only checked by `ripr check`.
-fn probe_perl_exporter(config: Option<&RiprConfig>) -> PerlExporterProbe {
+/// Lexically normalize an absolute path: drop `.` and resolve `..`
+/// against preceding normal components without touching the filesystem.
+fn lexical_normalize(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::RootDir | Component::Prefix(_) | Component::Normal(_) => {
+                out.push(component.as_os_str());
+            }
+        }
+    }
+    out
+}
+
+/// The path doctor judges and, when approved, executes for `candidate`
+/// (#5349, findings 2/5/6). A successful `canonicalize` is used verbatim,
+/// so the judged path and the executed path are the same object and a
+/// later symlink swap of the PATH spelling cannot redirect execution.
+/// When `canonicalize(candidate)` fails, the longest existing ancestor
+/// is canonicalized and the remaining suffix is appended lexically:
+/// this resolves an intermediate symlink (for example `outside/link ->
+/// <root>/bin` with a missing final component) to its real location
+/// instead of trusting the textual spelling. When no ancestor
+/// canonicalizes, the lexical absolute form is returned.
+fn judged_exporter_path(candidate: &Path) -> PathBuf {
+    if let Ok(canonical) = std::fs::canonicalize(candidate) {
+        return canonical;
+    }
+    let absolute = if candidate.is_absolute() {
+        candidate.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(candidate))
+            .unwrap_or_else(|_| candidate.to_path_buf())
+    };
+    for ancestor in absolute.ancestors() {
+        if let Ok(canonical_ancestor) = std::fs::canonicalize(ancestor) {
+            let suffix = absolute.strip_prefix(ancestor).unwrap_or(Path::new(""));
+            let mut resolved = canonical_ancestor;
+            for component in suffix.components() {
+                match component {
+                    std::path::Component::Normal(part) => resolved.push(part),
+                    std::path::Component::CurDir => {}
+                    std::path::Component::ParentDir => {
+                        resolved.pop();
+                    }
+                    std::path::Component::RootDir | std::path::Component::Prefix(_) => {}
+                }
+            }
+            return resolved;
+        }
+    }
+    lexical_normalize(&absolute)
+}
+
+/// Whether `candidate` lies under `root` (#5349). Both sides are judged
+/// through [`judged_exporter_path`], so a symlink or relative PATH entry
+/// pointing into the checkout counts. Fail-closed (finding 5): when
+/// `candidate` cannot be canonicalized, it is still judged by its
+/// ancestor-resolved / lexical location, so a candidate whose resolved
+/// location is inside the root is refused instead of executed. Only a
+/// candidate whose ancestor-resolved location is provably outside the
+/// (similarly resolved) root is allowed; resolvable outside-root
+/// exporters therefore keep working exactly as before.
+fn path_lies_under_root(candidate: &Path, root: &Path) -> bool {
+    let resolved_candidate = judged_exporter_path(candidate);
+    let resolved_root = judged_exporter_path(root);
+    resolved_candidate.starts_with(&resolved_root)
+}
+
+/// Whether doctor must refuse to execute this PATH hit: its canonical path
+/// lies under the analyzed root and the user did not opt in (#5349). The
+/// analyzed checkout is hostile input to a read-only diagnosis. Relative
+/// PATH entries keep working for exporters outside the root because only
+/// the canonical destination is judged, not the PATH spelling.
+fn perl_path_exporter_refused(candidate: &Path, root: &Path, opt_in: bool) -> bool {
+    !opt_in && path_lies_under_root(candidate, root)
+}
+
+fn probe_perl_exporter(root: &Path, config: Option<&RiprConfig>) -> PerlExporterProbe {
     let timeout =
         std::time::Duration::from_millis(config.map_or(30_000, |c| c.perl().timeout_ms()));
     // `[perl].executable` from ripr.toml is only probed when the user opts
     // in (see `PerlConfig::executable`); doctor is usually the first command
     // run in a fresh clone and must not execute a repository-chosen program.
     let explicit = config.and_then(|c| c.perl().executable().map(|p| p.display().to_string()));
+    let has_explicit = explicit.is_some();
     let candidates: Vec<String> = match explicit {
         Some(path) => vec![path],
         None => vec![
@@ -2323,11 +2453,33 @@ fn probe_perl_exporter(config: Option<&RiprConfig>) -> PerlExporterProbe {
             "perllsp".to_string(),
         ],
     };
+    let opt_in = crate::config::perl_executable_opt_in();
+    let resolved_root = judged_exporter_path(root);
     let mut first_incompatible = None;
+    let mut first_refused = None;
     for candidate in &candidates {
         let Some(program) = doctor_program(candidate) else {
             continue;
         };
+        // Resolve once: the judged path is the reported path and the
+        // executed path (#5349 findings 2 and 6). A later swap of the
+        // relative or symlink PATH spelling therefore cannot redirect
+        // execution to a different file than the one that was judged.
+        let judged = judged_exporter_path(&program);
+        // #5349: never execute a PATH hit whose canonical path lies under
+        // the analyzed root unless the user opted in. The explicit
+        // `[perl].executable` branch only reaches here when opted in, so
+        // its existing gating is unchanged.
+        // `judged`/`resolved_root` are already canonical, so this
+        // re-judgement is idempotent and cannot be redirected by
+        // swapping the original PATH spelling.
+        if !has_explicit && perl_path_exporter_refused(&judged, &resolved_root, opt_in) {
+            first_refused.get_or_insert(PerlExporterProbe::Refused {
+                bin: judged.display().to_string(),
+            });
+            continue;
+        }
+        let program = judged;
         let bin = program.display().to_string();
         let Some(version) = run_exporter_probe(&program, &["--version"], timeout)
             .filter(|output| output.status.success())
@@ -2352,7 +2504,11 @@ fn probe_perl_exporter(config: Option<&RiprConfig>) -> PerlExporterProbe {
         }
         first_incompatible.get_or_insert(PerlExporterProbe::Incompatible { bin, version });
     }
-    first_incompatible.unwrap_or(PerlExporterProbe::NotFound)
+    // A refusal is a security decision and must not be masked by an
+    // incompatible hit for the other candidate name (#5349 finding 3).
+    first_refused
+        .or(first_incompatible)
+        .unwrap_or(PerlExporterProbe::NotFound)
 }
 
 /// Whether `candidate ripr-facts --help` succeeds and documents `--schema`.
@@ -2412,6 +2568,16 @@ fn perl_exporter_lines(exporter: &output::doctor::DoctorPerlExporter) -> Vec<Str
             crate::config::PERL_EXECUTABLE_OPT_IN_ENV,
             crate::domain::PERL_FACT_EXPORTER
         )],
+        DoctorPerlExporterState::Refused => vec![
+            format!(
+                "exporter: refused `{}` (not run): resolved path is inside the analyzed checkout, so doctor does not execute it",
+                display_text(exporter.executable.as_deref().unwrap_or_default())
+            ),
+            format!(
+                "note: set {}=1 to trust it, or put the exporter outside the repo and on PATH",
+                crate::config::PERL_EXECUTABLE_OPT_IN_ENV
+            ),
+        ],
     }
 }
 
@@ -2767,6 +2933,15 @@ fn untrack_artifacts_command(root: &Path, artifact_roots: &[PathBuf]) -> String 
 /// exclusive file, so doctor never creates the cache or any layer itself. A
 /// regular file anywhere on one of those paths is reported by name.
 fn cache_unwritable_reason(cache_dir: &Path) -> Option<String> {
+    cache_unwritable_reason_with(cache_dir, &|path| std::fs::create_dir(path))
+}
+
+/// The directory-creation operation the cache probes perform. Production
+/// passes `std::fs::create_dir`; tests inject a refusal so the reason and its
+/// route are exercised on hosts whose ACL deny is not enforced (#9688).
+type CreateDir<'a> = &'a dyn Fn(&Path) -> std::io::Result<()>;
+
+fn cache_unwritable_reason_with(cache_dir: &Path, create_dir: CreateDir<'_>) -> Option<String> {
     // Only the entry directories matter: their nearest existing ancestor is
     // the base itself whenever the base is missing, blocked or still empty,
     // and a read-only base whose entry directories already exist and accept
@@ -2791,7 +2966,18 @@ fn cache_unwritable_reason(cache_dir: &Path) -> Option<String> {
         if let Some(reason) = probe_writable(&probe_dir) {
             return Some(reason);
         }
-        if needs_dir && let Some(reason) = probe_creatable_dir(&probe_dir) {
+        if needs_dir && let Some(reason) = probe_creatable_dir_with(&probe_dir, create_dir) {
+            return Some(reason);
+        }
+        // #6707: sharded publication creates a generation subdirectory
+        // inside an existing per-key directory (`sharded_dir/<key>/g…`),
+        // one level below the directory probed above. A key directory
+        // that blocks subdirectory creation is otherwise unreported, so
+        // probe creation inside every existing key directory too.
+        if *makes_subdirs
+            && probe_dir == *target
+            && let Some(reason) = probe_existing_key_dirs(target, create_dir)
+        {
             return Some(reason);
         }
         probed.push((probe_dir, needs_dir));
@@ -2799,19 +2985,83 @@ fn cache_unwritable_reason(cache_dir: &Path) -> Option<String> {
     None
 }
 
+/// Probes the operations sharded publication performs inside each
+/// existing immediate subdirectory (per-key directory) of a sharded
+/// entry directory: writing a file directly there (the manifest, via
+/// its same-directory temporary) and creating a generation
+/// subdirectory (whose shard files it then writes). A key directory
+/// can permit one and deny the other (a Windows ACL separates adding
+/// files from adding subdirectories), so both are probed. The first
+/// failure is the reason; unreadable listings stay silent because the
+/// entry-directory probes above already passed.
+fn probe_existing_key_dirs(sharded_dir: &Path, create_dir: CreateDir<'_>) -> Option<String> {
+    let entries = std::fs::read_dir(sharded_dir).ok()?;
+    for entry in entries.flatten() {
+        let key_dir = entry.path();
+        if !key_dir.is_dir() {
+            continue;
+        }
+        if let Some(reason) = probe_writable(&key_dir) {
+            return Some(reason);
+        }
+        if let Some(reason) = probe_creatable_dir_with(&key_dir, create_dir) {
+            return Some(reason);
+        }
+    }
+    None
+}
+
 /// Creates and removes a short-lived subdirectory, the operation a producer
 /// needs before it can write under a missing entry directory.
+#[cfg(test)]
 fn probe_creatable_dir(probe_dir: &Path) -> Option<String> {
+    probe_creatable_dir_with(probe_dir, &|path| std::fs::create_dir(path))
+}
+
+fn probe_creatable_dir_with(probe_dir: &Path, create_dir: CreateDir<'_>) -> Option<String> {
     let probe = probe_dir.join(probe_name("dir"));
-    match std::fs::create_dir(&probe) {
-        Ok(()) => {
-            let _ = std::fs::remove_dir(&probe);
-            None
-        }
+    match create_dir(&probe) {
+        Ok(()) => remove_probe_dir(&probe),
         Err(error) => Some(format!(
             "cannot create a directory in {}: {error}",
             probe_dir.display()
         )),
+    }
+}
+
+/// Removes a probe directory; a removal failure is itself reported
+/// (#6707) rather than silently leaving `.ripr-doctor-probe-*` residue.
+fn remove_probe_dir(probe: &Path) -> Option<String> {
+    match std::fs::remove_dir(probe) {
+        Ok(()) => None,
+        Err(error) => Some(format!(
+            "cannot remove probe directory {}: {error}",
+            probe.display()
+        )),
+    }
+}
+
+/// Removes a probe file; a removal failure is itself reported (#6707)
+/// rather than silently leaving `.ripr-doctor-probe-*` residue.
+fn remove_probe_file(probe: &Path) -> Option<String> {
+    match std::fs::remove_file(probe) {
+        Ok(()) => None,
+        Err(error) => Some(format!(
+            "cannot remove probe file {}: {error}",
+            probe.display()
+        )),
+    }
+}
+
+/// The reason for a probe file whose payload write or sync failed. The
+/// probe file is removed; when that removal also fails, the residue is
+/// reported alongside the write failure (#6707) instead of being left
+/// silently as a stranded `.ripr-doctor-probe-*` file.
+fn failed_probe_write_reason(probe: &Path, probe_dir: &Path, error: &std::io::Error) -> String {
+    let write_reason = format!("cannot write in {}: {error}", probe_dir.display());
+    match remove_probe_file(probe) {
+        None => write_reason,
+        Some(removal_reason) => format!("{write_reason}; {removal_reason}"),
     }
 }
 
@@ -2857,19 +3107,33 @@ fn nearest_existing_dir(path: &Path) -> Result<Option<PathBuf>, String> {
     }
 }
 
+/// Bytes the file probe writes so a volume with free inodes but no free
+/// blocks fails the probe instead of passing it (#6707). One filesystem
+/// block is enough to force an allocation; real cache entries are larger,
+/// so this still understates a nearly-full volume by design.
+const PROBE_WRITE_BYTES: usize = 4096;
+
 /// Creates and removes one exclusive probe file in `dir`; the error when
-/// that fails.
+/// that fails. The probe writes [`PROBE_WRITE_BYTES`] and syncs them, so
+/// an out-of-blocks volume (ENOSPC) is reported even though a zero-byte
+/// creation would have succeeded on its remaining inodes.
 fn probe_writable(probe_dir: &Path) -> Option<String> {
+    use std::io::Write as _;
     let probe = probe_dir.join(probe_name("file"));
     match std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&probe)
     {
-        Ok(file) => {
+        Ok(mut file) => {
+            let written = file
+                .write_all(&[0_u8; PROBE_WRITE_BYTES])
+                .and_then(|()| file.sync_all());
             drop(file);
-            let _ = std::fs::remove_file(&probe);
-            None
+            if let Err(error) = written {
+                return Some(failed_probe_write_reason(&probe, probe_dir, &error));
+            }
+            remove_probe_file(&probe)
         }
         Err(error) => Some(format!("cannot write in {}: {error}", probe_dir.display())),
     }
@@ -4162,6 +4426,461 @@ mod tests {
         Ok(())
     }
 
+    /// The first sharded entry directory doctor probes for `base`.
+    fn first_sharded_entry_dir(base: &Path) -> Result<PathBuf, String> {
+        analysis::seam_cache::production_entry_dirs(base)
+            .into_iter()
+            .find(|(_, makes_subdirs)| *makes_subdirs)
+            .map(|(dir, _)| dir)
+            .ok_or_else(|| "no sharded entry dir".to_string())
+    }
+
+    /// Denies subdirectory creation in `dir` while (on Windows) leaving
+    /// file creation allowed: Windows ACL `(AD)` deny, Unix mode `0o555`.
+    /// Returns `false` when the host cannot deny creation for this
+    /// process (for example a Unix root run, which bypasses mode bits);
+    /// on Windows an unenforced deny is a `NOT_ESTABLISHED` error (#9688).
+    fn deny_subdirectory_creation(dir: &Path) -> Result<bool, String> {
+        deny_creation(dir, "(AD)")
+    }
+
+    /// Removes the fixture tree unless the deny was established, so neither
+    /// an unenforced deny's `NOT_ESTABLISHED` error nor a host that cannot
+    /// deny leaves a temp tree behind.
+    fn cleaned_unless_denied(denied: Result<bool, String>, root: &Path) -> Result<bool, String> {
+        if !matches!(denied, Ok(true)) {
+            let _ = std::fs::remove_dir_all(root);
+        }
+        denied
+    }
+
+    /// Denies file creation in `dir` while (on Windows) leaving
+    /// subdirectory creation allowed: Windows ACL `(WD)` deny, Unix
+    /// mode `0o555` (which denies both there).
+    fn deny_file_creation(dir: &Path) -> Result<bool, String> {
+        deny_creation(dir, "(WD)")
+    }
+
+    fn deny_creation(dir: &Path, windows_deny: &str) -> Result<bool, String> {
+        #[cfg(windows)]
+        {
+            let user = icacls_user()?;
+            let status = std::process::Command::new("icacls")
+                .arg(dir)
+                .arg("/deny")
+                .arg(format!("{user}:{windows_deny}"))
+                .status()
+                .map_err(|error| format!("run icacls deny: {error}"))?;
+            if !status.success() {
+                return Err(format!("icacls deny failed with {status}"));
+            }
+            // A successful icacls exit does not prove this process is denied
+            // (hosted runners were observed creating through the ACE), so
+            // establish the denial first. An unenforced deny fails closed with
+            // a named reason rather than passing: a captured early return is
+            // indistinguishable from a pass in the Windows receipts. The
+            // injected-refusal tests carry the oracle on every host (#9688).
+            if creation_is_denied(dir, windows_deny == "(WD)") {
+                return Ok(true);
+            }
+            restore_subdirectory_creation(dir)?;
+            Err(format!(
+                "NOT_ESTABLISHED: icacls {windows_deny} deny is not enforced for this process (#9688); {}",
+                privilege_diagnostic()
+            ))
+        }
+        #[cfg(unix)]
+        {
+            let _ = windows_deny;
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o555))
+                .map_err(|error| format!("chmod deny dir: {error}"))?;
+            // Root bypasses mode bits; detect that instead of faking a pass.
+            Ok(creation_is_denied(dir, false))
+        }
+        #[cfg(not(any(windows, unix)))]
+        {
+            let _ = (dir, windows_deny);
+            Ok(false)
+        }
+    }
+
+    /// Whether creating a scratch entry in `dir` actually fails for this
+    /// process: a file when `file` is set, otherwise a subdirectory. A
+    /// scratch entry that could be created is removed again.
+    #[cfg(any(windows, unix))]
+    fn creation_is_denied(dir: &Path, file: bool) -> bool {
+        let scratch = dir.join(".ripr-doctor-deny-check");
+        if file {
+            match std::fs::File::create(&scratch) {
+                Ok(_) => {
+                    let _ = std::fs::remove_file(&scratch);
+                    false
+                }
+                Err(_) => true,
+            }
+        } else {
+            match std::fs::create_dir(&scratch) {
+                Ok(()) => {
+                    let _ = std::fs::remove_dir(&scratch);
+                    false
+                }
+                Err(_) => true,
+            }
+        }
+    }
+
+    fn restore_subdirectory_creation(dir: &Path) -> Result<(), String> {
+        #[cfg(windows)]
+        {
+            let user = icacls_user()?;
+            let status = std::process::Command::new("icacls")
+                .arg(dir)
+                .arg("/remove:d")
+                .arg(&user)
+                .status()
+                .map_err(|error| format!("run icacls remove: {error}"))?;
+            if !status.success() {
+                return Err(format!("icacls remove failed with {status}"));
+            }
+            Ok(())
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755))
+                .map_err(|error| format!("chmod restore dir: {error}"))
+        }
+        #[cfg(not(any(windows, unix)))]
+        {
+            let _ = dir;
+            Ok(())
+        }
+    }
+
+    /// The backup and restore privileges let a directory open with backup
+    /// intent bypass an ACL deny, which is one hypothesis for #9688. Record
+    /// their state so a hosted failure says which token it ran with.
+    #[cfg(windows)]
+    fn privilege_diagnostic() -> String {
+        let output = match std::process::Command::new("whoami")
+            .args(["/priv", "/fo", "csv", "/nh"])
+            .output()
+        {
+            Ok(output) => output,
+            Err(error) => return format!("whoami /priv unavailable: {error}"),
+        };
+        let rows: Vec<String> = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|row| {
+                [
+                    "SeBackupPrivilege",
+                    "SeRestorePrivilege",
+                    "SeTakeOwnershipPrivilege",
+                ]
+                .iter()
+                .any(|name| row.contains(name))
+            })
+            .map(|row| row.replace('"', ""))
+            .collect();
+        format!("whoami /priv: [{}]", rows.join("; "))
+    }
+
+    #[cfg(windows)]
+    fn icacls_user() -> Result<String, String> {
+        let user = std::env::var("USERNAME").map_err(|_err| "USERNAME unset".to_string())?;
+        match std::env::var("USERDOMAIN") {
+            Ok(domain) if !domain.is_empty() => Ok(format!("{domain}\\{user}")),
+            _ => Ok(user),
+        }
+    }
+
+    /// A `create_dir` that refuses inside `denied` with a permission error
+    /// and otherwise creates for real, standing in for an enforced
+    /// subdirectory deny on every host (#9688).
+    fn refuse_creation_in(denied: PathBuf) -> impl Fn(&Path) -> std::io::Result<()> {
+        move |path: &Path| {
+            if path.parent() == Some(denied.as_path()) {
+                Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+            } else {
+                std::fs::create_dir(path)
+            }
+        }
+    }
+
+    #[test]
+    fn probe_creatable_dir_names_an_injected_creation_refusal() -> Result<(), String> {
+        let root = unique_command_test_dir("cache-probe-injected-dir");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let reason = probe_creatable_dir_with(&root, &refuse_creation_in(root.clone()));
+        // Control: the same directory with a real create_dir is creatable
+        // and the probe leaves no residue.
+        let control = probe_creatable_dir(&root);
+        let residue = std::fs::read_dir(&root)
+            .map_err(|error| error.to_string())?
+            .count();
+        let _ = std::fs::remove_dir_all(&root);
+        let expected = format!("cannot create a directory in {}", root.display());
+        assert!(
+            reason
+                .as_deref()
+                .is_some_and(|text| text.starts_with(&expected)),
+            "{reason:?}"
+        );
+        assert_eq!(control, None);
+        assert_eq!(residue, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn cache_unwritable_reason_routes_an_injected_sharded_dir_refusal() -> Result<(), String> {
+        let root = unique_command_test_dir("cache-probe-injected-sharded");
+        let base = root.join("cache");
+        let sharded = first_sharded_entry_dir(&base)?;
+        std::fs::create_dir_all(&sharded).map_err(|error| error.to_string())?;
+        let reason = cache_unwritable_reason_with(&base, &refuse_creation_in(sharded.clone()));
+        // Control: a refusal outside every probed directory changes nothing.
+        let control =
+            cache_unwritable_reason_with(&base, &refuse_creation_in(root.join("elsewhere")));
+        let _ = std::fs::remove_dir_all(&root);
+        let expected = format!("cannot create a directory in {}", sharded.display());
+        assert!(
+            reason
+                .as_deref()
+                .is_some_and(|text| text.starts_with(&expected)),
+            "{reason:?}"
+        );
+        assert_eq!(control, None);
+        Ok(())
+    }
+
+    #[test]
+    fn cache_unwritable_reason_routes_an_injected_key_dir_refusal() -> Result<(), String> {
+        let root = unique_command_test_dir("cache-probe-injected-key");
+        let base = root.join("cache");
+        let key_dir = first_sharded_entry_dir(&base)?.join("some-cache-key");
+        std::fs::create_dir_all(&key_dir).map_err(|error| error.to_string())?;
+        // Only the per-key probe (#6707) creates inside the key directory,
+        // so this reason exists only while that probe is routed.
+        let reason = cache_unwritable_reason_with(&base, &refuse_creation_in(key_dir.clone()));
+        let control = cache_unwritable_reason(&base);
+        let _ = std::fs::remove_dir_all(&root);
+        let expected = format!("cannot create a directory in {}", key_dir.display());
+        assert!(
+            reason
+                .as_deref()
+                .is_some_and(|text| text.starts_with(&expected)),
+            "{reason:?}"
+        );
+        assert_eq!(control, None);
+        Ok(())
+    }
+
+    #[test]
+    fn probe_creatable_dir_reports_a_directory_that_denies_creation() -> Result<(), String> {
+        let root = unique_command_test_dir("cache-probe-deny-dir");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        if !cleaned_unless_denied(deny_subdirectory_creation(&root), &root)? {
+            return Ok(());
+        }
+        // On Windows the ACL denies only subdirectory creation, so the
+        // file probe must still pass: the two probes are separable there.
+        #[cfg(windows)]
+        assert_eq!(probe_writable(&root), None);
+        let reason = probe_creatable_dir(&root);
+        restore_subdirectory_creation(&root)?;
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            reason
+                .as_deref()
+                .is_some_and(|text| text.contains("cannot create a directory")),
+            "{reason:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cache_unwritable_reason_reports_existing_sharded_dir_denying_subdirectories()
+    -> Result<(), String> {
+        let root = unique_command_test_dir("cache-probe-sharded-deny");
+        let base = root.join("cache");
+        let sharded = first_sharded_entry_dir(&base)?;
+        std::fs::create_dir_all(&sharded).map_err(|error| error.to_string())?;
+        if !cleaned_unless_denied(deny_subdirectory_creation(&sharded), &root)? {
+            return Ok(());
+        }
+        let reason = cache_unwritable_reason(&base);
+        restore_subdirectory_creation(&sharded)?;
+        let _ = std::fs::remove_dir_all(&root);
+        // Windows separates file creation (allowed) from subdirectory
+        // creation (denied), so the directory probe names the failure.
+        // Unix mode bits deny both and the file probe answers first.
+        #[cfg(windows)]
+        assert!(
+            reason
+                .as_deref()
+                .is_some_and(|text| text.contains("cannot create a directory")),
+            "{reason:?}"
+        );
+        #[cfg(not(windows))]
+        assert!(reason.is_some(), "{reason:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn cache_unwritable_reason_reports_key_dir_denying_subdirectories() -> Result<(), String> {
+        let root = unique_command_test_dir("cache-probe-key-deny");
+        let base = root.join("cache");
+        let sharded = first_sharded_entry_dir(&base)?;
+        let key_dir = sharded.join("some-cache-key");
+        std::fs::create_dir_all(&key_dir).map_err(|error| error.to_string())?;
+        assert_eq!(cache_unwritable_reason(&base), None);
+        if !cleaned_unless_denied(deny_subdirectory_creation(&key_dir), &root)? {
+            return Ok(());
+        }
+        let reason = cache_unwritable_reason(&base);
+        restore_subdirectory_creation(&key_dir)?;
+        let _ = std::fs::remove_dir_all(&root);
+        // Windows separates subdirectory creation (denied) from file
+        // creation (allowed), so the directory probe names the failure.
+        // Unix mode bits deny both and the file probe answers first.
+        #[cfg(windows)]
+        assert!(
+            reason.as_deref().is_some_and(|text| {
+                text.contains("cannot create a directory") && text.contains("some-cache-key")
+            }),
+            "{reason:?}"
+        );
+        #[cfg(not(windows))]
+        assert!(
+            reason
+                .as_deref()
+                .is_some_and(|text| text.contains("some-cache-key")),
+            "{reason:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cache_unwritable_reason_reports_key_dir_denying_file_writes() -> Result<(), String> {
+        let root = unique_command_test_dir("cache-probe-key-deny-file");
+        let base = root.join("cache");
+        let sharded = first_sharded_entry_dir(&base)?;
+        let key_dir = sharded.join("some-cache-key");
+        std::fs::create_dir_all(&key_dir).map_err(|error| error.to_string())?;
+        assert_eq!(cache_unwritable_reason(&base), None);
+        if !cleaned_unless_denied(deny_file_creation(&key_dir), &root)? {
+            return Ok(());
+        }
+        // On Windows the ACL denies only file creation, so the
+        // subdirectory probe must still pass: the two probes are
+        // separable there, and production writes its manifest file
+        // directly in the key directory.
+        #[cfg(windows)]
+        assert_eq!(probe_creatable_dir(&key_dir), None);
+        let reason = cache_unwritable_reason(&base);
+        restore_subdirectory_creation(&key_dir)?;
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            reason.as_deref().is_some_and(|text| {
+                text.contains("cannot write in") && text.contains("some-cache-key")
+            }),
+            "{reason:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn failed_probe_write_reports_residue_when_removal_also_fails() -> Result<(), String> {
+        let root = unique_command_test_dir("cache-probe-write-residue");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        // A directory at the probe path makes `remove_file` fail on
+        // every supported platform, standing in for an undeletable file.
+        let probe = root.join(".ripr-doctor-probe-file-0-0");
+        std::fs::create_dir_all(&probe).map_err(|error| error.to_string())?;
+        let error = std::io::Error::other("injected write failure");
+        let reason = failed_probe_write_reason(&probe, &root, &error);
+        assert!(probe.exists(), "residue must remain for this control");
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            reason.contains("cannot write in")
+                && reason.contains("cannot remove probe file")
+                && reason.contains(".ripr-doctor-probe-file-0-0"),
+            "{reason}"
+        );
+        // When removal succeeds, only the write failure is reported and
+        // no probe file is left behind.
+        let root = unique_command_test_dir("cache-probe-write-cleanup");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let probe = root.join(".ripr-doctor-probe-file-0-1");
+        std::fs::write(&probe, b"x").map_err(|error| error.to_string())?;
+        let reason = failed_probe_write_reason(&probe, &root, &error);
+        let probe_left = probe.exists();
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(!probe_left, "probe file must be removed");
+        assert!(
+            reason.contains("cannot write in") && !reason.contains("cannot remove"),
+            "{reason}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn probe_removal_failure_is_reported_not_left_silent() -> Result<(), String> {
+        let root = unique_command_test_dir("cache-probe-removal");
+        let probe = root.join(".ripr-doctor-probe-dir-0-0");
+        std::fs::create_dir_all(&probe).map_err(|error| error.to_string())?;
+        std::fs::write(probe.join("occupant"), "x").map_err(|error| error.to_string())?;
+        // A non-empty probe directory cannot be removed with `remove_dir`.
+        let dir_reason = remove_probe_dir(&probe);
+        let file_reason = remove_probe_file(&root.join(".ripr-doctor-probe-file-0-0"));
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            dir_reason
+                .as_deref()
+                .is_some_and(|text| text.contains("cannot remove probe directory")),
+            "{dir_reason:?}"
+        );
+        assert!(
+            file_reason
+                .as_deref()
+                .is_some_and(|text| text.contains("cannot remove probe file")),
+            "{file_reason:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn doctor_screen_skips_the_cache_probe_when_the_root_is_missing() -> Result<(), String> {
+        let root = unique_command_test_dir("doctor-screen-missing-root");
+        if root.exists() {
+            return Err(format!("test root unexpectedly exists: {}", root.display()));
+        }
+        let binary = quiet_binary();
+        let config = Ok(RiprConfig::default());
+        let environment = empty_environment();
+        let report = passing_report();
+        let lines = render_doctor_human_screen(DoctorHumanScreen {
+            root: &root,
+            profile: output::doctor::DoctorProfile::Analysis,
+            report: &report,
+            config: &config,
+            environment: &environment,
+            binary: &binary,
+            verbose: false,
+            passed: true,
+        });
+        assert!(
+            !lines.iter().any(|line| line.contains("Cache not writable")),
+            "{lines:?}"
+        );
+        assert!(
+            !root.exists(),
+            "missing root must not be created by probing"
+        );
+        Ok(())
+    }
+
     /// The artifact-root list the production probes build for a default
     /// (non-relocated) workspace, without reading the process environment
     /// (#8751 keeps the cache base a parameter so tests stay env-independent).
@@ -5343,6 +6062,149 @@ mod tests {
     }
 
     #[test]
+    fn perl_path_exporter_refused_only_inside_root_without_opt_in() -> Result<(), String> {
+        // #5349: canonical location decides, not the PATH spelling.
+        let root = unique_command_test_dir("doctor-perl-refused-root");
+        let inside = root.join("bin");
+        std::fs::create_dir_all(&inside).map_err(|e| format!("mkdir inside: {e}"))?;
+        let inside_bin = inside.join("perllsp");
+        std::fs::write(&inside_bin, "x").map_err(|e| format!("write inside: {e}"))?;
+        let outside = unique_command_test_dir("doctor-perl-outside");
+        std::fs::create_dir_all(&outside).map_err(|e| format!("mkdir outside: {e}"))?;
+        let outside_bin = outside.join("perllsp");
+        std::fs::write(&outside_bin, "x").map_err(|e| format!("write outside: {e}"))?;
+        assert!(perl_path_exporter_refused(&inside_bin, &root, false));
+        assert!(!perl_path_exporter_refused(&inside_bin, &root, true));
+        assert!(!perl_path_exporter_refused(&outside_bin, &root, false));
+        // Fail-closed (finding 5): an unresolvable candidate whose
+        // ancestor-resolved location is inside the root is refused,
+        // while one provably outside is not.
+        assert!(perl_path_exporter_refused(
+            &root.join("missing").join("perllsp"),
+            &root,
+            false
+        ));
+        assert!(!perl_path_exporter_refused(
+            &outside.join("missing").join("perllsp"),
+            &root,
+            false
+        ));
+        assert_eq!(
+            judged_exporter_path(&inside_bin),
+            std::fs::canonicalize(&inside_bin).map_err(|e| e.to_string())?
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn perl_path_exporter_refused_unresolvable_symlink_ancestor_into_root() -> Result<(), String> {
+        // Finding 5: final component missing, but an intermediate
+        // symlink resolves into the root; textual spelling is outside.
+        let root = unique_command_test_dir("doctor-perl-ancestor-root");
+        let inside = root.join("bin");
+        std::fs::create_dir_all(&inside).map_err(|e| format!("mkdir inside: {e}"))?;
+        let outside = unique_command_test_dir("doctor-perl-ancestor-out");
+        std::fs::create_dir_all(&outside).map_err(|e| format!("mkdir outside: {e}"))?;
+        let link = outside.join("link");
+        std::os::unix::fs::symlink(&inside, &link).map_err(|e| format!("symlink: {e}"))?;
+        let candidate = link.join("missing-perllsp");
+        assert!(perl_path_exporter_refused(&candidate, &root, false));
+        assert_eq!(
+            judged_exporter_path(&candidate),
+            std::fs::canonicalize(&inside)
+                .map_err(|e| e.to_string())?
+                .join("missing-perllsp")
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
+        Ok(())
+    }
+
+    #[test]
+    fn compact_screen_discloses_refused_perl_exporter() {
+        let report = passing_report();
+        let mut environment = empty_environment();
+        environment.facts.perl_preview = Some(output::doctor::DoctorPerlPreview {
+            pm_files: 1,
+            pl_files: 0,
+            t_files: 0,
+            adapter_compiled: false,
+            producer: None,
+            ignored_configured_executable: None,
+            canonical_exporter_on_path: false,
+            exporter: output::doctor::DoctorPerlExporter {
+                state: output::doctor::DoctorPerlExporterState::Refused,
+                executable: Some("/repo/bin/perllsp".to_string()),
+                version: None,
+            },
+            expected_schema: "1".to_string(),
+            test_roots: Vec::new(),
+            frameworks: Vec::new(),
+            runners: Vec::new(),
+            next_command: "next".to_string(),
+        });
+        let compact = render_screen(&report, &environment, false, true);
+        assert_fits_one_screen(&compact);
+        let text = compact.join("\n");
+        assert!(
+            text.contains("exporter: refused `/repo/bin/perllsp` (not run)")
+                && text.contains("RIPR_ALLOW_REPO_PERL_EXECUTABLE=1"),
+            "default doctor must surface the exporter refusal:\n{text}"
+        );
+        assert!(
+            !text.contains("- Perl preview:"),
+            "full Perl preview stays behind --verbose:\n{text}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn perl_path_exporter_refused_follows_symlink_into_root() -> Result<(), String> {
+        let root = unique_command_test_dir("doctor-perl-symlink-root");
+        let inside = root.join("bin");
+        std::fs::create_dir_all(&inside).map_err(|e| format!("mkdir inside: {e}"))?;
+        let target = inside.join("perllsp");
+        std::fs::write(&target, "x").map_err(|e| format!("write target: {e}"))?;
+        let outside = unique_command_test_dir("doctor-perl-symlink-out");
+        std::fs::create_dir_all(&outside).map_err(|e| format!("mkdir outside: {e}"))?;
+        let link = outside.join("perllsp");
+        std::os::unix::fs::symlink(&target, &link).map_err(|e| format!("symlink: {e}"))?;
+        assert!(perl_path_exporter_refused(&link, &root, false));
+        assert!(!perl_path_exporter_refused(&link, &root, true));
+        // Findings 2/6: the judged (and reported/executed) path is the
+        // canonical target, not the symlink spelling.
+        assert_eq!(
+            judged_exporter_path(&link),
+            std::fs::canonicalize(&target).map_err(|e| e.to_string())?
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
+        Ok(())
+    }
+
+    #[test]
+    fn perl_exporter_lines_report_refused_hit_with_next_step() {
+        let lines = perl_exporter_lines(&exporter_typed(&PerlExporterProbe::Refused {
+            bin: "/repo/bin/perllsp".to_string(),
+        }));
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(
+            lines[0].contains("refused")
+                && lines[0].contains("(not run)")
+                && lines[0].contains("inside the analyzed checkout"),
+            "{lines:?}"
+        );
+        assert!(
+            lines[1].contains("RIPR_ALLOW_REPO_PERL_EXECUTABLE=1")
+                && lines[1].contains("outside the repo"),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
     fn doctor_program_keeps_explicit_paths_and_skips_bare_names_off_path() {
         assert_eq!(
             doctor_program("/opt/perl/bin/perllsp"),
@@ -6123,7 +6985,7 @@ mod tests {
     /// The report must not run against a path named after a flag.
     #[test]
     fn doctor_reports_a_missing_root_value_when_a_known_flag_follows() {
-        for flag in ["--json", "--profile", "--root", "--help", "-h"] {
+        for flag in ["--json", "--timings", "--profile", "--root", "--help", "-h"] {
             assert_eq!(
                 doctor(&args(&["--root", flag])),
                 Err(CommandError::Failure(
@@ -6395,6 +7257,7 @@ mod tests {
                 &detect_languages(&dir),
                 std::time::Instant::now(),
                 std::time::Duration::ZERO,
+                false,
             ),
             Err(CommandError::Decision("doctor found issues".to_string()))
         );
@@ -6436,6 +7299,17 @@ mod tests {
     #[test]
     fn doctor_json_flag_accepts_explicit_root() -> Result<(), String> {
         doctor(&args(&["--json", "--root", "."])).map_err(|error| error.message().to_string())
+    }
+
+    /// #9807: `--timings` is a documented flag in every position doctor
+    /// accepts flags: alongside `--json` it opts into the volatile timing
+    /// fields, and alone it leaves the human output (which already prints
+    /// its run-time summary) unchanged.
+    #[test]
+    fn doctor_timings_flag_is_accepted_with_and_without_json() -> Result<(), String> {
+        doctor(&args(&["--json", "--timings", "--root", "."]))
+            .map_err(|error| error.message().to_string())?;
+        doctor(&args(&["--timings"])).map_err(|error| error.message().to_string())
     }
 
     // --- preview_language_enable_suggestions tests ---

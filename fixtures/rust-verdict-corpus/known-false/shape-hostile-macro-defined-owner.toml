@@ -1,0 +1,3 @@
+case = "shape-hostile-macro-defined-owner"
+issue = 9442
+reason = "Macro-defined owner is not resolved (#9442)."

@@ -1,0 +1,9 @@
+diff --git a/shapes/rates/table.py b/shapes/rates/table.py
+--- a/shapes/rates/table.py
++++ b/shapes/rates/table.py
+@@ -1,4 +1,4 @@
+-RATE_TABLE = {"gold": 10, "silver": 5}
++RATE_TABLE = {"gold": 10, "silver": 6}
+ 
+ 
+ def lookup(tier):
