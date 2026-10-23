@@ -135,11 +135,14 @@ same text, because an absolute root prefix is removed before rendering. A
 relative root keeps its spelling, since it already names a path under the
 invoking directory.
 
-Path separators follow the native host: Windows backslashes become `/`,
-while a literal backslash in a Unix filename remains part of that filename.
-In particular, `src/a\b.rs` on Unix must emit `src/a%5Cb.rs`, distinct from
-`src/a/b.rs`; its fingerprint retains the literal backslash too. Existing
-fingerprints for ordinary slash-separated paths remain unchanged.
+For retained UTF-8 finding paths (`--format sarif`), separators follow the
+native host: Windows backslashes become `/`, while a literal backslash in a
+Unix filename remains part of that filename. In particular, `src/a\b.rs`
+on Unix must emit `src/a%5Cb.rs`, distinct from `src/a/b.rs`; its fingerprint
+retains the literal backslash too. Existing fingerprints for ordinary
+slash-separated paths remain unchanged. Repo-scoped seam construction still
+normalizes backslashes before rendering; the renderer cannot restore native
+filename bytes already discarded by that producer.
 
 The physical location `uri` is that path percent-encoded as an RFC 3986
 relative reference: every byte of the UTF-8 path outside `A-Z a-z 0-9 - . _ ~ /` is written
