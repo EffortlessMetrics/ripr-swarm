@@ -167,15 +167,17 @@ fn render_no_scope_note(output: &CheckOutput) -> String {
         && crate::output::analyzed_revisions::is_working_tree_read(output)
     {
         return format!(
-            "\nNote: the working tree has no changed tracked files against `{base}` (diff from \
+            "\nNote: the working tree has no analyzable changed files against `{base}` (diff from \
              the merge base of `{base}` and HEAD to the working tree), so there was nothing to \
-             analyze. An empty result here means no tracked behavior changed against it.\n",
+             analyze. Deleted files, submodule pointer changes and files ripr does not analyze \
+             are not counted, so this empty result does NOT mean no behavior changed.\n",
         );
     }
     if let Some(base) = output.base.as_deref() {
         format!(
-            "\nNote: `{base}...HEAD` contains no changed files, so there was nothing to analyze. \
-             The compared base was `{base}`; an empty result here means no behavior changed against it.\n",
+            "\nNote: `{base}...HEAD` has no analyzable changed files, so there was nothing to analyze. \
+             The compared base was `{base}`. Deleted files, submodule pointer changes and files \
+             ripr does not analyze are not counted, so this empty result does NOT mean no behavior changed.\n",
         )
     } else {
         format!(
@@ -193,10 +195,10 @@ fn render_no_scope_note(output: &CheckOutput) -> String {
 /// to a range with no analyzable changed files (for example `--base HEAD`, or
 /// the base branch while on it) used to print only "No diff-derived static
 /// exposure probes found.", leaving a reader to guess whether ripr ran at all
-/// (#9033). The wording stays narrower than the default-base note on purpose:
+/// (#9033). The explicit-base and default-base notes share this wording (#9222):
 /// `NoScope` with zero changed files also covers ranges that only delete
-/// files, change submodule pointers, or touch ripr's own artifacts, so this
-/// note never claims that no behavior changed.
+/// files, change submodule pointers, or touch ripr's own artifacts, so neither
+/// note claims that no behavior changed.
 fn empty_scope_note(output: &CheckOutput) -> Option<String> {
     if output.unanalyzed_working_tree {
         return None;
@@ -3673,7 +3675,7 @@ mod tests {
         );
         assert!(
             rendered.contains(
-                "Note: the working tree has no changed tracked files against `main` (diff from the merge base of `main` and HEAD to the working tree), so there was nothing to analyze."
+                "Note: the working tree has no analyzable changed files against `main` (diff from the merge base of `main` and HEAD to the working tree), so there was nothing to analyze."
             ),
             "{rendered}"
         );
@@ -3699,7 +3701,7 @@ mod tests {
         committed.untracked_working_tree_source_paths = vec!["src/new.rs".to_string()];
         let committed_rendered = render(&committed);
         assert!(
-            committed_rendered.contains("`main...HEAD` contains no changed files"),
+            committed_rendered.contains("`main...HEAD` has no analyzable changed files"),
             "{committed_rendered}"
         );
         assert!(
