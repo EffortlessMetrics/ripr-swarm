@@ -102,6 +102,14 @@ pub(super) fn safe_prefix_line_ends(
             continue;
         }
         let definition = matches!(statement.first(), Some(Tok::Def | Tok::Class | Tok::As));
+        // Formal parameters of a nested definition do not bind this owner.
+        // Named expressions in defaults/annotations still execute here.
+        let nested_header = statement
+            .iter()
+            .any(|token| matches!(token, Tok::Def | Tok::Class));
+        if nested_header && !definition && !matches!(tail.first(), Some(Tok::ColonEqual)) {
+            continue;
+        }
         // Only a top-level `in` ends a loop target. Membership inside a
         // subscript target must not hide a later receiver/parameter target.
         let mut depth = 0usize;

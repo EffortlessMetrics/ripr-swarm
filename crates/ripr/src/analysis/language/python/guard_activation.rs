@@ -318,16 +318,18 @@ fn entered_if_conditions(
     if changed.trim().is_empty() {
         return None;
     }
-    // Text indentation is sound only for spaces. Python expands tabs and
-    // resets indentation on form-feed; byte counts cannot model either.
-    if lines[owner.start_line..=changed_index].iter().any(|raw| {
-        raw.chars()
-            .take_while(|ch| ch.is_whitespace())
-            .any(|ch| ch != ' ')
+    let ends = super::guard_credit::safe_prefix_line_ends(owner, owner_source, changed_index)?;
+    // Python expands tabs and resets indentation on form-feed. Only code
+    // indentation matters; comments and string interiors cannot add ancestors.
+    if (owner.start_line..=changed_index).any(|index| {
+        (index == changed_index || ends[index].is_some())
+            && lines[index]
+                .chars()
+                .take_while(|ch| ch.is_whitespace())
+                .any(|ch| ch != ' ')
     }) {
         return None;
     }
-    let ends = super::guard_credit::safe_prefix_line_ends(owner, owner_source, changed_index)?;
     let starts: Vec<usize> = std::iter::once(0)
         .chain(
             owner_source

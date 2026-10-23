@@ -788,6 +788,10 @@ fn guarded_self_field_credit_preserves_benign_prefix_expressions_and_scopes() ->
         "        marker = (other := 1)\n",
         "        for marker in []:\n            pass\n",
         "        def marker():\n            pass\n",
+        "        def helper(kind):\n            pass\n",
+        "        def helper(kind=kind):\n            pass\n",
+        "\t# comment-only indentation does not make an ancestor\n",
+        "        \"\"\"Notes\n\treturn raise with\n        \"\"\"\n",
         "        class Marker:\n            pass\n",
         "        import math\n",
         "        marker = 1\n        del marker\n",
@@ -814,6 +818,7 @@ fn guarded_self_field_credit_refuses_native_binding_declarations() -> Check {
     let unchanged = "    rec = Recorder()\n    rec.note(\"error\")\n    assert rec.last == None";
     for preamble in [
         "        marker = (kind := \"ok\")\n",
+        "        def helper(arg=(kind := \"ok\")):\n            pass\n",
         "        for kind in [\"ok\"]:\n            pass\n",
         "        for self in [Recorder()]:\n            pass\n",
         "        def kind():\n            pass\n",
