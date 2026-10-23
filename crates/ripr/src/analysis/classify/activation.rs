@@ -1313,7 +1313,6 @@ fn owner_rebinds_operand(owner: &FunctionSummary, operand: &str, predicate_line:
         let before_trimmed = before.trim_end();
         let after_trimmed = after.trim_start();
         let line_before = before.rsplit('\n').next().unwrap_or(before);
-        let line_after = after.split('\n').next().unwrap_or(after);
         let last_word = before_trimmed
             .rsplit(|ch: char| !is_word(ch))
             .next()
