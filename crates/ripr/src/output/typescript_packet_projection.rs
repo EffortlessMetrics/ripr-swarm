@@ -1164,13 +1164,9 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
     } else {
         AnalysisMode::Diff
     };
-    if let Some(language) = finding.language
-        && !state_establishes_capability(cell_state(
-            language,
-            mode,
-            CapabilityFamily::RepairRouting,
-        ))
-    {
+    // A finding with no language cannot be matched to a cell: fail closed.
+    let language = finding.language?;
+    if !state_establishes_capability(cell_state(language, mode, CapabilityFamily::RepairRouting)) {
         return None;
     }
     // G-A: only the terminal `incomplete_repair_packet` branch is eligible.
@@ -1613,6 +1609,12 @@ mod tests {
                 "{language:?} repo-scoped finding must fail closed"
             );
         }
+        let mut unlabeled = complete_finding();
+        unlabeled.language = None;
+        assert!(
+            typescript_gap_record_for(&unlabeled).is_none(),
+            "a finding with no language must fail closed"
+        );
     }
 
     /// #7689: a deleted or moved line is base-side evidence, so the same

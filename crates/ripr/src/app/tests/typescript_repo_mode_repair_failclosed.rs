@@ -104,7 +104,6 @@ fn repo_mode_typescript_finding_is_not_repair_ready() -> Result<(), String> {
         return Err(format!("repo run produced no TS finding: {findings:?}"));
     }
     for finding in ts {
-        eprintln!("REPO_FINDING {finding}");
         if ready(finding) == Some(true)
             || finding
                 .get("typescript_repair_packet")

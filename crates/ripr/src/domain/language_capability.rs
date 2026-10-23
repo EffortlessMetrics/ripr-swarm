@@ -466,6 +466,8 @@ pub(crate) fn semantic_digest(cells: &[CapabilityCell]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn absent_repo_repair_routing_cells_are_not_proven_and_fail_closed() {
         for language in [LanguageId::TypeScript, LanguageId::JavaScript] {
@@ -486,8 +488,6 @@ mod tests {
             )));
         }
     }
-
-    use super::*;
 
     #[test]
     fn current_table_is_consistent() {
