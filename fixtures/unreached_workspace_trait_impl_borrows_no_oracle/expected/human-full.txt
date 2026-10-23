@@ -50,6 +50,7 @@ WARNING ./src/lib.rs:11
 Changed
   before: None => Err("ovf".to_string()),
   after:  None =>
+          (arm head only; open the arm at ./src/lib.rs:11 to read its new body)
 
 Probe
   family: match_arm

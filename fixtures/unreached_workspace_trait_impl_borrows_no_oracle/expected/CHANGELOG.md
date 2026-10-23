@@ -48,3 +48,14 @@ Manual integration edit: inserted the existing main five-line bounded Evidence l
 
 Updated:
 - `expected/human.txt`
+
+## Pending — unreached_workspace_trait_impl_borrows_no_oracle (5)
+
+Reason:
+RIPR-SPEC-0122: compose #9169 with main #9986's full-human note for a head-only match-arm after row. The two no_static_path findings and every machine/bounded-human evidence stage remain unchanged.
+
+Operation:
+Manual integration edit: added the one line emitted by main's existing renderer after `after:  None =>`. The official fixture comparison first rejected only the missing full-human note; JSON and bounded human outputs were byte-identical.
+
+Updated:
+- `expected/human-full.txt`
