@@ -915,6 +915,30 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
                 && !word_after_dot
                 && STRING_OPERAND_KEYWORDS.contains(&word))
     }
+    // Whether the text after a division-position `/` reads as a regex literal
+    // whose body holds a backtick: it starts with a backtick or a `[` class
+    // and reaches an unescaped closing `/` on the same line.
+    fn regex_with_backtick_follows(rest: &std::iter::Peekable<std::str::Chars<'_>>) -> bool {
+        let mut chars = rest.clone();
+        if !matches!(chars.peek(), Some('`' | '[')) {
+            return false;
+        }
+        let (mut in_class, mut tick) = (false, false);
+        while let Some(c) = chars.next() {
+            match c {
+                '\\' => {
+                    chars.next();
+                }
+                '\n' | '\r' => return false,
+                '`' => tick = true,
+                '[' => in_class = true,
+                ']' => in_class = false,
+                '/' if !in_class => return tick,
+                _ => {}
+            }
+        }
+        false
+    }
     let mut out = String::with_capacity(text.len());
     let mut mode = Mode::Code;
     // The last non-whitespace code character, to tell a regex from division.
@@ -966,7 +990,18 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
                         mode = Mode::BlockComment;
                         out.push_str("  ");
                     }
+                    // `</div>`: a `/` glued to a `<` closes a JSX element, so
+                    // it is never a regex start (#9936).
+                    '/' if prev == Some('<') && !after_space => out.push(c),
                     '/' if !postfix_op && operand_expected(prev, &word, word_after_dot) => {
+                        mode = Mode::Regex { in_class: false };
+                        out.push(c);
+                    }
+                    // A `/` read as division that is glued to a backtick or a
+                    // class and closes later on the line around a backtick is a
+                    // regex literal (`if (x) /`/.test(s)`), not a division by a
+                    // template string (#9936).
+                    '/' if regex_with_backtick_follows(&chars) => {
                         mode = Mode::Regex { in_class: false };
                         out.push(c);
                     }

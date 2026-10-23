@@ -293,3 +293,63 @@ fn non_ascii_names_are_whole_identifiers_in_the_write_scan() {
         "caf"
     ));
 }
+
+/// #9936 shape 1: in `.tsx` a closing tag `</div>` is not a regex start, so a
+/// write on the same line (or after it) is still seen.
+#[test]
+fn a_write_after_a_jsx_closing_tag_is_still_seen() -> Result<(), String> {
+    for tail in [
+        "const v = <p>x</p>; test = null;",
+        "const v = <div>a</div>;\ntest = function () {};",
+        "const v = <div><b>a</b></div>; test = null;",
+    ] {
+        let source = tape_test("var test = require('tape');", tail);
+        assert_eq!(
+            class_for_file("var-runner-jsx-close", "test/k.test.tsx", &source)?,
+            ExposureClass::NoStaticPath,
+            "{tail}"
+        );
+    }
+    // Negative control: the same shapes with no write keep the binding.
+    let control = tape_test(
+        "var test = require('tape');",
+        "const v = <div>a</div>; const w = <p>x</p>;",
+    );
+    assert_eq!(
+        class_for_file("var-runner-jsx-close-control", "test/k.test.tsx", &control)?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+/// #9936 shape 2: a backtick inside a regex literal that follows `)` or `}`
+/// (where `/` reads as division) does not open a template string.
+#[test]
+fn a_write_after_a_backtick_in_a_regex_literal_is_still_seen() -> Result<(), String> {
+    for tail in [
+        "if (n) /`/.test(s);\ntest = null;",
+        "if (n) /[`'\"]/.test(s);\ntest = null;",
+        "{}\n/`/.test(s);\ntest = function () {};",
+    ] {
+        let source = tape_test("var test = require('tape');", tail);
+        assert_eq!(
+            class_for("var-runner-regex-backtick", &source)?,
+            ExposureClass::NoStaticPath,
+            "{tail}"
+        );
+    }
+    // Negative controls: no write keeps the binding, and a real division by
+    // a template literal still masks the template text.
+    for tail in [
+        "if (n) /`/.test(s);\nconst s2 = 1;",
+        "const q = n /`test = null`;",
+    ] {
+        let source = tape_test("var test = require('tape');", tail);
+        assert_eq!(
+            class_for("var-runner-regex-backtick-control", &source)?,
+            ExposureClass::Exposed,
+            "{tail}"
+        );
+    }
+    Ok(())
+}
