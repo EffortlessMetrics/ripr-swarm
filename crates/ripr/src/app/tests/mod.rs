@@ -24,6 +24,8 @@ mod python_repo_mode_repair_failclosed;
 mod rendering_contracts;
 #[cfg(feature = "lang-typescript")]
 mod typescript_family_selection_packets;
+#[cfg(feature = "lang-typescript")]
+mod typescript_repo_mode_repair_failclosed;
 
 fn sample_finding(file: &str, line: usize) -> Finding {
     Finding {
