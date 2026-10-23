@@ -498,12 +498,28 @@ fn classify_in_workspace(
         own,
         others
             .iter()
-            .map(|(file, source)| (Path::new(file), *source)),
+            .map(|(file, source)| (Path::new(file), *source))
+            .chain([
+                (own, SETTINGS),
+                (Path::new("tests/test_settings.py"), test_source),
+            ]),
         unread_files,
     );
     for owner in owners.iter_mut().filter(|owner| owner.is_module_owner()) {
         owner.foreign_writes = foreign.clone();
     }
+    super::bool_oracle::credit_bare_bool_asserts(&mut tests, &owners, |path| {
+        if path == own {
+            Some(SETTINGS)
+        } else if path == Path::new("tests/test_settings.py") {
+            Some(test_source)
+        } else {
+            others
+                .iter()
+                .find(|(file, _)| Path::new(file) == path)
+                .map(|(_, source)| *source)
+        }
+    });
     for test in &mut tests {
         test.constant_rebinding.edited_in_diff = edited_tests;
     }
@@ -525,6 +541,73 @@ fn classify_in_workspace(
 
 const PINNING_TEST: &str =
     "from hostile.settings import over_limit\n\n\ndef test_it():\n    assert over_limit(11)\n";
+
+#[test]
+fn unreferenced_malformed_modules_do_not_erase_exact_credit() -> Check {
+    let malformed = [("hostile/broken.py", "def broken(:\n    pass\n")];
+    assert_credited(&classify_in_workspace(
+        &malformed,
+        false,
+        false,
+        PINNING_TEST,
+    )?);
+    let mut owners = owners_of(VERSIONED);
+    let file = Path::new("hostile/settings.py");
+    let foreign = super::module_value::ForeignWrites::scan(
+        file,
+        malformed
+            .iter()
+            .map(|(file, source)| (Path::new(file), *source)),
+        false,
+    );
+    super::conditional_defs::retain_workspace_certain(&mut owners, file, &foreign);
+    assert_eq!(
+        owners
+            .iter()
+            .filter(|owner| owner.version_conditional)
+            .count(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn referenced_or_implicitly_loaded_malformed_modules_withhold_credit() -> Check {
+    for (file, prefix) in [
+        ("hostile/broken.py", "import hostile.broken\n"),
+        ("hostile/broken.py", "from hostile import broken\n"),
+        (
+            "hostile/broken.py",
+            "import importlib\nimportlib.import_module('bro' 'ken')\n",
+        ),
+        (
+            "hostile/broken.py",
+            "getattr(__builtins__, '__im'+'port__')('bro'+'ken')\n",
+        ),
+        ("tests/__init__.py", ""),
+        ("conftest.py", ""),
+        ("tests/test_broken.py", ""),
+    ] {
+        let test = format!("{prefix}{PINNING_TEST}");
+        assert_abstains(&classify_in_workspace(
+            &[(file, "def broken(:\n    pass\n")],
+            false,
+            false,
+            &test,
+        )?);
+    }
+    assert_abstains(&classify_in_workspace(
+        &[
+            ("pkg/broken.py", "def broken(:\n    pass\n"),
+            ("pkg/__init__.py", "__all__ = ['bro'+'ken']\n"),
+            ("helper.py", "from pkg import *\n"),
+        ],
+        false,
+        false,
+        PINNING_TEST,
+    )?);
+    Ok(())
+}
 
 #[test]
 fn files_that_only_read_the_constant_leave_the_credit() -> Check {

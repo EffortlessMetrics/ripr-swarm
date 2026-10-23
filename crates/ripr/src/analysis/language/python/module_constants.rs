@@ -335,11 +335,11 @@ fn writes_namespace_dynamically(source: &str) -> bool {
 
 /// Attribute assignment/deletion targets, including unpacking, annotations,
 /// parentheses and whitespace around dots. Reads and annotations without values
-/// do not replace an attribute. Unparseable foreign sources stay uncertain.
-pub(super) fn assigned_attributes(source: &str) -> Vec<String> {
+/// do not replace an attribute. The caller retains parse uncertainty separately.
+pub(super) fn assigned_attributes(source: &str) -> Option<Vec<String>> {
     match parse_module_result(std::path::Path::new("attribute-writes.py"), source) {
-        Ok(ast::Mod::Module(module)) => assigned_attribute_names(&module.body),
-        _ => vec!["*".to_string()],
+        Ok(ast::Mod::Module(module)) => Some(assigned_attribute_names(&module.body)),
+        _ => None,
     }
 }
 

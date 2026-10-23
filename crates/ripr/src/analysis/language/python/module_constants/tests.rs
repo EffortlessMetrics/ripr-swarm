@@ -369,7 +369,7 @@ fn walrus_target_names_match_walrus_targets_for_every_name() {
 fn attribute_write_facts_distinguish_assignments_from_version_comparisons() {
     assert!(super::assigned_attributes(
         "if sys.version_info >= (3, 0):\n    pass\nif sys.version_info <= (2, 7):\n    pass\nassert sys.version_info == (3, 0)\n"
-    ).is_empty());
+    ).is_some_and(|attributes| attributes.is_empty()));
     for source in [
         "sys.version_info = (2, 7)",
         "sys.version_info: tuple = (2, 7)",
@@ -379,7 +379,7 @@ fn attribute_write_facts_distinguish_assignments_from_version_comparisons() {
     ] {
         assert_eq!(
             super::assigned_attributes(source),
-            ["version_info"],
+            Some(vec!["version_info".to_string()]),
             "{source}"
         );
     }
@@ -396,7 +396,7 @@ fn structural_attribute_targets_cover_replacements_without_confusing_reads() {
     ] {
         assert_eq!(
             super::assigned_attributes(source),
-            ["version_info"],
+            Some(vec!["version_info".to_string()]),
             "{source}"
         );
     }
@@ -405,7 +405,10 @@ fn structural_attribute_targets_cover_replacements_without_confusing_reads() {
         "import sys\nsys.version_info: tuple\n",
         "import sys\nassert sys.version_info >= (3, 0)\n",
     ] {
-        assert!(super::assigned_attributes(source).is_empty(), "{source}");
+        assert!(
+            super::assigned_attributes(source).is_some_and(|attributes| attributes.is_empty()),
+            "{source}"
+        );
     }
-    assert_eq!(super::assigned_attributes("def broken("), ["*"]);
+    assert_eq!(super::assigned_attributes("def broken("), None);
 }

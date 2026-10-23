@@ -32,7 +32,7 @@ use super::related_tests::{
     import_source_module_matches_owner, owner_module_callees, submodule_receivers,
 };
 use super::source_facts::parse_module_result;
-use super::source_utils::SourceText;
+use super::source_utils::{SourceText, is_test_file};
 use super::{PythonAssertion, PythonOwner, PythonTest, expr_full_name};
 use crate::domain::OwnerKind;
 use rustpython_parser::ast::{self, Expr, Mod, Stmt};
@@ -66,8 +66,25 @@ pub(super) struct ForeignWrites {
     unknown: bool,
 }
 
-/// Most distinct words kept from files with a dynamic writer.
-const MAX_DYNAMIC_WORDS: usize = 200_000;
+/// Most distinct words retained in the workspace reference index.
+const MAX_WORKSPACE_WORDS: usize = 200_000;
+
+/// Spellings that can hide an imported module's name from the word index.
+const DYNAMIC_LOADERS: [&str; 13] = [
+    "importlib",
+    "__import__",
+    "exec",
+    "eval",
+    "compile",
+    "runpy",
+    "load_module",
+    "exec_module",
+    "import_module",
+    "getattr",
+    "builtins",
+    "__builtins__",
+    "__dict__",
+];
 
 impl ForeignWrites {
     /// The writes in every source but `own`, with `unknown` when some
@@ -79,29 +96,67 @@ impl ForeignWrites {
     ) -> Self {
         let mut attributes = std::collections::BTreeSet::new();
         let mut words = std::collections::BTreeSet::new();
-        let mut unknown = unread_files;
+        // Keep each word's first source, or None when another source also
+        // mentions it. A malformed file's own function/name is not an import.
+        let mut references = std::collections::BTreeMap::new();
+        let mut unparsed = Vec::new();
+        let mut hidden_import = false;
         for (file, source) in sources {
+            hidden_import |= DYNAMIC_LOADERS
+                .iter()
+                .any(|loader| mentions_identifier(source, loader))
+                || source.contains("sys.modules")
+                || (file.file_name().is_some_and(|name| name == "__init__.py")
+                    && mentions_identifier(source, "__all__"));
+            for word in source_words(source) {
+                let first = references.entry(word).or_insert(Some(file));
+                if first.is_some_and(|first| first != file) {
+                    *first = None;
+                }
+                if references.len() > MAX_WORKSPACE_WORDS {
+                    return Self {
+                        unknown: true,
+                        ..Self::default()
+                    };
+                }
+            }
             if file == own {
                 continue;
             }
-            attributes.extend(assigned_attributes(source));
-            let dynamic = DYNAMIC_WRITERS
-                .iter()
-                .any(|writer| mentions_identifier(source, writer))
+            let assigned = assigned_attributes(source);
+            if let Some(assigned) = &assigned {
+                attributes.extend(assigned.iter().cloned());
+            } else {
+                unparsed.push(file);
+            }
+            let dynamic = assigned.is_none()
+                || DYNAMIC_WRITERS
+                    .iter()
+                    .any(|writer| mentions_identifier(source, writer))
                 || source.contains("sys.modules");
             if dynamic {
-                words.extend(
-                    source
-                        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
-                        .filter(|word| !word.is_empty())
-                        .map(str::to_string),
-                );
-                if words.len() > MAX_DYNAMIC_WORDS {
-                    unknown = true;
-                    words.clear();
-                }
+                words.extend(source_words(source).map(str::to_string));
             }
         }
+        // An unreferenced malformed production module cannot poison every
+        // binding. Retain its words as potential writes, and fail closed on
+        // references, implicit collection/initializers and hidden imports.
+        let unknown = unread_files
+            || (!unparsed.is_empty() && hidden_import)
+            || unparsed.iter().any(|file| {
+                is_test_file(file)
+                    || file
+                        .file_name()
+                        .is_some_and(|name| name == "__init__.py" || name == "conftest.py")
+                    || file
+                        .file_stem()
+                        .and_then(|name| name.to_str())
+                        .is_none_or(|stem| {
+                            references
+                                .get(stem)
+                                .is_some_and(|first| first.is_none_or(|first| first != *file))
+                        })
+            });
         Self {
             attributes: attributes.into_iter().collect(),
             dynamic_words: words.into_iter().collect(),
@@ -127,6 +182,12 @@ impl ForeignWrites {
             || self.dynamic_words.iter().any(|word| word == name)
             || (!stem.is_empty() && self.dynamic_words.iter().any(|word| word == stem))
     }
+}
+
+fn source_words(source: &str) -> impl Iterator<Item = &str> {
+    source
+        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .filter(|word| !word.is_empty())
 }
 
 /// One assertion that fails when the constant takes its new value.

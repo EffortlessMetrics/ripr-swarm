@@ -399,7 +399,12 @@ must retain their binding too: same-module walrus/attribute replacements and
 workspace foreign writes withhold the reader's credit. Attribute targets come
 from the parsed statement tree, including parenthesized, unpacked, annotated,
 loop/context and spaced targets; comparison reads and annotations without values
-are not writes. An unparseable foreign source retains write uncertainty. The assertion
+are not writes. An unparseable foreign source retains word-based write uncertainty;
+references to its module name, malformed test/initializer/conftest files, hidden
+loader spellings or package export uncertainty withhold credit globally. An
+unreferenced malformed production module alone does not erase exact credit.
+The workspace word index is bounded; overflow withholds credit. This is a bounded
+source read, not a complete import or reflective-execution graph. The assertion
 reads `NAME` itself or calls a module function with literal arguments whose
 body is one `return` expression over its parameters, literals and `NAME`; a
 name, call, operator or value kind outside that bounded evaluator decides
