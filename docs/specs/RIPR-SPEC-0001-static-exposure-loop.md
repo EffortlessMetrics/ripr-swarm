@@ -63,8 +63,12 @@ A changed `struct`, `enum`, `union` or `trait` header that opens its body on the
 same line (`enum Operator<P, Q: Ord + Copy> {`, with any visibility or `unsafe`
 prefix) declares bounds and runs nothing, so it is one `static_unknown` probe
 like an `impl` header, never a `field_construction` probe: the generic bound
-only looks like a field `name: Type` (#9170). A one-line declaration whose body
-follows the `{` stays probed.
+only looks like a field `name: Type` (#9170). This holds only when the header
+has no expression or macro descendants: a const-generic default
+(`<const N: usize = { capacity() }>`), an array length call or a macro keeps
+its call probe. A one-line declaration whose body follows the `{` stays
+probed, and `union` is a header only before an identifier (`union = Bits {` is
+an expression).
 
 An equal-sized replacement with no retained long identifier token does not
 seed a second historical finding when an emitted candidate probe of the same

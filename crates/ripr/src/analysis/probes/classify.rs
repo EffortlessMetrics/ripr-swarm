@@ -588,14 +588,19 @@ pub(crate) fn is_item_header(text: &str) -> bool {
         ';' => depth == 0,
         _ => false,
     });
-    if text.contains("fn ") || body_semicolon {
+    if body_semicolon {
         return false;
     }
     // Text after the opening `{` is a one-line body, not a header.
     if text.contains('{') && !text.ends_with('{') {
         return false;
     }
-    if word_after("impl") && (text.ends_with('{') || text.contains(" where")) {
+    // A one-line `impl` body holding a `fn` is not a header. A type header's
+    // `fn` is a fn-pointer bound (`T: Fn(fn(u8))`) and stays a header.
+    if word_after("impl")
+        && !text.contains("fn ")
+        && (text.ends_with('{') || text.contains(" where"))
+    {
         return true;
     }
     // #9170: a `struct`/`enum`/`union`/`trait` header declares generic bounds
@@ -616,7 +621,6 @@ pub(crate) fn is_item_header(text: &str) -> bool {
                     .trim_start()
                     .starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
                 && text.ends_with('{')
-                && !rest.contains("fn ")
                 && !generics_hold_expression(rest)
         })
     })
@@ -634,10 +638,28 @@ fn generics_hold_expression(rest: &str) -> bool {
         .match_indices('!')
         .any(|(i, _)| masked[i + 1..].trim_start().starts_with(['(', '[', '{']));
     // An array length call: `(` after a `;` (`[u8; cap()]`), not `[u8; 4]`.
-    let array_len_call = masked
-        .split_once(';')
-        .is_some_and(|(_, after)| after.contains('('));
+    let array_len_call = array_length_texts(&masked).any(|len| len.contains('('));
     masked.contains('{') || bang_macro || array_len_call
+}
+
+/// The text after each `;` inside `[..]` brackets: an array length.
+fn array_length_texts(text: &str) -> impl Iterator<Item = &str> {
+    let mut starts = Vec::new();
+    let mut open = Vec::new();
+    for (i, c) in text.char_indices() {
+        match c {
+            '[' => open.push(i),
+            ']' => {
+                if let Some(start) = open.pop()
+                    && let Some(semi) = text[start..i].find(';')
+                {
+                    starts.push(&text[start + semi + 1..i]);
+                }
+            }
+            _ => {}
+        }
+    }
+    starts.into_iter()
 }
 
 /// A line that only opens or closes a block (`}`, `});`, `} else {`,
@@ -686,6 +708,8 @@ mod tests {
             "unsafe trait Marker<T: Sized>: Send {",
             "union Bits<T: Copy> {",
             "pub struct Arr<T> where [u8; 4]: Copy {",
+            "struct Callback<T: Fn(fn (u8))> {",
+            "struct Wrapper<T> where [u8; 4]: Copy, T: Fn() {",
         ] {
             assert!(is_item_header(header), "`{header}`");
             assert_eq!(
