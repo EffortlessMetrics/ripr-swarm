@@ -276,8 +276,9 @@ through a `src`, `tests`, `examples` or `benches` directory directly below, so
 a workspace member's or nested package's file does not count, while library,
 binary and test-helper files all do. A mount is an `include!` or `#[path]`
 whose arguments (read whole, across lines, after masking comments and string
-literals) hold a string-literal path with an exact `build.rs` component, or the
-`OUT_DIR` environment variable. A comment, a string mention, `mybuild.rs` and
+literals) hold a string-literal path with an exact `build.rs` component. Including the
+script's generated `OUT_DIR` output is not a mount (it is the script's output,
+not its functions). A comment, a string mention, `mybuild.rs` and
 `build.rs.bak` are not mounts. A `package.build = "tools/gen.rs"` script is not
 recognised and keeps the ordinary rules; a mount in a file the index does not
 hold is not seen. When a mount exists the ordinary rules apply and the

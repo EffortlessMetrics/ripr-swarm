@@ -2518,8 +2518,8 @@ fn package_mounts_build_script(index: &RustIndex, script: &str) -> bool {
 }
 
 /// Whether `source` mounts a build script: an `include!` or `#[path]` whose
-/// arguments hold a string-literal path with a `build.rs` component, or the
-/// `OUT_DIR` generated-source environment variable. Comments and string
+/// arguments hold a string-literal path with an exact `build.rs` component.
+/// Including the script's generated `OUT_DIR` output is not a mount. Comments and string
 /// literals are masked first, so a mention in either, `mybuild.rs`, and
 /// `build.rs.bak` do not count; a multi-line argument list is read whole.
 fn source_mounts_build_script(source: &str) -> bool {
@@ -2533,8 +2533,7 @@ fn source_mounts_build_script(source: &str) -> bool {
             let span = &args[..balanced_end(args)];
             literal_ids(span).any(|id| {
                 literals.get(id).is_some_and(|literal| {
-                    literal == "OUT_DIR"
-                        || literal.split(['/', '\\']).any(|part| part == "build.rs")
+                    literal.split(['/', '\\']).any(|part| part == "build.rs")
                 })
             })
         })
@@ -11066,7 +11065,6 @@ try_parse_summary(raw).map_err(Into::into)"
         for mount in [
             "include!(\"../build.rs\");",
             "include!(\n    \"../build.rs\"\n);",
-            "include!( concat!(env!(\"OUT_DIR\"), \"/gen.rs\") );",
             "#[path = \"../build.rs\"]\nmod script;",
             "#[path=\"..\\\\build.rs\"] mod script;",
             "/* old */ include!(r#\"../build.rs\"#);",
@@ -11082,6 +11080,7 @@ try_parse_summary(raw).map_err(Into::into)"
             "let s = r#\"#[path = \"../build.rs\"]\"#;",
             "include!(\"../mybuild.rs\");",
             "include!(\"../build.rs.bak\");",
+            "include!( concat!(env!(\"OUT_DIR\"), \"/gen.rs\") );",
             "include!(\"../fixtures/data.rs\"); // build.rs OUT_DIR",
             "mod build; let _ = \"build.rs\";",
         ] {
