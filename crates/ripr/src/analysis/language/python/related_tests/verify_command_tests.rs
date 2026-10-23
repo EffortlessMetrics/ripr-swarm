@@ -1,3 +1,4 @@
+use super::super::PythonFramework;
 use super::super::owners_tests::extract_tests;
 use super::{
     PythonRelatedCandidate, PythonRelationKind, python_repair_placement_on,
@@ -22,7 +23,7 @@ fn unittest_literal_path_dots_cannot_name_another_module() {
         let tests = extract_tests(Path::new(path), UNITTEST);
         assert_eq!(tests.len(), 1, "{path}");
         let test = &tests[0];
-        assert_eq!(test.framework, "unittest");
+        assert_eq!(test.framework, PythonFramework::Unittest);
         assert_eq!(test.qualified_name, "CheckoutTests.test_same");
         assert_eq!(verify_command_for_test_on(test, false), None, "{path}");
         assert_eq!(
@@ -271,7 +272,7 @@ fn pytest_keeps_literal_path_dots_in_its_file_selector() {
     ] {
         let tests = extract_tests(Path::new(path), "def test_same():\n    assert checkout()\n");
         assert_eq!(tests.len(), 1, "{path}");
-        assert_eq!(tests[0].framework, "pytest");
+        assert_eq!(tests[0].framework, PythonFramework::Pytest);
         assert_eq!(
             verify_command_for_test_on(&tests[0], false).as_deref(),
             Some(command)

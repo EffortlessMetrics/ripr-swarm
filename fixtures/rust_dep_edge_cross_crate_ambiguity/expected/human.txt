@@ -20,6 +20,11 @@ Start here:
     ripr's static model does not yet trace. If none does, add a co-located test that reaches and
     observes the changed behavior so a discriminator exists
   Evidence: reach no · infection unknown · propagation yes · observation no · discriminator no
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach no: No static test path found for the changed owner
     - infection unknown: No reachable tests were found, so infection cannot be established
     - 4 more detail line(s) in --format human-full
@@ -27,7 +32,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_dep_edge_cross_crate_ambiguity/input --diff <cwd>/fixtures/rust_dep_edge_cross_crate_ambiguity/diff.patch --mode fast probe:crates_b_src_lib.rs:return_value:daf98d2c
   ripr context --root <cwd>/fixtures/rust_dep_edge_cross_crate_ambiguity/input --diff <cwd>/fixtures/rust_dep_edge_cross_crate_ambiguity/diff.patch --mode fast --at probe:crates_b_src_lib.rs:return_value:daf98d2c
-  no repair start offered: repair route not ready; run `ripr repair probe:crates_b_src_lib.rs:return_value:daf98d2c --root <cwd>/fixtures/rust_dep_edge_cross_crate_ambiguity/input` for the full gate's answer
+  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: return_value; safe test target; new test proposal blocked: package has no established tests/ layout); run `ripr repair probe:crates_b_src_lib.rs:return_value:daf98d2c --root <cwd>/fixtures/rust_dep_edge_cross_crate_ambiguity/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/rust_dep_edge_cross_crate_ambiguity/input --at crates/b/src/lib.rs:4 --kind return_value
 

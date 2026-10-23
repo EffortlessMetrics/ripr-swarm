@@ -15,7 +15,12 @@ pub(super) fn owner_for_changed_line<'a>(
     owners
         .iter()
         .filter(|owner| normalized_path(&owner.file) == changed_file)
-        .filter(|owner| line >= owner.start_line && line <= owner.end_line)
+        .filter(|owner| {
+            (line >= owner.start_line && line <= owner.end_line)
+                || owner
+                    .decorator_lines
+                    .is_some_and(|(first, last)| line >= first && line <= last)
+        })
         .min_by_key(|owner| (owner.span_width(), owner.specificity_rank()))
 }
 

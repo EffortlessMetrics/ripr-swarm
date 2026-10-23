@@ -1206,6 +1206,7 @@ mod tests {
                 flow_sink: None,
             });
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:gap-admission".to_string(),
             canonical_gap: None,
             probe: Probe {

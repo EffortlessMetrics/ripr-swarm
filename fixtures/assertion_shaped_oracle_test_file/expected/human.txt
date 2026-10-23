@@ -24,6 +24,11 @@ Start here:
     using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static
     classification may remain unknown
   Evidence: reach yes · infection unknown · propagation yes · observation yes · discriminator unknown
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: Related tests appear to reach assert_workspace_source_paths_are_stable: workspace_source_paths_are_stable
     - infection unknown: Predicate changed, but no literal boundary was visible in the changed expression
     - 5 more detail line(s) in --format human-full
@@ -31,7 +36,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/assertion_shaped_oracle_test_file/input --diff <cwd>/fixtures/assertion_shaped_oracle_test_file/diff.patch --mode fast probe:src_fragment_checks.rs:predicate:41d9e03a
   ripr context --root <cwd>/fixtures/assertion_shaped_oracle_test_file/input --diff <cwd>/fixtures/assertion_shaped_oracle_test_file/diff.patch --mode fast --at probe:src_fragment_checks.rs:predicate:41d9e03a
-  no repair start offered: repair route not ready; run `ripr repair probe:src_fragment_checks.rs:predicate:41d9e03a --root <cwd>/fixtures/assertion_shaped_oracle_test_file/input` for the full gate's answer
+  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: boundary_value; incomplete evidence stage: propagation); run `ripr repair probe:src_fragment_checks.rs:predicate:41d9e03a --root <cwd>/fixtures/assertion_shaped_oracle_test_file/input` for the full gate's answer
 No test stub here: the owner returns no value to assert on
 
 More:

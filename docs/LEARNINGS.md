@@ -3242,3 +3242,26 @@ walked every `UseTree` / `macro_rules!` / `mod` / `MacroCall` descendant
 for each untrusted macro. `cli_smoke.rs` and `doctor.rs` make that
 macros × file size again. Collect those nodes once per parse and filter
 per call; pin the collect count, not a wall-clock.
+
+## An `icacls /deny` that exits 0 is not an enforced deny (#9688)
+
+Sharded Windows run 39764872026: the doctor fixtures ran
+`icacls <dir> /deny USER:(AD)`, got "Successfully processed 1 files", and
+`create_dir` inside the directory still succeeded on the hosted runner,
+while the sibling `(WD)` file deny with the same principal was enforced.
+Three tests then failed as if `ripr doctor` had missed an unwritable cache.
+
+Durable rule: a permission fixture establishes its precondition by
+attempting the denied operation, on every host (the Unix branch already
+did this for root). When the precondition cannot be established, the test
+says so in its log and links the coverage issue; it does not count as a
+pass of the oracle.
+
+A log line is not enough: libtest captures output of passing tests, and
+the Windows receipts classify an `ok` row as a pass. So an unestablished
+Windows deny now fails with `NOT_ESTABLISHED`, and the oracle itself moves
+to an injected `create_dir` refusal that needs no ACL and runs everywhere.
+Unverified cause: `CreateDirectoryW` opens with backup intent, which an
+enabled `SeRestorePrivilege` lets bypass the ACL, while `File::create` does
+not (the `(WD)` deny was enforced). The failure message records that
+privilege state.
