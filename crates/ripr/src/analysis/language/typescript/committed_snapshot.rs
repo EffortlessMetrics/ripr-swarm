@@ -238,6 +238,13 @@ fn committed_snapshot_file(root: &Path, test_file: &Path) -> Option<CommittedSna
     {
         return None;
     }
+    // A `--worktree` run installs no overlay, so a `.snap` file that is
+    // untracked or ignored would credit an entry CI never sees (#7708).
+    // When the repository can list its tracked snapshot files, the file
+    // must be one of them.
+    if !snapshot_file_is_tracked(root, &snapshots.join(format!("{name}.snap"))) {
+        return None;
+    }
     let path = root.join(&snapshots).join(format!("{name}.snap"));
     let text = read_config_capped(&path).ok()?;
     let header = text.lines().next()?;
@@ -261,6 +268,25 @@ fn committed_snapshot_file(root: &Path, test_file: &Path) -> Option<CommittedSna
         separator: separator.to_string(),
         runner,
     })
+}
+
+/// `false` only when the repository lists its tracked `*.snap` files under
+/// `root` (one call per run) and `relative` is not among them. When it cannot
+/// answer (an export, no repository, the tool unavailable) the file is read
+/// as it always was.
+fn snapshot_file_is_tracked(root: &Path, relative: &Path) -> bool {
+    let Some(tracked) = run_cached_tracked_snapshots(root, || {
+        crate::analysis::committed_source::tracked_snapshot_files(root).map(std::sync::Arc::new)
+    }) else {
+        return true;
+    };
+    let key = relative
+        .components()
+        .filter(|component| !matches!(component, std::path::Component::CurDir))
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/");
+    tracked.contains(&key)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -452,11 +478,23 @@ fn passes_config_by_path(text: &str) -> bool {
 /// cannot be read, or sits in a symlinked directory.
 /// `allow_symlink` is `true` only for the analysis root itself, whose path is
 /// the user's own checkout path and may be a link.
+/// The verdict is memoized per analysis run (#7708): every test file under
+/// the same ancestors shares one read of each directory.
 fn scan_config_directory(
     directory: &Path,
     allow_symlink: bool,
     configs: &mut RunnerConfigs,
 ) -> Option<()> {
+    let mentions_vitest = run_cached_config_directory(directory, allow_symlink, || {
+        scan_config_directory_uncached(directory, allow_symlink)
+    })?;
+    configs.mentions_vitest |= mentions_vitest;
+    Some(())
+}
+
+/// One uncached read of `directory`'s configs: `Some(mentions_vitest)` when
+/// every one is clean, `None` when any refuses.
+fn scan_config_directory_uncached(directory: &Path, allow_symlink: bool) -> Option<bool> {
     // `read_dir` follows a symlinked directory, so a link could point at a
     // tree this reader never judged; `read_config_capped` already refuses a
     // symlinked file.
@@ -468,6 +506,7 @@ fn scan_config_directory(
     {
         return None;
     }
+    let mut mentions_vitest = false;
     for entry in std::fs::read_dir(directory).ok()? {
         let entry = entry.ok()?;
         let file_name = entry.file_name();
@@ -493,9 +532,9 @@ fn scan_config_directory(
         {
             return None;
         }
-        configs.mentions_vitest |= file_name.starts_with("vite") || text.contains("vitest");
+        mentions_vitest |= file_name.starts_with("vite") || text.contains("vitest");
     }
-    Some(())
+    Some(mentions_vitest)
 }
 
 /// How many directories above `root` the walk reads while it looks for the

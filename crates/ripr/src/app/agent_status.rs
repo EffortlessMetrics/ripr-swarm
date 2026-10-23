@@ -533,9 +533,10 @@ fn attempt_receipt(
         AttemptTerminalReceipt::Unavailable { path, reason } => {
             AgentStatusAttemptReceipt::Unavailable { path, reason }
         }
-        // #9103: a gap-bound attempt issues no receipt, so it never consults
-        // the one-slot compatibility file; only retained terminal evidence
-        // (above) can promote a matching receipt.
+        // #9103: a gap-bound attempt's receipt is issued with retained
+        // terminal evidence (above). One finished without it (by the C2b build,
+        // which issued none) never consults the one-slot compatibility file,
+        // which another attempt's receipt may occupy.
         AttemptTerminalReceipt::NotRetained if manifest.gap_binding.is_some() => {
             AgentStatusAttemptReceipt::NotIssued
         }
@@ -1076,11 +1077,12 @@ fn unconfirmed_receipt_reason(attempt: &AgentStatusRepairAttempt) -> String {
                 "{reason}; status does not reconstruct the outcome from another attempt's compatibility receipt"
             )
         }
-        // #9103: a gap-bound attempt issues no receipt in this slice; its
-        // closure is the `bound_gap` of the after-phase verify document, which
-        // status does not retain per attempt, so it stays unconfirmed here.
+        // #9103: a gap-bound attempt finished without retained terminal
+        // evidence (the C2b build issued no receipt) reports its closure only
+        // in the after-phase verify document, which status does not retain per
+        // attempt, so it stays unconfirmed here.
         AgentStatusAttemptReceipt::NotIssued if attempt.gap_base.is_some() => format!(
-            "a gap-bound attempt issues no receipt; its closure is the `bound_gap` of the after-phase verify document (`{WORKFLOW_AGENT_VERIFY_ARTIFACT}`), which status does not retain per attempt"
+            "this gap-bound attempt finished without a retained receipt (retention did not complete, or an earlier build issued none); its closure is the `bound_gap` of that run's verify document (`{WORKFLOW_AGENT_VERIFY_ARTIFACT}`), which status does not retain per attempt"
         ),
         _ => format!(
             "no receipt at `{WORKFLOW_AGENT_RECEIPT_ARTIFACT}` was issued for its after verdict"
