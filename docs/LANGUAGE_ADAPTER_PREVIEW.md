@@ -250,9 +250,11 @@ analysis. Repo-mode analysis differs per adapter:
   baseline claim. The scope is the typed `Finding.analysis_scope` (set only via
   `Finding::mark_repo_scoped`, which also derives the compatibility evidence
   line; consumers read the typed field and fail closed if the two disagree). The
-  typed field is not part of the hand-rendered check report JSON; scope
-  round-trips through that report via the evidence line, and a contradiction
-  fails closed.
+  typed scope is emitted in the hand-rendered check report JSON as
+  `findings[].analysis_scope: "repo"` for repo findings only (omitted for diff
+  scope, so diff bytes are unchanged); check-output consumers such as the gap
+  ledger read that field, never the evidence line, and a contradiction fails
+  closed.
   Repo-mode Python findings carry the evidence line
   `analysis_scope: repo` and never get a `python_repair_card` or repair
   routing: the capability registry has no repo-mode `repair_routing` cell for

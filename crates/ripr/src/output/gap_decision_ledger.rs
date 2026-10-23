@@ -72,7 +72,7 @@ pub(crate) struct GapDecisionLedgerReport {
     /// Why the writer could not derive a stamp (for example the input carried
     /// none). Editor consumers then report `unverifiable_subject`.
     source_subject_unavailable: Option<&'static str>,
-    records: Vec<GapRecord>,
+    pub(crate) records: Vec<GapRecord>,
     warnings: Vec<String>,
     limits: Vec<String>,
 }

@@ -25,6 +25,15 @@ fn run_with_scopes(
     repo: bool,
     format: crate::OutputFormat,
 ) -> Result<(String, Vec<crate::domain::AnalysisScope>), String> {
+    run_with_test(label, repo, format, TEST)
+}
+
+fn run_with_test(
+    label: &str,
+    repo: bool,
+    format: crate::OutputFormat,
+    test_source: &str,
+) -> Result<(String, Vec<crate::domain::AnalysisScope>), String> {
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|error| format!("system time: {error}"))?
@@ -37,7 +46,7 @@ fn run_with_scopes(
         for (path, contents) in [
             ("ripr.toml", CONFIG),
             ("src/pricing.py", SOURCE),
-            ("tests/test_pricing.py", TEST),
+            ("tests/test_pricing.py", test_source),
             ("diff.patch", DIFF),
         ] {
             let path = root.join(path);
@@ -174,6 +183,102 @@ fn producer_sets_typed_analysis_scope_python() -> Result<(), String> {
             .any(|s| *s != crate::domain::AnalysisScope::Diff)
     {
         return Err(format!("diff control findings must all be Diff: {diff:?}"));
+    }
+    Ok(())
+}
+
+/// Ledger records for untouched `render_check(Json)` bytes of the fixture.
+fn ledger_records(
+    rendered: String,
+) -> Result<Vec<crate::output::gap_decision_ledger::GapRecord>, String> {
+    use crate::output::gap_decision_ledger::{
+        GapDecisionLedgerInput, GapDecisionLedgerSourceKind, build_gap_decision_ledger_report,
+    };
+    Ok(build_gap_decision_ledger_report(GapDecisionLedgerInput {
+        root: ".".to_string(),
+        generated_at: "test".to_string(),
+        source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+        records_path: "check.json".to_string(),
+        records_json: Ok(rendered),
+    })
+    .records)
+}
+
+fn no_card_records(
+    records: Vec<crate::output::gap_decision_ledger::GapRecord>,
+) -> Vec<crate::output::gap_decision_ledger::GapRecord> {
+    records
+        .into_iter()
+        .filter(|r| r.static_limit_kind.as_deref() == Some("python_repair_card_unavailable"))
+        .collect()
+}
+
+/// #5531: the real check JSON carries the typed repo scope to the ledger, so
+/// the no-repair-card record names the scope (registry-derived) with no route.
+/// Diff control keeps the placement-style reason; a repo no-path finding forms
+/// no such record.
+#[test]
+fn real_check_json_carries_repo_scope_into_ledger_reason() -> Result<(), String> {
+    let scope_detail = "this Python preview finding has no repair card (repo-mode findings have no repair routing (python/any/repo/repair_routing is not_proven)), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`";
+
+    let repo_json = run("ledger-repo", true, crate::OutputFormat::Json)?;
+    let weak = py_findings(&repo_json)?;
+    if weak.is_empty() {
+        return Err("repo run produced no weak Python subject".to_string());
+    }
+    if weak.iter().any(|f| f["analysis_scope"] != "repo") {
+        return Err(format!("repo finding JSON lacks typed scope: {weak:?}"));
+    }
+    let records = no_card_records(ledger_records(repo_json)?);
+    if records.is_empty() {
+        return Err("repo run produced no no-repair-card ledger record".to_string());
+    }
+    for record in &records {
+        if record.static_limit_detail.as_deref() != Some(scope_detail)
+            || record.repair_route.is_some()
+        {
+            return Err(format!("unexpected repo record: {record:?}"));
+        }
+    }
+
+    let diff_json = run("ledger-diff", false, crate::OutputFormat::Json)?;
+    if py_findings(&diff_json)?
+        .iter()
+        .any(|f| f.get("analysis_scope").is_some())
+    {
+        return Err("diff finding JSON must omit analysis_scope".to_string());
+    }
+    for record in no_card_records(ledger_records(diff_json)?) {
+        if record
+            .static_limit_detail
+            .as_deref()
+            .is_some_and(|d| d.contains("repo-mode findings"))
+        {
+            return Err(format!("diff record borrowed scope reason: {record:?}"));
+        }
+    }
+
+    let (nopath_json, _) = run_with_test(
+        "ledger-nopath",
+        true,
+        crate::OutputFormat::Json,
+        "def test_unrelated():\n    assert True\n",
+    )?;
+    let value: Value = serde_json::from_str(&nopath_json).map_err(|e| e.to_string())?;
+    let classes: Vec<&str> = value["findings"]
+        .as_array()
+        .map(|fs| {
+            fs.iter()
+                .filter(|f| f.to_string().contains("pricing.py"))
+                .filter_map(|f| f["classification"].as_str())
+                .collect()
+        })
+        .unwrap_or_default();
+    if !classes.contains(&"no_static_path") || classes.contains(&"weakly_exposed") {
+        return Err(format!("no-path fixture premise failed: {classes:?}"));
+    }
+    if !no_card_records(ledger_records(nopath_json)?).is_empty() {
+        return Err("a no-static-path finding must form no no-repair-card record".to_string());
     }
     Ok(())
 }
