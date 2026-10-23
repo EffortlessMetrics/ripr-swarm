@@ -873,6 +873,7 @@ pub(super) fn assertion_observes_dispatch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::facts::OracleFact;
     use crate::analysis::rust_index::{RustIndex, summarize_file};
     use std::path::PathBuf;
 
@@ -921,5 +922,608 @@ mod tests {
         assert!(surface.excluded_receivers.contains("Counter"));
         assert!(surface.excluded_receivers.contains("Other"));
         assert!(!surface.excluded_receivers.contains("Unrelated"));
+    }
+
+    const CELL_OBSERVER: &str = r#"use std::{cell::Cell, rc::Rc};
+struct Counter { sink: Rc<Cell<usize>>, finished: bool }
+impl Iterator for Counter {
+    type Item = ();
+    fn next(&mut self) -> Option<()> {
+        if self.finished { return None; }
+        self.finished = true;
+        self.sink.set(1);
+        Some(())
+    }
+}
+#[derive(Debug, PartialEq)] struct Observation { cell: Rc<Cell<usize>> }
+#[test]
+fn implicit_observer() {
+    let state = Rc::new(Cell::new(0));
+    let counter = Counter { sink: state.clone(), finished: false };
+    for _ in counter {}
+    assert_eq!(Observation { cell: state }, Observation { cell: Rc::new(Cell::new(1)) });
+}
+"#;
+
+    const VEC_OBSERVER: &str = r#"use std::{cell::RefCell, rc::Rc};
+struct Counter { sink: Rc<RefCell<Vec<usize>>>, finished: bool }
+impl Iterator for Counter {
+    type Item = ();
+    fn next(&mut self) -> Option<()> {
+        if self.finished { return None; }
+        self.finished = true;
+        record(&self.sink);
+        Some(())
+    }
+}
+fn record(sink: &Rc<RefCell<Vec<usize>>>) {
+    sink.borrow_mut().push(1);
+}
+#[derive(Debug, PartialEq)] struct Observation { sink: Rc<RefCell<Vec<usize>>> }
+#[test]
+fn implicit_observer() {
+    let sink = Rc::new(RefCell::new(Vec::new()));
+    let counter = Counter { sink: sink.clone(), finished: false };
+    for _ in counter {}
+    assert_eq!(Observation { sink }, Observation { sink: Rc::new(RefCell::new(vec![1])) });
+}
+"#;
+
+    const ADD_OBSERVER: &str = r#"use std::ops::Add;
+use std::{cell::Cell, rc::Rc};
+struct Counter { sink: Rc<Cell<usize>>, finished: bool }
+impl std::ops::Add<()> for Counter {
+    type Output = ();
+    fn add(self, _: ()) {
+        self.sink.set(1);
+    }
+}
+#[derive(Debug, PartialEq)] struct Observation { cell: Rc<Cell<usize>> }
+#[test]
+fn implicit_observer() {
+    let state = Rc::new(Cell::new(0));
+    let counter = Counter { sink: state.clone(), finished: false };
+    let _ = counter + ();
+    assert_eq!(Observation { cell: state }, Observation { cell: Rc::new(Cell::new(1)) });
+}
+"#;
+
+    const DIRECT: &str = "self.sink.set(1)";
+    const REVERSE: &str = "sink.borrow_mut().push(1)";
+    const CELL_ASSERTION: &str =
+        "assert_eq!(Observation { cell: state }, Observation { cell: Rc::new(Cell::new(1)) });";
+
+    fn edit(source: &str, from: &str, to: &str) -> Result<String, String> {
+        if !source.contains(from) {
+            return Err(format!("fixture drifted: missing {from:?}"));
+        }
+        Ok(source.replacen(from, to, 1))
+    }
+
+    /// Runs the production predicate over parsed facts of `source`.
+    fn observes(
+        source: &str,
+        dispatch: &str,
+        owner: &str,
+        expression: &str,
+    ) -> Result<bool, String> {
+        observes_with(source, source, dispatch, owner, expression, |_| {})
+    }
+
+    fn observes_with(
+        facts_source: &str,
+        predicate_source: &str,
+        dispatch: &str,
+        owner: &str,
+        expression: &str,
+        adjust: impl FnOnce(&mut OracleFact),
+    ) -> Result<bool, String> {
+        let path = PathBuf::from("src/lib.rs");
+        let facts = summarize_file(path.clone(), facts_source.to_owned());
+        let find = |name: &str| {
+            facts
+                .functions
+                .iter()
+                .find(|function| function.name == name)
+                .ok_or_else(|| format!("fixture lacks function {name}"))
+        };
+        let dispatch = find(dispatch)?;
+        let owner = find(owner)?;
+        let test = facts
+            .tests
+            .iter()
+            .find(|test| test.name == "implicit_observer")
+            .ok_or("fixture lacks the test")?;
+        let mut assertion = test
+            .assertions
+            .first()
+            .cloned()
+            .ok_or("fixture lacks an assertion")?;
+        adjust(&mut assertion);
+        let mut index = RustIndex::default();
+        index.insert_file_only(path.clone(), summarize_file(path, facts_source.to_owned()));
+        let memo = ImplicitExpansionMemo::default();
+        let context = ImplicitExpansionContext::new(&index, &memo);
+        Ok(assertion_observes_dispatch(
+            dispatch,
+            owner,
+            expression,
+            test,
+            &assertion,
+            predicate_source,
+            &context,
+        ))
+    }
+
+    #[test]
+    fn controls_admit_each_bounded_observer_form() -> Result<(), String> {
+        assert!(observes(CELL_OBSERVER, "next", "next", DIRECT)?);
+        assert!(observes(ADD_OBSERVER, "add", "add", DIRECT)?);
+        assert!(observes(VEC_OBSERVER, "next", "record", REVERSE)?);
+        for form in [
+            "counter.for_each(|_| {});",
+            "while counter.next().is_some() {}",
+        ] {
+            let source = edit(CELL_OBSERVER, "for _ in counter {}", form)?;
+            assert!(observes(&source, "next", "next", DIRECT)?, "{form}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn non_trait_impl_dispatch_is_refused() -> Result<(), String> {
+        let source = edit(
+            CELL_OBSERVER,
+            "impl Iterator for Counter {\n    type Item = ();\n    fn next(&mut self) -> Option<()> {",
+            "impl Counter {\n    fn next(&mut self) -> Option<()> {",
+        )?;
+        assert!(!observes(&source, "next", "next", DIRECT)?);
+        Ok(())
+    }
+
+    #[test]
+    fn hidden_destructor_or_expansion_vetoes_the_proof() -> Result<(), String> {
+        for extra in [
+            "impl Drop for Counter { fn drop(&mut self) {} }",
+            "impl std::ops::Drop for Counter { fn drop(&mut self) {} }",
+            "macro_rules! hidden { () => {} }",
+            "hidden_item!{}",
+            "impl Custom for Counter {}",
+            "type Alias = Counter;",
+            "use other::Counter;",
+        ] {
+            let source = format!("{CELL_OBSERVER}{extra}\n");
+            assert!(!observes(&source, "next", "next", DIRECT)?, "{extra}");
+        }
+        // Any attribute on the receiver struct, even a derive, is unproven.
+        let source = edit(
+            CELL_OBSERVER,
+            "struct Counter",
+            "#[derive(Debug)]\nstruct Counter",
+        )?;
+        assert!(!observes(&source, "next", "next", DIRECT)?);
+        // A duplicate receiver definition is ambiguous.
+        let source = format!("{CELL_OBSERVER}mod other {{ struct Counter; }}\n");
+        assert!(!observes(&source, "next", "next", DIRECT)?);
+        Ok(())
+    }
+
+    #[test]
+    fn unparseable_predicate_source_is_refused() -> Result<(), String> {
+        let admitted = observes_with(
+            CELL_OBSERVER,
+            "fn broken( {",
+            "next",
+            "next",
+            DIRECT,
+            |_| {},
+        )?;
+        assert!(!admitted);
+        Ok(())
+    }
+
+    #[test]
+    fn unlocated_or_misplaced_assertion_is_refused() -> Result<(), String> {
+        for shift in [-1_i64, 1, 500] {
+            let admitted =
+                observes_with(CELL_OBSERVER, CELL_OBSERVER, "next", "next", DIRECT, |a| {
+                    a.line = a.line.saturating_add_signed(shift as isize);
+                })?;
+            assert!(!admitted, "shift {shift}");
+        }
+        let before_test =
+            observes_with(CELL_OBSERVER, CELL_OBSERVER, "next", "next", DIRECT, |a| {
+                a.line = 0;
+            })?;
+        assert!(!before_test);
+        Ok(())
+    }
+
+    #[test]
+    fn deferred_or_conditional_assertions_are_refused() -> Result<(), String> {
+        for wrapped in [
+            format!("if true {{ {CELL_ASSERTION} }}"),
+            format!("let check = || {{ {CELL_ASSERTION} }};\n    check();"),
+            format!("{{ {CELL_ASSERTION} }}"),
+        ] {
+            let source = edit(CELL_OBSERVER, CELL_ASSERTION, &wrapped)?;
+            assert!(!observes(&source, "next", "next", DIRECT)?, "{wrapped}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn assertion_shapes_other_than_equal_record_pair_are_refused() -> Result<(), String> {
+        for replacement in [
+            "assert_ne!(Observation { cell: state }, Observation { cell: Rc::new(Cell::new(1)) });",
+            "assert!(true);",
+            "assert_eq!(state, state);",
+            "assert_eq!(Observation { cell: state }, Other { cell: Rc::new(Cell::new(1)) });",
+            "assert_eq!(Observation { cell: state }, Observation { cell: Rc::new(Cell::new(1)), ..base() });",
+            "assert_eq!(Observation { cell: state, extra: 1 }, Observation { cell: Rc::new(Cell::new(1)), extra: 1 });",
+            "assert_eq!(Observation { cell: state }, Observation { other: Rc::new(Cell::new(1)) });",
+            "assert_eq!(Observation { cell: state }, Observation { cell: state });",
+            "assert_eq!(Observation { cell: state }, Observation { cell: Rc::new(Cell::new(state.get())) });",
+        ] {
+            let source = edit(CELL_OBSERVER, CELL_ASSERTION, replacement)?;
+            assert!(!observes(&source, "next", "next", DIRECT)?, "{replacement}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn expected_value_must_match_the_observed_write() -> Result<(), String> {
+        let source = edit(CELL_OBSERVER, "Cell::new(1)) });", "Cell::new(2)) });")?;
+        assert!(!observes(&source, "next", "next", DIRECT)?);
+        let source = edit(VEC_OBSERVER, "vec![1]", "vec![2]")?;
+        assert!(!observes(&source, "next", "record", REVERSE)?);
+        for expression in [
+            "self.sink.replace(1)",
+            "self.sink.set(1, 2)",
+            "self.sink.set(compute())",
+            "self.sink",
+        ] {
+            assert!(
+                !observes(CELL_OBSERVER, "next", "next", expression)?,
+                "{expression}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn initial_state_must_be_a_distinct_literal_or_empty_vec() -> Result<(), String> {
+        for initial in [
+            "Rc::new(Cell::new(1))",
+            "Rc::new(Cell::new(seed))",
+            "Rc::new(Cell::new(0)).clone()",
+            "make()",
+        ] {
+            let source = edit(CELL_OBSERVER, "Rc::new(Cell::new(0))", initial)?;
+            assert!(!observes(&source, "next", "next", DIRECT)?, "{initial}");
+        }
+        for initial in [
+            "Rc::new(RefCell::new(vec![5]))",
+            "Rc::new(RefCell::new(Vec::with_capacity(1)))",
+        ] {
+            let source = edit(VEC_OBSERVER, "Rc::new(RefCell::new(Vec::new()))", initial)?;
+            assert!(!observes(&source, "next", "record", REVERSE)?, "{initial}");
+        }
+        let source = edit(
+            VEC_OBSERVER,
+            "Rc::new(RefCell::new(Vec::new()))",
+            "Rc::new(RefCell::new(vec![]))",
+        )?;
+        assert!(observes(&source, "next", "record", REVERSE)?);
+        Ok(())
+    }
+
+    #[test]
+    fn wrapper_must_be_a_derived_single_shared_handle() -> Result<(), String> {
+        let decl = "struct Observation { cell: Rc<Cell<usize>> }";
+        for (from, to) in [
+            (
+                "#[derive(Debug, PartialEq)] struct Observation",
+                "#[derive(Debug)] struct Observation",
+            ),
+            (
+                "#[derive(Debug, PartialEq)] struct Observation",
+                "struct Observation",
+            ),
+            (decl, "struct Observation { cell: Cell<usize> }"),
+            (decl, "struct Observation(Rc<Cell<usize>>);"),
+            (
+                decl,
+                "struct Observation { cell: Rc<Cell<usize>>, extra: u8 }",
+            ),
+            (decl, "struct Observation { sink: Rc<Cell<usize>> }"),
+        ] {
+            let source = edit(CELL_OBSERVER, from, to)?;
+            assert!(!observes(&source, "next", "next", DIRECT)?, "{to}");
+        }
+        let source = format!("{CELL_OBSERVER}struct Observation;\n");
+        assert!(!observes(&source, "next", "next", DIRECT)?);
+        Ok(())
+    }
+
+    #[test]
+    fn shadowed_or_renamed_standard_handles_are_refused() -> Result<(), String> {
+        for extra in [
+            "struct Cell;",
+            "enum Vec {}",
+            "type RefCell = u8;",
+            "struct Rc;",
+        ] {
+            let source = format!("{CELL_OBSERVER}{extra}\n");
+            assert!(!observes(&source, "next", "next", DIRECT)?, "{extra}");
+        }
+        let imports = "use std::{cell::Cell, rc::Rc};";
+        for to in [
+            "use std::{cell::Cell, rc::Rc as Shared};",
+            "use std::cell::Cell;",
+            "use other::rc::Rc;\nuse std::cell::Cell;",
+            "use std::{cell::Cell, rc::Rc};\nuse std::rc::Rc;",
+            "use std::{cell::Cell, rc::Rc};\nuse other::Vec;",
+        ] {
+            let source = edit(CELL_OBSERVER, imports, to)?;
+            assert!(!observes(&source, "next", "next", DIRECT)?, "{to}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn receiver_literal_must_be_exact_and_bind_the_shared_local() -> Result<(), String> {
+        let literal = "let counter = Counter { sink: state.clone(), finished: false };";
+        for replacement in [
+            "let counter = Counter { sink: state.clone(), finished: flag };",
+            "let counter = Counter { sink: state.clone(), ..base() };",
+            "let counter = Counter { sink: other.clone(), finished: false };",
+            "let counter = Counter { sink: state, finished: false };",
+            "let counter = Counter { sink: state.clone(1), finished: false };",
+            "let counter = Counter { sink: state.to_owned(), finished: false };",
+            "let counter = Counter { sink: make(), finished: false };",
+            "let counter = Other { sink: state.clone(), finished: false };",
+            "let counter = build(state.clone());",
+            "let counter;",
+        ] {
+            let source = edit(CELL_OBSERVER, literal, replacement)?;
+            assert!(!observes(&source, "next", "next", DIRECT)?, "{replacement}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn intervening_uses_or_unproven_dispatch_defeat_the_exception() -> Result<(), String> {
+        for replacement in [
+            "counter.next();",
+            "let _ = counter;",
+            "for _ in counter {}\n    let _again = counter;",
+            "for _ in counter {}\n    for _ in counter {}",
+            "let alias = state.clone();\n    for _ in counter {}",
+            "for _ in counter {}\n    state.set(9);",
+            "touch(&counter);\n    for _ in counter {}",
+            "",
+        ] {
+            let source = edit(CELL_OBSERVER, "for _ in counter {}", replacement)?;
+            assert!(!observes(&source, "next", "next", DIRECT)?, "{replacement}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn shared_local_must_have_exactly_one_plain_introduction() -> Result<(), String> {
+        let introduction = "let state = Rc::new(Cell::new(0));";
+        for replacement in [
+            "let state = Rc::new(Cell::new(0));\n    let state = Rc::new(Cell::new(0));",
+            "let state = Rc::new(Cell::new(0));\n    state.set(0);",
+            "let mut state = Rc::new(Cell::new(0));",
+            "let (state, _) = (Rc::new(Cell::new(0)), 0);",
+            "",
+        ] {
+            let source = edit(CELL_OBSERVER, introduction, replacement)?;
+            assert!(!observes(&source, "next", "next", DIRECT)?, "{replacement}");
+        }
+        // A type annotation does not change the bound pattern; it stays admitted.
+        let annotated = edit(
+            CELL_OBSERVER,
+            introduction,
+            "let state: Rc<Cell<usize>> = Rc::new(Cell::new(0));",
+        )?;
+        assert!(observes(&annotated, "next", "next", DIRECT)?);
+        Ok(())
+    }
+
+    #[test]
+    fn dispatch_body_must_use_the_shared_field_exactly_once() -> Result<(), String> {
+        for replacement in [
+            "self.sink.set(1);\n        self.sink.set(1);",
+            "assert!(self.finished);\n        self.sink.set(1);",
+            "let me = self;\n        me.sink.set(1);",
+            "self.sink.set(1);\n        let _ = self;",
+        ] {
+            let source = edit(CELL_OBSERVER, "self.sink.set(1);", replacement)?;
+            assert!(!observes(&source, "next", "next", DIRECT)?, "{replacement}");
+        }
+        for expression in ["other.sink.set(1)", "sink.set(1)", ""] {
+            assert!(
+                !observes(CELL_OBSERVER, "next", "next", expression)?,
+                "{expression}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn reverse_transfer_admits_only_one_direct_unconditional_argument() -> Result<(), String> {
+        for replacement in [
+            "if self.finished { record(&self.sink); }",
+            "let run = || record(&self.sink);\n        run();",
+            "{ record(&self.sink); }",
+            "record(&self.sink);\n        record(&self.sink);",
+            "record(self.sink.clone());",
+            "record(&self.sink.clone());",
+            "record(&self.other);",
+            "record(&other.sink);",
+            "record(&self);",
+            "record();",
+            "other(&self.sink);",
+            "let _ = self.sink.clone();\n        record(&self.sink);",
+        ] {
+            let source = edit(VEC_OBSERVER, "record(&self.sink);", replacement)?;
+            assert!(
+                !observes(&source, "next", "record", REVERSE)?,
+                "{replacement}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn reverse_owner_must_have_one_unique_parameter_use() -> Result<(), String> {
+        let signature = "fn record(sink: &Rc<RefCell<Vec<usize>>>) {";
+        let write = "    sink.borrow_mut().push(1);\n}";
+        for (from, to) in [
+            (
+                signature,
+                "fn record(sink: &Rc<RefCell<Vec<usize>>>, extra: usize) {",
+            ),
+            (
+                write,
+                "    sink.borrow_mut().push(1);\n    sink.borrow_mut().push(1);\n}",
+            ),
+            (
+                write,
+                "    let _alias = sink;\n    sink.borrow_mut().push(1);\n}",
+            ),
+            (write, "    log!(sink);\n    sink.borrow_mut().push(1);\n}"),
+        ] {
+            let source = edit(VEC_OBSERVER, from, to)?;
+            assert!(!observes(&source, "next", "record", REVERSE)?, "{to}");
+        }
+        assert!(!observes(
+            VEC_OBSERVER,
+            "next",
+            "record",
+            "other.borrow_mut().push(1)"
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    fn expansion_surface_scan_vetoes_unknown_forms() {
+        let bounded = |sources: &[&str]| ExpansionSurface::scan(sources.iter().copied()).bounded;
+        assert!(bounded(&[
+            "struct Counter; #[derive(Debug, Clone)] struct Other; #[cfg(test)] mod t { fn f() { assert!(true); let _ = vec![1]; } }"
+        ]));
+        assert!(bounded(&[
+            "use std::iter::Iterator; use std::ops::Add; impl Iterator for Counter {}"
+        ]));
+        assert!(bounded(&["use core::iter::Iterator; use core::ops::Add;"]));
+        for source in [
+            "#[tokio::test] fn t() {}",
+            "#[derive(Serialize)] struct S;",
+            "#[derive] struct S;",
+            "#[custom_attr] struct S;",
+            "fn f() { custom!(); }",
+            "fn f() { module::vec![1]; }",
+            "use other::*;",
+            "use other::vec;",
+            "use other::assert_eq;",
+            "use other::Clone;",
+            "use other::Iterator;",
+            "use other::ops::Add;",
+            "use std::ops::Drop;",
+            "use other::Drop as Gone;",
+            "mod std {}",
+            "mod core {}",
+            "use other as std;",
+            "use other as core;",
+            "extern crate other as std;",
+            "extern crate other as core;",
+            "use std;",
+            "use core;",
+            "macro_rules! m { () => {} }",
+            "impl Drop for S { fn drop(&mut self) {} }",
+            "impl other::Drop for S { fn drop(&mut self) {} }",
+            "fn broken( {",
+        ] {
+            assert!(!bounded(&[source]), "{source}");
+        }
+        // A renamed dispatch trait stays bounded, but an impl through the
+        // rename is a non-dispatch trait impl and excludes its receiver.
+        let renamed = ExpansionSurface::scan([
+            "use std::iter::Iterator as It; impl It for Counter {}",
+            "use std::ops::Add as Plus; impl Plus<()> for Summed {}",
+        ]);
+        assert!(renamed.excluded_receivers.contains("Counter"));
+        assert!(renamed.excluded_receivers.contains("Summed"));
+        // One vetoing source anywhere in the workspace vetoes every receiver.
+        assert!(!bounded(&[
+            "struct Counter;",
+            "macro_rules! m { () => {} }"
+        ]));
+    }
+
+    #[test]
+    fn expansion_surface_excludes_only_names_the_sources_rename_or_reimplement() {
+        let surface = ExpansionSurface::scan([
+            "use other::{Imported, nested::Deep};",
+            "type Wrapped = Vec<Hidden>;",
+            "impl From<u8> for module::Converted {}",
+            "impl Iterator for Plain {}",
+            "impl std::ops::Add<()> for Summed {}",
+            "impl core::iter::Iterator for Spelled {}",
+        ]);
+        for excluded in ["Imported", "nested", "Deep", "Hidden", "Converted"] {
+            assert!(surface.excluded_receivers.contains(excluded), "{excluded}");
+        }
+        // An alias excludes the names it points at, not its own spelling.
+        for admitted in ["Wrapped", "Plain", "Summed", "Spelled", "Unrelated"] {
+            assert!(!surface.excluded_receivers.contains(admitted), "{admitted}");
+        }
+        let memo = ImplicitExpansionMemo::default();
+        let mut index = RustIndex::default();
+        let path = PathBuf::from("src/lib.rs");
+        index.insert_file_only(
+            path.clone(),
+            summarize_file(path, "use other::Imported; struct Plain;".to_owned()),
+        );
+        assert!(!memo.admits(&index, "Imported"));
+        assert!(!memo.admits(&index, "module::Imported"));
+        assert!(memo.admits(&index, "Plain"));
+        assert!(memo.admits(&index, "module::Plain"));
+    }
+
+    #[test]
+    fn known_builtin_attribute_rejects_malformed_and_unknown_attributes() {
+        let attr = |text: &str| -> Option<bool> {
+            let parse = parse_clean_source_file(&format!("{text} fn f() {{}}"))?;
+            let found = parse
+                .tree()
+                .syntax()
+                .descendants()
+                .find_map(ast::Attr::cast)?;
+            Some(known_builtin_attribute(&found))
+        };
+        for accepted in [
+            "#[test]",
+            "#[inline(always)]",
+            "#[doc = \"text\"]",
+            "#[cfg(unix)]",
+            "#[warn(unused)]",
+            "#[derive(Debug, Clone, PartialEq)]",
+            "#[must_use]",
+        ] {
+            assert_eq!(attr(accepted), Some(true), "{accepted}");
+        }
+        for refused in [
+            "#[tokio::test]",
+            "#[rstest]",
+            "#[derive(Debug, Serialize)]",
+            "#[derive(Debug, other::Clone)]",
+            "#[derive]",
+        ] {
+            assert_eq!(attr(refused), Some(false), "{refused}");
+        }
     }
 }
