@@ -15,7 +15,6 @@ Start here:
   Why no path: no related test was found that reaches this change
   Canonical gap: gap:rust:src/lib.rs:impl Step for Inc::process:match_arm:match_arm:none
   Changed behavior: None =>
-  Missing discriminator (1 of 3): No relevant oracle was detected
   Related test (1 of 2 matched rows): src/lib.rs:29 other_test (no call to the changed code found; linked by file location only)
   Next step: ripr found no static test path to this change — this is not a coverage assessment. A
     test may already exercise it through macros, helper-call chains, or integration tests that
@@ -29,7 +28,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/uncalled_workspace_trait_method/input --diff <cwd>/fixtures/uncalled_workspace_trait_method/diff.patch --mode fast probe:src_lib.rs:match_arm:c973c4dc
   ripr context --root <cwd>/fixtures/uncalled_workspace_trait_method/input --diff <cwd>/fixtures/uncalled_workspace_trait_method/diff.patch --mode fast --at probe:src_lib.rs:match_arm:c973c4dc
-  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:match_arm:c973c4dc --root <cwd>/fixtures/uncalled_workspace_trait_method/input` for the full gate's answer
+  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: match_arm_taken); run `ripr repair probe:src_lib.rs:match_arm:c973c4dc --root <cwd>/fixtures/uncalled_workspace_trait_method/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/uncalled_workspace_trait_method/input --at src/lib.rs:11 --kind match_arm
 
