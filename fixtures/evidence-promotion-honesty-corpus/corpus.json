@@ -192,7 +192,7 @@
         },
         {
           "type": "expected_class",
-          "class": "weakly_exposed"
+          "class": "reachable_unrevealed"
         }
       ]
     },
@@ -10654,6 +10654,20 @@
       ]
     },
     {
+      "id": "rust_method_entry_private_method_pin",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/helper_chain_method_entry",
+      "vector": "public_entry_exact_assertion_pins_private_method_return_value_through_method_hops",
+      "control": "must_stay_exposed",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
+      ]
+    },
+    {
       "id": "rust_committed_golden_expected_file",
       "language": "rust",
       "tier": "pure",
@@ -10856,6 +10870,96 @@
       "assertions": [
         { "type": "must_not_report_clean" },
         { "type": "must_not_promote" }
+      ]
+    },
+    {
+      "id": "rust_effect_assertion_after_return_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/effect_assertion_after_return",
+      "vector": "effect_assertion_after_unconditional_return_is_not_credited",
+      "probe_family": "side_effect",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "reachable_unrevealed" },
+        { "type": "maximum_class", "class": "reachable_unrevealed" }
+      ]
+    },
+    {
+      "id": "rust_effect_assertion_after_return_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/effect_assertion_after_return",
+      "vector": "effect_assertion_after_unconditional_return_is_not_credited",
+      "probe_family": "call_deletion",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "reachable_unrevealed" },
+        { "type": "maximum_class", "class": "reachable_unrevealed" }
+      ]
+    },
+    {
+      "id": "rust_effect_assertion_in_false_block_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/effect_assertion_in_false_block",
+      "vector": "effect_assertion_in_literal_false_block_is_not_credited",
+      "probe_family": "side_effect",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "reachable_unrevealed" },
+        { "type": "maximum_class", "class": "reachable_unrevealed" }
+      ]
+    },
+    {
+      "id": "rust_effect_assertion_in_false_block_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/effect_assertion_in_false_block",
+      "vector": "effect_assertion_in_literal_false_block_is_not_credited",
+      "probe_family": "call_deletion",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "reachable_unrevealed" },
+        { "type": "maximum_class", "class": "reachable_unrevealed" }
+      ]
+    },
+    {
+      "id": "rust_effect_assertion_uncalled_closure_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/effect_assertion_uncalled_closure",
+      "vector": "effect_assertion_in_uncalled_closure_is_not_credited",
+      "probe_family": "side_effect",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "reachable_unrevealed" },
+        { "type": "maximum_class", "class": "reachable_unrevealed" }
+      ]
+    },
+    {
+      "id": "rust_effect_assertion_uncalled_closure_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/effect_assertion_uncalled_closure",
+      "vector": "effect_assertion_in_uncalled_closure_is_not_credited",
+      "probe_family": "call_deletion",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "reachable_unrevealed" },
+        { "type": "maximum_class", "class": "reachable_unrevealed" }
       ]
     },
     {

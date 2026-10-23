@@ -547,6 +547,11 @@ scope = "out"
 reason = "check-findings-json verify artifact contract; not an exposure-verdict example a corpus case labels"
 
 [[spec]]
+id = "RIPR-SPEC-0311"
+scope = "out"
+reason = "gap-bound TypeScript repair start from a complete packet; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
 id = "RIPR-SPEC-0318"
 scope = "out"
 reason = "pilot next-step text for an uncommitted inline-module target; not an exposure-verdict example a corpus case labels"
@@ -568,3 +573,15 @@ reason = "release-process tooling (xtask release-ledger); its examples validate 
 # and a fixed row leaves this list and cannot silently return. Adding an entry
 # is a reviewed edit that names the owner; the fix belongs in the case, the
 # spec or the analyzer, never in an exclusion.
+
+# Rust bounded value transfer
+[[spec]]
+id = "RIPR-SPEC-0158"
+scope = "out"
+reason = "Rust analyzer transfer rule over Rust syntax; a Perl packet case cannot label it"
+
+# Rust bounded helper-call transfer
+[[spec]]
+id = "RIPR-SPEC-0159"
+scope = "out"
+reason = "Rust analyzer transfer rule over Rust syntax; a Perl packet case cannot label it"
