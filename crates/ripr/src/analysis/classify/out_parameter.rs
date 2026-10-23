@@ -120,11 +120,11 @@ fn owner_out_parameters(owner: &FunctionSummary) -> Option<Vec<(usize, String)>>
                 && ty.mut_token().is_some()
                 && pattern
                     .name()
-                    .is_some_and(|name| mentions_token(body.syntax(), name.text().as_ref()))
+                    .is_some_and(|name| mentions_token(body.syntax(), name.text()))
         })
         .filter_map(|(at, parameter)| match parameter.pat() {
             Some(ast::Pat::IdentPat(pattern)) => {
-                Some((at, strip_raw(pattern.name()?.text().as_ref()).to_string()))
+                Some((at, strip_raw(pattern.name()?.text()).to_string()))
             }
             _ => None,
         })
@@ -141,19 +141,13 @@ fn local_written_by_owner_call(
     assertion: &OracleFact,
     local: &str,
 ) -> Option<String> {
-    let Some(parse) = parse_clean_source_file(&test.body) else {
-        return None;
-    };
+    let parse = parse_clean_source_file(&test.body)?;
     let tree = parse.tree();
-    let Some(function) = tree.syntax().descendants().find_map(ast::Fn::cast) else {
-        return None;
-    };
+    let function = tree.syntax().descendants().find_map(ast::Fn::cast)?;
     if function.async_token().is_some() {
         return None;
     }
-    let Some(list) = function.body().and_then(|body| body.stmt_list()) else {
-        return None;
-    };
+    let list = function.body().and_then(|body| body.stmt_list())?;
     let items: Vec<SyntaxNode> = list
         .statements()
         .map(|statement| statement.syntax().clone())
@@ -194,13 +188,8 @@ fn local_written_by_owner_call(
     {
         return None;
     }
-    let Some(call_expr) = ast::ExprStmt::cast(call.clone()).and_then(|statement| statement.expr())
-    else {
-        return None;
-    };
-    let Some(method_call) = owner_method_call(call_expr, &owner.name) else {
-        return None;
-    };
+    let call_expr = ast::ExprStmt::cast(call.clone()).and_then(|statement| statement.expr())?;
+    let method_call = owner_method_call(call_expr, &owner.name)?;
     let parameter = passes_local_as_out_parameter(&method_call, call, out_parameters, local)?;
     // The receiver must resolve to the owner's impl type, read from the
     // masked source up to this call so an earlier call of the same method
@@ -230,7 +219,7 @@ fn is_owned_local_definition(statement: &SyntaxNode, local: &str) -> bool {
     let Some(name) = pattern.name() else {
         return false;
     };
-    if strip_raw(name.text().as_ref()) != local
+    if strip_raw(name.text()) != local
         || pattern.mut_token().is_none()
         || pattern.ref_token().is_some()
         || pattern.pat().is_some()
@@ -260,10 +249,10 @@ fn owner_method_call(mut expression: ast::Expr, method: &str) -> Option<ast::Met
             ast::Expr::TryExpr(inner) => expression = inner.expr()?,
             ast::Expr::MethodCallExpr(call) => {
                 let name = call.name_ref()?;
-                if strip_raw(name.text().as_ref()) == method {
+                if strip_raw(name.text()) == method {
                     return Some(call);
                 }
-                if !matches!(name.text().as_ref(), "unwrap" | "expect") {
+                if !matches!(name.text(), "unwrap" | "expect") {
                     return None;
                 }
                 expression = call.receiver()?;
