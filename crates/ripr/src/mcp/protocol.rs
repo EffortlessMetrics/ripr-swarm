@@ -93,6 +93,26 @@ const REPAIR_CARD_TEMPLATE_DESCRIPTION: &str = "One canonical item's bounded rep
 const GET_REPAIR_CARD_TOOL_DESCRIPTION: &str = "Project the bounded repair card for one canonical item of the current completed snapshot: the same versioned repair_card.v1 document `ripr agent card` and the standard language server project (RIPR-SPEC-0215), assembled by the shared application authority from the committed snapshot — never re-derived or weakened by this server. Route disambiguation: prefer this card over ripr_get_gap when the agent intends to repair; ripr_get_gap is the lighter read when only analysis evidence is needed and no fix instruction is wanted. Inputs: canonical_id (required, a canonical item id from ripr_list_gaps) and optional snapshot_id, which must match the current snapshot or the call fails closed with stale_snapshot. The document carries: the item identity and the verbatim card (seam subject, changed behavior, exact blocker or named limitation, fix instruction, edit-cage surfaces, done-when goals, attempt state, and one typed next action when the route gate is open); the analyzed repository head and the commit-time evidence-scope dirty-state probe the card binds (edits after ripr_refresh are visible only after the next refresh); the claim boundary; and links to the snapshot, gap, repair-attempt, and receipt resources. The durable attempt store is re-read at card-read time, so the attempt block matches `ripr agent status` at this moment; in-memory session transactions never ride a card. The card edits nothing, executes nothing, and is never a repair authorization: the external client's approval and sandbox policy remains authoritative for the command the next action names, and the display binds the portable root `.` (never the host-local path). Reachable failure vocabulary: no_snapshot, analysis_in_flight, stale_snapshot, item_not_found, seam_not_found, identity_unnameable, budget_overflow, result_too_large, workspace_unavailable, analysis_failed; policy_omitted and witness_unavailable stay named on the wire for stability. Equivalent reads: the tool ripr_get_repair_card and the resource ripr://repair-card/{canonical_id} return the same document.";
 
 pub(super) fn tools_list_result() -> Value {
+    // #9852 context-sink budget: this payload rides every session start, so
+    // it carries a pinned byte ceiling (the `tools_list_byte_budget` guard
+    // below) the same way descriptions carry char budgets (#9818/#9848).
+    // The obvious next lever — factoring repeated outputSchema subschemas
+    // through `$defs`/`$ref` — was evaluated and rejected on arithmetic,
+    // not taste. Every advertised `outputSchema` is a standalone schema
+    // document: a host validates a tool result against that value alone, so
+    // a ref may only target `#/$defs/...` inside the same `outputSchema`,
+    // and the wire's big duplication is cross-document — the ~800-byte
+    // typed-failure branch repeats in all nine tools (~7.3 KB) with only
+    // the `schema_version` const differing. Factoring that across tools
+    // would dangle for standalone validators and break the "validate
+    // identically" contract. Within one document, the only repeated
+    // subschemas are 40-68-byte leaves occurring 2-5 times, and moving one
+    // copy into `$defs` plus `$ref`s costs more bytes than the replaced
+    // copies at every such size (best case ~75 bytes across all nine
+    // schemas, before overlap exclusion). What remains honest is dropping
+    // the `annotations.title` duplicate of each top-level `title` (done in
+    // the descriptors below) and pinning the ceiling so the sink cannot
+    // grow back unnoticed.
     json!({"tools": [
         status_tool_descriptor(),
         refresh_tool_descriptor(),
@@ -424,7 +444,6 @@ fn status_tool_descriptor() -> Value {
         },
         "outputSchema": status_output_schema(),
         "annotations": {
-            "title": "RIPR workspace status",
             "readOnlyHint": true,
             "destructiveHint": false,
             "idempotentHint": true,
@@ -452,7 +471,6 @@ fn refresh_tool_descriptor() -> Value {
         },
         "outputSchema": refresh_output_schema(),
         "annotations": {
-            "title": "RIPR refresh",
             // #5192: readOnlyHint is scoped to the user's world (source,
             // tests, processes, external state). Committing the completed
             // snapshot mutates only in-memory session state, so the
@@ -513,7 +531,6 @@ fn list_gaps_tool_descriptor() -> Value {
         },
         "outputSchema": gap_list_output_schema(),
         "annotations": {
-            "title": "RIPR bounded gap list",
             "readOnlyHint": true,
             "destructiveHint": false,
             "idempotentHint": true,
@@ -538,7 +555,6 @@ fn get_gap_tool_descriptor() -> Value {
         },
         "outputSchema": gap_output_schema(),
         "annotations": {
-            "title": "RIPR gap evidence",
             "readOnlyHint": true,
             "destructiveHint": false,
             "idempotentHint": true,
@@ -563,7 +579,6 @@ fn prepare_repair_tool_descriptor() -> Value {
         },
         "outputSchema": repair_packet_output_schema(),
         "annotations": {
-            "title": "RIPR prepare repair",
             // #5192: readOnlyHint is scoped to the user's world (source,
             // tests, processes, external state). The transaction is
             // in-memory, deterministic, and replayed identically, so the
@@ -591,7 +606,6 @@ fn get_repair_attempt_tool_descriptor() -> Value {
         },
         "outputSchema": repair_attempt_output_schema(),
         "annotations": {
-            "title": "RIPR repair attempt",
             "readOnlyHint": true,
             "destructiveHint": false,
             "idempotentHint": true,
@@ -615,7 +629,6 @@ fn get_receipt_status_tool_descriptor() -> Value {
         },
         "outputSchema": receipt_status_output_schema(),
         "annotations": {
-            "title": "RIPR receipt status",
             "readOnlyHint": true,
             "destructiveHint": false,
             "idempotentHint": true,
@@ -640,7 +653,6 @@ fn get_repair_card_tool_descriptor() -> Value {
         },
         "outputSchema": repair_card_output_schema(),
         "annotations": {
-            "title": "RIPR repair card",
             "readOnlyHint": true,
             "destructiveHint": false,
             "idempotentHint": true,
@@ -1969,6 +1981,57 @@ mod tests {
             if description.is_empty() {
                 return Err(format!("template {index} carries an empty description"));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn tool_annotations_do_not_duplicate_the_top_level_title() -> Result<(), String> {
+        // #9852: eight of nine descriptors repeated their top-level `title`
+        // verbatim inside `annotations.title` (~27 wire bytes each, every
+        // session). The annotation added no information; the dedup is
+        // pinned so a copy does not creep back.
+        let tools = tools_list_result();
+        let tools = tools
+            .pointer("/tools")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "tools/list payload drifted".to_string())?;
+        for tool in tools {
+            let name = tool
+                .pointer("/name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "tool descriptor lost its name".to_string())?;
+            if tool.pointer("/title").and_then(Value::as_str).is_none() {
+                return Err(format!("{name} lost its top-level title"));
+            }
+            if tool.pointer("/annotations/title").is_some() {
+                return Err(format!(
+                    "{name} duplicates its title inside annotations; the top-level title is the one surface"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn tools_list_byte_budget_pins_the_session_context_sink() -> Result<(), String> {
+        // #9852: `tools/list` is paid by every LLM consumer at session start
+        // and re-paid on reconnect; one third of it already competes with
+        // real evidence payloads inside the 128 KiB response bound. The
+        // live-measured ceiling below (compact serialization of this exact
+        // payload, after the `annotations.title` dedup) is pinned with
+        // headroom for small additive contract growth; a failing assert
+        // here means a descriptor change grew the per-session sink and
+        // needs an explicit budget decision, not a silent ceiling bump.
+        const TOOLS_LIST_BUDGET: usize = 46_400;
+        let payload = tools_list_result();
+        let bytes = serde_json::to_vec(&payload)
+            .map_err(|error| format!("measure tools/list payload: {error}"))?
+            .len();
+        if bytes > TOOLS_LIST_BUDGET {
+            return Err(format!(
+                "tools/list is {bytes} bytes, over the {TOOLS_LIST_BUDGET}-byte session budget"
+            ));
         }
         Ok(())
     }
