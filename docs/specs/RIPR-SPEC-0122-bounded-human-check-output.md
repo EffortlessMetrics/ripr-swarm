@@ -551,23 +551,27 @@ suggested write cannot fail on the same missing base.
 
 ### Plain wording for an unconfirmed observation (#9244)
 
-The producer's `observation` and `discriminator` stage summaries end with the
-machine marker `(observation_unverified)`. The per-finding human evidence lines
+The producer's `observation` and `discriminator` stage summaries carry the
+machine marker `observation_unverified`. The per-finding human evidence lines
 (the single-finding blocks of bounded and `human-full` output, and
-`ripr explain`) rewrite the stage summary text before it is embedded in the line: the parenthetical is dropped and any bare
-occurrence of the token is spelled "the observation is unconfirmed". The words
-before it ("Discriminator unconfirmed: no assertion text references this probe's
-changed expression") already say it in prose. Only the producer's summary is
-rewritten, and only outside paired backticks: a backticked source expression,
-whether the line adds it or the summary quotes it, is left as written. The TypeScript boundary-gap controls rename the
-parameter to `observation_unverified` and to `check_observation_unverified_count`
-and require the producer's `missing proof` expression to print unchanged in the
-human Evidence row.
-The JSON stage summaries and the shared discriminator evidence line keep the
-marker unchanged, because downstream consumers key on it. With two or more
-owner-bearing findings, `human-full` renders every evidence row through the shared
-catalogue, a separate projection that this change does not touch; every row of
-that multi-finding catalogue is covered by #9928.
+`ripr explain`) remove only the producer-appended marker, at the fixed
+position each producer emits it: the trailing ` (observation_unverified)`
+suffix, the Python adapter's fixed `(observation_unverified).` sentence forms,
+and the TypeScript adapter's exact strong-oracle-no-flow summary (whose token
+reads "the observation is unconfirmed"). The words before the marker
+("Discriminator unconfirmed: no assertion text references this probe's changed
+expression") already say it in prose. No substring or token scanning is done,
+so source text a summary embeds (identifiers, quoted literals, backticks of
+any parity) is never modified. The JSON stage summaries and the shared
+discriminator evidence line keep the marker unchanged, because downstream
+consumers key on it. With two or more owner-bearing findings, `human-full`
+renders every evidence row through the shared catalogue, a separate projection
+that this change does not touch; every row of that multi-finding catalogue is
+covered by #9928. The TypeScript and Python controls run the built binary on
+the boundary-gap and error-path shapes with the token as a parameter name, as a
+longer identifier, and as an unpaired-backtick message, and require the
+producer's `missing proof` expression to print unchanged in the human Evidence
+row.
 
 This item does not rewrite the Python Weakness section text (python
 `classify.rs`, rendered through `weakness_lines`), the LSP hover, pilot output
@@ -620,9 +624,11 @@ or the agent packet routes. Those, with the python `classify.rs:686` and
 ## Test Mapping
 
 - `crates/ripr/src/output/human.rs::tests::human_evidence_spells_the_unconfirmed_observation_in_words`
-- `crates/ripr/src/output/human.rs::tests::plain_observation_wording_handles_each_embedded_spelling`
+- `crates/ripr/src/output/human.rs::tests::plain_observation_wording_handles_each_producer_form`
 - `crates/ripr/src/output/human.rs::tests::plain_wording_leaves_backticked_source_literals_alone`
-- `crates/ripr/src/output/human.rs::tests::plain_observation_wording_skips_backticked_spans_inside_the_summary`
+- `crates/ripr/src/output/human.rs::tests::plain_observation_wording_never_modifies_embedded_source_text`
+- `crates/ripr/tests/observation_wording_python_literals.rs::single_backtick_before_the_token_prints_as_written`
+- `crates/ripr/tests/observation_wording_python_literals.rs::bare_token_message_prints_as_written`
 - `crates/ripr/tests/observation_wording_source_literals.rs::renamed_parameter_equal_to_the_token_prints_as_written`
 - `crates/ripr/tests/observation_wording_source_literals.rs::renamed_parameter_containing_the_token_prints_as_written`
 - `crates/ripr/tests/observation_wording_source_literals.rs::ordinary_parameter_keeps_the_prose_free_of_the_raw_marker`

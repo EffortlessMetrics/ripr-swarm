@@ -6787,48 +6787,58 @@ mod tests {
     }
 
     #[test]
-    fn plain_observation_wording_handles_each_embedded_spelling() {
+    fn plain_observation_wording_handles_each_producer_form() {
         use super::evidence_lines::plain_observation_wording;
         assert_eq!(
-            plain_observation_wording("unexecuted (observation_unverified). Add a test input."),
-            "unexecuted. Add a test input."
+            plain_observation_wording(
+                "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"
+            ),
+            "Discriminator unconfirmed: no assertion text references this probe's changed expression"
         );
         assert_eq!(
-            plain_observation_wording("no flow; observation_unverified — discriminate unknown."),
-            "no flow; the observation is unconfirmed — discriminate unknown."
+            plain_observation_wording(
+                "A strong Python oracle reaches `kind`, but static evidence does not place a related test input inside the guarding arm `case _`; every observed input leaves the changed line unexecuted (observation_unverified). Add a test input that satisfies the guarding condition."
+            ),
+            "A strong Python oracle reaches `kind`, but static evidence does not place a related test input inside the guarding arm `case _`; every observed input leaves the changed line unexecuted. Add a test input that satisfies the guarding condition."
+        );
+        assert_eq!(
+            plain_observation_wording(
+                "A strong Python oracle reaches `f`, but every strong assertion reads its result only through a further method call, so the edited value is not observed (observation_unverified). gap reason."
+            ),
+            "A strong Python oracle reaches `f`, but every strong assertion reads its result only through a further method call, so the edited value is not observed. gap reason."
+        );
+        assert_eq!(
+            plain_observation_wording(
+                "TypeScript preview adapter: strong oracle found but no assertion's observed_expression flows from the changed sub-expression; observation_unverified — discriminate unknown."
+            ),
+            "TypeScript preview adapter: strong oracle found but no assertion's observed_expression flows from the changed sub-expression; the observation is unconfirmed — discriminate unknown."
         );
         assert_eq!(
             plain_observation_wording("Strong oracle found"),
             "Strong oracle found"
         );
-        // Multiple occurrences, and a marker with no leading space.
-        assert_eq!(
-            plain_observation_wording("a (observation_unverified) b (observation_unverified)"),
-            "a b"
-        );
-        assert_eq!(
-            plain_observation_wording("(observation_unverified) first"),
-            "(the observation is unconfirmed) first"
-        );
     }
 
     #[test]
-    fn plain_observation_wording_skips_backticked_spans_inside_the_summary() {
+    fn plain_observation_wording_never_modifies_embedded_source_text() {
         use super::evidence_lines::plain_observation_wording;
+        // Token mid-summary, single backtick before it, paired backticks around
+        // the whole message, and a longer identifier: none is a producer form.
+        for text in [
+            "missing proof: `observation_unverified == threshold`.",
+            "missing proof: `check_observation_unverified_count == threshold`.",
+            "Python preview adapter found no strong discriminator; missing proof: `raise ValueError(\"`observation_unverified\")`.",
+            "see `a (observation_unverified) b` for details",
+            "`missing proof: observation_unverified == threshold`",
+            "no flow; observation_unverified mid-summary prose",
+            "(observation_unverified) first",
+        ] {
+            assert_eq!(plain_observation_wording(text), text, "{text}");
+        }
+        // The producer-appended suffix after embedded source is still removed.
         assert_eq!(
-            plain_observation_wording(
-                "missing `observation_unverified == threshold` and `check_observation_unverified_count == threshold` (observation_unverified)"
-            ),
-            "missing `observation_unverified == threshold` and `check_observation_unverified_count == threshold`"
-        );
-        assert_eq!(
-            plain_observation_wording("observation_unverified for `x` then observation_unverified"),
-            "the observation is unconfirmed for `x` then the observation is unconfirmed"
-        );
-        // An unpaired backtick leaves the rest as prose.
-        assert_eq!(
-            plain_observation_wording("`a` b ` observation_unverified"),
-            "`a` b ` the observation is unconfirmed"
+            plain_observation_wording("x `observation_unverified` y (observation_unverified)"),
+            "x `observation_unverified` y"
         );
     }
 
