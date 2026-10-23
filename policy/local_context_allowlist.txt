@@ -7,3 +7,4 @@
 # memory paths, sandbox paths, uploaded-file references, and session transcripts
 # should be removed instead of allowlisted.
 crates/ripr/src/config/perl_executable_tests.rs|C:\path\to\Perl|1|Generic Windows absolute exporter path with spaces exercises exact config preservation (#8841).
+crates/ripr/tests/sarif_uri_identity.rs|C:\path\to\a%b.rs|1|Generic drive-looking filename exercises native Unix SARIF URI identity (RIPR-SPEC-0008).
