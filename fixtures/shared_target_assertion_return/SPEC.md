@@ -1,6 +1,7 @@
 # Fixture: shared_target_assertion_return
 
-Spec: RIPR-SPEC-0169, RIPR-SPEC-0197
+Spec: RIPR-SPEC-0169
+Spec: RIPR-SPEC-0197
 
 ## Given
 

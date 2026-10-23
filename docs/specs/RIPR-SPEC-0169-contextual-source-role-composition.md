@@ -96,8 +96,9 @@ file occurrence under a closed rule set:
   module parent in a request-local graph before choosing the deterministic
   role-explanation chain. Assertion admission checks every resolved ancestor
   declaration and relevant macro context, including descendants of a shared
-  file. Positive owner attribution requires a unique established root; possible
-  shadow checks include all possible roots and remain conservative when
+  file. Crate-root-dependent positive owner attribution requires a unique
+  established root; independently established same-source local identity stays
+  supported. Possible shadow checks include all possible roots and remain conservative when
   placement is unknown. Qualified macro and trusted-import certification cannot
   use only a recorded subset while unresolved syntax disables complete routing.
   This does not expand the role exemption or grant new Cargo target roles.
