@@ -341,6 +341,10 @@ code spans or blocks. Preserve the destination and title of recognized inline
 and reference links, including angle-bracket destination delimiters; these are
 link syntax, not visible prose. Continue neutralizing raw HTML and mentions in
 visible link labels without removing their emphasis or code formatting.
+Reference definitions and explicit reference identifiers use the same
+code-sensitive neutralization as visible labels, so shortcut and collapsed
+references containing code still resolve. Prose outside that code remains
+neutralized in both the use and definition.
 Neutralize raw HTML and mentions outside code or link destination/title syntax.
 Backtick runs in different
 CommonMark blocks or GFM table cells do not form one code span; a soft newline

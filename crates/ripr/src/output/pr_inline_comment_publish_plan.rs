@@ -1474,6 +1474,21 @@ mod tests {
                     "https://example.test",
                     "",
                 ),
+                (
+                    "[`code`]\n\n[`code`]: <https://example.test>",
+                    "https://example.test",
+                    "",
+                ),
+                (
+                    "[`@octocat`][]\n\n[`@octocat`]: <https://example.test>",
+                    "https://example.test",
+                    "",
+                ),
+                (
+                    "[**@octocat**][`<img>`]\n\n[`<img>`]: <https://example.test>",
+                    "https://example.test",
+                    "",
+                ),
             ] {
                 let body = planned_prose(field, source)?;
                 let mut links = Vec::new();

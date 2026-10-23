@@ -185,6 +185,10 @@ fn prose_once(text: &str) -> String {
             if ch == '\\' {
                 chars.next();
             } else if ch == ']' && source[offset..].starts_with("]:") {
+                protected.extend(reference_label_code_ranges(
+                    &source[..offset + 1],
+                    definition.span.start,
+                ));
                 protected.push(definition.span.start + offset + 2..definition.span.end);
                 break;
             }
@@ -197,19 +201,24 @@ fn prose_once(text: &str) -> String {
     for (event, range) in parser.into_offset_iter() {
         match event {
             Event::Start(Tag::Link {
-                link_type: LinkType::Inline,
+                link_type: link_type @ (LinkType::Inline | LinkType::Reference),
                 ..
-            }) => label_end = Some(range.start + 1),
+            }) => label_end = Some((range.start + 1, link_type)),
             Event::End(TagEnd::Link) => {
-                if let Some(end) = label_end.take() {
+                if let Some((end, link_type)) = label_end.take() {
                     // Child events cover the visible label, including markup.
-                    // Only its trailing destination/title syntax is protected;
-                    // copying the whole link would leave label HTML/mentions live.
-                    protected.push(end..range.end);
+                    // Protect inline destination/title syntax or code within a
+                    // reference identifier. Copying the whole link would leave
+                    // visible label HTML/mentions live.
+                    if link_type == LinkType::Inline {
+                        protected.push(end..range.end);
+                    } else {
+                        protected.extend(reference_label_code_ranges(&text[end..range.end], end));
+                    }
                 }
             }
             _ => {
-                if let Some(end) = &mut label_end {
+                if let Some((end, _)) = &mut label_end {
                     *end = (*end).max(range.end);
                 }
                 if matches!(event, Event::Code(_) | Event::Start(Tag::CodeBlock(_))) {
@@ -233,6 +242,23 @@ fn prose_once(text: &str) -> String {
     }
     out.push_str(&neutralize(&text[copied..], false, false));
     out
+}
+
+// Reference identifiers are not emitted as inline events. Match the visible
+// label's code-sensitive neutralization in both definitions and explicit uses;
+// otherwise a shortcut like [`code`] no longer resolves after escaping. Parse
+// the bracketed spelling so indentation cannot turn a label into a code block.
+fn reference_label_code_ranges(
+    label: &str,
+    offset: usize,
+) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
+    use pulldown_cmark::{Event, Options, Parser};
+
+    Parser::new_ext(label, Options::ENABLE_TABLES)
+        .into_offset_iter()
+        .filter_map(move |(event, range)| {
+            matches!(event, Event::Code(_)).then_some(offset + range.start..offset + range.end)
+        })
 }
 
 /// Untrusted prose on one line (a list item or a heading): line endings
@@ -1437,6 +1463,95 @@ mod tests {
             let rendered = prose(source);
             assert_eq!(rendered, expected, "{source:?}");
             assert_eq!(prose(&rendered), rendered);
+        }
+    }
+
+    /// RIPR-SPEC-0025: hidden reference labels must match visible code labels.
+    #[test]
+    fn given_reference_code_labels_when_neutralized_then_links_still_resolve() {
+        use pulldown_cmark::{Event, Options, Parser, Tag};
+
+        for label in ["`code`", "`@octocat`", "`<img src=x>`", "``a`b``"] {
+            for usage in [
+                format!("[{label}]"),
+                format!("[{label}][]"),
+                format!("[**shown**][{label}]"),
+            ] {
+                let source =
+                    format!("{usage}\n\n[{label}]: <https://example.test/@owner> \"title <x>\"");
+                let rendered = prose(&source);
+                assert_eq!(rendered, source);
+                assert_eq!(prose(&rendered), rendered);
+                let links = Parser::new_ext(&rendered, Options::ENABLE_TABLES)
+                    .filter_map(|event| match event {
+                        Event::Start(Tag::Link {
+                            dest_url, title, ..
+                        }) => Some((dest_url.to_string(), title.to_string())),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    links,
+                    vec![(
+                        "https://example.test/@owner".to_string(),
+                        "title <x>".to_string()
+                    )]
+                );
+            }
+        }
+    }
+
+    /// RIPR-SPEC-0025: code in reference identifiers must not shelter prose.
+    #[test]
+    fn given_reference_label_prose_when_neutralized_then_matching_and_safety_hold() {
+        use pulldown_cmark::{Event, Options, Parser, Tag};
+
+        for label in [
+            "**@octocat**",
+            "\\`@octocat\\`",
+            "`code` @octocat <img>",
+            "`unclosed @octocat",
+        ] {
+            for usage in [
+                format!("[{label}]"),
+                format!("[{label}][]"),
+                format!("[**@octocat**][{label}]"),
+            ] {
+                let source = format!("{usage}\n\n[{label}]: <https://example.test>");
+                let rendered = prose(&source);
+                assert_eq!(prose(&rendered), rendered);
+                let mut links = 0;
+                for event in Parser::new_ext(&rendered, Options::ENABLE_TABLES) {
+                    match event {
+                        Event::Start(Tag::Link { dest_url, .. }) => {
+                            assert_eq!(dest_url.as_ref(), "https://example.test");
+                            links += 1;
+                        }
+                        Event::Html(html) | Event::InlineHtml(html) => {
+                            assert!(html.is_empty(), "raw HTML: {rendered}")
+                        }
+                        Event::Text(text) => {
+                            assert!(!text.contains("@octocat"), "live mention: {rendered}")
+                        }
+                        _ => {}
+                    }
+                }
+                assert_eq!(links, 1, "{source:?} -> {rendered:?}");
+            }
+        }
+        for source in [
+            "[@octocat <img>]",
+            "[label]\n\n[label]: <bad <img>> @octocat",
+        ] {
+            let rendered = prose(source);
+            assert_eq!(prose(&rendered), rendered);
+            assert!(!rendered.contains("@octocat"));
+            assert!(
+                !Parser::new_ext(&rendered, Options::ENABLE_TABLES).any(|event| matches!(
+                    event,
+                    Event::Start(Tag::Link { .. }) | Event::Html(_) | Event::InlineHtml(_)
+                ))
+            );
         }
     }
 
