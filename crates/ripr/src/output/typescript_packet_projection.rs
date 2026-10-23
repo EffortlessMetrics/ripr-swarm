@@ -14,6 +14,10 @@
 //! - No parallel TypeScript-specific completeness validator is introduced.
 //!   The only flip gate is `validate_agent_gap_record_packet(..) == Ok(())`.
 
+use crate::domain::language_capability::{
+    AnalysisMode, CapabilityFamily, cell_state, finding_is_repo_scoped,
+    state_establishes_capability,
+};
 use crate::domain::{Finding, OracleStrength, ProbeFamily, StageState};
 use crate::output::gap_decision_ledger::{
     GapAnchor, GapRecord, GapRepairRoute, ProjectionEligibility, preview_receipt_write_command,
@@ -1150,6 +1154,21 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
     if !finding.is_candidate_actionable() {
         return None;
     }
+    // G-0 (#5531): the capability table is the authority for whether this
+    // finding's analysis scope may route repair. A repo-mode run has no
+    // `repair_routing` cell for TypeScript/JavaScript (absent = `not_proven`),
+    // so a repo-scoped finding never becomes a repair packet, however complete
+    // the diff-shaped evidence looks.
+    let mode = if finding_is_repo_scoped(&finding.evidence) {
+        AnalysisMode::Repo
+    } else {
+        AnalysisMode::Diff
+    };
+    // A finding with no language cannot be matched to a cell: fail closed.
+    let language = finding.language?;
+    if !state_establishes_capability(cell_state(language, mode, CapabilityFamily::RepairRouting)) {
+        return None;
+    }
     // G-A: only the terminal `incomplete_repair_packet` branch is eligible.
     let category = evidence_value(finding, "actionability_category: ")?;
     if category != "incomplete_repair_packet" {
@@ -1568,6 +1587,34 @@ pub(crate) mod tests {
             alignment_reason: None,
             source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
         }
+    }
+
+    /// #5531: the capability table has no repo-mode `repair_routing` cell for
+    /// TypeScript or JavaScript, so a repo-scoped finding projects no gap
+    /// record even though the identical diff-scoped finding does.
+    #[test]
+    fn repo_scoped_finding_projects_no_gap_record() {
+        for language in [LanguageId::TypeScript, LanguageId::JavaScript] {
+            let mut diff = complete_finding();
+            diff.language = Some(language);
+            assert!(
+                typescript_gap_record_for(&diff).is_some(),
+                "{language:?} diff control must keep its record"
+            );
+            let mut repo = diff.clone();
+            repo.evidence
+                .push(crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
+            assert!(
+                typescript_gap_record_for(&repo).is_none(),
+                "{language:?} repo-scoped finding must fail closed"
+            );
+        }
+        let mut unlabeled = complete_finding();
+        unlabeled.language = None;
+        assert!(
+            typescript_gap_record_for(&unlabeled).is_none(),
+            "a finding with no language must fail closed"
+        );
     }
 
     /// #7689: a deleted or moved line is base-side evidence, so the same

@@ -30,9 +30,7 @@ Evidence
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches returned value: input * 3 (line 2)
-  - related test tests/weight_tests.rs:4 rejects_the_old_weight uses weak relational check oracle: if weight(4) == 8 {
-return Err("weight(4) kept the old value".to_string());
-}; misses: assertion too weak to tell the old behavior from the new
+  - related test tests/weight_tests.rs:4 rejects_the_old_weight uses weak relational check oracle: if weight(4) == 8 { return Err("weight(4) kept the old value".to_string()); }; misses: assertion too weak to tell the old behavior from the new
   - related test tests/weight_tests.rs:12 weight_is_at_least_twelve uses weak relational check oracle: assert!(weight(4) >= 12); misses: assertion too weak to tell the old behavior from the new
   - related test tests/weight_tests.rs:17 weight_matches_or_flag uses weak relational check oracle: assert!(weight(4) == 12 || lenient); misses: assertion too weak to tell the old behavior from the new
   - source function argument value input = 4 at line 5

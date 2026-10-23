@@ -4032,7 +4032,9 @@ mod tests {
         assert!(matches!(
             missing_before,
             Err(CommandError::Failure(message))
-                if message.contains("canonicalize agent verify --before")
+                if message.contains("failed to read agent verify --before snapshot")
+                    && !message.contains("canonicalize")
+                    && message.contains("repo-exposure-json")
         ));
 
         let missing_after = agent(&args(&[
@@ -4048,7 +4050,9 @@ mod tests {
         assert!(matches!(
             missing_after,
             Err(CommandError::Failure(message))
-                if message.contains("canonicalize agent verify --after")
+                if message.contains("failed to read agent verify --after snapshot")
+                    && !message.contains("canonicalize")
+                    && message.contains("repo-exposure-json")
         ));
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
@@ -4156,6 +4160,33 @@ mod tests {
                     .to_string()
             ))
         );
+    }
+
+    #[test]
+    fn agent_brief_missing_diff_reads_like_explain_diff() -> Result<(), String> {
+        let dir = unique_command_test_dir("agent-brief-missing-diff");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
+
+        let missing = agent(&args(&[
+            "brief",
+            "--root",
+            &dir.display().to_string(),
+            "--diff",
+            "missing-change.diff",
+            "--json",
+        ]));
+        assert!(
+            matches!(
+                missing,
+                Err(CommandError::Failure(ref message))
+                    if message.contains("failed to read agent brief --diff file")
+                        && !message.contains("canonicalize")
+                        && message.contains("pass the path of an existing unified diff file")
+            ),
+            "missing brief diff must read like explain --diff, got {missing:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
     }
 
     #[test]
