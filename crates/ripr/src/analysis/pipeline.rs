@@ -2114,7 +2114,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
     // adapter enablement, so a repo-scope clean result is never silently
     // presented as Rust-grade clean when TypeScript/JavaScript/Python files
     // exist but are not analyzed (RIPR-SPEC-0082, #1111).
-    let discovered_preview_files = super::workspace::discover_preview_language_files(&options.root);
+    let discovered_preview_files = super::workspace::discover_routed_language_files(&options.root);
     let preview_advisories = preview_advisories_from_discovered(
         &discovered_preview_files,
         languages,
@@ -5500,6 +5500,62 @@ mod tests {
         assert_eq!(aggregate.completeness(), DiffCompleteness::Incomplete);
         assert!(
             analysis.language_runs.is_empty(),
+            "{:?}",
+            analysis.language_runs
+        );
+        Ok(())
+    }
+
+    /// #6470: a Rust tree the language set did not select is one `not_selected`
+    /// child, so the aggregate cannot claim Complete from the Python child
+    /// alone. The public `language_runs` gains no row for it.
+    #[test]
+    fn repo_pipeline_aggregate_records_unselected_rust() -> Result<(), String> {
+        let (analysis, aggregate) = run_repo_aggregate(
+            "repo-aggregate-unselected-rust",
+            &[
+                (
+                    "Cargo.toml",
+                    "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+                ),
+                (
+                    "src/lib.rs",
+                    "pub fn discount(price: u32) -> u32 { price / 2 }\n",
+                ),
+                ("app.py", "def discount(price):\n    return price / 2\n"),
+            ],
+            &[LanguageId::Python],
+        )?;
+        assert!(aggregate.validate().is_ok(), "{:?}", aggregate.validate());
+        let python = aggregate
+            .outcomes
+            .get("python")
+            .ok_or_else(|| "no python child".to_string())?;
+        if cfg!(feature = "lang-python") {
+            assert_eq!(python.status, LanguageOutcomeStatus::Complete);
+            assert!(python.finding_count() > 0, "python child is empty");
+        }
+        let rust = aggregate
+            .outcomes
+            .get("rust")
+            .ok_or_else(|| "no rust child".to_string())?;
+        assert_eq!(rust.status, LanguageOutcomeStatus::NotSelected);
+        assert_eq!(aggregate.completeness(), DiffCompleteness::Incomplete);
+        assert!(
+            aggregate
+                .blockers()
+                .iter()
+                .any(|(language, _)| *language == "rust"),
+            "{:?}",
+            aggregate.blockers()
+        );
+        assert!(
+            analysis.language_runs.is_empty()
+                || (!cfg!(feature = "lang-python")
+                    && analysis
+                        .language_runs
+                        .iter()
+                        .all(|run| run.language == "python")),
             "{:?}",
             analysis.language_runs
         );

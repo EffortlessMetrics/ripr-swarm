@@ -197,18 +197,18 @@ pub fn discover_rust_files(root: &Path) -> Result<Vec<PathBuf>, String> {
 /// adapter is not enabled (RIPR-SPEC-0082, #1111). Test files and excluded
 /// directories are skipped the same way as Rust discovery.
 pub(crate) fn discover_preview_language_files(root: &Path) -> Vec<(LanguageId, PathBuf)> {
+    let mut out = discover_routed_language_files(root);
+    out.retain(|(language, _)| *language != LanguageId::Rust);
+    out
+}
+
+/// Every file in the workspace that routes to any adapter language, Rust
+/// included, from one walk. [`discover_preview_language_files`] is this walk
+/// without Rust; the repo pipeline uses this form so a Rust tree the language
+/// set did not select is disclosed instead of vanishing.
+pub(crate) fn discover_routed_language_files(root: &Path) -> Vec<(LanguageId, PathBuf)> {
     let mut out: Vec<(LanguageId, PathBuf)> = Vec::new();
-    visit_classified(root, root, &mut out, &|path| {
-        route(path).filter(|language| {
-            matches!(
-                language,
-                LanguageId::TypeScript
-                    | LanguageId::JavaScript
-                    | LanguageId::Python
-                    | LanguageId::Perl
-            )
-        })
-    });
+    visit_classified(root, root, &mut out, &|path| route(path));
     out.sort_by(|a, b| a.1.cmp(&b.1));
     out
 }
