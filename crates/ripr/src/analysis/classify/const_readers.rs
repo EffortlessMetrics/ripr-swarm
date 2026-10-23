@@ -118,7 +118,7 @@ fn code_reads(masked: &str, name: &str) -> bool {
             continue;
         }
         let before = masked[..at].trim_end();
-        if before.ends_with('.') || is_assigned(masked, end) {
+        if (before.ends_with('.') && !before.ends_with("..")) || is_assigned(masked, end) {
             continue;
         }
         if let Some(path) = before.strip_suffix("::") {
@@ -295,6 +295,11 @@ mod tests {
         assert!(function_reads("{ attempt < Self::LIMIT }", "LIMIT"));
         assert!(function_reads("{ attempt < self::LIMIT }", "LIMIT"));
         assert!(function_reads("{ attempt == LIMIT }", "LIMIT"));
+        // A range operator is not field access.
+        assert!(function_reads("{ for i in 0..LIMIT { go(i) } }", "LIMIT"));
+        assert!(function_reads("{ &v[..LIMIT] }", "LIMIT"));
+        assert!(function_reads("{ a..LIMIT }", "LIMIT"));
+        assert!(function_reads("{ a..=LIMIT }", "LIMIT"));
         assert!(function_reads("{ f(a, LIMIT) }", "LIMIT"));
         assert!(function_reads(
             "{ if LIMIT >= 2 { 1 } else { 0 } }",
@@ -317,6 +322,8 @@ mod tests {
             "{ Other::LIMIT }",
             "{ a::Self::LIMIT }",
             "{ x.LIMIT }",
+            "{ x . LIMIT }",
+            "{ x.\n LIMIT }",
             "{ let LIMIT = 1; LIMIT }",
             "{ LIMIT = 5; }",
             "{ LIMIT += 1; }",
