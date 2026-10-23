@@ -9688,6 +9688,70 @@ fn allow_attribute_detection_sees_suppressions_after_raw_string_reasons() {
     }
 }
 
+/// Char literals (`')'`, `'"'`, `'['`, escapes, multibyte) in an attribute
+/// must not desync the paren span or comma split, and lifetimes must not
+/// swallow following text.
+#[test]
+fn allow_attribute_detection_sees_suppressions_after_char_literals() {
+    let guarded = guarded_allow_attribute_lints();
+    for literal in [
+        "')'",
+        "'\"'",
+        "'('",
+        "'['",
+        "']'",
+        "','",
+        "'\\''",
+        "'\\\\'",
+        "'\\u{29}'",
+        "'🦀'",
+    ] {
+        for text in [
+            format!(
+                concat!(
+                    "#",
+                    "[cfg_attr(test, allow(dead_code, reason = {}), expect(warnings))]"
+                ),
+                literal
+            ),
+            format!(
+                concat!(
+                    "#",
+                    "[allow(dead_code, reason = {})]\n",
+                    "#",
+                    "[expect(warnings)]"
+                ),
+                literal
+            ),
+        ] {
+            let warning_line = if text.contains('\n') { 2 } else { 1 };
+            assert_eq!(
+                guarded_allow_attributes_in_text(&text, &guarded),
+                vec![
+                    (1, "allow(dead_code)".to_string()),
+                    (warning_line, "expect(warnings)".to_string()),
+                ],
+                "char literal must retain both suppressions: {text}",
+            );
+        }
+    }
+    // A lifetime tick is not a char literal and must not hide a suppression.
+    let text = concat!(
+        "#",
+        "[cfg_attr(test, allow(dead_code), expect(warnings), x = 'a)]"
+    );
+    assert_eq!(
+        guarded_allow_attributes_in_text(text, &guarded)
+            .into_iter()
+            .map(|(_, f)| f)
+            .collect::<Vec<_>>(),
+        vec![
+            "allow(dead_code)".to_string(),
+            "expect(warnings)".to_string()
+        ],
+    );
+}
+
 #[test]
 fn allow_attribute_detection_keeps_fake_attributes_inside_raw_reasons() {
     let reason = "r#\"\"), allow(warnings), (\"#";
