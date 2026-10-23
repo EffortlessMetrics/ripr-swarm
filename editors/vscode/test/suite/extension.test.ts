@@ -844,11 +844,14 @@ suite('Extension Smoke', () => {
     const previous = config.inspect<boolean>('includeUnchangedTests')?.workspaceValue;
     const update = (value: unknown) =>
       config.update('includeUnchangedTests', value, vscode.ConfigurationTarget.Workspace);
+    // Always a real change from whatever the workspace held, so every update
+    // emits a configuration event and a pull.
+    const accepted = previous === false ? true : false;
     try {
       // An accepted non-default value, established by a real applied pull, so
       // correction returns to a previously effective value.
       let mark = frames.length;
-      await update(false);
+      await update(accepted);
       await waitUntil(() => pullAfter(mark, 'applied'), 'baseline pull applied');
       assert.ok(!isRejection(), `baseline shows no rejection: ${describe()}`);
 
@@ -872,7 +875,7 @@ suite('Extension Smoke', () => {
       // Restoring the previously accepted value is a new applied pull that
       // clears the item with the same client, and no restart, save or refresh.
       mark = frames.length;
-      await update(false);
+      await update(accepted);
       await waitUntil(() => pullAfter(mark, 'applied'), 'correction pull applied');
       await waitUntil(() => !isRejection(), 'rejection cleared after the applied pull');
       assert.strictEqual(controller.client, startedClient, 'correction must not replace the client');
