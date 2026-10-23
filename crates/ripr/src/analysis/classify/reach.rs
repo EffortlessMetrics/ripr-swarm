@@ -391,8 +391,11 @@ fn foreign_imported_names(source: &str) -> impl Iterator<Item = &str> {
         let end = after.find(';').unwrap_or(after.len());
         if boundary {
             let body = after[..end].trim_start();
-            if !(body.starts_with("crate") || body.starts_with("self") || body.starts_with("super"))
-            {
+            let root = body
+                .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .next()
+                .unwrap_or("");
+            if !matches!(root, "crate" | "self" | "super") {
                 statements.push(&after[..end]);
             }
         }
@@ -899,11 +902,17 @@ mod tests {
         let parent = impl_method("process", "super::traits::Step", "src/a.rs");
         let imported_std = impl_method("add", "Add", "src/ops.rs");
         let local_bare = impl_method("add", "Add", "src/local.rs");
+        // A crate named like a local root keyword prefix is still foreign.
+        let lookalike = impl_method("add", "Add", "src/lookalike.rs");
         let index = RustIndex::from_owned(OwnedRustIndex {
             files: BTreeMap::from([
                 file("src/a.rs", "pub fn lonely() {}\n"),
                 file("src/ops.rs", "use std::ops::Add;\npub fn lonely() {}\n"),
                 file("src/local.rs", "use crate::Add;\npub fn lonely() {}\n"),
+                file(
+                    "src/lookalike.rs",
+                    "use crates_x::Add;\nuse selfish::Sub;\npub fn lonely() {}\n",
+                ),
             ]),
             functions: vec![
                 declared("Step"),
@@ -912,6 +921,7 @@ mod tests {
                 parent.clone(),
                 imported_std.clone(),
                 local_bare.clone(),
+                lookalike.clone(),
             ],
             ..Default::default()
         });
@@ -927,6 +937,8 @@ mod tests {
         // The operator `+` runs `add` without spelling it.
         assert!(owner_may_be_reached_unseen(&imported_std, &index));
         assert!(names.may_reach_unseen(&imported_std));
+        assert!(owner_may_be_reached_unseen(&lookalike, &index));
+        assert!(names.may_reach_unseen(&lookalike));
     }
 
     /// #9169 review: dropping the trait allowance keeps the ordinary ones. A
