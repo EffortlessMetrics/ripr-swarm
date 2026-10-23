@@ -191,17 +191,23 @@ fn prose_once(text: &str) -> String {
         }
     }
 
-    let mut label_end = None;
+    let mut label_ends: Vec<Option<usize>> = Vec::new();
     // Inline spans cannot cross CommonMark block boundaries or GFM table cells.
     // The parser's ranges are UTF-8 byte boundaries in this exact source.
     for (event, range) in parser.into_offset_iter() {
+        if !matches!(event, Event::End(TagEnd::Link))
+            && let Some(Some(end)) = label_ends.last_mut()
+        {
+            *end = (*end).max(range.end);
+        }
         match event {
-            Event::Start(Tag::Link {
-                link_type: LinkType::Inline,
-                ..
-            }) => label_end = Some(range.start + 1),
+            Event::Start(Tag::Link { link_type, .. }) => {
+                // Links may nest through image descriptions. Keep an entry for
+                // each link so an inner end cannot consume the outer boundary.
+                label_ends.push((link_type == LinkType::Inline).then_some(range.start + 1));
+            }
             Event::End(TagEnd::Link) => {
-                if let Some(end) = label_end.take() {
+                if let Some(Some(end)) = label_ends.pop() {
                     // Child events cover the visible label, including markup.
                     // Only its trailing destination/title syntax is protected;
                     // copying the whole link would leave label HTML/mentions live.
@@ -209,9 +215,6 @@ fn prose_once(text: &str) -> String {
                 }
             }
             _ => {
-                if let Some(end) = &mut label_end {
-                    *end = (*end).max(range.end);
-                }
                 if matches!(event, Event::Code(_) | Event::Start(Tag::CodeBlock(_))) {
                     protected.push(range);
                 }
@@ -1398,6 +1401,7 @@ mod tests {
             "[](<https://example.test>)",
             "[link][ref]\n\n[ref]: <https://example.test/@owner> \"title <x>\"",
             "[link][r\\]ef]\n\n[r\\]ef]: <https://example.test>",
+            "[outer ![[inner](<inside>)](image)](<outside>)",
         ] {
             assert_eq!(prose(source), source, "{source:?}");
         }
