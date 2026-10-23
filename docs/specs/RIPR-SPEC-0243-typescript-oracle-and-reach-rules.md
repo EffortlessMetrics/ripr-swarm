@@ -30,6 +30,8 @@ Linked issues:
 - #9138 (assertion after an always-exiting try/finally)
 - #9150 (bare non-throwing exit first in a try block makes its catch unreachable)
 - #8959 (lexically bound runner registrations)
+- #9181 (CommonJS function export reached through `require()`)
+- #9182 (`var`/`let` CommonJS runner bindings)
 - #9435 (exact oracle ignored on five changed-line shapes)
 - #9497 (skipped or unexercised tests credited as exposed; rules 17 and 18)
 
@@ -113,7 +115,7 @@ contradicting limitation. The rest is either correct but unstated
 ## Behavior
 
 Paths are relative to `crates/ripr/src/analysis/language/typescript/`.
-Paragraphs headed Rule 1 to Rule 18 mark behavior changes. Rules 1 to 8
+Paragraphs headed Rule 1 to Rule 19 mark behavior changes. Rules 1 to 8
 are numbered in reading order; rules 9 to 11 were added later. Every other statement below is current behavior and is
 normative.
 
@@ -251,7 +253,14 @@ bindings in modules and strict scripts do not shadow a sibling registration.
 A sibling suite's
 helper is outside this lexical scope. Re-exports do not create local runner
 bindings, and an ESM namespace object is not a callable registration root.
-The CommonJS exemption requires an immutable runner declaration and
+The CommonJS exemption requires an immutable runner declaration (a `const`,
+or a `var`/`let` whose binding the file never writes outside its own
+initializer: no assignment, update, `for` target or redeclaration, and no
+`eval`/`with`/`\u` opacity, #9182; every occurrence must be a plain read or
+call, so a parenthesised, non-null, cast or destructuring assignment target,
+a `function`/`class` re-declaration and a `globalThis`/`this` member write all
+refuse. A nested-scope shadow such as a `test` parameter is refused too,
+fail-closed) and
 either ambient `require` syntax or an immutable loader created by a locally
 imported `node:module`/`module` `createRequire(import.meta.url)`. Mutable loaders
 or runner bindings and same-spelled helper factories remain uncredited.
@@ -596,7 +605,21 @@ Candidates come from the first non-empty tier:
      only when the owner is the default export, or
      `const m = await import("<owner module>")` with `m.owner(`); and
      `ReExportChainFollowed` (RIPR-SPEC-0095, at most 4 hops).
-2. **Module-entry relations** when tier 1 is empty, package-filtered.
+2. **Module-entry relations** when tier 1 is empty, package-filtered. For
+   an instance method this tier also holds the sibling methods of the same
+   class that reach it through at most 3 `this.method(...)` calls (#8567):
+   a test that calls such a sibling on a receiver it built relates through
+   `ModuleEntryCall`, which reads `weakly_exposed` at most and discloses the
+   reach as "only through same-class callers". The call graph is
+   syntax-only and fail-closed: a caller whose body declares a nested
+   `function` or `class` or an object/class method shorthand (keywords inside
+   strings, templates and comments do not count), a name defined twice in the
+   class, a name some method assigns, deletes or defines on `this`, a name an
+   instance field of the class defines (a computed field defines any name),
+   an arrow body that is not a call argument (`const later = () =>
+   this.helper()` is created, not run), and static methods contribute no
+   edge. An arrow passed to a call is read as invoked; the relation stays weak
+   and never reads `exposed`.
 3. **Heuristic relations** when tiers 1 and 2 are empty, package-filtered,
    for function, arrow and component owners, when the test body
    references the owner name and does not import that name from an
@@ -892,6 +915,41 @@ is appended to `missing` after the class is chosen. Actionability reads
 (RIPR-SPEC-0087 F10); RIPR-SPEC-0087 orders actionability only and says
 nothing about the class.
 
+**Rule 19. A `require()` of a CommonJS function export is that function
+(#9181).** `module.exports = function (...) {}`, `module.exports = function
+name(...) {}`, `module.exports = (...) => ...` and `module.exports = name;`
+(a plain reference to one top-level function declaration) make the module's
+whole export the owner, as `export default` does. A literal
+`const f = require("<owner module>")` in a test file then binds `f` to the
+owner, so a bare `f(...)` is an `ImportedOwnerCall` (or a `DirectOwnerCall`
+when `f` is the owner's own name), and the observation guard reads `f` as the
+owner (rule 7). The relation uses the same identity gates as the default-import
+arm of rule 5: the specifier must resolve to the owner module, a body-local
+declaration or enclosing binding of `f` shadows it, and a mock of the owner
+module blocks it. One file-level gate covers both the inline and the
+`module.exports = name;` forms: the masked file must assign `module.exports`
+exactly once and use the identifier `module` in no other way (no alias,
+`module?.exports`, `module[...]`, compound or update write, spaced or
+line-broken `module . exports =`, `Object.assign(module, ...)`), and must not
+be an `eval`/`with` file; a second, conditional or non-function assignment
+therefore marks nothing. The `name` form also needs exactly one top-level
+function declaration of the name that the file never writes. A test binding
+declared with `let`/`var` that the test file writes again is not a
+`require()` of the owner. `require()` of an ES module's `export default` stays
+a namespace object, not a call. Files that read the module object
+another way are refused on purpose: `require.main === module`, UMD
+`typeof module` guards, `require.main.exports`, `require.cache` and
+`process.mainModule` all make `module.exports` unknowable, as do
+`arguments`, a `require` that is not called directly (`const r = require`,
+`require['main']`), bracket access on `process` and the string `'module'`.
+The gate must hold on two masks, the regex-aware one and a division-only one,
+so a `/` the regex heuristic misreads (`t! / 2`, `a = {} / 2`) cannot hide a
+write. A named import or member of a function export (`const { triple } =
+require(...)`, `k.triple`) is a property of the function, not the owner.
+The gate text keeps strings, templates and regex literals visible beside the
+two masks, so a string spelling `module.exports = x` refuses the file (fail
+closed). Known limits: a default binding of a function export (`const { default: f } = require(...)`, and an ES `import f from` of the same module, which the adapter cannot tell apart) is refused rather than credited; overload-style repeated `function name` declarations and any `require.resolve` use refuse the file.
+
 **Rule 8. A mocked dependency on the changed line is `static_unknown`.**
 When the changed line calls a symbol imported (`imported_symbol_call`)
 from a module that the owner file imports (`TypeScriptOwner.imports`),
@@ -1102,7 +1160,20 @@ rejected alternative. Any can be reversed later without touching the rest.
     accessor body (it can compute anything), and `accessor <field>` auto-
     accessors, which the owner index does not record yet.
 
-21. **Mock call counts (2026-10-22, #9684).**
+Known limits of the textual write scan (#9182): the literal/comment masker
+reads `</div>` in `.tsx` text and a backtick inside a regex literal wrongly, so
+a write hidden by either is not seen; a postfix `++`/`--` before `/` is
+division, not a regex. These are fail-open only for files that already defeat
+the masker.
+21. **CommonJS function exports (#9181).** Adopted: rule 19, because
+    minimist exports one function and reads `no_static_path` while its
+    own suite fails every mutant of the line, and the ESM twin already relates. The gate is a bounded refusal
+    corpus, not a proof that the export is known: it refuses the module-object
+    routes it can name, and the claim is limited to shapes where the exported
+    value is the declared function.
+    Rejected: crediting `require()` of an ES module's default export
+    (runtime namespace object) and an arbitrary `module.exports = expr`.
+22. **Mock call counts (2026-10-22, #9684).**
     Adopted: for a changed side-effect call (a probe whose
     change is to what the owner's call sends), an assertion whose observed
     expression is a plain identifier path ending `.mock.callCount()` or
@@ -1427,7 +1498,7 @@ to `amount - 20`, and `tests/lib.test.ts` has
   length, an early exit, a branch in the body, a non-block body). Corpus row
   `ts-grid-boundary-table` moves from gap to credited.
 
-- #9684 (decision 21): `tests/mock_call_count_tests.rs` pins the call-count
+- #9684 (decision 22): `tests/mock_call_count_tests.rs` pins the call-count
   reading and its controls. Corpus row `ts-trap-mocked-send` moves from
   credited to gap.
 
@@ -1607,6 +1678,12 @@ to `amount - 20`, and `tests/lib.test.ts` has
   (`direct_owner_call_has_declaration_anchor`,
   `owner_name_shadowed_by_unrelated_import`) and the owner bindings
   rule 7 reads.
+- #8567: `crates/ripr/src/analysis/language/typescript/class_entries.rs`
+  (`assign_class_entries`) records the same-class entries on each instance
+  method owner; `related_tests.rs` `module_entry_owner` turns an entry into
+  the receiver-call stand-in that tier 2 checks, and
+  `tests/class_entry_tests.rs` pins the credited chains against each shape
+  that records no edge.
 - `crates/ripr/src/analysis/language/typescript/classifier.rs`: rules 6
   and 7 (`ts_changed_value_is_observed`,
   `ts_observed_local_aliases_owner`), and rule 8's `static_unknown` arm

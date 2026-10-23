@@ -135,6 +135,103 @@ pub(in crate::analysis) fn withhold_pinned_shape_gap(
     true
 }
 
+/// #9490: an `Err(..)` pin does not reach the `Ok` path of a
+/// `map(..).collect::<Result<Vec<_>, _>>()` owner tail. A `Result` collect
+/// stops at the first `Err` and drops the earlier values, so a test whose
+/// only exact pins on the call are `Err(..)` never observes a changed closure
+/// value on a later element. Withhold an `exposed` finding whose related
+/// direct-call tests carry no `Ok(..)` pin (or `.unwrap()` of the call).
+pub(in crate::analysis) fn withhold_result_collect_err_pin(
+    finding: &mut Finding,
+    index: &RustIndex,
+) -> bool {
+    if finding.static_limit_kind.is_some()
+        || finding.class != ExposureClass::Exposed
+        || !matches!(finding.probe.family, ProbeFamily::ReturnValue)
+    {
+        return false;
+    }
+    let Some(owner_id) = finding.probe.owner.as_ref() else {
+        return false;
+    };
+    let changed_line = finding.probe.location.line;
+    let Some(owner) = index.functions().iter().find(|function| {
+        function.id == *owner_id
+            && function.start_line <= changed_line
+            && changed_line <= function.end_line
+    }) else {
+        return false;
+    };
+    let collects_result =
+        super::owner_pin::closure_adaptor::admitted_owner_adaptor_tail(owner, index)
+            .is_some_and(|tail| tail.tail_is(&finding.probe.expression) && tail.collects_result());
+    if !collects_result {
+        return false;
+    }
+    let direct: Vec<&TestFact> = finding
+        .related_tests
+        .iter()
+        .filter(|related| related.relation_reason == Some(RelationReason::DirectOwnerCall))
+        .filter_map(|related| {
+            index.tests().iter().find(|test| {
+                test.name == related.name
+                    && test.file == related.file
+                    && test.start_line == related.line
+            })
+        })
+        .collect();
+    if direct.is_empty() || direct.iter().any(|test| pins_result_ok(test, &owner.name)) {
+        return false;
+    }
+    let labels: Vec<String> = direct
+        .iter()
+        .map(|test| format!("`{}`", test.name))
+        .collect();
+    let next_step = format!(
+        "{} pins this `Result` collect only through an `Err(..)` value, and a collect stops at the first `Err`, so ripr does not report the change as observed. Pin an `Ok(..)` result whose inputs all succeed so every element reaches the changed closure.",
+        labels.join(", ")
+    );
+    withhold_gap(
+        finding,
+        LIMIT,
+        "whether the pinned `Err` is produced before the changed closure value matters",
+        next_step,
+        &labels,
+    );
+    true
+}
+
+/// Whether `test` is a live test whose plain `assert_eq!` compares the
+/// owner's whole call with an `Ok(..)` value, or the call's `.unwrap()` with
+/// anything: every element ran for that pin to hold.
+fn pins_result_ok(test: &TestFact, owner: &str) -> bool {
+    if is_ignored(test)
+        || test
+            .attrs
+            .iter()
+            .map(String::as_str)
+            .chain(std::iter::once(test.body.as_str()))
+            .any(|text| text.contains("should_panic"))
+    {
+        return false;
+    }
+    test.assertions.iter().any(|assertion| {
+        assertion_runs_unconditionally(&test.body, &assertion.text)
+            && assertion.text.trim_start().starts_with("assert_eq!")
+            && assertion_comparison_operands(&assertion.text).is_some_and(|[left, right]| {
+                let ok_side = |call: &str, other: &str| {
+                    text_calls(call, owner)
+                        && !contains_name(other, owner)
+                        && is_whole_call(call, owner)
+                        && !degenerate_input(call)
+                        && (other.trim_start().starts_with("Ok(")
+                            || call.trim_end().ends_with(".unwrap()"))
+                };
+                ok_side(left, right) || ok_side(right, left)
+            })
+    })
+}
+
 /// Whether `test` is a live test with a plain `assert_eq!` whose one operand
 /// is the owner's call itself (see [`is_whole_call`]) on an input that is not
 /// empty or zero, and whose other operand does not name the owner.

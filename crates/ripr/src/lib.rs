@@ -155,6 +155,7 @@ pub use app::{
 /// consumer never needs the `#[doc(hidden)]` modules to annotate,
 /// pattern-match, or re-render a result.
 pub use app::{Mode, OutputFormat};
+pub use domain::{AnalysisScope, LanguageFileCount, SourceCurrentness, Summary};
 /// Domain model types exposed as part of the stable public contract.
 pub use domain::{
     ExposureClass, Finding, Probe, ProbeFamily, RiprEvidence, TestEvidenceEntry,
@@ -167,7 +168,6 @@ pub use domain::{
     GitCandidateBase, GitCandidateDiffSemantics, GitCandidateSubject, GitCandidateSubjectError,
     GitHashFormat, GitObjectId, GitTreeish,
 };
-pub use domain::{LanguageFileCount, SourceCurrentness, Summary};
 pub use output::suppressions::CheckSuppressionOutcome;
 pub use output::suppressions::SuppressedCheckFinding;
 pub use provider_contract::{

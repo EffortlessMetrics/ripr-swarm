@@ -976,6 +976,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
         StageEvidence, StageState, SymbolId,
     };
     let finding = crate::domain::Finding {
+        analysis_scope: crate::domain::AnalysisScope::Diff,
         id: format!("probe:{file}:10:predicate:aabbccdd"),
         canonical_gap: None,
         probe: Probe {
@@ -15674,6 +15675,7 @@ fn finding_projection_emits_one_limited_diagnostic_for_mixed_canonical_group() -
 
 pub(super) fn sample_finding() -> Finding {
     Finding {
+        analysis_scope: crate::domain::AnalysisScope::Diff,
         id: "probe:pricing:88:predicate".to_string(),
         canonical_gap: None,
         probe: Probe {
@@ -28213,7 +28215,13 @@ fn framed_lsp_zero_git_timeout_commits_limited_once_and_recovers() -> Result<(),
             !diff["snapshot_identity"].is_null(),
             "the failure must belong to a committed snapshot"
         );
-        assert_eq!(diff["recovery"], "retry ripr.refreshDiagnostics");
+        // #9895: this initialize advertises no `riprEditor` block, so the
+        // VS Code-only palette command must not be named; the server-executed
+        // `ripr.refresh` route is.
+        assert_eq!(
+            diff["recovery"],
+            "retry ripr.refresh (workspace/executeCommand)"
+        );
         let ends = limited
             .iter()
             .filter(|message| {
@@ -28366,6 +28374,93 @@ fn framed_lsp_zero_git_timeout_commits_limited_once_and_recovers() -> Result<(),
                 let _ = server_task.await;
                 return Err("LSP server did not stop after exit".into());
             }
+        }
+        Ok(())
+    })
+}
+
+/// #9895: the recovery hint follows the negotiated client. The same degraded
+/// component (a zero git timeout) must name the VS Code palette command for a
+/// `riprEditor` client and the server-executed command for a generic client,
+/// through the real Backend, so a backend that hard-coded
+/// `ClientFeatureProfile::unsupported()` would regress the editor path.
+#[test]
+#[serial]
+fn framed_lsp_recovery_hint_follows_negotiated_client() -> Result<(), String> {
+    work_done_progress_runtime()?.block_on(async {
+        let cases = [
+            (
+                serde_json::json!({"riprEditor": {"version": "0.1", "commands": ["ripr.refreshDiagnostics"]}}),
+                "retry ripr.refreshDiagnostics",
+            ),
+            (
+                serde_json::json!({}),
+                "retry ripr.refresh (workspace/executeCommand)",
+            ),
+        ];
+        for (index, (experimental, expected)) in cases.into_iter().enumerate() {
+            let fixture = boundary_gap_git_fixture_root("framed-recovery-hint-client")?;
+            let root = fixture.path();
+            let lib = root.join("src/lib.rs");
+            let baseline = std::fs::read_to_string(&lib).map_err(|error| error.to_string())?;
+            let edited = baseline.replace(">=", ">");
+            assert_ne!(
+                edited, baseline,
+                "the fixture must contain a changed boundary"
+            );
+            std::fs::write(&lib, edited).map_err(|error| error.to_string())?;
+            let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+            let (mut client_read, mut client_write) = tokio::io::split(client_io);
+            let (server_read, server_write) = tokio::io::split(server_io);
+            let (service, socket) =
+                LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+            let server_task = tokio::spawn(async move {
+                Server::new(server_read, server_write, socket)
+                    .serve(service)
+                    .await;
+            });
+            let root_uri = file_uri_for_path(root)?;
+            let mut capabilities = serde_json::json!({"window": {"workDoneProgress": true}});
+            if let Some(experimental) = experimental.as_object()
+                && !experimental.is_empty()
+            {
+                capabilities["experimental"] = serde_json::Value::Object(experimental.clone());
+            }
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                    "params": {
+                        "processId": null, "rootUri": root_uri.as_str(),
+                        "initializationOptions": {
+                            "baseRef": "HEAD", "checkMode": "instant",
+                            "diagnosticProfile": "full", "gitTimeoutMs": 0
+                        },
+                        "capabilities": capabilities
+                    }
+                }),
+            )
+            .await?;
+            let initialized = read_lsp_response(&mut client_read, 1).await?;
+            assert!(initialized.get("error").is_none(), "{initialized}");
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+            )
+            .await?;
+            let limited =
+                run_wire_refresh_collecting(&mut client_read, &mut client_write, 2).await?;
+            let statuses = analysis_status_params(&limited);
+            let status = statuses
+                .last()
+                .ok_or("the timeout committed no analysis status")?;
+            let diff = status["components"]
+                .as_array()
+                .and_then(|components| components.iter().find(|c| c["component"] == "diff"))
+                .ok_or("the timeout committed no diff outcome")?;
+            assert_eq!(diff["kind"], "git_invocation_timeout", "case {index}");
+            assert_eq!(diff["recovery"], expected, "case {index}");
+            server_task.abort();
         }
         Ok(())
     })

@@ -14,7 +14,8 @@ pub(crate) use super::super::{
 // can call `probes::expected_sinks` / `probes::required_oracles` via `super::probes`.
 use super::read_limit_disclosure::bounded_read_limit_limitations;
 pub(crate) use super::{
-    LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route,
+    LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, RepoCapFired,
+    RepoFileAccounting, RepoLimitingStage, route,
 };
 pub(super) use crate::analysis::probes;
 pub(crate) use crate::analysis_outcome::{
@@ -63,6 +64,7 @@ mod bun_bridge;
 #[cfg(test)]
 mod capability_disposition_tests;
 mod catch_arm_guard;
+mod class_entries;
 mod classifier;
 mod committed_snapshot;
 mod custom_matcher_guard;
@@ -75,6 +77,7 @@ mod enum_member_guard;
 mod error_payload_guard;
 mod field_update_guard;
 mod guard_entry_guard;
+mod hook_owner_guard;
 mod instance_class_guard;
 #[cfg(test)]
 mod line_index_tests;
@@ -103,6 +106,7 @@ pub(crate) use package::detect_framework_for_root;
 mod ambient_declaration_tests;
 #[cfg(test)]
 mod conditional_assertion_tests;
+mod loop_count_guard;
 mod loop_rows;
 mod parse;
 mod paths;
@@ -161,6 +165,7 @@ pub(crate) use boolean_pin_guard::*;
 pub(crate) use boundary_input::*;
 pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
+pub(crate) use class_entries::*;
 pub(crate) use classifier::*;
 pub(crate) use committed_snapshot::*;
 pub(crate) use custom_matcher_guard::*;

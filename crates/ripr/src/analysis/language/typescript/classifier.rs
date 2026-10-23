@@ -854,6 +854,18 @@ fn ts_mask_typeof_consumed_owner_names(
 /// expected (at the start, or after an operator or opening punctuation);
 /// elsewhere it is division.
 pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
+    ts_mask_with(text, true)
+}
+
+/// [`ts_mask_literals_and_comments`] with every `/` read as division, so a
+/// regex-versus-division misjudgement cannot hide code from a scan that also
+/// runs on this mask. A real regex literal holding a quote can misread the rest
+/// of its line here; callers require agreement of both masks.
+pub(crate) fn ts_mask_literals_and_comments_division_only(text: &str) -> String {
+    ts_mask_with(text, false)
+}
+
+fn ts_mask_with(text: &str, regex_allowed: bool) -> String {
     #[derive(Clone, Copy)]
     enum Mode {
         Code,
@@ -927,6 +939,10 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
     // Consecutive `.` ending at `prev`: three is a spread (`[...'p']`), while
     // a sentence's `.` in JSX text (`Hi. "Bye {p(1)}`) is not.
     let mut dots = 0usize;
+    // `++`/`--` that directly follows an operand is postfix, so a `/` after
+    // it is division (`i++ / 2`), never a regex start.
+    let mut postfix_op = false;
+    let mut op_after_operand = false;
     // One entry per open `${`: the brace depth inside that interpolation.
     let mut interpolations: Vec<usize> = Vec::new();
     let mut chars = text.chars().peekable();
@@ -962,7 +978,10 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
                         mode = Mode::BlockComment;
                         out.push_str("  ");
                     }
-                    '/' if operand_expected(prev, &word, word_after_dot) => {
+                    '/' if regex_allowed
+                        && !postfix_op
+                        && operand_expected(prev, &word, word_after_dot) =>
+                    {
                         mode = Mode::Regex { in_class: false };
                         out.push(c);
                     }
@@ -990,6 +1009,16 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
                 if matches!(mode, Mode::LineComment | Mode::BlockComment) {
                     after_space = true;
                     continue;
+                }
+                if (c == '+' || c == '-') && !after_space && prev == Some(c) {
+                    postfix_op = op_after_operand && !postfix_op;
+                } else {
+                    if c == '+' || c == '-' {
+                        op_after_operand = !operand_expected(prev, &word, word_after_dot);
+                    }
+                    if !c.is_whitespace() {
+                        postfix_op = false;
+                    }
                 }
                 if is_word_char(c) {
                     // Whitespace ends a word: `x as` is two words.
@@ -5305,7 +5334,7 @@ pub(crate) fn strongest_family_matching_oracle(
                 {
                     (OracleKind::MockExpectation, OracleStrength::Strong)
                 }
-                // RIPR-SPEC-0243 decision 21: a call count does not see the
+                // RIPR-SPEC-0243 decision 22: a call count does not see the
                 // arguments a changed side-effect call sends.
                 _ if matches!(probe_family, ProbeFamily::SideEffect)
                     && mock_call_count_assertion(assertion) =>
@@ -6113,6 +6142,50 @@ pub(crate) fn classify_change_with_alias_state(
             workspace_root,
         },
     );
+    // RIPR-SPEC-0246 rule 7: a setup hook that calls the owner outside every
+    // test body. It reads an actionable gap, never a credit.
+    let hook_owner_unknown = !ladder_exposed
+        && !reach_only_through_module_entry
+        && static_limit.is_none()
+        && strong_oracle_present
+        && !observation_confirmed
+        && matches!(verdict.class, ExposureClass::WeaklyExposed)
+        && matches!(probe_shape.family, ProbeFamily::SideEffect)
+        && super::hook_owner_guard::setup_hook_calls_owner(
+            &related_candidates,
+            owner,
+            reexport_index,
+            alias_map,
+            workspace_root,
+        );
+    if hook_owner_unknown {
+        verdict.class = ExposureClass::StaticUnknown;
+        verdict.observe_state = StageState::Unknown;
+        verdict.discriminate_state = StageState::Unknown;
+        verdict.missing = vec![format!(
+            "A synchronous mocha setup hook calls `{}` outside every test body, and no related test asserts the changed effect through a call it makes; whether a test observes what the hook set is not established either way.",
+            owner.name
+        )];
+    }
+    // RIPR-SPEC-0246 rule 8: a counted-loop header change that a related test
+    // reads only through a mock call count. The ladder's predicate-boundary
+    // gap does not apply to a loop header, so the iteration count is unknown.
+    let loop_count_unknown = matches!(verdict.class, ExposureClass::WeaklyExposed)
+        && strongest_strength >= OracleStrength::Strong.rank()
+        && super::loop_count_guard::ts_loop_count_unmodeled(
+            old_line_text,
+            line_text,
+            &related_candidates,
+        );
+    if loop_count_unknown {
+        verdict.class = ExposureClass::StaticUnknown;
+        verdict.observe_state = StageState::Unknown;
+        verdict.discriminate_state = StageState::Unknown;
+        verdict.missing = vec![format!(
+            "The change to `{}` rewrites a counted loop header, and the related tests observe it only through a mock call count; the adapter does not model how many iterations the loop runs, so whether the count discriminates the change is not established.",
+            owner.name
+        )];
+    }
     let TsLadderVerdict {
         class,
         observe_state,
@@ -6121,9 +6194,11 @@ pub(crate) fn classify_change_with_alias_state(
     } = verdict;
     let static_unknown_by_mock = matches!(class, ExposureClass::StaticUnknown)
         && !ladder_unresolved_unknown
-        && !ladder_entry_unknown;
-    let unresolved_callback_unknown =
-        matches!(class, ExposureClass::StaticUnknown) && ladder_unresolved_unknown;
+        && !ladder_entry_unknown
+        && !hook_owner_unknown
+        && !loop_count_unknown;
+    let unresolved_callback_unknown = matches!(class, ExposureClass::StaticUnknown)
+        && (ladder_unresolved_unknown || hook_owner_unknown);
     let entry_reach_unknown = matches!(class, ExposureClass::StaticUnknown) && ladder_entry_unknown;
     // Collect named TS-specific limitations (RIPR-SPEC-0085 §PR4 taxonomy).
     // These are ADDITIVE evidence lines; existing `static_limit_kind` is
@@ -6246,8 +6321,12 @@ pub(crate) fn classify_change_with_alias_state(
     let observe = StageEvidence::new(observe_state, Confidence::Low, &observe_summary);
     let discriminate_summary = if static_unknown_by_mock {
         "TypeScript preview adapter: every exposing test file mocks a module the changed line calls; discriminate unknown (RIPR-SPEC-0243 rule 8).".to_string()
+    } else if loop_count_unknown {
+        "TypeScript preview adapter: the changed counted-loop header is observed only through a mock call count; the iteration count is not modeled, so discriminate unknown (RIPR-SPEC-0246 rule 8).".to_string()
     } else if ladder_entry_unknown {
         "TypeScript preview adapter: the related tests reach the changed owner only through a same-module caller; discriminate unknown (RIPR-SPEC-0027).".to_string()
+    } else if hook_owner_unknown {
+        "TypeScript preview adapter: a synchronous mocha setup hook calls the changed owner outside every test body; discriminate unknown (RIPR-SPEC-0246 rule 7).".to_string()
     } else if ladder_unresolved_unknown {
         "TypeScript preview adapter: the related tests hold assertion-like code in a callback the extractor cannot resolve; discriminate unknown (RIPR-SPEC-0246 rule 4).".to_string()
     } else if ladder_exposed && !matches!(class, ExposureClass::Exposed) {
@@ -6317,6 +6396,12 @@ pub(crate) fn classify_change_with_alias_state(
         }
         ExposureClass::StaticUnknown if ladder_entry_unknown => {
             "TypeScript preview advisory: the related test reaches the changed owner only through a same-module caller, so no new assertion is needed on that evidence; no repair packet is emitted.".to_string()
+        }
+        ExposureClass::StaticUnknown if loop_count_unknown => {
+            "TypeScript preview advisory: the changed counted-loop header is observed only through a mock call count the adapter cannot tie to the iteration count; no new assertion is needed on that evidence, and no repair packet is emitted.".to_string()
+        }
+        ExposureClass::StaticUnknown if hook_owner_unknown => {
+            "TypeScript preview advisory: a mocha setup hook calls the changed owner outside every test body, so a test may observe the state it set; no new assertion is needed on that evidence, and no repair packet is emitted.".to_string()
         }
         ExposureClass::StaticUnknown if ladder_unresolved_unknown => {
             "TypeScript preview advisory: the related test asserts inside a callback the extractor cannot resolve (a `.then` with a rejection handler or an async `forEach`); no new assertion is needed on that evidence, and no repair packet is emitted.".to_string()
@@ -6465,6 +6550,7 @@ pub(crate) fn classify_change_with_alias_state(
         probe.after.as_deref(),
     );
     Some(Finding {
+        analysis_scope: crate::domain::AnalysisScope::Diff,
         id: probe.id.0.clone(),
         canonical_gap: None,
         probe,
@@ -6488,7 +6574,7 @@ pub(crate) fn classify_change_with_alias_state(
         },
         stop_reasons: if static_unknown_by_mock {
             vec![StopReason::StaticProbeUnknown]
-        } else if unresolved_callback_unknown {
+        } else if unresolved_callback_unknown || loop_count_unknown {
             vec![StopReason::GapEvidenceUnresolved]
         } else if entry_reach_unknown {
             vec![StopReason::PropagationEvidenceUnknown]
@@ -8078,14 +8164,19 @@ fn module_entry_reach_summary(
     } else {
         called.join(", ")
     };
+    let scope = if owner.class_name.is_some() {
+        "same-class"
+    } else {
+        "same-module"
+    };
     if discriminator_unknown {
         return format!(
-            "Related tests reach `{}` only through same-module callers ({}); static evidence cannot confirm whether the changed behavior reaches their assertions, so the discriminator is not established either way.",
+            "Related tests reach `{}` only through {scope} callers ({}); static evidence cannot confirm whether the changed behavior reaches their assertions, so the discriminator is not established either way.",
             owner.name, entries
         );
     }
     format!(
-        "Related tests reach `{}` only through same-module callers ({}); static evidence cannot confirm the changed behavior reaches their assertions. Add a test whose exact-value assertion depends on the changed behavior of `{}`.",
+        "Related tests reach `{}` only through {scope} callers ({}); static evidence cannot confirm the changed behavior reaches their assertions. Add a test whose exact-value assertion depends on the changed behavior of `{}`.",
         owner.name, entries, owner.name
     )
 }

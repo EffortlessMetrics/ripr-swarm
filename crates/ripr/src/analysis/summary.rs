@@ -30,6 +30,7 @@ mod tests {
 
     fn finding(class: ExposureClass) -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: format!("finding-{}", class.as_str()),
             canonical_gap: None,
             probe: Probe {
