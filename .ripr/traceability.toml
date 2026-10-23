@@ -9940,6 +9940,8 @@ tests = [
   "crates/ripr/src/output/human.rs::tests::render_finding_adds_no_arm_note_when_the_after_row_is_complete",
   "crates/ripr/src/output/human.rs::tests::render_finding_arm_note_ignores_arrows_in_literals_and_comments",
   "crates/ripr/tests/cli_smoke.rs::check_human_full_marks_head_only_match_arm_after_row",
+  "crates/ripr/src/output/human.rs::tests::render_finding_arm_note_preserves_literal_body_presence",
+  "crates/ripr/tests/cli_smoke.rs::check_human_full_keeps_a_final_literal_arm_body_note_without_a_comma",
   "crates/ripr/src/output/human.rs::tests::human_evidence_spells_the_unconfirmed_observation_in_words",
   "crates/ripr/src/output/human.rs::tests::shared_evidence_rows_spell_the_unconfirmed_observation_in_words",
   "crates/ripr/src/output/human.rs::tests::plain_observation_wording_handles_each_producer_form",
@@ -9970,6 +9972,7 @@ tests = [
   "crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_refusal_preserves_the_requested_probe_family",
   "crates/ripr/tests/agent_stub_compiles.rs::kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub",
   "crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_without_a_matching_family_suggests_no_other_seams",
+  "crates/ripr/tests/agent_stub_compiles.rs::kind_suffix_refusal_does_not_claim_filtered_family_is_absent",
   "crates/ripr/tests/agent_stub_compiles.rs::check_routes_a_continuation_line_finding_to_the_line_the_stub_targets",
   "crates/ripr/tests/agent_stub_compiles.rs::check_prints_no_route_when_the_nearest_gap_line_is_ambiguous",
   "crates/ripr/tests/agent_stub_compiles.rs::check_routes_a_changed_constant_to_the_consumer_seam_line",
@@ -14328,6 +14331,7 @@ spec = "docs/specs/RIPR-SPEC-0210-installed-typescript-journey-fixture.md"
 tests = [
   "crates/ripr/tests/cli_smoke.rs::agent_receipt_attempt_flag_selects_one_attempt_and_refusals_name_ids",
   "crates/ripr/tests/installed_python_typescript_journeys.rs::typescript_literal_threshold_packet_is_complete_and_controls_fail_closed",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::typescript_status_warning_keeps_the_no_start_claim_for_refused_variants",
   "xtask/src/fixture_contracts/general_validators.rs::installed_typescript_fixture_tests::committed_installed_typescript_manifest_binds_the_snapshot_bytes",
   "xtask/src/fixture_contracts/general_validators.rs::installed_typescript_fixture_tests::committed_installed_typescript_scenarios_exist_in_the_executor_corpus",
   "xtask/src/fixture_contracts/general_validators.rs::installed_typescript_fixture_tests::unknown_installed_typescript_scenario_is_reported_missing",
@@ -14393,6 +14397,7 @@ tests = [
   "crates/ripr/src/mcp/server_tests.rs::window_sized_gap_item_refuses_typed_instead_of_dropping_structured_content",
   "crates/ripr/src/mcp/server_tests.rs::outer_envelope_budget_reserves_the_escaped_request_id",
   "crates/ripr/src/mcp/workspace.rs::tests::list_gaps_honors_the_id_aware_envelope_budget",
+  "crates/ripr/src/mcp/workspace.rs::tests::list_gaps_overflow_recovery_names_the_shrinkable_cause",
   "crates/ripr/src/mcp/writer.rs::tests::pinned_sdk_wraps_the_measured_envelope_within_the_outer_reserve",
   "crates/ripr/src/mcp/writer.rs::tests::request_id_escaping_is_charged_exactly_by_the_outer_budget",
   "crates/ripr/src/mcp/workspace.rs::tests::gap_list_summaries_project_readiness_matching_get_gap",
@@ -14417,6 +14422,7 @@ tests = [
   "crates/ripr/src/mcp/gaps.rs::tests::fallback_identity_uses_the_finding_id",
   "crates/ripr/src/mcp/gaps.rs::tests::complete_and_incomplete_evidence_stay_distinct",
   "crates/ripr/src/mcp/gaps.rs::tests::resource_uri_parsing_is_strict",
+  "crates/ripr/src/mcp/gaps.rs::tests::resource_id_routes_tolerate_one_trailing_slash",
   "crates/ripr/src/mcp/protocol.rs::tests::status_tool_description_names_payload_scope_and_analysis_boundary",
   "crates/ripr/src/mcp/protocol.rs::tests::tool_descriptions_state_positive_contracts_and_bounds",
   "crates/ripr/src/mcp/protocol.rs::tests::status_resource_description_states_session_not_evidence",
@@ -14437,6 +14443,7 @@ tests = [
   "crates/ripr/src/mcp/server_tests.rs::list_gaps_accepts_offset_and_limit_at_the_dispatch_edge",
   "crates/ripr/tests/mcp_stdio.rs::optional_tool_arguments_reject_null_and_recover_over_stdio",
   "crates/ripr/tests/mcp_stdio.rs::catalog_list_cursors_fail_closed_over_stdio",
+  "crates/ripr/tests/mcp_stdio.rs::malformed_catalog_cursors_preserve_protocol_validation_and_recover",
   "crates/ripr/tests/mcp_sdk.rs",
   "crates/ripr/tests/mcp_stdio.rs::gap_tools_fail_closed_before_the_first_refresh",
   "crates/ripr/tests/mcp_stdio.rs::unavailable_workspace_evidence_names_restart_before_any_refresh",
@@ -14579,6 +14586,7 @@ tests = [
   "crates/ripr/src/mcp/repair.rs::tests::missing_producer_facts_never_create_a_misleading_attempt",
   "crates/ripr/src/mcp/repair.rs::tests::stale_snapshot_and_unknown_items_fail_closed",
   "crates/ripr/src/mcp/repair.rs::tests::attempt_identity_is_root_bound",
+  "crates/ripr/src/mcp/repair.rs::tests::resource_id_routes_tolerate_one_trailing_slash",
   "crates/ripr/src/mcp/repair.rs::tests::superseded_attempt_fails_closed_after_refresh",
   "crates/ripr/src/mcp/repair.rs::tests::receipt_status_for_session_attempt_awaits_the_external_edit",
   "crates/ripr/src/mcp/repair.rs::tests::unknown_and_invalid_durable_attempts_fail_closed",
@@ -18150,6 +18158,22 @@ outputs = [
   "docs/OUTPUT_SCHEMA.md",
   "docs/EXIT_CODES.md",
   "docs/AGENT_WORKFLOWS.md",
+id = "RIPR-SPEC-0289"
+name = "Edit-cage parse-error refusal leads with the plain fix-the-syntax-error hint"
+spec = "docs/specs/RIPR-SPEC-0289-edit-cage-parse-error-hint.md"
+tests = [
+  "crates/ripr/src/cli/commands/agent.rs::tests::unparseable_selected_file_refusal_leads_with_the_plain_hint",
+  "crates/ripr/src/edit_cage/mod.rs::tests::unparseable_predicate_agrees_with_the_real_observation_and_cage",
+  "crates/ripr/src/cli/commands/agent.rs::tests::other_inline_region_refusals_do_not_lead_with_the_parse_hint",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/cli/commands/agent.rs",
+  "crates/ripr/src/edit_cage/mod.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0289-edit-cage-parse-error-hint.md",
+  "docs/REPAIR_ATTEMPT.md",
 ]
 metrics = [
   "unit_test_pass_rate",
@@ -18478,6 +18502,42 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0347"
+name = "Changed trybuild fixtures are named on stderr as not analyzed as test oracles"
+spec = "docs/specs/RIPR-SPEC-0347-trybuild-fixtures-not-analyzed-as-oracles.md"
+tests = [
+  "crates/ripr/tests/trybuild_fixture_disclosure.rs::trybuild_fixture_diff_is_named_on_stderr_without_changing_the_report",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::trybuild_crate_fixtures_are_named_with_their_paths",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::member_crate_manifest_owns_its_fixtures",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::ui_directory_in_a_crate_without_trybuild_is_not_named",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::missing_or_unparseable_manifest_names_nothing",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::target_specific_and_build_dependency_tables_count",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::trybuild_named_only_outside_dependency_tables_does_not_count",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::only_fixture_files_below_tests_ui_count",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::long_fixture_lists_are_bounded",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::nested_crate_path_uses_the_directory_owning_tests_ui",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::ambiguous_multiple_tests_ui_pairs_fail_closed",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::oversized_manifest_fails_closed",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::non_regular_manifest_path_fails_closed",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::nested_fixture_tree_is_owned_by_its_own_directory_not_an_ancestor",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::inherited_workspace_entries_never_name_fixtures",
+  "crates/ripr/tests/trybuild_fixture_disclosure.rs::inherited_workspace_trybuild_never_names_and_direct_forms_still_do",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::dependency_package_key_decides_whether_an_entry_is_trybuild",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::helper_names_any_changed_path_it_is_given_without_reading_the_fixture",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/trybuild_fixtures.rs",
+  "crates/ripr/src/analysis/pipeline.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0347-trybuild-fixtures-not-analyzed-as-oracles.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0311"
 name = "A complete TypeScript packet offers a gap-bound repair start"
 spec = "docs/specs/RIPR-SPEC-0311-gap-bound-typescript-repair-start.md"
@@ -18490,6 +18550,7 @@ tests = [
   "crates/ripr/tests/installed_python_typescript_journeys.rs::gap_bound_after_phase_stops_when_the_retry_budget_is_spent",
   "crates/ripr/tests/installed_python_typescript_journeys.rs::gap_bound_after_phase_human_output_names_closure_and_replaces_a_stale_receipt",
   "crates/ripr/tests/installed_python_typescript_journeys.rs::gap_bound_receipt_requires_the_verify_closure_and_rejects_forgery",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::typescript_status_warning_keeps_the_no_start_claim_for_refused_variants",
   "crates/ripr/src/app/repair_attempt/mod.rs::tests::gap_bound_receipt_closure_needs_a_closed_bound_gap_in_verify_and_receipt",
   "crates/ripr/src/output/agent_receipt.rs::tests::receipt_carries_bound_gap_only_when_the_verify_closure_names_its_seam",
   "crates/ripr/src/cli/agent.rs::tests::agent_repair_gap_id_parses_a_gap_bound_before_start",
@@ -18505,6 +18566,7 @@ tests = [
 fixtures = []
 code = [
   "crates/ripr/src/app/gap_bound_repair.rs",
+  "crates/ripr/src/app/task_first.rs",
   "crates/ripr/src/app/repair_attempt/mod.rs",
   "crates/ripr/src/app/agent_status.rs",
   "crates/ripr/src/app/agent_receipt.rs",

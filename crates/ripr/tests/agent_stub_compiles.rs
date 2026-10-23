@@ -1030,6 +1030,7 @@ fn fixture_files(root: &Path) -> Result<std::collections::BTreeMap<PathBuf, Vec<
                     "ambiguous-files-repeat",
                     "ambiguous-seams",
                     "ambiguous-seams-repeat",
+                    "filtered-family",
                 ]
                 .iter()
                 .any(|label| {
@@ -1416,6 +1417,72 @@ fn at_kind_stub_discloses_strongly_gripped_classification() -> Result<(), String
 }
 
 #[test]
+fn kind_suffix_refusal_does_not_claim_filtered_family_is_absent() -> Result<(), String> {
+    let scratch = Scratch::new()?;
+    let root = &scratch.directory;
+    let member = root.join("crates/a");
+    std::fs::create_dir_all(member.join("src")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/a\"]\nresolver = \"3\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        member.join("Cargo.toml"),
+        "[package]\nname = \"a\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let source = format!("{STRONGLY_GRIPPED_CLAMP}\npub fn other(n: u8) -> u8 {{ n + 1 }}\n");
+    std::fs::write(member.join("src/lib.rs"), &source).map_err(|error| error.to_string())?;
+    let other_line = source.lines().count();
+    for (at, kind, owner) in [
+        ("crates/a/src/lib.rs:2".to_string(), "predicate", "clamp_to"),
+        (format!("src/lib.rs:{other_line}"), "return_value", "other"),
+    ] {
+        let ready = run_bounded(
+            kind_refusal_command(root, &at, Some(kind)),
+            root,
+            owner,
+            Duration::from_mins(2),
+        )?;
+        assert!(
+            ready.status.success(),
+            "{}",
+            String::from_utf8_lossy(&ready.stderr)
+        );
+        let document: serde_json::Value =
+            serde_json::from_slice(&ready.stdout).map_err(|error| error.to_string())?;
+        assert_eq!(document["state"], "ready");
+        assert_eq!(document["owner"], format!("crates/a/src/lib.rs::{owner}"));
+        assert_eq!(document["written"], false);
+        if kind == "predicate" {
+            assert_eq!(document["grip_class"], "strongly_gripped");
+        }
+    }
+
+    // The suffix uses reported gaps, which omit the existing gripped predicate.
+    // Its empty nearest list cannot establish that the family has no seam.
+    let before = fixture_files(root)?;
+    let mut command = kind_refusal_command(root, "src/lib.rs:2", Some("predicate"));
+    command.arg("--write");
+    let refused = run_bounded(command, root, "filtered-family", Duration::from_mins(2))?;
+    assert_eq!(refused.status.code(), Some(3));
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    let stdout = String::from_utf8_lossy(&refused.stdout);
+    let (envelope, prose) = split_refusal_envelope(&stdout, &stderr)?;
+    assert_selector_refusal(&envelope, "seam_not_found");
+    assert_eq!(
+        envelope["refusal"]["reason"],
+        "no predicate reported gap is in the function at src/lib.rs:2; nearest: none"
+    );
+    assert!(prose.starts_with(
+        "ripr: agent stub: no predicate reported gap is in the function at src/lib.rs:2; nearest: none. Run "
+    ), "{prose}");
+    assert_eq!(fixture_files(root)?, before);
+    scratch.cleanup()
+}
+
+#[test]
 fn kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub() -> Result<(), String> {
     let scratch = kind_refusal_crate(KIND_NEAREST_SOURCE)?;
     let root = &scratch.directory;
@@ -1576,12 +1643,12 @@ fn kind_not_found_without_a_matching_family_suggests_no_other_seams() -> Result<
         .split_once(". Run ")
         .ok_or_else(|| format!("the refusal needs its follow-up route: {stderr}"))?;
     assert_eq!(
-        nearest, "",
+        nearest, "none",
         "a file with only other families must not offer their seams: {stderr}"
     );
     assert!(
         prose.starts_with(
-            "ripr: agent stub: no error_path seam ripr can stub is in the function at src/lib.rs:2; nearest: ",
+            "ripr: agent stub: no error_path seam ripr can stub is in the function at src/lib.rs:2; nearest: none",
         ),
         "{stderr}"
     );

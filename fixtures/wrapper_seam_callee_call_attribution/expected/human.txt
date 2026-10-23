@@ -26,6 +26,8 @@ Start here:
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach weak: Related tests exercise the wrapper seam's converted callee (the changed owner is not invoked by them): calls_callee_before_shadow_binding, observes_callee_outcome
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 9 more detail line(s) in --format human-full
