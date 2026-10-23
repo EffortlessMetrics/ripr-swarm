@@ -99,9 +99,20 @@ fn finding_with_files(
 
 #[test]
 fn parser_only_decoys_cannot_supply_aggregation_discrimination() -> Result<(), String> {
-    let with = effect(SOURCE, DIFF, ".or_default()")?;
-    let without = SOURCE.replace_checked("assert_eq!(parse_note(&oriented), expected);", "let _ = parse_note(&oriented);").replace_checked("assert_eq!(\n            parse_note(&format!(\"{oriented} {MODULE_AMBIGUOUS_PARENT_NEXT_STEP}\")),\n            expected\n        );", "let _ = parse_note(&format!(\"{oriented} {MODULE_AMBIGUOUS_PARENT_NEXT_STEP}\"));");
-    assert_ne!(without, SOURCE);
+    // The retained `json!(format!(..))` at line 101 nests a macro inside
+    // `json!`, which execution admission (#8927, RIPR-SPEC-0197 MacroArgument)
+    // refuses file-wide, so on the verbatim file every assertion is refused and
+    // `with == control` would prove nothing about the decoys. Bind the value
+    // first on the same line (line numbers unchanged) so the real assertions are
+    // admitted and the decoy comparison is discriminating again.
+    let source = SOURCE.replace_checked(
+        "json!(format!(\"{:x}\", Sha256::digest(&bytes)))",
+        "{ let hex = format!(\"{:x}\", Sha256::digest(&bytes)); json!(hex) }",
+    );
+    let source = source.as_str();
+    let with = effect(source, DIFF, ".or_default()")?;
+    let without = source.replace_checked("assert_eq!(parse_note(&oriented), expected);", "let _ = parse_note(&oriented);").replace_checked("assert_eq!(\n            parse_note(&format!(\"{oriented} {MODULE_AMBIGUOUS_PARENT_NEXT_STEP}\")),\n            expected\n        );", "let _ = parse_note(&format!(\"{oriented} {MODULE_AMBIGUOUS_PARENT_NEXT_STEP}\"));");
+    assert_ne!(without, source);
     assert!(!without.contains("assert_eq!(parse_note(&oriented), expected);"));
     assert!(!without.contains("parse_note(&format!(\"{oriented} {MODULE_AMBIGUOUS_PARENT_NEXT_STEP}\")),\n            expected"));
     assert!(without.contains("parse_note(&oriented)"));
@@ -121,13 +132,10 @@ fn parser_only_decoys_cannot_supply_aggregation_discrimination() -> Result<(), S
         .iter()
         .filter(|r| r["name"] == "module_note_orientation_sentence_accepts_optional_next_step")
         .collect();
-    // Execution admission (#8927) refuses the retained module's assertions
-    // (see below), so the orientation test collapses to one `same_test_file`
-    // row that lends no credit: `assertion_not_credited`, never a discriminator.
-    assert_eq!(decoys.len(), 1, "{with}");
+    assert_eq!(decoys.len(), 2, "{with}");
     for row in decoys {
         assert_eq!(row["relation_reason"], "same_test_file", "{row}");
-        assert_eq!(row["miss"], "assertion_not_credited", "{row}");
+        assert_eq!(row["miss"], "observation_unconfirmed", "{row}");
     }
     for caller in [
         "module_note_line_byte_boundary_excludes_line_terminators",
@@ -147,17 +155,36 @@ fn parser_only_decoys_cannot_supply_aggregation_discrimination() -> Result<(), S
             "missing retained control caller: {control}"
         );
     }
-    // The retained module's aggregation assertion at line 374 sits beside a
-    // `json!` invocation whose arguments mention `format`, so execution
-    // admission (#8927) cannot prove the standard macro binding and refuses it.
-    // The parser-only decoys still lend nothing: the finding is the same with
-    // and without them, and never reads as discriminated.
+    assert_eq!(with["classification"], "weakly_exposed", "{with}");
+    assert_eq!(with["ripr"]["discriminate"]["state"], "weak", "{with}");
+    // The control drops the two parser-only equalities. The retained callers'
+    // own assertions stay refused (the `if`-branch aggregation assertion is not
+    // admitted), so without the decoys nothing is admitted at all
+    // (`reachable_unrevealed`, discriminate `no`). With them the finding may rise
+    // only to the unconfirmed-observation floor above (`weakly_exposed`, `weak`):
+    // a credited decoy would read `exposed`/`yes` and fail the assertions above.
+    assert_eq!(
+        control["classification"], "reachable_unrevealed",
+        "{control}"
+    );
+    assert_eq!(control["ripr"]["discriminate"]["state"], "no", "{control}");
+    Ok(())
+}
+
+/// The verbatim retained module nests `format!` inside `json!` (line 101).
+/// Execution admission (#8927) refuses that file-wide, so the finding is
+/// `reachable_unrevealed` with no credit for any assertion, decoy or real.
+#[test]
+fn nested_macro_argument_refuses_every_assertion_in_the_retained_module() -> Result<(), String> {
+    let with = effect(SOURCE, DIFF, ".or_default()")?;
     assert_eq!(with["classification"], "reachable_unrevealed", "{with}");
     assert_eq!(with["ripr"]["discriminate"]["state"], "no", "{with}");
-    assert_eq!(with["classification"], control["classification"]);
-    assert_eq!(
-        with["ripr"]["discriminate"]["state"],
-        control["ripr"]["discriminate"]["state"]
+    let rows = with["related_tests"]
+        .as_array()
+        .ok_or("missing related tests")?;
+    assert!(
+        rows.iter().all(|r| r["miss"] == "assertion_not_credited"),
+        "{with}"
     );
     Ok(())
 }
