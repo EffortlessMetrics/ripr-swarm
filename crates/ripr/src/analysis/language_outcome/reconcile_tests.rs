@@ -357,6 +357,18 @@ fn typescript_family_duplicates_can_differ_and_are_not_a_conflict() -> Result<()
     }
     let both = both.finish();
     assert_eq!(both.validate(), Ok(()));
+    // Discriminating: a TypeScript-family label recorded twice with one
+    // complete and one blocking row is a recorded conflict that the family
+    // exemption alone lets `validate()` accept; any other label is rejected.
+    let good = repo_child(LanguageId::TypeScript, Vec::new(), 3);
+    let bad = LanguageAnalysisOutcomeV1::from_repo_err(
+        LanguageId::TypeScript,
+        "boom".to_string(),
+        LanguageRunStatus::Failed,
+    );
+    let family = repo_aggregate(vec![good, bad]);
+    assert!(family.conflicts.contains("typescript"));
+    assert_eq!(family.validate(), Ok(()));
     Ok(())
 }
 
