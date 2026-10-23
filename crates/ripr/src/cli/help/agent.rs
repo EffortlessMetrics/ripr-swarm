@@ -350,6 +350,7 @@ tests, edit files, change cache behavior, or touch LSP/MCP surfaces.
 pub(super) const AGENT_REPAIR_HELP: &str = r#"Run the before/edit/after repair transaction and its verification phase for one named gap.
 
 Usage: ripr agent repair [--root PATH] [--store PATH] --seam-id ID --phase before [--json]
+       ripr agent repair [--root PATH] [--store PATH] --gap-id ID --base REF --phase before [--json]
        ripr agent repair [--root PATH] [--store PATH] (--attempt ID|--seam-id ID) --phase after [--json]
        ripr agent repair [--root PATH] [--store PATH] --attempt ID --phase verify [--json]
            [--verify-authorized --verify-authority ID] [--verify-rollback]
@@ -377,6 +378,18 @@ Options:
                        resolves to that seam. `--phase after` keeps exact seam
                        IDs. An unmapped ID refuses with the `ripr pilot`
                        recovery route.
+  --gap-id ID          Start a repair for one canonical TypeScript preview gap
+                       (`gap:typescript:typescript_preview:...`) printed by
+                       `ripr check`; `--phase before` only, exclusive with
+                       `--seam-id`, and requires `--base`. It re-runs the
+                       diff-scoped check, refuses unless the finding's repair
+                       packet is ready, and records the check-findings
+                       snapshot; the edit cage is recorded but not enforced yet (C2b).
+                       Verify afterwards with `ripr agent verify`
+                       and its gap binding; the gap-bound `after` phase is
+                       not available. Python gaps are not repairable here.
+  --base REF           The Git base the diff-scoped check compares against;
+                       required with, and valid only for, `--gap-id`.
   --attempt ID         Select one durable repair attempt; valid for `after`
                        and `verify` (verify accepts only `--attempt`).
   --phase before|after|verify
