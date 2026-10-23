@@ -1,0 +1,22 @@
+{
+  "case_id": "mocha-weak-greaterthan-count",
+  "subject_id": "authored-ts-mocha-hooks",
+  "origin": "authored",
+  "anchor": "src/basket.ts:13",
+  "behavior_family": "return_value",
+  "test_shape": "mocha_chai_greaterthan_zero_only",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

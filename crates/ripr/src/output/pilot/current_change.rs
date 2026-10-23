@@ -279,6 +279,18 @@ impl PilotCurrentChange {
         }
     }
 
+    /// The change was taken from uncommitted tracked edits in the live working
+    /// tree, not from committed history.
+    pub(crate) fn is_uncommitted(&self) -> bool {
+        matches!(
+            self,
+            Self::Changed {
+                working_tree: true,
+                ..
+            }
+        )
+    }
+
     /// The `ripr check` flags that select this same diff.
     pub(crate) fn check_selector(&self) -> &'static str {
         match self {

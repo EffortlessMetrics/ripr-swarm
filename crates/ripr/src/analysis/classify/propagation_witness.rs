@@ -11,9 +11,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 mod collection_argument;
-pub(in crate::analysis) use collection_argument::{
-    assertion_observes_collection_argument, mutexed_assertion_observes_collection_argument,
-};
+pub(in crate::analysis) use collection_argument::assertion_observes_collection_argument;
 
 const SCHEMA_VERSION: u16 = 1;
 
@@ -486,7 +484,8 @@ pub(in crate::analysis) fn format_tail_witness(
     }
     // The file parse runs only for an owner whose tail already matched.
     let source = crate::analysis::syntax::parse_clean_source_file(owner_source?)?;
-    if crate::analysis::syntax::macro_binding_candidates(&source.tree()).may_bind("format") {
+    let bindings = crate::analysis::syntax::macro_binding_candidates(&source.tree());
+    if bindings.may_bind("format") || bindings.may_bind("write") {
         return None;
     }
     let sink = sinks.iter().find(|sink| {
@@ -495,6 +494,11 @@ pub(in crate::analysis) fn format_tail_witness(
             && sink.line == probe.location.line
             && normalize_semantic_text(&sink.text) == identity
     })?;
+    let tail_tag = if identity.starts_with("write!") {
+        "fmt_write_owner_tail"
+    } else {
+        "format_owner_tail"
+    };
     let mut witness = PropagationWitnessV1 {
         schema_version: SCHEMA_VERSION,
         behavior: BehaviorIdentity {
@@ -523,7 +527,7 @@ pub(in crate::analysis) fn format_tail_witness(
             line: sink.line,
         },
         completeness: PathCompleteness::Complete,
-        limitations: vec!["format_owner_tail".into(), "static_local_flow_only".into()],
+        limitations: vec![tail_tag.into(), "static_local_flow_only".into()],
         semantic_digest: String::new(),
     };
     witness.semantic_digest = witness.compute_semantic_digest();
@@ -537,7 +541,7 @@ fn format_owner_tail_line(
     owner: &crate::analysis::facts::FunctionSummary,
     identity: &str,
 ) -> Option<usize> {
-    use ra_ap_syntax::{AstNode, SyntaxKind, ast};
+    use ra_ap_syntax::{AstNode, SyntaxKind, ast, ast::HasName};
     let parse = crate::analysis::syntax::parse_clean_source_file(&owner.body)?;
     let function = parse.tree().syntax().children().find_map(ast::Fn::cast)?;
     let list = function.body()?.stmt_list()?;
@@ -548,7 +552,8 @@ fn format_owner_tail_line(
         return None;
     };
     let call = tail.macro_call()?;
-    if call.path()?.syntax().text() != "format" {
+    let macro_name = call.path()?.syntax().text().to_string();
+    if !matches!(macro_name.as_str(), "format" | "write") {
         return None;
     }
     let tree = call.token_tree()?;
@@ -572,6 +577,25 @@ fn format_owner_tail_line(
         _ => return None,
     };
     let mut fields = fields.into_iter();
+    if macro_name == "write" {
+        // `write!(f, "..", args)` as the whole body of a `fmt` writes its
+        // output into the owner's own formatter parameter, which is what
+        // `to_string()` and `format!("{}", ..)` read back.
+        let ast::Expr::PathExpr(sink) = fields.next()? else {
+            return None;
+        };
+        let formatter = function
+            .param_list()?
+            .params()
+            .filter_map(|param| match param.pat()? {
+                ast::Pat::IdentPat(ident) => Some(ident.syntax().text().to_string()),
+                _ => None,
+            })
+            .next()?;
+        if function.name()?.text() != "fmt" || sink.syntax().text() != formatter.as_str() {
+            return None;
+        }
+    }
     let ast::Expr::Literal(format) = fields.next()? else {
         return None;
     };
@@ -801,6 +825,9 @@ fn constructs_its_error_on_its_line(
     else {
         return false;
     };
+    // `Err(Box::new(E::V))` boxes the same variant for a `Box<dyn Error>`
+    // owner; the box is not a call that can drop the changed value.
+    let inner = super::text::unboxed_error_expression(inner);
     let call_free = !inner.trim().is_empty()
         && !inner.contains(['(', ')', '!', '|', '?', ';', '"', '\''])
         && inner.matches('{').count() <= 1
@@ -1350,7 +1377,7 @@ pub(in crate::analysis) fn assertion_field_collection_reads(
 /// The compared sides of `assertion_text`: its primary subject
 /// (`assert_eq!(subject, ..)`, `assert!(subject)`) and, for `assert_eq!`,
 /// the second operand too, since either side may hold the actual value.
-fn compared_sides(assertion_text: &str) -> Vec<String> {
+pub(in crate::analysis) fn compared_sides(assertion_text: &str) -> Vec<String> {
     let mut subjects: Vec<String> = assertion_primary_subject(assertion_text)
         .into_iter()
         .collect();
@@ -2927,6 +2954,47 @@ mod tests {
         }
     }
 
+    /// RIPR-SPEC-0175: a `Box<dyn Error>` owner returns `Err(Box::new(E::V))`;
+    /// the box is the same variant, so the on-line witness completes. A box
+    /// around a call, a `.into()` conversion and a box that does not span the
+    /// payload stay candidates.
+    #[test]
+    fn a_boxed_err_on_its_own_line_completes_the_error_witness() {
+        let complete = |expression: &str| {
+            current_path_witness_with(
+                &probe(ProbeFamily::ErrorPath, expression),
+                &[sink(
+                    FlowSinkKind::ErrorVariant,
+                    "Result::Err(ParseError::InvalidData)",
+                    10,
+                )],
+                &|_| true,
+            )
+            .is_some_and(|witness| {
+                witness.completeness == PathCompleteness::Complete
+                    && complete_direct_witness(
+                        &probe(ProbeFamily::ErrorPath, expression),
+                        Some(&witness),
+                    )
+            })
+        };
+        for expression in [
+            "return Err(Box::new(ParseError::InvalidData));",
+            "Err(Box::new(ParseError::InvalidData))",
+            "return Err(Box::new(ParseError::InvalidData { reason: why }));",
+        ] {
+            assert!(complete(expression), "{expression}");
+        }
+        for expression in [
+            "return Err(Box::new(make(ParseError::InvalidData)));",
+            "return Err(Box::new(ParseError::InvalidData).into());",
+            "return Err(Box::new(ParseError::InvalidData) as Box<dyn Error>);",
+            "return Err(ParseError::InvalidData.into());",
+        ] {
+            assert!(!complete(expression), "{expression}");
+        }
+    }
+
     /// The owner-checked `ok_or?` bypass keys on the probe line having no
     /// literal `Err(..)`; a line with both must use the ordinary edge rule.
     #[test]
@@ -3256,6 +3324,55 @@ mod tests {
         }
     }
 
+    /// RIPR-SPEC-0297: a `fmt` whose whole body is one `write!` into its own
+    /// formatter parameter has the same direct-output tail as `format!`.
+    #[test]
+    fn fmt_owner_tail_line_reads_only_a_write_into_the_formatter_parameter() {
+        let tail = "write!(f, \"{}C\", self.0)";
+        let fmt = |signature: &str, tail: &str| format!("{signature} {{\n    {tail}\n}}");
+        let signature = "fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result";
+        assert_eq!(
+            format_owner_tail_line(&constant_owner(&fmt(signature, tail)), tail),
+            Some(2)
+        );
+        for (body, expression) in [
+            // Writes into something other than the formatter parameter.
+            (
+                fmt(signature, "write!(out, \"{}C\", self.0)"),
+                "write!(out, \"{}C\", self.0)",
+            ),
+            // Not a `fmt` method.
+            (
+                fmt(
+                    "fn render(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result",
+                    tail,
+                ),
+                tail,
+            ),
+            // A statement before the tail.
+            (
+                format!("{signature} {{\n    let _x = 1;\n    {tail}\n}}"),
+                tail,
+            ),
+            // A non-literal format string.
+            (
+                fmt(signature, "write!(f, FORMAT, self.0)"),
+                "write!(f, FORMAT, self.0)",
+            ),
+            // An argument that may not evaluate plainly.
+            (
+                fmt(signature, "write!(f, \"{}\", self.0?)"),
+                "write!(f, \"{}\", self.0?)",
+            ),
+        ] {
+            assert_eq!(
+                format_owner_tail_line(&constant_owner(&body), expression),
+                None,
+                "{body}"
+            );
+        }
+    }
+
     /// #6578: an owner tail whose only opaque syntax is a closure the diff
     /// leaves unchanged completes like a closure-free tail.
     #[test]
@@ -3330,6 +3447,54 @@ mod tests {
         ] {
             let probe = changed(after, Some(before), ProbeFamily::ReturnValue);
             assert!(!witness(&probe, after, 10), "{after}");
+        }
+    }
+
+    /// RIPR-SPEC-0297: a `write!(f, ..)` tail of a `fmt` completes under its
+    /// own tag, and a file that may bind `write` (or `format`) gets nothing.
+    #[test]
+    fn format_tail_witness_completes_a_fmt_write_tail_and_refuses_a_rebound_write() {
+        let expression = "write!(f, \"{}C\", self.0)";
+        let body = format!(
+            "fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {{\n    {expression}\n}}"
+        );
+        let owner = constant_owner(&body);
+        let probe = probe_at(ProbeFamily::ReturnValue, expression, 2);
+        let sinks = super::super::local_flow_sinks(&probe, Some(&owner));
+        let witness = format_tail_witness(&probe, &owner, Some(&body), &sinks);
+        assert!(
+            complete_direct_witness(&probe, witness.as_ref()),
+            "{witness:?} {sinks:?}"
+        );
+        assert_eq!(
+            witness.map(|witness| witness.limitations),
+            Some(vec![
+                "fmt_write_owner_tail".to_string(),
+                "static_local_flow_only".to_string()
+            ])
+        );
+        for prefix in [
+            "macro_rules! write { ($($t:tt)*) => { Ok(()) }; }\n",
+            "use other::write;\n",
+            "macro_rules! format { ($($t:tt)*) => { String::new() }; }\n",
+        ] {
+            let source = format!("{prefix}{body}");
+            assert!(
+                format_tail_witness(&probe, &owner, Some(&source), &sinks).is_none(),
+                "{source}"
+            );
+        }
+        // `writeln!`, a format-less `write!` and a shadowed formatter name
+        // are not read.
+        for tail in ["writeln!(f, \"{}C\", self.0)", "write!(f, \"C\")x"] {
+            let body = format!(
+                "fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {{\n    {tail}\n}}"
+            );
+            assert_eq!(
+                format_owner_tail_line(&constant_owner(&body), tail),
+                None,
+                "{tail}"
+            );
         }
     }
 

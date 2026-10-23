@@ -203,7 +203,20 @@ fn repair_refusal(
                     format!("{label}: its existing tests already grip it (exposed) on current static evidence, so no static gap remains to repair"),
                 )
             } else if reason == RepairPacketIneligibility::RouteNotReady {
-                (RefusalKind::RouteNotReady, label.to_string())
+                // Name the evidence the route still needs, not just the gate
+                // verdict: "repair route not ready" alone sends the reader
+                // hunting for what to strengthen (#9604). The parenthetical
+                // matches the agent card's readiness line so both surfaces
+                // read the same way.
+                let missing = eligibility.readiness.missing_evidence.join("; ");
+                if missing.is_empty() {
+                    (RefusalKind::RouteNotReady, label.to_string())
+                } else {
+                    (
+                        RefusalKind::RouteNotReady,
+                        format!("{label} (missing evidence: {missing})"),
+                    )
+                }
             } else {
                 (RefusalKind::Other, label.to_string())
             }
@@ -215,13 +228,18 @@ fn repair_refusal(
 }
 
 fn ineligibility_label(reason: RepairPacketIneligibility) -> &'static str {
+    // Sentence-style labels: these render directly in "none repair-eligible
+    // (...)" lists and refusal notes, so an internal-enum spelling reads as a
+    // bug to the user (#9604).
     match reason {
-        RepairPacketIneligibility::ClassNotHeadlineEligible => "not a headline repair target",
+        RepairPacketIneligibility::ClassNotHeadlineEligible => {
+            "its class is not a repair target under the current policy"
+        }
         RepairPacketIneligibility::CrossLanguageOracleVisibilityUnresolved => {
-            "cross-language oracle visibility unresolved"
+            "ripr cannot resolve which external-language observer would notice this seam"
         }
         RepairPacketIneligibility::CrossLanguageTestTargetUnresolved => {
-            "cross-language test target unresolved"
+            "ripr cannot resolve a safe external-language test target for this seam"
         }
         RepairPacketIneligibility::RouteNotReady => "repair route not ready",
     }
@@ -566,6 +584,14 @@ impl RepairStartGate {
 
     /// `None` when the gate admits a start for `seam_id`.
     pub(crate) fn check(&self, seam_id: &str) -> Option<RepairStartRefusal> {
+        // #9103 (RIPR-SPEC-0311): a gap-bound attempt's subject is a
+        // canonical TypeScript gap id, not a Rust seam, so this seam-inventory
+        // gate has no verdict to give. Its admission is decided where the
+        // start is: the shared agent-packet validator at the gap-bound before
+        // phase, which re-checks it on every restart.
+        if super::gap_bound_repair::is_gap_bound_subject(seam_id) {
+            return None;
+        }
         #[cfg(test)]
         if self.admitted.iter().any(|id| id == seam_id) {
             return None;
@@ -627,10 +653,9 @@ fn check_state(root: &Path, state: &GateState, seam_id: &str) -> Option<RepairSt
     // The explicit-subject resolver refuses every start from a truncated
     // inventory, so no seam in one can be verified as startable.
     if truncated {
-        return Some(RepairStartRefusal::unverified(
-            "the seam inventory was truncated by the seam limit, and a start from a truncated inventory is refused"
-                .to_string(),
-        ));
+        return Some(RepairStartRefusal::unverified(format!(
+            "the seam inventory was truncated by the seam limit, and a start from a truncated inventory is refused; {WIDEN_SEAM_BUDGET}"
+        )));
     }
     let Some(entry) = classified
         .iter()
@@ -827,17 +852,38 @@ pub(crate) fn check_repair_route(
     // computed refusal is named instead of silent (#8729): a static-limited
     // finding whose seam the gate refused must not read as "analysis could
     // not decide" either.
-    let static_limited = finding.static_limit_kind.is_some()
-        || matches!(
-            finding.class,
-            crate::domain::ExposureClass::NoStaticPath
-                | crate::domain::ExposureClass::InfectionUnknown
-                | crate::domain::ExposureClass::PropagationUnknown
-                | crate::domain::ExposureClass::StaticUnknown
-        );
+    let static_limited = super::gap_bound_repair::finding_is_static_limited(finding);
+    // #9103 (RIPR-SPEC-0311): a TypeScript preview finding carries no Rust
+    // canonical gap, but its GapRecord validates through the shared
+    // agent-packet validator and starts a gap-bound attempt. The canonical
+    // gap id and the base this run analyzed are the whole start. A finding
+    // that does not validate, a static-limited one, and a run without a base
+    // keep the refusals below. Python and the other routed languages are
+    // unchanged.
+    if non_rust_language(&finding.probe.location.file) == Some("TypeScript")
+        && !static_limited
+        && let Some(base) = output.base.as_deref()
+        && let Some(record) = super::gap_bound_repair::startable_typescript_gap_record(finding)
+    {
+        return CheckRepairRoute::GapRoute(crate::app::GapRepairRoute {
+            finding_id: finding.id.clone(),
+            gap_id: record.canonical_gap_id,
+            base: base.to_string(),
+        });
+    }
     let Some(gap) = finding.canonical_gap.as_ref() else {
         return CheckRepairRoute::Refused(RepairRouteRefusal::NoCanonicalGap);
     };
+    // #9102: the seam inventory `ripr repair` binds from is built from the
+    // Rust index only. A finding in another routed language therefore has no
+    // seam to bind, whatever its gap, test node and verify command say; name
+    // that terminal state instead of the misleading "no seam binds" refusal.
+    if let Some(language) = non_rust_language(Path::new(&gap.file)) {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::NoSeamInventory {
+            language: language.to_string(),
+            file: gap.file.clone(),
+        });
+    }
     let Ok(config) = load_for_root(root) else {
         return CheckRepairRoute::Refused(RepairRouteRefusal::ConfigUnreadable);
     };
@@ -918,7 +964,65 @@ fn ineligible_repair_item(root: &Path, item: &str, seam_id: &str, reason: &str) 
     )
 }
 
+/// Display name of the routed non-Rust language a file belongs to, or
+/// `None` for Rust and for files no adapter routes. Reads the language
+/// router, the same authority the pipeline dispatches on.
+fn non_rust_language(file: &Path) -> Option<&'static str> {
+    match crate::analysis::route(file)? {
+        crate::domain::LanguageId::Rust => None,
+        language => Some(language.display_name()),
+    }
+}
+
+/// Display name of the non-Rust language a repair item names, or `None` for
+/// any other item: a canonical gap id (`gap:<language>:<file>:...`) or the
+/// preview-adapter finding id `ripr check` prints
+/// (`probe:<file>:<language>_preview:<hash>`). Reads only the typed language
+/// wire strings, never a file name.
+pub(crate) fn non_rust_item_language(item: &str) -> Option<&'static str> {
+    let wire = if let Some(rest) = item.strip_prefix("gap:") {
+        rest.split(':').next()?
+    } else {
+        let parts: Vec<&str> = item.split(':').collect();
+        match parts.as_slice() {
+            ["probe" | "repo-probe", _file, tagged, _hash] => tagged.strip_suffix("_preview")?,
+            _ => return None,
+        }
+    };
+    match crate::domain::LanguageId::from_wire(wire)? {
+        crate::domain::LanguageId::Rust => None,
+        language => Some(language.display_name()),
+    }
+}
+
+/// The precise terminal reason a finding or gap in a non-Rust language gets
+/// no repair start (#9102). `file` is the finding's file, or empty when only
+/// the gap id names the language.
+pub(crate) fn no_seam_inventory_reason(language: &str, file: &str) -> String {
+    let subject = if file.is_empty() {
+        format!("this {language} gap")
+    } else {
+        format!("this {language} finding in `{file}`")
+    };
+    let verified_route = if language == "TypeScript" {
+        // The check-findings artifact kind makes the manual TypeScript route
+        // verifiable by gap id (#9103, RIPR-SPEC-0310).
+        "; to verify the repair by gap id, save `ripr check --base <base> --format check-findings-json` before and after the edit, then run `ripr agent verify --before <before> --after <after> --gap-id <canonical gap printed by check> --json`, which reports the gap closed only when it reads exposed in the after snapshot"
+    } else {
+        ""
+    };
+    format!(
+        "the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so {subject} has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command{verified_route}"
+    )
+}
+
 fn unknown_repair_item(root: &Path, item: &str) -> String {
+    if let Some(language) = non_rust_item_language(item) {
+        return format!(
+            "repair item `{item}` names no seam in the selected root: {}",
+            no_seam_inventory_reason(language, "")
+        );
+    }
     let list = format!(
         "`ripr pilot --root {}` to list current seam IDs",
         shell_arg(&bound_root(&root.to_string_lossy()))
@@ -1346,7 +1450,14 @@ pub(crate) mod tests {
         );
         let refusal = repair_start_refusal_for_entry(root, &not_ready, policy)
             .ok_or("the shared gate must refuse a route that is not ready")?;
-        assert_eq!(refusal.reason, "repair route not ready");
+        // #9604: the verdict now names the evidence the route still needs.
+        assert!(
+            refusal
+                .reason
+                .starts_with("repair route not ready (missing evidence: "),
+            "{}",
+            refusal.reason
+        );
         assert_eq!(
             refusal.related_test.as_deref(),
             Some("`at_threshold_runs` (tests/pricing.rs:12)")
@@ -1464,7 +1575,13 @@ pub(crate) mod tests {
         // the unverified one.
         let refused = check_state(root, &loaded, &known).ok_or("known seam must be refused")?;
         assert_eq!(refused.kind, RefusalKind::RouteNotReady);
-        assert_eq!(refused.reason, "repair route not ready");
+        assert!(
+            refused
+                .reason
+                .starts_with("repair route not ready (missing evidence: "),
+            "{}",
+            refused.reason
+        );
         Ok(())
     }
 
@@ -1522,6 +1639,7 @@ pub(crate) mod tests {
             repository_head: head.to_string(),
             producer_version: "test".to_string(),
             seam_id: seam.to_string(),
+            gap_binding: None,
             created_unix_ms: created,
             artifacts: Vec::new(),
             next_command: format!("ripr agent repair --root . --attempt {id_tail} --phase after"),
@@ -1581,6 +1699,84 @@ pub(crate) mod tests {
             Some(within.repair_attempt_id.as_str().to_string())
         );
         Ok(())
+    }
+
+    /// RIPR-SPEC-0310: only TypeScript has a gap-bound verify route; Python
+    /// keeps the plain manual route of #9102.
+    #[test]
+    fn terminal_reason_names_gap_bound_verify_only_for_typescript() {
+        let typescript = no_seam_inventory_reason("TypeScript", "src/pricing.ts");
+        assert!(
+            typescript.contains("--format check-findings-json"),
+            "{typescript}"
+        );
+        assert!(typescript.contains("--gap-id"), "{typescript}");
+        let python = no_seam_inventory_reason("Python", "pricing/core.py");
+        assert!(!python.contains("check-findings-json"), "{python}");
+        assert!(
+            python.contains("run the printed verify command"),
+            "{python}"
+        );
+    }
+
+    /// #9102: a canonical gap id or preview finding id of a routed non-Rust
+    /// language is a terminal state of the delegated loop, named by the
+    /// typed language wire string.
+    #[test]
+    fn non_rust_item_language_names_gap_and_preview_probe_ids() {
+        let cases = [
+            (
+                "gap:python:pricing/core.py:bulk_discount_rate:predicate_boundary:predicate:units>=20",
+                Some("Python"),
+            ),
+            (
+                "probe:pricing_core.py:python_preview:6705c5d5",
+                Some("Python"),
+            ),
+            (
+                "repo-probe:src_discount.ts:typescript_preview:2396aec1",
+                Some("TypeScript"),
+            ),
+            (
+                "gap:typescript:typescript_preview:2396aec1",
+                Some("TypeScript"),
+            ),
+            // Discriminating negatives: Rust ids, stale-looking ids, an
+            // unknown language wire and malformed shapes stay un-named so
+            // they keep the generic stale-id guidance.
+            ("gap:rust:src/lib.rs:add:call_deletion:x", None),
+            ("probe:src_lib.rs:12:predicate", None),
+            ("probe:src_lib.rs:rust_preview:abcd1234", None),
+            ("gap:cobol:legacy.cbl:run:x", None),
+            ("probe:a_py:python_preview", None),
+            ("probe:a.py:python_preview:abcd:extra", None),
+            ("python_preview", None),
+            ("seam-discount-boundary-equality", None),
+        ];
+        for (item, expected) in cases {
+            assert_eq!(non_rust_item_language(item), expected, "item `{item}`");
+        }
+    }
+
+    /// #9102: the unknown-item message for a non-Rust gap names the
+    /// terminal reason and the manual route; a Rust-shaped stale id keeps
+    /// the stale-id guidance and never claims the terminal reason.
+    #[test]
+    fn unknown_repair_item_names_terminal_reason_only_for_non_rust_items() {
+        let root = Path::new("repo");
+        let python = unknown_repair_item(root, "probe:pricing_core.py:python_preview:6705c5d5");
+        assert!(
+            python.contains("covers Rust files only")
+                && python.contains("Python")
+                && python.contains("not a stale id"),
+            "{python}"
+        );
+        let rust = unknown_repair_item(root, "probe:src_lib.rs:12:predicate");
+        assert!(
+            rust.contains("stale or maps to no current seam")
+                && !rust.contains("covers Rust files only"),
+            "{rust}"
+        );
     }
 
     #[test]
@@ -1769,18 +1965,20 @@ pub(crate) mod tests {
     /// Every ineligibility reason keeps its own distinct, human label.
     #[test]
     fn ineligibility_labels_are_distinct_and_exact() -> Result<(), String> {
+        // #9604: labels render verbatim in user-facing refusal lists, so they
+        // must read as sentences, not internal-enum spellings.
         let labels = [
             (
                 RepairPacketIneligibility::ClassNotHeadlineEligible,
-                "not a headline repair target",
+                "its class is not a repair target under the current policy",
             ),
             (
                 RepairPacketIneligibility::CrossLanguageOracleVisibilityUnresolved,
-                "cross-language oracle visibility unresolved",
+                "ripr cannot resolve which external-language observer would notice this seam",
             ),
             (
                 RepairPacketIneligibility::CrossLanguageTestTargetUnresolved,
-                "cross-language test target unresolved",
+                "ripr cannot resolve a safe external-language test target for this seam",
             ),
             (
                 RepairPacketIneligibility::RouteNotReady,

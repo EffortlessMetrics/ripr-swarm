@@ -1,0 +1,10 @@
+diff --git a/grid_delete/core.py b/grid_delete/core.py
+--- a/grid_delete/core.py
++++ b/grid_delete/core.py
+@@ -27,5 +27,5 @@
+         self.last_event = "writes"
+ 
+     def record_eviction(self):
+-        self.evictions = self.evictions + 1
++        self.evictions += 1
+         self.last_event = "evictions"

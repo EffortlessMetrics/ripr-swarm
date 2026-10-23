@@ -1,0 +1,12 @@
+diff --git a/src/flow.rs b/src/flow.rs
+--- a/src/flow.rs
++++ b/src/flow.rs
+@@ -40,7 +40,7 @@
+ }
+ 
+ pub fn bump(x: u8) -> u8 {
+-    x.saturating_add(10)
++    x.checked_add(10).unwrap_or(u8::MAX)
+ }
+ 
+ pub fn parse_all(xs: &[&str]) -> Result<Vec<u32>, std::num::ParseIntError> {

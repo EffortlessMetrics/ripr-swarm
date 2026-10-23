@@ -41,7 +41,7 @@ routes the missing producer proof to its owning issue.
 | `schemas/ripr/rust-repair-trust-corpus.schema.json` | `0.1` | `metrics/rust-repair-trust/corpus.json`, the corpus of record read by `xtask/src/reports/rust_repair_trust.rs` | live | `metrics/rust-repair-trust/corpus.json` (the artifact itself, not a copy) | `cargo xtask check-verification-contracts --check` | `rust_repair_trust_corpus_rejects_a_non_sha_analyzed_head` | registered (attempt subschema unexercised) | The corpus `cases` array is empty today (24 exclusions, 15 observations, 0 cases), so the per-attempt subschema is registered but consumes no subject. The negative mutation exercises `exclusions[0].analyzed_head_sha`, not an attempt. Attempt-level validation becomes real evidence only once a case exists. |
 | `schemas/ripr/repair-assurance.schema.json` `#/$defs/command_spec` | `1` | `crates/ripr/src/agent/command_specs.rs` → `command_specs` in `ripr agent packet --json` | live | `fixtures/boundary_gap/expected/editor-agent-loop/agent-packet.json` `/packets/0/evidence_record/canonical_item/command_specs/receipt` | `cargo xtask check-verification-contracts --check` | `command_spec_contract_rejects_an_absolute_working_directory` | registered | — |
 | `schemas/ripr/repair-assurance.schema.json` `#/$defs/verification_command_spec` | `1` | same producer, verify route | live | same golden, `…/command_specs/verify` | `cargo xtask check-verification-contracts --check` | `verification_command_spec_contract_rejects_a_receipt_route` | registered | — |
-| `schemas/ripr/repair-assurance.schema.json` `#/$defs/execution_result` | `1` | `ripr agent verify-execute` → `crates/ripr/src/app/verification_execution.rs`, `ripr::domain::VerificationExecutionResultV1` | live | none committed — the producer only emits bytes from a real bounded execution | `cargo test -p ripr --test verification_result`; `cargo test -p ripr --test cli_smoke agent_verify_execute` | `serialized_result_conforms_to_the_published_schema` fails on a serde-defaulted field becoming schema-required | **exempt (partial)** | No committed producer-byte artifact exists. The narrower authorities are the serde↔schema field/required parity test and `VerificationExecutionResultV1::validate_against`, which enforce root, HEAD, digest, and disposition bindings the schema cannot express. Capturing a real `verify-execute` result as a committed fixture is deferred. |
+| `schemas/ripr/repair-assurance.schema.json` `#/$defs/execution_result` | `1` | `ripr agent verify-execute` → `crates/ripr/src/app/verification_execution.rs`, `ripr::domain::VerificationExecutionResultV1` | live | none committed — the producer only emits bytes from a real bounded execution | `cargo test -p ripr --test verification_result`; `cargo test -p ripr --test cli_smoke agent_verify_execute` | `serialized_result_conforms_to_the_published_schema` fails on a serde-defaulted field becoming schema-required | **exempt (partial)** | No committed producer-byte artifact exists. The narrower authorities are the serde↔schema field/required parity test and `VerificationExecutionResultV1::validate_against`, which enforce root, HEAD, digest, and disposition bindings the schema cannot express. `assert_result_matches_published_schema` in `crates/ripr/tests/cli_smoke.rs` now checks the result the real CLI commits against the schema (#9561). Capturing a real `verify-execute` result as a committed fixture is deferred. |
 | `schemas/ripr/repair-assurance.schema.json` (envelope) | `1` | none — `implementation_state` is pinned to `const "design_only"` | reserved | `fixtures/assurance_vocabulary/assurance/corpus.json` `/cases/*/record` (design corpus, **not** producer bytes) | `cargo xtask check-verification-contracts --check` | `assurance_corpus_rejects_an_absolute_command_working_directory` | registered as design corpus | No producer emits a whole `RepairAssuranceV1` record. `RIPR-SPEC-0135` and ADR 0021 reserve the envelope for a future slice that joins the static-movement, verification, receipt, and runtime-mutation axes. The corpus makes the vocabulary claim enforceable; it does not make the envelope producer-backed. |
 | `schemas/ripr/repair-attempt.schema.json` | `0.1` | `ripr agent repair --phase before` and `--phase after` → `crates/ripr/src/app/repair_attempt/mod.rs` (`write_repair_attempt_manifest`) | live | none committed — the manifest is a per-attempt runtime artifact at `target/ripr/repair-attempts/<attempt-id>/attempt.json` | `cargo test -p ripr --test python_repair_attempt` | `published_schema_conformance_rejects_manifests_the_schema_forbids`, and a schema requirement the producer does not emit fails `clean_test_only_edit_binds_prepare_and_apply` | **exempt (partial)** | No committed producer-byte artifact exists, so the xtask contract table has nothing to register. The narrower authority is `assert_manifest_matches_published_schema` in `crates/ripr/tests/python_repair_attempt.rs`, which checks bytes the real `before` and `after` phases wrote — both branches of the state-to-`after` conditional — against the published closed property set, required fields, and pinned `const` and `enum` values. It does not evaluate the schema's `pattern` constraints. Those are enforced instead by `validate_manifest` in the same module, which every read and write of a manifest passes through: it pins the `schema_version` and `kind` constants, runs `RepairAttemptId::parse` for the `repair-attempt-` plus 24-hex identity, requires a 40-character hexadecimal `repository_head`, runs `is_sha256_digest` over every artifact digest, and rejects the same state-to-`after` boundary the schema declares. The `after` block's own `attempt_id`, `repository_head`, `delta_sha256`, and `packet_sha256` are **not** covered by that validator; those shapes hold by construction only. `repair_attempt_schema_carries_terminal_after_contract` asserts what the schema declares, not that a producer matches it, so it is not a producer binding on its own. |
 | `schemas/ripr/ripr-agent-capability.schema.json` | `0.2` | `crates/ripr/src/lsp/agent_protocol.rs` — only `ripr/listActionableItems` is implemented | live (capability only) | `fixtures/lsp_agent_protocol/capability.json` | `capability_output_matches_the_published_schema` + `capability_advertises_only_implemented_handlers` in `crates/ripr/src/lsp/agent_protocol.rs` (structural producer↔schema parity) | none registered (structural parity only) | **exempt — narrower authority named** | The live `server_capability()` projection and the committed fixture are pinned against the schema by the structural parity tests above, which fail on any producer↔schema drift. Producer-state vocabulary: the capability producer is live; only the envelope schemas below stay reserved. |
@@ -118,19 +118,60 @@ rule for which bytes count:
   evidence-promotion `source_report` inputs. A document outside every binding
   that still carries a schema's `const` discriminators and required fields fails
   as an unbound lookalike until it is bound or excluded.
-- **Runtime-only rows** (`pr-evidence`, `review-comments`, `repair-attempt`,
-  the `execution_result` subschema) have no committed producer bytes. They report
+- **Runtime-only rows** (`doctor`, `pr-evidence`, `review-comments`) have no
+  committed producer bytes. They report
   `not_run` unless live artifacts are passed with `--artifact`.
 - **Exempt rows** are the reserved envelopes and the capability schema, whose
   narrower authorities are named in the audit table above.
+- **Authority rows** (`repair-attempt`, `execution_result`) have no committed
+  producer bytes either; a named test checks real producer bytes instead (see
+  below). They report `authority_only` without `--artifact`.
 
 Hand-written edge fixtures are counted apart from producer bytes, so they can
 never be a row's only subjects.
 
-The sweep is release-only. It is not a required check; replacing the required
-gate's subject selection is #3919, deferred past the 0.11 cut. Unit tests pin
-the sweep's own failure modes and that its binding table names exactly the
-published inventory.
+The sweep runs in the required Rust gate (`rust-gates.yml`, step `Schema
+producer sweep`, reached through `Ripr Rust Small Result` on a merge-ready
+request and on `main` pushes) without any new workflow or check name (#9505).
+On the candidate it validates every corpus row and feeds the runtime-only rows
+with bytes that same run produced: `doctor` from the freshly built binary on
+every run, and on pull requests and merge groups also `pr-evidence`
+(`target/ripr/pr/repo-exposure.json`) and `review-comments`
+(`target/ripr/review/comments.json`) from the PR evidence step. A missing or
+unparseable artifact fails the step, so a producer that stops writing cannot
+turn a row into `not_run`. A producer that drifts from its published schema
+(for example renaming a `doctor` field) fails the gate with
+`missing required field` / `unexpected field`. Replacing the required gate's
+hand-picked subject selection is still #3919.
+
+Reviewed narrower authority (#9561): `repair-attempt` and `execution_result`
+need an agent repair transaction, which is too heavy to add to the required
+gate, so the sweep binds them as authority rows that name the test checking
+real producer bytes. `assert_manifest_matches_published_schema` (in
+`python_repair_attempt.rs`) checks the `attempt.json` the real `ripr agent
+repair` before/after phases write, and `assert_result_matches_published_schema`
+(in `cli_smoke.rs`, run on the committed `--result-json` of the real
+`ripr agent verify-execute`) checks the execution result. Both run in the
+existing Rust test step, so this adds no time to the gate. Without `--artifact`
+an authority row reports `authority_only`; a good release replay reports
+`artifact_validated` and a bad one fails. The `repair-attempt` row still
+flags a committed document carrying its discriminators as an unbound lookalike
+(`execution_result` is a pointer binding, so that control does not apply to
+it). The sweep test
+`exempt_rows_name_authorities_that_still_exist` fails if a named helper is
+deleted or appears only once (definition without any other occurrence), or the capability test loses its `#[test]`.
+Negative experiments: `published_schema_helper_rejects_results_the_schema_forbids`
+and `published_schema_conformance_rejects_manifests_the_schema_forbids` show each
+helper rejects a missing, undeclared, out-of-enum, mistyped or malformed field.
+The helpers check closed properties, required fields, `const`, `enum`, `type`,
+`minLength`, `minimum` and the digest `pattern`; they do not evaluate
+`allOf`/`oneOf`/`if`-`then` (the `repair-attempt` helper checks its
+state-to-`after` conditional by hand and skips `pattern`). The release-packet
+replay below runs the full validator. Exempt rows (reserved envelopes and
+`ripr-agent-capability`) and authority rows are never counted as producer
+subjects validated. Unit tests pin the
+sweep's own failure modes, that its binding table names exactly the published
+inventory, and that the required gate keeps the step and its three artifacts.
 
 To feed the runtime-only rows on a candidate, run the producers in a scratch Git
 repository with one committed behavior change (for example

@@ -479,7 +479,7 @@ fn repair_explicit_ineligible_seam_refuses_without_attempt_or_lock() -> Result<(
         "refusal must name the seam:\n{stderr}"
     );
     assert!(
-        stderr.contains("not a headline repair target"),
+        stderr.contains("its class is not a repair target under the current policy"),
         "refusal must name the ineligibility reason:\n{stderr}"
     );
     assert_no_repair_attempt_side_effects(root);

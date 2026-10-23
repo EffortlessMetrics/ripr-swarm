@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/python_no_projectable_owner/input
 config: <cwd>/fixtures/python_no_projectable_owner/input/ripr.toml
 
-Summary: 1 probe (0 exposed, 1 weak, 0 unrevealed, 0 no path); 1 of 1 finding unsuppressed
+Summary: 1 probe (0 exposed, 0 weak, 0 unrevealed, 0 no path, 1 unknown); 1 of 1 finding unsuppressed
 
 Changed file(s) by language: python = 1
 
@@ -12,29 +12,39 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: this Python preview finding has no repair card (static evidence names no concrete missing discriminator), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
+  Safe next action: static limitation `missing_import_graph` keeps this Python preview finding from a repair card, so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
   File: src/constants.py:1
   Language: python
   Language status: preview
-  Static exposure: weak (severity: warning, confidence 0.40)
-  Why weak: a related test reaches this change but does not observe the exact changed value
-  Canonical gap: gap:python:src/constants.py:<module>:predicate_boundary:predicate:base_discount=12
+  Static exposure: unknown (severity: note, confidence 0.20)
+  Why unknown: the analysis could not determine a static exposure state
   Changed behavior: BASE_DISCOUNT = 12
-  Missing discriminator: Only heuristic Python test links were found for `<module>`; verify the suggested test location or add a direct pytest or unittest call with an exact-value assertion
+  Analyzer limit: Static limit `missing_import_graph`: the changed line is a module-level statement (a constant, decorator argument or conditional definition) that runs when a test imports the…
   Related test: tests/test_constants.py:4 test_base_discount
-  Evidence: reach weak · infection yes · propagation weak · observation weak · discriminator weak
+  Evidence: reach weak · infection unknown · propagation unknown · observation weak · discriminator unknown
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach weak: 1 heuristic Python test link(s) found for owner `<module>`; relation is uncertain
-    - infection yes: Changed Python expression can alter preview-classified predicate behavior: `BASE_DISCOUNT = 12`
-    - 5 more detail line(s) in --format human-full
+    - infection unknown: Static limit `missing_import_graph` prevents a safe Python infection claim
+    - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_no_projectable_owner/input --diff <cwd>/fixtures/python_no_projectable_owner/diff.patch --mode fast probe:src_constants.py:python_preview:c16b4583
   ripr context --root <cwd>/fixtures/python_no_projectable_owner/input --diff <cwd>/fixtures/python_no_projectable_owner/diff.patch --mode fast --at probe:src_constants.py:python_preview:c16b4583
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_constants.py:python_preview:c16b4583 --root <cwd>/fixtures/python_no_projectable_owner/input` for the full gate's answer
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_constants.py:python_preview:c16b4583 --root <cwd>/fixtures/python_no_projectable_owner/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 
+
+Note: ripr could not classify any of the 1 changed expression(s) in this diff well enough to
+  establish a static test path. Scope analyzed: 1 changed expression(s) and 1 statically linked
+  related test(s). This is not a coverage assessment. A test may already exercise these changes
+  through macros, helper-call chains, or integration tests that ripr's static model does not yet
+  trace; if none does, add co-located tests that observe the changed behavior.
 
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

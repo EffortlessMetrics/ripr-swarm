@@ -1,0 +1,103 @@
+pub trait Shape {
+    fn area(&self) -> u32;
+}
+
+pub struct Square(pub u32);
+
+impl Shape for Square {
+    fn area(&self) -> u32 {
+        self.0 * self.0
+    }
+}
+
+pub struct Tile(pub u32);
+
+impl Shape for Tile {
+    fn area(&self) -> u32 {
+        self.0 * self.0
+    }
+}
+
+pub fn largest<T: PartialOrd + Copy>(xs: &[T]) -> T {
+    let mut best = xs[0];
+    for &x in xs {
+        if x > best {
+            best = x;
+        }
+    }
+    best
+}
+
+pub fn total<const N: usize>(values: [u32; N]) -> u32 {
+    values.iter().sum()
+}
+
+pub fn total_empty<const N: usize>(values: [u32; N]) -> u32 {
+    values.iter().sum()
+}
+
+pub fn evens(limit: u32) -> impl Iterator<Item = u32> {
+    (0..limit).filter(|n| n % 2 == 0)
+}
+
+pub trait Limits {
+    const MAX: u32;
+
+    fn clamp(v: u32) -> u32 {
+        if v > Self::MAX {
+            Self::MAX
+        } else {
+            v
+        }
+    }
+}
+
+pub struct Small;
+
+impl Limits for Small {
+    const MAX: u32 = 10;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn square_area_through_dyn() {
+        let shapes: Vec<Box<dyn Shape>> = vec![Box::new(Square(3))];
+        assert_eq!(shapes[0].area(), 9);
+    }
+
+    #[test]
+    fn tile_area_through_dyn() {
+        let shapes: Vec<Box<dyn Shape>> = vec![Box::new(Tile(2))];
+        assert_eq!(shapes[0].area(), 4);
+    }
+
+    #[test]
+    fn largest_of_ints_and_floats() {
+        assert_eq!(largest(&[3, 9, 2]), 9);
+        assert_eq!(largest(&[1.5, 0.5]), 1.5);
+    }
+
+    #[test]
+    fn total_of_three() {
+        assert_eq!(total([2, 3, 4]), 9);
+    }
+
+    #[test]
+    fn total_of_none() {
+        assert_eq!(total_empty([]), 0);
+    }
+
+    #[test]
+    fn evens_below_seven() {
+        assert_eq!(evens(7).collect::<Vec<_>>(), vec![0, 2, 4, 6]);
+    }
+
+    #[test]
+    fn small_clamps_and_passes() {
+        assert_eq!(Small::clamp(50), 10);
+        assert_eq!(Small::clamp(5), 5);
+    }
+}
