@@ -80,8 +80,7 @@ pub(in crate::analysis) fn assertion_out_parameter(
             local_written_by_owner_call(
                 owner,
                 &out_parameters,
-                &impl_type,
-                impl_trait.as_deref(),
+                (impl_type.as_str(), impl_trait.as_deref()),
                 test,
                 assertion,
                 &operand,
@@ -239,8 +238,7 @@ fn name_written_in(body: &SyntaxNode, name: &str) -> bool {
 fn local_written_by_owner_call(
     owner: &FunctionSummary,
     out_parameters: &[(usize, String)],
-    impl_type: &str,
-    impl_trait: Option<&str>,
+    (impl_type, impl_trait): (&str, Option<&str>),
     test: &TestSummary,
     assertion: &OracleFact,
     local: &str,
