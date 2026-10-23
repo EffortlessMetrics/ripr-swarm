@@ -552,9 +552,10 @@ suggested write cannot fail on the same missing base.
 ### Plain wording for an unconfirmed observation (#9244)
 
 The producer's `observation` and `discriminator` stage summaries carry the
-machine marker `observation_unverified`. The per-finding human evidence lines
-(the single-finding blocks of bounded and `human-full` output, and
-`ripr explain`) remove only the producer-appended marker, at the fixed
+machine marker `observation_unverified`. Both human evidence routes, the
+per-finding lines (the single-finding blocks of bounded and `human-full`
+output, and `ripr explain`) and the grouped rows of the shared multi-finding
+catalogue, remove only the producer-appended marker, at the fixed
 position each producer emits it: the trailing ` (observation_unverified)`
 suffix, the Python adapter's fixed `(observation_unverified).` sentence forms,
 and the TypeScript adapter's exact strong-oracle-no-flow summary (whose token
@@ -565,10 +566,10 @@ so source text a summary embeds (identifiers, quoted literals, backticks of
 any parity) is never modified. The JSON stage summaries and the shared
 discriminator evidence line keep the marker unchanged, because downstream
 consumers key on it. With two or more owner-bearing findings, `human-full`
-renders every evidence row through the shared catalogue, a separate projection
-that this change does not touch; every row of that multi-finding catalogue is
-covered by #9928. The TypeScript controls run the built binary on the boundary-gap shape with the
-token as a parameter name and as part of a longer identifier; the Python controls
+renders every evidence row through the shared catalogue; those rows apply the
+same rewrite as the per-finding lines. The TypeScript controls run the built
+binary on the boundary-gap shape with the token as a parameter name and as part
+of a longer identifier; the Python controls
 run it on the error-path shape with the raised message as an unpaired-backtick
 string and as the bare token. All require the producer's `missing proof`
 expression to print unchanged in the human Evidence row.
@@ -626,6 +627,7 @@ or the agent packet routes. Those, with the python `classify.rs:686` and
 
 - `crates/ripr/src/output/human.rs::tests::human_evidence_spells_the_unconfirmed_observation_in_words`
 - `crates/ripr/src/output/human.rs::tests::plain_observation_wording_handles_each_producer_form`
+- `crates/ripr/src/output/human.rs::tests::shared_evidence_rows_spell_the_unconfirmed_observation_in_words`
 - `crates/ripr/src/output/human.rs::tests::plain_wording_leaves_backticked_source_literals_alone`
 - `crates/ripr/src/output/human.rs::tests::plain_observation_wording_never_modifies_embedded_source_text`
 - `crates/ripr/tests/observation_wording_python_literals.rs::single_backtick_before_the_token_prints_as_written`

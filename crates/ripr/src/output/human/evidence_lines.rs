@@ -102,46 +102,29 @@ pub(super) fn plain_observation_wording(text: &str) -> String {
     text.to_string()
 }
 
-/// The stage summary as the human window shows it. Only the producer's summary
-/// text is rewritten, before it is embedded in a line, so backticked source
-/// literals the line adds around it are never touched.
-fn summary_text(plain: bool, summary: &str) -> String {
-    if plain {
-        plain_observation_wording(summary)
-    } else {
-        summary.to_string()
-    }
-}
-
 pub(super) fn evidence_path_lines(finding: &Finding, wording: JsonPointerWording) -> Vec<String> {
-    evidence_path(finding, wording, true, |text, _| text)
+    evidence_path(finding, wording, |text, _| text)
 }
 
 pub(super) fn evidence_path_entries(finding: &Finding, with_keys: bool) -> Vec<EvidenceEntry> {
-    evidence_path(
-        finding,
-        JsonPointerWording::CheckFlag,
-        false,
-        |text, source| {
-            // Multi-line literals retain their existing rendering locally and cannot
-            // forge a catalogue definition or generated reference.
-            let key = if !with_keys
-                || matches!(source, EvidenceSource::Window)
-                || text.contains(['\n', '\r'])
-            {
-                None
-            } else {
-                serde_json::to_vec(&(source, &text)).ok()
-            };
-            EvidenceEntry { text, key }
-        },
-    )
+    evidence_path(finding, JsonPointerWording::CheckFlag, |text, source| {
+        // Multi-line literals retain their existing rendering locally and cannot
+        // forge a catalogue definition or generated reference.
+        let key = if !with_keys
+            || matches!(source, EvidenceSource::Window)
+            || text.contains(['\n', '\r'])
+        {
+            None
+        } else {
+            serde_json::to_vec(&(source, &text)).ok()
+        };
+        EvidenceEntry { text, key }
+    })
 }
 
 fn evidence_path<T>(
     finding: &Finding,
     wording: JsonPointerWording,
-    plain: bool,
     mut project: impl FnMut(String, EvidenceSource<'_>) -> T,
 ) -> Vec<T> {
     let mut lines = vec![
@@ -173,14 +156,14 @@ fn evidence_path<T>(
             format!(
                 "observation {}: {}",
                 finding.ripr.reveal.observe.state.as_str(),
-                summary_text(plain, &finding.ripr.reveal.observe.summary)
+                plain_observation_wording(&finding.ripr.reveal.observe.summary)
             ),
             EvidenceSource::Stage("observation", &finding.ripr.reveal.observe),
         ),
         project(
             crate::output::discriminator_line::discriminator_evidence_line_with_summary(
                 finding,
-                &summary_text(plain, &finding.ripr.reveal.discriminate.summary),
+                &plain_observation_wording(&finding.ripr.reveal.discriminate.summary),
             ),
             EvidenceSource::Discriminator(
                 &finding.ripr.reveal.discriminate,

@@ -647,14 +647,22 @@ fn optional_tool_arguments_reject_null_and_recover_over_stdio() -> Result<(), St
         let expected_message = format!(
             "{field} must be a {}",
             if *kind == "integer" {
-                "non-negative integer"
+                "whole JSON integer"
             } else {
                 "string"
             }
         );
+        let message = rejected
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let message_matches = if *kind == "integer" {
+            message.starts_with(expected_message.as_str()) && message.ends_with(", not null")
+        } else {
+            message == expected_message
+        };
         if rejected.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
-            || rejected.pointer("/error/message").and_then(Value::as_str)
-                != Some(expected_message.as_str())
+            || !message_matches
             || rejected.get("result").is_some()
         {
             return Err(format!(
@@ -1169,6 +1177,80 @@ fn malformed_params_of_a_served_method_answer_invalid_params_and_the_session_rec
             "session must recover after rejections: {}",
             responses[4]
         ));
+    }
+    Ok(())
+}
+
+#[test]
+fn non_object_params_keep_the_request_id_and_the_session_recovers() -> Result<(), String> {
+    let root = workspace_root()?;
+    let mut request_bytes = line(json!({
+        "jsonrpc": "2.0", "id": "discover", "method": "server/discover",
+        "params": { "_meta": current_meta() }
+    }))?;
+    let mut expected: Vec<Value> = Vec::new();
+    let shapes = [
+        json!("oops"),
+        json!(7),
+        json!([1, 2]),
+        json!(true),
+        json!(1.5),
+    ];
+    let methods = ["tools/list", "tools/call", "resources/read"];
+    for (index, shape) in shapes.iter().enumerate() {
+        let method = methods[index % methods.len()];
+        let id = if index % 2 == 0 {
+            json!(100 + index)
+        } else {
+            json!(format!("req-{index}"))
+        };
+        request_bytes.extend(line(json!({
+            "jsonrpc": "2.0", "id": id, "method": method, "params": shape
+        }))?);
+        expected.push(id);
+    }
+    request_bytes.extend(line(json!({
+        "jsonrpc": "2.0", "id": "recovered-status", "method": "resources/read",
+        "params": { "_meta": current_meta(), "uri": "ripr://workspace/status" }
+    }))?);
+    let output = run_mcp(&root, &[&request_bytes])?;
+    let responses = response_lines(&output)?;
+    if responses.len() != expected.len() + 2 {
+        return Err(format!(
+            "expected {} MCP responses, got {}: {responses:?}",
+            expected.len() + 2,
+            responses.len()
+        ));
+    }
+    if responses[0].get("id") != Some(&json!("discover")) {
+        return Err(format!(
+            "first response must answer the discover request: {}",
+            responses[0]
+        ));
+    }
+    for (index, id) in expected.iter().enumerate() {
+        let response = &responses[index + 1];
+        if response.get("id") != Some(id) {
+            return Err(format!(
+                "non-object params rejection must echo request id {id}: {response}"
+            ));
+        }
+        // A frame the SDK cannot type is Invalid Request (docs/interop/mcp.md),
+        // and it keeps the request id (#8725) so the client can correlate it.
+        if response.pointer("/error/code").and_then(Value::as_i64) != Some(-32600) {
+            return Err(format!(
+                "non-object params rejection for {id} must use -32600: {response}"
+            ));
+        }
+    }
+    let last = &responses[expected.len() + 1];
+    if last.get("id") != Some(&json!("recovered-status")) {
+        return Err(format!(
+            "last response must answer the recovered-status request: {last}"
+        ));
+    }
+    if last.get("result").is_none() {
+        return Err(format!("session must recover after rejections: {last}"));
     }
     Ok(())
 }
@@ -3159,6 +3241,137 @@ fn list_gaps_bounds_the_echoed_unknown_class_token() -> Result<(), String> {
                 reply.get("id")
             ));
         }
+    }
+    Ok(())
+}
+
+/// Send one `tools/call` whose `arguments` object is raw JSON text, so number
+/// literals such as `18446744073709551616` and `1e30` reach the server exactly
+/// as a client could write them. A `serde_json::Value` cannot hold
+/// `18446744073709551616` as an integer (it degrades to floating-point data,
+/// as `1e30` also is), so it could not state the literal the client wrote.
+fn call_tool_with_raw_arguments(
+    session: &mut SequentialStdio,
+    id: &str,
+    tool: &str,
+    arguments: &str,
+) -> Result<Value, String> {
+    let meta = serde_json::to_string(&current_meta()).map_err(|error| error.to_string())?;
+    let request = format!(
+        "{{\"jsonrpc\":\"2.0\",\"id\":\"{id}\",\"method\":\"tools/call\",\"params\":{{\"name\":\"{tool}\",\"arguments\":{arguments},\"_meta\":{meta}}}}}\n"
+    );
+    session.send_raw(request.as_bytes())?;
+    let deadline = Instant::now() + Duration::from_mins(1);
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let reply = session.next_reply(remaining)?;
+        if reply.get("id").and_then(Value::as_str) == Some(id) {
+            return Ok(reply);
+        }
+    }
+}
+
+/// #9895: every malformed `limit` states the real constraint (a whole JSON
+/// integer in the accepted range) and a recovery, instead of the old single
+/// "must be a non-negative integer" sentence that also answered `limit:
+/// 18446744073709551616` (which is non-negative and an integer) and `-1`
+/// (which the sentence did not name as the problem). `ripr_list_gaps` accepts
+/// up to this platform's `usize::MAX` (the effective bound `data.maximum`, the
+/// message and the recovery all name); `ripr_list_repair_attempts` caps at 256.
+#[test]
+fn limit_errors_state_the_real_constraint_and_recovery_over_stdio() -> Result<(), String> {
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    let root = install_b4_repair_ready_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+    let too_large = "is larger than the largest accepted integer";
+    let whole = "must be a whole JSON integer";
+    let platform_max = u64::try_from(usize::MAX).unwrap_or(u64::MAX);
+    // (tool, literal, message fragment, expected data.maximum); the
+    // effective maximum is capped at this platform's usize::MAX
+    let cases: [(&str, &str, &str, u64); 12] = [
+        (
+            "ripr_list_gaps",
+            "0",
+            "limit must be at least 1",
+            platform_max,
+        ),
+        ("ripr_list_gaps", "-1", "-1 is negative", platform_max),
+        (
+            "ripr_list_gaps",
+            "1.5",
+            "without a fraction or exponent, not 1.5",
+            platform_max,
+        ),
+        ("ripr_list_gaps", "\"10\"", "not a string", platform_max),
+        (
+            "ripr_list_gaps",
+            "18446744073709551616",
+            too_large,
+            platform_max,
+        ),
+        ("ripr_list_gaps", "1e30", too_large, platform_max),
+        ("ripr_list_gaps", "null", "not null", platform_max),
+        ("ripr_list_repair_attempts", "-1", "-1 is negative", 256),
+        ("ripr_list_repair_attempts", "\"10\"", whole, 256),
+        (
+            "ripr_list_repair_attempts",
+            "18446744073709551615",
+            "limit must be at most 256",
+            256,
+        ),
+        (
+            "ripr_list_repair_attempts",
+            "18446744073709551616",
+            too_large,
+            256,
+        ),
+        ("ripr_list_repair_attempts", "1e30", too_large, 256),
+    ];
+    for (tool, literal, fragment, maximum) in cases {
+        let reply = call_tool_with_raw_arguments(
+            &mut session,
+            "bad-limit",
+            tool,
+            &format!("{{\"limit\":{literal}}}"),
+        )?;
+        let message = reply
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let data = reply.pointer("/error/data").cloned().unwrap_or(Value::Null);
+        let recovery = data
+            .pointer("/recovery")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
+            || !message.contains(fragment)
+            || message.contains("non-negative integer")
+            || data.pointer("/argument") != Some(&json!("limit"))
+            || data.pointer("/minimum") != Some(&json!(1))
+            || data.pointer("/maximum") != Some(&json!(maximum))
+            || !recovery.contains(&format!("from 1 to {maximum}"))
+        {
+            return Err(format!(
+                "{tool} limit {literal} must name its constraint: {reply}"
+            ));
+        }
+    }
+    // The largest accepted value is a valid request, not an error.
+    let reply = call_tool_with_raw_arguments(
+        &mut session,
+        "max-limit",
+        "ripr_list_gaps",
+        &format!("{{\"limit\":{platform_max}}}"),
+    )?;
+    if reply.get("error").is_some() {
+        return Err(format!("usize::MAX is an accepted limit: {reply}"));
+    }
+    // The session survives the whole sweep.
+    let reply = session.call_tool("after", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
+    if reply.get("error").is_some() {
+        return Err(format!("the session must survive bad limits: {reply}"));
     }
     Ok(())
 }
