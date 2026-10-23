@@ -56,8 +56,14 @@ fn assert_entry_related(label: &str, owner_source: &str, test_source: &str) -> R
         finding.related_tests
     );
     assert_eq!(finding.ripr.reach.state, StageState::Yes, "{label}");
-    // Indirect reach never reaches `exposed` on its own.
-    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+    // Indirect reach never reaches `exposed` on its own, and an exact oracle
+    // behind an entry is unknown, not an actionable gap (#9290).
+    assert_eq!(finding.class, ExposureClass::StaticUnknown, "{label}");
+    assert_eq!(
+        finding.stop_reasons,
+        [StopReason::PropagationEvidenceUnknown],
+        "{label}"
+    );
     assert!(
         finding
             .missing

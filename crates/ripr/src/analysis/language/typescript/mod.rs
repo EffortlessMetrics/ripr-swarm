@@ -63,8 +63,8 @@ mod bounded_read;
 mod bun_bridge;
 #[cfg(test)]
 mod capability_disposition_tests;
-mod class_entries;
 mod catch_arm_guard;
+mod class_entries;
 mod classifier;
 mod committed_snapshot;
 mod custom_matcher_guard;
