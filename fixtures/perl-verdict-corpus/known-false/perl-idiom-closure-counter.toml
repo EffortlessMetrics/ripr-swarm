@@ -1,0 +1,3 @@
+case = "perl-idiom-closure-counter"
+issue = 9416
+reason = "False actionable: the closure's captured initialiser is read as a reachable_unrevealed gap though the subject's exact is() on the closure's calls pins it."
