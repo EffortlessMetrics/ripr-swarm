@@ -2197,6 +2197,15 @@ fn parse_demo<'a>(xs: &'a str) {
                 "--static-json",
                 "hidden alias of --repo-exposure-json",
             ),
+            // `mcp --help --all` is rejected with a route to the documented
+            // extended help (#9867); `--all` is not an accepted mcp flag, so
+            // it owns no Options entry — the help body names the supported
+            // route in the rejection text itself.
+            (
+                "mcp",
+                "--all",
+                "rejected with --help; extended help is `ripr help --all`",
+            ),
         ];
 
         for (body, commands) in &groups {
