@@ -49,6 +49,8 @@ const DYNAMIC_WORDS: &[&str] = &[
     "lambda",
     "partial",
     "usefixtures",
+    "builtins",
+    "__builtins__",
 ];
 
 /// The `unittest.TestCase` methods a test may call without reaching project
@@ -147,9 +149,18 @@ pub(super) fn row_reaches_owner_only_by_direct_calls(
     {
         return false;
     }
+    // `import builtins` can rewrite what a bare builtin name means.
+    if test
+        .imports
+        .iter()
+        .any(|import| import.imported == "builtins" || import.source_module == "builtins")
+    {
+        return false;
+    }
     let Some(code) = code_only(&test.body_text) else {
         return false;
     };
+    let plain_locals = plain_locals(&code, test);
     if DYNAMIC_WORDS.iter().any(|word| contains_word(&code, word)) {
         return false;
     }
@@ -231,8 +242,166 @@ pub(super) fn row_reaches_owner_only_by_direct_calls(
         if !safe {
             return false;
         }
+        // A trusted call must not carry a project callable by reference
+        // (`pytest.raises(E, probe, ...)`, `sorted(x, key=probe)`): its
+        // arguments may only be literals, safe builtins, builtin exceptions,
+        // plain locals and nested calls (vetted on their own turn).
+        let Some(args) = call_arguments(&code, idx) else {
+            return false;
+        };
+        if !arguments_are_closed(args, test, &plain_locals) {
+            return false;
+        }
     }
     true
+}
+
+/// The argument text of the call whose name ends at `name_end`, up to its
+/// matching parenthesis.
+fn call_arguments(code: &str, name_end: usize) -> Option<&str> {
+    let rest = &code[name_end..];
+    let open = name_end + (rest.len() - rest.trim_start().len());
+    if !code[open..].starts_with('(') {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (offset, ch) in code[open..].char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&code[open + 1..open + offset]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Builtin exception classes a test may name uncalled (`pytest.raises(E)`).
+const BUILTIN_EXCEPTIONS: &[&str] = &[
+    "ArithmeticError",
+    "AssertionError",
+    "AttributeError",
+    "DeprecationWarning",
+    "Exception",
+    "IndexError",
+    "KeyError",
+    "LookupError",
+    "NotImplementedError",
+    "OverflowError",
+    "RuntimeError",
+    "RuntimeWarning",
+    "StopIteration",
+    "TypeError",
+    "UserWarning",
+    "ValueError",
+    "ZeroDivisionError",
+];
+
+fn is_literal_word(ident: &str) -> bool {
+    matches!(
+        ident,
+        "True" | "False" | "None" | "and" | "or" | "not" | "in" | "is" | "if" | "else" | "for"
+    )
+}
+
+fn is_unshadowed_builtin(test: &PythonTest, ident: &str) -> bool {
+    (SAFE_BARE_CALLS.contains(&ident) || BUILTIN_EXCEPTIONS.contains(&ident))
+        && !builtin_is_shadowed(test, ident)
+}
+
+/// Every identifier in `args` (apart from keyword labels and called names) is
+/// a literal word, an unshadowed builtin or exception, or a plain local.
+fn arguments_are_closed(args: &str, test: &PythonTest, plain_locals: &[String]) -> bool {
+    let bytes = args.as_bytes();
+    let mut idx = 0usize;
+    while idx < bytes.len() {
+        let byte = bytes[idx];
+        if byte.is_ascii_digit() {
+            // A numeric literal, including exponents and separators.
+            while idx < bytes.len()
+                && (bytes[idx] == b'_' || bytes[idx] == b'.' || bytes[idx].is_ascii_alphanumeric())
+            {
+                idx += 1;
+            }
+            continue;
+        }
+        if !(byte == b'_' || byte.is_ascii_alphabetic()) {
+            idx += 1;
+            continue;
+        }
+        let start = idx;
+        while idx < bytes.len() && (bytes[idx] == b'_' || bytes[idx].is_ascii_alphanumeric()) {
+            idx += 1;
+        }
+        let ident = &args[start..idx];
+        let after = args[idx..].trim_start();
+        // A called name is vetted by the caller's own scan.
+        if after.starts_with('(') {
+            continue;
+        }
+        // A keyword label (`key=`, `match=`) names no object.
+        if after.starts_with('=') && !after.starts_with("==") {
+            continue;
+        }
+        // An attribute read can name a project callable.
+        if args[..start].trim_end().ends_with('.') {
+            return false;
+        }
+        if is_literal_word(ident)
+            || is_unshadowed_builtin(test, ident)
+            || plain_locals.iter().any(|local| local == ident)
+        {
+            continue;
+        }
+        return false;
+    }
+    true
+}
+
+/// Locals the test assigns exactly once from an expression made only of
+/// literals, unshadowed builtins and earlier plain locals, and never rebinds
+/// through a loop, `with ... as`, `def` or walrus.
+fn plain_locals(code: &str, test: &PythonTest) -> Vec<String> {
+    let mut plain: Vec<String> = Vec::new();
+    for line in code.lines() {
+        let line = line.trim();
+        let Some((target, rhs)) = line.split_once('=') else {
+            continue;
+        };
+        if rhs.starts_with('=') || target.ends_with(['!', '<', '>', '=', '+', '-', '*', '/']) {
+            continue;
+        }
+        let name = target.trim();
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+            || name.starts_with(|ch: char| ch.is_ascii_digit())
+        {
+            continue;
+        }
+        let assignments = code
+            .lines()
+            .filter(|other| {
+                other.trim().strip_prefix(name).is_some_and(|rest| {
+                    rest.trim_start().starts_with('=') && !rest.trim_start().starts_with("==")
+                })
+            })
+            .count();
+        let rebound = ["for ", "as ", "def ", "global ", "nonlocal "]
+            .iter()
+            .any(|marker| code.contains(&format!("{marker}{name}")))
+            || code.contains(&format!("{name} :="))
+            || code.contains(&format!("({name}:="));
+        if assignments == 1 && !rebound && arguments_are_closed(rhs, test, &plain) {
+            plain.push(name.to_string());
+        }
+    }
+    plain
 }
 
 /// A framework API call on a receiver whose identity is established:

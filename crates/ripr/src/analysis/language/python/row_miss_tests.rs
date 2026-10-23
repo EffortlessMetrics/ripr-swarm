@@ -358,12 +358,71 @@ fn rebound_builtin_or_foreign_receiver_api_never_gets_missing_input() -> Result<
 }
 
 #[test]
+fn callable_passed_by_reference_to_a_trusted_call_never_gets_missing_input() -> Result<(), String> {
+    let body = "def test_subject():\n    assert can_reserve(5, 3) == True\n    ";
+    let probe = "from src.helpers import boundary_probe\n";
+    for (label, imports, subject) in [
+        (
+            "pytest.raises with a callable argument",
+            format!("import pytest\n{probe}"),
+            format!("{body}with pytest.raises(ValueError):\n        pass\n    pytest.raises(ValueError, boundary_probe, [1])\n"),
+        ),
+        (
+            "assertRaises with a callable argument",
+            format!("import unittest\n{probe}"),
+            "class T(unittest.TestCase):\n    def test_subject(self):\n        self.assertEqual(can_reserve(5, 3), True)\n        self.assertRaises(ValueError, boundary_probe, [1])\n".to_string(),
+        ),
+        (
+            "sorted with key=callable",
+            probe.to_string(),
+            format!("{body}sorted([1], key=boundary_probe)\n"),
+        ),
+        (
+            "max with key=callable",
+            probe.to_string(),
+            format!("{body}max([1], key=boundary_probe)\n"),
+        ),
+        (
+            "key= an attribute of a project module",
+            "import src.helpers as receiver\n".to_string(),
+            format!("{body}sorted([1], key=receiver.boundary_probe)\n"),
+        ),
+        (
+            "key= a local bound from an import",
+            probe.to_string(),
+            format!("{body}fn = boundary_probe\n    sorted([1], key=fn)\n"),
+        ),
+    ] {
+        assert_subject_withheld(&imports, &subject, label)?;
+    }
+    // A module that imports `builtins` can rewrite any bare builtin, so the
+    // whole file withholds the claim, control row included.
+    let finding = reserve_case(&format!(
+        "import builtins\n{probe}def test_control():\n    assert can_reserve(5, 3) == True\n\n{body}builtins.list = boundary_probe\n    list([1])\n"
+    ))?;
+    assert!(
+        finding
+            .related_tests
+            .iter()
+            .all(|row| row.miss != Some(RelatedTestMiss::MissingInput)),
+        "{:?}",
+        misses(&finding)
+    );
+    Ok(())
+}
+
+#[test]
 fn genuine_framework_and_builtin_calls_keep_the_claim() -> Result<(), String> {
     for (label, imports, tests) in [
         (
             "plain builtins",
             "",
             "def test_a():\n    assert can_reserve(5, 3) == True\n    assert sum([1]) == 1\n    assert len(list([1])) == 1\n",
+        ),
+        (
+            "plain local and a builtin key",
+            "",
+            "def test_a():\n    assert can_reserve(5, 3) == True\n    values = [3, 1, 2]\n    assert sorted(values) == [1, 2, 3]\n    assert max(values, key=len) == 1 or True\n",
         ),
         (
             "pytest.approx via the real import",

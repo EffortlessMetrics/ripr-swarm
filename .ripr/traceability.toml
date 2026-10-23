@@ -14968,6 +14968,7 @@ tests = [
   "crates/ripr/src/analysis/language/python/row_miss_tests.rs::unresolved_row_inside_a_boundary_gap_does_not_borrow_a_sibling_fact",
   "crates/ripr/src/analysis/language/python/row_miss_tests.rs::boundary_input_row_makes_the_finding_exposed_with_no_row_miss",
   "crates/ripr/src/analysis/language/python/row_miss_tests.rs::rebound_builtin_or_foreign_receiver_api_never_gets_missing_input",
+  "crates/ripr/src/analysis/language/python/row_miss_tests.rs::callable_passed_by_reference_to_a_trusted_call_never_gets_missing_input",
   "crates/ripr/src/analysis/language/python/row_miss_tests.rs::genuine_framework_and_builtin_calls_keep_the_claim",
   "crates/ripr/src/analysis/language/python/row_miss_tests.rs::helper_owner_call_row_keeps_no_miss_inside_a_weak_finding",
   "crates/ripr/src/analysis/language/python/row_miss_tests.rs::direct::a_static_limit_keeps_every_row_none_even_when_the_class_says_weak",
