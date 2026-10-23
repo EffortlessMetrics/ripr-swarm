@@ -544,19 +544,38 @@ pub(crate) fn budget_items(
         .collect()
 }
 
+/// Tolerate exactly one trailing slash on a captured resource id (#9895).
+/// Clients — especially LLMs hand-assembling `ripr://` links — not
+/// uncommonly produce `ripr://gap/{id}/`; every id-bearing resource route
+/// normalizes that single slash instead of answering `item_not_found` for
+/// an id that merely looks typo'd. Two trailing slashes still miss: the
+/// second one is not a normalization artifact, it is a different (invalid)
+/// id.
+pub(crate) fn trim_one_trailing_slash(id: &str) -> &str {
+    id.strip_suffix('/').unwrap_or(id)
+}
+
 /// Extract the canonical item id from a `ripr://gap/{id}` resource URI.
 ///
 /// The producer gap id embeds a workspace-relative path (Python, and since
 /// #5268 Rust), so the suffix is read whole: the `ripr://gap/` prefix alone
-/// routes the URI, and only an empty suffix fails. Returns `None` for any
-/// other URI, including the exact status resource.
+/// routes the URI, and only an empty suffix fails. One trailing slash is
+/// normalized away (see [`trim_one_trailing_slash`]). Returns `None` for
+/// any other URI, including the exact status resource.
 pub(crate) fn gap_resource_id(uri: &str) -> Option<&str> {
-    uri.strip_prefix("ripr://gap/").filter(|id| !id.is_empty())
+    uri.strip_prefix("ripr://gap/")
+        .map(trim_one_trailing_slash)
+        // A residual trailing slash means the URI carried more than one —
+        // that id does not exist, so the route misses rather than
+        // normalizing a second slash away. Gap ids embed workspace-relative
+        // paths, so only the trailing position is rejected.
+        .filter(|id| !id.is_empty() && !id.ends_with('/'))
 }
 
 /// Extract the snapshot id from a `ripr://snapshot/{id}` resource URI.
 pub(crate) fn snapshot_resource_id(uri: &str) -> Option<&str> {
     uri.strip_prefix("ripr://snapshot/")
+        .map(trim_one_trailing_slash)
         .filter(|id| !id.is_empty() && !id.contains('/'))
 }
 
@@ -670,6 +689,7 @@ pub(crate) fn test_finding() -> Result<Finding, String> {
     };
     let stage = || StageEvidence::new(StageState::Unknown, Confidence::Unknown, "test");
     Ok(Finding {
+        analysis_scope: crate::domain::AnalysisScope::Diff,
         id: "finding:test:1".to_string(),
         canonical_gap: Some(crate::domain::FindingCanonicalGap {
             id: "gap:test:1".to_string(),
@@ -1704,6 +1724,40 @@ mod tests {
         assert_eq!(snapshot_resource_id("ripr://gap/x"), None);
     }
 
+    /// #9895: every id-bearing resource route tolerates exactly one
+    /// trailing slash — `ripr://gap/{id}/` addresses the same item as
+    /// `ripr://gap/{id}` — while a second slash, or a slash that would
+    /// leave the id empty, still misses.
+    #[test]
+    fn resource_id_routes_tolerate_one_trailing_slash() {
+        for (uri, expected) in [
+            ("ripr://gap/gap:test:1/", Some("gap:test:1")),
+            (
+                "ripr://gap/gap:rust:src/lib.rs:nested/",
+                Some("gap:rust:src/lib.rs:nested"),
+            ),
+            // A second slash is a different (invalid) id, not a
+            // normalization artifact.
+            ("ripr://gap/gap:test:1//", None),
+            // The bare prefix with only a slash still routes nowhere.
+            ("ripr://gap//", None),
+        ] {
+            assert_eq!(gap_resource_id(uri), expected, "gap route: {uri}");
+        }
+        for (uri, expected) in [
+            (
+                "ripr://snapshot/snapshot:sha256:x/",
+                Some("snapshot:sha256:x"),
+            ),
+            ("ripr://snapshot/snapshot:sha256:x//", None),
+            ("ripr://snapshot//", None),
+            // The single-segment grammar stays strict inside the id.
+            ("ripr://snapshot/a/b/", None),
+        ] {
+            assert_eq!(snapshot_resource_id(uri), expected, "snapshot route: {uri}");
+        }
+    }
+
     /// #5268 review: the producer gap id embeds a workspace-relative path,
     /// so the advertised `ripr://gap/{id}` resource must parse the suffix
     /// whole — a nested-file Rust (or Python) finding's resource link has to
@@ -1717,10 +1771,22 @@ mod tests {
             Some(nested)
         );
         assert_eq!(
+            gap_resource_id(&format!("ripr://gap/{nested}/")),
+            Some(nested),
+            "one trailing slash must not truncate a nested id"
+        );
+        assert_eq!(
             crate::mcp::repair_card::repair_card_resource_id(&format!(
                 "ripr://repair-card/{nested}"
             )),
             Some(nested)
+        );
+        assert_eq!(
+            crate::mcp::repair_card::repair_card_resource_id(&format!(
+                "ripr://repair-card/{nested}/"
+            )),
+            Some(nested),
+            "one trailing slash must not truncate a nested repair-card id"
         );
         // A snapshot id never carries a path, so its grammar stays strict.
         assert_eq!(snapshot_resource_id("ripr://snapshot/a/b"), None);

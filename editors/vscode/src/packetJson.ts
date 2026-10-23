@@ -44,6 +44,8 @@ export function stringValues(value: Record<string, unknown> | undefined): string
  * With `windowsQuoting` (the server runs on Windows, #9659) the console
  * double-quoted spans `windows_console_quote` writes are accepted as well,
  * and a bare `^` (cmd.exe's escape character) is refused outside every span.
+ * A single-quoted span holding `<` or `>` is refused too: cmd.exe reads them
+ * as redirects, since `'` does not quote there (#9738).
  * Callers pass `isWindowsHost()`: the server quotes for its own host.
  */
 export function hasUnsafeShellMetacharacter(command: string, windowsQuoting = false): boolean {
@@ -56,7 +58,12 @@ export function hasUnsafeShellMetacharacter(command: string, windowsQuoting = fa
     return true;
   }
   const spans = checked.split("'");
-  return spans.length % 2 === 0 || spans.some((span, index) => index % 2 === 0 && /[$()]/.test(span));
+  // cmd.exe does not treat `'` as a quote, so on Windows a `<` or `>` inside
+  // the single-quote form (printed for `$`/backtick values) is a live
+  // redirect there (#9738).
+  return spans.length % 2 === 0
+    || spans.some((span, index) => index % 2 === 0 && /[$()]/.test(span))
+    || (windowsQuoting && spans.some((span, index) => index % 2 === 1 && /[<>]/.test(span)));
 }
 
 /**

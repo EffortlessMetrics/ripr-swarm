@@ -17,13 +17,19 @@ Start here:
   Changed behavior: amount >= 100
   Missing discriminator (1 of 2): Changed boundary input is unresolved: a related test passes `amount` the result of a call (`boundary_amount()`), whose value ripr does not evaluate statically, so it cannot tell…
   Related test: tests/pricing.rs:8 discounted_total_at_boundary
-  Next step: Trace the related test input through the local or computed operand, including
-    default/empty cases, to check whether the change matters. ripr.toml does not support
+  Next step: Open the related test and trace its input through the local or computed operand
+    (including default and empty cases) to see which side of the changed condition it exercises,
+    then name an input that would exercise the other side. ripr.toml does not support
     fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap.
     Compare the original and changed implementations with a focused run using the project's
     configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain
     unknown
   Evidence: reach yes · infection unknown · propagation yes · observation yes · discriminator not established
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: Related tests appear to reach discounted_total: discounted_total_at_boundary
     - infection unknown: Changed boundary input is unresolved: a related test passes `amount` the result of a call (`boundary_amount()`), whose value ripr does not evaluate statically,…
     - 6 more detail line(s) in --format human-full

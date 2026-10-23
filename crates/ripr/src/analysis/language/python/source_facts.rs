@@ -7,7 +7,7 @@ use super::owners_tests::{
 use super::source_utils::{
     SourceText, is_test_file, line_for_range_end, line_for_range_start, text_for_range,
 };
-use super::{PythonOwner, PythonTest, expr_full_name};
+use super::{PythonFramework, PythonOwner, PythonTest, expr_full_name};
 use crate::domain::{LanguageId as DomainLanguageId, StaticLimitKind};
 use rustpython_parser::{
     Mode,
@@ -141,7 +141,7 @@ pub(super) struct PythonSourceLimitation {
 /// first when both are present so primary-of-set consumers stay pytest-first.
 /// Fail-closed: empty when no marker matches — callers must report
 /// "not detected", never guess.
-pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
+pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<PythonFramework> {
     let mut saw_pytest = root.join("pytest.ini").exists()
         || root.join("conftest.py").exists()
         // A bare pyproject.toml is PEP 517 packaging, not pytest evidence
@@ -212,10 +212,10 @@ pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
     }
     let mut frameworks = Vec::new();
     if saw_pytest {
-        frameworks.push("pytest");
+        frameworks.push(PythonFramework::Pytest);
     }
     if saw_unittest {
-        frameworks.push("unittest");
+        frameworks.push(PythonFramework::Unittest);
     }
     frameworks
 }
@@ -257,7 +257,7 @@ fn python_framework_scan_dirs(root: &Path) -> Vec<PathBuf> {
 /// Primary detected Python test framework: the first entry of
 /// [`detect_python_test_frameworks`] (pytest before unittest). Adapter
 /// repo-input still stores a single `Option`; doctor prints the full set.
-pub(crate) fn detect_python_test_framework(root: &Path) -> Option<&'static str> {
+pub(crate) fn detect_python_test_framework(root: &Path) -> Option<PythonFramework> {
     detect_python_test_frameworks(root).into_iter().next()
 }
 
