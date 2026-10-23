@@ -6340,6 +6340,50 @@ mod tests {
         assert!(!render_finding(&nested).contains("arm head only"));
     }
 
+    /// Masking may hide a whole literal body, including its delimiters. A
+    /// final arm need not have a trailing comma to establish that body.
+    #[test]
+    fn render_finding_arm_note_preserves_literal_body_presence() {
+        for body in [
+            "\"old\"",
+            "\"\"",
+            "'a'",
+            "'é'",
+            r"'\n'",
+            "r#\"old\"#",
+            "b'a'",
+            "/* \"not code\" */ \"body\"",
+        ] {
+            let mut finding = sample_finding();
+            finding.probe.family = crate::domain::ProbeFamily::MatchArm;
+            finding.probe.before = Some(format!("false => {body}"));
+            finding.probe.after = Some("false =>".to_string());
+            assert!(render_finding(&finding).contains("arm head only"), "{body}");
+
+            finding.probe.before = Some("false => 10,".to_string());
+            finding.probe.after = Some(format!("false => {body}"));
+            assert!(
+                !render_finding(&finding).contains("arm head only"),
+                "{body}"
+            );
+        }
+        for suffix in [
+            "",
+            "/* old body unread */",
+            "// \"not a body\"",
+            "/* 'x' */",
+        ] {
+            let mut finding = sample_finding();
+            finding.probe.family = crate::domain::ProbeFamily::MatchArm;
+            finding.probe.before = Some(format!("false => {suffix}"));
+            finding.probe.after = Some("false =>".to_string());
+            assert!(
+                !render_finding(&finding).contains("arm head only"),
+                "{suffix}"
+            );
+        }
+    }
+
     /// Discriminating negatives: a pattern-only edit (old arm is also just a
     /// head), a complete after arm, and a non-arm family add no note.
     #[test]

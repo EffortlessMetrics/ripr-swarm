@@ -1,0 +1,23 @@
+{
+  "case_id": "perl-testdeep-record-ignore",
+  "subject_id": "authored-perl-testdeep-inventory",
+  "origin": "authored",
+  "anchor": "lib/Inventory.pm:32",
+  "behavior_family": "return_value_construction",
+  "test_shape": "testdeep_ignore_field",
+  "hard_case": true,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "reachable_unrevealed"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {},
+  "packet_provenance": "producer"
+}
