@@ -1514,6 +1514,11 @@ fn adaptor_element_runs(
                 test,
                 &entry.caller.name,
                 call.line,
+            ) && super::call_identity::qualified_owner_calls_resolve(
+                index,
+                &entry.caller,
+                test,
+                &call.text,
             )
         },
     )?;
@@ -3119,8 +3124,17 @@ fn call_values_for_owner(
     } else {
         parameters.to_vec()
     };
-    let direct =
-        owner_call_parameter_values(related_tests, &owner.name, is_free(owner), &parameters);
+    // #9218: a module-qualified call that does not resolve to the owner's
+    // module (`rival::thr(101)`) supplies no owner input row.
+    let direct = owner_call_parameter_values_where(
+        related_tests,
+        &owner.name,
+        is_free(owner),
+        &parameters,
+        |test, call| {
+            super::call_identity::qualified_owner_calls_resolve(index, owner, test, &call.text)
+        },
+    );
     if !direct.is_empty() {
         return direct;
     }

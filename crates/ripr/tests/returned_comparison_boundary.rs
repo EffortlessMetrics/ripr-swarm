@@ -476,3 +476,59 @@ fn pattern_and_loop_rebindings_of_the_parameter_keep_the_gap() -> Result<(), Str
     }
     Ok(())
 }
+
+const RIVAL_MOD: &str =
+    "mod rival {\n    pub fn thr(x: i32) -> bool {\n        x > 0\n    }\n}\n\n";
+const FAR_ONLY: &str = "#[test]\nfn low() {\n    assert!(!thr(50));\n}\n\n#[test]\nfn high() {\n    assert!(thr(500));\n}\n";
+
+#[test]
+fn a_qualified_rival_call_is_not_a_boundary_input() -> Result<(), String> {
+    // #9218: the owner is called only with far inputs; `rival::thr(101)` is
+    // another function, so it must not supply the boundary-equal input.
+    let rival = findings(
+        NEW,
+        OLD,
+        &format!(
+            "use thr::thr;\n\n{RIVAL_MOD}{FAR_ONLY}\n#[test]\nfn other() {{\n    assert!(!rival::thr(101));\n}}\n"
+        ),
+    )?;
+    assert_gap_named(&rival, true)?;
+    let owner = family(&rival, "return_value")?;
+    assert_ne!(owner.class, ExposureClass::Exposed, "{owner:?}");
+    // The same holds when the rival module is not defined in the test file.
+    let foreign = findings(
+        NEW,
+        OLD,
+        &format!(
+            "use thr::thr;\n\n{FAR_ONLY}\n#[test]\nfn other() {{\n    assert!(!other_dep::thr(101));\n}}\n"
+        ),
+    )?;
+    assert_gap_named(&foreign, true)?;
+    let owner = family(&foreign, "return_value")?;
+    assert_ne!(owner.class, ExposureClass::Exposed, "{owner:?}");
+    // Positive control: the plain owner call at the boundary still clears it.
+    let plain = findings(
+        NEW,
+        OLD,
+        &format!(
+            "use thr::thr;\n\n{RIVAL_MOD}{FAR_ONLY}\n#[test]\nfn at() {{\n    assert!(!thr(101));\n}}\n"
+        ),
+    )?;
+    assert_gap_named(&plain, false)?;
+    Ok(())
+}
+
+#[test]
+fn a_crate_qualified_owner_call_is_still_a_boundary_input() -> Result<(), String> {
+    // #9218: a qualification that resolves to the owner's own module keeps
+    // supplying its input (`thr::thr` names the owner crate's root `thr`).
+    let findings = findings(
+        NEW,
+        OLD,
+        &format!("{FAR_ONLY_QUALIFIED}\n#[test]\nfn at() {{\n    assert!(!thr::thr(101));\n}}\n"),
+    )?;
+    assert_gap_named(&findings, false)?;
+    Ok(())
+}
+
+const FAR_ONLY_QUALIFIED: &str = "#[test]\nfn low() {\n    assert!(!thr::thr(50));\n}\n\n#[test]\nfn high() {\n    assert!(thr::thr(500));\n}\n";

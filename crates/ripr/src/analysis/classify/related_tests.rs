@@ -3755,6 +3755,11 @@ const PRIMITIVE_TYPE_QUALIFIERS: &[&str] = &[
     "u32", "u64", "u128", "usize",
 ];
 
+/// Whether `qualifier` is a primitive type's name (`u64::max(`).
+pub(super) fn is_primitive_type_qualifier(qualifier: &str) -> bool {
+    PRIMITIVE_TYPE_QUALIFIERS.contains(&qualifier)
+}
+
 /// Whether a call's `(` follows a name ending at `after_name`, across
 /// whitespace and an optional turbofish (`name::<T>(`).
 fn call_paren_follows(text: &str, after_name: usize) -> bool {

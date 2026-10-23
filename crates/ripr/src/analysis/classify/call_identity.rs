@@ -567,26 +567,13 @@ impl OwnerCallIdentity {
     /// the owner is the root package. From any other crate: the import
     /// names the manifests give the owner's library (`MemberCrates`).
     fn own_crate_names(&self, test: &TestSummary, index: &RustIndex) -> BTreeSet<String> {
-        let test_package = package_key(&test.file);
-        let same_package = test_package == self.owner_package;
-        let mut names = BTreeSet::new();
-        if same_package && !under_tests_dir(&test.file) {
-            return names;
-        }
-        // An integration test imports only the package's library, never a
-        // binary's crate.
-        if same_package
-            && self.owner_package.is_none()
-            && self.owner_crate.as_deref() == Some("lib")
-        {
-            names.extend(index.package_names.iter().cloned());
-        }
-        if let Some(owner_root) =
-            super::owner_pin::target_root(&self.owner_file, index, &BTreeSet::new())
-        {
-            names.extend(index.member_crates.import_names(&test.file, &owner_root));
-        }
-        names
+        own_crate_names_of(
+            &self.owner_file,
+            self.owner_package.as_deref(),
+            self.owner_crate.as_deref(),
+            test,
+            index,
+        )
     }
 
     fn target_of(&self, matches: &Matches) -> CallTarget {
@@ -1245,6 +1232,135 @@ fn call_qualifiers(body: &str, name: &str) -> Vec<Option<Vec<String>>> {
         calls.push(qualifier_before(head));
     }
     calls
+}
+
+/// [`OwnerCallIdentity::own_crate_names`] for an owner given by its file,
+/// package and crate class.
+fn own_crate_names_of(
+    owner_file: &Path,
+    owner_package: Option<&str>,
+    owner_crate: Option<&str>,
+    test: &TestSummary,
+    index: &RustIndex,
+) -> BTreeSet<String> {
+    let test_package = package_key(&test.file);
+    let same_package = test_package.as_deref() == owner_package;
+    let mut names = BTreeSet::new();
+    if same_package && !under_tests_dir(&test.file) {
+        return names;
+    }
+    // An integration test imports only the package's library, never a
+    // binary's crate.
+    if same_package && owner_package.is_none() && owner_crate == Some("lib") {
+        names.extend(index.package_names.iter().cloned());
+    }
+    if let Some(owner_root) = super::owner_pin::target_root(owner_file, index, &BTreeSet::new()) {
+        names.extend(index.member_crates.import_names(&test.file, &owner_root));
+    }
+    names
+}
+
+/// #9218: whether every module-qualified free call of the owner's name in a
+/// captured call line settles on the owner's own module, so the line's
+/// arguments may be read as an input of the owner. A bare call (`thr(5)`)
+/// keeps the name-only reading its consumers always had, a type-path call
+/// (`Type::thr(5)`) never lends arguments (the free-call reader skips it),
+/// and a receiver call is no free call. Any other qualified spelling
+/// (`rival::thr(5)`) must resolve to the owner: through the shared
+/// same-named-rival identity when the owner has rivals, otherwise only as
+/// `crate::<owner module>::thr` from the owner's own crate sources or as
+/// `super::thr` from a test beside a file-level owner. Everything else
+/// (an unreadable qualifier, an import-bound module, a dependency path, a
+/// `#[path]`-remapped package) declines: it supplies no input row, which
+/// only keeps a gap open.
+pub(super) fn qualified_owner_calls_resolve(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    call_text: &str,
+) -> bool {
+    if owner.item.container != FunctionContainer::Free {
+        return true;
+    }
+    call_qualifiers(call_text, &owner.name)
+        .into_iter()
+        .all(|qualifier| match qualifier {
+            None => false,
+            Some(segments) if segments.is_empty() => true,
+            Some(segments) if names_a_type(&segments) => true,
+            Some(segments) => qualified_call_names_owner(index, owner, test, &segments),
+        })
+}
+
+fn names_a_type(qualifier: &[String]) -> bool {
+    qualifier.last().is_some_and(|last| {
+        last.starts_with(|ch: char| ch.is_ascii_uppercase())
+            || super::related_tests::is_primitive_type_qualifier(last)
+    })
+}
+
+/// Whether no other indexed function shares the owner's name, so a path
+/// anchored at the owner's crate can only reach the owner (directly or
+/// through a re-export such as `pub use internal::inner;`).
+fn only_definition_of_name(index: &RustIndex, owner: &FunctionSummary) -> bool {
+    index
+        .functions()
+        .iter()
+        .filter(|function| function.name == owner.name)
+        .count()
+        == 1
+}
+
+fn qualified_call_names_owner(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    qualifier: &[String],
+) -> bool {
+    if let Some(identity) = shared_owner_call_identity(index, owner) {
+        return identity.resolve_call(test, index, qualifier) == CallTarget::Owner;
+    }
+    let owner_package = package_key(&owner.file);
+    if package_remaps_module_paths(index, owner_package.as_deref()) {
+        return false;
+    }
+    let Some(owner_path) = definition_module_path(owner) else {
+        return false;
+    };
+    let layout = CrateLayout::new(index, owner_package.as_deref());
+    let CrateClass::Crate(owner_crate) = layout.classify(&owner.file) else {
+        return false;
+    };
+    match qualifier {
+        // `owner_crate::module::thr(..)` from another crate's test: the
+        // owner library's import name, not rebound by a local `mod`.
+        [first, rest @ ..]
+            if own_crate_names_of(
+                &owner.file,
+                owner_package.as_deref(),
+                Some(&owner_crate),
+                test,
+                index,
+            )
+            .contains(first)
+                && !index.files().get(&test.file).is_some_and(|facts| {
+                    mentions_word(&facts.data().source, &format!("mod {first}"))
+                }) =>
+        {
+            rest == owner_path.as_slice() || only_definition_of_name(index, owner)
+        }
+        [first, rest @ ..] if first == "crate" => {
+            (rest == owner_path.as_slice() || only_definition_of_name(index, owner))
+                && package_key(&test.file) == owner_package
+                && !under_tests_dir(&test.file)
+                && !under_tests_dir(&owner.file)
+        }
+        [only] if only == "super" => {
+            test.file == owner.file
+                && file_module_segments(&owner.file).is_some_and(|file| file == owner_path)
+        }
+        _ => false,
+    }
 }
 
 /// The spelled module path of every mention of `name` in `body` that is no
@@ -2768,5 +2884,52 @@ mod tests {
     fn a_mixed_path_form_index_has_no_identity() {
         let index = index(&[("src/lib.rs", RENDER_LIB), ("/w/x/src/lib.rs", BIN_UTIL)]);
         assert_eq!(settle(&index, "src/lib.rs::a::render", "doubles_two"), None);
+    }
+
+    /// #9218: a qualified call feeds the owner's inputs only when it
+    /// resolves to the owner's module (no-rival path).
+    #[test]
+    fn qualified_calls_lend_inputs_only_when_they_resolve_to_the_owner() {
+        let lib = "pub mod pricing {\n    pub fn thr(x: i32) -> bool { x > 1 }\n}\n\
+                   pub fn root(x: i32) -> bool { x > 1 }\n\
+                   #[test]\nfn unit() { assert!(pricing::thr(1)); }\n";
+        let index = index(&[("src/lib.rs", lib)]);
+        let owner_of = |suffix: &str| {
+            index
+                .functions()
+                .iter()
+                .find(|function| function.id.0.ends_with(suffix))
+                .cloned()
+        };
+        let thr = owner_of("::pricing::thr");
+        let root = owner_of("::root");
+        let test = index.tests().iter().find(|test| test.name == "unit");
+        assert!(
+            thr.is_some() && root.is_some() && test.is_some(),
+            "fixture items must be indexed"
+        );
+        let (Some(thr), Some(root), Some(test)) = (thr, root, test) else {
+            return;
+        };
+        let resolves = |owner: &FunctionSummary, text: &str| {
+            qualified_owner_calls_resolve(&index, owner, test, text)
+        };
+        // Bare and type-path spellings keep their reading.
+        assert!(resolves(&thr, "assert!(thr(1));"));
+        assert!(resolves(&thr, "assert!(Type::thr(1));"));
+        // The owner's own module path resolves; a different one declines.
+        assert!(resolves(&thr, "assert!(crate::pricing::thr(1));"));
+        assert!(!resolves(&thr, "assert!(crate::other::thr(1));"));
+        assert!(!resolves(&thr, "assert!(rival::thr(1));"));
+        assert!(!resolves(&thr, "assert!(pricing::thr(1));"));
+        assert!(!resolves(&thr, "assert!(thr(1) + rival::thr(2));"));
+        assert!(!resolves(&thr, "assert!(<T as R>::thr(1));"));
+        // A root-level owner resolves `crate::root` but not a module path.
+        assert!(resolves(&root, "assert!(crate::root(1));"));
+        assert!(!resolves(&root, "assert!(rival::root(1));"));
+        assert!(!resolves(&root, "assert!(crate::pricing::root(1));"));
+        // `super::root` from a test beside a file-level owner.
+        assert!(resolves(&root, "assert!(super::root(1));"));
+        assert!(!resolves(&thr, "assert!(super::thr(1));"));
     }
 }
