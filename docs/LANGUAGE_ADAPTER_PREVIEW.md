@@ -270,7 +270,11 @@ analysis. Repo-mode analysis differs per adapter:
   `RIPR_TS_MAX_WORKSPACE_FILES` and the `RIPR_TS_MAX_FILE_READ_BYTES` /
   `RIPR_TS_MAX_WORKSPACE_READ_BYTES` read budgets, with any refusal named as a
   partial reason. Declared `handwritten_files` are admitted as in diff mode.
-  No support-tier, gate or baseline promotion.
+  No support-tier, gate or baseline promotion. Repo-mode TypeScript/JavaScript
+  findings carry an `analysis_scope: repo` evidence line and never project a
+  repair packet or `repair_packet_ready: true`, because the capability
+  registry has no repo-mode `repair_routing` cell for these languages (#5531);
+  repair routing stays diff-mode only.
 
 Consumption boundary: the repo-scoped CLI formats (`repo-exposure-*`,
 `repo-seams-*`, `repo-badge-*`, `agent-seam-packets-json`) render the
