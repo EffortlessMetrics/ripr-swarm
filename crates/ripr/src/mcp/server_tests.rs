@@ -1514,6 +1514,66 @@ fn resource_failures_carry_the_typed_code_as_data_and_the_current_snapshot() -> 
     Ok(())
 }
 
+/// #9854: every resource-read failure kind answers its own protocol-honest
+/// JSON-RPC code instead of the blanket ResourceNotFound. Identity misses
+/// keep `-32002`; session-state and bound kinds answer InternalError
+/// (`-32603`). The human sentence and `data.code` stay stable for existing
+/// clients on both paths, and the snapshot route keeps disclosing
+/// `current_snapshot_id`.
+#[test]
+fn resource_failure_maps_each_kind_to_a_protocol_honest_code() -> Result<(), String> {
+    let not_found = ErrorCode::RESOURCE_NOT_FOUND;
+    let internal = ErrorCode::INTERNAL_ERROR;
+    for (code, expected) in [
+        ("no_snapshot", internal),
+        ("stale_snapshot", internal),
+        ("analysis_in_flight", internal),
+        ("workspace_unavailable", internal),
+        (workspace::CODE_RESULT_TOO_LARGE, internal),
+        ("attempt_invalid", internal),
+        ("superseded", internal),
+        ("seam_not_found", internal),
+        (workspace::CODE_ITEM_NOT_FOUND, not_found),
+        (repair::CODE_ATTEMPT_NOT_FOUND, not_found),
+    ] {
+        let failure = workspace::AttemptFailure::new(code, "typed detail", "typed recovery");
+        let error = resource_failure("snapshot", &failure, Some("snapshot:current"));
+        if error.code != expected {
+            return Err(format!(
+                "resource failure kind {code} must answer {expected:?}, got {:?}",
+                error.code
+            ));
+        }
+        if error.message != format!("unavailable snapshot resource: {code}") {
+            return Err(format!("human sentence drifted for {code}: {error:?}"));
+        }
+        let data = error
+            .data
+            .ok_or_else(|| format!("{code} lost typed data"))?;
+        if data["code"] != serde_json::json!(code)
+            || data["recovery"] != serde_json::json!("typed recovery")
+            || data["failure"]["detail"] != serde_json::json!("typed detail")
+            || data["current_snapshot_id"] != serde_json::json!("snapshot:current")
+        {
+            return Err(format!("typed data payload drifted for {code}: {data}"));
+        }
+    }
+    // The snapshot route's not-found disclosure stays on the identity path:
+    // a stale-snapshot miss still names the current snapshot in data.
+    let stale = workspace::AttemptFailure::new("stale_snapshot", "stale", "refresh");
+    let error = resource_failure("snapshot", &stale, Some("snapshot:now"));
+    if error.code != internal {
+        return Err(format!(
+            "stale_snapshot must not read as a resource miss: {error:?}"
+        ));
+    }
+    let data = error.data.ok_or("stale_snapshot lost typed data")?;
+    if data["current_snapshot_id"] != serde_json::json!("snapshot:now") {
+        return Err(format!("stale_snapshot lost current identity: {data}"));
+    }
+    Ok(())
+}
+
 #[test]
 fn resource_budget_failure_reports_bytes_budget_and_recovery() -> Result<(), String> {
     let error = resource_budget_failure(9_001, 4_000, "narrow the read");

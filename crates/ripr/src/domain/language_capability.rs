@@ -337,6 +337,46 @@ pub(crate) const CAPABILITY_CELLS: &[CapabilityCell] = &[
     ),
 ];
 
+/// Evidence line a repo-mode producer stamps on every finding it emits, so a
+/// consumer that only holds a `Finding` can recover the analysis scope and look
+/// the capability cell up instead of re-deriving a rule (#5531).
+pub(crate) const REPO_SCOPE_EVIDENCE_LINE: &str = "analysis_scope: repo";
+
+/// Whether a finding was produced by a repo-mode run.
+pub(crate) fn finding_is_repo_scoped(evidence: &[String]) -> bool {
+    evidence.iter().any(|line| line == REPO_SCOPE_EVIDENCE_LINE)
+}
+
+/// State of the framework-independent cell for one language/mode/family. A
+/// combination with no registered cell is `not_proven`, never implied by a
+/// neighboring mode or language.
+pub(crate) fn cell_state(
+    language: LanguageId,
+    mode: AnalysisMode,
+    family: CapabilityFamily,
+) -> SupportState {
+    CAPABILITY_CELLS
+        .iter()
+        .find(|cell| {
+            cell.language == language
+                && cell.framework == FRAMEWORK_ANY
+                && cell.mode == mode
+                && cell.family == family
+        })
+        .map_or(NotProven, |cell| cell.state)
+}
+
+/// Whether the cell lets a consumer treat the capability as established
+/// (possibly with its required fallback). Every other state fails closed.
+pub(crate) fn state_establishes_capability(state: SupportState) -> bool {
+    matches!(
+        state,
+        SupportState::ExactSupported
+            | SupportState::ConservativeOverapproximation
+            | SupportState::SupportedWithRequiredFallback
+    )
+}
+
 /// Cells for one language, in registry order.
 #[cfg(test)]
 pub(crate) fn cells_for(language: LanguageId) -> impl Iterator<Item = &'static CapabilityCell> {
@@ -427,6 +467,27 @@ pub(crate) fn semantic_digest(cells: &[CapabilityCell]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn absent_repo_repair_routing_cells_are_not_proven_and_fail_closed() {
+        for language in [LanguageId::TypeScript, LanguageId::JavaScript] {
+            assert_eq!(
+                cell_state(language, Repo, RepairRouting),
+                NotProven,
+                "{language:?} has no repo repair_routing cell"
+            );
+            assert!(!state_establishes_capability(cell_state(
+                language,
+                Repo,
+                RepairRouting
+            )));
+            assert!(state_establishes_capability(cell_state(
+                language,
+                Diff,
+                RepairRouting
+            )));
+        }
+    }
 
     #[test]
     fn current_table_is_consistent() {
