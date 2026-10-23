@@ -9,7 +9,17 @@ const TRYBUILD_MANIFEST: &str = "[package]\nname = \"demo\"\nversion = \"0.1.0\"
 const PLAIN_MANIFEST: &str =
     "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2024\"\n";
 
-const FIXTURE_DIFF: &str = "diff --git a/tests/ui/fail_len.rs b/tests/ui/fail_len.rs
+/// A production change (so the report carries findings and the byte comparison
+/// is discriminating) followed by the two trybuild fixture files.
+const FIXTURE_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,3 @@
+ pub fn id(x: u8) -> u8 {
+-    x
++    x + 1
+ }
+diff --git a/tests/ui/fail_len.rs b/tests/ui/fail_len.rs b/tests/ui/fail_len.rs
 new file mode 100644
 --- /dev/null
 +++ b/tests/ui/fail_len.rs
@@ -41,7 +51,7 @@ impl Scratch {
         std::fs::write(root.join("Cargo.toml"), manifest).map_err(|error| error.to_string())?;
         std::fs::write(
             root.join("src/lib.rs"),
-            "pub fn id(x: u8) -> u8 {\n    x\n}\n",
+            "pub fn id(x: u8) -> u8 {\n    x + 1\n}\n",
         )
         .map_err(|error| error.to_string())?;
         std::fs::write(
@@ -101,7 +111,11 @@ fn trybuild_fixture_diff_is_named_on_stderr_without_changing_the_report() -> Res
         String::from_utf8_lossy(&output.stdout)
             .replace(scratch.0.to_string_lossy().as_ref(), "<root>")
     };
-    assert!(!normalize(&named, &with_trybuild).is_empty());
+    let named_report = normalize(&named, &with_trybuild);
+    assert!(
+        named_report.contains("src/lib.rs"),
+        "the production change must produce a non-empty report: {named_report}"
+    );
     assert_eq!(
         normalize(&named, &with_trybuild),
         normalize(&control, &without_trybuild),

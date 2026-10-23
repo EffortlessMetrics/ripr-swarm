@@ -18424,6 +18424,7 @@ tests = [
   "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::ambiguous_multiple_tests_ui_pairs_fail_closed",
   "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::oversized_manifest_fails_closed",
   "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::non_regular_manifest_path_fails_closed",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::nested_fixture_tree_is_owned_by_its_own_directory_not_an_ancestor",
   "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::inherited_workspace_entries_never_name_fixtures",
   "crates/ripr/tests/trybuild_fixture_disclosure.rs::inherited_workspace_trybuild_never_names_and_direct_forms_still_do",
   "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::dependency_package_key_decides_whether_an_entry_is_trybuild",

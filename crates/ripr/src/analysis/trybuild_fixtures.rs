@@ -522,4 +522,36 @@ mod tests {
         }
         Ok(())
     }
+
+    #[test]
+    fn nested_fixture_tree_is_owned_by_its_own_directory_not_an_ancestor() -> Result<(), String> {
+        let root = temp_root("nestedtree")?;
+        write(&root.join("crates/a/Cargo.toml"), TRYBUILD_MANIFEST)?;
+        // The ancestor crate depends on trybuild, but the fixture tree below
+        // `tests/fixtures/x` has no manifest of its own: nothing is named.
+        let nested = changed("crates/a/tests/fixtures/x/tests/ui/pass.rs");
+        assert_eq!(
+            trybuild_fixture_disclosure_message(&root, std::slice::from_ref(&nested)),
+            None
+        );
+        // Two `tests/ui` pairs are ambiguous even when every candidate qualifies.
+        write(
+            &root.join("crates/a/tests/ui/sub/Cargo.toml"),
+            TRYBUILD_MANIFEST,
+        )?;
+        assert_eq!(
+            trybuild_fixture_disclosure_message(
+                &root,
+                &[changed("crates/a/tests/ui/sub/tests/ui/foo.stderr")]
+            ),
+            None
+        );
+        // A single pair whose own directory declares trybuild is named.
+        write(
+            &root.join("crates/a/tests/fixtures/x/Cargo.toml"),
+            TRYBUILD_MANIFEST,
+        )?;
+        assert!(trybuild_fixture_disclosure_message(&root, &[nested]).is_some());
+        Ok(())
+    }
 }

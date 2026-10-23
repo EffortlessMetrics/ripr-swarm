@@ -123,6 +123,7 @@ silence for "reviewed and clean".
   `ambiguous_multiple_tests_ui_pairs_fail_closed`,
   `oversized_manifest_fails_closed`,
   `non_regular_manifest_path_fails_closed`,
+  `nested_fixture_tree_is_owned_by_its_own_directory_not_an_ancestor`,
   `inherited_workspace_entries_never_name_fixtures`,
   `dependency_package_key_decides_whether_an_entry_is_trybuild`,
   `helper_names_any_changed_path_it_is_given_without_reading_the_fixture`.
