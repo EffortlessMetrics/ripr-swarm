@@ -94,13 +94,13 @@ fn fixture_crate_dir(path: &Path) -> Option<String> {
 }
 
 /// Whether the manifest at `path` declares `trybuild` in a dependency table,
-/// including target-specific tables. Missing, oversized or unparseable
+/// including target-specific tables. Missing, non-regular, oversized or unparseable
 /// manifests answer `false`: the disclosure only ever under-names.
 fn manifest_declares_trybuild(path: &Path) -> bool {
     let Ok(metadata) = std::fs::metadata(path) else {
         return false;
     };
-    if metadata.len() > MAX_MANIFEST_BYTES {
+    if !metadata.is_file() || metadata.len() > MAX_MANIFEST_BYTES {
         return false;
     }
     let Ok(text) = std::fs::read_to_string(path) else {
@@ -447,6 +447,17 @@ mod tests {
             "{message}"
         );
         assert!(!root.join("tests/ui/gone.rs").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn non_regular_manifest_path_fails_closed() -> Result<(), String> {
+        let root = temp_root("nonregular")?;
+        // A directory named Cargo.toml is not a manifest file.
+        fs::create_dir_all(root.join("Cargo.toml"))
+            .map_err(|err| format!("create dir failed: {err}"))?;
+        let files = vec![changed("tests/ui/a.rs")];
+        assert_eq!(trybuild_fixture_disclosure_message(&root, &files), None);
         Ok(())
     }
 }

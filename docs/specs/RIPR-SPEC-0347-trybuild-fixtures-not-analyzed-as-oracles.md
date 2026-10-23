@@ -61,7 +61,7 @@ silence for "reviewed and clean".
    `workspace = true` entry is judged by its local key only; a rename in the
    workspace table is not resolved.
    A path alone is not enough: a `tests/ui` directory in a crate that does not
-   depend on trybuild is never named. A missing, oversized or unparseable
+   depend on trybuild is never named. A missing, non-regular (directory, FIFO, device), oversized or unparseable
    manifest names nothing, and a path with more than one `tests/ui` pair is
    ambiguous and names nothing. Only files in the diff intake's changed-file
    list are considered: a deleted-file section is omitted by intake and a pure
@@ -122,6 +122,7 @@ silence for "reviewed and clean".
   `nested_crate_path_uses_the_directory_owning_tests_ui`,
   `ambiguous_multiple_tests_ui_pairs_fail_closed`,
   `oversized_manifest_fails_closed`,
+  `non_regular_manifest_path_fails_closed`,
   `dependency_package_key_decides_whether_an_entry_is_trybuild`,
   `helper_names_any_changed_path_it_is_given_without_reading_the_fixture`.
 - `crates/ripr/tests/trybuild_fixture_disclosure.rs`:
