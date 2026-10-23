@@ -796,6 +796,43 @@ fn witness_is_live(stat: Result<&str, &std::io::Error>, pid: u32, start: u64) ->
     }
 }
 
+/// Launch-to-decision budget: the witness sleeps 8s from launch, so a dead
+/// witness read later than this could have expired naturally instead of being
+/// terminated.
+const DECISION_DEADLINE: std::time::Duration = std::time::Duration::from_secs(6);
+
+/// `live_at_decision` is the decisive liveness read; `age` is measured after it,
+/// from launch, so it bounds the read's age. A dead witness is only evidence of
+/// termination when read before natural expiry was possible.
+fn termination_verdict(live_at_decision: bool, age: std::time::Duration) -> TestResult<bool> {
+    if live_at_decision {
+        return Ok(true);
+    }
+    if age > DECISION_DEADLINE {
+        return Err(format!(
+            "inconclusive: dead witness observed {age:?} after launch, past the {DECISION_DEADLINE:?} \
+             decision deadline, so natural expiry cannot be ruled out"
+        )
+        .into());
+    }
+    Ok(false)
+}
+
+#[test]
+fn delayed_observation_cannot_turn_self_expiry_into_termination() -> TestResult {
+    let secs = std::time::Duration::from_secs;
+    assert!(termination_verdict(true, secs(9))?);
+    assert!(termination_verdict(true, secs(1))?);
+    assert!(!termination_verdict(false, secs(2))?);
+    assert!(!termination_verdict(false, DECISION_DEADLINE)?);
+    for delayed in [secs(7), secs(8), secs(30)] {
+        if let Ok(verdict) = termination_verdict(false, delayed) {
+            return Err(format!("dead witness at {delayed:?} accepted as {verdict}").into());
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn witness_observer_distinguishes_identity_state_and_incomplete_evidence() -> TestResult {
     let stat = |pid, state, start| {
@@ -890,12 +927,12 @@ fn timeout_terminates_shell_descendants() -> TestResult {
             };
             let observed = std::time::Instant::now();
             // Wider than the SIGKILL teardown a loaded hosted runner can take, but
-            // still shorter than the witness's own 8s sleep, so natural expiry
-            // cannot masquerade as termination.
-            while live()? && observed.elapsed() < std::time::Duration::from_secs(5) {
+            // bounded from launch (`started`), not from this observation, so the
+            // decision stays inside the witness's own 8s sleep.
+            while live()? && started.elapsed() < std::time::Duration::from_secs(5) {
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
-            let failed_termination = live()?;
+            let failed_termination = termination_verdict(live()?, started.elapsed())?;
             // No numeric-PID signal: even checking start time before kill races
             // PID reuse. Let this finite witness expire, preserving the failure.
             while live()? && observed.elapsed() < std::time::Duration::from_secs(10) {
