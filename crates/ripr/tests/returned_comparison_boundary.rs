@@ -554,3 +554,109 @@ fn an_import_bound_owner_crate_path_is_still_a_boundary_input() -> Result<(), St
     assert_gap_named(&unbound, true)?;
     Ok(())
 }
+
+/// [`findings`] for an owner `thr` that lives in `src/internal.rs`, with
+/// `lib_rs` as the crate root (beside a path dependency `other_dep` that
+/// also defines a `thr`).
+fn findings_in_internal(
+    lib_rs: &str,
+    new: &str,
+    old: &str,
+    test: &str,
+) -> Result<Vec<Finding>, String> {
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let repo = TempRepo {
+        root: std::env::temp_dir().join(format!(
+            "ripr-returned-comparison-internal-{}-{sequence}",
+            std::process::id()
+        )),
+    };
+    let root = &repo.root;
+    for dir in ["src", "tests", "other_dep/src"] {
+        std::fs::create_dir_all(root.join(dir)).map_err(|error| format!("{dir}: {error}"))?;
+    }
+    let write = |path: &str, text: &str| {
+        std::fs::write(root.join(path), text).map_err(|error| format!("write {path}: {error}"))
+    };
+    write(
+        "Cargo.toml",
+        "[package]\nname = \"thr\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dependencies]\nother_dep = { path = \"other_dep\" }\n\n[workspace]\n",
+    )?;
+    write(
+        "other_dep/Cargo.toml",
+        "[package]\nname = \"other_dep\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+    )?;
+    write(
+        "other_dep/src/lib.rs",
+        "pub fn thr(x: i32) -> bool {\n    x > 0\n}\n",
+    )?;
+    write("src/lib.rs", lib_rs)?;
+    write(
+        "src/internal.rs",
+        &format!("pub fn thr(x: i32) -> bool {{\n{new}\n}}\n"),
+    )?;
+    write("tests/it.rs", test)?;
+    let diff = format!(
+        "diff --git a/src/internal.rs b/src/internal.rs\nindex 0000000..1111111 100644\n--- a/src/internal.rs\n+++ b/src/internal.rs\n@@ -1,3 +1,3 @@\n pub fn thr(x: i32) -> bool {{\n-{old}\n+{new}\n }}\n"
+    );
+    write("diff.patch", &diff)?;
+    let output = check_workspace(CheckInput {
+        root: root.clone(),
+        base: None,
+        diff_file: Some(root.join("diff.patch")),
+        mode: Mode::Ready,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })
+    .map_err(|error| format!("check failed: {error}"))?;
+    Ok(output
+        .findings
+        .into_iter()
+        .filter(|finding| finding.probe.location.line == 2)
+        .collect())
+}
+
+const INTERNAL_FAR_ONLY: &str = "#[test]\nfn low() {\n    assert!(!thr::internal::thr(50));\n}\n\n#[test]\nfn high() {\n    assert!(thr::internal::thr(500));\n}\n";
+
+fn reexport_case(lib_rs: &str) -> Result<Vec<Finding>, String> {
+    findings_in_internal(
+        lib_rs,
+        NEW,
+        OLD,
+        &format!("{INTERNAL_FAR_ONLY}\n#[test]\nfn at() {{\n    assert!(!thr::thr(101));\n}}\n"),
+    )
+}
+
+#[test]
+fn a_genuine_reexport_of_the_owner_still_supplies_the_boundary_input() -> Result<(), String> {
+    // #9218: `pub use internal::thr;` makes `thr::thr(101)` the owner.
+    for lib_rs in [
+        "pub mod internal;\npub use internal::thr;\n",
+        "pub mod internal;\npub use internal::{thr, other};\n",
+        "pub mod internal;\npub use crate::internal::*;\n",
+    ] {
+        let found = reexport_case(lib_rs)?;
+        assert_gap_named(&found, false).map_err(|error| format!("{lib_rs:?}: {error}"))?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_dependency_export_of_a_same_named_function_is_not_the_owner() -> Result<(), String> {
+    // #9218: the root exports `other_dep`'s `thr`, so `thr::thr(101)` is not
+    // the owner whether the export is named, grouped, glob or renamed.
+    for lib_rs in [
+        "pub mod internal;\npub use other_dep::thr;\n",
+        "pub mod internal;\npub use other_dep::{thr, other};\n",
+        "pub mod internal;\npub use other_dep::*;\n",
+        "pub mod internal;\npub use internal::thr as renamed;\npub use other_dep::thr;\n",
+    ] {
+        let found = reexport_case(lib_rs)?;
+        assert_gap_named(&found, true).map_err(|error| format!("{lib_rs:?}: {error}"))?;
+        let owner = family(&found, "return_value")?;
+        assert_ne!(owner.class, ExposureClass::Exposed, "{lib_rs:?} {owner:?}");
+    }
+    Ok(())
+}

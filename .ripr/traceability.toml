@@ -13359,6 +13359,8 @@ tests = [
   "crates/ripr/tests/returned_comparison_boundary.rs::a_qualified_rival_call_is_not_a_boundary_input",
   "crates/ripr/tests/returned_comparison_boundary.rs::a_crate_qualified_owner_call_is_still_a_boundary_input",
   "crates/ripr/tests/returned_comparison_boundary.rs::an_import_bound_owner_crate_path_is_still_a_boundary_input",
+  "crates/ripr/tests/returned_comparison_boundary.rs::a_genuine_reexport_of_the_owner_still_supplies_the_boundary_input",
+  "crates/ripr/tests/returned_comparison_boundary.rs::a_dependency_export_of_a_same_named_function_is_not_the_owner",
   "crates/ripr/src/analysis/classify/call_identity.rs::tests::qualified_calls_lend_inputs_only_when_they_resolve_to_the_owner",
   "crates/ripr/tests/returned_comparison_boundary.rs::pattern_and_loop_rebindings_of_the_parameter_keep_the_gap",
   "crates/ripr/tests/check_helper_argument_pins.rs::a_helper_comparing_its_parameters_pins_the_arguments_the_test_passes",

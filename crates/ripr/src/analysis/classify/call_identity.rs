@@ -1352,9 +1352,67 @@ fn names_a_type(qualifier: &[String]) -> bool {
     })
 }
 
+/// One `use` leaf: its full path (the last segment is a name or `*`) and
+/// whether it is renamed.
+type UseLeaf = (Vec<String>, bool);
+
+/// Expand a masked `use` tree (`a::{b, c::d}`, `a::b as c`, `a::*`) into its
+/// leaves. A group whose braces do not balance yields nothing.
+fn expand_use_tree(tree: &str, prefix: &[String], out: &mut Vec<UseLeaf>) {
+    let tree = tree.trim();
+    let Some(open) = tree.find('{') else {
+        let (path, renamed) = match tree.split_once(" as ") {
+            Some((path, _)) => (path, true),
+            None => (tree, false),
+        };
+        let mut segments = prefix.to_vec();
+        segments.extend(
+            path.split("::")
+                .map(str::trim)
+                .filter(|segment| !segment.is_empty())
+                .map(str::to_string),
+        );
+        out.push((segments, renamed));
+        return;
+    };
+    let mut segments = prefix.to_vec();
+    segments.extend(
+        tree[..open]
+            .split("::")
+            .map(str::trim)
+            .filter(|segment| !segment.is_empty())
+            .map(str::to_string),
+    );
+    let mut depth = 0usize;
+    let mut start = open + 1;
+    let mut parts = Vec::new();
+    for (at, ch) in tree.char_indices().skip_while(|(at, _)| *at < open) {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    parts.push(&tree[start..at]);
+                    break;
+                }
+            }
+            ',' if depth == 1 => {
+                parts.push(&tree[start..at]);
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    for part in parts {
+        expand_use_tree(part, &segments, out);
+    }
+}
+
 /// Whether `owner`'s crate re-exports it into the module `module`
-/// (`pub use internal::inner;` in the crate root), read from a `use` item
-/// of that module's file that names the owner or globs its module.
+/// (`pub use internal::inner;` in the crate root): a `use` leaf of that
+/// module's file, not renamed, that names the owner (or globs) through a
+/// path resolving to the owner's own module. A dependency's path, an
+/// undeclared first segment or an unreadable tree does not qualify.
 fn module_reexports_owner(
     index: &RustIndex,
     owner: &FunctionSummary,
@@ -1362,19 +1420,42 @@ fn module_reexports_owner(
     module: &[String],
 ) -> bool {
     let owner_package = package_key(&owner.file);
-    let last = owner_path.last();
     index.files().iter().any(|(file, facts)| {
-        package_key(file) == owner_package
-            && file_module_segments(file).is_some_and(|segments| segments == module)
-            && {
-                let masked = mask_comments_and_strings(&facts.data().source);
-                use_item_ranges(&masked).into_iter().any(|range| {
-                    let item = &masked[range];
-                    mentions_word(item, &owner.name)
-                        || (item.contains('*')
-                            && last.is_some_and(|last| mentions_word(item, last)))
-                })
-            }
+        if package_key(file) != owner_package
+            || file_module_segments(file).is_none_or(|segments| segments != module)
+        {
+            return false;
+        }
+        let masked = mask_comments_and_strings(&facts.data().source);
+        use_item_ranges(&masked).into_iter().any(|range| {
+            let item = masked[range].trim().trim_end_matches(';');
+            let Some(tree) = item.strip_prefix("use") else {
+                return false;
+            };
+            let mut leaves = Vec::new();
+            expand_use_tree(tree, &[], &mut leaves);
+            leaves.into_iter().any(|(path, renamed)| {
+                let Some((last, target)) = path.split_last() else {
+                    return false;
+                };
+                if renamed || (last != "*" && *last != owner.name) {
+                    return false;
+                }
+                let Some(first) = target.first() else {
+                    return false;
+                };
+                let resolved = match first.as_str() {
+                    "crate" | "self" | "super" => keyword_module(target, module),
+                    // A module declared in this file; any other first
+                    // segment may be a dependency.
+                    _ if mentions_word(&masked, &format!("mod {first}")) => {
+                        Some(join(module, target))
+                    }
+                    _ => None,
+                };
+                resolved.is_some_and(|resolved| resolved == owner_path)
+            })
+        })
     })
 }
 
