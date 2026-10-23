@@ -323,7 +323,47 @@ Updated:
 ## Pending — match_arm_diagnostic_literal_no_promotion (24)
 
 Reason:
-RIPR-SPEC-0122: a head-only match-arm after row names the arm head and the line holding the new body (#9244)
+RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
+
+Command:
+`cargo xtask goldens bless match_arm_diagnostic_literal_no_promotion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — match_arm_diagnostic_literal_no_promotion (25)
+
+Reason:
+RIPR-SPEC-0122: #9373 item 1 review repair; missing discriminators include absent assertions as well as inputs
+
+Command:
+`cargo xtask goldens bless match_arm_diagnostic_literal_no_promotion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — match_arm_diagnostic_literal_no_promotion (26)
+
+Reason:
+RIPR-SPEC-0122: #9373 item 1 observation-gloss repair; report independent related test/assertion evidence without implying that the changed arm executes.
+
+Operation:
+Manual edit: replaced only the observation clause in the existing five-line bounded Evidence legend with `observation = related test/assertion evidence`.
+
+Execution:
+Source-only reviewed edit; no native fixture or goldens-bless command executed because local storage admission is unavailable.
+
+Updated:
+- `expected/human.txt`
+
+## Pending — match_arm_diagnostic_literal_no_promotion (27)
+
+Reason:
+RIPR-SPEC-0122: a head-only match-arm after row tells the reader to open the arm at its head line to read the new body (#9244)
 
 Command:
 `cargo xtask goldens bless match_arm_diagnostic_literal_no_promotion --reason "..."`

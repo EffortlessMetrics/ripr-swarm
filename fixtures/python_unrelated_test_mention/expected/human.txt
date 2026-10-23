@@ -22,6 +22,11 @@ Start here:
   Changed behavior: return amount - 10
   Missing discriminator: No Python test references `apply_discount(`; add a pytest or unittest test that calls the changed owner
   Evidence: reach no · infection yes · propagation yes · observation no · discriminator no
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach no: 0 related Python test(s) found for owner `apply_discount`
     - infection yes: Changed Python return expression can alter the owner return value: `return amount - 10`
     - 4 more detail line(s) in --format human-full

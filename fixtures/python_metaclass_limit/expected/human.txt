@@ -22,6 +22,11 @@ Start here:
   Analyzer limit: Static limit `metaprogramming`: the Python preview adapter saw metaprogramming syntax and does not infer runtime-created behavior
   Related test: tests/test_models.py:4 test_invoice_record_status
   Evidence: reach weak · infection unknown · propagation unknown · observation weak · discriminator unknown
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach weak: 1 heuristic Python test link(s) found for owner `InvoiceRecord`; relation is uncertain
     - infection unknown: Static limit `metaprogramming` prevents a safe Python infection claim
     - 4 more detail line(s) in --format human-full
