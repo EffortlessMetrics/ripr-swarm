@@ -293,14 +293,13 @@ fn literal_tokens_supported(
         };
         match token {
             Tok::Float { .. } | Tok::Complex { .. } | Tok::Or | Tok::Not => return false,
-            Tok::String { kind, .. } => {
+            Tok::String { kind, .. }
                 if kind.is_any_fstring()
                     || source
                         .get(usize::from(range.start())..usize::from(range.end()))
-                        .is_none_or(|text| text.contains('\\'))
-                {
-                    return false;
-                }
+                        .is_none_or(|text| text.contains('\\')) =>
+            {
+                return false;
             }
             Tok::Name { name } => {
                 if let Some((row, constants)) = bindings
