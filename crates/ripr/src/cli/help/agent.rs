@@ -89,7 +89,7 @@ falls back to all repo-actionable seams. This scope-widening is disclosed in
 the warnings[] field of the JSON output — check warnings[] to confirm whether
 you received a scoped result or a repo-wide fallback.
 
-This parser is the first implementation seam for RIPR-SPEC-0010. The brief
+This parser is the agent-brief router's first implementation seam. The brief
 router remains advisory and static; it does not run mutation testing, generate
 tests, edit files, change cache behavior, or touch LSP/MCP surfaces.
 "#;
@@ -220,7 +220,7 @@ LSP/MCP surfaces.
 Refusal contract: a typed verify refusal — drifted analysis inputs
 (`analysis input identities differ`) or no repository movement between the
 artifacts — names the cause on stderr, exits `3`, and leaves stdout empty
-(RIPR-SPEC-0134). Other rejections (unreadable or invalid artifacts, lineage
+. Other rejections (unreadable or invalid artifacts, lineage
 or metadata mismatches) exit `2`.
 
 Movement vocabulary (#2648): the JSON output uses two related fields:
@@ -396,7 +396,7 @@ Options:
                        Which phase of the repair loop to run.
   --python-repair-trust-manifest PATH
                        Bind this attempt to an accepted Python repair-trust
-                       selection manifest (RIPR-SPEC-0176); `before` only.
+                       selection manifest; `before` only.
   --python-repair-trust-attempt ID
                        The selection attempt identity to bind; requires the
                        manifest flag.

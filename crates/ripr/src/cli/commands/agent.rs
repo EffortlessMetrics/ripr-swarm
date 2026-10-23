@@ -300,7 +300,7 @@ fn agent_start_prose_lines(written: &AgentStartWritten) -> Vec<String> {
     let mut lines = written
         .paths
         .iter()
-        .map(|path| format!("Wrote {}", path.display()))
+        .map(|path| format!("Wrote {}", output::path::human_path(path)))
         .collect::<Vec<_>>();
     if let Some(next) = &written.next_command {
         lines.push(format!("Next: {next}"));

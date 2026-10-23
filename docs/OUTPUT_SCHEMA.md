@@ -530,6 +530,23 @@ document root is `canonical_next_action.subject.root`; doctor reads no diff, so
 `diff_source` is the fixed no-base committed mode, never a live-tree claim. The
 human line and this object agree by construction (Control 9).
 
+### Doctor volatile timing fields and stable output (#9807)
+
+The timing fields `ripr doctor --json` can carry are volatile: their values
+change on every run, so a run that changed nothing still produced a full-field
+diff on every timing value. The volatile fields are the top-level `elapsed_ms`
+run total, the top-level `segments[]` named segment timings, and the per-entry
+`elapsed_ms` on each `checks[]` check and each `runtime_probes[]` probe.
+
+Since #9807 the default `ripr doctor --json` document omits all of them, so the
+machine-readable output is byte-stable across runs that changed nothing and can
+be committed, snapshotted, or diffed directly. `ripr doctor --json --timings`
+restores the full projection with every timing field. All omitted fields remain
+declared and optional in
+[`schemas/ripr/doctor.schema.json`](../schemas/ripr/doctor.schema.json) —
+schema `0.4` is unchanged and a timed document stays legal — and the human
+screen is unaffected: it always prints its run-time summary.
+
 ### What `--json` now probes, and where that shows up
 
 Both surfaces read one probe per run, so `ripr doctor --json` performs the
