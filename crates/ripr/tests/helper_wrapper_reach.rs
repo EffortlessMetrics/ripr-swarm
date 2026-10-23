@@ -1231,3 +1231,154 @@ fn bytesize_shape_not_observing_the_method_result_is_not_exposed() -> Result<(),
     }
     Ok(())
 }
+const WIDE_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n fn wide_x(input: &str) -> bool {\n-    input.len() > 3\n+    3 < input.len()\n }\n";
+
+/// RIPR-SPEC-0159 example 9 (#9889): the private helper `wide_x` is reached
+/// through `classify_trimmed`, whose call hands it `argument`.
+fn wide_source(argument: &str) -> String {
+    format!(
+        "fn wide_x(input: &str) -> bool {{\n    3 < input.len()\n}}\n\npub fn classify_trimmed(input: &str) -> &'static str {{\n    if wide_x({argument}) {{\n        \"wide\"\n    }} else {{\n        \"narrow\"\n    }}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn rows_straddle_four() {{\n        assert_eq!(classify_trimmed(\" abcd \"), \"wide\");\n        assert_eq!(classify_trimmed(\" abc \"), \"narrow\");\n    }}\n}}\n"
+    )
+}
+
+// #9889: a computed argument on the chain edge (`input.trim()`) stops row
+// transfer, so observation through the chain can be neither confirmed nor
+// refuted. The return_value probe abstains like its predicate sibling and
+// never claims a gap.
+#[test]
+fn return_value_behind_a_computed_chain_argument_abstains() -> Result<(), String> {
+    // `&input` is no strict literal and not the caller parameter text, so
+    // `bind_helper_argument` stops the row there too (gemini review, #9947).
+    for argument in [
+        "input.trim()",
+        "input.trim_start()",
+        "&input[1..]",
+        "&input",
+    ] {
+        let source = wide_source(argument);
+        let predicate = predicate_finding(&source, WIDE_DIFF)?;
+        assert_eq!(
+            relation_of(&predicate, "rows_straddle_four"),
+            Some("helper_owner_call"),
+            "{argument}: {predicate}"
+        );
+        assert_eq!(
+            predicate["classification"], "infection_unknown",
+            "{argument}: {predicate}"
+        );
+        let finding = family_finding(&source, WIDE_DIFF, "return_value")?;
+        assert_eq!(
+            relation_of(&finding, "rows_straddle_four"),
+            Some("helper_owner_call"),
+            "{argument}: {finding}"
+        );
+        assert_eq!(
+            finding["classification"], "infection_unknown",
+            "{argument}: {finding}"
+        );
+    }
+    Ok(())
+}
+
+// Control for #9889: where the chain transfers the rows (the entry hands the
+// helper its own parameter), the return_value probe keeps its ordinary
+// reading, not the computed-argument abstention.
+#[test]
+fn return_value_behind_a_row_transferring_chain_keeps_its_reading() -> Result<(), String> {
+    let finding = family_finding(&wide_source("input"), WIDE_DIFF, "return_value")?;
+    assert_eq!(
+        relation_of(&finding, "rows_straddle_four"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
+    assert!(
+        !finding["ripr"]["infect"]["summary"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("computed argument"),
+        "{finding}"
+    );
+    assert_eq!(finding["classification"], "weakly_exposed", "{finding}");
+    assert_eq!(finding["ripr"]["infect"]["state"], "yes", "{finding}");
+    Ok(())
+}
+
+// #9889: the row-binding authority binds only a strict literal or the
+// caller's own parameter. A local or a named constant handed to the helper
+// stops the transfer just like a method call, so the return_value probe
+// abstains; a literal argument binds, so the probe keeps its reading.
+#[test]
+fn return_value_behind_a_local_or_constant_chain_argument_abstains() -> Result<(), String> {
+    for (prelude, argument) in [
+        ("    let trimmed = input.trim();\n", "trimmed"),
+        ("", "PADDED"),
+    ] {
+        let source = wide_source(argument)
+            .replace("    if wide_x(", &format!("{prelude}    if wide_x("))
+            .replace("fn wide_x", "const PADDED: &str = \" abcd \";\n\nfn wide_x");
+        let diff = WIDE_DIFF.replace("@@ -1,3 +1,3 @@", "@@ -3,3 +3,3 @@");
+        let finding = family_finding(&source, &diff, "return_value")?;
+        assert_eq!(
+            relation_of(&finding, "rows_straddle_four"),
+            Some("helper_owner_call"),
+            "{argument}: {finding}"
+        );
+        assert_eq!(
+            finding["classification"], "infection_unknown",
+            "{argument}: {finding}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn return_value_behind_a_literal_chain_argument_keeps_its_reading() -> Result<(), String> {
+    let finding = family_finding(&wide_source("\" abcd \""), WIDE_DIFF, "return_value")?;
+    assert_eq!(
+        relation_of(&finding, "rows_straddle_four"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
+    assert_eq!(finding["ripr"]["infect"]["state"], "yes", "{finding}");
+    assert_ne!(finding["classification"], "infection_unknown", "{finding}");
+    Ok(())
+}
+
+// #9889 review: `bind_helper_argument` binds `self.<tuple index>` only, so
+// any other receiver projection stops the row and abstains; the tuple index
+// keeps its reading.
+fn receiver_wide_source(argument: &str, field_decl: &str, construct: &str) -> String {
+    format!(
+        "fn wide_x(input: &str) -> bool {{\n    3 < input.len()\n}}\n\npub struct W{field_decl}\n\nimpl W {{\n    pub fn run(&self, input: &str) -> &'static str {{\n        if wide_x({argument}) {{\n            \"wide\"\n        }} else {{\n            \"narrow\"\n        }}\n    }}\n}}\n\npub fn run_w(input: &str) -> &'static str {{\n    {construct}.run(input)\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn rows_straddle_four() {{\n        assert_eq!(run_w(\" abcd \"), \"wide\");\n        assert_eq!(run_w(\" abc \"), \"narrow\");\n    }}\n}}\n"
+    )
+}
+
+#[test]
+fn return_value_behind_a_receiver_field_chain_argument_abstains() -> Result<(), String> {
+    for argument in ["self.pad.as_str()", "&self.pad", "self.pad.as_str().trim()"] {
+        let source = receiver_wide_source(
+            argument,
+            " {\n    pad: String,\n}",
+            "W { pad: String::new() }",
+        );
+        let finding = family_finding(&source, WIDE_DIFF, "return_value")?;
+        assert_eq!(
+            relation_of(&finding, "rows_straddle_four"),
+            Some("helper_owner_call"),
+            "{argument}: {finding}"
+        );
+        assert_eq!(
+            finding["classification"], "infection_unknown",
+            "{argument}: {finding}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn return_value_behind_a_receiver_tuple_index_keeps_its_reading() -> Result<(), String> {
+    let source = receiver_wide_source("self.0", "(&'static str);", "W(\"\")");
+    let finding = family_finding(&source, WIDE_DIFF, "return_value")?;
+    assert_ne!(finding["classification"], "infection_unknown", "{finding}");
+    Ok(())
+}
