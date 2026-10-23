@@ -40,7 +40,7 @@ use std::path::{Component, Path, PathBuf};
 /// Chain-walk bound, mirroring the include pass's depth limit. Module and
 /// include chains past this bound are exotic input that fails closed instead
 /// of risking unbounded recursion.
-const MAX_CONTEXT_CHAIN_DEPTH: usize = 32;
+pub(super) const MAX_CONTEXT_CHAIN_DEPTH: usize = 32;
 
 /// Limitation reason: two distinct parent declarations resolve to the same
 /// child file (or a default-resolution declaration matches both candidate
@@ -98,7 +98,9 @@ impl Context {
 /// fully parsed, normalized index. Deterministic: all intermediate maps are
 /// ordered, so grants and provenance are byte-identical across runs.
 pub(super) fn compose_index_source_roles(index: &mut RustIndex, workspace_root: &Path) {
-    let module_edges = resolved_module_edges(index, workspace_root);
+    let mut execution_parents = BTreeMap::new();
+    let module_edges = resolved_module_edges(index, workspace_root, &mut execution_parents);
+    index.execution_module_parents = Some(execution_parents);
     // Phase 1 (immutable): resolve every file's context and provenance.
     // The resolver borrows `include_parents`, so all mutations wait for it
     // to go out of scope.
@@ -290,6 +292,7 @@ enum DeclarationTargets {
 fn resolved_module_edges(
     index: &RustIndex,
     workspace_root: &Path,
+    execution_parents: &mut BTreeMap<PathBuf, Vec<SourceRoleProvenanceEdge>>,
 ) -> BTreeMap<PathBuf, Result<ModuleEdge, &'static str>> {
     let mut candidates: BTreeMap<PathBuf, BTreeSet<(PathBuf, usize, String, bool)>> =
         BTreeMap::new();
@@ -394,6 +397,24 @@ fn resolved_module_edges(
         if edges.contains_key(&child) {
             continue;
         }
+        // Role agreement admits the edges, not a unique execution scope.
+        // Retain every approved parent before selecting the role explanation.
+        execution_parents.insert(
+            child.clone(),
+            owners
+                .iter()
+                .map(
+                    |(parent, line, declaration, requires_test)| SourceRoleProvenanceEdge {
+                        kind: SourceRoleProvenanceEdgeKind::Module,
+                        parent: parent.clone(),
+                        child: child.clone(),
+                        declaration: declaration.clone(),
+                        line: *line,
+                        requires_test: *requires_test,
+                    },
+                )
+                .collect(),
+        );
         if let Some((parent, line, declaration, requires_test)) = owners.into_iter().next() {
             edges.insert(
                 child,

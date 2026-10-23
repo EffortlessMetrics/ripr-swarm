@@ -55,6 +55,14 @@ Policy impact:
   test has one allowlisted test-only process-launch site for compiling/running the
   fixed fixture subjects.
 
+Shared physical modules compiled by several targets do not inherit the
+representative role parent's assertion binding. Existing assertion admission
+must hold across every resolved target context. The shared effect-family gate,
+including its effect-only live-duplicate exception, also governs direct
+collection matching and strength so a refused assertion cannot restore credit
+through a second observation path. Standard assertions retain their existing
+operand and binding requirements.
+
 ## Problem
 
 A Rust `return_value` probe confirms its discriminator only when an

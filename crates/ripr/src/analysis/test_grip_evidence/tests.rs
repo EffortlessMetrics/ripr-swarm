@@ -1,4 +1,5 @@
 mod module_extraction;
+mod shared_execution_context;
 
 use super::related_tests::context::*;
 use super::related_tests::*;
@@ -78,6 +79,7 @@ fn index_from_files_at_stamp(
             .iter()
             .map(|(path, facts)| (path, facts.data().source.as_ref())),
     ));
+    crate::analysis::facts::compose_fixture_source_roles(&mut index, &fixture_root);
     Ok(FixtureIndex {
         index,
         _fixture_root: fixture_root,

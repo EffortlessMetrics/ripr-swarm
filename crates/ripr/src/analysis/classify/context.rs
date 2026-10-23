@@ -186,7 +186,11 @@ impl<'a> ProbeContext<'a> {
             super::owner_pin::target_root(&owner.file, self.index, &Default::default())
         });
         let Some(owner_root) = owner_root else {
-            return std::borrow::Cow::Borrowed(&self.index.package_names);
+            return if self.owner_fn.is_some() {
+                std::borrow::Cow::Owned(Default::default())
+            } else {
+                std::borrow::Cow::Borrowed(&self.index.package_names)
+            };
         };
         let member = self.index.member_crates.import_names(file, &owner_root);
         // A `pub use` of a foreign item under the callee's name means the
