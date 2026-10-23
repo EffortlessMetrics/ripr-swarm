@@ -898,7 +898,7 @@ fn timeout_terminates_shell_descendants() -> TestResult {
             "timeout left a live owned descendant (stubborn={stubborn})"
         );
         assert!(
-            elapsed < std::time::Duration::from_secs(4),
+            elapsed < std::time::Duration::from_secs(3),
             "timeout observation waited for natural witness expiry: {elapsed:?}"
         );
         if stubborn {
