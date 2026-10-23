@@ -6682,7 +6682,7 @@ mod tests {
     #[test]
     fn bounded_evidence_legend_observation_allows_relation_only_preview() -> Result<(), String> {
         let mut packet: serde_json::Value =
-            serde_json::from_str(crate::analysis::language::EXACT_RETURN_PACKET)
+            serde_json::from_str(crate::analysis::EXACT_RETURN_PACKET)
                 .map_err(|error| error.to_string())?;
         assert_eq!(packet["relations"].as_array().map(Vec::len), Some(1));
         packet["oracles"] = serde_json::json!([]);
@@ -6691,7 +6691,7 @@ mod tests {
             .ok_or("relation-only packet needs its relation")?;
         assert!(relation.remove("oracle_id").is_some());
         let text = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
-        let finding = crate::analysis::language::only_finding(&text)?;
+        let finding = crate::analysis::only_finding(&text)?;
         assert!(!finding.related_tests.is_empty());
         assert!(
             finding
