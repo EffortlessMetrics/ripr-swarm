@@ -64,7 +64,7 @@ pub(super) fn trybuild_fixture_disclosure_message(
 
 /// The crate directory (relative, `/`-joined, empty for the root crate) owning
 /// a `tests/ui/**` fixture path, or `None` when the path is not a fixture
-/// file. Only the first `tests/ui` component pair counts, and the file must
+/// file. Exactly one `tests/ui` component pair must appear (else ambiguous, `None`), and the file must
 /// sit below `ui` with a fixture extension.
 fn fixture_crate_dir(path: &Path) -> Option<String> {
     let extension = path.extension()?.to_str()?;
@@ -78,9 +78,17 @@ fn fixture_crate_dir(path: &Path) -> Option<String> {
             _ => None,
         })
         .collect::<Option<Vec<_>>>()?;
-    let at = components
+    let mut pairs = components
         .windows(3)
-        .position(|window| window[0] == "tests" && window[1] == "ui")?;
+        .enumerate()
+        .filter(|(_, window)| window[0] == "tests" && window[1] == "ui")
+        .map(|(at, _)| at);
+    let at = pairs.next()?;
+    // More than one `tests/ui` pair makes the owning crate ambiguous (a
+    // fixture tree that itself contains a `tests/ui`); fail closed.
+    if pairs.next().is_some() {
+        return None;
+    }
     // `windows(3)` guarantees a third component, so the file is below `ui`.
     Some(components[..at].join("/"))
 }
@@ -300,6 +308,73 @@ mod tests {
         );
         assert!(message.contains("and 3 more"), "{message}");
         assert!(!message.contains("case_3.rs"), "{message}");
+        Ok(())
+    }
+
+    #[test]
+    fn nested_crate_path_uses_the_directory_owning_tests_ui() -> Result<(), String> {
+        let root = temp_root("nested")?;
+        write(&root.join("Cargo.toml"), TRYBUILD_MANIFEST)?;
+        write(&root.join("crates/sub/Cargo.toml"), PLAIN_MANIFEST)?;
+        // The root crate declares trybuild but the owner of this fixture is
+        // crates/sub, which does not: nothing is named.
+        let files = vec![changed("crates/sub/tests/ui/x.rs")];
+        assert_eq!(trybuild_fixture_disclosure_message(&root, &files), None);
+        write(&root.join("crates/sub/Cargo.toml"), TRYBUILD_MANIFEST)?;
+        write(&root.join("Cargo.toml"), PLAIN_MANIFEST)?;
+        assert!(trybuild_fixture_disclosure_message(&root, &files).is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn ambiguous_multiple_tests_ui_pairs_fail_closed() -> Result<(), String> {
+        let root = temp_root("ambiguous")?;
+        write(&root.join("Cargo.toml"), TRYBUILD_MANIFEST)?;
+        write(&root.join("a/Cargo.toml"), TRYBUILD_MANIFEST)?;
+        for path in ["a/tests/ui/b/tests/ui/x.rs", "tests/ui/tests/ui/x.rs"] {
+            assert_eq!(
+                trybuild_fixture_disclosure_message(&root, &[changed(path)]),
+                None,
+                "{path}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn oversized_manifest_fails_closed() -> Result<(), String> {
+        let root = temp_root("oversized")?;
+        let mut manifest = TRYBUILD_MANIFEST.to_string();
+        manifest.push_str("# ");
+        manifest.push_str(&"x".repeat(MAX_MANIFEST_BYTES as usize));
+        manifest.push('\n');
+        write(&root.join("Cargo.toml"), &manifest)?;
+        let files = vec![changed("tests/ui/a.rs")];
+        assert_eq!(trybuild_fixture_disclosure_message(&root, &files), None);
+        // Control: the same manifest under the cap is named.
+        write(&root.join("Cargo.toml"), TRYBUILD_MANIFEST)?;
+        assert!(trybuild_fixture_disclosure_message(&root, &files).is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn deleted_and_renamed_fixture_paths_are_named_by_their_diff_path() -> Result<(), String> {
+        let root = temp_root("deleted")?;
+        write(&root.join("Cargo.toml"), TRYBUILD_MANIFEST)?;
+        // A deleted fixture (removed lines only) and a rename's new path are
+        // each one changed file; the disclosure names the path the diff
+        // reports and does not require the file to exist on disk.
+        let files = vec![
+            changed("tests/ui/gone.rs"),
+            changed("tests/ui/renamed.stderr"),
+        ];
+        let message = trybuild_fixture_disclosure_message(&root, &files)
+            .ok_or_else(|| "deleted/renamed fixtures must be named".to_string())?;
+        assert!(
+            message.contains("2 changed trybuild fixture file(s)"),
+            "{message}"
+        );
+        assert!(!root.join("tests/ui/gone.rs").exists());
         Ok(())
     }
 }
