@@ -4090,7 +4090,12 @@ mod tests {
     /// seam id; the cage binds to exactly that packet and its test file.
     #[test]
     fn cage_policy_binds_a_typescript_gap_packet_to_its_test_file() -> Result<(), String> {
-        for target in ["test/pricing.test.ts", "src/pricing.spec.ts"] {
+        // The `.spec.ts` file-name convention is a test surface only when
+        // the TypeScript adapter is compiled in.
+        let mut targets = vec!["test/pricing.test.ts"];
+        #[cfg(feature = "lang-typescript")]
+        targets.push("src/pricing.spec.ts");
+        for target in targets {
             let policy = edit_cage_policy_from_packet(&typescript_gap_packet(target)?, TS_GAP)?;
             if policy.selected_target.path() != target || policy.inline_test_module_target {
                 return Err(format!("cage did not bind {target}: {policy:?}"));
