@@ -820,7 +820,7 @@ fn is_inside_for_target(head: &str) -> bool {
 }
 
 /// Whether text before a bracket opener puts it in a binding-target position
-/// (line start, or after `for`, `as`, `,`, `*`, `:`, `;` or another opener that is itself
+/// (line start, or after `for`, `as`, `,`, `*`, `;`, a compound-header `:` or another opener that is itself
 /// in target position) rather than a call argument list (`len(r), 0` in
 /// `self.assertEqual(len(r), 0)`).
 fn opener_is_target_position(head: &str) -> bool {
@@ -829,11 +829,44 @@ fn opener_is_target_position(head: &str) -> bool {
         head = outer.trim_end();
     }
     head.is_empty()
-        || head.ends_with([',', '*', ':', ';'])
+        || head.ends_with([',', '*', ';'])
+        || (head.ends_with(':') && is_compound_header_colon(head))
         || head
             .rsplit(|ch: char| !is_python_identifier_char(ch))
             .next()
             .is_some_and(|word| word == "for" || word == "as")
+}
+
+/// Whether the `:` that ends `head` closes a compound-statement header
+/// (`if c:`, `else:`, `for x in y:`) rather than a dict value, slice or
+/// annotation colon: the line starts with a header keyword and the brackets
+/// opened before the colon are balanced.
+fn is_compound_header_colon(head: &str) -> bool {
+    let first = head
+        .trim_start()
+        .split(|ch: char| !is_python_identifier_char(ch))
+        .next()
+        .unwrap_or("");
+    let header = matches!(
+        first,
+        "if" | "elif"
+            | "else"
+            | "try"
+            | "except"
+            | "finally"
+            | "while"
+            | "for"
+            | "with"
+            | "def"
+            | "class"
+            | "async"
+    );
+    let depth = head.chars().fold(0i32, |depth, ch| match ch {
+        '(' | '[' | '{' => depth + 1,
+        ')' | ']' | '}' => depth - 1,
+        _ => depth,
+    });
+    header && depth == 0
 }
 
 /// Whether the construction at `idx` is the whole right-hand side of its

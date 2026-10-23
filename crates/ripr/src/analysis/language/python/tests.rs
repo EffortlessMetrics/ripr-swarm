@@ -7738,6 +7738,8 @@ fn protocol_entry_receiver_read_in_bracketed_call_arguments_is_still_credited() 
         // A membership test is not a binding, however many brackets wrap the name.
         "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    items = [r]\n    assert ((r)) in items\n    assert list(reversed(r)) == []\n",
         "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    items = [r]\n    for x in items:\n        assert ((r)) in items\n    assert list(reversed(r)) == []\n",
+        // A dict-value or annotation colon is not a compound-statement header.
+        "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    d = {\"k\": (r), \"b\": 2}\n    e = {\"k\": [r], 1: 2}\n    assert list(reversed(r)) == []\n",
         "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(0)\n    items = [r]\n    for x in items: assert ((r)) in items\n    assert list(reversed(r)) == []\n",
     ] {
         let (finding, relations) = classify_reversed_guard(test_src)?;
