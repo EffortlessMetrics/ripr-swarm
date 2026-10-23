@@ -195,6 +195,56 @@ pub(crate) fn attribute_test_build_availability(attr_text: &str) -> Option<bool>
     availability_attribute(body, 0).ok().flatten()
 }
 
+/// Whether `#[cfg_attr(<predicate>, .., test, ..)]` introduces the bare `test`
+/// attribute in a test build: the predicate is known true there (`all()`,
+/// `test`, `not(any())`) and one introduced attribute is exactly `test`. A
+/// feature, target or custom predicate stays unknown and does not count, so
+/// the function keeps whatever role it had without the attribute.
+pub(crate) fn attribute_introduces_test(attr_text: &str) -> bool {
+    true_cfg_attr_introduced(attr_text).is_some_and(|(_, has_test)| has_test)
+}
+
+/// [`attribute_introduces_test`] where `test` is the only attribute
+/// introduced, so the function is a plain `#[test]` in a test build. A
+/// sibling such as `ignore` or `should_panic` introduced beside it may
+/// change how the test runs and does not qualify.
+pub(crate) fn attribute_introduces_only_test(attr_text: &str) -> bool {
+    true_cfg_attr_introduced(attr_text).is_some_and(|(count, has_test)| count == 1 && has_test)
+}
+
+/// For a `cfg_attr` whose predicate is known true in a test build: how many
+/// attributes it introduces and whether one of them is the bare `test`.
+fn true_cfg_attr_introduced(attr_text: &str) -> Option<(usize, bool)> {
+    let tokens: Vec<_> = positioned_tokens(attr_text)?
+        .into_iter()
+        .map(|positioned| positioned.token)
+        .collect();
+    let [
+        Token::Punct('#'),
+        Token::Punct('['),
+        Token::Word(name),
+        Token::Punct('('),
+        inner @ ..,
+        Token::Punct(')'),
+        Token::Punct(']'),
+    ] = tokens.as_slice()
+    else {
+        return None;
+    };
+    if name != "cfg_attr" || !body_is_balanced(inner) {
+        return None;
+    }
+    let parts = availability_arguments(inner).ok()?;
+    let (condition, introduced) = parts.split_first()?;
+    if !matches!(availability_predicate(condition, 0), Ok(Some(true))) {
+        return None;
+    }
+    let has_test = introduced
+        .iter()
+        .any(|part| matches!(part, [Token::Word(word)] if word == "test"));
+    Some((introduced.len(), has_test))
+}
+
 /// A flat inactive `cfg_attr` with bare prelude flags and supported lint metadata.
 /// Unknown, malformed and nested introductions retain the existing boundary.
 pub(crate) fn attribute_is_known_inactive_prelude_flags(attr_text: &str) -> bool {

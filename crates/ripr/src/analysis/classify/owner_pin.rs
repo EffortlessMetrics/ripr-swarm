@@ -5550,7 +5550,20 @@ fn return_path_gate_from(
     // with the changed text (`Ok("a")` is not `Ok("b")`).
     let masked_changed = collapse_whitespace(&mask_comments_and_strings(changed));
     let tail_is_changed = [after_semicolon, after_brace].into_iter().any(|start| {
-        let tail = collapse_whitespace(&inner_text[start..]);
+        // A comment after the tail (`1 + x // assert_eq!(..)`) is masked to
+        // blanks, so the code ends where the masked tail does; reading the
+        // unmasked rest would compare the comment with the changed text.
+        // Masking also blanks string and char literals, so the code ends at
+        // the masked end only when a real comment starts there.
+        let masked_end = start + inner[start..].trim_end().len();
+        let rest = inner_text[masked_end..].trim_start();
+        let comment_follows = rest.starts_with("//") || rest.starts_with("/*");
+        let code_end = if comment_follows {
+            masked_end
+        } else {
+            inner_text.len()
+        };
+        let tail = collapse_whitespace(&inner_text[start..code_end]);
         (tail == changed
             || (collapse_whitespace(&inner[start..]) == masked_changed && tail.ends_with(changed)))
             && spans_changed_line(start, inner_text.len())

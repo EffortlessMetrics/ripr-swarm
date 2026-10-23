@@ -20,7 +20,8 @@ Linked plan:
 
 Linked issues:
 
-- #5327 (serde `format_u8` false gap), #5432 (sibling-arm oracles)
+- #5327 (serde `format_u8` false gap), #5432 (sibling-arm oracles),
+  #9442 and #9443 (owners reached without a placeable call)
 
 Linked PRs:
 
@@ -592,6 +593,54 @@ cannot tell twin impls apart from a dyn call, so the rule trades that one
 advisory for removing three false actionable claims. The finding names at most
 three judged tests.
 
+### Owners reached without a call ripr can place (#9442, #9443)
+
+A gap pairs an assertion with a call to the owner. Three source forms give
+ripr no such call although the test's oracle is real, and each used to read
+`weakly_exposed`. `indirect_owner::withhold_indirect_owner_gap` withholds a
+`weakly_exposed` or `reachable_unrevealed` finding with no `static_limit_kind`
+under `rust_indirect_owner_call_unresolved`:
+
+- **function value**: a non-ignored test with an assertion, in the owner's file
+  or an integration test, names the owner without calling it: an argument
+  (`.map(inc)`) or a binding (`let f: fn(u32) -> u32 = inc; f(2)`). A call
+  `inc(..)`, a macro `inc!`, a method `.inc`, a `use` line, a field label
+  `inc:`, a `fn inc` definition and a test that binds a local or parameter
+  named `inc` are not value uses. A mention only in production code keeps the
+  gap, since no test is shown to run it.
+- **generated owner**: the changed line lies in no function of its file and the
+  changed expression is an item-position macro invocation
+  (`def_add!(add_five, 2 + 3);`). The definition the macro emits is not source
+  ripr reads, so a related test's assertion cannot be paired with the changed
+  value.
+- **executor-wrapped call**: a related `direct_owner_call` test passes the
+  owner call as the only argument of `block_on(..)`, written bare, as a path
+  (`futures::executor::block_on`) or as a method (`rt.block_on(..)`), or of a
+  helper in the test's file whose signature mentions `Future`. A second
+  argument, or a helper that does not take a `Future`, keeps the gap. The
+  assertion reads the helper's result, and a bounded rule that follows a
+  single-argument helper to the future's output is not specified, so the
+  finding is limited rather than credited.
+
+These forms are limited, not credited: crediting needs the iterator chain or
+the executor's return evaluated, and a wrong credit is worse than an honest
+unknown. Both `credited` and `limited` satisfy the corpus rows
+`shape-hostile-owner-as-path-value`, `shape-hostile-owner-through-fn-pointer`,
+`shape-async-fn-block-on` and `shape-hostile-macro-defined-owner`.
+
+Two reading defects behind a neighbouring row are fixed instead of limited:
+
+- `#[cfg_attr(<predicate>, test)]` introduces the built-in `#[test]` when the
+  shared evaluator reads the predicate as true in a test build (`all()`,
+  `test`): `cfg_predicates::attribute_introduces_test` for the fact normalizer
+  and the parser, `attribute_introduces_only_test` for the owner pin, so a
+  sibling such as `ignore` or `should_panic` introduced beside `test` still
+  refuses it. A feature, target or custom predicate stays unknown and does
+  not make the function a test. `shape-hostile-cfg-attr-test` is credited.
+- A comment after the owner's tail (`x + 1 // assert_eq!(f(1), 3);`) is not
+  part of the tail: the owner pin compares the tail with comments masked on
+  both sides.
+
 ## Scope boundary
 
 - Rust check findings only. The pilot seam rule is RIPR-SPEC-0230 (#5569).
@@ -734,6 +783,10 @@ Integration: `crates/ripr/tests/owner_pin_execution.rs`
 `an_already_unknown_finding_names_the_budget_and_drops_call_derived_absence`), plus the unit test
 `gap_admission.rs::tests::a_related_test_line_at_the_call_budget_withholds_a_gap_and_names_an_unknown`.
 
+`crates/ripr/tests/indirect_owner_limit.rs` (function value, pointer binding,
+local and known executors, item macro, `cfg_attr` and trailing-comment
+controls) and `cfg_predicates::tests::cfg_attr_introduces_test_only_under_a_predicate_known_true`.
+
 Fixtures: `gap_withheld_feature_gated_test`, `gap_kept_ignored_test`.
 
 Wire strings are pinned by
@@ -749,6 +802,8 @@ and `crates/ripr/src/domain/probe.rs::tests::stop_reason_glosses_are_clean_prose
 - `crates/ripr/src/analysis/classify/gap_admission.rs` owns the decision.
 - `crates/ripr/src/analysis/classify/implicit_call.rs` owns the implicit-call
   rule (#9441).
+- `crates/ripr/src/analysis/classify/indirect_owner.rs` owns the
+  indirect-owner decision.
 - `crates/ripr/src/analysis/language/rust/mod.rs` calls it last in
   `apply_probe_and_oracle_limits`.
 - `crates/ripr/src/domain/language.rs` and `crates/ripr/src/domain/probe.rs`

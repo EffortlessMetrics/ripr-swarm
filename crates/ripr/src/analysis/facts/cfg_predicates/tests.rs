@@ -627,3 +627,28 @@ fn source_preservation_closes_stable_crate_metadata_without_cfg_credit() {
         );
     }
 }
+
+#[test]
+fn cfg_attr_introduces_test_only_under_a_predicate_known_true() {
+    for (text, any_test, only_test) in [
+        ("#[cfg_attr(all(), test)]", true, true),
+        ("#[cfg_attr(test, test)]", true, true),
+        ("#[ cfg_attr ( all ( ) , test ) ]", true, true),
+        ("#[cfg_attr(not(any()), test)]", true, true),
+        ("#[cfg_attr(all(), test, ignore)]", true, false),
+        ("#[cfg_attr(all(), ignore)]", false, false),
+        ("#[cfg_attr(any(), test)]", false, false),
+        ("#[cfg_attr(feature = \"extra\", test)]", false, false),
+        ("#[cfg_attr(all(), tokio::test)]", false, false),
+        ("#[cfg_attr(all(), test(arg))]", false, false),
+        ("#[cfg_attr(all(), r#test)]", false, false),
+        ("#[cfg_attr(all(),)]", false, false),
+        ("#[cfg_attr(all(), test", false, false),
+        ("#[test]", false, false),
+        ("#![cfg_attr(all(), test)]", false, false),
+        ("#[cfg(test)]", false, false),
+    ] {
+        assert_eq!(attribute_introduces_test(text), any_test, "{text}");
+        assert_eq!(attribute_introduces_only_test(text), only_test, "{text}");
+    }
+}
