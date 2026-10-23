@@ -252,7 +252,11 @@ bindings, and an ESM namespace object is not a callable registration root.
 The CommonJS exemption requires an immutable runner declaration (a `const`,
 or a `var`/`let` whose binding the file never writes outside its own
 initializer: no assignment, update, `for` target or redeclaration, and no
-`eval`/`with`/`\u` opacity, #9182) and
+`eval`/`with`/`\u` opacity, #9182; every occurrence must be a plain read or
+call, so a parenthesised, non-null, cast or destructuring assignment target,
+a `function`/`class` re-declaration and a `globalThis`/`this` member write all
+refuse. A nested-scope shadow such as a `test` parameter is refused too,
+fail-closed) and
 either ambient `require` syntax or an immutable loader created by a locally
 imported `node:module`/`module` `createRequire(import.meta.url)`. Mutable loaders
 or runner bindings and same-spelled helper factories remain uncredited.
