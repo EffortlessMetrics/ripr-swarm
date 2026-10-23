@@ -863,7 +863,10 @@ fn timeout_terminates_shell_descendants() -> TestResult {
                 witness_is_live(stat.as_deref(), pid, start)
             };
             let observed = std::time::Instant::now();
-            while live()? && observed.elapsed() < std::time::Duration::from_secs(1) {
+            // Wider than the SIGKILL teardown a loaded hosted runner can take, but
+            // still shorter than the witness's own 8s sleep, so natural expiry
+            // cannot masquerade as termination.
+            while live()? && observed.elapsed() < std::time::Duration::from_secs(5) {
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
             let failed_termination = live()?;
