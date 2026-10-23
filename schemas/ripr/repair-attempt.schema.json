@@ -51,6 +51,15 @@
       "minItems": 1,
       "items": { "type": "string", "minLength": 1 }
     },
+    "gap_binding": {
+      "description": "Present only for a gap-bound TypeScript attempt started with `ripr agent repair --gap-id G --base B --phase before` (RIPR-SPEC-0311); seam_id then holds the canonical gap id. Absent for seam attempts, so their bytes and before commitment are unchanged. Included in the before commitment when present.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["base"],
+      "properties": {
+        "base": { "type": "string", "minLength": 1 }
+      }
+    },
     "after": {
       "oneOf": [
         { "type": "null" },

@@ -530,6 +530,23 @@ document root is `canonical_next_action.subject.root`; doctor reads no diff, so
 `diff_source` is the fixed no-base committed mode, never a live-tree claim. The
 human line and this object agree by construction (Control 9).
 
+### Doctor volatile timing fields and stable output (#9807)
+
+The timing fields `ripr doctor --json` can carry are volatile: their values
+change on every run, so a run that changed nothing still produced a full-field
+diff on every timing value. The volatile fields are the top-level `elapsed_ms`
+run total, the top-level `segments[]` named segment timings, and the per-entry
+`elapsed_ms` on each `checks[]` check and each `runtime_probes[]` probe.
+
+Since #9807 the default `ripr doctor --json` document omits all of them, so the
+machine-readable output is byte-stable across runs that changed nothing and can
+be committed, snapshotted, or diffed directly. `ripr doctor --json --timings`
+restores the full projection with every timing field. All omitted fields remain
+declared and optional in
+[`schemas/ripr/doctor.schema.json`](../schemas/ripr/doctor.schema.json) —
+schema `0.4` is unchanged and a timed document stays legal — and the human
+screen is unaffected: it always prints its run-time summary.
+
 ### What `--json` now probes, and where that shows up
 
 Both surfaces read one probe per run, so `ripr doctor --json` performs the
@@ -3593,6 +3610,28 @@ gap. On success the verify document gains one additive member,
 Any other outcome is a named refusal (`agent verify gap binding refused: ...`,
 exit `3`, empty stdout), and `--gap-id` over a `repo-exposure-json` snapshot is
 an operational error (exit `2`).
+
+### Gap-Bound Repair Start
+
+For a TypeScript finding whose repair packet is complete, `ripr check` prints
+`ripr agent repair --gap-id <gap> --base <base> --phase before` as the start
+line (RIPR-SPEC-0311, #9103). The command re-runs the diff-scoped check against
+`--base`, requires the same shared packet validator to accept the finding, and
+otherwise refuses with "the repair packet is not ready" and writes nothing.
+A refused start restores the shared workflow artifacts to the bytes they had
+before the invocation (removing only files it created). On
+acceptance it writes `before.check-findings.json` (a `check-findings-json`
+artifact) and `gap-repair-packet.json` under the attempt's artifacts and a
+repair-attempt manifest whose `seam_id` is the canonical gap id and which
+carries one additive member, `gap_binding: { "base": "<base>" }`. Seam
+attempts omit `gap_binding`, so their bytes are unchanged. The packet names the
+gap as its `seam_id`; the edit cage is derived from the packet's test file
+and recorded in the attempt baseline, but this slice does not enforce it: only
+the after phase consumes it. This slice has no `--phase after` for gap attempts: that phase refuses naming the manual
+route, `ripr agent verify --before <snapshot> --after <snapshot> --gap-id <gap>`.
+Let-bound, imported and reach-barrier variants stay unrouted. Python keeps its
+terminal reason. The static result is exposure evidence only; it does not
+claim a runtime mutation outcome.
 
 ## Repo Seam Inventory
 
