@@ -1806,6 +1806,67 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('a rejection received during post-start setup reads survives the startup paint (#9917)', async () => {
+    let releaseRead: (() => void) | undefined;
+    let sawPostStartRead: (() => void) | undefined;
+    const readGate = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    const postStartReadStarted = new Promise<void>((resolve) => {
+      sawPostStartRead = resolve;
+    });
+    let holder: { client: { startCalls: number } } | undefined;
+    let held = false;
+    const context = createControllerTestContext({
+      beforeReadFile: async () => {
+        if (held || !holder || holder.client.startCalls === 0) {
+          return;
+        }
+        held = true;
+        sawPostStartRead?.();
+        await readGate;
+      }
+    });
+    holder = context;
+    try {
+      const starting = context.controller.start();
+      await postStartReadStarted;
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'stopped',
+        input_authority: { configuration_pull: { state: 'failed', failure: { kind: 'config_pull_invalid', message: 'bad `gitTimeoutMs`' } } }
+      });
+      assert.ok(context.status.text.includes('ripr: failed'));
+      assert.ok(String(context.status.tooltip).includes('`gitTimeoutMs`'));
+
+      releaseRead?.();
+      await starting;
+      assert.ok(context.status.text.includes('ripr: failed'), `startup must not hide the rejection: ${context.status.text}`);
+      assert.ok(String(context.status.tooltip).includes('`gitTimeoutMs`'));
+
+      // A later applied pull still clears it.
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'stopped',
+        input_authority: { configuration_pull: { state: 'applied' } }
+      });
+      assert.ok(!context.status.text.includes('ripr: failed'));
+      assert.ok(!String(context.status.tooltip).includes('gitTimeoutMs'));
+    } finally {
+      releaseRead?.();
+      await context.dispose();
+    }
+  });
+
+  test('startup without a rejection still paints the queued placeholder (#9917)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      assert.ok(context.status.text.includes('queued'), `no-failure startup is queued: ${context.status.text}`);
+      assert.ok(!context.status.text.includes('ripr: failed'));
+    } finally {
+      await context.dispose();
+    }
+  });
+
   test('an accepted pull does not mask a real analysis failure after a rejected pull (#9917)', async () => {
     const context = createControllerTestContext({});
     try {

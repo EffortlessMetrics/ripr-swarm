@@ -827,12 +827,21 @@ export class RiprClientController {
     if (this.pendingWorkspaceRoot && this.workspaceRoot && sameWorkspaceRoot(this.pendingWorkspaceRoot, this.workspaceRoot)) {
       this.pendingWorkspaceRoot = undefined;
     }
-    this.updateStatus({
-      kind: 'analysisQueued',
-      summary: 'ripr saved-workspace analysis is queued.',
-      detail: `Server: ${server.source} (${server.detail})\nWorkspace: ${this.workspaceRoot}\nOpen or save a Rust or enabled preview-language file to refresh diagnostics.`,
-      nextStep: 'Open or save a Rust or enabled preview-language file, then wait for diagnostics.'
-    });
+    // The server is live during the setup reads above, so its first
+    // configuration pull may already have been rejected. The queued paint is
+    // only the startup placeholder and must not hide that rejection; a later
+    // pending/applied pull still clears or re-asserts it through
+    // handleAnalysisStatus.
+    if (this.configurationFailureStatus) {
+      this.updateStatus(this.configurationFailureStatus);
+    } else {
+      this.updateStatus({
+        kind: 'analysisQueued',
+        summary: 'ripr saved-workspace analysis is queued.',
+        detail: `Server: ${server.source} (${server.detail})\nWorkspace: ${this.workspaceRoot}\nOpen or save a Rust or enabled preview-language file to refresh diagnostics.`,
+        nextStep: 'Open or save a Rust or enabled preview-language file, then wait for diagnostics.'
+      });
+    }
     await this.refreshFirstUsefulActionStatus();
   }
 
