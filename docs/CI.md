@@ -2364,6 +2364,34 @@ It is not part of `precommit`, `check-pr` or any required lane (it requires a
 `ripr` build), so it reports failures only when run; hosted wiring is a
 follow-up on #5531.
 
+## Capability Registry Docs Block
+
+`cargo xtask capability-docs [--check | --write] [--markdown-file <path>]` keeps
+the generated `<!-- capability-registry:begin ... end -->` block in
+`docs/status/SUPPORT_TIERS.md` equal to the registry (#5531). There is one
+renderer, in the `ripr` library; `ripr capabilities --markdown` prints it and
+the command builds `ripr`, runs that, and compares or splices the exact text.
+The in-crate `language_capability_drift` test checks the same renderer, but a
+Rust test does not run on a Markdown-only PR (`routed-rust.yml` classifies it
+`docs_only`), so a hand edit of the block was previously caught only by a Rust
+run.
+
+- `--check` (default) fails when the block differs, when the begin/end markers
+  are missing, duplicated or reversed, or when the rendering is empty or has no
+  cell rows.
+- `--write` rewrites only the text from the begin marker to the end marker and
+  refuses on the same conditions, so a failed run writes nothing.
+- `--markdown-file` reads a saved rendering instead of building (offline, can be
+  stale; the report says so).
+
+Limits and remaining gap: it is `ci_enforced=false` and is not part of
+`precommit`, `check-pr` or any required lane. Producing the rendering needs a
+`ripr` build, which `precommit` must not force, and the docs-only route does not
+build Rust. Until a hosted lane or a docs-gate step runs it (a follow-up on
+#5531), run it by hand after editing `domain/language_capability.rs` or the
+block. It does not check tier prose or row bindings (`check-support-tiers` and
+the drift test).
+
 ## Principles
 
 - Fast gates first: formatting, check, clippy, and tests should fail early.
