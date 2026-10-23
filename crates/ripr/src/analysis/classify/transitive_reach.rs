@@ -1359,13 +1359,18 @@ impl<'a> TransitiveReachIndex<'a> {
                     })
                 })
             });
+        let path_untraced = graph.macro_may_mention(owner_name)
+            || reaching.iter().any(|name| graph.macro_may_mention(name))
+            || graph.walk_past_bound(owner_name, |_| Some(())).is_some();
         OwnerReach {
             graph,
             owner_name: owner_name.to_string(),
             reaching,
             implicit_dispatch,
-            path_untraced: graph.macro_may_mention(owner_name)
-                || graph.walk_past_bound(owner_name, |_| Some(())).is_some(),
+            // A macro body naming the owner, or any function on a path to it
+            // (`outer -> mac!(helper) -> helper -> owner`), hides a hop from
+            // the name walk.
+            path_untraced,
         }
     }
 

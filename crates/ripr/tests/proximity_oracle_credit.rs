@@ -117,3 +117,48 @@ fn production_macro_hop_keeps_proximity_credit() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// Review of #9225: the macro hop can sit above a helper
+/// (`outer -> call_helper!(x) -> helper -> inner`); the macro body names
+/// `helper`, not the owner, and the row still keeps credit.
+#[test]
+fn macro_hop_above_a_helper_keeps_proximity_credit() -> Result<(), String> {
+    let diff = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn inner(x: u8) -> u8 {\n-    x + 1\n+    x + 2\n }\n";
+    let source = "pub fn inner(x: u8) -> u8 {\n    x + 2\n}\n\npub fn helper(x: u8) -> u8 {\n    inner(x)\n}\n\nmacro_rules! call_helper {\n    ($x:expr) => {\n        helper($x)\n    };\n}\n\npub fn outer(x: u8) -> u8 {\n    call_helper!(x)\n}\n\npub fn smoke() -> u8 {\n    inner(1)\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn smoke_test() {\n        let _ = smoke();\n    }\n\n    #[test]\n    fn outer_triples() {\n        assert_eq!(outer(4), 6);\n    }\n}\n";
+    let actual = finding_for(source, diff, "x + 2")?;
+    assert_row_not_no_call_path(&actual, "outer_triples")
+}
+
+/// The walk past `MAX_TRANSITIVE_DEPTH`: a chain of seven callers above the
+/// owner is beyond the name walk's bound and keeps credit.
+#[test]
+fn chain_past_the_walk_bound_keeps_proximity_credit() -> Result<(), String> {
+    let diff = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn inner(x: u8) -> u8 {\n-    x + 1\n+    x + 2\n }\n";
+    let mut source = String::from(
+        "pub fn inner(x: u8) -> u8 {\n    x + 2\n}\n\npub fn smoke() -> u8 {\n    inner(1)\n}\n\n",
+    );
+    let mut callee = "inner".to_string();
+    for level in 1..=7 {
+        let name = format!("hop{level}");
+        source.push_str(&format!(
+            "pub fn {name}(x: u8) -> u8 {{\n    {callee}(x)\n}}\n\n"
+        ));
+        callee = name;
+    }
+    source.push_str(&format!("#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn smoke_test() {{\n        let _ = smoke();\n    }}\n\n    #[test]\n    fn deep_triples() {{\n        assert_eq!({callee}(4), 6);\n    }}\n}}\n"));
+    let actual = finding_for(&source, diff, "x + 2")?;
+    assert_row_not_no_call_path(&actual, "deep_triples")
+}
+
+fn assert_row_not_no_call_path(finding: &Value, test: &str) -> Result<(), String> {
+    let rows = finding["related_tests"].as_array().ok_or("missing rows")?;
+    let row = rows
+        .iter()
+        .find(|r| r["name"] == test)
+        .ok_or_else(|| format!("missing {test} row: {rows:?}"))?;
+    assert_ne!(
+        row["miss"], "no_call_path",
+        "an untraced path to the owner is not an unrelated test: {row:?}"
+    );
+    Ok(())
+}
