@@ -69,11 +69,14 @@ pub(super) fn plain_observation_wording(text: &str) -> String {
         .replace("observation_unverified", "the observation is unconfirmed")
 }
 
-fn plain_wording(plain: bool, line: String) -> String {
+/// The stage summary as the human window shows it. Only the producer's summary
+/// text is rewritten, before it is embedded in a line, so backticked source
+/// literals the line adds around it are never touched.
+fn summary_text(plain: bool, summary: &str) -> String {
     if plain {
-        plain_observation_wording(&line)
+        plain_observation_wording(summary)
     } else {
-        line
+        summary.to_string()
     }
 }
 
@@ -134,20 +137,17 @@ fn evidence_path<T>(
             EvidenceSource::Stage("propagation", &finding.ripr.propagate),
         ),
         project(
-            plain_wording(
-                plain,
-                format!(
-                    "observation {}: {}",
-                    finding.ripr.reveal.observe.state.as_str(),
-                    finding.ripr.reveal.observe.summary
-                ),
+            format!(
+                "observation {}: {}",
+                finding.ripr.reveal.observe.state.as_str(),
+                summary_text(plain, &finding.ripr.reveal.observe.summary)
             ),
             EvidenceSource::Stage("observation", &finding.ripr.reveal.observe),
         ),
         project(
-            plain_wording(
-                plain,
-                crate::output::discriminator_line::discriminator_evidence_line(finding),
+            crate::output::discriminator_line::discriminator_evidence_line_with_summary(
+                finding,
+                &summary_text(plain, &finding.ripr.reveal.discriminate.summary),
             ),
             EvidenceSource::Discriminator(
                 &finding.ripr.reveal.discriminate,

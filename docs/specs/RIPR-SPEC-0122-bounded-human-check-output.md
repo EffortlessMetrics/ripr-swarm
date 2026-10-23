@@ -552,15 +552,22 @@ suggested write cannot fail on the same missing base.
 ### Plain wording for an unconfirmed observation (#9244)
 
 The producer's `observation` and `discriminator` stage summaries end with the
-machine marker `(observation_unverified)`. The per-finding human evidence lines (bounded and
-`human-full`, and `ripr explain`) drop that parenthetical and spell any bare
-occurrence of the token as "the observation is unconfirmed"; the preceding
-words ("Discriminator unconfirmed: no assertion text references this probe's
-changed expression") already say it in prose. The JSON stage summaries and the
-shared discriminator evidence line keep the marker unchanged, because
-downstream consumers key on it. The grouped evidence rows of the shared
-(multi-finding) rendering use a separate projection and are covered by a
-sibling change.
+machine marker `(observation_unverified)`. The per-finding human evidence lines
+(bounded and `human-full`, and `ripr explain`) rewrite the stage summary text
+before it is embedded in the line: the parenthetical is dropped and any bare
+occurrence of the token is spelled "the observation is unconfirmed". The words
+before it ("Discriminator unconfirmed: no assertion text references this probe's
+changed expression") already say it in prose. Only the producer's summary is
+rewritten; backticked source literals the line adds around it are left as is.
+The JSON stage summaries and the shared discriminator evidence line keep the
+marker unchanged, because downstream consumers key on it. The grouped evidence
+rows of the shared (multi-finding) rendering use a separate projection and are
+covered by a sibling change.
+
+This item does not rewrite the Python Weakness section text (python
+`classify.rs`, rendered through `weakness_lines`), the LSP hover, pilot output
+or the agent packet routes. Those, with the `classify.rs:691` reason text, are
+tracked in #9929.
 
 ## Non-Claims
 

@@ -6741,6 +6741,44 @@ mod tests {
             plain_observation_wording("Strong oracle found"),
             "Strong oracle found"
         );
+        // Multiple occurrences, and a marker with no leading space.
+        assert_eq!(
+            plain_observation_wording("a (observation_unverified) b (observation_unverified)"),
+            "a b"
+        );
+        assert_eq!(
+            plain_observation_wording("(observation_unverified) first"),
+            "(the observation is unconfirmed) first"
+        );
+    }
+
+    #[test]
+    fn plain_wording_leaves_backticked_source_literals_alone() {
+        use crate::domain::{ExposureClass, MissingDiscriminatorFact};
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.ripr.reveal.discriminate = stage(
+            StageState::Yes,
+            Confidence::Medium,
+            "Strong oracle (observation_unverified)",
+        );
+        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "observation_unverified".to_string(),
+            reason: "r".to_string(),
+            flow_sink: None,
+        }];
+        let rendered = super::evidence_lines::evidence_path_lines(
+            &finding,
+            super::evidence_lines::JsonPointerWording::CheckFlag,
+        )
+        .join("\n");
+        assert!(
+            rendered.contains(
+                "discriminator missing: `observation_unverified`; related oracle: Strong oracle"
+            ),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("(observation_unverified)"), "{rendered}");
     }
 
     pub(super) fn bounded_output_with_findings(findings: Vec<Finding>) -> CheckOutput {
