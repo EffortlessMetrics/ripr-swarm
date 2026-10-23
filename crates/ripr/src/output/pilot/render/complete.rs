@@ -2024,9 +2024,6 @@ mod assertion_shape_tests {
     fn concrete_assertion_keeps_its_label_and_gets_no_note() {
         let mut out = String::new();
         push_assertion_shape(&mut out, "assert!(quote.total > Money::zero())");
-        assert_eq!(
-            out,
-            "  assertion: assert!(quote.total > Money::zero())\n"
-        );
+        assert_eq!(out, "  assertion: assert!(quote.total > Money::zero())\n");
     }
 }
