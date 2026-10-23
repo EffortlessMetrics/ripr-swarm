@@ -345,6 +345,8 @@ Reference definitions and explicit reference identifiers use the same
 code-sensitive neutralization as visible labels, so shortcut and collapsed
 references containing code still resolve. Prose outside that code remains
 neutralized in both the use and definition.
+Definitions shared with reference images must retain their existing resolution,
+including images nested in links.
 Neutralize raw HTML and mentions outside code or link destination/title syntax.
 Backtick runs in different
 CommonMark blocks or GFM table cells do not form one code span; a soft newline

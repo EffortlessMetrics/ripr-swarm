@@ -195,17 +195,32 @@ fn prose_once(text: &str) -> String {
         }
     }
 
-    let mut label_end = None;
+    let mut labels: Vec<(usize, Option<LinkType>)> = Vec::new();
     // Inline spans cannot cross CommonMark block boundaries or GFM table cells.
     // The parser's ranges are UTF-8 byte boundaries in this exact source.
     for (event, range) in parser.into_offset_iter() {
         match event {
-            Event::Start(Tag::Link {
-                link_type: link_type @ (LinkType::Inline | LinkType::Reference),
-                ..
-            }) => label_end = Some((range.start + 1, link_type)),
-            Event::End(TagEnd::Link) => {
-                if let Some((end, link_type)) = label_end.take() {
+            Event::Start(tag @ (Tag::Link { .. } | Tag::Image { .. })) => {
+                if let Some((end, _)) = labels.last_mut() {
+                    *end = (*end).max(range.end);
+                }
+                let (prefix_len, protected_type) = match tag {
+                    Tag::Link { link_type, .. }
+                        if matches!(link_type, LinkType::Inline | LinkType::Reference) =>
+                    {
+                        (1, Some(link_type))
+                    }
+                    Tag::Image {
+                        link_type: LinkType::Reference,
+                        ..
+                    } => (2, Some(LinkType::Reference)),
+                    Tag::Image { .. } => (2, None),
+                    _ => (1, None),
+                };
+                labels.push((range.start + prefix_len, protected_type));
+            }
+            Event::End(TagEnd::Link | TagEnd::Image) => {
+                if let Some((end, Some(link_type))) = labels.pop() {
                     // Child events cover the visible label, including markup.
                     // Protect inline destination/title syntax or code within a
                     // reference identifier. Copying the whole link would leave
@@ -218,7 +233,7 @@ fn prose_once(text: &str) -> String {
                 }
             }
             _ => {
-                if let Some((end, _)) = &mut label_end {
+                if let Some((end, _)) = labels.last_mut() {
                     *end = (*end).max(range.end);
                 }
                 if matches!(event, Event::Code(_) | Event::Start(Tag::CodeBlock(_))) {
@@ -1552,6 +1567,33 @@ mod tests {
                     Event::Start(Tag::Link { .. }) | Event::Html(_) | Event::InlineHtml(_)
                 ))
             );
+        }
+    }
+
+    /// RIPR-SPEC-0025: definitions shared by links and images must stay usable.
+    #[test]
+    fn given_reference_images_when_code_labels_are_preserved_then_existing_images_still_resolve() {
+        use pulldown_cmark::{Event, Options, Parser, Tag};
+
+        for usage in [
+            "![shown][`code`]",
+            "[![shown][`code`]](https://outer.test)",
+            "[![shown][`code`]][`code`]",
+            "![![shown][`code`]][`code`]",
+            "![][`code`]",
+        ] {
+            let source = format!("{usage}\n\n[`code`]: <https://example.test>");
+            let rendered = prose(&source);
+            assert_eq!(rendered, source, "{usage}");
+            assert_eq!(prose(&rendered), rendered);
+            let images = Parser::new_ext(&rendered, Options::ENABLE_TABLES)
+                .filter_map(|event| match event {
+                    Event::Start(Tag::Image { dest_url, .. }) => Some(dest_url.to_string()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(!images.is_empty());
+            assert!(images.iter().all(|url| url == "https://example.test"));
         }
     }
 

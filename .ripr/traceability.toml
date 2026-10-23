@@ -3113,6 +3113,7 @@ tests = [
   "crates/ripr/src/output/markdown.rs::given_link_labels_when_prose_is_neutralized_then_only_visible_text_is_escaped",
   "crates/ripr/src/output/markdown.rs::given_reference_code_labels_when_neutralized_then_links_still_resolve",
   "crates/ripr/src/output/markdown.rs::given_reference_label_prose_when_neutralized_then_matching_and_safety_hold",
+  "crates/ripr/src/output/markdown.rs::given_reference_images_when_code_labels_are_preserved_then_existing_images_still_resolve",
   "crates/ripr/src/output/pr_inline_comment_publish_plan.rs::inline_comment_publish_plan_matches_fixture_corpus",
   "crates/ripr/src/output/pr_inline_comment_publish_plan.rs::inline_comment_body_prefers_gap_repair_card",
   "crates/ripr/src/output/pr_inline_comment_publish_plan.rs::inline_comment_publish_plan_blocks_missing_dedupe_and_placement",
