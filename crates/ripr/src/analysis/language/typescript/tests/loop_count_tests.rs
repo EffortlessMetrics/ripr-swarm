@@ -1,4 +1,4 @@
-//! RIPR-SPEC-0246 rule 7: a counted-loop header change that a related test
+//! RIPR-SPEC-0246 rule 8: a counted-loop header change that a related test
 //! reads only through a mock call count is `static_unknown`, not a gap.
 
 use super::*;
