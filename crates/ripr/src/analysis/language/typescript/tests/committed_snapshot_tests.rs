@@ -1490,6 +1490,21 @@ fn quoted_combined_and_escaped_script_flags_stay_medium() -> Result<(), String> 
     Ok(())
 }
 
+/// `true` when a git hook (or wrapper) exported a repository selector. The
+/// tracked-file check reports "unknown" then (it must not answer for another
+/// repository), and the fixture repositories below would be created in the
+/// wrong place, so the tests that need real tracking return early.
+fn git_selector_env_present() -> bool {
+    [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
+        "GIT_INDEX_FILE",
+    ]
+    .iter()
+    .any(|name| std::env::var_os(name).is_some())
+}
+
 /// Run `git` in `root` for a test fixture.
 fn fixture_git(root: &Path, args: &[&str]) -> Result<(), String> {
     let output = crate::git::run_git_output_with_deadline(
@@ -1533,6 +1548,9 @@ fn snapshot_repo(label: &str, track: bool, ignore: bool) -> Result<PathBuf, Stri
 /// (committed or staged) keeps the credit.
 #[test]
 fn untracked_or_ignored_snapshot_file_stays_medium() -> Result<(), String> {
+    if git_selector_env_present() {
+        return Ok(());
+    }
     for (label, track, ignore, expected) in [
         ("snap-tracked", true, false, OracleStrength::Strong),
         ("snap-untracked", false, false, OracleStrength::Medium),
@@ -1574,6 +1592,9 @@ fn snapshot_file_outside_a_repository_is_read_as_before() -> Result<(), String> 
 /// later scope, the files are read again, so no verdict leaks across runs.
 #[test]
 fn config_walk_and_tracked_list_are_memoized_per_run_only() -> Result<(), String> {
+    if git_selector_env_present() {
+        return Ok(());
+    }
     let root = snapshot_repo("snap-memo", true, false)?;
     ts_write_file(&root.join("jest.config.js"), "module.exports = {};")?;
     let (first, cached_config, cached_tracked) = {
@@ -1624,6 +1645,9 @@ fn memoized_config_verdict_is_per_directory() -> Result<(), String> {
 /// tracked, an untracked snapshot file refuses.
 #[test]
 fn repository_tracking_nothing_under_root_is_unknown() -> Result<(), String> {
+    if git_selector_env_present() {
+        return Ok(());
+    }
     let root = ts_unique_tempdir("snap-nothing-tracked")?;
     fixture_git(&root, &["init", "--initial-branch=main"])?;
     ts_write_file(&root.join("test/price.test.ts"), PRICE_TEST)?;
