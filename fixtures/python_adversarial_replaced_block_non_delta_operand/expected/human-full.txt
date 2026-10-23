@@ -37,7 +37,7 @@ Evidence
   - observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)
   - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
   - local flow reaches returned value: return max(0, self._balance) (line 7)
-  - related test tests/test_account.py:4 test_balance_starts_at_the_opening_amount uses strong exact value oracle: assert account._balance == 100
+  - related test tests/test_account.py:4 test_balance_starts_at_the_opening_amount uses strong exact value oracle: assert account._balance == 100; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
 
 Weakness
   - A strong Python oracle reaches `balance`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output

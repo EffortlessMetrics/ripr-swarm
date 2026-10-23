@@ -1,0 +1,9 @@
+diff --git a/idioms/legacy.py b/idioms/legacy.py
+--- a/idioms/legacy.py
++++ b/idioms/legacy.py
+@@ -3,4 +3,4 @@
+ 
+ 
+ def beta_enabled():
+-    return False
++    return True

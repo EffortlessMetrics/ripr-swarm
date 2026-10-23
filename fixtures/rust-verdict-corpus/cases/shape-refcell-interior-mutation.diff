@@ -1,0 +1,12 @@
+diff --git a/src/flow.rs b/src/flow.rs
+--- a/src/flow.rs
++++ b/src/flow.rs
+@@ -71,7 +71,7 @@
+     }
+ 
+     pub fn hit(&self) {
+-        *self.hits.borrow_mut() += 1;
++        *self.hits.borrow_mut() += 1u32;
+     }
+ 
+     pub fn hits(&self) -> u32 {

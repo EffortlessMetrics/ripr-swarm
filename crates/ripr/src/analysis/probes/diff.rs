@@ -9,7 +9,7 @@ use super::binding_predicate::{
     resolve_changed_binding_uses,
 };
 use super::classify::{
-    added_type_bound_lines, is_structural_delimiter_line,
+    added_header_bound_lines, added_type_bound_lines, is_structural_delimiter_line,
     parser_probe_shapes_for_changed_line_against, removed_type_bounds, should_ignore_changed_line,
 };
 use super::expectations::{expected_sinks, required_oracles};
@@ -191,6 +191,10 @@ pub(crate) fn probes_for_file_with_relations(
     let mut added_macro_seeded = std::collections::BTreeSet::<(String, usize)>::new();
     let mut removed_macro_seeded = std::collections::BTreeSet::<(String, usize)>::new();
 
+    // Type-bound lines of a wrapped signature are declarations of their own
+    // (one visible `static_unknown` each) and are never grouped away; parsed
+    // lazily, only when a line sits in a wrapped signature (#8999).
+    let signature_cx = SignatureContext::default();
     for (added_index, added) in changed.added_lines.iter().enumerate() {
         let text = added.text.trim();
         // Blank and comment-only lines are never probed. The other
@@ -231,7 +235,21 @@ pub(crate) fn probes_for_file_with_relations(
         if should_ignore_changed_line(text) {
             continue;
         }
-        if opens_new_function_with_added_body(index, changed, added.new_side_line, text) {
+        if opens_new_function_with_added_body(index, changed, added_index, &signature_cx) {
+            continue;
+        }
+        if let Some(carrier) =
+            signature_carrier_probe(index, changed, added_index, &probes, &signature_cx)
+        {
+            // Same logical declaration change: the retained probe carries this
+            // line's new text and its old counterpart so no edited parameter
+            // loses its evidence.
+            let counterpart = replaced_line_counterpart(added.new_side_line, changed);
+            let probe = &mut probes[carrier].probe;
+            append_signature_text(&mut probe.after, text);
+            if let Some(counterpart) = counterpart.as_deref() {
+                append_signature_text(&mut probe.before, counterpart);
+            }
             continue;
         }
         let propagation_subject = propagation_subjects.get(&added.new_side_line);
@@ -327,6 +345,23 @@ pub(crate) fn probes_for_file_with_relations(
                             })
                     })
             };
+            // A return value whose integer literal only changed spelling
+            // (`Some(21)` to `Some(0x15)`) holds the same value, so it is not
+            // changed behavior. As above, it is dropped only when another
+            // shape keeps a probe on the line: the arm head still stands for
+            // the edited arm, and the arm's own selection decides whether a
+            // test notices it.
+            let respelled_return = |shape: &super::classify::ParserProbeShape| {
+                shape.family == ProbeFamily::ReturnValue
+                    && removed_counterpart.as_deref().is_some_and(|removed| {
+                        let shape_text = canonical_probe_text(text, shape.text);
+                        removed_span_of_shape(text, &shape_text, removed.trim())
+                            .is_some_and(|before| is_integer_respelling(&shape_text, &before))
+                            && canonical_shapes
+                                .iter()
+                                .any(|other| other.family != ProbeFamily::ReturnValue)
+                    })
+            };
             // A guard-only edit (`n if 0 > n =>` from `n if n < 0 =>`) is
             // the guard's predicate finding: its boundary pairing is the
             // discriminator the edit needs, and arm selection never
@@ -362,7 +397,9 @@ pub(crate) fn probes_for_file_with_relations(
             }
             let canonical_shapes = canonical_shapes
                 .iter()
-                .filter(|shape| !unchanged_return(shape) && !guard_only_arm(shape))
+                .filter(|shape| {
+                    !unchanged_return(shape) && !respelled_return(shape) && !guard_only_arm(shape)
+                })
                 .cloned()
                 .collect::<Vec<_>>();
             for shape in canonical_shapes {
@@ -764,6 +801,79 @@ fn is_behavior_neutral_respelling(after: &str, before: &str) -> bool {
         && neutral_spelling(after) == neutral_spelling(before)
 }
 
+/// Whether `after` is `before` with integer literals respelled to the same
+/// value (`Some(0x15)` for `Some(21)`, `1_000` for `1000`), the literals'
+/// suffixes unchanged and everything around them the same. Text holding a
+/// string, character or macro is never a respelling: its characters or
+/// expansion may observe the spelling.
+fn is_integer_respelling(after: &str, before: &str) -> bool {
+    let observes = |text: &str| text.contains(['"', '\'', '!']);
+    after != before
+        && !observes(after)
+        && !observes(before)
+        && canonical_integer_literals(after) == canonical_integer_literals(before)
+}
+
+/// `text` with each plain integer literal (decimal, `0x`, `0o` or `0b`, with
+/// optional `_` separators and an integer suffix) rewritten as its decimal
+/// value. A literal that is part of a longer token (an identifier, a float,
+/// a tuple index after `.`) or too large for `u128` is left as written.
+fn canonical_integer_literals(text: &str) -> String {
+    const SUFFIXES: [&str; 12] = [
+        "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
+    ];
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        let byte = bytes[at];
+        let free_start = text[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|prev| !(prev.is_alphanumeric() || matches!(prev, '_' | '.')));
+        if !(byte.is_ascii_digit() && free_start) {
+            let ch = text[at..].chars().next().unwrap_or(' ');
+            out.push(ch);
+            at += ch.len_utf8();
+            continue;
+        }
+        let (radix, digits_at) = match (byte, bytes.get(at + 1)) {
+            (b'0', Some(b'x')) => (16, at + 2),
+            (b'0', Some(b'o')) => (8, at + 2),
+            (b'0', Some(b'b')) => (2, at + 2),
+            _ => (10, at),
+        };
+        let mut end = digits_at;
+        while end < bytes.len()
+            && (bytes[end] == b'_'
+                || char::from(bytes[end]).is_digit(if radix == 16 { 16 } else { 10 }))
+        {
+            end += 1;
+        }
+        // An `e` after a decimal run, or `.` and a digit, makes a float.
+        let digits = text[digits_at..end].replace('_', "");
+        let rest = &text[end..];
+        let suffix = SUFFIXES
+            .iter()
+            .find(|suffix| rest.starts_with(**suffix))
+            .copied()
+            .unwrap_or("");
+        let after = rest[suffix.len()..].chars().next();
+        let boundary = after.is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'))
+            && !(rest.starts_with('.') && rest[1..].starts_with(|ch: char| ch.is_ascii_digit()));
+        let value = u128::from_str_radix(&digits, radix).ok();
+        match value {
+            Some(value) if boundary && !digits.is_empty() => {
+                out.push_str(&value.to_string());
+                out.push_str(suffix);
+            }
+            _ => out.push_str(&text[at..end + suffix.len()]),
+        }
+        at = end + suffix.len();
+    }
+    out
+}
+
 /// Whether a block of added lines only rewraps and respells the block of
 /// removed lines it replaced: the same statement joined or split across a
 /// different number of lines (`= \n Index::new(core::isize::MAX - 1);` joined
@@ -1032,37 +1142,181 @@ fn neutral_spelling(line: &str) -> String {
     out
 }
 
-/// Whether an added `text` line is only the one-line signature of a NEW
-/// function whose body lines are added too: the owner starts on this line, no
-/// line of its span was removed and no removed line declared a function of the
-/// same name (so the signature did not change, even when git pairs the old
-/// signature with an unrelated inserted line), and another added line in the
-/// span carries the behavior. A signature has no runtime behavior of its own
-/// (Rust has no default arguments), so probing it only repeats the body
-/// findings. Multi-line signatures and one-line bodies keep their probes.
+/// Per-file state for wrapped-signature handling (#8999): header-bound lines
+/// parsed lazily once, and each function's body-opening line found once.
+#[derive(Default)]
+struct SignatureContext {
+    bounds: std::cell::OnceCell<Vec<bool>>,
+    open_lines: std::cell::RefCell<std::collections::BTreeMap<usize, Option<usize>>>,
+}
+
+/// The line holding the body-opening `{` of `function`, when its signature
+/// spans physical lines (`start_line..=open_line`). `None` for a body-less
+/// declaration, a one-line body (`fn f() { x }`) or an unreadable shape: a
+/// signature is grouped only when its extent is unambiguous (#8999).
+fn signature_open_line(
+    index: &RustIndex,
+    path: &Path,
+    function: &crate::analysis::rust_index::FunctionSummary,
+    line: usize,
+    cx: &SignatureContext,
+) -> Option<usize> {
+    /// Bound on the downward walk; a longer header is not grouped.
+    const MAX_SIGNATURE_LINES: usize = 64;
+    // Cheap pre-filter: a line far below the `fn` line is never in the header,
+    // so no source is read or masked for it.
+    if line < function.start_line || line - function.start_line > MAX_SIGNATURE_LINES {
+        return None;
+    }
+    if let Some(found) = cx.open_lines.borrow().get(&function.start_line) {
+        return *found;
+    }
+    let found = scan_signature_open_line(index, path, function, MAX_SIGNATURE_LINES);
+    cx.open_lines
+        .borrow_mut()
+        .insert(function.start_line, found);
+    found
+}
+
+fn scan_signature_open_line(
+    index: &RustIndex,
+    path: &Path,
+    function: &crate::analysis::rust_index::FunctionSummary,
+    max_lines: usize,
+) -> Option<usize> {
+    let facts = find_file_facts(index, path)?;
+    let count = function.end_line.checked_sub(function.start_line)?;
+    // Only a bounded window from the `fn` line is masked (that line starts in
+    // code, so the window starts outside any comment or string). Comment and
+    // string text is masked (length and lines preserved), so a trailing
+    // `// note {` or a brace in a literal cannot move the extent.
+    let window = facts
+        .source
+        .lines()
+        .skip(function.start_line.checked_sub(1)?)
+        .take(count.min(max_lines) + 1)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let masked = mask_comments_and_strings(&window);
+    for (offset, raw) in masked.lines().enumerate() {
+        let text = raw.trim();
+        if text.contains('{') {
+            return (text.ends_with('{') && text.matches('{').count() == 1)
+                .then_some(function.start_line + offset);
+        }
+        if text.ends_with(';') {
+            return None;
+        }
+    }
+    None
+}
+
+/// Whether an added `text` line belongs to the signature of a NEW function
+/// whose body lines are added too: the signature (one line, or the physical
+/// lines from the `fn` line through the line opening the body) starts on the
+/// owner's first line, no line of its span was removed and no removed line
+/// declared a function of the same name (so the signature did not change, even
+/// when git pairs the old signature with an unrelated inserted line), and
+/// another added body line carries the behavior. A signature has no runtime
+/// behavior of its own (Rust has no default arguments), so probing it, once
+/// per physical line for a wrapped one, only repeats the body findings. One-line
+/// bodies keep their probes.
 fn opens_new_function_with_added_body(
     index: &RustIndex,
     changed: &ChangedFile,
-    line: usize,
-    text: &str,
+    added_index: usize,
+    cx: &SignatureContext,
 ) -> bool {
-    if !text.contains("fn ") || !text.ends_with('{') || text.matches('{').count() != 1 {
-        return false;
-    }
+    let line = changed.added_lines[added_index].new_side_line;
     let Some(function) = find_owner_function(index, &changed.path, line) else {
         return false;
     };
-    function.start_line == line
-        && function.end_line > line
+    let Some(open_line) = signature_open_line(index, &changed.path, function, line, cx) else {
+        return false;
+    };
+    line <= open_line
+        && function.end_line > open_line
+        && !is_signature_type_bound(index, changed, added_index, cx)
+        && changed
+            .added_lines
+            .iter()
+            .any(|added| added.new_side_line == function.start_line)
         && !changed.removed_lines.iter().any(|removed| {
             (function.start_line..=function.end_line).contains(&removed.new_side_line)
                 || declares_fn_named(&removed.text, &function.name)
         })
         && changed.added_lines.iter().any(|other| {
-            other.new_side_line > line
+            other.new_side_line > open_line
                 && other.new_side_line <= function.end_line
                 && !should_ignore_changed_line(other.text.trim())
         })
+}
+
+/// The position of the emitted probe that already carries this multi-line
+/// signature's change, when this added line is a later physical line of the
+/// same declaration (#8999). The first retained line keeps the probe (its id
+/// and span stay stable); only lines of one function's header from `fn`
+/// through the body-opening line group. Reads emitted probes, never assumes
+/// one: a carrier line a later filter dropped leaves this line its own probe.
+fn signature_carrier_probe(
+    index: &RustIndex,
+    changed: &ChangedFile,
+    added_index: usize,
+    emitted: &[SeededProbe],
+    cx: &SignatureContext,
+) -> Option<usize> {
+    let line = changed.added_lines[added_index].new_side_line;
+    let function = find_owner_function(index, &changed.path, line)?;
+    let open_line = signature_open_line(index, &changed.path, function, line, cx)?;
+    if line > open_line
+        || line <= function.start_line
+        || is_signature_type_bound(index, changed, added_index, cx)
+    {
+        return None;
+    }
+    emitted.iter().position(|seeded| {
+        let carried = seeded.probe.location.line;
+        carried >= function.start_line
+            && carried < line
+            && changed
+                .added_lines
+                .iter()
+                .position(|other| other.new_side_line == carried)
+                .is_some_and(|earlier| !is_signature_type_bound(index, changed, earlier, cx))
+    })
+}
+
+/// Append one grouped signature line's text to a retained probe's before/after
+/// evidence, space-separated like the original parameter list.
+fn append_signature_text(slot: &mut Option<String>, text: &str) {
+    let text = text.trim();
+    if text.is_empty() {
+        return;
+    }
+    match slot {
+        Some(existing) => {
+            existing.push(' ');
+            existing.push_str(text);
+        }
+        None => *slot = Some(text.to_string()),
+    }
+}
+
+/// Whether added line `added_index` touches a type bound anywhere on the line
+/// (`where`, a bound predicate, `<T: Clone>`, `impl Trait`): such a line keeps
+/// its own probe so a changed bound is disclosed, and a bound sharing a line
+/// with parameters or the body opener is never grouped away.
+fn is_signature_type_bound(
+    index: &RustIndex,
+    changed: &ChangedFile,
+    added_index: usize,
+    cx: &SignatureContext,
+) -> bool {
+    cx.bounds
+        .get_or_init(|| added_header_bound_lines(index, changed))
+        .get(added_index)
+        .copied()
+        .unwrap_or(true)
 }
 
 /// Whether `text` holds `fn <name>` (raw `r#` spelling included).
@@ -1110,7 +1364,24 @@ fn changed_line_is_test_evidence(
                         && !other.source_role.is_evidence_role()
                 })
             });
-        return function.source_role.is_evidence_role() && !shares_line_with_production;
+        // A helper `fn` declared inside a `#[test]` body is itself indexed as
+        // a production-role function; it is still part of the test, so a
+        // strictly enclosing evidence-role function makes it test evidence
+        // (#9177). A same-start-line sibling is not enclosing (the strict
+        // `<` keeps the #9076 shared-line rule intact).
+        let nested_in_evidence_fn = !function.source_role.is_evidence_role()
+            && find_file_facts(index, path).is_some_and(|facts| {
+                facts.functions.iter().any(|outer| {
+                    outer.source_role.is_evidence_role()
+                        && function.start_line < outer.end_line
+                        && function.end_line <= outer.end_line
+                        && (outer.start_line < function.start_line
+                            || (outer.start_line == function.start_line
+                                && line > function.start_line))
+                })
+            });
+        return (function.source_role.is_evidence_role() && !shares_line_with_production)
+            || nested_in_evidence_fn;
     }
     // Lines outside functions but inside an inline `#[cfg(test)]` module
     // (fixture constants, raw-string data) are test evidence even when the
@@ -3149,6 +3420,102 @@ mod tests {
         assert!(families.contains(&ProbeFamily::ReturnValue), "{probes:?}");
     }
 
+    /// A respelled integer literal in an arm's value holds the same value, so
+    /// the line keeps the arm probe and drops the return-value probe that
+    /// would ask for a discriminator of a value that never changed.
+    #[test]
+    fn a_respelled_arm_value_drops_the_return_value_probe() {
+        let probes = shapes_probes(
+            "\"ftp\" => Some(0x15),",
+            "\"ftp\" => Some(21),",
+            &[
+                (ProbeShapeKind::MatchArm, "\"ftp\" =>"),
+                (ProbeShapeKind::ReturnValue, "Some(0x15)"),
+            ],
+            "",
+        );
+
+        let families = probes
+            .iter()
+            .map(|probe| probe.family.clone())
+            .collect::<Vec<_>>();
+        assert!(families.contains(&ProbeFamily::MatchArm), "{probes:?}");
+        assert!(!families.contains(&ProbeFamily::ReturnValue), "{probes:?}");
+    }
+
+    /// Controls: a different value, a respelling that is not an equal integer
+    /// literal, and a respelled value with no other shape on the line all keep
+    /// the return-value probe.
+    #[test]
+    fn a_changed_or_unreadable_arm_value_keeps_the_return_value_probe() {
+        for (after, before, value) in [
+            (
+                "\"ftp\" => Some(0x16),",
+                "\"ftp\" => Some(21),",
+                "Some(0x16)",
+            ),
+            (
+                "\"ftp\" => Some(21u8),",
+                "\"ftp\" => Some(21),",
+                "Some(21u8)",
+            ),
+            (
+                "\"ftp\" => Some(1.5e0),",
+                "\"ftp\" => Some(1.5),",
+                "Some(1.5e0)",
+            ),
+            ("\"ftp\" => \"0x15\",", "\"ftp\" => \"21\",", "\"0x15\""),
+        ] {
+            let probes = shapes_probes(
+                after,
+                before,
+                &[
+                    (ProbeShapeKind::MatchArm, "\"ftp\" =>"),
+                    (ProbeShapeKind::ReturnValue, value),
+                ],
+                "",
+            );
+            assert!(
+                probes
+                    .iter()
+                    .any(|probe| probe.family == ProbeFamily::ReturnValue),
+                "{after}: {probes:?}"
+            );
+        }
+        let alone = shapes_probes(
+            "Some(0x15)",
+            "Some(21)",
+            &[(ProbeShapeKind::ReturnValue, "Some(0x15)")],
+            "",
+        );
+        assert!(
+            alone
+                .iter()
+                .any(|probe| probe.family == ProbeFamily::ReturnValue),
+            "{alone:?}"
+        );
+    }
+
+    #[test]
+    fn integer_respelling_compares_values_and_nothing_else() {
+        assert!(is_integer_respelling("Some(0x15)", "Some(21)"));
+        assert!(is_integer_respelling("n + 1_000", "n + 1000"));
+        assert!(is_integer_respelling("x = 0b101u8;", "x = 5u8;"));
+        assert!(is_integer_respelling("-0o17", "-15"));
+        assert!(!is_integer_respelling("Some(21)", "Some(21)"));
+        assert!(!is_integer_respelling("Some(0x16)", "Some(21)"));
+        // A suffix, a float, a tuple index and a longer token are not integers.
+        assert!(!is_integer_respelling("5u16", "5u8"));
+        assert!(!is_integer_respelling("1e3", "1000"));
+        assert!(!is_integer_respelling("x.0x1", "x.1"));
+        assert!(!is_integer_respelling("v0x15", "v21"));
+        assert!(!is_integer_respelling("na\u{ef}ve0x1", "na\u{ef}ve1"));
+        // Text that can observe its spelling is never a respelling.
+        assert!(!is_integer_respelling("f(\"a\", 0x15)", "f(\"a\", 21)"));
+        assert!(!is_integer_respelling("stringify!(0x15)", "stringify!(21)"));
+        assert!(!is_integer_respelling("'a' as u8 + 0x15", "'a' as u8 + 21"));
+    }
+
     /// A guard-only edit is the guard's predicate finding: the arm head adds
     /// a selection question arm selection cannot answer through a guard,
     /// and the old line is not probed again as deleted behavior
@@ -4047,6 +4414,286 @@ mod tests {
         assert!(
             probes.iter().any(|probe| probe.location.line == 1),
             "{probes:?}"
+        );
+    }
+
+    const WRAPPED_SIGNATURE: &str = "pub fn price(\n    amount: u64,\n    years: u32,\n) -> u64\nwhere\n    u64: Copy,\n{\n    if years >= 5 {\n        amount - 1\n    } else {\n        amount\n    }\n}\n";
+
+    fn wrapped_signature_change(
+        added: &[usize],
+        removed: &[(usize, &str)],
+    ) -> (RustIndex, ChangedFile) {
+        let path = PathBuf::from("src/lib.rs");
+        let mut index = RustIndex::default();
+        index.insert_file_only(
+            path.clone(),
+            crate::analysis::rust_index::summarize_file(
+                path.clone(),
+                WRAPPED_SIGNATURE.to_string(),
+            ),
+        );
+        let lines = WRAPPED_SIGNATURE.lines().collect::<Vec<_>>();
+        let added_lines = added
+            .iter()
+            .map(|&line| ChangedLine {
+                line,
+                new_side_line: line,
+                text: lines[line - 1].to_string(),
+            })
+            .collect();
+        let removed_lines = removed
+            .iter()
+            .map(|&(line, text)| ChangedLine {
+                line,
+                new_side_line: line,
+                text: text.to_string(),
+            })
+            .collect();
+        (
+            index,
+            ChangedFile {
+                path,
+                added_lines,
+                removed_lines,
+            },
+        )
+    }
+
+    /// #8999: a new function whose signature wraps over several physical
+    /// lines (params, return type, body-opening brace) seeds no probe on those
+    /// lines, exactly like the one-line form; the `where` clause and its bound
+    /// keep their declaration probes (bound contract) and the body its own.
+    #[test]
+    fn probes_for_file_skips_wrapped_signature_lines_of_new_function_but_keeps_bound() {
+        let (index, changed) = wrapped_signature_change(&(1..=13).collect::<Vec<_>>(), &[]);
+
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+
+        assert!(
+            probes.iter().any(|probe| probe.location.line == 8),
+            "premise: the body predicate is probed: {probes:?}"
+        );
+        let signature = probes
+            .iter()
+            .filter(|probe| probe.location.line <= 7)
+            .map(|probe| (probe.location.line, probe.expression.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            signature,
+            vec![(5, "where"), (6, "u64: Copy,")],
+            "{probes:?}"
+        );
+    }
+
+    /// #8999: two physical lines of one existing signature changing is one
+    /// declaration change: one probe, kept on the first changed line.
+    #[test]
+    fn probes_for_file_groups_changed_wrapped_signature_lines_into_one_probe() -> Result<(), String>
+    {
+        // A parsed diff, so the removed lines carry the parser's real
+        // coordinates and the positional old counterparts pair as in production.
+        let diff = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,4 +1,4 @@\n pub fn price(\n-    amount: u32,\n-    years: u8,\n+    amount: u64,\n+    years: u32,\n ) -> u64\n where\n";
+        let (index, _) = wrapped_signature_change(&[], &[]);
+        let changed = crate::analysis::diff::parse_unified_diff(diff)
+            .into_iter()
+            .next()
+            .ok_or_else(|| "diff fixture yields no changed file".to_string())?;
+        assert_eq!(changed.added_lines.len(), 2);
+        assert_eq!(changed.removed_lines.len(), 2);
+
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+
+        let lines = probes
+            .iter()
+            .map(|probe| probe.location.line)
+            .collect::<Vec<_>>();
+        assert_eq!(lines, vec![2], "{probes:?}");
+        // The retained probe carries every grouped line's new text and old
+        // counterpart, so the second edited parameter keeps its evidence.
+        let after = probes[0].after.as_deref().unwrap_or_default();
+        let before = probes[0].before.as_deref().unwrap_or_default();
+        assert!(
+            after.contains("amount: u64,") && after.contains("years: u32,"),
+            "{probes:?}"
+        );
+        assert!(
+            before.contains("amount: u32,") && before.contains("years: u8,"),
+            "{probes:?}"
+        );
+        Ok(())
+    }
+
+    fn all_added_probes(source: &str) -> Vec<Probe> {
+        let path = PathBuf::from("src/lib.rs");
+        let mut index = RustIndex::default();
+        index.insert_file_only(
+            path.clone(),
+            crate::analysis::rust_index::summarize_file(path.clone(), source.to_string()),
+        );
+        let added_lines = source
+            .lines()
+            .enumerate()
+            .map(|(offset, text)| ChangedLine {
+                line: offset + 1,
+                new_side_line: offset + 1,
+                text: text.to_string(),
+            })
+            .collect();
+        let changed = ChangedFile {
+            path,
+            added_lines,
+            removed_lines: Vec::new(),
+        };
+        probes_for_file(Path::new("workspace"), &changed, &index)
+    }
+
+    /// #8999 review: a bound that shares a line with parameters or the body
+    /// opener is not grouped away from a new wrapped function.
+    #[test]
+    fn probes_for_file_keeps_bound_sharing_a_header_line_in_new_wrapped_function() {
+        let generic = all_added_probes("fn f<T: Clone>(\n    a: T,\n) -> T {\n    a.clone()\n}\n");
+        assert!(
+            generic.iter().any(|probe| probe.location.line == 1),
+            "inline generic bound lost: {generic:?}"
+        );
+        let opener =
+            all_added_probes("fn f<T>(\n    a: T,\n) -> T\nwhere T: Clone {\n    a.clone()\n}\n");
+        assert!(
+            opener.iter().any(|probe| probe.location.line == 4),
+            "where bound sharing the body opener lost: {opener:?}"
+        );
+        // Control: the plain parameter and return lines are still grouped away.
+        assert!(
+            generic.iter().all(|probe| probe.location.line != 2),
+            "{generic:?}"
+        );
+    }
+
+    /// #8999 negative: grouping stops at the signature. A changed body line
+    /// of the same function keeps its own probe beside the changed signature
+    /// line's probe.
+    #[test]
+    fn probes_for_file_keeps_body_probe_beside_changed_wrapped_signature() {
+        let (index, changed) =
+            wrapped_signature_change(&[3, 8], &[(3, "    years: u8,"), (8, "    if years > 5 {")]);
+
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+
+        let mut lines = probes
+            .iter()
+            .map(|probe| probe.location.line)
+            .collect::<Vec<_>>();
+        lines.sort_unstable();
+        lines.dedup();
+        assert_eq!(lines, vec![3, 8], "{probes:?}");
+    }
+
+    /// #8999 review: the grouping skip needs the `fn` line itself to be an
+    /// added line. A parameter inserted into an existing wrapped signature
+    /// is a changed signature, not part of a new function, and keeps its probe.
+    #[test]
+    fn probes_for_file_keeps_parameter_inserted_into_existing_wrapped_signature() {
+        let (index, changed) = wrapped_signature_change(&[3], &[]);
+
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+
+        let lines = probes
+            .iter()
+            .map(|probe| probe.location.line)
+            .collect::<Vec<_>>();
+        assert_eq!(lines, vec![3], "{probes:?}");
+    }
+
+    /// #8999 review: grouping reads an emitted probe, never assumes one. A
+    /// carrier line that was dropped (a block-comment line inside the header)
+    /// leaves the next changed line to keep its own probe.
+    #[test]
+    fn probes_for_file_keeps_probe_when_earlier_signature_line_emitted_none() {
+        let source = "pub fn price(\n    /* a */\n    amount: u32,\n) -> u64 {\n    amount\n}\n";
+        let path = PathBuf::from("src/lib.rs");
+        let mut index = RustIndex::default();
+        index.insert_file_only(
+            path.clone(),
+            crate::analysis::rust_index::summarize_file(path.clone(), source.to_string()),
+        );
+        let changed = ChangedFile {
+            path,
+            added_lines: vec![
+                ChangedLine {
+                    line: 2,
+                    new_side_line: 2,
+                    text: "    /* a */".to_string(),
+                },
+                ChangedLine {
+                    line: 3,
+                    new_side_line: 3,
+                    text: "    amount: u32,".to_string(),
+                },
+            ],
+            removed_lines: vec![ChangedLine {
+                line: 3,
+                new_side_line: 3,
+                text: "    amount: u64,".to_string(),
+            }],
+        };
+
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+
+        assert!(
+            probes.iter().any(|probe| probe.location.line == 3),
+            "{probes:?}"
+        );
+    }
+
+    fn signature_open_line_of(source: &str, line: usize) -> Option<usize> {
+        let path = PathBuf::from("src/lib.rs");
+        let mut index = RustIndex::default();
+        index.insert_file_only(
+            path.clone(),
+            crate::analysis::rust_index::summarize_file(path.clone(), source.to_string()),
+        );
+        let function = find_owner_function(&index, &path, line)?;
+        signature_open_line(&index, &path, function, line, &SignatureContext::default())
+    }
+
+    /// #8999 review: the signature extent is claimed only when unambiguous.
+    #[test]
+    fn signature_open_line_fails_closed_on_ambiguous_headers() {
+        // Positive control: plain wrapped header.
+        assert_eq!(
+            signature_open_line_of(
+                "fn f<const N: usize>(\n    a: [u8; N],\n) -> u8 {\n    a[0]\n}\n",
+                1
+            ),
+            Some(3)
+        );
+        // One-line body.
+        assert_eq!(
+            signature_open_line_of("pub fn f(a: u8) -> u8 { a + 1 }\n", 1),
+            None
+        );
+        // Body-less trait declaration.
+        assert_eq!(
+            signature_open_line_of("trait T {\n    fn f(\n        a: u8,\n    ) -> u8;\n}\n", 2),
+            None
+        );
+        // Braces inside the header (array length expression).
+        assert_eq!(
+            signature_open_line_of("fn f(\n    a: [u8; { 3 }],\n) -> u8 {\n    a[0]\n}\n", 1),
+            None
+        );
+        // Comments are masked: a trailing comment, with or without a brace,
+        // neither hides nor fakes the body-opening brace.
+        assert_eq!(
+            signature_open_line_of("fn f(\n    a: u8,\n) -> u8 { // {\n    a\n}\n", 1),
+            Some(3)
+        );
+        assert_eq!(
+            signature_open_line_of(
+                "fn f(\n    a: u8, // note\n) -> u8 { // note\n    a\n}\n",
+                1
+            ),
+            Some(3)
         );
     }
 
@@ -5059,6 +5706,98 @@ mod source_currentness_tests {
         );
         assert!(!changed_line_is_test_evidence(&index, &path, 1, &[]));
         assert!(changed_line_is_test_evidence(&index, &path, 3, &[]));
+        Ok(())
+    }
+
+    /// #9177: a helper `fn` declared inside a `#[test]` body is part of the
+    /// test, not a production candidate; a production fn's own nested helper
+    /// stays eligible.
+    #[test]
+    fn helper_fn_nested_in_a_test_fn_is_test_evidence() -> Result<(), String> {
+        let path = PathBuf::from("src/lib.rs");
+        let source = "#[test]\n\
+                      fn check_it() {\n\
+                      fn assert_send<T: Send>() {}\n\
+                      assert_send::<u8>();\n\
+                      }\n\
+                      pub fn prod(x: i32) -> i32 {\n\
+                      fn helper(y: i32) -> i32 { y + 1 }\n\
+                      helper(x)\n\
+                      }\n";
+        let mut index = RustIndex::default();
+        index.insert_file_only(
+            path.clone(),
+            crate::analysis::rust_index::summarize_file(path.clone(), source.to_string()),
+        );
+        let facts = find_file_facts(&index, &path).ok_or("file facts missing")?;
+        let nested = facts
+            .functions
+            .iter()
+            .find(|f| f.name == "assert_send")
+            .ok_or("nested helper not indexed")?;
+        assert!(
+            !nested.source_role.is_evidence_role(),
+            "fixture: the nested helper is indexed with a production role"
+        );
+        assert!(changed_line_is_test_evidence(&index, &path, 3, &[]));
+        assert!(!changed_line_is_test_evidence(&index, &path, 7, &[]));
+        Ok(())
+    }
+
+    /// A helper opened on its test's opening line owns that shared line
+    /// ambiguously, but its later body lines are still test evidence.
+    #[test]
+    fn helper_sharing_the_test_opening_line_keeps_later_lines_test_evidence() -> Result<(), String>
+    {
+        let path = PathBuf::from("src/lib.rs");
+        let source = "#[test]\n\
+                      fn check_it() { fn helper() {\n\
+                      persist();\n\
+                      } }\n";
+        let mut index = RustIndex::default();
+        index.insert_file_only(
+            path.clone(),
+            crate::analysis::rust_index::summarize_file(path.clone(), source.to_string()),
+        );
+        let facts = find_file_facts(&index, &path).ok_or("file facts missing")?;
+        let helper = facts
+            .functions
+            .iter()
+            .find(|f| f.name == "helper")
+            .ok_or("fn helper not indexed")?;
+        assert!(
+            !helper.source_role.is_evidence_role(),
+            "fixture: helper is indexed as production"
+        );
+        assert!(changed_line_is_test_evidence(&index, &path, 3, &[]));
+        Ok(())
+    }
+
+    /// A production fn that starts on a test fn's closing line is a sibling,
+    /// not a nested helper, so its probe stays production-eligible.
+    #[test]
+    fn sibling_fn_on_a_test_fns_closing_line_stays_production() -> Result<(), String> {
+        let path = PathBuf::from("src/lib.rs");
+        let source = "#[test]\n\
+                      fn check_it() {\n\
+                      assert!(true);\n\
+                      } fn live() { persist(); }\n";
+        let mut index = RustIndex::default();
+        index.insert_file_only(
+            path.clone(),
+            crate::analysis::rust_index::summarize_file(path.clone(), source.to_string()),
+        );
+        let facts = find_file_facts(&index, &path).ok_or("file facts missing")?;
+        let live = facts
+            .functions
+            .iter()
+            .find(|f| f.name == "live")
+            .ok_or("fn live not indexed")?;
+        assert!(
+            !live.source_role.is_evidence_role(),
+            "fixture: live is production"
+        );
+        assert!(!changed_line_is_test_evidence(&index, &path, 4, &[]));
         Ok(())
     }
 

@@ -153,7 +153,7 @@ fn changed_behavior(finding: &Finding, behavior_kind: &str) -> String {
         .trim();
     format!(
         "{behavior_kind} changed at {}:{}: `{expression}`",
-        finding.probe.location.file.display(),
+        crate::output::path::display_path(&finding.probe.location.file),
         finding.probe.location.line
     )
 }
@@ -166,7 +166,7 @@ fn current_test_evidence(test: &RelatedTest) -> String {
         .unwrap_or_default();
     format!(
         "{}:{} {} currently has oracle_strength={}, oracle_kind={}{}",
-        test.file.display(),
+        crate::output::path::display_path(&test.file),
         test.line,
         test.name,
         test.oracle_strength.as_str(),

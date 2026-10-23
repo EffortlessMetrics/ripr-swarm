@@ -864,6 +864,15 @@ impl FixtureRun {
         self.comparisons.iter().all(|comparison| comparison.matches)
     }
 
+    // Test-only detail accessor so nested-child assertions (fixture_cache)
+    // can print WHICH golden drifted and the first differing line instead of
+    // a bare bool; the parent's captured child output is the only artifact
+    // available when a CI flake reproduces on a hosted runner.
+    #[cfg(test)]
+    pub(crate) fn comparison_violations_for_tests(&self) -> Vec<String> {
+        self.comparison_violations()
+    }
+
     fn comparison_violations(&self) -> Vec<String> {
         self.comparisons
             .iter()
@@ -2478,6 +2487,9 @@ pub(crate) fn fixtures_with_args(args: &[String]) -> Result<(), String> {
             println!(
                 "       cargo xtask fixtures new <name> — scaffold a new fixture directory with a seeded golden (#2445)"
             );
+            println!(
+                "       cargo xtask fixtures refresh-identity <typescript|python> — re-derive installed-journey digests, snapshot ids and corpus bindings after a dependency bump (#9261)"
+            );
             println!();
             println!("Without a name, runs all fixtures. With a name, runs only that fixture.");
             println!("Use `new <name>` to scaffold a new fixture directory.");
@@ -2488,6 +2500,9 @@ pub(crate) fn fixtures_with_args(args: &[String]) -> Result<(), String> {
                 .get(1)
                 .ok_or_else(|| "fixtures new requires a <name> argument".to_string())?;
             return fixtures_new(name);
+        }
+        if sub == "refresh-identity" {
+            return crate::fixture_contracts::fixtures_refresh_identity(&args[1..]);
         }
     }
     // Fall through to the existing runner (pass the first arg as the optional fixture name).
