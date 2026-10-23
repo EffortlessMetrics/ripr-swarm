@@ -1828,6 +1828,14 @@ owner = "product-output"
 standalone_reason = "Issue #3896 and PR #8520 record the pilot next-step contract: when the current change is uncommitted and the repair targets an inline test module the terminal and Markdown summaries say to commit or stash the target before the repair start, and the final step names the continue command that step 1 prints."
 
 [[artifact]]
+id = "RIPR-SPEC-0347"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0347-trybuild-fixtures-not-analyzed-as-oracles.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #8999 records the trybuild fixture disclosure: a changed tests/ui fixture in a crate whose manifest depends on trybuild is named on stderr as not analyzed as a test oracle, as advisory text that changes no finding, outcome or output contract."
+
+[[artifact]]
 id = "RIPR-SPEC-0300"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0300-wrapped-signature-one-probe.md"

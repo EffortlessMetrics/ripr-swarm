@@ -18481,6 +18481,42 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0347"
+name = "Changed trybuild fixtures are named on stderr as not analyzed as test oracles"
+spec = "docs/specs/RIPR-SPEC-0347-trybuild-fixtures-not-analyzed-as-oracles.md"
+tests = [
+  "crates/ripr/tests/trybuild_fixture_disclosure.rs::trybuild_fixture_diff_is_named_on_stderr_without_changing_the_report",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::trybuild_crate_fixtures_are_named_with_their_paths",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::member_crate_manifest_owns_its_fixtures",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::ui_directory_in_a_crate_without_trybuild_is_not_named",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::missing_or_unparseable_manifest_names_nothing",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::target_specific_and_build_dependency_tables_count",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::trybuild_named_only_outside_dependency_tables_does_not_count",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::only_fixture_files_below_tests_ui_count",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::long_fixture_lists_are_bounded",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::nested_crate_path_uses_the_directory_owning_tests_ui",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::ambiguous_multiple_tests_ui_pairs_fail_closed",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::oversized_manifest_fails_closed",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::non_regular_manifest_path_fails_closed",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::nested_fixture_tree_is_owned_by_its_own_directory_not_an_ancestor",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::inherited_workspace_entries_never_name_fixtures",
+  "crates/ripr/tests/trybuild_fixture_disclosure.rs::inherited_workspace_trybuild_never_names_and_direct_forms_still_do",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::dependency_package_key_decides_whether_an_entry_is_trybuild",
+  "crates/ripr/src/analysis/trybuild_fixtures.rs::tests::helper_names_any_changed_path_it_is_given_without_reading_the_fixture",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/trybuild_fixtures.rs",
+  "crates/ripr/src/analysis/pipeline.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0347-trybuild-fixtures-not-analyzed-as-oracles.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0311"
 name = "A complete TypeScript packet offers a gap-bound repair start"
 spec = "docs/specs/RIPR-SPEC-0311-gap-bound-typescript-repair-start.md"
