@@ -217,7 +217,8 @@ fn finding_with_owner_changed(
 ) -> Result<Value, String> {
     let rest = "        out.push_str(&format!(\"{:02}\", minutes.abs()));";
     let original = "        out.push(if minutes < 0 { '-' } else { '+' });";
-    let src = source(test_body).replace(&format!("{original}\n{rest}\n"), &format!("{owner_body}\n"));
+    let src =
+        source(test_body).replace(&format!("{original}\n{rest}\n"), &format!("{owner_body}\n"));
     let changed = src
         .lines()
         .position(|text| text == line5)
@@ -265,8 +266,8 @@ fn an_expected_value_equal_to_the_initial_state_is_not_credited() -> Result<(), 
 
 #[test]
 fn a_read_only_out_parameter_is_not_credited() -> Result<(), String> {
-    let changed = "        let _sign = (out.len(), if minutes < 0 { '-' } else { '+' });";
-    let owner = format!("        let _first = out.len();\n{changed}");
+    let changed = "        out.reserve(minutes as usize + '+' as usize);";
+    let owner = format!("{changed}\n        let _ = out.len();");
     let test = format!("{BUILD}        assert_eq!(s, \"+570\");");
     let finding = finding_with_owner_changed(&owner, changed, &test)?;
     assert_uncredited(&finding, &owner);

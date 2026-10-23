@@ -18326,6 +18326,12 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0351-out-parameter-oracle-credit.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0311"
 name = "A complete TypeScript packet offers a gap-bound repair start"
 spec = "docs/specs/RIPR-SPEC-0311-gap-bound-typescript-repair-start.md"
