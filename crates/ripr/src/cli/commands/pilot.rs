@@ -469,7 +469,18 @@ fn artifact_root_ignore_note(root: &Path, out_dir: &Path) -> Option<String> {
         return None;
     }
     let artifact_root = Path::new("target").join("ripr");
-    if !out_dir.starts_with(&artifact_root) {
+    // The run's output is under the artifact root either as the bare
+    // repository-relative form (`--out target/ripr/...`, or the default with
+    // a `.` root) or prefixed by the selected `--root`, because
+    // `default_pilot_out_dir` anchors the default packet under the root
+    // (#5324). Comparing only the bare form suppressed the note for
+    // `pilot --root repo` and `pilot --root /abs/repo` even though both
+    // write `repo/target/ripr/pilot` (review follow-up on #9858).
+    let writes_under_artifact_root = out_dir.starts_with(&artifact_root)
+        || out_dir
+            .strip_prefix(root)
+            .is_ok_and(|relative| relative.starts_with(&artifact_root));
+    if !writes_under_artifact_root {
         return None;
     }
     let uncovered = super::doctor::uncovered_artifact_roots(root, &[artifact_root])?;
@@ -1011,6 +1022,15 @@ mod tests {
         // An explicit packet dir outside `target/ripr`: silent.
         std::fs::remove_file(root.join("Cargo.toml")).map_err(|error| error.to_string())?;
         assert!(artifact_root_ignore_note(&root, Path::new("reports/pilot")).is_none());
+
+        // The default packet location with a non-dot `--root` is
+        // `root/target/ripr/pilot` (#5324); the note must fire there too,
+        // for both the absolute and parent-relative root spellings
+        // (#9858 review follow-up).
+        let root_prefixed = root.join("target").join("ripr").join("pilot");
+        let note = artifact_root_ignore_note(&root, &root_prefixed)
+            .ok_or("note must fire for a root-prefixed default out dir")?;
+        assert!(note.contains("target/ripr"), "{note}");
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
