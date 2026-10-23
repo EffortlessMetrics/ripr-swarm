@@ -1105,3 +1105,16 @@ incomplete portable receipt remain explicit. Five literal envelope differences
 from the native receipt are retained, including an absent portable
 `seam.guidance_note` versus native `null`; four differences remain if absent and
 null are treated as equal. Full envelope equivalence is not claimed.
+
+### typed function-pointer pins classified-cache generation parity (1.97)
+
+The snapshots follow cache generation 1.96 to 1.97 for typed pointer owner
+pins (RIPR-SPEC-0197, #9478), preserving the accepted pinned-shape generation
+1.96. A clean native producer at
+b084e86a1ccbfdbaebf23fb250043eb675ecde3b supplied the snapshot, verify and
+receipt outputs. Existing CLI-test normalization changes only the generation,
+content commitments and dependent byte hashes. Historical currentness and the
+incomplete portable receipt remain explicit. Five literal envelope differences
+from the native receipt are retained, including an absent portable
+`seam.guidance_note` versus native `null`. Full envelope equivalence is not
+claimed.
