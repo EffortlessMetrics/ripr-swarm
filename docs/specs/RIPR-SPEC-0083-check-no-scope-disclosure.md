@@ -117,7 +117,7 @@ was actually established (#4012):
   scope was provided:
 
 ```
-Note: `<base>...HEAD` contains no changed files, so there was nothing to analyze. The compared base was `<base>`; an empty result here means no behavior changed against it.
+Note: `<base>...HEAD` has no analyzable changed files, so there was nothing to analyze. The compared base was `<base>`. Deleted files, submodule pointer changes and files ripr does not analyze are not counted, so this empty result does NOT mean no behavior changed.
 ```
 
   The triage "Safe next action" likewise reads `no changed files were
@@ -169,7 +169,7 @@ base instead of claiming no scope was provided:
   {
     "scope_status": "no_scope_provided",
     "category": "no_scope_disclosure",
-    "why": "empty range: <base>...HEAD contains no changed files; nothing was analyzed because nothing changed"
+    "why": "empty range: <base>...HEAD has no analyzable changed files; nothing was analyzed; deleted files, submodule pointer changes and files ripr does not analyze are not counted, so this does not mean no behavior changed"
   }
 ]
 ```
@@ -282,6 +282,7 @@ GitHub and JSON `why` strings are tracked separately.
 - `crates/ripr/tests/cli_smoke.rs::check_with_base_scope_does_not_show_no_scope_disclosure_smoke` (explicit `--base HEAD`: no "no analysis scope was provided" disclosure, and the empty range is named as having no analyzable changed files)
 - `crates/ripr/tests/cli_smoke.rs::check_diff_file_with_base_does_not_report_a_git_range_note` (#9033: `--diff empty.patch --base HEAD` in both human formats)
 - `crates/ripr/tests/cli_smoke.rs::check_explicit_base_deletion_only_range_does_not_claim_no_behavior_changed` (#9033: a deletion-only range never gets a "no behavior changed" assurance)
+- `crates/ripr/tests/cli_smoke.rs::check_default_base_deletion_only_range_does_not_claim_no_behavior_changed_in_any_renderer` (#9222: a default-base deletion-only range never gets a "no behavior changed" assurance in human, GitHub or JSON output, and still says nothing was analyzed)
 - `crates/ripr/src/output/human.rs::tests::explicit_base_with_an_empty_range_explains_the_empty_result` (#9033: range and working-tree wording, bounded and full forms)
 - `crates/ripr/src/output/human.rs::tests::empty_range_note_is_suppressed_when_it_would_be_untrue_or_redundant` (#9033: off for other outcome kinds, changed file count alone, no base, unanalyzed working tree, preview advisories and language runs)
 

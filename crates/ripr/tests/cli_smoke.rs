@@ -23419,6 +23419,85 @@ fn check_explicit_base_deletion_only_range_does_not_claim_no_behavior_changed() 
     Ok(())
 }
 
+/// #9222: a default-base run (no `--base`) on a branch that only deletes a file
+/// lands in `no_scope` with zero changed files. Human, GitHub and JSON output
+/// must not assure the reader that nothing changed, and must still say that
+/// nothing was analyzed.
+#[test]
+fn check_default_base_deletion_only_range_does_not_claim_no_behavior_changed_in_any_renderer()
+-> Result<(), String> {
+    let root = unique_temp_workspace("default-base-deletion-only");
+    std::fs::create_dir_all(root.join("src")).map_err(|e| format!("mkdir: {e}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(root.join("src/lib.rs"), "pub fn one() -> i32 { 1 }\n")
+        .map_err(|e| format!("write lib: {e}"))?;
+    std::fs::write(root.join("src/old.rs"), "pub fn two() -> i32 { 2 }\n")
+        .map_err(|e| format!("write old: {e}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"default-deletion-only\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|e| format!("write Cargo.toml: {e}"))?;
+    std::fs::write(root.join(".gitignore"), "target/\n").map_err(|e| format!("gitignore: {e}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    run_git(&root, &["checkout", "-b", "feat"])?;
+    run_git(&root, &["rm", "src/old.rs"])?;
+    run_git(&root, &["commit", "-m", "delete"])?;
+    let root_str = root.to_string_lossy().into_owned();
+    for (label, args) in [
+        ("human", vec!["check", "--root", root_str.as_str()]),
+        (
+            "github",
+            vec!["check", "--root", root_str.as_str(), "--format", "github"],
+        ),
+        (
+            "json",
+            vec!["check", "--root", root_str.as_str(), "--format", "json"],
+        ),
+    ] {
+        let output = run_ripr(&args);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if !stdout.contains("main...HEAD") {
+            return Err(format!(
+                "{label}: fixture must resolve the default base `main`:\n{stdout}"
+            ));
+        }
+        if !stdout.contains("nothing was analyzed") && !stdout.contains("nothing to analyze") {
+            return Err(format!(
+                "{label}: an empty range must still say nothing was analyzed:\n{stdout}"
+            ));
+        }
+        if !stdout.contains("no analyzable changed files") {
+            return Err(format!(
+                "{label}: expected the analyzable-files wording:\n{stdout}"
+            ));
+        }
+        for forbidden in [
+            "means no behavior changed against it",
+            "because nothing changed",
+            "contains no changed files",
+        ] {
+            if stdout.contains(forbidden) {
+                return Err(format!(
+                    "{label}: a deletion-only range must not claim `{forbidden}`:\n{stdout}"
+                ));
+            }
+        }
+        if !stdout.contains("not mean no behavior changed")
+            && !stdout.contains("NOT mean no behavior changed")
+        {
+            return Err(format!(
+                "{label}: expected the not-no-behavior-changed disclaimer:\n{stdout}"
+            ));
+        }
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
 /// #9033: `--diff <file>` wins over `--base`; the retained base must not be
 /// reported as an analyzed Git range in either human format.
 #[test]
@@ -23907,7 +23986,7 @@ fn check_untracked_files_keep_committed_default_and_working_tree_reads_name_them
     }
     let empty_worktree = human(&["check", "--root", &root_str]);
     for expected in [
-        "Note: the working tree has no changed tracked files against `main` (diff from the merge base of `main` and HEAD to the working tree), so there was nothing to analyze.",
+        "Note: the working tree has no analyzable changed files against `main` (diff from the merge base of `main` and HEAD to the working tree), so there was nothing to analyze.",
         "Safe next action: the working tree has no changed tracked files against `main`",
         "Untracked files (src/new.rs) are not in the working-tree diff",
     ] {
@@ -24236,7 +24315,7 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
             "clean tracked worktree must not disclose uncommitted edits; got:\n{stdout}"
         ));
     }
-    if !stdout.contains("contains no changed files") {
+    if !stdout.contains("has no analyzable changed files") {
         return Err(format!(
             "empty default-base run must keep the no-scope disclosure (base-naming form per #4012); got:\n{stdout}"
         ));
