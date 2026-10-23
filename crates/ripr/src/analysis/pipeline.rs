@@ -17,6 +17,7 @@ use crate::analysis::committed_source;
 use crate::analysis::diff_scope_filter::{DiffIntake, DiffScopeFilter};
 
 use crate::analysis::language_outcome::LanguageAnalysisOutcomeV1;
+use crate::analysis::trybuild_fixtures;
 use crate::analysis_outcome::{
     AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
     AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
@@ -1438,6 +1439,14 @@ fn run_pipeline_for_diff_text_with_language_config(
     // Emit as stderr disclosures — these are not Findings (no probe was
     // generated), but the user needs to know what was not analyzed.
     for message in unanalyzed_disclosures(non_source_message, &changed_files) {
+        eprintln!("{message}");
+    }
+    // RIPR-SPEC-0347 (#8999): changed trybuild `tests/ui` fixtures are compile-time
+    // expectations ripr does not read as oracles. Advisory stderr text only; no
+    // finding, limitation or outcome field changes.
+    if let Some(message) =
+        trybuild_fixtures::trybuild_fixture_disclosure_message(&options.root, &changed_files)
+    {
         eprintln!("{message}");
     }
 

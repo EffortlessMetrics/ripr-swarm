@@ -1812,6 +1812,14 @@ owner = "product-analysis"
 standalone_reason = "Issue #9103 records the check-findings artifact contract: a producer-identified, unbounded diff-scoped findings snapshot verifies movement by canonical gap id through the same identity and commitment validator as repo-exposure, and an incomplete, edited, unenveloped, duplicate or reversed snapshot is refused."
 
 [[artifact]]
+id = "RIPR-SPEC-0347"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0347-trybuild-fixtures-not-analyzed-as-oracles.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #8999 records the trybuild fixture disclosure: a changed tests/ui fixture in a crate whose manifest depends on trybuild is named on stderr as not analyzed as a test oracle, as advisory text that changes no finding, outcome or output contract."
+
+[[artifact]]
 id = "RIPR-SPEC-0300"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0300-wrapped-signature-one-probe.md"
