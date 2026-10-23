@@ -2593,19 +2593,24 @@ Only unqualified owner calls supply separating inputs: a module-qualified or met
 An operand that merely name-matches an owner parameter is that parameter's
 observed value only while the owner leaves the name alone (#9197). When the
 owner rebinds or mutates the name on or before the compared line (`let x`,
-`let mut x`, `x += ..`, `x = ..`, `&mut x`, a `for`, `let`, `if let` or match-arm
-pattern, a closure parameter list, or a `matches!` line that mentions it), the
-equality-boundary path withholds the credit: an observed input is not treated
-as the compared value, so a test input that equals the threshold only by name
-no longer satisfies the boundary and the gap stays. The operand remains a known
-parameter, so the unresolved-input reading is unchanged; a live `let` local
-still folds through the bounded evaluator. The scan is deliberately over-eager
-(it does not prove scope), so it only ever removes a credit; a field access,
-path segment, comparison or unrelated local keeps it, and a match arm that binds
-the scrutinee's own name (`match n { n if 0 > n => .. }`) rebinds the same value
-and keeps the credit.
-The one corpus row this moves is `strsim-sorensen-dice-equal` (credited to gap):
-its `if b == a` follows `let a: String = a.chars().filter(..).collect()`, so `a`
-is a rebound local, not the argument the test passed. Declining the credit is
-the intended fail-closed direction; it does cost this row a correct credit
-(labeled discriminated, now `false_actionable` in the report).
+`let mut x`, `x += ..`, `x = ..`, destructuring assignment `(x, y) = ..`,
+`&mut x`, a `for`, `let` or `if let` pattern, a closure parameter list, a
+match-arm pattern before its own `=>`, or a `matches!` line that mentions it),
+the equality-boundary path withholds the credit and never lists the caller's
+values as the operand's observed values. When the withheld credit is the only
+thing that would have satisfied the boundary (the input equals the threshold
+only by name), the boundary is unresolved with a rebound-operand reason rather
+than a named missing equality value, because no input can satisfy a repair for
+a value ripr cannot see: the predicate reads infection-unknown and a returned
+comparison keeps its prior reading. Where no credit was at stake the existing
+reading is unchanged. The scan is deliberately over-eager (it does not prove
+scope, and a bare arm re-binding the scrutinee's own name is declined too), so
+it only ever removes a credit; a field access, path segment, comparison, the
+scrutinee of a one-line `match`, a use in an earlier arm's result or an
+unrelated local keeps it.
+Two verdict-corpus rows move from credited to limited, both inside their
+acceptable verdicts and abstained rather than actionable: `strsim-sorensen-dice-equal`
+(`if b == a` follows `let a: String = a.chars().filter(..).collect()`, so `a` is
+a rebound local, not the passed argument) and `grid-match-guard` (the bare arm
+`n if 0 > n` re-binds the scrutinee's own name, which the scan declines rather
+than proving it is the same value).

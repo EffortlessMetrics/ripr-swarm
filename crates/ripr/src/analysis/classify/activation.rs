@@ -995,14 +995,57 @@ fn owner_rebinds_operand(owner: &FunctionSummary, operand: &str, predicate_line:
                 .iter()
                 .any(|assignment| after_trimmed.starts_with(assignment));
         let binding_keyword = matches!(last_word, "let" | "mut" | "ref");
-        // A guard use (`n if 0 > n =>`) is not a pattern. An arm that binds
-        // the scrutinee's own name (`match n { n if .. => .. }`) rebinds the
-        // same value, so it keeps the parameter.
-        let self_binding_arm = line_before.trim().is_empty()
-            && (after_trimmed.starts_with("if ") || after_trimmed.starts_with("=>"))
-            && body.contains(&format!("match {operand} {{"));
-        let match_arm_pattern =
-            line_after.contains("=>") && !contains_word(line_before, "if") && !self_binding_arm;
+        // A pattern name sits before the arm's own `=>`: a guard use
+        // (`n if 0 > n =>`), the scrutinee of a one-line match, or a use in an
+        // earlier arm's result (`Some(v) => x, None =>`) is not a binding. An
+        // arm that re-binds the scrutinee's own name is declined too (no
+        // attempt to tie it to its match).
+        let match_arm_pattern = line_after.contains("=>")
+            && !contains_word(line_before, "if")
+            && last_word != "match"
+            && {
+                let mut depth = line_before.matches(['(', '[']).count() as i64
+                    - line_before.matches([')', ']']).count() as i64;
+                let mut pattern = true;
+                for ch in line_after.chars() {
+                    match ch {
+                        '(' | '[' => depth += 1,
+                        ')' | ']' => depth -= 1,
+                        ',' if depth <= 0 => {
+                            pattern = false;
+                            break;
+                        }
+                        ';' | '{' | '}' => {
+                            pattern = false;
+                            break;
+                        }
+                        '=' => break,
+                        _ => {}
+                    }
+                }
+                pattern
+            };
+        // A destructuring assignment `(x, y) = (y, x);` or `[x, ..] = ..;`:
+        // the bracket group holding the name is followed by a bare `=`.
+        let destructuring_assignment = {
+            let mut depth = 0usize;
+            let mut closed_at = None;
+            for (offset, ch) in after.char_indices() {
+                match ch {
+                    '(' | '[' | '{' => depth += 1,
+                    ')' | ']' | '}' if depth == 0 => {
+                        closed_at = Some(offset + 1);
+                        break;
+                    }
+                    ')' | ']' | '}' => depth -= 1,
+                    _ => {}
+                }
+            }
+            closed_at.is_some_and(|at| {
+                let rest = after[at..].trim_start();
+                rest.starts_with('=') && !rest.starts_with("==") && !rest.starts_with("=>")
+            })
+        };
         let for_pattern = before
             .rfind("for ")
             .filter(|at| at == &0 || !before[..*at].ends_with(is_word))
@@ -1017,6 +1060,7 @@ fn owner_rebinds_operand(owner: &FunctionSummary, operand: &str, predicate_line:
             .matches('|')
             .count();
         assigned
+            || destructuring_assignment
             || binding_keyword
             || match_arm_pattern
             || for_pattern
@@ -1601,14 +1645,13 @@ fn missing_boundary_discriminator(
         })
     });
 
-    let equality_observed = exact_equality_observed
-        || left_credit.as_deref().is_some_and(|left_credit| {
+    let parameter_equality = |left_name: Option<&str>, right_name: Option<&str>| {
+        left_name.is_some_and(|left_name| {
             call_values.iter().any(|row| {
-                let Some(left_value) = parameter_value(row, left_credit) else {
+                let Some(left_value) = parameter_value(row, left_name) else {
                     return false;
                 };
-                let right_value = right_credit
-                    .as_deref()
+                let right_value = right_name
                     .and_then(|parameter| parameter_value(row, parameter))
                     .map(|value| value.value)
                     .or_else(|| {
@@ -1619,22 +1662,40 @@ fn missing_boundary_discriminator(
                     comparable_value(value) == comparable_value(&left_value.value)
                 })
             })
-        });
-    let constant_named = right_constant
-        .as_ref()
-        .zip(left_credit.as_deref())
-        .is_some_and(|(constant, left_credit)| {
-            !owner_calls_passing_constant(
-                related_tests,
-                owner,
-                &parameters,
-                left_credit,
-                constant,
-                index,
-            )
-            .is_empty()
-        });
+        })
+    };
+    let constant_passed = |left_name: Option<&str>| {
+        right_constant
+            .as_ref()
+            .zip(left_name)
+            .is_some_and(|(constant, left_name)| {
+                !owner_calls_passing_constant(
+                    related_tests,
+                    owner,
+                    &parameters,
+                    left_name,
+                    constant,
+                    index,
+                )
+                .is_empty()
+            })
+    };
+    let equality_observed = exact_equality_observed
+        || parameter_equality(left_credit.as_deref(), right_credit.as_deref());
+    let constant_named = constant_passed(left_credit.as_deref());
     if equality_observed || constant_named {
+        return None;
+    }
+    // #9197: the owner rebinds or mutates a compared parameter name, and the
+    // test input would have satisfied the boundary only by that name. No input
+    // can satisfy a repair for a value ripr cannot see, so the boundary is
+    // unresolved rather than a named missing equality.
+    if parameter_equality(left_parameter.as_deref(), right_parameter.as_deref())
+        || constant_passed(left_parameter.as_deref())
+    {
+        *unresolved = Some(format!(
+            "boundary operand `{left}` or `{right}` is rebound or mutated by the owner before the compared line, so a related test's input is not its value and ripr cannot tell which side of the boundary a test reaches"
+        ));
         return None;
     }
     // A deep table or builder line that may feed the owner hides its
@@ -1765,7 +1826,7 @@ fn missing_boundary_discriminator(
         return None;
     }
 
-    let mut left_values = left_parameter
+    let mut left_values = left_credit
         .as_deref()
         .map(|parameter| observed_parameter_values(&call_values, parameter))
         .unwrap_or_default();
@@ -1779,7 +1840,7 @@ fn missing_boundary_discriminator(
     left_values.extend(exact_lefts);
     left_values.sort();
     left_values.dedup();
-    let right_parameter_values = right_parameter
+    let right_parameter_values = right_credit
         .as_deref()
         .and_then(|parameter| parameter_value_set(&call_values, parameter));
     let right_literal =
@@ -8523,7 +8584,8 @@ assert_eq!(input.amount, 100);"#
                 "pub fn thr(x: i32) -> bool {{\n{prelude}\n    x > 102\n}}"
             ));
             let parameters = function_parameters(&owner);
-            credited_parameter(&owner, &parameters, "x", &Some("x".to_string()), 3)
+            let line = 2 + prelude.lines().count();
+            credited_parameter(&owner, &parameters, "x", &Some("x".to_string()), line)
         };
         for prelude in [
             "    let x = x * 2;",
@@ -8538,6 +8600,10 @@ assert_eq!(input.amount, 100);"#
             "    let _ = matches!(Some(1), Some(x) if x > 0);",
             "    let _ = foo(&mut x);",
             "    let _ = match Some(1) { Some(x) if x > 0 => x, _ => 0 };",
+            "    (x, y) = (y, x);",
+            "    [x, ..] = [1, 2];",
+            "    let _ = match x {\n        x if 0 > x => -1,\n        _ => 1,\n    };",
+            "    let _ = match x { 0 => 1, _ => 2 };\n    let _ = match o {\n        x => x > 101,\n    };",
         ] {
             assert_eq!(rebound(prelude), None, "{prelude}");
         }
@@ -8550,7 +8616,10 @@ assert_eq!(input.amount, 100);"#
             "    let _ = m::x();",
             "    let _ = x == 3;",
             "    let _ = Foo { x: x };",
-            "    let _ = match x {\n        x if 0 > x => -1,\n        _ => 1,\n    };",
+            "    let _ = x >= y;",
+            "    let _ = match x { 0 => 1, _ => 2 };",
+            "    let _ = match o { Some(v) => x, None => 0 };",
+            "    let _ = match o {\n        Some(v) => x + v,\n        None => x,\n    };",
         ] {
             assert_eq!(rebound(prelude), Some("x".to_string()), "{prelude}");
         }

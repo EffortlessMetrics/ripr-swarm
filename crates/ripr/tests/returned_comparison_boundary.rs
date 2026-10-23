@@ -510,7 +510,8 @@ const AT_NEW_THRESHOLD: &str = "use thr::thr;\n\n#[test]\nfn at() {\n    assert!
 fn a_rebound_or_mutated_parameter_does_not_satisfy_the_equality_boundary() -> Result<(), String> {
     // #9197: the observed 101 equals the new threshold only by name. The
     // owner rebinds or mutates `x` first, so the compared value is not 101 and
-    // the boundary gap stays, for the tail and explicit-return forms.
+    // the boundary is unresolved: no missing equality value is named (no
+    // input could satisfy it), and no input is listed as the compared value.
     for prefix in [
         "    let x = x * 2;\n",
         "    let mut x = x;\n    x += 5;\n",
@@ -523,11 +524,10 @@ fn a_rebound_or_mutated_parameter_does_not_satisfy_the_equality_boundary() -> Re
             ("    return x > 101;", "    return x > 100;"),
         ] {
             let findings = findings_after(prefix, new, old, AT_NEW_THRESHOLD)?;
-            assert_gap_named(&findings, true).map_err(|e| format!("{prefix:?} {new}: {e}"))?;
+            assert_gap_named(&findings, false).map_err(|e| format!("{prefix:?} {new}: {e}"))?;
             let return_value = family(&findings, "return_value")?;
-            assert_ne!(
-                return_value.class,
-                ExposureClass::Exposed,
+            assert!(
+                return_value.activation.missing_discriminators.is_empty(),
                 "{prefix:?} {return_value:?}"
             );
         }
@@ -557,5 +557,38 @@ fn an_unrelated_local_keeps_the_equality_boundary_credit() -> Result<(), String>
             "{return_value:?}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn a_rebound_parameter_makes_the_predicate_boundary_unresolved_not_a_named_gap()
+-> Result<(), String> {
+    // #9197: with the owner rebinding `x`, the observed 101 would satisfy
+    // `x > 101` only by name, so the predicate reads infection-unknown with no
+    // missing value to name; the unrebound control keeps its reading.
+    let read = |prefix: &str| -> Result<(ExposureClass, usize), String> {
+        let findings = findings_after(
+            prefix,
+            "    if x > 101 { true } else { false }",
+            "    if x > 100 { true } else { false }",
+            AT_NEW_THRESHOLD,
+        )?;
+        let predicate = family(&findings, "predicate")?;
+        Ok((
+            predicate.class.clone(),
+            predicate.activation.missing_discriminators.len(),
+        ))
+    };
+    for prefix in [
+        "    let x = x * 2;\n",
+        "    let mut x = x;\n    x += 5;\n",
+        "    let mut x = x;\n    x = x + 5;\n",
+    ] {
+        let (class, missing) = read(prefix)?;
+        assert_eq!(class, ExposureClass::InfectionUnknown, "{prefix:?}");
+        assert_eq!(missing, 0, "{prefix:?}");
+    }
+    let (control, _) = read("    let y = 7;\n")?;
+    assert_ne!(control, ExposureClass::InfectionUnknown);
     Ok(())
 }
