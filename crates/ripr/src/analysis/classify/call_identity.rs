@@ -1017,10 +1017,48 @@ pub(super) fn root_library_item_module_path(
             .class(&function.file)
             .as_deref()
             != Some("lib")
+        || module.iter().any(|segment| module_declaration_is_ambiguous(index, segment))
     {
         return None;
     }
     Some(module)
+}
+
+/// Whether the root package's `src/` files declare `mod <segment>` other than
+/// exactly once, or declare it under a `cfg`/`cfg_attr` attribute: a
+/// cfg-selected alternate definition, or a second declaration in another file,
+/// may make `<lib>::..::<segment>` name a different item than the layout does.
+/// A raw text scan; a match in a string or comment only refuses (fails closed).
+fn module_declaration_is_ambiguous(index: &RustIndex, segment: &str) -> bool {
+    let mut declarations = 0usize;
+    for (path, facts) in index.files().iter() {
+        if package_key(path).is_some() || under_tests_dir(path) {
+            continue;
+        }
+        let source: &str = &facts.data().source;
+        for (at, _) in source.match_indices("mod") {
+            if ident_char_before(source, at) {
+                continue;
+            }
+            let rest = source[at + 3..].trim_start();
+            let rest = rest.strip_prefix("r#").unwrap_or(rest);
+            let Some(tail) = rest.strip_prefix(segment) else {
+                continue;
+            };
+            if ident_char_at(tail, 0) {
+                continue;
+            }
+            declarations += 1;
+            let before = &source[..at];
+            let statement_start = before
+                .rfind([';', '{', '}'])
+                .map_or(0, |boundary| boundary + 1);
+            if before[statement_start..].contains("cfg") {
+                return true;
+            }
+        }
+    }
+    declarations != 1
 }
 
 /// The package a file belongs to. A relative path keeps

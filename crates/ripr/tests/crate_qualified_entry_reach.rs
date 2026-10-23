@@ -598,3 +598,46 @@ fn a_module_qualified_call_fails_closed_on_rebinding_and_include() -> Result<(),
     assert_eq!(package.relation()?, None);
     Ok(())
 }
+
+/// A nested inline module path links; a cfg-gated or doubly declared module
+/// does not (a cfg-selected alternate may be a different item), nor does a
+/// test crate that declares a module named like the library.
+#[test]
+fn nested_cfg_and_shadowing_module_shapes_fail_closed() -> Result<(), String> {
+    let nested_lib = "pub mod outer {\n    pub mod inner {\n        fn is_bulk(qty: u32) -> bool {\n            10 <= qty\n        }\n\n        pub fn order_discount(qty: u32) -> u32 {\n            if is_bulk(qty) { 5 } else { 0 }\n        }\n    }\n}\n";
+    let nested = |tests: String| Package {
+        nested: true,
+        ..Package::root(nested_lib, true, &tests)
+    };
+    assert_eq!(
+        nested(spelled("qual_reach::outer::inner::order_discount"))
+            .relation()?
+            .as_deref(),
+        LINKED,
+        "control: the nested inline path links"
+    );
+    assert_eq!(
+        nested(spelled("qual_reach::inner::order_discount")).relation()?,
+        None
+    );
+    let qualified_path = spelled("qual_reach::inner::order_discount");
+    for lib in [
+        "#[cfg(feature = \"alt\")]\npub mod inner;\n#[cfg(not(feature = \"alt\"))]\npub mod inner {}\n",
+        "#[cfg(feature = \"alt\")]\npub mod inner;\n",
+        "#[cfg_attr(docsrs, doc(hidden))]\npub mod inner;\n",
+        "pub mod inner;\nmod other {\n    pub mod inner {}\n}\n",
+    ] {
+        let package = module_package("src/inner.rs", lib, qualified_path.clone(), vec![]);
+        assert_eq!(package.relation()?, None, "{lib}");
+    }
+    // A test crate that declares a module named like the library.
+    let shadow = format!("mod qual_reach;\n{qualified_path}");
+    let package = module_package(
+        "src/inner.rs",
+        MODULE_LIB,
+        shadow,
+        vec![("tests/qual_reach.rs", "pub mod inner {}\n".to_string())],
+    );
+    assert_eq!(package.relation()?, None);
+    Ok(())
+}
