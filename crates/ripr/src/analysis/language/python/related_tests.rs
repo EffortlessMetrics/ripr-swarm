@@ -766,7 +766,7 @@ fn chained_or_bracketed_target(body: &str, idx: usize, before: &str, after: &str
     // spacing, nesting (`(( r ))`) and a split across lines do not change the
     // reading.
     let mut head_end = before.len();
-    let mut rest = after;
+    let mut rest = after.trim_start();
     let mut peeled = false;
     while let Some(closer) = rest.chars().next().filter(|c| matches!(c, ']' | ')')) {
         let opener = if closer == ']' { '[' } else { '(' };
