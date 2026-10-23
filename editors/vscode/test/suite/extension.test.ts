@@ -826,7 +826,8 @@ suite('Extension Smoke', () => {
     const isRejection = () => controller.status.kind === 'analysisFailed'
       && (controller.status.summary ?? '').includes('rejected your latest settings');
     const itemText = () => `${statusItem.text}\n${String(statusItem.tooltip ?? '')}`;
-    const describe = () => `status=${JSON.stringify(controller.status)} item=${JSON.stringify(itemText())} frames=${JSON.stringify(frames.slice(-8))}`;
+    const colorIds = () => `bg=${(statusItem.backgroundColor as { id?: string } | undefined)?.id} fg=${(statusItem.color as { id?: string } | undefined)?.id}`;
+    const describe = () => `status=${JSON.stringify(controller.status)} colors=${colorIds()} item=${JSON.stringify(itemText())} frames=${JSON.stringify(frames.slice(-8))}`;
     const waitUntil = async (predicate: () => boolean, label: string, timeoutMs = 60000): Promise<void> => {
       const deadline = Date.now() + timeoutMs;
       while (!predicate()) {
@@ -864,7 +865,8 @@ suite('Extension Smoke', () => {
       assert.ok(!/default settings/i.test(controller.status.detail ?? ''), 'no default-settings claim');
       assert.ok((controller.status.nextStep ?? '').includes('Restart Server'), 'names a recovery action');
       assert.ok(statusItem.text.includes('failed'), `the real item shows the failure: ${describe()}`);
-      assert.strictEqual((statusItem.backgroundColor as { id?: string } | undefined)?.id, 'statusBarItem.errorBackground', 'the real item carries the error colors');
+      assert.strictEqual((statusItem.backgroundColor as { id?: string } | undefined)?.id, 'statusBarItem.errorBackground', 'the real item carries the error background');
+      assert.strictEqual((statusItem.color as { id?: string } | undefined)?.id, 'statusBarItem.errorForeground', 'the real item carries the error foreground');
 
       // A second, decided rejection stays visible.
       mark = frames.length;
@@ -887,7 +889,9 @@ suite('Extension Smoke', () => {
       const recoveredBackground = (statusItem.backgroundColor as { id?: string } | undefined)?.id;
       assert.notStrictEqual(recoveredBackground, 'statusBarItem.errorBackground',
         `the error background is cleared (a legitimate warning state may remain): ${describe()}`);
-      assert.strictEqual(statusItem.color, undefined, 'error foreground is cleared');
+      const recoveredForeground = (statusItem.color as { id?: string } | undefined)?.id;
+      assert.notStrictEqual(recoveredForeground, 'statusBarItem.errorForeground',
+        `the error foreground is cleared (a legitimate warning pair may remain): ${describe()}`);
     } finally {
       controller.handleAnalysisStatus = originalHandle;
       await config.update('includeUnchangedTests', previous, vscode.ConfigurationTarget.Workspace);
