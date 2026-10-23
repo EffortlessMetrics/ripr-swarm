@@ -180,7 +180,8 @@ existed with no way to begin the attempt.
   `gap_bound_after_phase_enforces_the_edit_cage`,
   `gap_bound_after_phase_stops_when_the_retry_budget_is_spent`,
   `gap_bound_after_phase_human_output_names_closure_and_replaces_a_stale_receipt`,
-  `gap_bound_receipt_requires_the_verify_closure_and_rejects_forgery`.
+  `gap_bound_receipt_requires_the_verify_closure_and_rejects_forgery`,
+  `typescript_status_warning_keeps_the_no_start_claim_for_refused_variants`.
 - `crates/ripr/src/cli/agent.rs`, `crates/ripr/src/app/repair_attempt/mod.rs`,
   `crates/ripr/src/app/agent_status.rs` and
   `crates/ripr/src/output/agent_seam_packets.rs` unit tests named in the
@@ -189,7 +190,10 @@ existed with no way to begin the attempt.
 ## Implementation Mapping
 
 - `crates/ripr/src/app/gap_bound_repair.rs`: lookup, start spelling, manual
-  verify route.
+  verify route, and `default_check_gap_start`, the admission `ripr agent
+  status` consults so its `pilot_routed_to_check_no_repair_target` warning
+  names the start check prints and keeps the "offers no start" claim only when
+  check offers none (#10001).
 - `crates/ripr/src/cli/commands/agent.rs`: `run_gap_bound_before_phase`.
 - `crates/ripr/src/app/repair_attempt/mod.rs`: `RepairAttemptGapBinding`,
   `begin_gap_bound_repair_attempt_with_identity`,

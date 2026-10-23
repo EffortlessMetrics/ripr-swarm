@@ -13,6 +13,7 @@ WARNING ./src/lib.rs:5
 Changed
   before: None => 601,
   after:  None =>
+          (arm head only; open the arm at ./src/lib.rs:5 to read its new body)
 
 Probe
   family: match_arm

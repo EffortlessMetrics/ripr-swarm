@@ -3278,6 +3278,67 @@ fn out_dir_map_for(root: &Path) -> Option<TsOutDirMap> {
 struct RunResolverCache {
     directory_modules: HashMap<(PathBuf, String), Option<String>>,
     out_dir_maps: HashMap<PathBuf, Option<TsOutDirMap>>,
+    /// The committed-snapshot reader's verdict per config directory
+    /// (RIPR-SPEC-0258, #7708): `Some(mentions_vitest)` when the directory's
+    /// configs are clean, `None` when one refuses. Keyed by the directory and
+    /// whether it may be a symlink (the analysis root).
+    config_directories: HashMap<(PathBuf, bool), Option<bool>>,
+    /// Tracked `*.snap` files per analysis root (`None`: unknown).
+    tracked_snapshots: HashMap<PathBuf, Option<std::sync::Arc<HashSet<String>>>>,
+}
+
+/// Memoize `compute` for one analysis run, keyed by `key`, in the field
+/// `slot` picks. Outside a [`DirectoryModuleCacheScope`] nothing is stored,
+/// so no answer outlives the run that computed it.
+fn run_memoized<K: Clone + Eq + std::hash::Hash, V: Clone>(
+    key: &K,
+    slot: impl Fn(&mut RunResolverCache) -> &mut HashMap<K, V>,
+    compute: impl FnOnce() -> V,
+) -> V {
+    let cached = RUN_RESOLVER_CACHE.with(|cache| {
+        cache.try_borrow_mut().ok().and_then(|mut cache| {
+            cache
+                .as_mut()
+                .and_then(|cache| slot(cache).get(key).cloned())
+        })
+    });
+    if let Some(value) = cached {
+        return value;
+    }
+    let value = compute();
+    RUN_RESOLVER_CACHE.with(|cache| {
+        if let Ok(mut cache) = cache.try_borrow_mut()
+            && let Some(cache) = cache.as_mut()
+        {
+            slot(cache).insert(key.clone(), value.clone());
+        }
+    });
+    value
+}
+
+/// Per-run memo of one config directory's snapshot-config verdict.
+pub(crate) fn run_cached_config_directory(
+    directory: &Path,
+    allow_symlink: bool,
+    compute: impl FnOnce() -> Option<bool>,
+) -> Option<bool> {
+    run_memoized(
+        &(directory.to_path_buf(), allow_symlink),
+        |cache| &mut cache.config_directories,
+        compute,
+    )
+}
+
+/// Per-run memo of the tracked `*.snap` files under `root`.
+pub(crate) fn run_cached_tracked_snapshots(
+    root: &Path,
+    compute: impl FnOnce() -> Option<std::sync::Arc<HashSet<String>>>,
+) -> Option<std::sync::Arc<HashSet<String>>> {
+    run_memoized(
+        &root.to_path_buf(),
+        |cache| &mut cache.tracked_snapshots,
+        compute,
+    )
 }
 
 thread_local! {

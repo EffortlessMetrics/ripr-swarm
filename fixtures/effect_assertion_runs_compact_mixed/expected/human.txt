@@ -16,6 +16,13 @@ Start here:
   Changed behavior: notifier.send(order_id)
   Related test: src/lib.rs:27 process_order_sends_exact_order_id
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: Related tests appear to reach process_order: process_order_sends_exact_order_id
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 8 more detail line(s) in --format human-full
