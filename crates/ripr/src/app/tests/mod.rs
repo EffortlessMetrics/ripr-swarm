@@ -19,6 +19,8 @@ mod python_test_note;
 mod python_family_selection_packets;
 #[cfg(feature = "lang-python")]
 mod python_packet_eligibility;
+#[cfg(feature = "lang-python")]
+mod python_repo_mode_repair_failclosed;
 mod rendering_contracts;
 #[cfg(feature = "lang-typescript")]
 mod typescript_family_selection_packets;

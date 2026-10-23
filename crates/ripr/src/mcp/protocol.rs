@@ -90,12 +90,12 @@ const RECEIPT_TEMPLATE_DESCRIPTION: &str = "The receipt status document for one 
 
 const REPAIR_CARD_TEMPLATE_DESCRIPTION: &str = "One canonical item's bounded repair card, the same document ripr_get_repair_card returns: the repair_card.v1 document `ripr agent card` and the language server project assemble from the committed snapshot by the shared authority. The card names the seam, witness, fix instruction, edit cage, attempt state, and typed next action. The item must exist in the current snapshot with an owner-discriminated seam binding (else item_not_found or seam_not_found).";
 
-const GET_REPAIR_CARD_TOOL_DESCRIPTION: &str = "Project the bounded repair card for one canonical item of the current completed snapshot: the same versioned repair_card.v1 document `ripr agent card` and the standard language server project, assembled by the shared application authority from the committed snapshot. Route disambiguation: prefer this card over ripr_get_gap when the agent intends to repair; ripr_get_gap is the lighter read when only analysis evidence is wanted. Inputs: canonical_id (required, from ripr_list_gaps) and optional snapshot_id, which must match the current snapshot or the call fails closed with stale_snapshot. The document carries the verbatim card (seam subject, changed behavior, exact blocker or named limitation, fix instruction, edit-cage surfaces, done-when goals, attempt state, typed next action) plus the claim boundary and resource links. The durable attempt store is re-read at card-read time, so the attempt block matches `ripr agent status` at this moment; in-memory session transactions never ride a card. The card edits nothing, executes nothing, and is never a repair authorization: the external client's approval and sandbox policy remains authoritative for the command the next action names, and the display binds the portable root `.` (never the host-local path). Reachable failure vocabulary: no_snapshot, analysis_in_flight, stale_snapshot, item_not_found, seam_not_found, identity_unnameable, budget_overflow, result_too_large, workspace_unavailable, analysis_failed; policy_omitted and witness_unavailable stay named on the wire for stability. The resource ripr://repair-card/{canonical_id} returns the same document.";
+const GET_REPAIR_CARD_TOOL_DESCRIPTION: &str = "Project the bounded repair card for one canonical item of the current completed snapshot: the same versioned repair_card.v1 document `ripr agent card` and the standard language server project, assembled by the shared application authority. Route disambiguation: prefer this card over ripr_get_gap when the agent intends to repair; ripr_get_gap is the lighter read when only analysis evidence is wanted. Inputs: canonical_id (required, from ripr_list_gaps) and optional snapshot_id, which must match the current snapshot or the call fails closed with stale_snapshot. The document carries the verbatim card (seam subject, changed behavior, exact blocker or named limitation, fix instruction, edit-cage surfaces, done-when goals, attempt state, typed next action) plus the claim boundary and resource links. The durable attempt store is re-read at card-read time, so the attempt block matches `ripr agent status` at this moment; in-memory session transactions never ride a card. The card edits nothing, executes nothing, and is never a repair authorization: the external client's approval and sandbox policy remains authoritative for the command the next action names, and the display binds the portable root `.` (never the host-local path). Reachable failure vocabulary: no_snapshot, analysis_in_flight, stale_snapshot, item_not_found, seam_not_found, identity_unnameable, budget_overflow, incomplete_inventory, result_too_large, workspace_unavailable, analysis_failed; policy_omitted and witness_unavailable stay named on the wire for stability. The resource ripr://repair-card/{canonical_id} returns the same document.";
 
 pub(super) fn tools_list_result() -> Value {
     // #9852 context-sink budget: this payload rides every session start, so
     // it carries a pinned byte ceiling (the `tools_list_byte_budget` guard
-    // below) the same way descriptions carry char budgets (#9818/#9848).
+    // below) the same way descriptions carry byte budgets (#9818/#9848).
     // The obvious next lever — factoring repeated outputSchema subschemas
     // through `$defs`/`$ref` — was evaluated and rejected on arithmetic,
     // not taste. Every advertised `outputSchema` is a standalone schema
@@ -1603,93 +1603,172 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn description_length_budgets_keep_session_context_lean() {
-        // #9604 finding 33: every description below is injected into the
-        // model's context for the whole session, so each surface carries a
-        // byte budget. Both diet passes have landed; the budgets below are
-        // the tightened per-surface ceilings.
-        const TEMPLATE_BUDGET: usize = 475;
-        const RESOURCE_BUDGET: usize = 650;
-        const TOTAL_BUDGET_INTERIM: usize = 14900;
-        for (name, text, budget) in [
-            ("status_tool", STATUS_TOOL_DESCRIPTION, 1025),
-            ("refresh_tool", REFRESH_TOOL_DESCRIPTION, 1450),
-            ("list_gaps_tool", LIST_GAPS_TOOL_DESCRIPTION, 1075),
-            ("get_gap_tool", GET_GAP_TOOL_DESCRIPTION, 975),
-            ("prepare_repair_tool", PREPARE_REPAIR_TOOL_DESCRIPTION, 1390),
-            (
-                "get_repair_attempt_tool",
-                GET_REPAIR_ATTEMPT_TOOL_DESCRIPTION,
-                1285,
-            ),
-            (
-                "get_receipt_status_tool",
-                GET_RECEIPT_STATUS_TOOL_DESCRIPTION,
-                1610,
-            ),
-            (
-                "get_repair_card_tool",
-                GET_REPAIR_CARD_TOOL_DESCRIPTION,
-                1630,
-            ),
-            (
-                "status_resource",
-                STATUS_RESOURCE_DESCRIPTION,
-                RESOURCE_BUDGET,
-            ),
-            (
-                "snapshot_resource_template",
-                SNAPSHOT_RESOURCE_TEMPLATE_DESCRIPTION,
-                TEMPLATE_BUDGET,
-            ),
-            (
-                "gap_resource_template",
-                GAP_RESOURCE_TEMPLATE_DESCRIPTION,
-                TEMPLATE_BUDGET,
-            ),
-            (
-                "repair_attempt_resource_template",
-                REPAIR_ATTEMPT_TEMPLATE_DESCRIPTION,
-                TEMPLATE_BUDGET,
-            ),
-            (
-                "receipt_resource_template",
-                RECEIPT_TEMPLATE_DESCRIPTION,
-                TEMPLATE_BUDGET,
-            ),
-            (
-                "repair_card_resource_template",
-                REPAIR_CARD_TEMPLATE_DESCRIPTION,
-                TEMPLATE_BUDGET,
-            ),
-            ("instructions", INSTRUCTIONS, 1665),
-        ] {
-            assert!(
-                text.len() <= budget,
-                "{name} description is {} chars, over the {budget}-char budget",
-                text.len()
-            );
+    fn check_description_byte_budgets(
+        tools: &Value,
+        resources: &Value,
+        templates: &Value,
+        instructions: &str,
+    ) -> Result<usize, String> {
+        // #9935: enumerate the published catalogs, rather than a parallel
+        // list of description constants that can omit a published tool.
+        // Keep the previous 14,900-byte ceiling on its original surfaces;
+        // the complete ceiling adds only the inventory's new 1,090 bytes.
+        let mut budgets = std::collections::BTreeMap::from([
+            ("tool ripr_workspace_status", 1025),
+            ("tool ripr_refresh", 1450),
+            ("tool ripr_list_gaps", 1075),
+            ("tool ripr_get_gap", 975),
+            ("tool ripr_prepare_repair", 1390),
+            ("tool ripr_get_repair_attempt", 1285),
+            ("tool ripr_get_receipt_status", 1610),
+            ("tool ripr_get_repair_card", 1630),
+            ("tool ripr_list_repair_attempts", 1090),
+            ("resource ripr-workspace-status", 650),
+            ("template ripr-snapshot-evidence", 475),
+            ("template ripr-gap-evidence", 475),
+            ("template ripr-repair-attempt", 475),
+            ("template ripr-receipt-status", 475),
+            ("template ripr-repair-card", 475),
+        ]);
+        if instructions.is_empty() || instructions.len() > 1665 {
+            return Err(format!(
+                "instructions contain {} UTF-8 bytes; expected 1..=1665",
+                instructions.len()
+            ));
         }
-        let total = STATUS_TOOL_DESCRIPTION.len()
-            + REFRESH_TOOL_DESCRIPTION.len()
-            + LIST_GAPS_TOOL_DESCRIPTION.len()
-            + GET_GAP_TOOL_DESCRIPTION.len()
-            + PREPARE_REPAIR_TOOL_DESCRIPTION.len()
-            + GET_REPAIR_ATTEMPT_TOOL_DESCRIPTION.len()
-            + GET_RECEIPT_STATUS_TOOL_DESCRIPTION.len()
-            + GET_REPAIR_CARD_TOOL_DESCRIPTION.len()
-            + STATUS_RESOURCE_DESCRIPTION.len()
-            + SNAPSHOT_RESOURCE_TEMPLATE_DESCRIPTION.len()
-            + GAP_RESOURCE_TEMPLATE_DESCRIPTION.len()
-            + REPAIR_ATTEMPT_TEMPLATE_DESCRIPTION.len()
-            + RECEIPT_TEMPLATE_DESCRIPTION.len()
-            + REPAIR_CARD_TEMPLATE_DESCRIPTION.len()
-            + INSTRUCTIONS.len();
-        assert!(
-            total <= TOTAL_BUDGET_INTERIM,
-            "description total is {total} chars, over the {TOTAL_BUDGET_INTERIM}-char interim budget"
-        );
+        let mut total = instructions.len();
+        let mut previous_surfaces = instructions.len();
+        for (kind, catalog, key) in [
+            ("tool", tools, "tools"),
+            ("resource", resources, "resources"),
+            ("template", templates, "resourceTemplates"),
+        ] {
+            let rows = catalog[key]
+                .as_array()
+                .ok_or_else(|| format!("{kind} catalog lost {key}"))?;
+            for row in rows {
+                let name = row["name"]
+                    .as_str()
+                    .ok_or_else(|| format!("{kind} catalog contains an unnamed surface"))?;
+                let surface = format!("{kind} {name}");
+                let budget = budgets.remove(surface.as_str()).ok_or_else(|| {
+                    format!("{surface} has no description budget or appears more than once")
+                })?;
+                let description = row["description"]
+                    .as_str()
+                    .filter(|text| !text.is_empty())
+                    .ok_or_else(|| format!("{surface} lost its nonempty description"))?;
+                let bytes = description.len();
+                if bytes > budget {
+                    return Err(format!(
+                        "{surface} description is {bytes} UTF-8 bytes, over its {budget}-byte budget"
+                    ));
+                }
+                total += bytes;
+                if surface != "tool ripr_list_repair_attempts" {
+                    previous_surfaces += bytes;
+                }
+            }
+        }
+        if let Some(surface) = budgets.keys().next() {
+            return Err(format!("{surface} is missing from its published catalog"));
+        }
+        if previous_surfaces > 14900 {
+            return Err(format!(
+                "previously guarded descriptions total {previous_surfaces} UTF-8 bytes, over 14900"
+            ));
+        }
+        if total > 15990 {
+            return Err(format!(
+                "complete descriptions/instructions total {total} UTF-8 bytes, over 15990"
+            ));
+        }
+        Ok(total)
+    }
+
+    #[test]
+    fn description_length_budgets_keep_session_context_lean() -> Result<(), String> {
+        let total = check_description_byte_budgets(
+            &tools_list_result(),
+            &resources_list_result(),
+            &resource_templates_list_result(),
+            INSTRUCTIONS,
+        )?;
+        // Independent literal accounting at the #9935 basis, including the
+        // ninth tool and instructions once. Intentional metadata changes
+        // need to reconcile this byte count as well as the ceilings.
+        assert_eq!(total, 15981);
+        Ok(())
+    }
+
+    #[test]
+    fn description_budget_rejects_inventory_growth_in_utf8_bytes() -> Result<(), String> {
+        let mut tools = tools_list_result();
+        let inventory = tools["tools"]
+            .as_array_mut()
+            .and_then(|rows| {
+                rows.iter_mut()
+                    .find(|row| row["name"] == "ripr_list_repair_attempts")
+            })
+            .ok_or("the real catalog lost the inventory tool")?;
+        let original = inventory["description"]
+            .as_str()
+            .ok_or("inventory description")?;
+        let grown = format!("{original}éé");
+        assert_eq!(grown.len(), 1091);
+        assert!(grown.chars().count() <= 1090);
+        inventory["description"] = json!(grown);
+        let error = match check_description_byte_budgets(
+            &tools,
+            &resources_list_result(),
+            &resource_templates_list_result(),
+            INSTRUCTIONS,
+        ) {
+            Err(error) => error,
+            Ok(total) => return Err(format!("inventory growth escaped its budget: {total}")),
+        };
+        if !error.contains("tool ripr_list_repair_attempts") || !error.contains("1091 UTF-8 bytes")
+        {
+            return Err(format!(
+                "inventory growth lost its surface/byte diagnosis: {error}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn description_budget_rejects_missing_inventory_surface_or_text() -> Result<(), String> {
+        for remove_tool in [false, true] {
+            let mut tools = tools_list_result();
+            let rows = tools["tools"].as_array_mut().ok_or("tool catalog")?;
+            if remove_tool {
+                rows.retain(|row| row["name"] != "ripr_list_repair_attempts");
+            } else {
+                rows.iter_mut()
+                    .find(|row| row["name"] == "ripr_list_repair_attempts")
+                    .and_then(Value::as_object_mut)
+                    .ok_or("inventory tool")?
+                    .remove("description")
+                    .ok_or("inventory description")?;
+            }
+            let error = match check_description_byte_budgets(
+                &tools,
+                &resources_list_result(),
+                &resource_templates_list_result(),
+                INSTRUCTIONS,
+            ) {
+                Err(error) => error,
+                Ok(total) => {
+                    return Err(format!("missing inventory surface/text escaped: {total}"));
+                }
+            };
+            if !error.contains("tool ripr_list_repair_attempts") {
+                return Err(format!(
+                    "missing inventory lost its surface diagnosis: {error}"
+                ));
+            }
+        }
+        Ok(())
     }
 
     #[test]

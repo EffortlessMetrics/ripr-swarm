@@ -31,6 +31,7 @@ Linked issues:
 - #9150 (bare non-throwing exit first in a try block makes its catch unreachable)
 - #8959 (lexically bound runner registrations)
 - #9181 (CommonJS function export reached through `require()`)
+- #9182 (`var`/`let` CommonJS runner bindings)
 - #9435 (exact oracle ignored on five changed-line shapes)
 - #9497 (skipped or unexercised tests credited as exposed; rules 17 and 18)
 
@@ -284,7 +285,14 @@ bindings in modules and strict scripts do not shadow a sibling registration.
 A sibling suite's
 helper is outside this lexical scope. Re-exports do not create local runner
 bindings, and an ESM namespace object is not a callable registration root.
-The CommonJS exemption requires an immutable runner declaration and
+The CommonJS exemption requires an immutable runner declaration (a `const`,
+or a `var`/`let` whose binding the file never writes outside its own
+initializer: no assignment, update, `for` target or redeclaration, and no
+`eval`/`with`/`\u` opacity, #9182; every occurrence must be a plain read or
+call, so a parenthesised, non-null, cast or destructuring assignment target,
+a `function`/`class` re-declaration and a `globalThis`/`this` member write all
+refuse. A nested-scope shadow such as a `test` parameter is refused too,
+fail-closed) and
 either ambient `require` syntax or an immutable loader created by a locally
 imported `node:module`/`module` `createRequire(import.meta.url)`. Mutable loaders
 or runner bindings and same-spelled helper factories remain uncredited.
@@ -629,7 +637,21 @@ Candidates come from the first non-empty tier:
      only when the owner is the default export, or
      `const m = await import("<owner module>")` with `m.owner(`); and
      `ReExportChainFollowed` (RIPR-SPEC-0095, at most 4 hops).
-2. **Module-entry relations** when tier 1 is empty, package-filtered.
+2. **Module-entry relations** when tier 1 is empty, package-filtered. For
+   an instance method this tier also holds the sibling methods of the same
+   class that reach it through at most 3 `this.method(...)` calls (#8567):
+   a test that calls such a sibling on a receiver it built relates through
+   `ModuleEntryCall`, which reads `weakly_exposed` at most and discloses the
+   reach as "only through same-class callers". The call graph is
+   syntax-only and fail-closed: a caller whose body declares a nested
+   `function` or `class` or an object/class method shorthand (keywords inside
+   strings, templates and comments do not count), a name defined twice in the
+   class, a name some method assigns, deletes or defines on `this`, a name an
+   instance field of the class defines (a computed field defines any name),
+   an arrow body that is not a call argument (`const later = () =>
+   this.helper()` is created, not run), and static methods contribute no
+   edge. An arrow passed to a call is read as invoked; the relation stays weak
+   and never reads `exposed`.
 3. **Heuristic relations** when tiers 1 and 2 are empty, package-filtered,
    for function, arrow and component owners, when the test body
    references the owner name and does not import that name from an
@@ -1141,6 +1163,12 @@ rejected alternative. Any can be reversed later without touching the rest.
     accessor body (it can compute anything), and `accessor <field>` auto-
     accessors, which the owner index does not record yet.
 
+Known limits of the textual write scan (#9182): the literal/comment masker
+reads `</div>` in `.tsx` text and a backtick inside a regex literal wrongly, so
+a write hidden by either is not seen; a postfix `++`/`--` before `/` is
+division, not a regex. These are fail-open only for files that already defeat
+the masker.
+
 ## Required Evidence
 
 - Each Problem table row reads as the acceptance examples state, in JSON
@@ -1625,6 +1653,12 @@ to `amount - 20`, and `tests/lib.test.ts` has
   (`direct_owner_call_has_declaration_anchor`,
   `owner_name_shadowed_by_unrelated_import`) and the owner bindings
   rule 7 reads.
+- #8567: `crates/ripr/src/analysis/language/typescript/class_entries.rs`
+  (`assign_class_entries`) records the same-class entries on each instance
+  method owner; `related_tests.rs` `module_entry_owner` turns an entry into
+  the receiver-call stand-in that tier 2 checks, and
+  `tests/class_entry_tests.rs` pins the credited chains against each shape
+  that records no edge.
 - `crates/ripr/src/analysis/language/typescript/classifier.rs`: rules 6
   and 7 (`ts_changed_value_is_observed`,
   `ts_observed_local_aliases_owner`), and rule 8's `static_unknown` arm

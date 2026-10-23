@@ -62,3 +62,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — field_match_unexecuted_assertion (6)
+
+Reason:
+RIPR-SPEC-0197: use generic Human assertion guidance when refusal provenance does not establish a macro identity; verdict and evidence unchanged (#8927)
+
+Command:
+`cargo xtask goldens bless field_match_unexecuted_assertion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
