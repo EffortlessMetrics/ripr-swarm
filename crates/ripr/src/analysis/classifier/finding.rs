@@ -645,6 +645,11 @@ fn refused_assertion_next_step(
     subject: &str,
 ) -> String {
     let macro_name = note.map_or(macro_name, |note| note.macro_name.as_str());
+    let standard_macro = if macro_name.is_empty() {
+        "the intended standard assertion macro".to_string()
+    } else {
+        format!("the standard `{macro_name}!`")
+    };
     match note {
         Some(note) if note.calls_owner && note.is_analyzer_limit => format!(
             "ripr did not credit the {}; the \"not credited\" note says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.",
@@ -654,7 +659,7 @@ fn refused_assertion_next_step(
         // not a limit of ripr's reading, so offering a static-limit
         // reading would let the reader dismiss a real gap.
         Some(note) if note.calls_owner => format!(
-            "ripr did not credit the {}; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `{macro_name}!`, in a test expected to pass.",
+            "ripr did not credit the {}; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as {standard_macro}, in a test expected to pass.",
             note.location
         ),
         _ => format!(
@@ -1397,6 +1402,16 @@ mod tests {
             !not_limit.contains("static limit, not a missing test"),
             "{not_limit}"
         );
+        let mut unidentified = note(true, false);
+        unidentified.macro_name.clear();
+        unidentified.location = "assertion in t at tests/t.rs:3".to_string();
+        let generic =
+            refused_assertion_next_step(Some(&unidentified), "assert_eq", "changed effect");
+        assert!(
+            generic.contains("as the intended standard assertion macro"),
+            "{generic}"
+        );
+        assert!(!generic.contains("`!`"), "{generic}");
 
         for unrelated in [Some(note(false, true)), Some(note(false, false)), None] {
             assert!(

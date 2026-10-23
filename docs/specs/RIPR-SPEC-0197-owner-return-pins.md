@@ -124,11 +124,6 @@ flow proof. These contexts still credit a plain `assert_eq!` / `assert!` as
 review of #8934; tracked with the #8983 follow-up unless a separate issue says
 otherwise):
 
-- A `macro_rules!` macro that is invoked and swallows its arguments
-  (`macro_rules! w { ($($t:tt)*) => {} } w!(assert_eq!(..));`). The outer macro
-  is `w`, so neither the compound-statement branch nor the macro-name gate
-  applies. This contradicts the "same admission" wording above for effect
-  probes: the return family refuses this shape, effect families do not.
 - An infinite outer loop hidden by a nested exit: `loop { for _ in 0..1 { break; } }`
   or `loop { let _c = || { loop { break; } }; }` before the assertion. Root
   divergence detection treats any descendant `break` as an exit of the root loop.
@@ -147,8 +142,13 @@ uncalled closure is still refused. Identical assertion spellings on one line
 admitted when some invocation of it provably runs and refused when none does, so
 the first assertion keeps its `exposed` credit and a pair that cannot run
 (`return; A A`) stays uncredited. A dead copy beside a live one adds no credit the
-live copy does not already carry. This shared reading also governs the return
-family.
+live copy does not already carry. This live-duplicate exception applies only to
+effect families; the return family retains its ambiguous-coordinate refusal.
+
+Compound oracles, including an invoked macro that swallows an assertion in its
+arguments, take the context gate above. When the retained compound text does not
+establish the assertion macro's identity, refusal provenance and Human guidance
+refer to the assertion generically rather than naming its outer macro.
 
 The admission also over-refuses, failing closed and matching the return family:
 qualified `std::` / `core::` assertions whose arguments contain a nested `vec!`

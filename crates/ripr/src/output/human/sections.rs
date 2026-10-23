@@ -1,7 +1,7 @@
 use crate::config::RiprConfig;
 use crate::domain::{
     CALLEE_ONLY_REACH_PREFIX, ExposureClass, Finding, LanguageId, LanguageStatus,
-    MISSING_DISCRIMINATOR_VALUE_PREFIX, ProbeFamily, RiprEvidence, StageState,
+    MISSING_DISCRIMINATOR_VALUE_PREFIX, RiprEvidence, StageState,
 };
 use crate::output::agent_seam_packets::{
     allowed_edit_surface_for_gap_route, gap_record_packet_do_not_do,
@@ -108,12 +108,7 @@ pub(crate) fn render_finding_digest_with_config(
     // #2614: add a brief classification hint so the digest reader understands
     // WHY the finding is at this class without reading the full form.
     let refused_macro = refused_assertion_macro(finding);
-    if let Some(hint) = classification_hint(
-        &finding.class,
-        &finding.ripr,
-        &finding.probe.family,
-        refused_macro,
-    ) {
+    if let Some(hint) = classification_hint(&finding.class, &finding.ripr, refused_macro) {
         out.push_str(&format!("  Why {}: {hint}\n", finding.class.plain_label()));
     }
     // The refusal names a file and a blocker; a cut would drop the blocker,
@@ -1247,13 +1242,12 @@ fn is_callee_only_reach(reach: &crate::domain::StageEvidence) -> bool {
 fn refused_assertion_macro(finding: &Finding) -> Option<&str> {
     let note = evidence_value(finding, crate::domain::ASSERTION_NOT_CREDITED_PREFIX)?;
     let name = note.strip_prefix('`')?.split_once("!`")?.0;
-    (!name.is_empty()).then_some(name)
+    matches!(name, "assert_eq" | "assert").then_some(name)
 }
 
 fn classification_hint(
     class: &ExposureClass,
     ripr: &RiprEvidence,
-    family: &ProbeFamily,
     refused_macro: Option<&str>,
 ) -> Option<String> {
     let reveal = &ripr.reveal;
@@ -1276,16 +1270,14 @@ fn classification_hint(
             if reveal.observe.summary == crate::domain::ASSERTION_CONTEXT_UNESTABLISHED
                 && !callee_only
             {
-                // The refusal note names the assertion that was actually
-                // refused; the family default only stands in when none is
-                // recorded.
-                let macro_name = refused_macro.unwrap_or(if *family == ProbeFamily::MatchArm {
-                    "assert"
-                } else {
-                    "assert_eq"
-                });
+                // A compound oracle can carry no established assertion
+                // identity. Do not infer one from its probe family.
+                let standard_macro = refused_macro.map_or_else(
+                    || "the intended standard assertion macro".to_string(),
+                    |name| format!("the standard `{name}!`"),
+                );
                 Some(format!(
-                    "a related test asserts here, but ripr could not establish that the assertion runs and is the standard `{macro_name}!`"
+                    "a related test asserts here, but ripr could not establish that the assertion runs and is {standard_macro}"
                 ))
             } else if reveal.observe.state == StageState::No && !callee_only {
                 Some(
@@ -1356,7 +1348,7 @@ fn should_render_language_metadata(finding: &Finding) -> bool {
 #[cfg(test)]
 mod classification_hint_tests {
     fn classification_hint(class: &ExposureClass, ripr: &RiprEvidence) -> Option<String> {
-        super::classification_hint(class, ripr, &crate::domain::ProbeFamily::ReturnValue, None)
+        super::classification_hint(class, ripr, None)
     }
     use crate::domain::{
         ASSERTION_CONTEXT_UNESTABLISHED, CALLEE_ONLY_REACH_PREFIX, Confidence, ExposureClass,
@@ -1546,7 +1538,7 @@ mod classification_hint_tests {
         );
 
         // Negative: owner-reaching unestablished assertion keeps the
-        // established sentence (ReturnValue uses `assert_eq!`).
+        // assertion guidance without inventing a macro identity.
         let mut reaching = ripr(StageState::Yes, StageState::No);
         reaching.reveal.observe = StageEvidence::new(
             StageState::No,
@@ -1557,7 +1549,7 @@ mod classification_hint_tests {
         assert_eq!(
             hint.as_deref(),
             Some(
-                "a related test asserts here, but ripr could not establish that the assertion runs and is the standard `assert_eq!`"
+                "a related test asserts here, but ripr could not establish that the assertion runs and is the intended standard assertion macro"
             )
         );
     }
@@ -1575,7 +1567,6 @@ mod classification_hint_tests {
         let hint = super::classification_hint(
             &ExposureClass::ReachableUnrevealed,
             &reaching,
-            &crate::domain::ProbeFamily::SideEffect,
             Some("assert"),
         );
         assert_eq!(
@@ -1587,7 +1578,6 @@ mod classification_hint_tests {
         let hint = super::classification_hint(
             &ExposureClass::ReachableUnrevealed,
             &reaching,
-            &crate::domain::ProbeFamily::SideEffect,
             Some("assert_eq"),
         );
         assert!(hint.is_some_and(|hint| hint.ends_with("the standard `assert_eq!`")));
