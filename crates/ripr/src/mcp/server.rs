@@ -772,17 +772,21 @@ fn reject_pagination_cursor(
         .as_ref()
         .is_some_and(|params| params.cursor.is_some())
     {
-        return Err(ErrorData::invalid_params(
-            format!(
-                "{method} does not paginate: this server returns the complete list in one response and never issues a nextCursor; drop the cursor argument"
-            ),
-            Some(serde_json::json!({
-                "argument": "cursor",
-                "expected": "omit; the complete list fits one page",
-            })),
-        ));
+        return Err(pagination_cursor_error(method));
     }
     Ok(())
+}
+
+fn pagination_cursor_error(method: &str) -> ErrorData {
+    ErrorData::invalid_params(
+        format!(
+            "{method} does not paginate: this server returns the complete list in one response and never issues a nextCursor; drop the cursor argument"
+        ),
+        Some(serde_json::json!({
+            "argument": "cursor",
+            "expected": "omit; the complete list fits one page",
+        })),
+    )
 }
 
 /// A paging limit with a typed row cap: a JSON integer `>= 1` and `<= max`.
@@ -936,6 +940,17 @@ impl ServerHandler for McpServer {
         request: CustomRequest,
         _: RequestContext<RoleServer>,
     ) -> Result<CustomResult, ErrorData> {
+        if matches!(
+            request.method.as_str(),
+            "tools/list" | "prompts/list" | "resources/list" | "resources/templates/list"
+        ) && request
+            .params
+            .as_ref()
+            .and_then(|params| params.get("cursor"))
+            .is_some_and(|cursor| !cursor.is_null() && !cursor.is_string())
+        {
+            return Err(pagination_cursor_error(&request.method));
+        }
         const SERVED_METHODS: [&str; 9] = [
             "initialize",
             "server/discover",

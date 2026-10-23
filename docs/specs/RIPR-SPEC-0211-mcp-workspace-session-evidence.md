@@ -79,7 +79,11 @@ official SDK transport:
   instead of being accepted and silently ignored (which would let an agent
   believe paging worked while it re-read page one), it fails closed with a
   `-32602` Invalid Params error naming `cursor` and the recovery — drop the
-  argument (#9895). The SDK's default `prompts/list` answers an empty
+  argument (#9895). Every non-null cursor is refused, including malformed
+  boolean, number, array, or object values that the SDK optional-param decoder
+  would otherwise discard. Null retains the SDK omission semantics. The raw
+  input guard preserves metadata, protocol and request-ID validation precedence.
+  The SDK's default `prompts/list` answers an empty
   catalog, so the override pins the same rule there instead of inheriting
   the silent drop. Tool-level paging stays on `ripr_list_gaps`'s explicit
   `offset`/`limit`, which is disclosed through `page`.
@@ -499,8 +503,13 @@ is not evidence that a resource with a particular identity exists.
 - `crates/ripr/tests/mcp_stdio.rs::catalog_list_cursors_fail_closed_over_stdio`
   — a `cursor` on `tools/list`, `prompts/list`, `resources/list`, or
   `resources/templates/list` is a `-32602` whose message explains the list
-  never paginates and whose structured data names `cursor`; the same lists
+  never paginates and whose structured data names `cursor` and the literal omission recovery;
+  string and malformed non-null inputs fail in both protocol modes, while
+  null/omitted inputs retain their defaults. The same complete lists
   still answer normally without one, on the same session (#9895).
+- `crates/ripr/tests/mcp_stdio.rs::malformed_catalog_cursors_preserve_protocol_validation_and_recover`
+  — malformed cursor refusal retains SDK metadata/protocol precedence, bounded
+  request-ID refusal, unknown-method routing and same-session recovery.
 - `crates/ripr/src/mcp/protocol.rs::tests` + `server_tests.rs` —
   descriptor and dispatch contracts.
 - `crates/ripr/tests/mcp_sdk.rs`, `crates/ripr/tests/mcp_stdio.rs` —
