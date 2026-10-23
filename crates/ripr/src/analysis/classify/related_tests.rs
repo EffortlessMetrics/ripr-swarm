@@ -1969,37 +1969,84 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
     // std::cmp::max; }`, which can leave the crate) or an entry whose module
     // path is unknown refuses.
     let entry_module = super::call_identity::definition_module_path(caller);
+    // The library must actually bind that module path to the entry's file: no
+    // cfg-selected alternate, `#[path]` remap, duplicate declaration or
+    // spliced macro item on any segment.
+    let module_bound = entry_module
+        .as_deref()
+        .is_some_and(|module| super::call_identity::library_module_path_is_bound(index, module));
     // A crate-root `pub use [crate::|self::]<module path>::<entry>;` re-exports
-    // the entry from its own definition (every root binding of the name must
-    // be such a re-export, plain and unaliased).
+    // the entry from its own definition. Only top-level root `use` items
+    // count (never a `use` inside a decoy module); every root binding of the
+    // name must be such a public, plain, unaliased re-export; any other root
+    // item named like the entry (a `const`/`static`/`fn`/type), a root glob or
+    // a root macro refuses.
     let root_reexports_entry = |module: &[String]| {
+        use ra_ap_syntax::{AstNode, ast, ast::HasModuleItem, ast::HasName, ast::HasVisibility};
         let Some(root) = index.files().get(Path::new("src/lib.rs")) else {
             return false;
         };
-        let bindings: Vec<_> = super::reveal::flattened_use_paths(&root.source)
-            .into_iter()
-            .filter(|import| {
-                import
-                    .alias
-                    .as_deref()
-                    .or_else(|| import.path.rsplit("::").next())
-                    .map(unraw)
-                    .as_deref()
-                    == Some(caller.name.as_str())
-            })
-            .collect();
-        !bindings.is_empty()
-            && bindings.iter().all(|import| {
-                let segments: Vec<String> = import
-                    .path
-                    .split("::")
-                    .map(unraw)
-                    .skip_while(|segment| segment == "crate" || segment == "self")
-                    .collect();
-                import.alias.is_none()
-                    && segments.last().map(String::as_str) == Some(caller.name.as_str())
-                    && segments[..segments.len() - 1] == *module
-            })
+        let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&root.source) else {
+            return false;
+        };
+        let mut reexports = 0usize;
+        for item in parse.tree().items() {
+            let named = match &item {
+                ast::Item::Use(use_item) => {
+                    for import in
+                        super::reveal::flattened_use_paths(&use_item.syntax().text().to_string())
+                    {
+                        if import.path.ends_with('*') {
+                            return false;
+                        }
+                        let bound = import
+                            .alias
+                            .as_deref()
+                            .or_else(|| import.path.rsplit("::").next())
+                            .map(unraw);
+                        if bound.as_deref() != Some(caller.name.as_str()) {
+                            continue;
+                        }
+                        let segments: Vec<String> = import
+                            .path
+                            .split("::")
+                            .map(unraw)
+                            .skip_while(|segment| segment == "crate" || segment == "self")
+                            .collect();
+                        let public = use_item
+                            .visibility()
+                            .is_some_and(|visibility| visibility.syntax().text() == "pub");
+                        if !public
+                            || import.alias.is_some()
+                            || super::owner_pin::has_cfg_attr(use_item)
+                            || segments.last().map(String::as_str) != Some(caller.name.as_str())
+                            || segments[..segments.len() - 1] != *module
+                        {
+                            return false;
+                        }
+                        reexports += 1;
+                    }
+                    continue;
+                }
+                ast::Item::Fn(i) => i.name(),
+                ast::Item::Const(i) => i.name(),
+                ast::Item::Static(i) => i.name(),
+                ast::Item::Struct(i) => i.name(),
+                ast::Item::Enum(i) => i.name(),
+                ast::Item::Union(i) => i.name(),
+                ast::Item::Trait(i) => i.name(),
+                ast::Item::TypeAlias(i) => i.name(),
+                ast::Item::Module(i) => i.name(),
+                ast::Item::MacroCall(_) | ast::Item::MacroRules(_) | ast::Item::MacroDef(_) => {
+                    return false;
+                }
+                _ => continue,
+            };
+            if named.is_some_and(|name| name.text().trim_start_matches("r#") == caller.name) {
+                return false;
+            }
+        }
+        reexports == 1
     };
     let suffix_resolves = |source: &str| {
         super::reveal::flattened_use_paths(source)
@@ -2022,6 +2069,9 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
                 let Some(module) = entry_module.as_ref() else {
                     return false;
                 };
+                if !module_bound {
+                    return false;
+                }
                 if imported_last.as_deref() != Some(caller.name.as_str()) || segments.len() < 2 {
                     return false;
                 }

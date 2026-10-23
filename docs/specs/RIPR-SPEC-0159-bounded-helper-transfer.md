@@ -291,16 +291,18 @@ can only hint that a caller "may lead here" without changing anything.
   with a bare call were already related; that bare-call route is now
   refused too when the test file imports a path starting with the library's
   name and the file aliases, imports, globs or declares that name, or
-  invokes an `include`-family macro (the prefix then may not name the
-  library), imports the entry's name through any `self::`/`crate::`/`super::` path
+  invokes an `include`-family macro, defines a macro or invokes any macro in
+  item position (an expansion may declare the name; the prefix then may not
+  name the library), imports the entry's name through any `self::`/`crate::`/`super::` path
   (only `crate::` from a unit test under `src/` is credited), or when any
   `const`/`static` of that name appears anywhere in the test file.
 
   The imported suffix is resolved, not only the prefix: an import of the
   entry's name through the library must spell the entry's definition module
   path exactly (`<lib>::<module path>::<entry>`), or be the crate-root
-  `<lib>::<entry>` of a plain unaliased crate-root `pub use` of that same
-  path. A path reaching the name through another module (a re-export such as
+  `<lib>::<entry>` of a plain unaliased top-level crate-root `pub use` of that same
+  path (a `use` inside another module, a non-`pub` use, a glob or macro at
+  the root, or any other root item named like the entry refuses). A path reaching the name through another module (a re-export such as
   `pub mod foreign { pub use std::cmp::max; }`), an aliased tail, or an entry
   whose definition path is unknown refuses.
 

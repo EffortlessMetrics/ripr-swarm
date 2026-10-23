@@ -578,7 +578,8 @@ fn an_unplaceable_module_does_not_link() -> Result<(), String> {
             ("tests/api.rs", tests),
         ],
     };
-    assert_eq!(binary(bare).relation()?.as_deref(), LINKED);
+    // A binary-only package has no library to import from: refused.
+    assert_eq!(binary(bare).relation()?, None);
     assert_eq!(binary(qualified_path).relation()?, None);
     Ok(())
 }
@@ -1027,6 +1028,52 @@ fn an_imported_suffix_must_spell_the_entrys_module_path() -> Result<(), String> 
         assert_eq!(package.relation()?, None, "{import}");
         assert_ne!(package.classification()?, "exposed", "{import}");
     }
+    // Root re-export scope: a decoy module's `pub use`, a competing root
+    // value binding, or a non-public re-export never credits the entry.
+    let reexport_tests = format!("use qual_reach::order_discount;\n{}", test_file(BARE));
+    let nested = |lib: &str| Package::root(lib, true, &reexport_tests);
+    let valid_reexport = "mod inner {\n    fn is_bulk(qty: u32) -> bool {\n        10 <= qty\n    }\n\n    pub fn order_discount(qty: u32) -> u32 {\n        if is_bulk(qty) { 5 } else { 0 }\n    }\n}\npub use inner::order_discount;\n";
+    let control = Package {
+        nested: true,
+        ..nested(valid_reexport)
+    };
+    assert_eq!(
+        control.relation()?.as_deref(),
+        LINKED,
+        "root re-export control"
+    );
+    assert_eq!(
+        control.classification()?,
+        "exposed",
+        "root re-export control"
+    );
+    for (extra, tail) in [
+        (
+            "pub mod decoy {\n    pub use crate::inner::order_discount;\n}\n",
+            "mod inner2 {}\n",
+        ),
+        (
+            "",
+            "pub const order_discount: fn(u32) -> u32 = std::cmp::max::<u32>;\n",
+        ),
+    ] {
+        let lib = valid_reexport.replace(
+            "pub use inner::order_discount;\n",
+            &format!("{extra}{tail}"),
+        );
+        let package = Package {
+            nested: true,
+            ..nested(&lib)
+        };
+        assert_eq!(package.relation()?, None, "{extra}{tail}");
+        assert_ne!(package.classification()?, "exposed", "{extra}{tail}");
+    }
+    let private = valid_reexport.replace("pub use inner", "use inner");
+    let package = Package {
+        nested: true,
+        ..nested(&private)
+    };
+    assert_eq!(package.relation()?, None, "private re-export");
     // A unit test inside `src/` whose module shadows the std path.
     let unit_lib = format!(
         "{LIB}\n#[cfg(test)]\nmod tests {{\n    mod foreign {{\n        pub use std::cmp;\n    }}\n    use self::foreign::cmp::order_discount;\n\n    #[test]\n    fn discount_boundary() {{\n        assert_eq!(order_discount(10), 5);\n        assert_eq!(order_discount(9), 0);\n    }}\n}}\n"
@@ -1034,5 +1081,70 @@ fn an_imported_suffix_must_spell_the_entrys_module_path() -> Result<(), String> 
     let package = Package::root(&unit_lib, false, "");
     assert_ne!(package.relation()?.as_deref(), LINKED, "unit shadow");
     assert_ne!(package.classification()?, "exposed", "unit shadow");
+    Ok(())
+}
+
+/// The imported route proves the library binds the module path to the
+/// entry's file: a cfg-selected alternate or a `#[path]` remap that rebinds
+/// the module to a std re-export refuses (rendered non-promotion), while a
+/// genuine unconditional declaration, a harmless unrelated remap and a binary
+/// that shares the module name still link.
+#[test]
+fn the_library_must_bind_the_imported_module_path_to_the_entrys_file() -> Result<(), String> {
+    let import = "use qual_reach::inner::order_discount;\n";
+    let tests = format!("{import}{}", test_file(BARE));
+    let genuine = module_package("src/inner.rs", MODULE_LIB, tests.clone(), vec![]);
+    assert_eq!(
+        genuine.relation()?.as_deref(),
+        LINKED,
+        "genuine import links"
+    );
+    assert_eq!(
+        genuine.classification()?,
+        "exposed",
+        "genuine import renders"
+    );
+    let harmless = module_package(
+        "src/inner.rs",
+        MODULE_LIB,
+        tests.clone(),
+        vec![(
+            "src/util.rs",
+            "#[path = \"elsewhere.rs\"]\nmod moved;\n".to_string(),
+        )],
+    );
+    assert_eq!(harmless.relation()?.as_deref(), LINKED, "harmless remap");
+    let shared = module_package(
+        "src/inner.rs",
+        MODULE_LIB,
+        tests.clone(),
+        vec![("src/main.rs", "mod inner;\nfn main() {}\n".to_string())],
+    );
+    assert_eq!(shared.relation()?.as_deref(), LINKED, "shared binary");
+    for lib in [
+        "#[cfg(any())]\npub mod inner;\n#[cfg(not(any()))]\npub use std::cmp as inner;\n",
+        "#[path = \"foreign.rs\"]\npub mod inner;\n",
+        "#[cfg(feature = \"alt\")]\npub mod inner;\n",
+    ] {
+        let package = module_package(
+            "src/inner.rs",
+            lib,
+            tests.clone(),
+            vec![(
+                "src/foreign.rs",
+                "pub use std::cmp::max as order_discount;\n".to_string(),
+            )],
+        );
+        // Either no finding is produced for the unreachable file (nothing can
+        // be credited) or the finding is not related and not exposed.
+        match package.outcome() {
+            Err(error) if error.contains("no predicate finding") => {}
+            Err(error) => return Err(error),
+            Ok((relation, classification)) => {
+                assert_eq!(relation, None, "{lib}");
+                assert_ne!(classification, "exposed", "{lib}");
+            }
+        }
+    }
     Ok(())
 }

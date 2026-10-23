@@ -11706,6 +11706,66 @@
           "class": "no_static_path"
         }
       ]
+    },
+    {
+      "id": "rust_module_reach_root_const_decoy",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/module_reach_root_const_decoy",
+      "vector": "root_value_binding_and_decoy_reexport_do_not_credit_the_entry",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_module_reach_cfg_alt_reexport",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/module_reach_cfg_alt_reexport",
+      "vector": "cfg_alternate_reexport_rebinds_the_module_path_away_from_the_changed_file",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_module_reach_path_remap_reexport",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/module_reach_path_remap_reexport",
+      "vector": "path_remap_rebinds_the_module_path_away_from_the_changed_file",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
+      ]
     }
   ]
 }

@@ -1015,7 +1015,7 @@ pub(super) fn root_library_item_module_path(
     if package_remaps_module_paths(index, None)
         || module
             .iter()
-            .any(|segment| module_declaration_is_ambiguous(index, segment))
+            .any(|segment| module_declaration_is_ambiguous(index, segment, false))
     {
         return None;
     }
@@ -1053,17 +1053,34 @@ pub(super) fn source_may_splice_items(source: &str, item_position_macros: bool) 
     })
 }
 
+/// Whether every segment of the entry's definition module path is bound by
+/// exactly one unconditional, un-remapped library declaration (binary roots are
+/// ignored), so `<lib>::<path>` names the file the entry was read from.
+pub(super) fn library_module_path_is_bound(index: &RustIndex, module: &[String]) -> bool {
+    module
+        .iter()
+        .all(|segment| !module_declaration_is_ambiguous(index, segment, true))
+}
+
 /// Whether the root package's `src/` files declare `mod <segment>` other than
 /// exactly once, declare it (or an enclosing inline module, or the item's own
 /// file) under a `cfg`/`cfg_attr`, or may splice unread items (macros,
 /// `include!`). Read from parsed module items, so an attribute hidden from a
 /// text scan by a comment or string is still seen; an unparsable file
 /// refuses.
-fn module_declaration_is_ambiguous(index: &RustIndex, segment: &str) -> bool {
+fn module_declaration_is_ambiguous(index: &RustIndex, segment: &str, library_only: bool) -> bool {
     use ra_ap_syntax::{AstNode, ast, ast::HasName};
     let mut declarations = 0usize;
     for (path, facts) in index.files().iter() {
         if package_key(path).is_some() || under_tests_dir(path) {
+            continue;
+        }
+        // The library-only form (an imported entry) ignores binary roots: a
+        // binary that also declares the module does not rebind the library's.
+        let normalized = super::related_tests::normalize_path(path);
+        let body = src_body(&normalized);
+        if library_only && (body == Some("main.rs") || body.is_some_and(|b| b.starts_with("bin/")))
+        {
             continue;
         }
         if source_may_splice_items(&facts.source, true) {
@@ -1089,6 +1106,13 @@ fn module_declaration_is_ambiguous(index: &RustIndex, segment: &str) -> bool {
                 continue;
             }
             declarations += 1;
+            // A `#[path]` on the declaration binds the module to another file.
+            if library_only
+                && ast::HasAttrs::attrs(&module)
+                    .any(|attr| has_path_attribute(&attr.syntax().text().to_string()))
+            {
+                return true;
+            }
             let gated = |module: &ast::Module| {
                 super::owner_pin::has_cfg_attr(module)
                     || module
