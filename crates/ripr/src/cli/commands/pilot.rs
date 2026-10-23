@@ -462,25 +462,29 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
 /// The one-line first-run stderr note naming the artifact root pilot just
 /// wrote and the `.gitignore` entry that covers it (#9858). `None` for Cargo
 /// projects (the `target/` convention applies), an explicit `--out` outside
-/// `target/ripr`, covered ignore rules, or a probe that cannot establish
-/// coverage — the note must never claim a fact ripr did not check.
+/// the selected root's `target/ripr`, covered ignore rules, or a probe that
+/// cannot establish coverage — the note must never claim a fact ripr did
+/// not check.
 fn artifact_root_ignore_note(root: &Path, out_dir: &Path) -> Option<String> {
     if root.join("Cargo.toml").is_file() {
         return None;
     }
     let artifact_root = Path::new("target").join("ripr");
-    // The run's output is under the artifact root either as the bare
-    // repository-relative form (`--out target/ripr/...`, or the default with
-    // a `.` root) or prefixed by the selected `--root`, because
-    // `default_pilot_out_dir` anchors the default packet under the root
-    // (#5324). Comparing only the bare form suppressed the note for
-    // `pilot --root repo` and `pilot --root /abs/repo` even though both
-    // write `repo/target/ripr/pilot` (review follow-up on #9858).
-    let writes_under_artifact_root = out_dir.starts_with(&artifact_root)
-        || out_dir
-            .strip_prefix(root)
-            .is_ok_and(|relative| relative.starts_with(&artifact_root));
-    if !writes_under_artifact_root {
+    // Anchor the check in the selected root's coordinate system (#9858
+    // review follow-up): with a non-dot `--root`, a bare relative out_dir
+    // resolves against the process cwd, not the repository, so accepting it
+    // could probe the root's ignore rules for artifacts the run wrote
+    // elsewhere. The dot root keeps the historical bare form (cwd ==
+    // root). `default_pilot_out_dir` anchors the default packet under the
+    // root (#5324), so the stripped form covers every default run; an
+    // explicit out_dir outside the root stays silent — custom output
+    // outside the artifact root is the documented silence.
+    let repo_relative_out: &Path = if root == Path::new(".") {
+        out_dir
+    } else {
+        out_dir.strip_prefix(root).ok()?
+    };
+    if !repo_relative_out.starts_with(&artifact_root) {
         return None;
     }
     let uncovered = super::doctor::uncovered_artifact_roots(root, &[artifact_root])?;
@@ -996,10 +1000,11 @@ mod tests {
         ] {
             crate::git::run_git(&root, args).map_err(|error| error.to_string())?;
         }
-        let out = Path::new("target").join("ripr").join("pilot");
+        let out = root.join("target").join("ripr").join("pilot");
 
-        // Non-Cargo project, default packet location, no ignore coverage:
-        // the note names the root and the exact entry (#9858).
+        // Non-Cargo project, default packet location (root-prefixed, as
+        // `default_pilot_out_dir` produces for any spelled root), no ignore
+        // coverage: the note names the root and the exact entry (#9858).
         let note = artifact_root_ignore_note(&root, &out)
             .ok_or("note must fire for an uncovered non-Cargo project")?;
         assert!(note.contains("target/ripr"), "{note}");
@@ -1021,16 +1026,16 @@ mod tests {
 
         // An explicit packet dir outside `target/ripr`: silent.
         std::fs::remove_file(root.join("Cargo.toml")).map_err(|error| error.to_string())?;
-        assert!(artifact_root_ignore_note(&root, Path::new("reports/pilot")).is_none());
+        assert!(artifact_root_ignore_note(&root, &root.join("reports/pilot")).is_none());
 
-        // The default packet location with a non-dot `--root` is
-        // `root/target/ripr/pilot` (#5324); the note must fire there too,
-        // for both the absolute and parent-relative root spellings
-        // (#9858 review follow-up).
-        let root_prefixed = root.join("target").join("ripr").join("pilot");
-        let note = artifact_root_ignore_note(&root, &root_prefixed)
-            .ok_or("note must fire for a root-prefixed default out dir")?;
-        assert!(note.contains("target/ripr"), "{note}");
+        // A bare relative out_dir with a non-dot root resolves against the
+        // process cwd, not the repository — the note must stay silent
+        // rather than probe the root's ignore rules for artifacts the run
+        // wrote elsewhere (#9858 review follow-up). The dot-root bare form
+        // is exercised by the cli_smoke matrix
+        // `pilot_artifact_note_uses_the_selected_root_at_the_cli`.
+        let bare_out = Path::new("target").join("ripr").join("pilot");
+        assert!(artifact_root_ignore_note(&root, &bare_out).is_none());
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
