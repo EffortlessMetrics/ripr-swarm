@@ -98,6 +98,16 @@ pub(crate) use probes::{
 pub(crate) use rust_index::DeclinedRustFile;
 #[cfg(test)]
 pub(crate) use rust_index::{FileFacts, RaRustSyntaxAdapter, RustIndex, RustSyntaxAdapter};
+/// Parser-backed related-test retention fixture for consumer tests (#9175);
+/// a narrow cfg(test) entry so output tests need no analysis internals.
+#[cfg(test)]
+pub(crate) fn retention_fixture_finding(
+    docs: usize,
+    demoted_call: &str,
+    demoted_asserts: usize,
+) -> crate::domain::Finding {
+    classifier::tests::retention_finding(docs, demoted_call, demoted_asserts)
+}
 pub use seam_cache::cache_layer_names;
 pub(crate) use seam_classification::ClassifiedSeam;
 #[cfg(test)]
