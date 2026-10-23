@@ -278,6 +278,10 @@ analysis. Repo-mode analysis differs per adapter:
   would only be lower bounds after truncated or unreadable discovery are
   unknown, never zero; this does not change the public `LanguageRun` wire.
   No support-tier, gate or baseline promotion.
+  Repo-mode TypeScript/JavaScript findings carry an `analysis_scope: repo` evidence line and never project a
+  repair packet or `repair_packet_ready: true`, because the capability
+  registry has no repo-mode `repair_routing` cell for these languages (#5531);
+  repair routing stays diff-mode only.
 
 Consumption boundary: the repo-scoped CLI formats (`repo-exposure-*`,
 `repo-seams-*`, `repo-badge-*`, `agent-seam-packets-json`) render the
