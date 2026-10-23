@@ -121,6 +121,19 @@ fn write_terminal_hint(stdin_is_terminal: bool, stderr: &mut impl std::io::Write
 }
 
 pub fn run(args: &[String]) -> Result<(), String> {
+    // #9867: startup dispatches this route directly, bypassing
+    // `CliCommand::from_parts`, so the extended-help rejection owned there
+    // must be mirrored here: `mcp --help --all` is a usage error naming the
+    // supported routes, not ordinary help that silently discards `--all`.
+    if args.iter().any(|arg| arg == "--help" || arg == "-h")
+        && args.iter().any(|arg| arg == "--all")
+    {
+        return Err(
+            "`ripr mcp --help --all` is not supported; extended help is available via \
+             `ripr help --all` (or `ripr check --help --all` for check)"
+                .to_string(),
+        );
+    }
     let mut explicit_root = None;
     let mut index = 0;
     while index < args.len() {
@@ -199,6 +212,25 @@ mod tests {
         let mut piped = Vec::new();
         write_terminal_hint(false, &mut piped);
         assert!(piped.is_empty());
+    }
+
+    #[test]
+    fn extended_help_pair_is_rejected_on_the_direct_route() -> Result<(), String> {
+        // #9867: startup dispatches `ripr mcp` straight here, bypassing
+        // `CliCommand::from_parts`; the pair must be a usage error naming
+        // the supported routes, not ordinary help discarding `--all`.
+        for argv in [
+            ["--help", "--all"].as_slice(),
+            ["--all", "--help"].as_slice(),
+            ["-h", "--all"].as_slice(),
+        ] {
+            let err = run(&args(argv))
+                .err()
+                .ok_or_else(|| format!("{argv:?} must be rejected on the direct MCP route"))?;
+            assert!(err.contains("not supported"), "{err}");
+            assert!(err.contains("ripr help --all"), "{err}");
+        }
+        Ok(())
     }
 
     #[test]
