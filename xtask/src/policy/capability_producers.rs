@@ -92,7 +92,7 @@ pub(crate) fn check_capability_producers(args: &[String]) -> Result<(), String> 
         PolicyReportSpec {
             report_file: "capability-producers.md",
             check: "check-capability-producers",
-            why_it_matters: "A new language, adapter or Cargo language feature without a capability registration would read as `not_proven` only by accident of absence. The producer inventory makes an unregistered producer a repository failure instead of a silent gap.",
+            why_it_matters: "A new language, adapter or Cargo language feature without a capability registration would read as `not_proven` only by accident of absence. When this check is run it reports an unregistered producer as a failure; it is not wired into any required lane, so it does not by itself stop a merge.",
             fix_kind: FixKind::AuthorDecisionRequired,
             recommended_fixes: &[
                 "Add the language to `LanguageId::ALL` and register at least one cell in `domain/language_capability.rs` with an explicit state (`not_proven` is a valid disposition).",
@@ -266,7 +266,14 @@ pub(super) fn capability_violations(registry: &Value, inventory: &Inventory) -> 
         let feature = entry.get("required_feature").and_then(Value::as_str);
         match (language, feature) {
             (Some(language), Some(feature)) => {
-                registered.insert(language.to_string(), feature.to_string());
+                if registered
+                    .insert(language.to_string(), feature.to_string())
+                    .is_some()
+                {
+                    violations.push(format!(
+                        "registry lists language `{language}` more than once"
+                    ));
+                }
             }
             _ => violations.push(format!(
                 "registry language entry lacks `language` or `required_feature`: {entry}"
@@ -295,18 +302,27 @@ pub(super) fn capability_violations(registry: &Value, inventory: &Inventory) -> 
             Some(language) => *cells_per_language.entry(language).or_default() += 1,
             None => violations.push(format!("registry cell lacks `language`: {cell}")),
         }
-        for reference in cell
-            .get("proof_refs")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-        {
-            if !inventory.spec_ids.contains(reference) {
-                let id = cell.get("id").and_then(Value::as_str).unwrap_or("<no id>");
-                violations.push(format!(
-                    "cell `{id}` proof ref `{reference}` has no {SPEC_DIR}/{reference}-*.md"
-                ));
+        let id = cell.get("id").and_then(Value::as_str).unwrap_or("<no id>");
+        let references = cell.get("proof_refs").and_then(Value::as_array);
+        match references {
+            None => violations.push(format!("cell `{id}` lacks a `proof_refs` array")),
+            Some(references) if references.is_empty() => {
+                violations.push(format!("cell `{id}` has empty `proof_refs`"));
+            }
+            Some(references) => {
+                for reference in references {
+                    match reference.as_str() {
+                        None => violations.push(format!(
+                            "cell `{id}` has a non-string `proof_refs` entry: {reference}"
+                        )),
+                        Some(reference) if !inventory.spec_ids.contains(reference) => {
+                            violations.push(format!(
+                                "cell `{id}` proof ref `{reference}` has no {SPEC_DIR}/{reference}-*.md"
+                            ));
+                        }
+                        Some(_) => {}
+                    }
+                }
             }
         }
     }

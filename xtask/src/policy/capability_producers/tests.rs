@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use serde_json::{Value, json};
 
-use super::{Inventory, capability_violations, language_id_variants, read_inventory};
+use super::{Inventory, capability_violations, language_id_variants, parse_args, read_inventory};
 
 fn set(items: &[&str]) -> BTreeSet<String> {
     items.iter().map(|item| (*item).to_string()).collect()
@@ -30,7 +30,7 @@ fn registry() -> Value {
         "cells": [
             {"id": "rust/any/diff/static_facts", "language": "rust", "proof_refs": ["RIPR-SPEC-0001"]},
             {"id": "typescript/any/diff/static_facts", "language": "typescript", "proof_refs": ["RIPR-SPEC-0001"]},
-            {"id": "javascript/any/diff/static_facts", "language": "javascript", "proof_refs": []}
+            {"id": "javascript/any/diff/static_facts", "language": "javascript", "proof_refs": ["RIPR-SPEC-0001"]}
         ]
     })
 }
@@ -82,7 +82,7 @@ fn cell_for_unregistered_language_fails() -> Result<(), String> {
     reg["cells"]
         .as_array_mut()
         .ok_or("cells")?
-        .push(json!({"id": "go/x", "language": "go", "proof_refs": []}));
+        .push(json!({"id": "go/x", "language": "go", "proof_refs": ["RIPR-SPEC-0001"]}));
     only(
         &capability_violations(&reg, &inventory()),
         "not a registered language",
@@ -124,7 +124,7 @@ fn unresolved_proof_ref_fails() -> Result<(), String> {
     let mut inv = inventory();
     inv.spec_ids.clear();
     let violations = capability_violations(&registry(), &inv);
-    if violations.len() == 2 && violations.iter().all(|v| v.contains("proof ref")) {
+    if violations.len() == 3 && violations.iter().all(|v| v.contains("proof ref")) {
         Ok(())
     } else {
         Err(format!("{violations:?}"))
@@ -185,5 +185,116 @@ fn real_repository_inventory_is_nonempty_and_covers_known_adapters() -> Result<(
         assert!(inv.lang_features.contains(&format!("lang-{dir}")), "{dir}");
     }
     assert!(inv.spec_ids.contains("RIPR-SPEC-0026"));
+    Ok(())
+}
+
+#[test]
+fn malformed_empty_or_missing_proof_refs_fail() -> Result<(), String> {
+    for (refs, needle) in [
+        (Some(json!([null, 5])), "non-string"),
+        (Some(json!([])), "empty `proof_refs`"),
+        (None, "lacks a `proof_refs` array"),
+    ] {
+        let mut reg = registry();
+        let cell = reg["cells"][0].as_object_mut().ok_or("cell")?;
+        match refs {
+            Some(value) => cell.insert("proof_refs".to_string(), value),
+            None => cell.remove("proof_refs"),
+        };
+        let violations = capability_violations(&reg, &inventory());
+        if !violations.iter().any(|v| v.contains(needle)) {
+            return Err(format!("{needle}: {violations:?}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn duplicate_language_entry_fails() -> Result<(), String> {
+    let mut reg = registry();
+    reg["languages"]
+        .as_array_mut()
+        .ok_or("languages")?
+        .push(json!({"language": "rust", "required_feature": "lang-perl"}));
+    let violations = capability_violations(&reg, &inventory());
+    if violations.iter().any(|v| v.contains("more than once")) {
+        Ok(())
+    } else {
+        Err(format!("{violations:?}"))
+    }
+}
+
+#[test]
+fn parse_args_accepts_known_shapes_and_rejects_the_rest() -> Result<(), String> {
+    assert_eq!(parse_args(&[])?, None);
+    let ok = ["--registry-json", "r.json"].map(String::from);
+    assert_eq!(parse_args(&ok)?, Some(std::path::PathBuf::from("r.json")));
+    for bad in [
+        vec!["--registry-json".to_string()],
+        vec!["--bogus".to_string()],
+        vec![
+            "--registry-json".to_string(),
+            "a".to_string(),
+            "b".to_string(),
+        ],
+    ] {
+        if let Ok(parsed) = parse_args(&bad) {
+            return Err(format!("accepted {bad:?} as {parsed:?}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn rendered_registry_matches_real_inventory() -> Result<(), String> {
+    // A registry rendered from the real inventory (every enum language, its
+    // feature, one cell each, a real spec id) must pass; removing one
+    // language's cells must fail. Binds the pure check to real repo facts.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let inv = read_inventory(&root)?;
+    let spec = inv.spec_ids.iter().next().ok_or("no specs")?.clone();
+    let languages: Vec<Value> = inv
+        .enum_languages
+        .iter()
+        .map(|l| {
+            let dir = if l == "javascript" {
+                "typescript"
+            } else {
+                l.as_str()
+            };
+            json!({"language": l, "required_feature": format!("lang-{dir}")})
+        })
+        .collect();
+    let cells: Vec<Value> = inv
+        .enum_languages
+        .iter()
+        .map(|l| json!({"id": format!("{l}/x"), "language": l, "proof_refs": [spec]}))
+        .collect();
+    let mut reg = json!({
+        "kind": "ripr_language_capabilities", "schema_version": "0.1",
+        "semantic_digest": "sha256:x", "languages": languages, "cells": cells
+    });
+    assert_eq!(capability_violations(&reg, &inv), Vec::<String>::new());
+    reg["cells"]
+        .as_array_mut()
+        .ok_or("cells")?
+        .retain(|c| c["language"] != "python");
+    if capability_violations(&reg, &inv).is_empty() {
+        return Err("missing python cell accepted".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn enum_parser_rejects_discriminants_and_multiline_attributes() -> Result<(), String> {
+    for bad in [
+        "pub enum LanguageId {\n    Rust = 1,\n}\n",
+        "pub enum LanguageId {\n    Rust, // trailing\n}\n",
+        "pub enum LanguageId {\n    #[serde(\n        rename = \"x\"\n    )]\n    Rust,\n}\n",
+    ] {
+        if let Ok(variants) = language_id_variants(bad) {
+            return Err(format!("accepted {bad:?} as {variants:?}"));
+        }
+    }
     Ok(())
 }

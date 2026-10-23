@@ -2360,7 +2360,9 @@ the registry. Limits: it does not check cell states, tier ceilings or docs text
 per-language disposition tests), the registry's relation to
 `metrics/capabilities.toml`, or non-default feature builds. `--registry-json`
 reads a saved registry without building and can be stale; the report says so.
-It is not part of `precommit` or `check-pr` because it requires a `ripr` build.
+It is not part of `precommit`, `check-pr` or any required lane (it requires a
+`ripr` build), so it reports failures only when run; hosted wiring is a
+follow-up on #5531.
 
 ## Principles
 
