@@ -1075,9 +1075,9 @@ The same snapshots follow corpus cache generation 1.95 to 1.96 for the
 pinned-shape limit (RIPR-SPEC-0240, #9440), with the same scope: generation,
 content commitment, dependent verify commitments and receipt byte hashes only.
 
-### #8927 - effect-assertion execution admission classified-cache generation parity
+### effect-assertion execution admission classified-cache generation parity
 
 The same snapshots follow corpus cache generation 1.96 to 1.97 for effect-family
-assertion execution admission (#8927), with the same scope: generation, content
-commitment, dependent verify commitments and receipt byte hashes only. Routing,
-unchanged movement, incomplete receipt and all tamper controls remain.
+assertion execution admission (RIPR-SPEC-0197, #8927), with the same scope:
+generation, content commitment, dependent verify commitments and receipt byte
+hashes only.

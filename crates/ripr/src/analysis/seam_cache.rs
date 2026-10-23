@@ -496,7 +496,7 @@ pub(crate) struct CachedSeamLimitInfo {
 /// let-else exit withholds the gap under `rust_pinned_shape_unresolved`
 /// (#9440). Old entries keep it weakly exposed.
 /// `1.97`: effect-family assertions share execution admission (#8927). Old
-/// entries keep the unadmitted effect oracle.
+/// entries credit an assertion that provably never runs.
 pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.97";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
