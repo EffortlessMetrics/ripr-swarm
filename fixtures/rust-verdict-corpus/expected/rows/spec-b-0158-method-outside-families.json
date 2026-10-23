@@ -1,0 +1,23 @@
+{
+  "case_id": "spec-b-0158-method-outside-families",
+  "subject_id": "authored-spec-b-value",
+  "origin": "authored",
+  "anchor": "src/v_method.rs:6",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "computed_local_boundary_unevaluated_method",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "infection_unknown",
+    "propagation_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

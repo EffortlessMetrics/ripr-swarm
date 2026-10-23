@@ -75,7 +75,7 @@ impl InventoryCompleteness {
         }
     }
 
-    fn refusal_detail(&self) -> Option<String> {
+    pub(crate) fn refusal_detail(&self) -> Option<String> {
         match self {
             Self::Complete => None,
             Self::Truncated { analyzed, total } => Some(format!(

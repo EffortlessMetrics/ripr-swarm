@@ -275,8 +275,8 @@ fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
         "{}",
         start_here_cli_summary(&packet, &json_path, &markdown_path)
     );
-    println!("Wrote {}", display_path(&json_path));
-    println!("Wrote {}", display_path(&markdown_path));
+    println!("Wrote {}", crate::output::path::human_path(&json_path));
+    println!("Wrote {}", crate::output::path::human_path(&markdown_path));
     Ok(())
 }
 
