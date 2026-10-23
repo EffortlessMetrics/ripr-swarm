@@ -3577,6 +3577,122 @@ fn far_above_threshold_discounts() {
         }
     }
 
+    /// #9175 end to end: captured-call facts through signal derivation and
+    /// cap packing, then the human renderer. A demoted test that calls the
+    /// owner (receiver type unresolved among same-named owners) must be
+    /// visible within the first five human related-test rows, never primary,
+    /// with its low-confidence disclosure intact.
+    fn retention_finding(docs: usize, demoted_call: &str, demoted_asserts: usize) -> Finding {
+        let mut source = String::from(
+            "pub struct Bytes { len: usize }\npub struct BytesMut { len: usize }\nimpl Bytes {\n    pub fn truncate(&mut self, len: usize) {\n        if len == 0 {\n            self.len = 0;\n        } else if len < self.len {\n            self.len = len;\n        }\n    }\n}\nimpl BytesMut {\n    pub fn truncate(&mut self, len: usize) {\n        self.len = len;\n    }\n}\n#[cfg(test)]\nmod tests {\n",
+        );
+        for index in 0..docs {
+            source.push_str(&format!(
+                "    #[test]\n    fn doc_{index:02}() {{\n        let len = 0;\n        assert_eq!(len, 0);\n    }}\n"
+            ));
+        }
+        source.push_str("}\n");
+        let mut tests = String::from("use demo::Bytes;\n");
+        tests.push_str(&format!(
+            "#[test]\nfn truncate_to_zero_releases_shared_reference() {{\n    let mut truncated = make().freeze();\n    {demoted_call};\n    let len = 0;\n"
+        ));
+        for _ in 0..demoted_asserts {
+            tests.push_str("    assert_eq!(len, 0);\n");
+        }
+        tests.push_str("}\n");
+        let index = parser_backed_index(&[("src/bytes.rs", &source), ("tests/trunc.rs", &tests)]);
+        let probe = Probe {
+            id: ProbeId("probe:src_bytes_rs:5:predicate".to_string()),
+            location: SourceLocation::new("src/bytes.rs", 5, 1),
+            owner: Some(SymbolId("src/bytes.rs::impl Bytes::truncate".to_string())),
+            family: ProbeFamily::Predicate,
+            delta: DeltaKind::Control,
+            before: Some("len < self.len".to_string()),
+            after: Some("len == 0".to_string()),
+            expression: "len == 0".to_string(),
+            expected_sinks: vec![],
+            required_oracles: vec![],
+        };
+        classify_probe(&probe, &index, true, None)
+    }
+
+    fn first_five_human_related_rows(finding: &Finding) -> Vec<String> {
+        crate::output::human::render_finding(finding)
+            .lines()
+            .filter(|line| line.contains("related test "))
+            .take(5)
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn given_demoted_owner_calling_test_when_cap_overflows_then_it_is_visible_in_human_rows() {
+        let finding = retention_finding(9, "truncated.truncate(0)", 1);
+        let retained: Vec<_> = finding
+            .related_tests
+            .iter()
+            .filter(|test| test.name == "truncate_to_zero_releases_shared_reference")
+            .collect();
+        assert_eq!(retained.len(), 1, "{:#?}", finding.related_tests);
+        assert_eq!(finding.related_tests.len(), 8);
+        assert_ne!(
+            finding.related_tests[0].name,
+            "truncate_to_zero_releases_shared_reference"
+        );
+        assert_eq!(
+            retained[0].relation_reason,
+            Some(RelationReason::WeakTokenSubstring)
+        );
+        assert_eq!(
+            retained[0].relation_confidence,
+            Some(RelationConfidence::Low)
+        );
+        assert_eq!(retained[0].miss, Some(RelatedTestMiss::NoCallPath));
+        let rows = first_five_human_related_rows(&finding);
+        assert!(
+            rows.iter()
+                .any(|row| row.contains("truncate_to_zero_releases_shared_reference")),
+            "{rows:#?}"
+        );
+    }
+
+    #[test]
+    fn given_repeated_assertions_when_cap_overflows_then_demoted_test_keeps_one_row() {
+        let finding = retention_finding(9, "truncated.truncate(0)", 4);
+        let rows = finding
+            .related_tests
+            .iter()
+            .filter(|test| test.name == "truncate_to_zero_releases_shared_reference")
+            .count();
+        assert_eq!(rows, 1, "{:#?}", finding.related_tests);
+        assert_eq!(finding.related_tests.len(), 8);
+    }
+
+    #[test]
+    fn given_wrong_call_name_when_cap_overflows_then_nothing_is_retained() {
+        let finding = retention_finding(9, "truncated.clear()", 1);
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .all(|test| test.name != "truncate_to_zero_releases_shared_reference"),
+            "{:#?}",
+            finding.related_tests
+        );
+    }
+
+    #[test]
+    fn given_no_overflow_when_demoted_test_calls_owner_then_rows_are_unchanged_by_the_signal() {
+        let finding = retention_finding(2, "truncated.truncate(0)", 1);
+        assert!(finding.related_tests.len() <= 8);
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .any(|test| test.name == "truncate_to_zero_releases_shared_reference")
+        );
+    }
+
     /// Admission-sensitive tests need actual parser facts and exact function /
     /// assertion coordinates; fabricated TestSummary rows cannot establish them.
     fn parser_backed_index(sources: &[(&str, &str)]) -> RustIndex {

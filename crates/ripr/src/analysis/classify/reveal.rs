@@ -4581,14 +4581,14 @@ fn is_location_only_row(test: &RelatedTest) -> bool {
 /// #9175: when the render cap cut rows, let demoted rows whose test calls the
 /// owner replace the trailing file-location-only rows of the window, one for
 /// one. Row 0 never changes and the window length, the total, and the
-/// relative order of all remaining rows are unchanged. Rows after a displaced
-/// location-only row shift up one place (a medium non-location row at the
-/// window tail therefore moves up, and the displaced row is the last
-/// location-only row, not necessarily the last row). Lifted rows keep their
-/// `weak_token_substring`/`low`/`no_call_path` disclosure and are inserted
-/// after the last non-location-only row and never at index 0, so the primary
-/// related test (and the fix site derived from it) is what it was without the
-/// signal. Only rows in the oracle partition are lifted; an unmatched
+/// relative order within the surviving rows are unchanged. Lifted rows keep
+/// their `weak_token_substring`/`low`/`no_call_path` disclosure and are
+/// inserted ahead of every surviving non-primary location-only row (after any
+/// non-location rows that precede the first of them) and never at index 0, so
+/// a file-location link never outranks a row whose owner call was read and
+/// the primary related test (and the fix site derived from it) is what it was
+/// without the signal. The displaced rows are the last location-only rows, so
+/// a medium non-location row sitting after them shifts up. Only rows in the oracle partition are lifted; an unmatched
 /// (`assertion_not_observing`) demoted row is still packed only into free
 /// slots. Rows are keyed by file, start line and test name.
 fn retain_owner_calling_rows(
@@ -4629,11 +4629,13 @@ fn retain_owner_calling_rows(
             to_remove -= 1;
         }
     }
+    // Ahead of every surviving non-primary location-only row, so a file
+    // location link never outranks a row whose owner call was read.
     let at = window
         .iter()
-        .rposition(|test| !is_location_only_row(test))
-        .map_or(1, |last| last + 1)
-        .max(1);
+        .skip(1)
+        .position(is_location_only_row)
+        .map_or(window.len(), |first| first + 1);
     window.splice(at..at, lifted.into_iter().take(take));
 }
 
@@ -6311,9 +6313,10 @@ mod tests {
         );
     }
 
-    /// #9175 order pin: a medium non-location row at the window tail moves
-    /// up one place when the last location-only row is displaced; the lifted
-    /// row lands after it. Row 0 is unchanged.
+    /// #9175 order pin: with a medium non-location row at the window tail the
+    /// last location-only row is displaced, the tail row shifts up, and the
+    /// lifted row lands ahead of every surviving location-only row (not
+    /// behind the tail row). Row 0 is unchanged.
     #[test]
     fn owner_call_signal_shifts_a_tail_medium_row_up_one_place() {
         let mut input: Vec<_> = (0..6)
@@ -6364,13 +6367,13 @@ mod tests {
             names(&kept),
             [
                 "direct",
+                "truncate_to_zero",
                 "doc_00",
                 "doc_01",
                 "doc_02",
                 "doc_03",
                 "doc_04",
-                "zzz_affinity",
-                "truncate_to_zero"
+                "zzz_affinity"
             ]
         );
     }
@@ -6502,6 +6505,36 @@ mod tests {
         for name in ["truncate_to_zero", "second_demoted"] {
             assert_eq!(kept.iter().filter(|test| test.name == name).count(), 1);
         }
+    }
+
+    /// #9175 control: an unmatched demoted row (`assertion_not_observing`)
+    /// is packed only into free slots, so the signal never retains it.
+    #[test]
+    fn owner_call_signal_never_retains_an_unmatched_row() {
+        let mut input: Vec<_> = (0..9)
+            .map(|index| RelatedTest {
+                miss: Some(RelatedTestMiss::NoCallPath),
+                ..related(
+                    &format!("doc_{index:02}"),
+                    10 + index,
+                    Some(RelationReason::SameTestFile),
+                )
+            })
+            .collect();
+        input.push(RelatedTest {
+            oracle: None,
+            miss: Some(RelatedTestMiss::AssertionNotObserving),
+            ..related(
+                "truncate_to_zero",
+                40,
+                Some(RelationReason::WeakTokenSubstring),
+            )
+        });
+        let (plain, _) = finalize_related_tests(input.clone(), None);
+        let calls = owner_call_rows(&[40]);
+        let (kept, _) = finalize_related_tests_with_owner_calls(input, None, &calls);
+        assert_eq!(kept, plain);
+        assert!(kept.iter().all(|test| test.name != "truncate_to_zero"));
     }
 
     /// #9175 negative: with no file-location row to displace, nothing moves.
