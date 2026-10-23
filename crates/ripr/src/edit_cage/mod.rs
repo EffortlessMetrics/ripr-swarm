@@ -430,7 +430,10 @@ pub(crate) fn inline_target_is_uncommitted(root: &Path, path: &str) -> bool {
     };
     // `ls-tree` succeeds with empty output for a path HEAD does not carry,
     // so that case stays distinct from a git failure.
-    let Ok(listing) = git_text(&root, &["ls-tree", &head, "--", path]) else {
+    let Ok(listing) = git_text(
+        &root,
+        &["--literal-pathspecs", "ls-tree", &head, "--", path],
+    ) else {
         return false;
     };
     if listing.is_empty() {
@@ -460,7 +463,10 @@ pub(crate) fn inline_target_is_uncommitted(root: &Path, path: &str) -> bool {
     };
     // Empty output means the path is not in the index (a staged deletion):
     // that differs from HEAD. A git failure is not an answer: defer.
-    let Ok(entry) = git_text(&root, &["ls-files", "--stage", "--", path]) else {
+    let Ok(entry) = git_text(
+        &root,
+        &["--literal-pathspecs", "ls-files", "--stage", "--", path],
+    ) else {
         return false;
     };
     let staged = entry.split_ascii_whitespace().nth(1);
@@ -567,6 +573,9 @@ fn committed_changes(
             "--no-renames",
             "--no-ext-diff",
             "--no-textconv",
+            // Ambient `diff.ignoreSubmodules=all` would hide a committed
+            // gitlink change from the attempt's changed-path set.
+            "--ignore-submodules=none",
             "--name-status",
             "-z",
             baseline_head,
@@ -953,7 +962,11 @@ fn inventory_paths(
         }
         let raw_path = raw_path?;
         let path = normalize_repo_relative_path(Path::new(&raw_path))?;
-        if !case_keys.insert(path.to_lowercase()) {
+        if !case_keys.insert(crate::output::path::path_identity_key_on(
+            Path::new(&path),
+            false,
+            true,
+        )) {
             ambiguous = true;
         }
         if inventory.insert(path, ignored_path).is_some() {
@@ -4403,6 +4416,53 @@ mod tests {
         assert_eq!(verdict.status, EditCageVerdictStatus::Incomparable);
         assert_eq!(verdict.changed_paths, vec!["tests/pricing.rs".to_string()]);
         assert!(verdict.violations.is_empty());
+        Ok(())
+    }
+
+    /// `--literal-pathspecs`: a target whose name contains glob metacharacters
+    /// must not match a sibling entry (the sibling sorts first here, so the
+    /// first listed entry would otherwise carry the wrong object id).
+    #[test]
+    fn inline_target_check_treats_glob_characters_literally() -> Result<(), String> {
+        let fixture = git_fixture("literal-pathspec")?;
+        fs::write(fixture.root.join("fA.rs"), "pub fn decoy() {}\n")
+            .map_err(|err| format!("write decoy: {err}"))?;
+        fs::write(fixture.root.join("f[AB].rs"), "pub fn target() {}\n")
+            .map_err(|err| format!("write target: {err}"))?;
+        git_ok(&fixture.root, &["add", "."])?;
+        git_ok(&fixture.root, &["commit", "-qm", "glob names"])?;
+        assert!(
+            !inline_target_is_uncommitted(&fixture.root, "f[AB].rs"),
+            "a committed, unchanged target was judged uncommitted via a glob sibling"
+        );
+        Ok(())
+    }
+
+    /// `diff.ignoreSubmodules=all` must not hide a committed gitlink change
+    /// from the changed-path set.
+    #[test]
+    fn committed_changes_keep_a_gitlink_bump_under_ignore_submodules_all() -> Result<(), String> {
+        let fixture = git_fixture("gitlink-committed")?;
+        git_ok(&fixture.root, &["config", "diff.ignoreSubmodules", "all"])?;
+        let baseline = git_text(&fixture.root, &["rev-parse", "HEAD"])?;
+        git_ok(
+            &fixture.root,
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                "160000,2222222222222222222222222222222222222222,vendor/lib",
+            ],
+        )?;
+        git_ok(&fixture.root, &["commit", "-qm", "gitlink"])?;
+        let current = git_text(&fixture.root, &["rev-parse", "HEAD"])?;
+        let changes = committed_changes(&fixture.root, &baseline, &current)?;
+        let paths: Vec<_> = changes
+            .unwrap_or_default()
+            .into_iter()
+            .map(|change| change.path)
+            .collect();
+        assert_eq!(paths, vec![PathBuf::from("vendor/lib")]);
         Ok(())
     }
 }

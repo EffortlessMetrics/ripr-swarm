@@ -20,6 +20,9 @@ pub(crate) struct ReviewCommentsAnalysisScope {
     pub(crate) changed_lines: usize,
     pub(crate) changed_owner_functions: usize,
     pub(crate) changed_production_files: Vec<String>,
+    /// Changed production files the parser declined; their lexical fallback
+    /// extracts no seams, so they are not coverage (#9301).
+    pub(crate) parser_declined_files: Vec<String>,
     pub(crate) immediate_caller_files: Vec<String>,
     pub(crate) scoped_production_files: Vec<String>,
     pub(crate) total_rust_files: Option<usize>,
@@ -49,6 +52,7 @@ impl ReviewCommentsAnalysisScope {
             changed_lines: working_set.changed_lines.len(),
             changed_owner_functions: working_set.changed_owners.len(),
             changed_production_files: display_paths(&inventory.changed_production_files),
+            parser_declined_files: display_paths(&inventory.parser_declined_files),
             immediate_caller_files: display_paths(&inventory.immediate_caller_files),
             scoped_production_files: display_paths(&inventory.scoped_production_files),
             total_rust_files: Some(inventory.total_rust_files),
@@ -76,6 +80,7 @@ impl ReviewCommentsAnalysisScope {
             changed_lines: working_set.changed_lines.len(),
             changed_owner_functions: working_set.changed_owners.len(),
             changed_production_files: Vec::new(),
+            parser_declined_files: Vec::new(),
             immediate_caller_files: Vec::new(),
             scoped_production_files: display_paths(&working_set.files),
             total_rust_files: None,
@@ -122,6 +127,7 @@ impl ReviewCommentsAnalysisScope {
             changed_lines: anchored_lines,
             changed_owner_functions: 0,
             changed_production_files: anchor_files.clone(),
+            parser_declined_files: Vec::new(),
             immediate_caller_files: Vec::new(),
             scoped_production_files: anchor_files.clone(),
             total_rust_files: None,

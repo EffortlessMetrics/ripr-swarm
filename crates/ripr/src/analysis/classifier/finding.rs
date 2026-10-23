@@ -7,6 +7,8 @@ use crate::analysis::classify::{
 };
 use crate::analysis::rust_index::TestSummary;
 use crate::domain::*;
+use std::collections::BTreeSet;
+use std::path::PathBuf;
 
 const STATIC_UNKNOWN_UNREACHED_NEXT_STEP: &str = "No static test path reaches this change; a test may still reach it through paths ripr cannot follow.";
 const PROXIMITY_ONLY_INSPECTION_NEXT_STEP: &str = "The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap.";
@@ -90,6 +92,7 @@ pub(in crate::analysis) fn build_finding(
             &context.probe.family,
             &evidence.activation,
             unconfirmed,
+            &evidence.implicit_dispatch_tests,
         );
     }
     // RIPR-SPEC-0263: no related test call enters the guard around the
@@ -200,6 +203,19 @@ pub(in crate::analysis) fn build_finding(
     {
         evidence_lines.push(crate::analysis::classify::REFUSALS_ARE_ANALYZER_LIMITS.to_string());
     }
+    // #8051: hand the `debug_assert_eq!` pins to the gap-admission post-pass,
+    // which consumes the marker.
+    if matches!(
+        class,
+        ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+    ) {
+        evidence_lines.extend(evidence.debug_assert_eq_pins.iter().map(|label| {
+            format!(
+                "{}{label}",
+                crate::analysis::classify::DEBUG_ASSERT_EQ_PIN_PREFIX
+            )
+        }));
+    }
     // #8600: the render cap trims related rows, so the saturation of every
     // matched test is handed to the call-budget post-pass, which consumes it.
     if evidence.related_call_budget_saturated {
@@ -290,7 +306,15 @@ fn annotate_related_test_misses(
     family: &ProbeFamily,
     activation: &ActivationEvidence,
     unconfirmed: Unconfirmed,
+    implicit_dispatch_tests: &BTreeSet<(PathBuf, String)>,
 ) {
+    // Reach by known implicit dispatch is established even though the
+    // row's relation reason is proximity-only.
+    let reaches = |test: &RelatedTest| {
+        test.relation_reason
+            .is_some_and(|reason| reason.establishes_reach(owner_is_function))
+            || implicit_dispatch_tests.contains(&(test.file.clone(), test.name.clone()))
+    };
     let facts = &activation.missing_discriminators;
     let boundary = input_boundary_fact(facts, family).is_some();
     let exact = exact_assertion_fact(facts, family).is_some();
@@ -310,11 +334,10 @@ fn annotate_related_test_misses(
         // row keeps its miss: that value is what marks it examined-only
         // (`RelatedTest::is_unmatched`), and the no-static-path reach limit
         // and fix-site selection read `oracle_related_tests` through it.
-        for test in related_tests.iter_mut().filter(|test| {
-            test.relation_reason
-                .is_none_or(|reason| !reason.establishes_reach(owner_is_function))
-                && !test.is_unmatched()
-        }) {
+        for test in related_tests
+            .iter_mut()
+            .filter(|test| !reaches(test) && !test.is_unmatched())
+        {
             test.miss = Some(RelatedTestMiss::NoCallPath);
         }
     }
@@ -357,11 +380,7 @@ fn annotate_related_test_misses(
                 // a matched oracle or without a recorded relation reason
                 // keeps the unknown: the pass must not claim what the
                 // relation layer did not establish.
-                if test.oracle.is_some()
-                    && test
-                        .relation_reason
-                        .is_some_and(|reason| !reason.establishes_reach(owner_is_function))
-                {
+                if test.oracle.is_some() && test.relation_reason.is_some() && !reaches(test) {
                     Some(RelatedTestMiss::NoCallPath)
                 } else {
                     None
@@ -688,6 +707,7 @@ mod tests {
             &ProbeFamily::MatchArm,
             &ActivationEvidence::default(),
             Unconfirmed::Confirmed,
+            &Default::default(),
         );
         assert_eq!(
             rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
@@ -719,6 +739,7 @@ mod tests {
             &ProbeFamily::MatchArm,
             &ActivationEvidence::default(),
             Unconfirmed::Confirmed,
+            &Default::default(),
         );
         assert_eq!(
             module_rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
@@ -750,6 +771,7 @@ mod tests {
             &ProbeFamily::MatchArm,
             &ActivationEvidence::default(),
             Unconfirmed::Confirmed,
+            &Default::default(),
         );
         assert_eq!(
             rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
@@ -775,6 +797,7 @@ mod tests {
             &ProbeFamily::CallDeletion,
             &ActivationEvidence::default(),
             Unconfirmed::StrongestRank,
+            &Default::default(),
         );
         assert_eq!(
             rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
@@ -837,6 +860,7 @@ mod tests {
             &ProbeFamily::ReturnValue,
             &ActivationEvidence::default(),
             Unconfirmed::Confirmed,
+            &Default::default(),
         );
         assert_eq!(
             rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
@@ -861,6 +885,7 @@ mod tests {
             &ProbeFamily::ReturnValue,
             &ActivationEvidence::default(),
             Unconfirmed::Confirmed,
+            &Default::default(),
         );
         assert_eq!(
             module_owner_rows.last().and_then(|row| row.miss),
@@ -879,6 +904,7 @@ mod tests {
             &ProbeFamily::ReturnValue,
             &ActivationEvidence::default(),
             Unconfirmed::Confirmed,
+            &Default::default(),
         );
         assert_eq!(
             gap[0].miss,
@@ -900,6 +926,7 @@ mod tests {
             &ProbeFamily::CallDeletion,
             &ActivationEvidence::default(),
             Unconfirmed::AllRows,
+            &Default::default(),
         );
         assert!(rows.iter().all(|row| {
             row.miss == Some(crate::domain::RelatedTestMiss::ObservationUnconfirmed)
@@ -977,6 +1004,8 @@ mod tests {
             reach_ruled_out: true,
             assertion_refusal: None,
             refusals_are_analyzer_limits: false,
+            implicit_dispatch_tests: Default::default(),
+            debug_assert_eq_pins: Vec::new(),
             related_call_budget_saturated: false,
         }
     }

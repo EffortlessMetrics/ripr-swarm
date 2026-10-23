@@ -47,6 +47,7 @@ jobs:
       workflow: ${{ steps.route.outputs.workflow }}
       run_id: ${{ steps.route.outputs.run_id }}
       runner_query: ${{ steps.route.outputs.runner_query }}
+      runner_query_exit_code: ${{ steps.route.outputs.runner_query_exit_code }}
       runner_total: ${{ steps.route.outputs.runner_total }}
       cx43_online: ${{ steps.route.outputs.cx43_online }}
       cx43_idle_ready: ${{ steps.route.outputs.cx43_idle_ready }}
@@ -65,7 +66,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
         run: |
-          target=github reason=runner_api_failed runner_query=not_attempted runner_total=not_available
+          target=github reason=runner_api_failed runner_query=not_attempted runner_query_exit_code=not_attempted runner_total=not_available
           cx43_online=not_available cx43_idle_ready=not_available cpx42_online=not_available cpx42_idle_ready=not_available cx53_online=not_available cx53_idle_ready=not_available
           count() { printf '%s' "$runners" | jq -s "$1"; }
           idle() { printf '%s' "$runners" | jq -s -e --arg model "$1" --arg cap "$2" '[.[].runners[]? | select(.status == "online" and (.busy | not) and ([.labels[].name | ascii_downcase] | index("em-ci") and index($model) and index($cap)))] | length > 0' >/dev/null; }
@@ -78,7 +79,7 @@ jobs:
           if { [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "merge_group" ]; } && [ "$HEAD_REPO" != "$REPOSITORY" ]; then
             reason=fork_or_untrusted_pr runner_query=skipped_untrusted_pr
           elif runners="$(gh api --paginate 'orgs/EffortlessMetrics/actions/runners?per_page=100' 2>/tmp/runners.err)"; then
-            runner_query=ok
+            runner_query_exit_code=0 runner_query=ok
             runner_total="$(count '[.[].runners[]?] | length')"
             cx43_online="$(count '[.[].runners[]? | select(.status == "online" and ([.labels[].name | ascii_downcase] | index("em-ci") and index("cx43")))] | length')"
             cx43_idle_ready="$(count '[.[].runners[]? | select(.status == "online" and (.busy | not) and ([.labels[].name | ascii_downcase] | index("em-ci") and index("cx43") and index("rust-medium")))] | length')"
@@ -93,10 +94,14 @@ jobs:
             else reason=no_idle_runner
             fi
           else
+            runner_query_exit_code=$?
             runner_query=failed reason=runner_api_failed
           fi
-          { echo "router_target=$target"; echo "router_reason=$reason"; repo=$REPOSITORY workflow=routed-rust run_id=$RUN_ID; for name in repo workflow run_id runner_query runner_total cx43_online cx43_idle_ready cpx42_online cpx42_idle_ready cx53_online cx53_idle_ready; do echo "$name=${!name}"; done; } >> "$GITHUB_OUTPUT"
-          { echo "### Ripr Rust Small Router"; echo ""; echo "- repo: \`$REPOSITORY\`"; echo "- workflow: \`routed-rust\`"; echo "- run: \`$RUN_ID\`"; echo "- target: \`$target\`"; echo "- reason: \`$reason\`"; for row in "runner query:$runner_query" "visible runners:$runner_total" "cx43 online:$cx43_online" "cx43 idle ready:$cx43_idle_ready" "cpx42 online:$cpx42_online" "cpx42 idle ready:$cpx42_idle_ready" "cx53 online:$cx53_online" "cx53 idle ready:$cx53_idle_ready"; do echo "- ${row%%:*}: \`${row#*:}\`"; done; } >> "$GITHUB_STEP_SUMMARY"
+          { echo "router_target=$target"; echo "router_reason=$reason"; repo=$REPOSITORY workflow=routed-rust run_id=$RUN_ID; for name in repo workflow run_id runner_query runner_query_exit_code runner_total cx43_online cx43_idle_ready cpx42_online cpx42_idle_ready cx53_online cx53_idle_ready; do echo "$name=${!name}"; done; } >> "$GITHUB_OUTPUT"
+          { echo "### Ripr Rust Small Router"; echo ""; echo "- repo: \`$REPOSITORY\`"; echo "- workflow: \`routed-rust\`"; echo "- run: \`$RUN_ID\`"; echo "- target: \`$target\`"; echo "- reason: \`$reason\`"; for row in "runner query:$runner_query" "runner command exit code:$runner_query_exit_code" "visible runners:$runner_total" "cx43 online:$cx43_online" "cx43 idle ready:$cx43_idle_ready" "cpx42 online:$cpx42_online" "cpx42 idle ready:$cpx42_idle_ready" "cx53 online:$cx53_online" "cx53 idle ready:$cx53_idle_ready"; do echo "- ${row%%:*}: \`${row#*:}\`"; done; } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$runner_query" = "failed" ]; then
+            { echo '- inventory operation: `gh api --paginate orgs/EffortlessMetrics/actions/runners?per_page=100`'; echo "- HTTP status and underlying cause are unknown; command exit code is not an HTTP status. Raw stderr is withheld."; } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   detect-docs-only:
     if: github.event_name != 'pull_request' || github.event.label.name == 'merge-ready'
@@ -342,10 +347,10 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@v1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: 1.95.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: ripr-docs-gate
       - name: Doc/spec gates (full precommit table)
@@ -401,6 +406,7 @@ jobs:
           CPX42_SCRATCH_MESSAGE: ${{ needs.rust-cpx42.outputs.scratch_message }}
           CX53_SCRATCH_MESSAGE: ${{ needs.rust-cx53.outputs.scratch_message }}
           RUNNER_QUERY: ${{ needs.route.outputs.runner_query }}
+          RUNNER_QUERY_EXIT_CODE: ${{ needs.route.outputs.runner_query_exit_code }}
           RUNNER_TOTAL: ${{ needs.route.outputs.runner_total }}
           CX43_ONLINE: ${{ needs.route.outputs.cx43_online }}
           CX43_IDLE_READY: ${{ needs.route.outputs.cx43_idle_ready }}
@@ -475,7 +481,7 @@ jobs:
           fi
           echo "### Ripr Rust Small Result" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          for row in "admission result:$ADMISSION_RESULT" "admission status:$ADMISSION_STATUS" "admission reason:$ADMISSION_REASON" "admission detail:$ADMISSION_DETAIL" "admission cut status:$ADMISSION_CUT_STATUS" "admission cut reason:$ADMISSION_CUT_REASON" "admission cut detail:$ADMISSION_CUT_DETAIL" "admission claim:$ADMISSION_CLAIM" "admission delta:$ADMISSION_ACCEPTANCE_DELTA" "competing PRs:$ADMISSION_COMPETING_PRS" "changed files:$ADMISSION_CHANGED_FILES" "changed lines:$ADMISSION_CHANGED_LINES" "target:$TARGET" "reason:$REASON" "docs_detect:$DOCS_DETECT_RESULT" "docs_only:$DOCS_ONLY" "docs_gate:$DOCS_GATE_RESULT" "status:$status" "message:$message" "route:$ROUTE_RESULT" "cx43:$CX43_RESULT" "cpx42:$CPX42_RESULT" "cx53:$CX53_RESULT" "github:$GITHUB_RESULT" "cx43 scratch:$CX43_SCRATCH_STATUS" "cpx42 scratch:$CPX42_SCRATCH_STATUS" "cx53 scratch:$CX53_SCRATCH_STATUS" "cx43 scratch message:$CX43_SCRATCH_MESSAGE" "cpx42 scratch message:$CPX42_SCRATCH_MESSAGE" "cx53 scratch message:$CX53_SCRATCH_MESSAGE" "runner query:$RUNNER_QUERY" "visible runners:$RUNNER_TOTAL" "cx43 online:$CX43_ONLINE" "cx43 idle ready:$CX43_IDLE_READY" "cpx42 online:$CPX42_ONLINE" "cpx42 idle ready:$CPX42_IDLE_READY" "cx53 online:$CX53_ONLINE" "cx53 idle ready:$CX53_IDLE_READY"; do
+          for row in "admission result:$ADMISSION_RESULT" "admission status:$ADMISSION_STATUS" "admission reason:$ADMISSION_REASON" "admission detail:$ADMISSION_DETAIL" "admission cut status:$ADMISSION_CUT_STATUS" "admission cut reason:$ADMISSION_CUT_REASON" "admission cut detail:$ADMISSION_CUT_DETAIL" "admission claim:$ADMISSION_CLAIM" "admission delta:$ADMISSION_ACCEPTANCE_DELTA" "competing PRs:$ADMISSION_COMPETING_PRS" "changed files:$ADMISSION_CHANGED_FILES" "changed lines:$ADMISSION_CHANGED_LINES" "target:$TARGET" "reason:$REASON" "docs_detect:$DOCS_DETECT_RESULT" "docs_only:$DOCS_ONLY" "docs_gate:$DOCS_GATE_RESULT" "status:$status" "message:$message" "route:$ROUTE_RESULT" "cx43:$CX43_RESULT" "cpx42:$CPX42_RESULT" "cx53:$CX53_RESULT" "github:$GITHUB_RESULT" "cx43 scratch:$CX43_SCRATCH_STATUS" "cpx42 scratch:$CPX42_SCRATCH_STATUS" "cx53 scratch:$CX53_SCRATCH_STATUS" "cx43 scratch message:$CX43_SCRATCH_MESSAGE" "cpx42 scratch message:$CPX42_SCRATCH_MESSAGE" "cx53 scratch message:$CX53_SCRATCH_MESSAGE" "runner query:$RUNNER_QUERY" "runner command exit code:$RUNNER_QUERY_EXIT_CODE" "visible runners:$RUNNER_TOTAL" "cx43 online:$CX43_ONLINE" "cx43 idle ready:$CX43_IDLE_READY" "cpx42 online:$CPX42_ONLINE" "cpx42 idle ready:$CPX42_IDLE_READY" "cx53 online:$CX53_ONLINE" "cx53 idle ready:$CX53_IDLE_READY"; do
             echo "- ${row%%:*}: \`${row#*:}\`" >> "$GITHUB_STEP_SUMMARY"
           done
           [ "$status" = "pass" ]

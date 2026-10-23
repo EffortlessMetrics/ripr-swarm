@@ -1,0 +1,55 @@
+{
+  "case_id": "shape-hostile-attribute-noise-test",
+  "subject_id": "authored-shape-kit",
+  "diff": "cases/shape-hostile-attribute-noise-test.diff",
+  "anchor": {
+    "file": "src/hostile.rs",
+    "line": 37
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "test_fn_under_stacked_attributes",
+  "hard_case": "The test fn sits under `#[test]`, `#[rustfmt::skip]`, `#[allow(..)]` and `#[doc = ..]`.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "x + 8",
+        "mutated_line": "x + 8",
+        "outcome": "tests_failed",
+        "failing_test": "hostile::tests::attribute_noise_owner",
+        "equivalence_review": "not equivalent: `7 + x` becomes `x + 8`"
+      },
+      {
+        "replacement": "x - 7",
+        "mutated_line": "x - 7",
+        "outcome": "tests_failed",
+        "failing_test": "hostile::tests::attribute_noise_owner",
+        "equivalence_review": "not equivalent: `7 + x` becomes `x - 7`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "attribute_noise_owner pins attribute_noise(1) to 8; both mutants fail. Hostile input: test attribute stack.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "axes": [
+    "hostile_input"
+  ]
+}

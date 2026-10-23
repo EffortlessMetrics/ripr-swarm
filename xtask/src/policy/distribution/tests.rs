@@ -597,3 +597,298 @@ fn python_source_gate_selects_complete_distribution_inventory() -> Result<(), St
     }
     Ok(())
 }
+
+fn npm_with_version_and_tag(version: &str, tag: Option<&str>) -> String {
+    let mut text = NPM_MANIFEST_TEXT.replace(
+        "\"version\": \"0.11.0\"",
+        &format!("\"version\": \"{version}\""),
+    );
+    if let Some(tag) = tag {
+        text = text.replace(
+            "\"access\": \"public\"",
+            &format!("\"access\": \"public\", \"tag\": \"{tag}\""),
+        );
+    }
+    text
+}
+
+fn publish_tag_violations(version: &str, tag: Option<&str>) -> Vec<String> {
+    let mut violations = Vec::new();
+    npm_launcher::validate_publish_tag(npm_launcher::MANIFEST_PATH, version, tag, &mut violations);
+    violations
+}
+
+#[test]
+fn npm_prerelease_publish_tag_positive_controls_pass() {
+    assert!(publish_tag_violations("0.11.0-alpha.2", Some("next")).is_empty());
+    assert!(publish_tag_violations("0.11.0", None).is_empty());
+    assert!(publish_tag_violations("0.11.0", Some("latest")).is_empty());
+}
+
+#[test]
+fn npm_prerelease_without_explicit_tag_or_with_latest_is_rejected() {
+    for tag in [None, Some("latest"), Some("")] {
+        let violations = publish_tag_violations("0.11.0-alpha.2", tag);
+        assert!(has_violation(&violations, "prerelease version"), "{tag:?}");
+    }
+    let violations = publish_tag_violations("0.11.0", Some("next"));
+    assert!(has_violation(&violations, "stable version"));
+}
+
+#[test]
+fn npm_manifest_prerelease_to_latest_fails_through_launcher_validator() -> Result<(), String> {
+    let contract = parsed_contract(CONTRACT_TEXT)?;
+    let run = |tag: Option<&str>| {
+        let mut violations = Vec::new();
+        npm_launcher::validate_launcher(
+            npm_launcher::MANIFEST_PATH,
+            &npm_with_version_and_tag("0.11.0-alpha.2", tag),
+            "0.11.0-alpha.2",
+            &contract,
+            &mut violations,
+        );
+        violations
+    };
+    assert!(has_violation(&run(None), "publishConfig.tag"));
+    assert!(has_violation(&run(Some("latest")), "publishConfig.tag"));
+    assert!(!has_violation(&run(Some("next")), "publishConfig.tag"));
+    Ok(())
+}
+
+fn workflow_violations(text: &str) -> Vec<String> {
+    let mut violations = Vec::new();
+    npm_launcher::validate_workflow_npm_tags("wf.yml", text, &mut violations);
+    violations
+}
+
+#[test]
+fn workflow_npm_publish_and_dist_tag_require_explicit_non_latest_tag() {
+    let check = workflow_violations;
+    assert!(check("      - run: npm publish --tag next\n").is_empty());
+    assert!(check("      - run: npm publish --tag=next --access public\n").is_empty());
+    assert!(check("      - run: npm publish --tag \"next\"\n").is_empty());
+    assert!(check("      # npm publish\n      - run: npm pack --dry-run\n").is_empty());
+    assert!(has_violation(
+        &check("      - run: npm publish\n"),
+        "explicit non-`latest`"
+    ));
+    assert!(has_violation(
+        &check("      - run: npm publish --tag latest\n"),
+        "forbidden"
+    ));
+    assert!(has_violation(
+        &check("      - run: npm dist-tag add pkg@1.0.0-rc.1 latest\n"),
+        "forbidden"
+    ));
+    assert!(check("      - run: npm dist-tag add pkg@1.0.0-rc.1 next\n").is_empty());
+}
+
+#[test]
+fn workflow_multiline_and_chained_npm_publish_is_not_skipped() {
+    let multiline = "      - run: |\n          npm \\\n            publish --access public\n";
+    assert!(has_violation(
+        &workflow_violations(multiline),
+        "explicit non-`latest`"
+    ));
+    let flag_split = "      - run: |\n          npm publish \\\n            --tag latest\n";
+    assert!(has_violation(&workflow_violations(flag_split), "forbidden"));
+    let tagged = "      - run: |\n          npm publish \\\n            --tag next\n";
+    assert!(workflow_violations(tagged).is_empty());
+    let chained = "      - run: npm pack && npm publish\n";
+    assert!(has_violation(
+        &workflow_violations(chained),
+        "explicit non-`latest`"
+    ));
+    let leading_flag = "      - run: npm --silent publish\n";
+    assert!(has_violation(
+        &workflow_violations(leading_flag),
+        "explicit non-`latest`"
+    ));
+}
+
+#[test]
+fn workflow_interpolated_or_repeated_tag_options_are_rejected() {
+    for text in [
+        "      - run: npm publish --tag \"$DIST_TAG\"\n",
+        "      - run: npm publish --tag ${{ inputs.tag }}\n",
+        "      - run: npm publish --tag $(echo latest)\n",
+        "      - run: npm publish --tag=`echo latest`\n",
+        "      - run: npm dist-tag add pkg@1.0.0 $TAG\n",
+    ] {
+        assert!(
+            has_violation(&workflow_violations(text), "not a literal dist-tag"),
+            "{text}"
+        );
+    }
+    for text in [
+        "      - run: npm publish --tag next --tag latest\n",
+        "      - run: npm publish --tag next --tag=latest\n",
+        "      - run: npm publish --tag=next --tag=next\n",
+    ] {
+        assert!(
+            has_violation(&workflow_violations(text), "exactly one --tag"),
+            "{text}"
+        );
+    }
+}
+
+fn scratch_dir(name: &str) -> Result<std::path::PathBuf, String> {
+    let dir = std::env::temp_dir().join(format!("ripr-9302-{name}-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    Ok(dir)
+}
+
+#[test]
+fn workflow_directory_scan_reports_multiline_publish_and_read_failures() -> Result<(), String> {
+    let dir = scratch_dir("scan")?;
+    fs::write(
+        dir.join("publish.yml"),
+        "jobs:\n  job:\n    steps:\n      - run: |\n          npm \\\n            publish\n",
+    )
+    .map_err(|err| err.to_string())?;
+    // A workflow whose bytes are not UTF-8 cannot be read as text and must fail closed.
+    fs::write(dir.join("binary.yml"), [0xff_u8, 0xfe, 0x00]).map_err(|err| err.to_string())?;
+    let mut violations = Vec::new();
+    scan_workflow_npm_tags(&dir, &mut violations);
+    assert!(
+        has_violation(&violations, "publish.yml:5"),
+        "{violations:#?}"
+    );
+    assert!(
+        has_violation(&violations, "failed to read workflow"),
+        "{violations:#?}"
+    );
+
+    let mut missing = Vec::new();
+    scan_workflow_npm_tags(&dir.join("absent"), &mut missing);
+    assert!(has_violation(&missing, "run from the repository root"));
+    let mut orphan = Vec::new();
+    scan_workflow_npm_tags(&dir.join("no-parent").join("absent"), &mut orphan);
+    assert!(orphan.is_empty());
+    let mut not_a_dir = Vec::new();
+    scan_workflow_npm_tags(&dir.join("publish.yml"), &mut not_a_dir);
+    assert!(has_violation(
+        &not_a_dir,
+        "failed to read workflow directory"
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+#[test]
+fn workflow_global_flags_dry_run_comments_and_glued_separators() {
+    for text in [
+        "      - run: npm -w pkg publish\n",
+        "      - run: npm --workspace x publish\n",
+        "      - run: npm --otp 123 publish\n",
+        "      - run: npm --tag latest publish\n",
+        "      - run: echo \"a #b\"; npm publish\n",
+        "      - run: foo;npm publish\n",
+        "      - run: (npm publish)\n",
+        "      - run: 'npm publish'\n",
+        "      - run: npm publish --tag next;npm publish\n",
+        "      - run: npm dist-tag add pkg@1.0.0-rc.1\n",
+        "      - run: npm dist-tags add pkg@1.0.0-rc.1\n",
+        "      - run: npm dist-tag add --otp 123 pkg@1.0.0 latest\n",
+    ] {
+        assert!(!workflow_violations(text).is_empty(), "{text}");
+    }
+    for text in [
+        "      - run: npm publish --dry-run\n",
+        "# npm publish\n",
+        "      - run: echo done # npm publish\n",
+        "      - run: npm --otp 123 publish --tag next;\n",
+        "      - run: npm -w pkg publish --tag=next\n",
+        "      - run: npm run publish\n",
+        "      - run: npm dist-tag add --otp 123 pkg@1.0.0 next\n",
+        "      - run: npm dist-tag ls pkg\n",
+    ] {
+        assert!(
+            workflow_violations(text).is_empty(),
+            "{text}: {:?}",
+            workflow_violations(text)
+        );
+    }
+}
+
+#[test]
+fn prerelease_detection_ignores_build_metadata_and_latest_is_case_insensitive() {
+    assert!(publish_tag_violations("1.0.0+build-1", None).is_empty());
+    assert!(!publish_tag_violations("1.0.0-rc.1+build", None).is_empty());
+    assert!(!publish_tag_violations("1.0.0-rc.1", Some("LATEST")).is_empty());
+    assert!(publish_tag_violations("1.0.0", Some("Latest")).is_empty());
+}
+
+#[test]
+fn workflow_scan_only_reads_script_text_not_yaml_metadata() {
+    let metadata = "steps:\n  - name: Verify npm publish gating\n    description: runs npm publish checks\n    if: contains(github.event.head_commit.message, 'npm publish')\n    env:\n      NOTE: npm publish\n    run: echo ok\n  - name: note\n    with:\n      body: |\n        npm publish should be gated\n";
+    assert!(
+        workflow_violations(metadata).is_empty(),
+        "{:?}",
+        workflow_violations(metadata)
+    );
+    let inline = "steps:\n  - name: Verify npm publish gating\n    run: npm publish\n";
+    assert!(has_violation(&workflow_violations(inline), "wf.yml:3"));
+    let list_form = "steps:\n  - run: npm publish\n";
+    assert!(has_violation(&workflow_violations(list_form), "wf.yml:2"));
+    let block = "steps:\n  - name: Verify npm publish gating\n    run: |\n      echo start\n      npm publish --access public\n  - name: after\n    run: echo done\n";
+    assert!(has_violation(&workflow_violations(block), "wf.yml:5"));
+    let folded = "steps:\n  - run: >-\n      npm publish\n";
+    assert!(has_violation(&workflow_violations(folded), "wf.yml:3"));
+    let after_block = "steps:\n  - run: |\n      echo hi\n  - name: npm publish docs\n    description: npm publish\n";
+    assert!(workflow_violations(after_block).is_empty());
+}
+
+#[test]
+fn workflow_block_scalar_ends_at_key_column_for_list_items() {
+    let sibling_run =
+        "steps:\n  - if: >-\n      github.ref == 'refs/heads/main'\n    run: npm publish\n";
+    assert!(has_violation(&workflow_violations(sibling_run), "wf.yml:4"));
+    for key in ["name: |", "env: |", "with: |"] {
+        let text = format!("steps:\n  - {key}\n      body text\n    run: npm publish\n");
+        assert!(
+            has_violation(&workflow_violations(&text), "wf.yml:4"),
+            "{key}"
+        );
+    }
+    for chomp in ["|-", "|+", ">+", "|2"] {
+        let text = format!("steps:\n  - run: {chomp}\n      npm publish\n");
+        assert!(
+            has_violation(&workflow_violations(&text), "wf.yml:3"),
+            "{chomp}"
+        );
+    }
+    let nested =
+        "jobs:\n  job:\n    steps:\n      - name: x\n        with:\n          run: npm publish\n";
+    assert!(has_violation(&workflow_violations(nested), "wf.yml:6"));
+    assert!(!workflow_violations("      FOO=1 npm publish\n").is_empty());
+    // Positive controls: sibling metadata after a `- run: |` body is not script.
+    let siblings = "steps:\n  - run: |\n      echo hi\n    name: npm publish docs\n    env:\n      NOTE: npm publish\n";
+    assert!(
+        workflow_violations(siblings).is_empty(),
+        "{:?}",
+        workflow_violations(siblings)
+    );
+    let tagged = "steps:\n  - if: >-\n      x\n    run: npm publish --tag next\n";
+    assert!(workflow_violations(tagged).is_empty());
+}
+
+#[test]
+fn workflow_comment_trailing_backslash_does_not_hide_next_line() {
+    let hidden = "      - run: |\n          # note \\\n          npm publish\n";
+    assert!(has_violation(
+        &workflow_violations(hidden),
+        "explicit non-`latest`"
+    ));
+    let continued = "      - run: |\n          npm publish \\\n            --tag next\n";
+    assert!(workflow_violations(continued).is_empty());
+    let quoted_hash =
+        "      - run: |\n          echo '#' && npm publish \\\n            --tag next\n";
+    assert!(workflow_violations(quoted_hash).is_empty());
+    let quoted_hash_bad = "      - run: |\n          echo '#' && npm \\\n            publish\n";
+    assert!(has_violation(
+        &workflow_violations(quoted_hash_bad),
+        "explicit non-`latest`"
+    ));
+}

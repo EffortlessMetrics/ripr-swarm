@@ -1,0 +1,12 @@
+diff --git a/src/hostile.rs b/src/hostile.rs
+--- a/src/hostile.rs
++++ b/src/hostile.rs
+@@ -12,7 +12,7 @@
+ }
+ 
+ pub fn größe(x: u32) -> u32 {
+-    x * 2
++    2 * x
+ }
+ 
+ pub fn long_sum(a: u32) -> u32 {

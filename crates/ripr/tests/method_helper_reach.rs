@@ -164,3 +164,78 @@ fn wrong_owner_method_is_not_credited() -> Result<(), String> {
     assert_ne!(f["classification"], "exposed", "{f}");
     Ok(())
 }
+
+// #8633 review: each case below must stay uncredited.
+
+#[test]
+fn transformed_tail_method_result_is_not_credited() -> Result<(), String> {
+    // `0 * self.secs()` multiplies the hop's result away: the exact
+    // assertion on the constant zero cannot notice a change to `secs`.
+    let source = secs_source("        assert_eq!(entry(1), 0);").replace(
+        "fn total(&self) -> u64 { self.secs() }",
+        "fn total(&self) -> u64 { 0 * self.secs() }",
+    );
+    let f = finding(&source, SECS_DIFF, "return_value")?;
+    assert_ne!(f["classification"], "exposed", "{f}");
+    Ok(())
+}
+
+#[test]
+fn self_computed_entry_expectation_is_not_credited() -> Result<(), String> {
+    let f = finding(
+        &secs_source("        let expected = entry(1);\n        assert_eq!(entry(1), expected);"),
+        SECS_DIFF,
+        "return_value",
+    )?;
+    assert_ne!(f["classification"], "exposed", "{f}");
+    Ok(())
+}
+
+#[test]
+fn projected_entry_value_is_not_credited() -> Result<(), String> {
+    let f = finding(
+        &secs_source("        assert_eq!(entry(1) % 2, 0);"),
+        SECS_DIFF,
+        "return_value",
+    )?;
+    assert_ne!(f["classification"], "exposed", "{f}");
+    Ok(())
+}
+
+#[test]
+fn foreign_qualified_entry_assertion_is_not_credited() -> Result<(), String> {
+    let source = secs_source("        let _ = entry(1);\n        assert_eq!(other::entry(1), 7);")
+        .replace(
+            "#[cfg(test)]",
+            "mod other {\n    pub fn entry(_n: u64) -> u64 { 7 }\n}\n\n#[cfg(test)]",
+        );
+    let f = finding(&source, SECS_DIFF, "return_value")?;
+    assert_ne!(f["classification"], "exposed", "{f}");
+    Ok(())
+}
+
+#[test]
+fn nested_comparison_return_is_not_credited() -> Result<(), String> {
+    let source = "struct Parser { n: u64 }\nimpl Parser {\n    fn big(&self) -> bool {\n        (self.n < 1_209_600)\n    }\n    fn total(&self) -> bool { self.big() }\n}\npub fn entry(n: u64) -> bool { Parser { n }.total() }\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn small() { assert_eq!(entry(1), true); }\n}\n";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3,3 +3,3 @@\n impl Parser {\n     fn big(&self) -> bool {\n-        (self.n < 999_999)\n+        (self.n < 1_209_600)\n";
+    let f = finding(source, diff, "return_value")?;
+    assert_ne!(f["classification"], "exposed", "{f}");
+    Ok(())
+}
+
+#[test]
+fn imported_same_named_constructor_does_not_bind() -> Result<(), String> {
+    // `Duration` here is `std::time::Duration`, imported; the workspace's
+    // own `units::Duration` has the unique `secs` method but is not the
+    // type the entry constructs.
+    let source = "mod units {\n    pub struct Duration { pub n: u64 }\n    impl Duration {\n        pub(crate) fn secs(&self) -> u64 {\n            self.n * 1_209_600\n        }\n    }\n}\nuse std::time::Duration;\npub fn entry(n: u64) -> u64 {\n    Duration::from_secs(n).secs()\n}\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn fortnight() { assert_eq!(entry(1), 1_209_600); }\n}\n";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -4,3 +4,3 @@\n         pub(crate) fn secs(&self) -> u64 {\n-            self.n * 999_999\n+            self.n * 1_209_600\n";
+    let f = finding(source, diff, "return_value")?;
+    assert_ne!(
+        relation_of(&f, "fortnight"),
+        Some("helper_owner_call"),
+        "{f}"
+    );
+    assert_ne!(f["classification"], "exposed", "{f}");
+    Ok(())
+}

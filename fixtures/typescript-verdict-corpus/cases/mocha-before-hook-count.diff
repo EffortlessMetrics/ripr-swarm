@@ -1,0 +1,13 @@
+diff --git a/src/registry.ts b/src/registry.ts
+index 0000000..1111111 100644
+--- a/src/registry.ts
++++ b/src/registry.ts
+@@ -2,7 +2,7 @@
+ 
+ export function register(name: string): number {
+   names.push(name.trim());
+-  return names.length;
++  return names.length + 1;
+ }
+ 
+ export function registered(): readonly string[] {

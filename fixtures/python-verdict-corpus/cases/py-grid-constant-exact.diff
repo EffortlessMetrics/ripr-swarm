@@ -1,0 +1,12 @@
+diff --git a/grid_constant/core.py b/grid_constant/core.py
+--- a/grid_constant/core.py
++++ b/grid_constant/core.py
+@@ -2,7 +2,7 @@
+ 
+ 
+ def sales_tax(subtotal):
+-    return subtotal * 8 // 100
++    return subtotal * 9 // 100
+ 
+ 
+ def late_fee(days):

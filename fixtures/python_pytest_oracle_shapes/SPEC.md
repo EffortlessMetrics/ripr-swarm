@@ -39,6 +39,9 @@ The Python preview adapter:
 - records the pytest `caplog` fixture parameter,
 - records the output assertion shape from `caplog.text`,
 - keeps the oracle conservative as `relational_check` / `weak`,
+- abstains with `static_unknown` (`unsupported_syntax`) because the changed
+  logging call shares a word with the `in caplog.text` check and the adapter
+  does not evaluate the logged text (RIPR-SPEC-0238 rule 22),
 - emits Python preview metadata.
 
 ## Must Not

@@ -140,6 +140,10 @@ pub(super) use check::{bind_member_selector_file, resolve_implicit_command_root}
 mod review_comments;
 pub(super) use review_comments::review_comments;
 
+#[path = "commands/capabilities.rs"]
+mod capabilities;
+pub(super) use capabilities::capabilities;
+
 #[path = "commands/doctor.rs"]
 mod doctor;
 pub(super) use doctor::doctor;
@@ -245,8 +249,8 @@ pub(super) fn evidence_health(args: &[String]) -> Result<(), String> {
     let rendered_md = output::evidence_health::render_evidence_health_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&options.out_md, &rendered_md)?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", options.out_md.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&options.out_md));
     Ok(())
 }
 
@@ -500,8 +504,8 @@ pub(super) fn first_action(args: &[String]) -> Result<(), String> {
     let rendered_md = output::first_useful_action::render_first_useful_action_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&options.out_md, &rendered_md)?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", options.out_md.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&options.out_md));
     Ok(())
 }
 
@@ -554,8 +558,8 @@ fn report_packet_index(args: &[String]) -> Result<(), String> {
     let rendered_md = output::report_packet_index::render_report_packet_index_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&options.out_md, &rendered_md)?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", options.out_md.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&options.out_md));
     Ok(())
 }
 
@@ -610,8 +614,8 @@ fn gap_decision_ledger(args: &[String]) -> Result<(), String> {
     let rendered_md = output::gap_decision_ledger::render_gap_decision_ledger_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&options.out_md, &rendered_md)?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", options.out_md.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&options.out_md));
     Ok(())
 }
 
@@ -646,8 +650,8 @@ fn typescript_limitations(args: &[String]) -> Result<(), String> {
         output::typescript_limitations::render_typescript_limitation_leaderboard_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&options.out_md, &rendered_md)?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", options.out_md.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&options.out_md));
     Ok(())
 }
 
@@ -676,8 +680,8 @@ fn typescript_false_actionable(args: &[String]) -> Result<(), String> {
         );
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&options.out_md, &rendered_md)?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", options.out_md.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&options.out_md));
     Ok(())
 }
 
@@ -739,8 +743,8 @@ fn ripr_zero_status(args: &[String]) -> Result<(), String> {
     let rendered_md = output::ripr_zero_status::render_ripr_zero_status_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&options.out_md, &rendered_md)?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", options.out_md.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&options.out_md));
     Ok(())
 }
 
@@ -844,8 +848,8 @@ fn pr_evidence_ledger_record(args: &[String]) -> Result<(), String> {
         options.out_jsonl.as_deref(),
         &output::pr_evidence_ledger::render_pr_evidence_ledger_jsonl_record(&report)?,
     )?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", options.out_md.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&options.out_md));
     Ok(())
 }
 
@@ -890,8 +894,8 @@ fn pr_comments_plan(args: &[String]) -> Result<(), String> {
         output::pr_inline_comment_publish_plan::render_comment_publish_plan_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&options.out_md, &rendered_md)?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", options.out_md.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&options.out_md));
     Ok(())
 }
 
@@ -1015,8 +1019,8 @@ fn pr_review_front_panel(args: &[String]) -> Result<(), String> {
     let rendered_md = output::pr_review_front_panel::render_pr_review_front_panel_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&options.out_md, &rendered_md)?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", options.out_md.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&options.out_md));
     Ok(())
 }
 
@@ -1069,8 +1073,8 @@ fn coverage_grip_frontier(args: &[String]) -> Result<(), String> {
         output::coverage_grip_frontier::render_coverage_grip_frontier_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&options.out_md, &rendered_md)?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", options.out_md.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&options.out_md));
     Ok(())
 }
 
@@ -1159,8 +1163,8 @@ fn assistant_loop_proof(args: &[String]) -> Result<(), String> {
         output::test_oracle_assistant_proof::render_test_oracle_assistant_proof_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&options.out_md, &rendered_md)?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", options.out_md.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&options.out_md));
     Ok(())
 }
 
@@ -1189,8 +1193,8 @@ fn assistant_loop_health(args: &[String]) -> Result<(), String> {
     let rendered_md = output::assistant_loop_health::render_assistant_loop_health_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&options.out_md, &rendered_md)?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", options.out_md.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&options.out_md));
     println!(
         "Proofs: {}",
         output::assistant_loop_health::assistant_loop_health_proof_count(&report)
@@ -3051,6 +3055,7 @@ fn run_diff_check_from_file(
         suppression_policy: None,
         git_timeout: None,
         git_candidate: None,
+        scope: crate::analysis::DiffScopeFilter::default(),
     };
     apply_to_check_input(&mut input, config, options.explicit);
     app::check_workspace_with_config(input, config)

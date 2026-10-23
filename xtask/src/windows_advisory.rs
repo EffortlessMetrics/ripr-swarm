@@ -2850,6 +2850,25 @@ mod tests {
                 .iter()
                 .any(|line| line.contains("refs/tags/ripr-release-0\\.11\\.0-"))
         );
+        // Rehearsal accepts only a throwaway branch ref and must be marked in both receipts.
+        assert!(lines.iter().any(|line| line.starts_with("rehearsal:")));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("refs/heads/rehearsal/windows-packaged-"))
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("NON-QUALIFYING REHEARSAL"))
+        );
+        assert!(
+            lines
+                .iter()
+                .filter(|line| line.contains("rehearsal = ($env:REHEARSAL -eq 'true')"))
+                .count()
+                >= 2
+        );
         assert!(
             lines
                 .iter()

@@ -14,7 +14,7 @@ use crate::analysis::classify::{
     owner_touches_field_only_at, package_prefix, parameter_rebound,
     propagation_evidence_with_witness, reach_evidence, reveal_outcome,
     same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
-    unconditional_owner_insert_field,
+    unconditional_owner_insert_field, unexercised_mask_bits,
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
@@ -60,6 +60,16 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     /// related `assert_eq!` was refused for an analyzer limit, so the gap
     /// rests on what ripr could not read (RIPR-SPEC-0240).
     pub(in crate::analysis) refusals_are_analyzer_limits: bool,
+    /// Related tests `(file, name)` whose reach to the owner is established
+    /// by indexed implicit dispatch (a trait impl the language runs without
+    /// a named call). Their relation reason is proximity-only, so
+    /// annotation must not read "reason does not establish reach" as
+    /// "never calls the owner" for them.
+    pub(in crate::analysis) implicit_dispatch_tests: BTreeSet<(PathBuf, String)>,
+    /// #8051: related direct-call tests (labelled `name` (file:line)) whose
+    /// bare `debug_assert_eq!` the owner-return pin would admit as
+    /// `assert_eq!`. Never credit; the gap-admission post-pass reads it.
+    pub(in crate::analysis) debug_assert_eq_pins: Vec<String>,
     /// #8600: some related test (before the render cap trims the rows) has a
     /// line at the per-line call-fact budget, so a call there may be missing.
     pub(in crate::analysis) related_call_budget_saturated: bool,
@@ -628,6 +638,16 @@ impl ClassifiedProbeEvidence {
                 })
             })
         };
+        // RIPR-SPEC-0297: a `write!(f, ..)`-only `Display::fmt` has its whole
+        // output pinned by an exact `value.to_string()` assertion.
+        let fmt_write_tail = matches!(
+            &propagation_witness,
+            Some(PropagationWitnessDiagnostic::Valid(witness))
+                if witness.limitations.iter().any(|limit| limit == "fmt_write_owner_tail")
+        ) && crate::analysis::classify::changes_only_string_literals(
+            context.probe.before.as_deref(),
+            context.probe.after.as_deref(),
+        );
         let owner_pin_admits = |test: &TestSummary, assertion: &OracleFact| {
             // #5352: an exact assertion on the helper chain's entry pins
             // the owner's returned value when every observed hop
@@ -647,6 +667,15 @@ impl ClassifiedProbeEvidence {
                     })
                 });
             entry_pinned
+                || (fmt_write_tail
+                    && context.owner_fn.is_some_and(|owner| {
+                        crate::analysis::classify::assertion_pins_display_string(
+                            test,
+                            assertion,
+                            owner,
+                            context.index,
+                        )
+                    }))
                 || field_projection.as_ref().is_some_and(|receipt| {
                     receipt.valid_for(context.probe) && receipt.admits(test, assertion)
                 })
@@ -671,6 +700,11 @@ impl ClassifiedProbeEvidence {
                     )
                 })
         };
+        let fallback_expansion = crate::analysis::classify::ImplicitExpansionMemo::default();
+        let expansion = crate::analysis::classify::ImplicitExpansionContext::new(
+            context.index,
+            context.implicit_expansion.unwrap_or(&fallback_expansion),
+        );
         let reveal = reveal_outcome(
             context.probe,
             reveal_expression,
@@ -681,6 +715,31 @@ impl ClassifiedProbeEvidence {
             &ReturnOracleAdmission {
                 owner_return_pin: &owner_pin_admits,
                 assertion_admitted: &assertion_admitted,
+                assertion_has_known_implicit_observer: &|test, assertion| {
+                    if !matches!(
+                        context.probe.family,
+                        ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+                    ) {
+                        return None;
+                    }
+                    let owner = context.owner_fn?;
+                    let reach =
+                        owner_reach.get_or_init(|| proximity_reach.owner_reach(&owner.name));
+                    reach
+                        .test_has_known_implicit_dispatch(owner, test)
+                        .then(|| {
+                            context.index.files().get(&test.file).is_some_and(|facts| {
+                                reach.assertion_has_known_implicit_observer(
+                                    owner,
+                                    test,
+                                    assertion,
+                                    &context.probe.expression,
+                                    &facts.source,
+                                    &expansion,
+                                )
+                            })
+                        })
+                },
                 sibling_exclusion_admitted: &sibling_exclusion_admitted,
                 proximity_may_reach_owner: &|test| {
                     context.owner_fn.is_none_or(|owner| {
@@ -818,7 +877,10 @@ impl ClassifiedProbeEvidence {
         // RIPR-SPEC-0227 rule 3 pairs its own oracles: both sides of the
         // guard's edge are asserted in one test, so the #4828 same-test
         // pairing below has nothing left to establish.
-        let guard_side_flip = side_flip::guard::discrimination(context, &observe, &discriminate);
+        // RIPR-SPEC-0305 pairs the same way: one test calls the owner on
+        // both sides of the edge under one mock call count.
+        let guard_side_flip = side_flip::guard::discrimination(context, &observe, &discriminate)
+            .or_else(|| side_flip::mock_count::discrimination(context, &observe, &discriminate));
         let guard_side_flip_paired = guard_side_flip.is_some();
         let discriminate = guard_side_flip.unwrap_or(discriminate);
         // #4828: a boundary-class probe may not read `exposed` by taking a
@@ -934,6 +996,23 @@ impl ClassifiedProbeEvidence {
                 context.index,
             ) {
             StageEvidence::new(StageState::Weak, Confidence::Medium, pin.summary())
+        } else {
+            discriminate
+        };
+        // #9444: an exact pin on a masked integer cast is no discriminator
+        // for mask bits that no pinned input sets: a narrower mask returns
+        // the same value there.
+        let discriminate = if matches!(context.probe.family, ProbeFamily::ReturnValue)
+            && discriminate.state == StageState::Yes
+            && let Some(owner) = context.owner_fn
+            && let Some(mask) = unexercised_mask_bits(
+                &context.probe.expression,
+                &owner.name,
+                owner.body.as_str(),
+                &context.related_tests,
+                context.index,
+            ) {
+            StageEvidence::new(StageState::Weak, Confidence::Medium, mask.summary())
         } else {
             discriminate
         };
@@ -1086,6 +1165,89 @@ impl ClassifiedProbeEvidence {
                 && refusals.all(|refusal| is_limit(&refusal))
         };
 
+        let implicit_dispatch_tests = match context.owner_fn {
+            Some(owner)
+                if matches!(
+                    context.probe.family,
+                    ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+                ) =>
+            {
+                context
+                    .related_tests
+                    .iter()
+                    .filter(|(_, reason)| !reason.establishes_reach(true))
+                    .filter(|(test, _)| {
+                        owner_reach
+                            .get_or_init(|| proximity_reach.owner_reach(&owner.name))
+                            .test_has_known_implicit_dispatch(owner, test)
+                    })
+                    .map(|(test, _)| (test.file.clone(), test.name.clone()))
+                    .collect()
+            }
+            _ => BTreeSet::new(),
+        };
+        // #8051: the owner pin's own admission, spelled `debug_assert_eq!`.
+        // Only a gap reads it, and only as a profile limit.
+        let debug_assert_eq_pins: Vec<String> = owner_return_pin
+            .as_ref()
+            .map(|pin| {
+                context
+                    .related_tests
+                    .iter()
+                    .filter(|(test, reason)| {
+                        *reason == RelationReason::DirectOwnerCall
+                            && test.body.as_str().contains("debug_assert_eq")
+                            && !crate::analysis::classify::is_ignored(test)
+                    })
+                    .filter(|(test, _)| {
+                        let Some(facts) = context.index.files().get(&test.file) else {
+                            return false;
+                        };
+                        pin_syntax
+                            .debug_assert_eq_calls(
+                                &test.file,
+                                &facts.source,
+                                test.start_line,
+                                test.end_line,
+                            )
+                            .into_iter()
+                            .any(|(line, text)| {
+                                let assertion = OracleFact {
+                                    line,
+                                    text,
+                                    kind: OracleKind::ExactValue,
+                                    strength: OracleStrength::Strong,
+                                    observed_tokens: Vec::new(),
+                                    ok_value_observed: None,
+                                };
+                                pin.admits_debug_assert_eq(
+                                    test,
+                                    &assertion,
+                                    context.index,
+                                    &|file, name| {
+                                        context.index.files().get(file).is_some_and(|facts| {
+                                            context.test_file_imports_foreign_callee_name(
+                                                file,
+                                                &facts.source,
+                                                name,
+                                            )
+                                        })
+                                    },
+                                    pin_syntax,
+                                )
+                            })
+                    })
+                    .map(|(test, _)| {
+                        format!(
+                            "`{}` ({}:{})",
+                            test.name,
+                            test.file.display().to_string().replace('\\', "/"),
+                            test.start_line
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let related_call_budget_saturated = context
             .related_tests
             .iter()
@@ -1107,6 +1269,8 @@ impl ClassifiedProbeEvidence {
             reach_ruled_out,
             assertion_refusal,
             refusals_are_analyzer_limits,
+            implicit_dispatch_tests,
+            debug_assert_eq_pins,
             related_call_budget_saturated,
         }
     }

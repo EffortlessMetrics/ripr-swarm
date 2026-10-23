@@ -1,0 +1,12 @@
+diff --git a/src/constant.ts b/src/constant.ts
+--- a/src/constant.ts
++++ b/src/constant.ts
+@@ -3,7 +3,7 @@
+ }
+ 
+ export function lateFee(days: number): number {
+-  return days * 5;
++  return days * 6;
+ }
+ 
+ export function commission(sale: number): number {

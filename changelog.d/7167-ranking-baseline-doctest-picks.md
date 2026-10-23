@@ -1,2 +1,0 @@
-<!-- section: Internal / CI -->
-- The pilot-ranking baseline is refreshed after #8572 made runnable library doc examples count as related tests: strsim-rs and rust-hex gain three more judged weakly-gripped picks that the answer key refutes (top-5 refuted 11 -> 14, top-10 16 -> 19), while confirmed picks rise 1 -> 7 at the top 10 and precision from 5.9% to 26.9%. This clears the red scheduled `Pilot Ranking` lane (#7167).

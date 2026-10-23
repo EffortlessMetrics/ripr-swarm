@@ -36,6 +36,7 @@ pub mod github;
 pub mod human;
 pub(crate) mod intervention_study;
 pub mod json;
+pub(crate) mod language_capabilities;
 pub(crate) mod limited_check;
 pub(crate) mod markdown;
 pub(crate) mod mutation_calibration;
@@ -44,6 +45,7 @@ pub use mutation_calibration::{
     CargoMutantsLocationJoin, CargoMutantsOutcomeRecord, CargoMutantsRuntimeSpan,
     CargoMutantsSeamLocation, join_cargo_mutants_location, parse_cargo_mutants_outcomes_json,
 };
+pub(crate) mod check_findings;
 pub(crate) mod next_action;
 pub(crate) mod next_step;
 pub(crate) mod observed_values;

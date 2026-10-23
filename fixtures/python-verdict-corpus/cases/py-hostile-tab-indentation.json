@@ -1,0 +1,45 @@
+{
+  "case_id": "py-hostile-tab-indentation",
+  "subject_id": "authored-py-pytest-hostile",
+  "diff": "cases/py-hostile-tab-indentation.diff",
+  "anchor": {
+    "file": "hostile/tabs.py",
+    "line": 4
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_operator",
+  "test_shape": "pytest_tab_indented_owner_pinned",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, Hypothesis 6.168.3, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "total -= item",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_tabs.py::test_tabbed_total",
+        "equivalence_review": "not equivalent: items are subtracted"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The owner is indented with tabs; the test sums [1, 2, 3] to 6.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

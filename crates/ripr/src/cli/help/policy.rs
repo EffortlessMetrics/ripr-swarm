@@ -65,7 +65,7 @@ CI blocking by default.
 "#;
 pub(super) const GATE_HELP: &str = r#"Evaluate the optional pass/fail gate against existing PR guidance (advisory unless explicitly enabled).
 
-Usage: ripr gate evaluate [--pr-guidance PATH | --gap-ledger PATH] [--mode MODE] [--out PATH] [--out-md PATH]
+Usage: ripr gate evaluate [--pr-guidance PATH | --gap-ledger PATH] [--mode MODE] [--out PATH] [--out-md PATH] [further inputs: see Options below]
 
 Options:
   --root PATH                         Workspace root. Must be an existing directory. Defaults to current directory.
