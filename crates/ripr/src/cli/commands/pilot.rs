@@ -1057,6 +1057,21 @@ mod tests {
         let result = pilot(&args(&["--root", &empty.to_string_lossy()]));
         assert!(result.is_err());
         assert!(!empty.join("target").exists(), "refusal must write nothing");
+
+        // A dangling link named like a source file is not a source: the root
+        // is refused and nothing is written.
+        #[cfg(unix)]
+        {
+            let linked = base.join("dangling-link");
+            std::fs::create_dir_all(&linked).map_err(io)?;
+            std::os::unix::fs::symlink("missing-target", linked.join("app.py")).map_err(io)?;
+            let result = pilot(&args(&["--root", &linked.to_string_lossy()]));
+            assert!(result.is_err(), "dangling link root must be refused");
+            assert!(
+                !linked.join("target").exists(),
+                "refusal must write nothing"
+            );
+        }
         let _ = std::fs::remove_dir_all(&base);
         Ok(())
     }
