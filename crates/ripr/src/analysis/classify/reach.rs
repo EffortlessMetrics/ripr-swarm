@@ -929,6 +929,58 @@ mod tests {
         assert!(names.may_reach_unseen(&imported_std));
     }
 
+    /// #9169 review: dropping the trait allowance keeps the ordinary ones. A
+    /// workspace-trait impl method that source or a test names, or that
+    /// external docs may call, stays undecided; only a silent workspace has no
+    /// path. A name in a comment or string is not a trait declaration.
+    #[test]
+    fn a_workspace_trait_impl_method_keeps_the_name_and_external_docs_allowances() {
+        let mut declared = function("process");
+        declared.item.container = FunctionContainer::Trait {
+            trait_name: "Step".to_string(),
+        };
+        let mut owner = function("process");
+        owner.id = SymbolId("src/lib.rs::impl Step for Inc::process".to_string());
+        owner.item.container = FunctionContainer::TraitImpl {
+            trait_path: "Step".to_string(),
+            self_ty: "Inc".to_string(),
+        };
+        let index_for = |source: &str, functions: Vec<FunctionSummary>| {
+            RustIndex::from_owned(OwnedRustIndex {
+                files: BTreeMap::from([(
+                    PathBuf::from("src/other.rs"),
+                    FileFacts {
+                        path: PathBuf::from("src/other.rs"),
+                        source: source.into(),
+                        ..FileFacts::default()
+                    },
+                )]),
+                functions,
+                ..Default::default()
+            })
+        };
+        let verdicts = |source: &str, functions: Vec<FunctionSummary>| {
+            let index = index_for(source, functions);
+            let single = owner_may_be_reached_unseen(&owner, &index);
+            let pass = UnseenReachNames::build(&index).may_reach_unseen(&owner);
+            assert_eq!(single, pass, "{source}");
+            single
+        };
+        let both = || vec![declared.clone(), owner.clone()];
+        // Silent workspace: no path.
+        assert!(!verdicts("pub fn lonely() {}\n", both()));
+        // A call that names the method (a test, or any source) keeps it undecided.
+        assert!(verdicts("fn t() { Inc.process(1); }\n", both()));
+        // External docs may call it.
+        assert!(verdicts("#![doc = include_str!(\"../README.md\")]\n", both()));
+        // The trait is declared only in a comment or string: no declaration, so
+        // the owner is a foreign-trait impl and keeps the allowance.
+        assert!(verdicts(
+            "// trait Step\nconst S: &str = \"trait Step\";\n",
+            vec![owner.clone()]
+        ));
+    }
+
     #[test]
     fn includes_external_docs_many_answers_like_the_single_form() {
         let sources = [
