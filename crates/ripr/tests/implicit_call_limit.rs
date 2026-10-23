@@ -552,6 +552,7 @@ fn foreign_operator_import_syntax_keeps_unseen_reach_possible() -> Result<(), St
         "use/* gap */std::ops::Add;",
         "// use crate::placeholder\nuse std::ops::Add;",
         "// because imports follow\nuse std::ops::Add;",
+        "macro_rules! import_ops { () => { use std::ops::Add; }; }\nimport_ops!();",
     ] {
         let lib = format!(
             "{import}\nmod local {{ pub trait Add {{ fn marker(&self); }} }}\n\

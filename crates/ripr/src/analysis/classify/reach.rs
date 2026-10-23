@@ -377,14 +377,31 @@ fn implements_trait_in(
 }
 
 /// Identifiers in actual foreign-rooted `use` trees. The syntax tree excludes
-/// comments, strings and unexpanded macro tokens; whitespace does not change
-/// an import. `None` leaves the foreign-trait possibility open for unreadable
-/// source, rather than claiming a workspace identity from an incomplete scan.
+/// comments and strings; whitespace does not change an import. `None` leaves
+/// the foreign-trait possibility open for unreadable source or imports hidden
+/// in macro tokens, rather than claiming an identity from an incomplete scan.
 fn foreign_imported_names(source: &str) -> Option<HashSet<String>> {
     if !source.contains("use") {
         return Some(HashSet::new());
     }
     let parse = crate::analysis::syntax::parse_clean_source_file(source)?;
+    // An invoked item macro can introduce a foreign import. Its tokens are
+    // not `ast::Use` items, so keep identity undecided instead of excluding it.
+    if parse
+        .tree()
+        .syntax()
+        .descendants_with_tokens()
+        .any(|element| {
+            element.into_token().is_some_and(|token| {
+                token.kind() == ra_ap_syntax::SyntaxKind::USE_KW
+                    && token
+                        .parent_ancestors()
+                        .any(|node| ast::TokenTree::can_cast(node.kind()))
+            })
+        })
+    {
+        return None;
+    }
     let mut names = HashSet::new();
     fn collect(tree: &ast::UseTree, names: &mut HashSet<String>) {
         let foreign = tree
@@ -1050,6 +1067,22 @@ mod tests {
             ),
             (
                 "macro_rules! import { () => { use std::ops::Add; } }\nuse crate::local::Add;",
+                true,
+            ),
+            (
+                "macro_rules! import_ops { () => { use std::{ops::{Add}}; }; }\nimport_ops!();",
+                true,
+            ),
+            (
+                "macro_rules! text { () => { /* use std::ops::Add; */ } }\nuse crate::local::Add;",
+                false,
+            ),
+            (
+                "macro_rules! text { () => { \"use std::ops::Add;\" } }\nuse crate::local::Add;",
+                false,
+            ),
+            (
+                "macro_rules! name { () => { fn r#use() {} } }\nuse crate::local::Add;",
                 false,
             ),
         ] {
