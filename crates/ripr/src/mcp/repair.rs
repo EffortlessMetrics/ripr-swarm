@@ -320,9 +320,15 @@ fn durable_attempt_document(
     root_identity: Option<&str>,
 ) -> Value {
     let current_head = crate::agent::artifact::current_git_head(root).ok();
+    // The CLI binds the selected repository in every next-action display
+    // (paste-and-run from any working directory); this bounded MCP projection
+    // renders the same actions with the portable root `.`, exactly like the
+    // repair card's next-action display (ADR 0022): the host-local checkout
+    // path is intentionally not projected and the display is never execution
+    // authority.
     let selected = crate::app::agent_status::selected_attempt_status_reading(
         root,
-        root,
+        &crate::agent::loop_commands::root_display(crate::agent::command_specs::PORTABLE_ROOT),
         crate::app::repair_attempt::REPAIR_ATTEMPT_DIRECTORY,
         "",
         manifest,
@@ -363,6 +369,11 @@ fn durable_attempt_document(
     });
     let mut limitations = manifest.limitations.clone();
     limitations.extend(route_limitations);
+    // Ordinary next-action displays bind the portable root, like the repair
+    // card: presentation only, never execution authority (ADR 0022).
+    // Trust-bound or store-qualified continuations keep the persisted
+    // advanced spelling verbatim, exactly like the CLI renderer.
+    limitations.push("ordinary next-action displays bind the portable root `.` and are presentation only; the host-local root path is intentionally not projected and a display is never execution authority; trust-bound or store-qualified continuations keep their persisted advanced spelling".to_string());
     // #8766: a restart the shared repair gate refuses is named as by-hand work.
     limitations.extend(selected.restart_withheld.clone());
     json!({
