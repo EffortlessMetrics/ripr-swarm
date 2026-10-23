@@ -11,3 +11,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_body_local_use_shadow (2)
+
+Reason:
+RIPR-SPEC-0122: re-bless human render drift after merging main; verdicts unchanged
+
+Command:
+`cargo xtask goldens bless module_reach_body_local_use_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
