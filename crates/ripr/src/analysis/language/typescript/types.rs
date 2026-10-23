@@ -54,6 +54,19 @@ pub(crate) struct TypeScriptOwner {
     /// method, getter or duplicate), which keeps the member from being
     /// replaced inside the object. RIPR-SPEC-0243 rule 5.
     pub(crate) default_object_member: bool,
+    /// `true` when the owner is the whole value of a CommonJS
+    /// `module.exports = <function>` assignment (an anonymous or named
+    /// function expression, an arrow, or a plain reference to a top-level
+    /// function declaration). A `require()` of such a module IS the
+    /// function, so the test's binding is called directly; the `require()`
+    /// of an ES module's default export is a namespace object and is not.
+    /// RIPR-SPEC-0243 rule 19.
+    pub(crate) commonjs_default_export: bool,
+    /// `module.exports = <function>` as the file's whole export, independent of
+    /// the file-level gate that licenses `commonjs_default_export`: a named
+    /// import or member of such a module (`const { f } = require(...)`,
+    /// `k.f`) is a property of the function, never the owner.
+    pub(crate) commonjs_whole_function: bool,
     /// Exported names of the owner's module whose code reaches this
     /// top-level function through a bounded same-module call graph (an
     /// exported wrapper, or a value a same-module factory built). Empty for
@@ -149,6 +162,11 @@ pub(crate) struct TypeScriptTest {
     /// calls `local.member(`, all of one member (RIPR-SPEC-0243 rule 5).
     /// Populated once per file by `extract_tests`.
     pub(crate) default_member_only_locals_in_file: Vec<(String, String)>,
+    /// Names the containing test file writes more than once (their
+    /// declaration initializer plus a reassignment, update or loop target),
+    /// so a binding such as `let f = require('./owner')` may no longer hold
+    /// the owner function. Populated once per file by `extract_tests`.
+    pub(crate) written_locals_in_file: Vec<String>,
     /// Test-local mock factories of the containing test file
     /// (RIPR-SPEC-0247 rule 1, amended 2026-10-15): top-level
     /// `function f() { return { ... }; }` or `const f = () => ({ ... });`
