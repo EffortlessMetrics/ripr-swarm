@@ -367,8 +367,7 @@ fn shadowed_between(
                 other
                     .path()
                     .map(|path| path.syntax().text().to_string())
-                    .as_deref()
-                    != Some(name)
+                    .is_none_or(|path| !exempt.contains(&path))
             })
 }
 
