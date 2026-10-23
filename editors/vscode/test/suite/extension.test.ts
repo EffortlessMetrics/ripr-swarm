@@ -4894,6 +4894,8 @@ suite('Extension Smoke', () => {
     assert.ok(!hasUnsafeShellMetacharacter(body('"100% done!"'), true));
     assert.ok(!hasUnsafeShellMetacharacter(body('"HEAD^"'), true));
     assert.ok(!hasUnsafeShellMetacharacter(body('"%PATH%"'), true));
+    // A redirect between two single-quote spans is outside both (#9738).
+    assert.ok(!hasUnsafeShellMetacharacter(`${body("'a$b'")} > 'out$.json'`, true));
     // An even run then `""`, and adjacent spans, stay one quoted word.
     assert.ok(!hasUnsafeShellMetacharacter(body('"a\\\\""b"'), true));
     assert.ok(!hasUnsafeShellMetacharacter(body(`"a"'b'`), true));
@@ -4902,6 +4904,8 @@ suite('Extension Smoke', () => {
     // Not Windows: a double quote is refused, as before.
     assert.ok(hasUnsafeShellMetacharacter(body('"HEAD~1"')));
     assert.ok(hasUnsafeShellMetacharacter(body('"HEAD~1"'), false));
+    // Not Windows: `>` inside single quotes stays literal, as before.
+    assert.ok(!hasUnsafeShellMetacharacter(body("'gap:a>b'")));
     // Windows: only a complete console-quoted span passes.
     for (const bad of [
       body('"HEAD~1'),
@@ -4925,7 +4929,12 @@ suite('Extension Smoke', () => {
       body('"\\" x " ; calc ; \\"'),
       body('"a\\"'),
       body('"a\\\\\\"'),
-      body('"a\\""b"')
+      body('"a\\""b"'),
+      // cmd.exe does not quote with `'`, so `>`/`<` in the single-quote form
+      // redirect there (#9738).
+      body("'$x > /srv/evil/y'"),
+      body("'$x < in'"),
+      body("'a$' --x 'b > c'")
     ]) {
       assert.ok(hasUnsafeShellMetacharacter(bad, true), JSON.stringify(bad));
     }

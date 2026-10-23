@@ -22,7 +22,8 @@
 //!   (#2109).
 
 use super::{
-    AnalysisOptions, ChangedFile, Finding, LanguageRepoResult, TypeScriptAdapter, is_test_file,
+    AnalysisOptions, ChangedFile, Finding, LanguageRepoResult, RepoCapFired, RepoFileAccounting,
+    RepoLimitingStage, TS_MAX_WORKSPACE_FILES_ENV, TypeScriptAdapter, is_test_file,
     is_typescript_declaration_file, parse_error_reason, read_workspace_sources_capped,
     ts_file_read_limit, ts_workspace_file_limit, ts_workspace_read_budget,
     visit_workspace_with_handwritten,
@@ -128,6 +129,46 @@ pub(super) struct RepoSelection {
     pub(super) production_files: usize,
     pub(super) skipped_files: usize,
     pub(super) partial_reason: Option<String>,
+    pub(super) file_accounting: RepoFileAccounting,
+}
+
+/// Typed accounting for one selection (#6466). An unreadable root measured
+/// nothing, so every count stays unknown. A truncated walk saw an unknown
+/// total, so `discovered`, `skipped` and `omitted` (lower bounds only) are
+/// unknown while `selected` stays exact.
+/// Declaration files are the only non-cap exclusion; tests are evidence and
+/// are selected. The walk cap precedes the working-set cap, so it is the
+/// first limiting stage when both fired.
+fn file_accounting(input: &RepoInput, limit: usize, walk_limit: usize) -> RepoFileAccounting {
+    if input.root_unreadable {
+        return RepoFileAccounting::default();
+    }
+    let selected = input.production.len() + input.tests.len();
+    let discovered = selected + input.declarations + input.capped;
+    let first_cap_fired = if input.discovery_truncated {
+        Some(RepoCapFired {
+            name: TS_MAX_WORKSPACE_FILES_ENV,
+            stage: RepoLimitingStage::Discovery,
+            limit: walk_limit,
+        })
+    } else if input.capped > 0 {
+        Some(RepoCapFired {
+            name: TS_REPO_FILE_LIMIT_ENV,
+            stage: RepoLimitingStage::Selection,
+            limit,
+        })
+    } else {
+        None
+    };
+    RepoFileAccounting {
+        discovered: (!input.discovery_truncated).then_some(discovered),
+        selected: Some(selected),
+        // A truncated walk never saw the rest of the workspace, so the
+        // declaration and cap counts are only lower bounds there.
+        skipped: (!input.discovery_truncated).then_some(input.declarations),
+        omitted: (!input.discovery_truncated).then_some(input.capped),
+        first_cap_fired,
+    }
 }
 
 /// Run the bounded repo-mode analysis for `options.root` under `limit`.
@@ -153,6 +194,7 @@ pub(super) fn analyze_repo_with_limit(
         production_files: selection.production_files,
         skipped_files: selection.skipped_files,
         partial_reason: selection.partial_reason,
+        file_accounting: selection.file_accounting,
         rust_diagnostic_origins: Default::default(),
         rust_consumed_sources: Default::default(),
     })
@@ -203,12 +245,14 @@ fn select_and_analyze(
             input.links_skipped
         ));
     }
+    let file_accounting = file_accounting(&input, limit, walk_limit);
     if input.production.is_empty() {
         return Ok(RepoSelection {
             findings: Vec::new(),
             production_files: 0,
             skipped_files: input.capped,
             partial_reason: join_reasons(&reasons),
+            file_accounting,
         });
     }
 
@@ -314,6 +358,7 @@ fn select_and_analyze(
         production_files: changed.len(),
         skipped_files: input.capped + diff.skipped_files,
         partial_reason: join_reasons(&reasons),
+        file_accounting,
     })
 }
 
