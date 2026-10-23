@@ -388,6 +388,26 @@ fn callable_passed_by_reference_to_a_trusted_call_never_gets_missing_input() -> 
             format!("{body}sorted([1], key=receiver.boundary_probe)\n"),
         ),
         (
+            "keyword label continuation line",
+            probe.to_string(),
+            format!("{body}dict(\n        boundary_probe = 1,\n    )\n    sorted([1], key=boundary_probe)\n"),
+        ),
+        (
+            "keyword label in a multi-line call",
+            probe.to_string(),
+            format!("{body}foo(\n        x = 1,\n    )\n    sorted([1], key=x)\n"),
+        ),
+        (
+            "keyword label in a nested multi-line call",
+            probe.to_string(),
+            format!("{body}dict(\n        a=[\n            1,\n        ],\n        boundary_probe = 2,\n    )\n    sorted([1], key=boundary_probe)\n"),
+        ),
+        (
+            "default argument continuation line",
+            probe.to_string(),
+            format!("{body}def helper(\n        boundary_probe = 1,\n    ):\n        pass\n    sorted([1], key=boundary_probe)\n"),
+        ),
+        (
             "multi-line list holding a callable",
             probe.to_string(),
             format!("{body}fns = [\n        boundary_probe,\n    ]\n    sorted([1], key=fns[0])\n"),

@@ -370,10 +370,25 @@ fn arguments_are_closed(args: &str, test: &PythonTest, plain_locals: &[String]) 
 fn plain_locals(code: &str, test: &PythonTest) -> Vec<String> {
     let mut plain: Vec<String> = Vec::new();
     let mut line_start = 0usize;
+    // Bracket depth at the start of the physical line: a continuation line of
+    // an open call or literal is never a statement, so `name = 1,` there is a
+    // keyword label or element, not an assignment.
+    let mut depth = 0i32;
     for raw in code.split_inclusive('\n') {
         let offset = line_start + (raw.len() - raw.trim_start().len());
         line_start += raw.len();
         let line = raw.trim();
+        let at_statement_start = depth == 0;
+        for ch in raw.chars() {
+            match ch {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => depth -= 1,
+                _ => {}
+            }
+        }
+        if !at_statement_start {
+            continue;
+        }
         let name_len = line
             .find(|ch: char| !(ch == '_' || ch.is_ascii_alphanumeric()))
             .unwrap_or(line.len());
