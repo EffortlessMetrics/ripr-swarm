@@ -9912,7 +9912,8 @@ return Err(\"typed pin\".into());
                         owner_return_pin: &|_, _| false,
                         assertion_admitted: &|_, _| true,
                         sibling_exclusion_admitted: &|_, _| true,
-                        proximity_may_reach_owner: &|_| false,
+                        // The observer sibling may reach the owner (#9167).
+                        proximity_may_reach_owner: &|_| true,
                         owner_parameters: &[],
                         expected_reaches_owner: &|_, _| false,
                         effect_state_carried: &|_, _| true,
@@ -9940,12 +9941,14 @@ return Err(\"typed pin\".into());
                 )],
             );
             for reason in [RelationReason::SameTestFile, RelationReason::SameModule] {
-                let (_, discriminate, related) = reveal_evidence(
+                // The sibling may reach the owner (#9167).
+                let (_, discriminate, related) = reveal_evidence_proximity_reach(
                     &probe,
                     &[
                         (&reaching, RelationReason::DirectOwnerCall),
                         (&sibling, reason),
                     ],
+                    &|_| true,
                 );
                 assert_eq!(
                     discriminate.state,
@@ -9986,7 +9989,7 @@ return Err(\"typed pin\".into());
                         (test.name == "implicit_observer").then_some(true)
                     },
                     sibling_exclusion_admitted: &|_, _| true,
-                    proximity_may_reach_owner: &|_| false,
+                    proximity_may_reach_owner: &|_| true,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     effect_state_carried: &|_, _| true,
@@ -10023,12 +10026,13 @@ return Err(\"typed pin\".into());
                     OracleStrength::Strong,
                 )],
             );
-            let (_, confirmed, _) = reveal_evidence(
+            let (_, confirmed, _) = reveal_evidence_proximity_reach(
                 &probe,
                 &[
                     (&reaching, RelationReason::DirectOwnerCall),
                     (&token, RelationReason::SameTestFile),
                 ],
+                &|_| true,
             );
             assert_eq!(confirmed.state, StageState::Yes);
             // The established opaque-macro allowance remains explicit.
