@@ -673,3 +673,80 @@ fn function_pointer_shared_targets_require_binary_assertion_trust() -> Result<()
     }
     Ok(())
 }
+
+/// Alias reach to a constant reader must not become an owner-return pin.
+/// These are static relation controls, not mutation-runtime evidence.
+#[test]
+fn function_pointer_constant_readers_relate_without_promoting() -> Result<(), String> {
+    for (body, reads_constant) in [("x + LIMIT", true), ("x + 4", false)] {
+        let scratch = Scratch::create()?;
+        std::fs::create_dir(scratch.0.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            scratch.0.join("Cargo.toml"),
+            "[package]\nname = \"pointer-const-reader\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            scratch.0.join("src/lib.rs"),
+            format!(
+                "pub const LIMIT: u32 = 4;\npub fn score(x: u32) -> u32 {{ {body} }}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn pointer_const_case() {{\n        let f: fn(u32) -> u32 = score;\n        assert_eq!(f(2), 6);\n    }}\n}}\n"
+            ),
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            scratch.0.join("change.diff"),
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-pub const LIMIT: u32 = 3;\n+pub const LIMIT: u32 = 4;\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let report = check_workspace(CheckInput {
+            root: scratch.0.clone(),
+            diff_file: Some(scratch.0.join("change.diff")),
+            mode: Mode::Fast,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        let changed: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|finding| finding.probe.location.line == 1)
+            .collect();
+        assert_eq!(
+            changed.len(),
+            1,
+            "one changed constant: {body}: {changed:?}"
+        );
+        let finding = changed[0];
+        assert_eq!(finding.probe.family, ProbeFamily::StaticUnknown, "{body}");
+        assert_eq!(finding.class, ExposureClass::StaticUnknown, "{body}");
+        assert_eq!(
+            finding
+                .ripr
+                .reach
+                .summary
+                .contains("reads the changed constant"),
+            reads_constant,
+            "{body}: {finding:?}"
+        );
+        assert_eq!(
+            finding
+                .related_tests
+                .iter()
+                .any(|test| test.name == "pointer_const_case"),
+            reads_constant,
+            "{body}: {finding:?}"
+        );
+        if reads_constant {
+            assert_eq!(finding.ripr.reach.state, ripr::domain::StageState::Weak);
+            assert_eq!(
+                finding.ripr.reveal.observe.state,
+                ripr::domain::StageState::Unknown
+            );
+            assert_eq!(
+                finding.ripr.reveal.discriminate.state,
+                ripr::domain::StageState::Unknown
+            );
+        }
+    }
+    Ok(())
+}

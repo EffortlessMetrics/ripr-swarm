@@ -2537,8 +2537,11 @@ enum ReturnPathGate {
     /// `P.iter().A(|x| E)[.T()]`, whose closure runs once per element of
     /// the parameter at `position`. The pinned call must pass that
     /// parameter a non-empty literal sequence, so the closure runs at least
-    /// once on the pinned input.
-    Adaptor { position: usize },
+    /// once on the pinned input. A `Result<Vec<..>, ..>` collect stops at the
+    /// first `Err` and discards the earlier `Ok` values, so it also needs the
+    /// pinned value to be an `Ok(..)` that every element reached
+    /// (`requires_ok`, #9490).
+    Adaptor { position: usize, requires_ok: bool },
     /// RIPR-SPEC-0197 rule 3: the changed tail is the owner's whole body and
     /// one pure `&&` or `||` chain over its parameters. The pinned call
     /// must evaluate every operand on some run.
@@ -2857,6 +2860,7 @@ impl OwnerReturnPin {
                     .filter(|tail| tail.tail_is(&probe.expression))
                     .map(|tail| ReturnPathGate::Adaptor {
                         position: tail.position,
+                        requires_ok: tail.collects_result(),
                     })?
             }
             None => return None,
@@ -3924,7 +3928,7 @@ impl OwnerReturnPin {
                 }
                 // RIPR-SPEC-0265 rule 2: the pinned call must run the
                 // closure at least once.
-                if let ReturnPathGate::Adaptor { position } = path
+                if let ReturnPathGate::Adaptor { position, .. } = path
                     && !call_text.is_some_and(|text| {
                         closure_adaptor::pinned_call_runs_closure(
                             test,
@@ -4913,13 +4917,19 @@ impl ReturnPathGate {
         match self {
             Self::EarlyHead("Some") => &["Some", "None"],
             Self::EarlyHead(_) | Self::Head("Err") | Self::ErrVariant { .. } => &["Ok", "Err"],
+            Self::Adaptor {
+                requires_ok: true, ..
+            } => &["Ok", "Err"],
             _ => &[],
         }
     }
 
     fn admits(&self, expected: &str) -> bool {
         match self {
-            Self::Any | Self::Adaptor { .. } | Self::ShortCircuit(_) => true,
+            Self::Any | Self::ShortCircuit(_) => true,
+            Self::Adaptor { requires_ok, .. } => {
+                !requires_ok || constructor_call_span(expected.trim(), "Ok").is_some()
+            }
             Self::Head(head) | Self::EarlyHead(head) => {
                 constructor_call_span(expected.trim(), head).is_some()
             }

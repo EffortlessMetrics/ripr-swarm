@@ -1,0 +1,13 @@
+diff --git a/lib/Profile.pm b/lib/Profile.pm
+index 949eff0..78b154d 100644
+--- a/lib/Profile.pm
++++ b/lib/Profile.pm
+@@ -11,7 +11,7 @@ has full_name  => (is => 'ro', isa => 'Str', lazy => 1, builder => '_build_full_
+ 
+ sub _build_full_name {
+     my ($self) = @_;
+-    return join ' ', $self->first_name, $self->last_name;
++    return join(' ', $self->first_name, $self->last_name);
+ }
+ 
+ sub is_adult {

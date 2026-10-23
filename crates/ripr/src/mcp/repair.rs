@@ -83,15 +83,19 @@ pub(crate) struct RepairTransaction {
 }
 
 /// Extract the attempt id from a `ripr://repair-attempt/{attempt_id}` URI.
+/// One trailing slash is normalized away (#9895, `trim_one_trailing_slash`).
 pub(crate) fn repair_attempt_resource_id(uri: &str) -> Option<&str> {
     uri.strip_prefix("ripr://repair-attempt/")
+        .map(super::gaps::trim_one_trailing_slash)
         .filter(|id| !id.is_empty() && !id.contains('/'))
 }
 
 /// Extract the receipt id from a `ripr://receipt/{receipt_id}` URI. Receipt
 /// ids are attempt-bound: one retained receipt per durable attempt identity.
+/// One trailing slash is normalized away (#9895, `trim_one_trailing_slash`).
 pub(crate) fn receipt_resource_id(uri: &str) -> Option<&str> {
     uri.strip_prefix("ripr://receipt/")
+        .map(super::gaps::trim_one_trailing_slash)
         .filter(|id| !id.is_empty() && !id.contains('/'))
 }
 
@@ -2719,6 +2723,32 @@ mod tests {
         ] {
             assert_eq!(repair_attempt_resource_id(other), None, "{other}");
             assert_eq!(receipt_resource_id(other), None, "{other}");
+        }
+    }
+
+    /// #9895: the attempt and receipt routes tolerate exactly one trailing
+    /// slash; a second slash or a slash leaving the id empty still misses.
+    #[test]
+    fn resource_id_routes_tolerate_one_trailing_slash() {
+        for (uri, expected) in [
+            (
+                "ripr://repair-attempt/repair-attempt-abc/",
+                Some("repair-attempt-abc"),
+            ),
+            ("ripr://repair-attempt/repair-attempt-abc//", None),
+            ("ripr://repair-attempt//", None),
+        ] {
+            assert_eq!(repair_attempt_resource_id(uri), expected, "{uri}");
+        }
+        for (uri, expected) in [
+            (
+                "ripr://receipt/repair-attempt-abc/",
+                Some("repair-attempt-abc"),
+            ),
+            ("ripr://receipt/repair-attempt-abc//", None),
+            ("ripr://receipt//", None),
+        ] {
+            assert_eq!(receipt_resource_id(uri), expected, "{uri}");
         }
     }
 }
