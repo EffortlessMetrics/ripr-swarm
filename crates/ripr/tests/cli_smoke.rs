@@ -10053,6 +10053,48 @@ fn agent_receipt_attempt_flag_selects_one_attempt_and_refusals_name_ids()
                 "fixtures/blind_journey_installed_{language}/manifest.json"
             )))?)?;
         assert_eq!(manifest["journey"]["eligible_items"][0], authored_seam);
+        if language == "typescript" {
+            // #9103: the TypeScript journey is gap-bound; the after phase
+            // issues the receipt itself, so no separate `agent receipt`
+            // command is printed or scripted. Every positive row records the
+            // issued receipt exactly once and carries no seam-bound receipt
+            // command (the gap-bound receipt path has its own installed
+            // journey in installed_python_typescript_journeys.rs).
+            assert!(
+                manifest["journey"]["printed_command_templates"]
+                    .get("agent_receipt")
+                    .is_none(),
+                "typescript journey must not template a separate receipt command"
+            );
+            let mut gap_rows = 0usize;
+            for row in scenarios.iter().filter(|row| {
+                row["id"]
+                    .as_str()
+                    .is_some_and(|id| id.starts_with("installed_typescript_"))
+                    && row["expected"]["terminal"] == "passed_blind_journey"
+            }) {
+                let actions = row["journey"]["actions"]
+                    .as_array()
+                    .ok_or("journey actions")?;
+                let receipt_commands = actions
+                    .iter()
+                    .filter(|action| {
+                        action["input_bytes"]
+                            .as_str()
+                            .is_some_and(|input| input.starts_with("argv:ripr agent receipt "))
+                    })
+                    .count();
+                let receipt_records = actions
+                    .iter()
+                    .filter(|action| action["kind"] == "receipt_execution")
+                    .count();
+                assert_eq!(receipt_commands, 0, "{}", row["id"]);
+                assert_eq!(receipt_records, 1, "{}", row["id"]);
+                gap_rows += 1;
+            }
+            assert_eq!(gap_rows, 4, "typescript positive rows");
+            continue;
+        }
         let template = manifest["journey"]["printed_command_templates"]["agent_receipt"]
             .as_str()
             .ok_or("receipt template")?;
@@ -10202,7 +10244,7 @@ fn agent_receipt_attempt_flag_selects_one_attempt_and_refusals_name_ids()
             );
         }
     }
-    assert_eq!(positive_rows, 9);
+    assert_eq!(positive_rows, 6);
     std::fs::remove_dir_all(launch)?;
     std::fs::remove_dir_all(root)?;
     Ok(())

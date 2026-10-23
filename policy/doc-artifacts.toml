@@ -1124,7 +1124,7 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0210-installed-typescript-journey-fixture.md"
 status = "proposed"
 owner = "test-infra"
-standalone_reason = "Issue #4519 records the installed TypeScript journey fixture: fixtures/blind_journey_installed_typescript retains a digest-bound npm/Vitest threshold-boundary repository (committed inclusive equality change, related test missing exactly the boundary, lockfile-backed runner selection, reproducible git identities) plus eight digest-bound negative snapshots (rebindable let, reassignment, shadowing, imported constant, object/namespace write, enum or computed initializer, nonliteral arithmetic, control-flow reach barrier) whose sixteen scripted installed_typescript_* journeys execute through the unchanged RIPR-SPEC-0205 executor â€” positive row from a foreign CWD with decoy naming the owner, equality input and executable vitest run command, second-root portable-identity repeat, and the fail-closed variants / failing-command / skipped-verification / cyclic-route / deleted-artifact / workspace-binary / interrupted-receipt controls each keeping its own derived non-positive terminal â€” while a dedicated check-fixture-contracts validator recomputes snapshot digests and cross-references the corpus; the real candidate-bound run stays residual on the frozen #1609 candidate and the #4510 harness."
+standalone_reason = "Issue #4519 records the installed TypeScript journey fixture: fixtures/blind_journey_installed_typescript retains a digest-bound npm/Vitest threshold-boundary repository (committed inclusive equality change, related test missing exactly the boundary, lockfile-backed runner selection, reproducible git identities) plus eight digest-bound negative snapshots (rebindable let, reassignment, shadowing, imported constant, object/namespace write, enum or computed initializer, nonliteral arithmetic, control-flow reach barrier) whose seventeen scripted installed_typescript_* journeys execute through the unchanged RIPR-SPEC-0205 executor â€” positive row from a foreign CWD with decoy following the gap-bound agent repair --gap-id start, ripr continue after phase and gap-bound receipt (#9103) and naming the owner, equality input and executable vitest run command, a pilot/status route row that resolves to that start, second-root portable-identity repeat, and the fail-closed variants / failing-command / skipped-verification / cyclic-route / deleted-artifact / workspace-binary controls each keeping its own derived non-positive terminal, plus a completed-attempt rerun re-observation row that claims no interruption or lost-receipt recovery â€” while a dedicated check-fixture-contracts validator recomputes snapshot digests and cross-references the corpus; the real candidate-bound run stays residual on the frozen #1609 candidate and the #4510 harness."
 
 [[artifact]]
 id = "RIPR-SPEC-0211"
@@ -1730,6 +1730,14 @@ path = "docs/specs/RIPR-SPEC-0285-python-framework-scan-bounded-deterministic-st
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Issues #8706, #8707 and #8751 record the Python framework scan contract: per scanned directory only sorted regular .py test files count toward the 64-candidate cap so non-test entries and test-named directories cannot starve the scan or make it depend on filesystem order; each candidate is read for at most a 4096-byte prefix with a cut final line dropped; and evidence is matched only against code lines (scanning stops at an unquoted #, skips single-line string contents, and only the matching delimiter closes a triple-quoted string) so docstring examples, commented delimiters, and string-literal delimiters neither credit nor hide a real import pytest / import unittest."
+
+[[artifact]]
+id = "RIPR-SPEC-0289"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0289-edit-cage-parse-error-hint.md"
+status = "proposed"
+owner = "agent-loop"
+standalone_reason = "Issue #8991 records the edit-cage parse-error refusal clarity contract: when the inline test region reports the selected file unparseable after the attempt's edit, the after-phase refusal narration leads with the plain fix-the-syntax-error statement and the existing refused-path listing and CRLF-aware undo route follow verbatim below it; the wording is owned by the one refusal renderer so every surface that renders the refusal carries it, so the behavior sits inside the spec-test-code chain."
 
 [[artifact]]
 id = "RIPR-SPEC-0291"

@@ -12,7 +12,7 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 181
+floor = 182
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
@@ -839,6 +839,11 @@ reason = "doctor/repo-input framework-scan admission, ordering, and string-aware
 [[unmeasured]]
 id = "RIPR-SPEC-0291"
 reason = "acceptance examples are prose, not numbered; agent-brief start-command root rendering is not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0289"
+scope = "out"
+reason = "edit-cage refusal narration wording; not an exposure-verdict example a corpus case labels"
 
 [[spec]]
 id = "RIPR-SPEC-0290"
