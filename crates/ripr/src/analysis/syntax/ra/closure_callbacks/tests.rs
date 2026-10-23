@@ -42,6 +42,63 @@ fn closure_literal_positions_require_a_call_that_runs_with_the_closure()
         ),
         ("async closure", "run(true, async || gate(1));", vec![]),
         (
+            "exit in an earlier argument, statement",
+            "run({ return; true }, || gate(1));",
+            vec![],
+        ),
+        (
+            "exit in a later argument, statement",
+            "run(|| gate(1), { return; true });",
+            vec![],
+        ),
+        (
+            "exit in an argument, let initializer",
+            "let _ = run({ return; true }, || gate(1));",
+            vec![],
+        ),
+        (
+            "exit in a later argument, let initializer",
+            "let _ = run(|| gate(1), { return; true });",
+            vec![],
+        ),
+        (
+            "exit in an argument, tail",
+            "run({ return; true }, || gate(1))",
+            vec![],
+        ),
+        (
+            "exit in a later argument, tail",
+            "run(|| gate(1), { return; true })",
+            vec![],
+        ),
+        (
+            "question mark in an argument",
+            "run(x?, || gate(1));",
+            vec![],
+        ),
+        (
+            "opaque macro in an argument",
+            "run(m!(), || gate(1));",
+            vec![],
+        ),
+        (
+            "transparent macro in an argument",
+            "run(format!(\"x\"), || gate(1));",
+            vec![1],
+        ),
+        (
+            "closure return in an argument",
+            "run((|| { return 1; })(), || gate(1));",
+            vec![1],
+        ),
+        (
+            "return after the executed helper call",
+            "run(true, || gate(1)); return;",
+            vec![1],
+        ),
+        ("let initializer", "let _ = run(true, || gate(1));", vec![1]),
+        ("tail call", "run(true, || gate(1))", vec![1]),
+        (
             "under if false",
             "if false { run(true, || gate(1)); }",
             vec![],

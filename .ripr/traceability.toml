@@ -13350,6 +13350,7 @@ tests = [
   "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_credit_covers_generic_bounds_and_refuses_two_invoked_callbacks",
   "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_credit_orders_same_line_statements_by_source_position",
   "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_credit_ignores_an_unrelated_nested_fn_exit_in_the_test",
+  "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_credit_keeps_a_return_after_an_executed_helper_call",
   "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_credit_accepts_an_assertion_unrelated_to_the_closure_result",
   "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_credit_does_not_reach_helper_callbacks_in_another_module",
   "crates/ripr/src/analysis/syntax/ra/closure_callbacks/tests.rs::closure_literal_positions_require_a_call_that_runs_with_the_closure",

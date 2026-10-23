@@ -128,14 +128,23 @@ fn eager_statement_exprs(body: &ast::BlockExpr) -> Vec<(ast::Expr, TextSize)> {
             ast::Stmt::LetStmt(binding) if binding.let_else().is_none() => binding.initializer(),
             _ => None,
         };
-        if let Some(expression) = expression {
+        // The statement's own operands run before the call: an exit or an
+        // opaque macro anywhere in it (`run({ return; x }, ..)`) means the
+        // call may never run, so it is not yielded either.
+        let barrier = may_exit_early(statement.syntax()) || has_opaque_macro(statement.syntax());
+        if let Some(expression) = expression
+            && !barrier
+        {
             reached.push((expression, statement.syntax().text_range().end()));
         }
-        if may_exit_early(statement.syntax()) || has_opaque_macro(statement.syntax()) {
+        if barrier {
             return reached;
         }
     }
-    if let Some(tail) = list.tail_expr() {
+    if let Some(tail) = list.tail_expr()
+        && !may_exit_early(tail.syntax())
+        && !has_opaque_macro(tail.syntax())
+    {
         let end = tail.syntax().text_range().end();
         reached.push((tail, end));
     }
