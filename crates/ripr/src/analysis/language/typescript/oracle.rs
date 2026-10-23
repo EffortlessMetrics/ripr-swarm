@@ -848,6 +848,21 @@ fn collect_nested_callback_assertions(
             {
                 return;
             }
+            if let Some(statements) = function_body_statements_from_argument(callback) {
+                // `var` escapes nested blocks to the callback's function
+                // scope. The lexical block intervals below cannot prove it
+                // independent. Reuse the AST hoist walk, which skips nested
+                // function bodies; block functions keep their existing rules.
+                let mut hoisted = Vec::new();
+                for statement in statements {
+                    super::tests_extract::collect_hoisted_names(statement, &mut hoisted, true);
+                }
+                if receiver_identifiers(receiver)
+                    .any(|name| hoisted.iter().any(|binding| binding == name))
+                {
+                    return;
+                }
+            }
             if let Some(body) = callback_body_text(callback, text) {
                 // Substitution happens at parameter uses. A receiver binding
                 // in an independent nested block cannot capture those uses,

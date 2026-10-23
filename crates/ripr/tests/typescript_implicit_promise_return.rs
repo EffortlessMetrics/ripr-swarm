@@ -199,6 +199,8 @@ fn independent_nested_bindings_keep_promise_credit() -> Result<(), String> {
                 "const total = () => 0;",
                 "const unused = 0, total = () => 0;",
                 "\nconst total = () => 0;\n",
+                "let total = () => 0;",
+                "\nlet total = () => 0;\n",
             ] {
                 for callback in [
                     format!(
@@ -237,6 +239,98 @@ fn nested_binding_used_inside_its_scope_withholds_credit() -> Result<(), String>
                 ExposureClass::Exposed,
                 "{extension} {callback}: {got:?}"
             );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn nested_var_binds_the_entire_promise_callback() -> Result<(), String> {
+    for extension in ["ts", "js"] {
+        for runner in ["vitest", "node"] {
+            let assertion = if runner == "node" {
+                "assert.strictEqual(total(), 30)"
+            } else {
+                "expect(total()).toBe(30)"
+            };
+            for parameters in ["()", "(value)"] {
+                for declaration in ["{ var total = () => 30; }", "{\nvar total = () => 30;\n}"] {
+                    for callback in [
+                        format!(
+                            "() => total().then({parameters} => {{ {declaration} {assertion}; }})"
+                        ),
+                        format!(
+                            "() => {{ return total().then({parameters} => {{ {declaration} {assertion}; }}); }}"
+                        ),
+                        format!(
+                            "async () => {{ await total().then({parameters} => {{ {declaration} {assertion}; }}); }}"
+                        ),
+                    ] {
+                        let got = finding(extension, runner, &callback)?;
+                        assert_ne!(
+                            got.class,
+                            ExposureClass::Exposed,
+                            "{extension} {runner} {callback}: {got:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn var_in_an_independent_nested_function_does_not_capture_the_callback() -> Result<(), String> {
+    for extension in ["ts", "js"] {
+        for runner in ["vitest", "node"] {
+            let assertion = if runner == "node" {
+                "assert.strictEqual(value, 30)"
+            } else {
+                "expect(value).toBe(30)"
+            };
+            for helper in [
+                "const helper = () => { { var total = () => 0; } };",
+                "const helper = () => { {\nvar total = () => 0;\n} };",
+            ] {
+                let callback = format!("() => total().then(value => {{ {helper} {assertion}; }})");
+                let got = finding(extension, runner, &callback)?;
+                assert_eq!(
+                    got.class,
+                    ExposureClass::Exposed,
+                    "{extension} {runner} {callback}: {got:?}"
+                );
+                assert_eq!(got.related_tests.len(), 1);
+                assert_eq!(got.related_tests[0].oracle_kind, OracleKind::ExactValue);
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn hoisted_function_assertions_do_not_confirm_the_imported_owner() -> Result<(), String> {
+    for extension in ["ts", "js"] {
+        for runner in ["vitest", "node"] {
+            let assertion = if runner == "node" {
+                "assert.strictEqual(total(), 30)"
+            } else {
+                "expect(total()).toBe(30)"
+            };
+            for body in [
+                format!("{assertion}; function total() {{ return 30; }}"),
+                format!("{assertion};\nfunction total() {{ return 30; }}"),
+                format!("{{ {assertion}; function total() {{ return 30; }} }}"),
+                format!("{{ {assertion};\nfunction total() {{ return 30; }} }}"),
+            ] {
+                let callback = format!("() => total().then(value => {{ {body} }})");
+                let got = finding(extension, runner, &callback)?;
+                assert_ne!(
+                    got.class,
+                    ExposureClass::Exposed,
+                    "{extension} {runner} {callback}: {got:?}"
+                );
+            }
         }
     }
     Ok(())

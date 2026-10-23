@@ -141,6 +141,12 @@ assertions are collected as the test's own:
   names themselves are not uses, including non-first declarators. The shared
   lexical scope model retains its documented regex and cross-block `var`
   limitations; this is not general promise or binding dataflow analysis.
+  In a returned or awaited `.then` callback, a receiver name declared with
+  `var` at any block depth belongs to the callback's function scope. The
+  existing AST hoisting collector therefore refuses its substitution, even
+  outside the declaration's nested block. It does not enter independent
+  nested function bodies. This callback guard does not claim to repair the
+  shared lexical scanner's function-scoping limits in other consumers.
 - `await t.test(name, [options,] (t2) => body)`, where `t` is the test
   callback's own receiver, `name` is present and is a string or template
   literal, and

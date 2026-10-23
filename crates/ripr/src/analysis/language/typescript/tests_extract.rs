@@ -2366,7 +2366,7 @@ pub(super) fn collect_registration_scope_names(
     }
 }
 
-fn collect_hoisted_names(
+pub(super) fn collect_hoisted_names(
     statement: &Statement<'_>,
     out: &mut Vec<String>,
     block_functions_are_lexical: bool,

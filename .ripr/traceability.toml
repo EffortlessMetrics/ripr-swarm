@@ -8573,6 +8573,7 @@ fixtures = [
   "fixtures/error_path_operand_error_lexeme",
   "fixtures/evidence-promotion-honesty-corpus",
   "fixtures/typescript_then_inline_receiver_shadow",
+  "fixtures/typescript_then_function_scoped_var_shadow",
   "fixtures/evidence-promotion-honesty-corpus/patches/semver-matches-greater.diff",
   "fixtures/evidence-promotion-honesty-corpus/reports/scope-clean-complete-empty-may-be-clean.json",
   "fixtures/evidence-promotion-honesty-corpus/reports/scope-limited-empty-not-clean.json",
@@ -16279,6 +16280,9 @@ tests = [
   "crates/ripr/tests/typescript_implicit_promise_return.rs::inline_receiver_bindings_cannot_supply_promise_credit",
   "crates/ripr/tests/typescript_implicit_promise_return.rs::independent_nested_bindings_keep_promise_credit",
   "crates/ripr/tests/typescript_implicit_promise_return.rs::nested_binding_used_inside_its_scope_withholds_credit",
+  "crates/ripr/tests/typescript_implicit_promise_return.rs::nested_var_binds_the_entire_promise_callback",
+  "crates/ripr/tests/typescript_implicit_promise_return.rs::var_in_an_independent_nested_function_does_not_capture_the_callback",
+  "crates/ripr/tests/typescript_implicit_promise_return.rs::hoisted_function_assertions_do_not_confirm_the_imported_owner",
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::awaited_subtest_on_the_receiver_is_collected",
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::copy_for_identity_change_needs_an_identity_matcher",
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::identity_copy_subject_reads_both_directions",
@@ -16297,6 +16301,7 @@ tests = [
 fixtures = [
   "fixtures/typescript-verdict-corpus",
   "fixtures/typescript_then_inline_receiver_shadow",
+  "fixtures/typescript_then_function_scoped_var_shadow",
 ]
 code = [
   "crates/ripr/src/analysis/language/typescript/catch_arm_guard.rs",
@@ -16304,6 +16309,7 @@ code = [
   "crates/ripr/src/analysis/language/typescript/oracle.rs",
   "crates/ripr/src/analysis/language/typescript/related_tests.rs",
   "crates/ripr/src/analysis/language/typescript/table_rows.rs",
+  "crates/ripr/src/analysis/language/typescript/tests_extract.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0246-typescript-corpus-oracle-amendments.md",
