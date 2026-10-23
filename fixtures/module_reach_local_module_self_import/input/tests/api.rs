@@ -6,6 +6,6 @@ pub mod qual_reach {
 use self::qual_reach::inner::order_discount;
 #[test]
 fn discount_boundary() {
-    assert_eq!(order_discount(10), 5);
-    assert_eq!(order_discount(9), 0);
+    assert_eq!(order_discount(10, 5), 10);
+    assert_eq!(order_discount(9, 5), 9);
 }

@@ -292,8 +292,13 @@ can only hint that a caller "may lead here" without changing anything.
   refused too when the test file imports a path starting with the library's
   name and the file aliases, imports, globs or declares that name, or
   invokes an `include`-family macro (the prefix then may not name the
-  library), or imports the entry's name through `self::`/`crate::`/`super::`
-  (a module of the test crate). A bare call is read from the masked file at
+  library), or imports the entry's name through `self::`/`crate::`/`super::` without
+  resolving to the library (an `extern crate <lib> [as x]` item, or a root
+  inline module whose own items bind the next segment exactly once by a plain
+  `use <lib>::..`; a foreign, glob, `cfg`-gated, ambiguous or unresolvable
+  anchor refuses, and a unit test under `src/` is inside the library), or when
+  a `const`/`static` of that name is in scope of the test (file root or a
+  function body, not an unrelated `mod`). A bare call is read from the masked file at
   its own line, so a spelling only in a string or comment is not a call.
   The qualified spelling is refused for a path longer or shorter than
   the entry's own, another crate name, a test file that declares any item, `let`, closure

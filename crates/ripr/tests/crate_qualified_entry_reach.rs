@@ -829,6 +829,28 @@ fn bare_spelling_in_non_code_text_does_not_admit_an_import() -> Result<(), Strin
 #[test]
 fn a_local_module_import_of_the_entry_name_does_not_link() -> Result<(), String> {
     let local = "mod qual_reach {\n    pub mod inner {\n        pub use std::cmp::max as order_discount;\n    }\n}\n";
+    // The imported suffix is followed through the module's own bindings: a
+    // foreign re-export beside a library one, a library re-export in an
+    // unrelated child module, and a glob all refuse.
+    for (module, import) in [
+        (
+            "mod api {\n    pub use qual_reach::inner;\n    pub use std::cmp as foreign;\n}\n",
+            "use self::api::foreign::order_discount;\n",
+        ),
+        (
+            "mod api {\n    pub use std::cmp as foreign;\n    pub mod other {\n        pub use qual_reach::inner as foreign;\n    }\n}\n",
+            "use self::api::foreign::order_discount;\n",
+        ),
+        (
+            "mod api {\n    pub use qual_reach::inner;\n    pub use std::cmp::*;\n}\n",
+            "use self::api::inner::order_discount;\n",
+        ),
+    ] {
+        let tests = format!("{module}{import}{}", test_file(BARE));
+        let package = module_package("src/inner.rs", MODULE_LIB, tests, vec![]);
+        assert_eq!(package.relation()?, None, "{module}{import}");
+        assert_ne!(package.classification()?, "exposed", "{module}{import}");
+    }
     for import in [
         "use self::qual_reach::inner::order_discount;\n",
         "use crate::qual_reach::inner::order_discount;\n",
@@ -851,6 +873,18 @@ fn a_local_module_import_of_the_entry_name_does_not_link() -> Result<(), String>
             "use self::api::inner::order_discount;\n",
         ),
         ("", "use qual_reach::inner::{order_discount, other};\n"),
+        (
+            "extern crate qual_reach as lib_alias;\n",
+            "use crate::lib_alias::inner::order_discount;\n",
+        ),
+        (
+            "mod api {\n    pub use ::qual_reach::inner;\n}\n",
+            "use crate::api::inner::order_discount;\n",
+        ),
+        (
+            "mod api {\n    pub use ::qual_reach::inner;\n}\n",
+            "use self::api::inner::order_discount;\n",
+        ),
     ] {
         let tests = format!("{positive}{import}{}", test_file(BARE));
         let package = module_package("src/inner.rs", MODULE_LIB, tests, vec![]);
@@ -883,6 +917,13 @@ fn a_nearer_binding_or_same_line_non_code_does_not_admit_a_bare_call() -> Result
         assert_eq!(package.relation()?, None, "{binding}");
         assert_ne!(package.classification()?, "exposed", "{binding}");
     }
+    // A same-named const inside an unrelated module is not in scope.
+    let tests = format!(
+        "mod unrelated {{\n    pub const order_discount: u32 = 7;\n}}\n{import}{}",
+        test_file(BARE)
+    );
+    let package = module_package("src/inner.rs", MODULE_LIB, tests, vec![]);
+    assert_eq!(package.relation()?.as_deref(), LINKED, "unrelated const");
     for body in [
         "    let _t = \"order_discount(10)\"; assert_eq!(foreign::order_discount(10), 5);",
         "    /* order_discount(10) */ assert_eq!(foreign::order_discount(10), 5);",
