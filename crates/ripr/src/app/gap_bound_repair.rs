@@ -81,6 +81,60 @@ pub(crate) fn startable_typescript_gap_record(finding: &Finding) -> Option<GapRe
     Some(record)
 }
 
+/// Run the diff-scoped analysis the default human `ripr check` runs for
+/// `root` (the live diff source selection included; `base: None` lets the
+/// loader resolve the default base exactly as check does). The one analysis
+/// behind a gap-bound before snapshot and behind the start admission that
+/// `ripr agent status` consults (#10001), so they cannot drift.
+pub(crate) fn default_check_output(
+    root: &std::path::Path,
+    base: Option<&str>,
+    config: &crate::config::RiprConfig,
+) -> Result<super::CheckOutput, String> {
+    let mut input = super::CheckInput {
+        root: root.to_path_buf(),
+        base: base.map(str::to_string),
+        git_timeout: Some(super::default_cli_git_timeout()),
+        ..super::CheckInput::default()
+    };
+    crate::config::apply_to_check_input(
+        &mut input,
+        config,
+        crate::config::CheckInputExplicit::default(),
+    );
+    let worktree_run = super::diff_source::select_live_diff_source(
+        &input.root,
+        super::diff_source::DiffSourceRequest::Default,
+        input.git_timeout,
+    )
+    .is_working_tree();
+    let scope = if worktree_run {
+        super::AnalysisProgressScope::Worktree
+    } else {
+        super::AnalysisProgressScope::Diff
+    };
+    let mut output = super::check_with_progress_core(input, config, scope, None)
+        .map_err(|error| error.to_string())?;
+    // The same disclosure normalization `ripr check` applies: a working-tree
+    // read analyzed the live files, so the committed-history flag is off.
+    if worktree_run {
+        output.unanalyzed_working_tree = false;
+    }
+    Ok(output)
+}
+
+/// The gap-bound start the next default `ripr check --root` would print for
+/// `root`, or `None` when it would print none or the analysis cannot decide
+/// (fail-closed: the caller keeps its "no start" wording). Admission is the
+/// check pipeline's own, [`selected_typescript_gap_route`].
+///
+/// [`selected_typescript_gap_route`]: super::task_first::selected_typescript_gap_route
+pub(crate) fn default_check_gap_start(root: &std::path::Path) -> Option<super::GapRepairRoute> {
+    let config = crate::config::load_for_root(root).ok()?;
+    let output = default_check_output(root, None, &config).ok()?;
+    super::task_first::selected_typescript_gap_route(&output, &config)
+}
+
 /// What a canonical gap id resolves to among one check run's findings.
 pub(crate) enum GapStartLookup {
     /// A finding carries this gap and its record validates.
