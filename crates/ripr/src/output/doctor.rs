@@ -3545,7 +3545,7 @@ mod tests {
         std::fs::create_dir_all(&dir).map_err(|err| format!("create dir: {err}"))?;
         let file = dir.join("a-file");
         std::fs::write(&file, "x").map_err(|err| format!("write file: {err}"))?;
-        let mut cases: Vec<(&str, PathBuf, Option<&str>)> = vec![
+        let cases: Vec<(&str, PathBuf, Option<&str>)> = vec![
             ("directory", dir.clone(), None),
             (
                 "missing",
@@ -3555,7 +3555,8 @@ mod tests {
             ("file", file, Some("the root is not a directory")),
         ];
         #[cfg(unix)]
-        {
+        let cases = {
+            let mut cases = cases;
             let dangling = dir.join("dangling");
             std::os::unix::fs::symlink(dir.join("no-such-target"), &dangling)
                 .map_err(|err| format!("dangling symlink: {err}"))?;
@@ -3572,7 +3573,8 @@ mod tests {
                 looped,
                 Some("the root directory cannot be read"),
             ));
-        }
+            cases
+        };
         let failures: Vec<String> = cases
             .iter()
             .filter_map(|(name, root, expected)| {
