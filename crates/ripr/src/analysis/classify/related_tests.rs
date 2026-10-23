@@ -1204,6 +1204,22 @@ fn find_related_tests_with_candidates<'a>(
         let same_file_or_named =
             same_test_file || file_path_token_matches || owner_name_in_test || token_in_test_name;
 
+        // #9982: a doctest is named for the item it documents and runs only
+        // that item's example. Sharing a name token (`ready` from
+        // `Poll::Ready`) with the changed expression relates it to nothing;
+        // outside the owner's own file only a call, a helper or seam route,
+        // or an equality dispatch may. Every other relation is unchanged.
+        if !same_test_file
+            && !calls_owner
+            && !equality_asserts_owner
+            && !assertions_reference_owner
+            && !calls_helper_entry
+            && !calls_seam_callee
+            && index.doctest_source(test).is_some()
+        {
+            continue;
+        }
+
         // #3296 helper transfer: a test that calls a resolved hop's
         // caller directly reaches the owner through the bounded chain
         // (same authority the activation rows consume). The chain is
@@ -1993,7 +2009,10 @@ fn use_path_names_owner(rest: &str, owner_name: &str) -> bool {
 /// adjacency manifest identity. The scan root's own manifest is the empty
 /// prefix. `None` when no discovered manifest directory covers the file:
 /// the identity is unattributable and the admit fails closed.
-fn nearest_manifest_identity(manifest_dir_prefixes: &[String], file: &Path) -> Option<String> {
+pub(super) fn nearest_manifest_identity(
+    manifest_dir_prefixes: &[String],
+    file: &Path,
+) -> Option<String> {
     let normalized = normalize_path(file);
     manifest_dir_prefixes
         .iter()
@@ -2046,7 +2065,7 @@ fn body_binds_owner_name(body: &str, owner_name: &str) -> bool {
 /// or call evidence can never be fabricated from comment or string text
 /// (#2972 review). Every ambiguity strips MORE: a lost evidence site only
 /// suppresses the admit.
-fn strip_comments_and_strings(source: &str) -> String {
+pub(super) fn strip_comments_and_strings(source: &str) -> String {
     let mut out = String::with_capacity(source.len());
     let mut chars = source.chars().peekable();
     let mut in_string = false;

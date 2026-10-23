@@ -1412,6 +1412,7 @@ fn apply_rust_no_static_path_limit(
     index: &RustIndex,
     property_macro_mentions: &oracles::PropertyMacroMentionIndex<'_>,
     transitive_reach: &classify::TransitiveReachIndex<'_>,
+    dependency_edges: Option<&classify::DependencyEdgeContext<'_>>,
 ) {
     if needs_proximity_reach_limit(finding) {
         apply_rust_proximity_reach_limit(finding, probe, transitive_reach);
@@ -1465,7 +1466,43 @@ fn apply_rust_no_static_path_limit(
         // specific witness (#8047).
         replace_witnessed_no_path_infection_summary(finding);
         apply_rust_transitive_reach_limit(finding, &owner_name, &witness);
+    } else if let Some(context) = dependency_edges
+        && let Some(owner) = probe
+            .owner
+            .as_ref()
+            .and_then(|id| index.functions().iter().find(|function| function.id == *id))
+        && let Some(witness) = classify::facade_reach_witness(index, context, owner)
+    {
+        // #9982: after every other witness, so a traced path is never
+        // displaced by this broader structural one.
+        replace_witnessed_no_path_infection_summary(finding);
+        apply_rust_facade_reach_limit(finding, &owner_name, &witness);
     }
+}
+
+/// #9982: the same named limitation a traced integration-test witness gets,
+/// for a facade crate whose re-export of the owner's crate ripr does not
+/// resolve. No reach credit, no related-test relation, no class change.
+fn apply_rust_facade_reach_limit(
+    finding: &mut Finding,
+    owner_name: &str,
+    witness: &classify::FacadeReachWitness,
+) {
+    finding.static_limit_kind = Some(classify::transitive_reach_limit_kind(&witness.test_file));
+    finding
+        .stop_reasons
+        .push(StopReason::TransitiveReachUnresolved);
+    finding
+        .evidence
+        .push(classify::RUST_FACADE_REACH_MESSAGE.to_string());
+    finding
+        .evidence
+        .push(classify::facade_reach_witness_pointer(witness));
+    finding
+        .evidence
+        .extend(classify::facade_reach_limitation_detail_lines(
+            witness, owner_name,
+        ));
 }
 
 /// RIPR-SPEC-0114/0117 for a proximity-only `weakly_exposed` finding: the
@@ -2511,6 +2548,7 @@ impl RustAdapter {
                         &index,
                         &property_macro_mentions,
                         &transitive_reach,
+                        dependency_edges.as_ref(),
                     ),
                     dependent_scope::ReachIndex::Shared => {
                         if let Some(shared) = dependent_scope
@@ -2530,6 +2568,7 @@ impl RustAdapter {
                                 shared,
                                 mentions,
                                 reach,
+                                dependency_edges.as_ref(),
                             );
                         } else {
                             return Err("shared reach index reported but not held".to_string());
@@ -2546,6 +2585,7 @@ impl RustAdapter {
                             reach_index,
                             &reach_property_macro_mentions,
                             &classify::TransitiveReachIndex::new(reach_index),
+                            dependency_edges.as_ref(),
                         );
                     }
                     dependent_scope::ReachIndex::OverLimit { files, limit } => {
@@ -2558,6 +2598,7 @@ impl RustAdapter {
                             &index,
                             &property_macro_mentions,
                             &transitive_reach,
+                            dependency_edges.as_ref(),
                         );
                         let mixed = needs_mixed_macro_reach_limit(&finding);
                         if needs_no_static_path_limit(&finding) || mixed {
@@ -3098,6 +3139,7 @@ impl RustAdapter {
                     &index,
                     &property_macro_mentions,
                     &transitive_reach,
+                    Some(&dependency_edges),
                 );
                 classifier::withhold_proc_macro_no_path_as_unknown(&mut finding, &index);
                 apply_probe_and_oracle_limits(&mut finding, &probe, &index, None);
@@ -9175,6 +9217,8 @@ fn absent_delimiter_boundary_returns_head() {
     }
 }
 
+#[cfg(test)]
+mod facade_reach_tests;
 #[cfg(test)]
 mod handwritten_files_tests;
 #[cfg(test)]
