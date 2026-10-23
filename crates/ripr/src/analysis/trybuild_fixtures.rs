@@ -303,7 +303,7 @@ mod tests {
         assert!(trybuild_fixture_disclosure_message(&root, &files).is_some());
         write(
             &root.join("Cargo.toml"),
-            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[build-dependencies]\ntrybuild = { workspace = true }\n",
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[build-dependencies]\ntrybuild = { version = \"1\" }\n",
         )?;
         assert!(trybuild_fixture_disclosure_message(&root, &files).is_some());
         Ok(())
@@ -459,8 +459,8 @@ mod tests {
         assert!(named(
             "[target.'cfg(unix)'.dev-dependencies]\nfoo = { package = \"trybuild\", version = \"1\" }"
         )?);
-        // Limit: inherited entries are judged by their local key only.
-        assert!(named(
+        // Inherited entries with no workspace table fail closed.
+        assert!(!named(
             "[dev-dependencies]\ntrybuild = { workspace = true }"
         )?);
         assert!(!named("[dev-dependencies]\nfoo = { workspace = true }")?);
