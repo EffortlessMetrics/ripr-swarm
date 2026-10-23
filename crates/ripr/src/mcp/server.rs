@@ -628,8 +628,10 @@ fn optional_positive_argument(
 
 /// The shared integer validator behind `offset` and `limit` (#9895). Every
 /// refusal names the real constraint (a whole JSON integer from `minimum` to
-/// `u64::MAX`), why this value misses it, and a `data.recovery`. A negative
-/// number, a non-number, a fractional or exponent-form number and an integer
+/// the effective maximum: the declared maximum capped at this platform's
+/// `usize::MAX`, so `data.maximum`, the message and the recovery never
+/// disagree on a 32-bit build), why this value misses it, and a
+/// `data.recovery`. A negative number, a non-number, a fractional or exponent-form number and an integer
 /// past `u64::MAX` are different mistakes that used to share the single wrong
 /// sentence "must be a non-negative integer". A JSON number that does not fit
 /// `u64` reaches this adapter as a float, so `18446744073709551616` and `1e30`
@@ -640,6 +642,31 @@ fn optional_integer_argument(
     minimum: u64,
     maximum: u64,
 ) -> Result<Option<usize>, ErrorData> {
+    optional_integer_argument_for_platform(
+        arguments,
+        name,
+        minimum,
+        maximum,
+        u64::try_from(usize::MAX).unwrap_or(u64::MAX),
+    )
+}
+
+/// The bound a request is actually held to: the declared maximum, never above
+/// what the platform's `usize` can represent.
+fn effective_integer_maximum(declared: u64, platform_max: u64) -> u64 {
+    declared.min(platform_max)
+}
+
+/// `optional_integer_argument` with the platform's largest `usize` as a
+/// parameter so the effective-bound behavior is testable on any target.
+fn optional_integer_argument_for_platform(
+    arguments: &Option<serde_json::Map<String, Value>>,
+    name: &str,
+    minimum: u64,
+    declared_maximum: u64,
+    platform_max: u64,
+) -> Result<Option<usize>, ErrorData> {
+    let maximum = effective_integer_maximum(declared_maximum, platform_max);
     let Some(value) = arguments.as_ref().and_then(|arguments| arguments.get(name)) else {
         return Ok(None);
     };
@@ -720,16 +747,13 @@ fn optional_integer_argument(
             in_range,
         ));
     }
+    // The effective maximum already caps at `usize::MAX`, so this checked
+    // conversion cannot fail for an in-range value; it stays as the guard and
+    // reports the same bound if it ever does.
     usize::try_from(raw).map(Some).map_err(|_error| {
         refuse(
-            format!(
-                "{name} is larger than the largest integer this platform accepts ({})",
-                usize::MAX
-            ),
-            format!(
-                "send {name} as an integer from {minimum} to {}, or omit it",
-                usize::MAX
-            ),
+            format!("{name} must be at most {maximum}"),
+            in_range.clone(),
         )
     })
 }

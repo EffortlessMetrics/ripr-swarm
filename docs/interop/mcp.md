@@ -293,9 +293,11 @@ is invalid for `snapshot_id`, `offset`, `limit`, `file`, `class`,
 returns `-32602` Invalid Params naming the field with the same request ID;
 correct the argument or omit it and retry on the same connection.
 `offset` and `limit` must be whole JSON integers (no fraction or exponent
-form) in `0..=18446744073709551615` and `1..=18446744073709551615`; the
-`ripr_list_repair_attempts` limit is capped at 256. Each refusal names why the
-value missed (negative, not a number, fractional, larger than the largest
+form) in `0..=M` and `1..=M`, where `M` is the platform's `usize` width
+(64-bit builds: `18446744073709551615`; 32-bit builds: `4294967295`), and
+`data.maximum`, the message and `data.recovery` all name that one effective
+bound; the `ripr_list_repair_attempts` limit is capped at 256. Each refusal
+names why the value missed (negative, not a number, fractional, larger than the largest
 accepted integer) and carries `data.argument`, `data.minimum`, `data.maximum`
 and `data.recovery` with the accepted range (#9895).
 When the whole selection cannot fit one wire response, the default call

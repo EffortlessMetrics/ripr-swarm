@@ -3092,7 +3092,9 @@ fn list_gaps_bounds_the_echoed_unknown_class_token() -> Result<(), String> {
 
 /// Send one `tools/call` whose `arguments` object is raw JSON text, so number
 /// literals such as `18446744073709551616` and `1e30` reach the server exactly
-/// as a client could write them (a `serde_json::Value` cannot hold them).
+/// as a client could write them. A `serde_json::Value` cannot hold
+/// `18446744073709551616` as an integer (it degrades to floating-point data,
+/// as `1e30` also is), so it could not state the literal the client wrote.
 fn call_tool_with_raw_arguments(
     session: &mut SequentialStdio,
     id: &str,
@@ -3119,7 +3121,8 @@ fn call_tool_with_raw_arguments(
 /// "must be a non-negative integer" sentence that also answered `limit:
 /// 18446744073709551616` (which is non-negative and an integer) and `-1`
 /// (which the sentence did not name as the problem). `ripr_list_gaps` accepts
-/// up to `u64::MAX`; `ripr_list_repair_attempts` caps at 256.
+/// up to this platform's `usize::MAX` (the effective bound `data.maximum`, the
+/// message and the recovery all name); `ripr_list_repair_attempts` caps at 256.
 #[test]
 fn limit_errors_state_the_real_constraint_and_recovery_over_stdio() -> Result<(), String> {
     const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
@@ -3129,25 +3132,32 @@ fn limit_errors_state_the_real_constraint_and_recovery_over_stdio() -> Result<()
     session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
     let too_large = "is larger than the largest accepted integer";
     let whole = "must be a whole JSON integer";
-    // (tool, literal, message fragment, expected data.maximum)
+    let platform_max = u64::try_from(usize::MAX).unwrap_or(u64::MAX);
+    // (tool, literal, message fragment, expected data.maximum); the
+    // effective maximum is capped at this platform's usize::MAX
     let cases: [(&str, &str, &str, u64); 12] = [
-        ("ripr_list_gaps", "0", "limit must be at least 1", u64::MAX),
-        ("ripr_list_gaps", "-1", "-1 is negative", u64::MAX),
+        (
+            "ripr_list_gaps",
+            "0",
+            "limit must be at least 1",
+            platform_max,
+        ),
+        ("ripr_list_gaps", "-1", "-1 is negative", platform_max),
         (
             "ripr_list_gaps",
             "1.5",
             "without a fraction or exponent, not 1.5",
-            u64::MAX,
+            platform_max,
         ),
-        ("ripr_list_gaps", "\"10\"", "not a string", u64::MAX),
+        ("ripr_list_gaps", "\"10\"", "not a string", platform_max),
         (
             "ripr_list_gaps",
             "18446744073709551616",
             too_large,
-            u64::MAX,
+            platform_max,
         ),
-        ("ripr_list_gaps", "1e30", too_large, u64::MAX),
-        ("ripr_list_gaps", "null", "not null", u64::MAX),
+        ("ripr_list_gaps", "1e30", too_large, platform_max),
+        ("ripr_list_gaps", "null", "not null", platform_max),
         ("ripr_list_repair_attempts", "-1", "-1 is negative", 256),
         ("ripr_list_repair_attempts", "\"10\"", whole, 256),
         (
@@ -3198,10 +3208,10 @@ fn limit_errors_state_the_real_constraint_and_recovery_over_stdio() -> Result<()
         &mut session,
         "max-limit",
         "ripr_list_gaps",
-        "{\"limit\":18446744073709551615}",
+        &format!("{{\"limit\":{platform_max}}}"),
     )?;
     if reply.get("error").is_some() {
-        return Err(format!("u64::MAX is an accepted limit: {reply}"));
+        return Err(format!("usize::MAX is an accepted limit: {reply}"));
     }
     // The session survives the whole sweep.
     let reply = session.call_tool("after", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;

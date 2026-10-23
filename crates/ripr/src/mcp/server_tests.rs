@@ -1369,10 +1369,10 @@ fn paging_argument_parsers_pin_type_range_and_absence() -> Result<(), String> {
             .ok_or_else(|| format!("offset {bad} must be refused"))?;
         assert_eq!(error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
         assert!(
-            error
-                .message
-                .starts_with("offset must be a whole JSON integer from 0 to 18446744073709551615")
-                || error.message == "offset must be at least 0; -1 is negative",
+            error.message.starts_with(&format!(
+                "offset must be a whole JSON integer from 0 to {}",
+                usize::MAX
+            )) || error.message == "offset must be at least 0; -1 is negative",
             "{}",
             error.message
         );
@@ -1383,9 +1383,10 @@ fn paging_argument_parsers_pin_type_range_and_absence() -> Result<(), String> {
         .err()
         .ok_or("limit 1e30 must be refused")?;
     assert!(
-        error
-            .message
-            .contains("larger than the largest accepted integer 18446744073709551615"),
+        error.message.contains(&format!(
+            "larger than the largest accepted integer {}",
+            usize::MAX
+        )),
         "{}",
         error.message
     );
@@ -1399,6 +1400,62 @@ fn paging_argument_parsers_pin_type_range_and_absence() -> Result<(), String> {
         "{}",
         capped.message
     );
+    Ok(())
+}
+
+/// #9895 review: the declared maximum is capped at the platform's `usize`
+/// width, and `data.maximum`, the message and the recovery all name that one
+/// effective bound. Driven with a 32-bit `platform_max` so a 64-bit host
+/// proves the 32-bit behavior.
+#[test]
+fn integer_argument_effective_bound_is_the_platform_cap_everywhere() -> Result<(), String> {
+    const PLATFORM_MAX_32: u64 = u32::MAX as u64; // widening, never lossy
+    assert_eq!(
+        effective_integer_maximum(u64::MAX, PLATFORM_MAX_32),
+        PLATFORM_MAX_32
+    );
+    assert_eq!(effective_integer_maximum(256, PLATFORM_MAX_32), 256);
+    assert_eq!(effective_integer_maximum(u64::MAX, u64::MAX), u64::MAX);
+
+    let at_bound = argument_map(serde_json::json!({"limit": PLATFORM_MAX_32}));
+    assert_eq!(
+        optional_integer_argument_for_platform(&at_bound, "limit", 1, u64::MAX, PLATFORM_MAX_32),
+        Ok(Some(u32::MAX as usize))
+    );
+    for over in [
+        serde_json::json!(PLATFORM_MAX_32 + 1),
+        serde_json::json!(u64::MAX),
+        serde_json::json!(1e30),
+    ] {
+        let arguments = argument_map(serde_json::json!({"limit": over}));
+        let error = optional_integer_argument_for_platform(
+            &arguments,
+            "limit",
+            1,
+            u64::MAX,
+            PLATFORM_MAX_32,
+        )
+        .err()
+        .ok_or_else(|| format!("limit {over} must be refused"))?;
+        let data = error.data.clone().ok_or("refusal lost structured data")?;
+        let bound = PLATFORM_MAX_32.to_string();
+        assert_eq!(data["maximum"], serde_json::json!(PLATFORM_MAX_32));
+        assert!(error.message.contains(&bound), "{}", error.message);
+        assert!(
+            !error.message.contains("18446744073709551615"),
+            "{}",
+            error.message
+        );
+        let recovery = data["recovery"].as_str().ok_or("recovery missing")?;
+        assert!(
+            recovery.contains(&format!("from 1 to {bound}")),
+            "{recovery}"
+        );
+        assert_eq!(
+            data["expected"],
+            serde_json::json!(format!("integer at most {bound}"))
+        );
+    }
     Ok(())
 }
 
