@@ -3774,6 +3774,30 @@ fn init_check_refusal_repo(label: &str, commits: usize) -> Result<PathBuf, Strin
     Ok(root)
 }
 
+/// #9922: a typed input refusal is explained by the real error the caller
+/// prints, never also by an internal-failure `failed` progress line.
+fn assert_refusal_projects_no_failed_progress(output: &Output) -> Result<(), String> {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.contains("ripr progress: failed") {
+        return Err(format!(
+            "a user-fixable refusal must not project a failed progress line: {stderr}"
+        ));
+    }
+    Ok(())
+}
+
+/// Same, for refusals raised after progress began: the run must have
+/// projected progress first, so the absence of `failed` is not vacuous.
+fn assert_refusal_after_progress_projects_no_failed(output: &Output) -> Result<(), String> {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains("ripr progress: loading_input") {
+        return Err(format!(
+            "the refused run must still project progress on stderr: {stderr}"
+        ));
+    }
+    assert_refusal_projects_no_failed_progress(output)
+}
+
 /// #6834: the demonstrated case — an unresolvable `--base` emits a typed
 /// refusal naming `base_unresolvable`, with the caller-supplied invocation
 /// context echoed and the stderr prose unchanged.
@@ -3810,6 +3834,7 @@ fn check_json_unresolvable_base_emits_refusal_envelope() -> Result<(), String> {
             "the envelope message must be the stderr diagnostic verbatim; stderr: {stderr}"
         ));
     }
+    assert_refusal_after_progress_projects_no_failed(&output)?;
     ignore_remove_dir_all(&root);
     Ok(())
 }
@@ -3852,6 +3877,7 @@ fn check_json_unusable_root_emits_repository_root_unusable() -> Result<(), Strin
         "repository_root_unusable",
         "analysis/repository-root",
     )?;
+    assert_refusal_projects_no_failed_progress(&output)?;
 
     // Outside the repository: the temp dir sits under target/, where git
     // discovery would walk up into the checkout and resolve the base.
@@ -3869,6 +3895,7 @@ fn check_json_unusable_root_emits_repository_root_unusable() -> Result<(), Strin
             "refusal must echo the caller-supplied root: {value}"
         ));
     }
+    assert_refusal_projects_no_failed_progress(&output)?;
     ignore_remove_dir_all(&plain);
     Ok(())
 }
@@ -3912,6 +3939,7 @@ fn check_json_malformed_config_emits_redacted_refusal() -> Result<(), String> {
             "the recovery hint must not enter the machine message: {message}"
         ));
     }
+    assert_refusal_projects_no_failed_progress(&output)?;
     ignore_remove_dir_all(&root);
     Ok(())
 }
@@ -3947,6 +3975,7 @@ fn check_json_malformed_suppression_policy_emits_refusal() -> Result<(), String>
             "the message must name the policy failure: {message}"
         ));
     }
+    assert_refusal_after_progress_projects_no_failed(&output)?;
     ignore_remove_dir_all(&root);
     Ok(())
 }
