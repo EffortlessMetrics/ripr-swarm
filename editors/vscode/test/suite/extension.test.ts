@@ -1641,6 +1641,38 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('a rejected pull stays visible while its corrective pull is pending after a completed analysis (#9917)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      const succeeded = (state: string, extra: Record<string, unknown> = {}) => ({
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'succeeded',
+        run_status: 'completed', attempt_id: 'run-1', snapshot_id: 'snapshot:run-1',
+        input_authority: { configuration_pull: { state, ...extra } }
+      });
+      const failure = { failure: { kind: 'config_pull_invalid', message: 'bad key `includeUnchangedTests`' } };
+
+      context.client.emitNotification('ripr/analysisStatus', succeeded('applied'));
+      assert.ok(!context.status.text.includes('ripr: failed'));
+
+      context.client.emitNotification('ripr/analysisStatus', succeeded('failed', failure));
+      context.client.emitNotification('ripr/analysisStatus', succeeded('pending'));
+      assert.ok(context.status.text.includes('ripr: failed'), 'pending must not repaint the completed analysis over the rejection');
+      assert.ok(String(context.status.tooltip).includes('`includeUnchangedTests`'));
+
+      // Re-rejection keeps it visible through the pending interval too.
+      context.client.emitNotification('ripr/analysisStatus', succeeded('failed', failure));
+      context.client.emitNotification('ripr/analysisStatus', succeeded('pending'));
+      assert.ok(context.status.text.includes('ripr: failed'));
+
+      context.client.emitNotification('ripr/analysisStatus', succeeded('applied'));
+      assert.ok(!context.status.text.includes('ripr: failed'));
+      assert.ok(!String(context.status.tooltip).includes('includeUnchangedTests'));
+    } finally {
+      await context.dispose();
+    }
+  });
+
   test('an accepted pull does not mask a real analysis failure after a rejected pull (#9917)', async () => {
     const context = createControllerTestContext({});
     try {

@@ -511,6 +511,7 @@ export class RiprClientController {
    * must clear that paint, so the flag marks it as ours to clear.
    */
   private configurationFailurePainted = false;
+  private configurationFailureStatus: RiprStatusState | undefined;
   private workspaceRoot: string | undefined;
   /**
    * Session-scoped workspace folder picked through `ripr: Select Workspace
@@ -1103,6 +1104,7 @@ export class RiprClientController {
     this.dirtyRiprDocuments.clear();
     this.lastCompletedStatus = undefined;
     this.configurationFailurePainted = false;
+    this.configurationFailureStatus = undefined;
     this.clearAttemptStatusBar();
     this.updateStatus(config.enabled
       ? {
@@ -1894,6 +1896,7 @@ export class RiprClientController {
     const pullFailure = configurationPullFailureStatus(status);
     if (pullFailure) {
       this.configurationFailurePainted = true;
+      this.configurationFailureStatus = pullFailure;
       this.updateStatus(pullFailure);
       return;
     }
@@ -1903,7 +1906,18 @@ export class RiprClientController {
     const clearConfigurationFailure = this.configurationFailurePainted && !pullPending;
     if (!pullPending) {
       this.configurationFailurePainted = false;
+      this.configurationFailureStatus = undefined;
     }
+    this.renderAnalysisState(status, clearConfigurationFailure);
+    // A rejection stays painted until its corrective pull is decided: normal
+    // rendering above still records the analysis state (completed snapshot,
+    // typed state) but must not replace the visible rejection (#9917).
+    if (pullPending && this.configurationFailureStatus) {
+      this.updateStatus(this.configurationFailureStatus);
+    }
+  }
+
+  private renderAnalysisState(status: RiprAnalysisStatusPayload, clearConfigurationFailure: boolean): void {
     const failure = status.failure && typeof status.failure === 'object'
       ? status.failure as Record<string, unknown>
       : undefined;
