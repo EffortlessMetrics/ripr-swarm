@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_module_backslash_return (3)
+
+Reason:
+RIPR-SPEC-0028 and RIPR-SPEC-0108: retain executed identity/reachability refusal and current main renderer stage/state legend for contribution-owned fixtures
+
+Command:
+`cargo xtask goldens bless python_module_backslash_return --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

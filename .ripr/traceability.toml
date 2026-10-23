@@ -3681,6 +3681,7 @@ tests = [
   "crates/ripr/tests/python_parse_nesting.rs::unbalanced_bracket_string_literals_do_not_trip_the_nesting_budget",
 ]
 fixtures = [
+  "fixtures/python_module_same_line_prior_assert",
   "fixtures/python_module_generator_test",
   "fixtures/python_module_prior_failing_assert",
   "fixtures/python_module_test_reader_replacement",
