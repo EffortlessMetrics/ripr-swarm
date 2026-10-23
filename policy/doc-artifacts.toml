@@ -1826,3 +1826,11 @@ path = "docs/specs/RIPR-SPEC-0301-release-ledger-direct-main.md"
 status = "proposed"
 owner = "release-automation"
 standalone_reason = "Issue #2768 records the direct-main release ledger contract: release-ledger validates a captured ledger against its exact first-parent and reachable range, the closed eleven-value disposition vocabulary, a separate final-tree-effect axis, the #2766 packet and shared JSON, Markdown and manifest digests, and never claims per-commit review."
+
+[[artifact]]
+id = "RIPR-SPEC-0351"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0351-out-parameter-oracle-credit.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #8999 records the out-parameter oracle contract: an assert_eq! on the very local a direct call of the changed method received as &mut, bound once and asserted after the call in the same test, is an oracle for that call, and every other shape fails closed."

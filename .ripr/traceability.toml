@@ -18222,3 +18222,24 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0351"
+name = "A test that asserts on the local it passed as &mut observes the changed method"
+spec = "docs/specs/RIPR-SPEC-0351-out-parameter-oracle-credit.md"
+tests = [
+  "crates/ripr/tests/out_parameter_oracle.rs::asserting_the_local_passed_as_mut_credits_the_call",
+  "crates/ripr/tests/out_parameter_oracle.rs::a_different_asserted_local_is_not_credited",
+  "crates/ripr/tests/out_parameter_oracle.rs::an_assertion_before_the_call_is_not_credited",
+  "crates/ripr/tests/out_parameter_oracle.rs::a_rebound_or_reused_local_is_not_credited",
+  "crates/ripr/tests/out_parameter_oracle.rs::a_call_in_another_test_is_not_credited",
+]
+code = [
+  "crates/ripr/src/analysis/classify/out_parameter.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0351-out-parameter-oracle-credit.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
