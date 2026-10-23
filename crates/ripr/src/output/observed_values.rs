@@ -26,18 +26,30 @@ pub(crate) fn source_value_evidence_line(fact: &ValueFact) -> String {
     )
 }
 
+/// Human-only bare spelling (`at line N`) of [`source_value_evidence_line`]:
+/// identical for single-line values, one row for multi-line values (#9165).
+/// [`source_value_evidence_line`] stays raw for JSON.
+pub(crate) fn human_source_value_evidence_line(fact: &ValueFact) -> String {
+    format!(
+        "source {} value {} at line {}",
+        fact.context.as_str().replace('_', " "),
+        crate::output::related_test_miss::single_line_evidence_text(&fact.value),
+        fact.line
+    )
+}
+
 /// The human-output spelling of [`source_value_evidence_line`]: the same
 /// sentence, with the test file named (`path:line`) when the producer recorded
 /// it. The value is read from a related test, which is usually not in the diff,
 /// so a bare line number cannot be found. Check JSON keeps the bare spelling.
 pub(crate) fn source_value_evidence_line_with_file(fact: &ValueFact) -> String {
+    let Some(file) = &fact.file else {
+        return human_source_value_evidence_line(fact);
+    };
     // A multi-line string value would otherwise break the one-row layout of
     // the human evidence list (#9165); JSON keeps the raw value.
     let value = crate::output::related_test_miss::single_line_evidence_text(&fact.value);
     let context = fact.context.as_str().replace('_', " ");
-    let Some(file) = &fact.file else {
-        return format!("source {context} value {value} at line {}", fact.line);
-    };
     format!(
         "source {context} value {value} at {}:{}",
         crate::output::path::display_path(file),

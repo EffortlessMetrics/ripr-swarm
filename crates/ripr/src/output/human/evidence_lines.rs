@@ -255,7 +255,7 @@ fn evidence_path<T>(
             if name_files {
                 crate::output::observed_values::source_value_evidence_line_with_file(value)
             } else {
-                crate::output::observed_values::source_value_evidence_line(value)
+                crate::output::observed_values::human_source_value_evidence_line(value)
             },
             EvidenceSource::Value(value),
         ));

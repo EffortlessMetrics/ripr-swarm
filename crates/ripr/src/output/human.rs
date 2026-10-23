@@ -5476,6 +5476,38 @@ mod tests {
         )));
     }
 
+    /// #9165: a multi-line observed value is one human row in both the
+    /// single-file (`at line N`) and mixed-file (`at path:N`) spellings.
+    #[test]
+    fn render_finding_keeps_a_multi_line_observed_value_on_one_row() {
+        let fact = |file: &str, line: usize, value: &str| ValueFact {
+            file: Some(std::path::PathBuf::from(file)),
+            line,
+            text: "assert!(true);".to_string(),
+            value: value.to_string(),
+            context: ValueContext::AssertionArgument,
+        };
+        let mut finding = sample_finding();
+        finding.activation.observed_values = vec![fact("tests/pricing.rs", 7, "a\nb")];
+        let rendered = render_finding(&finding);
+        assert!(
+            rendered.contains("source assertion argument value a b at line 7"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("value a\nb"), "{rendered}");
+
+        finding.activation.observed_values = vec![
+            fact("tests/pricing.rs", 7, "a\nb"),
+            fact("tests/other.rs", 9, "c"),
+        ];
+        let rendered = render_finding(&finding);
+        assert!(
+            rendered.contains("source assertion argument value a b at tests/pricing.rs:7"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("value a\nb"), "{rendered}");
+    }
+
     /// #8744: `unknown sink` is the one unglossed internal term in the
     /// evidence window; the human render states its meaning beside the row
     /// while the JSON evidence strings stay raw.
