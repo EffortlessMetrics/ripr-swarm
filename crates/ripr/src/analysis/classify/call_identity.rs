@@ -1017,7 +1017,9 @@ pub(super) fn root_library_item_module_path(
             .class(&function.file)
             .as_deref()
             != Some("lib")
-        || module.iter().any(|segment| module_declaration_is_ambiguous(index, segment))
+        || module
+            .iter()
+            .any(|segment| module_declaration_is_ambiguous(index, segment))
     {
         return None;
     }
