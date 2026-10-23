@@ -504,6 +504,13 @@ id = "RIPR-SPEC-0005"
 name = "repo seam inventory and test grip"
 spec = "docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md"
 tests = [
+  "crates/ripr/src/build_identity.rs::tests::every_analysis_feature_set_has_a_distinct_cache_identity",
+  "crates/ripr/src/build_identity.rs::tests::live_cache_identity_records_the_compiled_analysis_features",
+  "crates/ripr/src/output/schemas.rs::tests::rerun_example_analyzer_identity_accepts_language_feature_sets",
+  "crates/ripr/src/output/schemas.rs::tests::rerun_example_analyzer_identity_rejects_malformed_formats",
+  "crates/ripr/src/analysis/seam_cache/semantic_identity_tests.rs::declared_language_features_require_cache_identity_coverage",
+  "crates/ripr/src/analysis/seam_cache/semantic_identity_tests.rs::same_generation_file_facts_refuse_other_builds_even_at_current_path",
+  "crates/ripr/src/analysis/seam_cache/semantic_identity_tests.rs::same_generation_classified_builds_coexist_without_replaying_each_other",
   "crates/ripr/src/analysis/test_grip_evidence/tests/warm_entrypoint.rs::evidence_entrypoint_dispatches_warm_at_1000_but_not_999",
   "crates/ripr/src/analysis/test_grip_evidence/tests/warm_entrypoint.rs::evidence_entrypoint_cancelled_1000_pays_zero_warm_scans",
   "crates/ripr/src/analysis/test_grip_evidence/tests/module_extraction.rs::module_extraction_controls",
@@ -11828,14 +11835,17 @@ id = "RIPR-SPEC-0169"
 name = "Contextual source-role composition"
 spec = "docs/specs/RIPR-SPEC-0169-contextual-source-role-composition.md"
 tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/tests/shared_target_context.rs",
   "crates/ripr/src/analysis/facts/role_composition.rs::tests",
   "crates/ripr/src/analysis/facts/cfg_predicates/tests.rs",
   "crates/ripr/src/analysis/facts/includes.rs::tests",
   "crates/ripr/src/analysis/syntax/ra.rs::tests",
   "crates/ripr/src/analysis/rust_index.rs::tests",
 ]
-fixtures = []
+fixtures = ["fixtures/shared_target_assertion_return", "fixtures/shared_target_assertion_effect"]
 code = [
+  "crates/ripr/src/analysis/facts/execution_context.rs",
+  "crates/ripr/src/analysis/facts/index.rs",
   "crates/ripr/src/analysis/facts/role_composition.rs",
   "crates/ripr/src/analysis/facts/model.rs",
   "crates/ripr/src/analysis/facts/includes.rs",
@@ -13331,6 +13341,8 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/src/analysis/test_grip_evidence/tests/shared_execution_context.rs::collection_grip_requires_assertion_trust_in_every_shared_context",
+  "crates/ripr/tests/owner_pin_execution/shared_execution.rs::shared_target_macro_context_matches_executed_binary_controls",
   "crates/ripr/tests/owner_pin_execution/effect_assertions.rs::effect_assertions_require_execution_but_keep_reachable_oracles",
   "crates/ripr/tests/owner_pin_execution/effect_assertions.rs::effect_assertion_contexts_match_executed_mutant_controls",
   "crates/ripr/tests/owner_pin_execution/effect_assertion_sweep.rs::effect_assertion_dead_context_sweep_refuses_every_never_run_assertion",
