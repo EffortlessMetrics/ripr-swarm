@@ -179,7 +179,10 @@ pub(crate) fn render_check_with_config_and_progress(
                         output.base.clone(),
                         config,
                     )?
-                    .with_rust_corpus_key(report.corpus_key.as_ref());
+                    .with_rust_inventory(
+                        report.corpus_key.as_ref(),
+                        &report.analyzed_production_files,
+                    );
                 repo_exposure::render_repo_exposure_json_with_context(
                     &report.classified,
                     report.limit_info.as_ref(),

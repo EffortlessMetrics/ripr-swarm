@@ -3797,15 +3797,21 @@ envelope whose governed `content_sha256` still matches the bytes read;
 `run_status: complete`; no `limitations[]` entry other than TypeScript/Python
 guidance; no `run_limitations` and no incomplete `analysis_outcome` when one is
 present; every seam converted to a record; and a `source_subject.corpus` carrying
-the producer's `cache_schema_version` and 16-lowercase-hex `files_content_hash`):
+the producer's `cache_schema_version`, 16-lowercase-hex `files_content_hash`, and
+`analyzed_production_files` array):
 `scope` (`rust_workspace`), `basis` (`repo_exposure_complete_run`), `run_status`,
 `corpus`, `records_total` and `records_digest` (SHA-256 over every record's
 canonical serialization, ordered by `gap_id`). The digest is tamper-evident
 against filtering or editing the records, not authentication: a party who can
 rewrite the ledger and recompute it is out of scope.
 `gate evaluate --gap-ledger` honors the disclosure only while the records still
-match the count and digest and the disclosed corpus hash equals the corpus of
-the tree being gated (`--root`, loaded with its `ripr.toml`); a stale,
+match the count and digest, and the disclosed corpus hash and production-file
+membership equal the current inventory owner's discovery and role selection
+for the tree being gated (`--root`, loaded with its `ripr.toml`). Membership
+comes from the actual inventory inputs, including cache hits, independently of
+surviving records. Source symlinks and symlinked parents are not followed.
+Missing, malformed or duplicate membership entries establish no coverage;
+a present empty array covers no baseline paths. A stale,
 unverifiable or rootless evaluation ignores it. The field is omitted for every
 other source or a limited run, so existing ledgers are byte-stable.
 
@@ -10776,8 +10782,9 @@ Field contract:
   from current evidence but whose file the current `analysis_scope` does not
   cover (or whose scope is missing, malformed, skipped or cap-omitted seams, or
   is a `gap_ledger_artifact` scope; a `rust_workspace_complete` scope covers only
-  normalized relative `.rs` paths outside the directories the workspace walk
-  skips (`target`, `.git`, `.ripr`, `fixtures`, `node_modules`, ...), #9599). `evaluation` is
+  normalized relative `.rs` paths in `corpus.analyzed_production_files`, the
+  inventory's actual production-role inputs. Symlink aliases, skipped sources
+  and evidence-only inputs are not covered, #9599). `evaluation` is
   `"not_evaluated"`; `not_evaluated_reason` is a one-sentence reason. Such an
   item is never `resolved` and `baseline update --remove-resolved` keeps it. The
   same set is exhaustive in the Markdown `Not evaluated by the current analysis`
@@ -18434,7 +18441,13 @@ top-level `source_subject`:
   `{ "scope": "rust_workspace", "cache_schema_version": "1.96",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
-  files after the existing generated-file exclusions. This is the existing
+  files after the existing generated-file exclusions. Repo-exposure producers
+  also carry `corpus.analyzed_production_files`, the sorted, normalized
+  repo-relative production-role inputs captured independently of surviving
+  seams and recomputed before cache lookup. Evidence-only sources, generated
+  exclusions and no-follow symlink aliases are absent. Missing or malformed
+  membership cannot establish baseline coverage; an empty list covers no paths.
+  This is the existing
   cache content authority, not another digest or a HEAD identity. Cold and
   warm inventories carry the same authority. Derived writers copy it only
   within the same canonical physical root; they do not rehash the current

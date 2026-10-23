@@ -393,6 +393,11 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
         let subject = source_subject
             .get_or_insert_with(|| serde_json::json!({"digest_algorithm": "sha256", "files": []}));
         subject["corpus"] = crate::output::gap_source_subject::captured_rust_corpus_subject(key);
+        if let Some(files) = context.analyzed_production_files.as_deref()
+            && let Some(files) = crate::output::gap_source_subject::production_files_subject(files)
+        {
+            subject["corpus"]["analyzed_production_files"] = files;
+        }
     }
     trace_latency_phase(
         "serialize_source_subject",

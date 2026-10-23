@@ -59,14 +59,17 @@ pub(crate) struct RepoExposureArtifactContext {
     /// Full Rust inventory provenance supplied by that analysis, never
     /// computed by artifact serialization or inferred from these seams.
     pub(crate) corpus_key: Option<crate::analysis::seam_cache::RepoSeamCacheKey>,
+    pub(crate) analyzed_production_files: Option<Vec<PathBuf>>,
 }
 
 impl RepoExposureArtifactContext {
-    pub(crate) fn with_rust_corpus_key(
+    pub(crate) fn with_rust_inventory(
         mut self,
         key: Option<&crate::analysis::seam_cache::RepoSeamCacheKey>,
+        analyzed_production_files: &[PathBuf],
     ) -> Self {
         self.corpus_key = key.cloned();
+        self.analyzed_production_files = Some(analyzed_production_files.to_vec());
         self
     }
 
@@ -175,6 +178,7 @@ impl RepoExposureArtifactContext {
             base_revision,
             input_identity,
             corpus_key: None,
+            analyzed_production_files: None,
         })
     }
 }

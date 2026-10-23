@@ -2392,7 +2392,10 @@ fn write_agent_repo_exposure_snapshot_with_report(
         None,
         config,
     )?
-    .with_rust_corpus_key(report.corpus_key.as_ref());
+    .with_rust_inventory(
+        report.corpus_key.as_ref(),
+        &report.analyzed_production_files,
+    );
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())

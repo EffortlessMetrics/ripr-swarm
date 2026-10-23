@@ -212,10 +212,7 @@ fn ledger_corpus_is_current(root: &std::path::Path, coverage: &Value) -> bool {
     let Ok(config) = crate::config::load_for_root(root) else {
         return false;
     };
-    matches!(
-        crate::output::gap_source_subject::check_rust_corpus_subject(root, Some(coverage), &config),
-        crate::output::gap_source_subject::CorpusSubjectCheck::Current
-    )
+    crate::output::gap_source_subject::rust_workspace_coverage_is_current(root, coverage, &config)
 }
 
 pub(super) fn read_recommendation_calibration_impl(

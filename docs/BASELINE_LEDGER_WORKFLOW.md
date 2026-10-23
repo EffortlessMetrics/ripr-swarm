@@ -228,12 +228,18 @@ parser-declined or generated-skipped Rust files) records that the whole Rust
 workspace was analyzed, bound to the ledger's exact records and to the corpus of
 the tree `gate evaluate` runs on (so generate the ledger and evaluate the gate on
 the same checkout). With it, an absent baseline entry on a normalized relative
-Rust path outside `target`/`fixtures`/`.git`-style directories resolves; a
+Rust path in `corpus.analyzed_production_files` resolves; a
 filtered, edited or stale ledger, a limited run, and other paths stay
 `not_evaluated` (#9599). The digest is tamper-evident, not authentication. Accepted limits: a ledger rewritten by someone who recomputes the digest on a
 matching current tree still earns the scope (no producer authentication);
-`baseline diff`/`update` trust a hand-edited gate-decision; symlinked paths are
-not distinguished. Without it, use a
+`baseline diff`/`update` trust a hand-edited gate-decision.
+The inventory discloses `corpus.analyzed_production_files` from its actual
+production-role inputs, including cache hits. Gate admission requires both
+that membership and the corpus hash to match current discovery and source-role
+selection. Source symlinks and symlinked parents are never followed; their
+aliased paths, deleted sources, and evidence-only files remain `not_evaluated`.
+Missing, malformed or unverified membership also remains `not_evaluated`;
+an empty membership list covers no paths. Without verified coverage, use a
 `--pr-guidance` gate decision to retire baselined gaps. To retire a gap, feed
 `update` a gate decision whose scope covers the gap's file, normally the PR
 that fixes it.

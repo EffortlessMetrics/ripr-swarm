@@ -535,7 +535,9 @@ fn repo_exposure_analysis_coverage(
         return None;
     }
     let corpus = source.pointer("/source_subject/corpus")?;
-    if !corpus_identity_is_well_formed(corpus) {
+    if !corpus_identity_is_well_formed(corpus)
+        || crate::output::gap_source_subject::analyzed_production_files(corpus).is_none()
+    {
         return None;
     }
     Some(serde_json::json!({
@@ -561,6 +563,10 @@ pub(crate) fn verified_analysis_coverage(document: &Value, records: &[GapRecord]
         || !coverage
             .get("corpus")
             .is_some_and(corpus_identity_is_well_formed)
+        || coverage
+            .get("corpus")
+            .and_then(crate::output::gap_source_subject::analyzed_production_files)
+            .is_none()
     {
         return None;
     }
@@ -7837,6 +7843,7 @@ mod tests {
             "scope": "rust_workspace",
             "cache_schema_version": SCHEMA,
             "files_content_hash": "0123456789abcdef",
+            "analyzed_production_files": ["src/lib.rs"],
         })
     }
 
@@ -7890,6 +7897,24 @@ mod tests {
             forged["analysis_coverage"]["corpus"] = corpus;
             assert!(verified_analysis_coverage(&forged, &records).is_none());
         }
+
+        for files in [
+            Value::Null,
+            serde_json::json!("src/lib.rs"),
+            serde_json::json!([7]),
+            serde_json::json!(["src/lib.rs", "src/lib.rs"]),
+            serde_json::json!(["src/../lib.rs"]),
+            serde_json::json!(["src\\\\lib.rs"]),
+        ] {
+            let mut malformed = coverage(&records);
+            malformed["analysis_coverage"]["corpus"]["analyzed_production_files"] = files;
+            assert!(verified_analysis_coverage(&malformed, &records).is_none());
+        }
+        let mut missing = coverage(&records);
+        if let Some(corpus) = missing["analysis_coverage"]["corpus"].as_object_mut() {
+            corpus.remove("analyzed_production_files");
+        }
+        assert!(verified_analysis_coverage(&missing, &records).is_none());
         // No disclosure, or a non-object one, is no coverage.
         assert!(verified_analysis_coverage(&serde_json::json!({}), &records).is_none());
         assert!(
@@ -7965,6 +7990,23 @@ mod tests {
                 "{limited}"
             );
         }
+
+        for files in [
+            Value::Null,
+            serde_json::json!("src/lib.rs"),
+            serde_json::json!([7]),
+            serde_json::json!(["src/lib.rs", "src/lib.rs"]),
+            serde_json::json!(["src/../lib.rs"]),
+        ] {
+            let mut malformed = complete.clone();
+            malformed["source_subject"]["corpus"]["analyzed_production_files"] = files;
+            assert!(repo_exposure_analysis_coverage(Some(&malformed), true, &records).is_none());
+        }
+        let mut missing = complete.clone();
+        if let Some(corpus) = missing["source_subject"]["corpus"].as_object_mut() {
+            corpus.remove("analyzed_production_files");
+        }
+        assert!(repo_exposure_analysis_coverage(Some(&missing), true, &records).is_none());
         // Language guidance entries do not narrow Rust coverage.
         let guided = with(serde_json::json!({"limitations": [{"category": "python_diff_first"}]}));
         assert!(repo_exposure_analysis_coverage(Some(&guided), true, &records).is_some());
