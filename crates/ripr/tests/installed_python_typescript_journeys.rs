@@ -156,6 +156,30 @@ fn selected_typescript_gap(check_output: &str) -> Result<String, String> {
     Ok(format!("gap:typescript:{}:{}", parts[2], parts[3]))
 }
 
+/// The gap and base tokens of the first `ripr agent repair --gap-id <gap>
+/// --base <base> ...` start in `text`, wherever it sits on its line (the
+/// root may hold spaces, so only the leading tokens are read).
+#[cfg(feature = "lang-typescript")]
+fn gap_start_tokens(text: &str) -> Option<(String, String)> {
+    let at = text.find("ripr agent repair --gap-id ")?;
+    let tokens: Vec<&str> = text[at..].split_whitespace().collect();
+    let value_after = |flag: &str| -> Option<String> {
+        let position = tokens.iter().position(|token| *token == flag)?;
+        Some(tokens.get(position + 1)?.trim_matches('\'').to_string())
+    };
+    Some((value_after("--gap-id")?, value_after("--base")?))
+}
+
+/// Moves the materialized repository onto a feature branch whose default
+/// comparison base (`main`) is the base commit, so a plain `ripr check --root`
+/// (the command pilot routes to, which carries no `--base`) analyzes the head
+/// diff instead of the empty `main`-against-`main` comparison.
+#[cfg(feature = "lang-typescript")]
+fn onto_feature_branch(root: &Path) -> Result<(), String> {
+    fixture_git_ok(root, &["checkout", "-q", "-b", "feature"])?;
+    fixture_git_ok(root, &["branch", "-f", "main", "HEAD~1"])
+}
+
 /// Published repair-attempt manifests under the root. The before-phase lock
 /// directory exists after any attempt to start; a manifest only after a start.
 #[cfg(feature = "lang-typescript")]
@@ -411,6 +435,45 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
         "Status selects no next command",
         "status terminates after pilot",
     )?;
+    // #9103: the pilot/status route does not cycle. Status names the route back
+    // to `ripr check` (which printed the gap-bound start above) and offers no
+    // `ripr pilot` command, so pilot -> status -> pilot cannot recur.
+    need(
+        &status,
+        "pilot_routed_to_check_no_repair_target",
+        "status names why it selects no command",
+    )?;
+    if status.contains("ripr pilot --root") && !status.contains("ripr check --root") {
+        return Err(format!("status cycled back to pilot:\n{status}"));
+    }
+    // #10001: the routed warning derives from the gap-start admission the
+    // next `ripr check --root` uses. That check prints a start, so status
+    // must not claim `ripr check` offers none, and the start it names is the
+    // one check prints.
+    onto_feature_branch(&root)?;
+    let (routed_ok, routed_check) = ripr(&decoy, &["check", "--root", &root_arg])?;
+    expect_exit(routed_ok, true, "routed check")?;
+    let (status_ok, status) = ripr(&decoy, &["agent", "status", "--root", &root_arg])?;
+    expect_exit(status_ok, true, "agent status on the feature branch")?;
+    let check_start = gap_start_tokens(&routed_check)
+        .ok_or_else(|| format!("the routed check printed no gap-bound start:\n{routed_check}"))?;
+    if status.contains("offers no `ripr agent repair` start") {
+        return Err(format!(
+            "status says check offers no start though check prints one:\n{status}"
+        ));
+    }
+    need(
+        &status,
+        "prints the gap-bound start",
+        "status names the start check prints",
+    )?;
+    let status_start = gap_start_tokens(&status)
+        .ok_or_else(|| format!("status names no gap-bound start:\n{status}"))?;
+    if status_start != check_start {
+        return Err(format!(
+            "status start {status_start:?} differs from check start {check_start:?}:\n{status}"
+        ));
+    }
     decoy_untouched(&decoy)?;
 
     // An unknown gap id is refused and leaves no attempt or gap artifact.
@@ -749,11 +812,107 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
                 return Err(format!("{variant} left an attempt behind:\n{start}"));
             }
             decoy_untouched(&vdecoy)?;
+            // The committed scripted row retains the product's verbatim
+            // diagnostics: the `Safe next action:` line of `check` and the
+            // `agent repair --gap-id` refusal line, for this exact gap.
+            let row_id = format!(
+                "installed_typescript_{}_variant_unresolved",
+                variant.trim_start_matches("variant-").replace('-', "_")
+            );
+            let corpus: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(
+                    Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("../../fixtures/blind_journey_execute/corpus.json"),
+                )
+                .map_err(|error| format!("corpus: {error}"))?,
+            )
+            .map_err(|error| format!("corpus json: {error}"))?;
+            let row = corpus["scenarios"]
+                .as_array()
+                .and_then(|rows| rows.iter().find(|row| row["id"] == row_id.as_str()))
+                .ok_or_else(|| format!("no scripted row {row_id}"))?;
+            let recorded = |subject: &str, field: &str| -> Result<String, String> {
+                row["journey"]["actions"]
+                    .as_array()
+                    .and_then(|actions| actions.iter().find(|a| a["subject"] == subject))
+                    .and_then(|a| a[field].as_str())
+                    .map(str::to_string)
+                    .ok_or_else(|| format!("{row_id}: no {subject} {field}"))
+            };
+            let recorded_check = recorded("ripr check", "output_bytes")?;
+            if !out.lines().any(|line| line.trim() == recorded_check) {
+                return Err(format!(
+                    "{row_id}: scripted check line differs from product output:\n{recorded_check}\n--- actual:\n{out}"
+                ));
+            }
+            let recorded_before = recorded("ripr agent repair before", "output_bytes")?;
+            if !start.lines().any(|line| line == recorded_before) {
+                return Err(format!(
+                    "{row_id}: scripted refusal differs from product output:\n{recorded_before}\n--- actual:\n{start}"
+                ));
+            }
+            let recorded_input = recorded("ripr agent repair before", "input_bytes")?;
+            if !recorded_input.contains(&format!("--gap-id {variant_gap} ")) {
+                return Err(format!(
+                    "{row_id}: scripted start names another gap than {variant_gap}: {recorded_input}"
+                ));
+            }
         } else if !projected {
             return Err(format!(
                 "{variant} now fails closed; flip its row to true (#9107):\n{out}"
             ));
         }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn typescript_status_warning_keeps_the_no_start_claim_for_refused_variants() -> Result<(), String> {
+    // #10001 negative control: the status warning is derived from the same
+    // admission as `ripr check`, so a finding check refuses keeps the claim
+    // that check offers no `ripr agent repair` start.
+    let toml = "[languages]\nenabled = [\"typescript\"]\n";
+    for variant in [
+        "variant-let-binding",
+        "variant-reassignment",
+        "variant-shadowing",
+        "variant-imported-constant",
+        "variant-object-namespace-write",
+        "variant-enum-computed-initializer",
+        "variant-nonliteral-arithmetic",
+        "variant-reach-barrier",
+    ] {
+        let (_guard, root, decoy) = materialize(
+            "blind_journey_installed_typescript",
+            variant,
+            "tsneg",
+            Some(toml),
+        )?;
+        let root_arg = root.to_string_lossy().into_owned();
+        onto_feature_branch(&root)?;
+        let (check_ok, check) = ripr(&decoy, &["check", "--root", &root_arg])?;
+        expect_exit(check_ok, true, variant)?;
+        if check.contains("nothing was in scope") {
+            return Err(format!("{variant}: the control analyzed no diff:\n{check}"));
+        }
+        if gap_start_tokens(&check).is_some() {
+            return Err(format!("{variant}: check printed a start:\n{check}"));
+        }
+        let (pilot_ok, _) = ripr(&decoy, &["pilot", "--root", &root_arg])?;
+        expect_exit(pilot_ok, true, variant)?;
+        let (status_ok, status) = ripr(&decoy, &["agent", "status", "--root", &root_arg])?;
+        expect_exit(status_ok, true, variant)?;
+        need(&status, "pilot_routed_to_check_no_repair_target", variant)?;
+        need(
+            &status,
+            "offers no `ripr agent repair` start",
+            "a refused variant keeps the warning",
+        )?;
+        if status.contains("prints the gap-bound start") || gap_start_tokens(&status).is_some() {
+            return Err(format!("{variant}: status names a start:\n{status}"));
+        }
+        decoy_untouched(&decoy)?;
     }
     Ok(())
 }
@@ -1164,20 +1323,71 @@ fn gap_bound_after_phase_closes_the_gap_on_positive_evidence() -> Result<(), Str
             return Err(format!("gap-bound after output leaks --seam-id:\n{text}"));
         }
     }
-    // Status over the finished gap attempt offers no seam-bound command and
-    // no receipt: the closure rides the verify document.
+    // The receipt is bound to the closed gap and to this attempt.
+    let receipt_path = attempt.root.join("target/ripr/reports/agent-receipt.json");
+    let receipt: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&receipt_path)
+            .map_err(|error| format!("read receipt: {error}"))?,
+    )
+    .map_err(|error| format!("receipt json: {error}"))?;
+    if receipt["status"] != "advisory"
+        || receipt["analysis_outcome_status"] != "complete"
+        || receipt["seam"]["seam_id"] != attempt.gap.as_str()
+        || receipt["provenance"]["seam_id"] != attempt.gap.as_str()
+        || receipt["bound_gap"]["gap_id"] != attempt.gap.as_str()
+        || receipt["bound_gap"]["closed"] != true
+        || receipt["bound_gap"]["before_classification"] != "weakly_exposed"
+        || receipt["bound_gap"]["after_classification"] != "exposed"
+        || receipt["repair_attempt"]["attempt_id"] != attempt.attempt_id.as_str()
+        || receipt["repair_attempt"]["seam_id"] != attempt.gap.as_str()
+        || receipt["repair_attempt"]["gap_binding"]["base"] != "HEAD~1"
+        || receipt["verification"]["status"] != "verification_not_run"
+        || receipt["provenance"]["limits"]["runtime_mutation_execution"] != false
+        || receipt["provenance"]["limits"]["runtime_adequacy_claim"] != false
+    {
+        return Err(format!(
+            "receipt is not bound to the closed gap:\n{receipt}"
+        ));
+    }
+    let manifest = attempt.manifest_for_only_attempt()?;
+    if receipt["repair_attempt"]["gap_binding"]["base_commit"]
+        != manifest["gap_binding"]["base_commit"]
+    {
+        return Err("receipt does not record the attempt's resolved base commit".to_string());
+    }
+    // The attempt retained the receipt and its verify document.
+    let roles: Vec<&str> = manifest["terminal_artifacts"]
+        .as_array()
+        .map(|artifacts| {
+            artifacts
+                .iter()
+                .filter_map(|a| a["role"].as_str())
+                .collect()
+        })
+        .unwrap_or_default();
+    if !roles.contains(&"agent_receipt") || !roles.contains(&"agent_verify") {
+        return Err(format!("terminal evidence not retained: {roles:?}"));
+    }
+    // Status reads the retained receipt as showing this gap closed and offers
+    // no seam-bound command.
     let (status_ok, status) = ripr(
         &attempt.decoy,
-        &["agent", "status", "--root", &attempt.root_arg],
+        &["agent", "status", "--root", &attempt.root_arg, "--json"],
     )?;
     expect_exit(status_ok, true, "agent status after a gap-bound finish")?;
-    need(
-        &status,
-        "gap-bound attempt issues no receipt",
-        "status explains the missing receipt",
-    )?;
-    if status.contains("--seam-id") || status.contains("ripr agent receipt") {
-        return Err(format!("status offers a seam or receipt route:\n{status}"));
+    let status_doc: serde_json::Value =
+        serde_json::from_str(&status).map_err(|error| format!("status json: {error}\n{status}"))?;
+    let attempt_view = &status_doc["repair_attempts"][0];
+    if attempt_view["receipt"]["issued_for_attempt"] != true
+        || attempt_view["receipt"]["shows_gap_closed"] != true
+        || attempt_view["receipt"]["status"] != "advisory"
+    {
+        return Err(format!("status does not read the receipt:\n{status}"));
+    }
+    if status.contains("--seam-id") || status.contains("repair_receipt_unconfirmed") {
+        return Err(format!(
+            "status offers a seam route or doubts the receipt:\n{status}"
+        ));
     }
     // A finished attempt cannot run again, and its restart names the gap.
     let again = attempt.after(false)?;
@@ -1187,12 +1397,13 @@ fn gap_bound_after_phase_closes_the_gap_on_positive_evidence() -> Result<(), Str
     decoy_untouched(&attempt.decoy)
 }
 
-/// Human (non `--json`) gap-bound after output names the closure, prints no
-/// receipt line, and never summarizes a stale seam receipt planted at the
-/// receipt path.
+/// Human (non `--json`) gap-bound after output names the closure and this
+/// attempt's receipt, and replaces a stale seam receipt planted at the
+/// receipt path rather than summarizing it.
 #[cfg(feature = "lang-typescript")]
 #[test]
-fn gap_bound_after_phase_human_output_names_closure_and_no_stale_receipt() -> Result<(), String> {
+fn gap_bound_after_phase_human_output_names_closure_and_replaces_a_stale_receipt()
+-> Result<(), String> {
     let attempt = GapAttempt::start("ts-after-human")?;
     let reports = attempt.root.join("target/ripr/reports");
     std::fs::create_dir_all(&reports).map_err(|error| format!("mkdir: {error}"))?;
@@ -1211,10 +1422,159 @@ fn gap_bound_after_phase_human_output_names_closure_and_no_stale_receipt() -> Re
     )?;
     need(&stdout, "closed", "stdout names the gap closure")?;
     need(&stdout, attempt.gap.as_str(), "stdout names the gap")?;
+    need(&stdout, "receipt:", "stdout names the receipt it issued")?;
     for text in [&stdout, &stderr] {
-        let lower = text.to_lowercase();
-        if lower.contains("receipt") || lower.contains("stale_seam_receipt_marker") {
-            return Err(format!("gap-bound output mentions a receipt:\n{text}"));
+        if text.contains("stale_seam_receipt_marker") || text.contains("--seam-id") {
+            return Err(format!(
+                "gap-bound output is not this attempt's output\n{text}"
+            ));
+        }
+    }
+    let receipt = std::fs::read_to_string(reports.join("agent-receipt.json"))
+        .map_err(|error| format!("read receipt: {error}"))?;
+    if receipt.contains("stale_seam_receipt_marker") {
+        return Err("the stale receipt was not replaced by the gap-bound finish".to_string());
+    }
+    need(&receipt, attempt.gap.as_str(), "receipt names the gap")?;
+    decoy_untouched(&attempt.decoy)
+}
+
+/// `ripr agent receipt` for a gap is fail-closed on closure evidence: the
+/// real bound verify document issues it, while an unbound pair (no
+/// `--gap-id`), a forged `bound_gap` naming a gap that never closed, and an
+/// edited closure are each refused.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_bound_receipt_requires_the_verify_closure_and_rejects_forgery() -> Result<(), String> {
+    let attempt = GapAttempt::start("ts-receipt-forgery")?;
+    attempt.commit_closing_test()?;
+    let finished = attempt.after(true)?;
+    let (stdout, stderr) = text_of(&finished);
+    expect_exit(
+        finished.status.success(),
+        true,
+        &format!("closing finish:\n{stdout}\n{stderr}"),
+    )?;
+    let workflow = attempt.root.join("target/ripr/workflow");
+    let verify_text = std::fs::read_to_string(workflow.join("agent-verify.json"))
+        .map_err(|error| format!("read verify: {error}"))?;
+    let verify: serde_json::Value =
+        serde_json::from_str(&verify_text).map_err(|error| format!("verify json: {error}"))?;
+    let before = verify["inputs"]["before"].as_str().unwrap_or_default();
+    let after = verify["inputs"]["after"].as_str().unwrap_or_default();
+
+    let receipt_for = |verify_path: &Path, label: &str| -> Result<std::process::Output, String> {
+        let out = workflow.join(format!("{label}.receipt.json"));
+        ripr_output(
+            &attempt.decoy,
+            &[
+                "agent",
+                "receipt",
+                "--root",
+                &attempt.root_arg,
+                "--verify-json",
+                &verify_path.to_string_lossy(),
+                "--seam-id",
+                &attempt.gap,
+                "--attempt",
+                &attempt.attempt_id,
+                "--json",
+                "--out",
+                &out.to_string_lossy(),
+            ],
+        )
+    };
+
+    // Positive control: the bound verify document the finish wrote issues the
+    // receipt again.
+    let again = receipt_for(&workflow.join("agent-verify.json"), "control")?;
+    expect_exit(
+        again.status.success(),
+        true,
+        &format!("receipt over the bound verify:\n{:?}", text_of(&again)),
+    )?;
+    let control = std::fs::read_to_string(workflow.join("control.receipt.json"))
+        .map_err(|error| format!("read control receipt: {error}"))?;
+    need(
+        &control,
+        "\"closed\": true",
+        "control receipt carries closure",
+    )?;
+
+    // Negative 1: an unbound verify over the same pair carries no closure.
+    let unbound = ripr_output(
+        &attempt.decoy,
+        &[
+            "agent",
+            "verify",
+            "--json",
+            "--root",
+            &attempt.root_arg,
+            "--before",
+            before,
+            "--after",
+            after,
+        ],
+    )?;
+    expect_exit(unbound.status.success(), true, "unbound verify")?;
+    let unbound_path = workflow.join("unbound-verify.json");
+    std::fs::write(&unbound_path, &unbound.stdout)
+        .map_err(|error| format!("write unbound verify: {error}"))?;
+    let refused = receipt_for(&unbound_path, "unbound")?;
+    let (_, refused_err) = text_of(&refused);
+    expect_exit(
+        refused.status.success(),
+        false,
+        "receipt over an unbound pair",
+    )?;
+    need(
+        &refused_err,
+        "requires an agent verify document bound to that gap",
+        "unbound pair refused",
+    )?;
+    if workflow.join("unbound.receipt.json").exists() {
+        return Err("a receipt was written over an unbound pair".to_string());
+    }
+
+    // Negative 2: a forged closure naming a gap that never closed.
+    let mut forged = verify.clone();
+    forged["bound_gap"]["gap_id"] = serde_json::json!("gap:typescript:typescript_preview:deadbeef");
+    let forged_path = workflow.join("forged-verify.json");
+    std::fs::write(
+        &forged_path,
+        serde_json::to_string_pretty(&forged).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("write forged verify: {error}"))?;
+    let refused = receipt_for(&forged_path, "forged")?;
+    let (_, refused_err) = text_of(&refused);
+    expect_exit(refused.status.success(), false, "receipt over a forged gap")?;
+    need(
+        &refused_err,
+        "gap binding refused",
+        "forged closure refused",
+    )?;
+
+    // Negative 3: the real gap with an edited classification is not the
+    // canonical render of its snapshots.
+    let mut edited = verify;
+    edited["bound_gap"]["before_classification"] = serde_json::json!("exposed");
+    let edited_path = workflow.join("edited-verify.json");
+    std::fs::write(
+        &edited_path,
+        serde_json::to_string_pretty(&edited).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("write edited verify: {error}"))?;
+    let refused = receipt_for(&edited_path, "edited")?;
+    let (_, refused_err) = text_of(&refused);
+    expect_exit(
+        refused.status.success(),
+        false,
+        "receipt over an edited closure",
+    )?;
+    need(&refused_err, "not_canonical", "edited closure refused")?;
+    for label in ["forged", "edited"] {
+        if workflow.join(format!("{label}.receipt.json")).exists() {
+            return Err(format!("a receipt was written over the {label} verify"));
         }
     }
     decoy_untouched(&attempt.decoy)
@@ -1251,6 +1611,13 @@ fn gap_bound_after_phase_refuses_a_gap_that_is_not_closed_and_stays_retryable() 
     }
     if attempt.state()? != "awaiting_edit" {
         return Err(format!("unexpected state {}", attempt.state()?));
+    }
+    if attempt
+        .root
+        .join("target/ripr/reports/agent-receipt.json")
+        .exists()
+    {
+        return Err("a receipt was issued for a gap that did not close".to_string());
     }
     let manifest = attempt.manifest_for_only_attempt()?;
     if manifest["after_refusal_count"] != 1 {
@@ -1309,6 +1676,13 @@ fn gap_bound_after_phase_does_not_treat_an_absent_gap_as_closed() -> Result<(), 
     if attempt.state()? != "awaiting_edit" {
         return Err(format!("unexpected state {}", attempt.state()?));
     }
+    if attempt
+        .root
+        .join("target/ripr/reports/agent-receipt.json")
+        .exists()
+    {
+        return Err("a receipt was issued for a gap that did not close".to_string());
+    }
     Ok(())
 }
 
@@ -1340,6 +1714,13 @@ fn gap_bound_after_phase_enforces_the_edit_cage() -> Result<(), String> {
     let state = attempt.state()?;
     if state == "awaiting_edit" || state == "ready_to_finish" {
         return Err(format!("cage violation left a live attempt: {state}"));
+    }
+    if attempt
+        .root
+        .join("target/ripr/reports/agent-receipt.json")
+        .exists()
+    {
+        return Err("a receipt was issued for a gap that the cage refused".to_string());
     }
     Ok(())
 }

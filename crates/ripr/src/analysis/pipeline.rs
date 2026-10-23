@@ -17,8 +17,9 @@ use crate::analysis::committed_source;
 use crate::analysis::diff_scope_filter::{DiffIntake, DiffScopeFilter};
 
 use crate::analysis::language_outcome::{
-    DiffLanguageAggregate, LanguageAnalysisOutcomeV1, diff_scope_label,
+    DiffLanguageAggregate, LanguageAggregate, LanguageAnalysisOutcomeV1, diff_scope_label,
 };
+use crate::analysis::trybuild_fixtures;
 use crate::analysis_outcome::{
     AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
     AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
@@ -52,6 +53,12 @@ static DIFF_PIPELINE_ENTRIES: std::sync::Mutex<
 /// so tests can inspect it without any production field exposing it.
 #[cfg(test)]
 static DIFF_AGGREGATES: std::sync::Mutex<
+    std::collections::BTreeMap<std::path::PathBuf, DiffLanguageAggregate>,
+> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// Test-only capture of the last repo-mode aggregate for a root.
+#[cfg(test)]
+static REPO_AGGREGATES: std::sync::Mutex<
     std::collections::BTreeMap<std::path::PathBuf, DiffLanguageAggregate>,
 > = std::sync::Mutex::new(std::collections::BTreeMap::new());
 
@@ -1618,6 +1625,14 @@ fn run_pipeline_for_diff_text_with_language_config(
     for message in unanalyzed_disclosures(non_source_message, &changed_files) {
         eprintln!("{message}");
     }
+    // RIPR-SPEC-0347 (#8999): changed trybuild `tests/ui` fixtures are compile-time
+    // expectations ripr does not read as oracles. Advisory stderr text only; no
+    // finding, limitation or outcome field changes.
+    if let Some(message) =
+        trybuild_fixtures::trybuild_fixture_disclosure_message(&options.root, &changed_files)
+    {
+        eprintln!("{message}");
+    }
 
     emit_submodule_disclosure(submodule_file_count, |message| eprintln!("{message}"));
 
@@ -2026,6 +2041,10 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
     let mut rust_harness_projections: Vec<
         crate::analysis::harness_projection::TestHarnessProjection,
     > = Vec::new();
+    // Internal per-language accounting (#6470). Derived from the same
+    // outcomes as the public `language_runs`, which stays the
+    // non-success-only projection.
+    let mut repo_language_aggregate = LanguageAggregate::new_repo();
     for language in languages {
         cancellation::checkpoint()?;
         // Non-abort contract (see the diff loop above): preview-language
@@ -2041,14 +2060,13 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
                     result.skipped_files
                 )
             });
-            language_runs.extend(
-                LanguageAnalysisOutcomeV1::from_repo_result(
-                    LanguageId::Rust,
-                    &result,
-                    skipped_reason,
-                )
-                .compat_run(),
+            let outcome = LanguageAnalysisOutcomeV1::from_repo_result(
+                LanguageId::Rust,
+                &result,
+                skipped_reason,
             );
+            language_runs.extend(outcome.compat_run());
+            repo_language_aggregate.record(outcome);
             rust_harness_projections = result.harness_projections;
             rust_diagnostic_origins = result.rust_diagnostic_origins;
             rust_consumed_sources = result.rust_consumed_sources;
@@ -2077,18 +2095,27 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
                 // `Partial` language run on the shared channel, so human
                 // and JSON output render the limitation and gates fail
                 // closed on the partial denominator (#3554, #2109).
-                language_runs.extend(
-                    LanguageAnalysisOutcomeV1::from_repo_result(*language, &result, None)
-                        .compat_run(),
-                );
+                let outcome = LanguageAnalysisOutcomeV1::from_repo_result(*language, &result, None);
+                language_runs.extend(outcome.compat_run());
+                repo_language_aggregate.record(outcome);
                 findings.extend(result.findings);
                 files_by_language.push((*language, result.production_files));
             }
-            Err(reason) => language_runs.push(LanguageRun {
-                language: language.as_str().to_string(),
-                status: perl_run_status_for_err(&reason),
-                reason: Some(reason),
-            }),
+            Err(reason) => {
+                let status = perl_run_status_for_err(&reason);
+                // The failed language is one child; its siblings' evidence
+                // is already recorded and untouched.
+                repo_language_aggregate.record(LanguageAnalysisOutcomeV1::from_repo_err(
+                    *language,
+                    reason.clone(),
+                    status,
+                ));
+                language_runs.push(LanguageRun {
+                    language: language.as_str().to_string(),
+                    status,
+                    reason: Some(reason),
+                });
+            }
         }
     }
 
@@ -2096,11 +2123,26 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
     // adapter enablement, so a repo-scope clean result is never silently
     // presented as Rust-grade clean when TypeScript/JavaScript/Python files
     // exist but are not analyzed (RIPR-SPEC-0082, #1111).
-    let preview_advisories = detect_repo_preview_advisories(
-        &options.root,
+    let discovered_preview_files = super::workspace::discover_routed_language_files(&options.root);
+    let preview_advisories = preview_advisories_from_discovered(
+        &discovered_preview_files,
         languages,
         &crate::config::LanguagesConfig::default(),
     );
+    for outcome in repo_not_selected_outcomes(&discovered_preview_files, languages) {
+        repo_language_aggregate.record(outcome);
+    }
+    let repo_language_aggregate = repo_language_aggregate.finish();
+    // Internal invariant check; never changes what a release build reports.
+    debug_assert!(
+        repo_language_aggregate.validate().is_ok(),
+        "{:?}",
+        repo_language_aggregate.validate()
+    );
+    #[cfg(test)]
+    if let Ok(mut aggregates) = REPO_AGGREGATES.lock() {
+        aggregates.insert(options.root.clone(), repo_language_aggregate);
+    }
 
     sort::sort_findings(&mut findings);
     cancellation::checkpoint()?;
@@ -2131,12 +2173,62 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
 
 /// Build repo-scope preview advisories by walking the workspace for
 /// preview-language files, grouped by language, regardless of enablement.
+#[cfg(all(test, feature = "lang-typescript"))]
 fn detect_repo_preview_advisories(
     root: &std::path::Path,
     enabled: &[LanguageId],
     language_config: &crate::config::LanguagesConfig,
 ) -> Vec<PreviewLanguageAdvisory> {
     let discovered = super::workspace::discover_preview_language_files(root);
+    preview_advisories_from_discovered(&discovered, enabled, language_config)
+}
+
+/// Repo-mode `not_selected` outcomes for preview-language files discovered in
+/// the workspace whose adapter the language set did not select. Counts keep
+/// JavaScript apart from TypeScript. Perl is included even when its adapter is
+/// not compiled in, matching the advisory.
+fn repo_not_selected_outcomes(
+    discovered: &[(LanguageId, std::path::PathBuf)],
+    languages: &[LanguageId],
+) -> Vec<LanguageAnalysisOutcomeV1> {
+    let mut counts: std::collections::BTreeMap<&'static str, (LanguageId, usize)> =
+        std::collections::BTreeMap::new();
+    for (language, path) in discovered {
+        let selected = match language {
+            LanguageId::TypeScript | LanguageId::JavaScript => {
+                languages.contains(&LanguageId::TypeScript)
+                    || languages.contains(&LanguageId::JavaScript)
+            }
+            other => languages.contains(other),
+        };
+        if selected {
+            continue;
+        }
+        let (resolved, label) = if is_javascript_family_path(path) {
+            (LanguageId::JavaScript, LanguageId::JavaScript.as_str())
+        } else {
+            (*language, language.as_str())
+        };
+        counts.entry(label).or_insert((resolved, 0)).1 += 1;
+    }
+    counts
+        .into_iter()
+        .map(|(label, (language, count))| {
+            let reason = if language.is_available() {
+                "language not in the effective [languages].enabled set"
+            } else {
+                "adapter not compiled into this ripr binary"
+            };
+            LanguageAnalysisOutcomeV1::repo_not_selected(label, count, reason)
+        })
+        .collect()
+}
+
+fn preview_advisories_from_discovered(
+    discovered: &[(LanguageId, std::path::PathBuf)],
+    enabled: &[LanguageId],
+    language_config: &crate::config::LanguagesConfig,
+) -> Vec<PreviewLanguageAdvisory> {
     let mut advisories: Vec<PreviewLanguageAdvisory> = Vec::new();
     for language in PREVIEW_LANGUAGE_ORDER {
         if !language.is_available() && *language != LanguageId::Perl {
@@ -5360,6 +5452,165 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    fn run_repo_aggregate(
+        name: &str,
+        files: &[(&str, &str)],
+        languages: &[LanguageId],
+    ) -> Result<(AnalysisResult, DiffLanguageAggregate), String> {
+        let root = temp_root(name)?;
+        for (path, body) in files {
+            write(&root.join(path), body)?;
+        }
+        let mut options = aggregate_options(root.clone(), root.join("unused.diff"));
+        options.diff_file = None;
+        options.mode = AnalysisMode::Deep;
+        let analysis =
+            run_repo_pipeline_with_oracle_policy(&options, &OraclePolicy::default(), languages)?;
+        let aggregate = super::REPO_AGGREGATES
+            .lock()
+            .map_err(|error| error.to_string())?
+            .remove(&root)
+            .ok_or_else(|| "no repo aggregate captured".to_string())?;
+        let _ = std::fs::remove_dir_all(&root);
+        Ok((analysis, aggregate))
+    }
+
+    /// #6470: preview-language files that the language set did not select are
+    /// recorded as `not_selected` children, the aggregate is incomplete, and
+    /// the public `language_runs` stays silent (the advisory carries it).
+    #[test]
+    fn repo_pipeline_aggregate_records_unselected_languages_without_public_rows()
+    -> Result<(), String> {
+        let (analysis, aggregate) = run_repo_aggregate(
+            "repo-aggregate-unselected",
+            &[
+                (
+                    "src/lib.rs",
+                    "pub fn discount(price: u32) -> u32 { price / 2 }\n",
+                ),
+                ("app.py", "def run():\n    return 1\n"),
+                ("lib/App.pm", "sub value { return 1 }\n"),
+                ("web/a.js", "export const a = 1;\n"),
+            ],
+            &[LanguageId::Rust],
+        )?;
+        assert!(aggregate.validate().is_ok(), "{:?}", aggregate.validate());
+        for label in ["python", "perl", "javascript"] {
+            assert_eq!(
+                aggregate.outcomes.get(label).map(|outcome| outcome.status),
+                Some(LanguageOutcomeStatus::NotSelected),
+                "{label}"
+            );
+        }
+        assert!(!aggregate.outcomes.contains_key("typescript"));
+        assert_eq!(aggregate.completeness(), DiffCompleteness::Incomplete);
+        assert!(
+            analysis.language_runs.is_empty(),
+            "{:?}",
+            analysis.language_runs
+        );
+        Ok(())
+    }
+
+    /// #6470: a Rust tree the language set did not select is one `not_selected`
+    /// child, so the aggregate cannot claim Complete from the Python child
+    /// alone. The public `language_runs` gains no row for it.
+    #[test]
+    fn repo_pipeline_aggregate_records_unselected_rust() -> Result<(), String> {
+        let (analysis, aggregate) = run_repo_aggregate(
+            "repo-aggregate-unselected-rust",
+            &[
+                (
+                    "Cargo.toml",
+                    "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+                ),
+                (
+                    "src/lib.rs",
+                    "pub fn discount(price: u32) -> u32 { price / 2 }\n",
+                ),
+                ("app.py", "def discount(price):\n    return price / 2\n"),
+            ],
+            &[LanguageId::Python],
+        )?;
+        assert!(aggregate.validate().is_ok(), "{:?}", aggregate.validate());
+        let python = aggregate
+            .outcomes
+            .get("python")
+            .ok_or_else(|| "no python child".to_string())?;
+        if cfg!(feature = "lang-python") {
+            assert_eq!(python.status, LanguageOutcomeStatus::Complete);
+            assert!(python.finding_count() > 0, "python child is empty");
+        }
+        let rust = aggregate
+            .outcomes
+            .get("rust")
+            .ok_or_else(|| "no rust child".to_string())?;
+        assert_eq!(rust.status, LanguageOutcomeStatus::NotSelected);
+        assert_eq!(aggregate.completeness(), DiffCompleteness::Incomplete);
+        assert!(
+            aggregate
+                .blockers()
+                .iter()
+                .any(|(language, _)| *language == "rust"),
+            "{:?}",
+            aggregate.blockers()
+        );
+        assert!(
+            analysis.language_runs.is_empty()
+                || (!cfg!(feature = "lang-python")
+                    && analysis
+                        .language_runs
+                        .iter()
+                        .all(|run| run.language == "python")),
+            "{:?}",
+            analysis.language_runs
+        );
+        Ok(())
+    }
+
+    /// #6470: an enabled Perl adapter that errors (no packet, or feature off)
+    /// is one blocked child; the Rust sibling keeps its own evidence and
+    /// the public projection is exactly the old bare `LanguageRun`.
+    #[test]
+    fn repo_pipeline_aggregate_keeps_rust_evidence_when_perl_errors() -> Result<(), String> {
+        let (analysis, aggregate) = run_repo_aggregate(
+            "repo-aggregate-perl-err",
+            &[
+                (
+                    "src/lib.rs",
+                    "pub fn discount(price: u32) -> u32 { price / 2 }\n",
+                ),
+                ("lib/App.pm", "sub value { return 1 }\n"),
+            ],
+            &[LanguageId::Rust, LanguageId::Perl],
+        )?;
+        assert!(aggregate.validate().is_ok(), "{:?}", aggregate.validate());
+        assert_eq!(
+            aggregate.outcomes.get("rust").map(|outcome| outcome.status),
+            Some(LanguageOutcomeStatus::Complete)
+        );
+        assert!(
+            aggregate
+                .outcomes
+                .get("rust")
+                .is_some_and(|rust| rust.finding_count() > 0)
+        );
+        assert_eq!(
+            aggregate.outcomes.get("perl").map(|outcome| outcome.status),
+            Some(LanguageOutcomeStatus::Unavailable)
+        );
+        assert_eq!(aggregate.completeness(), DiffCompleteness::Incomplete);
+        assert_eq!(
+            analysis
+                .language_runs
+                .iter()
+                .map(|run| (run.language.as_str(), run.status))
+                .collect::<Vec<_>>(),
+            vec![("perl", LanguageRunStatus::Unavailable)]
+        );
         Ok(())
     }
 

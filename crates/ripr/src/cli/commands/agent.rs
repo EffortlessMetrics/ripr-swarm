@@ -917,6 +917,29 @@ fn run_agent_receipt_for_attempt(
     })?;
     let validated =
         app::agent_receipt::validate_agent_receipt_verify_json(&options.root, &verify_json)?;
+    // #9103 (RIPR-SPEC-0311): a receipt for a gap is issued only over a verify
+    // document that closed that gap on positive evidence (open before,
+    // `exposed` after). The canonical validation above recomputed the closure
+    // from the snapshots; this requires it to be present for the receipt's
+    // subject, so an unbound pair can never be issued as a gap's receipt.
+    let gap_subject = app::gap_bound_repair::is_gap_bound_subject(&options.seam_id)
+        || match attempt_id {
+            Some(attempt_id) => crate::app::repair_attempt::attempt_gap_binding_from(
+                &options.root,
+                store,
+                attempt_id,
+            )?
+            .is_some(),
+            None => false,
+        };
+    if gap_subject
+        && output::agent_receipt::bound_gap_for_seam(&validated.verify, &options.seam_id).is_none()
+    {
+        return Err(format!(
+            "agent receipt for gap `{}` requires an agent verify document bound to that gap (`ripr agent verify --gap-id`) that records it closed; an unbound pair, an open gap or an absent gap is not closure evidence",
+            options.seam_id
+        ));
+    }
     if let Some(attempt_id) = attempt_id {
         let before_sha256 = validated
             .verify
@@ -1405,16 +1428,11 @@ impl SharedWorkflowArtifacts {
         } else {
             "after.repo-exposure.json"
         };
-        let mut paths = vec![
+        let paths = vec![
             root.join("target/ripr/workflow").join(after_snapshot),
             root.join("target/ripr/workflow/agent-verify.json"),
+            root.join(crate::agent::loop_commands::WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT),
         ];
-        // A gap-bound attempt writes no analysis outcome (it issues no
-        // receipt), so it must not back up and then discard the prior one on
-        // success: track only the artifacts this phase writes.
-        if !gap_bound {
-            paths.push(root.join(crate::agent::loop_commands::WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT));
-        }
         let mut backups = Vec::with_capacity(paths.len());
         for path in &paths {
             let mut backup_name = path
@@ -1881,12 +1899,18 @@ fn run_agent_repair_phase(
             // base resolved to then, and compares by gap id. Seam-bound
             // attempts keep the repo-exposure snapshot.
             let gap_bound = attempt.gap_base.is_some();
+            // The gap-bound after snapshot is also the analysis outcome its
+            // receipt reads: the same complete, diff-scoped producer document
+            // against the gap's own base, not a second run against a default
+            // base that could disagree with the closure it certifies.
+            let mut gap_analysis_outcome: Option<String> = None;
             let after = if let Some(base_commit) = attempt.gap_base_commit.as_deref() {
                 let after = root
                     .join("target/ripr/workflow")
                     .join(crate::app::gap_bound_repair::GAP_BOUND_AFTER_SNAPSHOT_FILE);
                 let snapshot = super::check::gap_check_findings_snapshot(&root, base_commit)?;
                 write_text_file(&after, &snapshot.rendered)?;
+                gap_analysis_outcome = Some(snapshot.rendered);
                 after
             } else {
                 let after = root.join("target/ripr/workflow/after.repo-exposure.json");
@@ -1990,10 +2014,12 @@ fn run_agent_repair_phase(
             // outcome. Generate it from the same current root before issuing
             // the receipt so the built-in repair route cannot report a clean
             // review packet without completeness evidence.
-            // A gap-bound attempt issues no receipt, so it needs no analysis
-            // outcome artifact either.
-            if !gap_bound {
-                write_agent_analysis_outcome(&root)?;
+            match &gap_analysis_outcome {
+                Some(rendered) => write_text_file(
+                    &root.join(crate::agent::loop_commands::WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT),
+                    rendered,
+                )?,
+                None => write_agent_analysis_outcome(&root)?,
             }
 
             let verify_options = AgentVerifyOptions {
@@ -2165,27 +2191,22 @@ fn run_agent_repair_phase(
                 // evidence, so the outcome is carried to the end and the apply
                 // record is published either way.
                 let test_changed = authored_test_changed(&cage_policy, &cage_after.verdict);
-                // #9103: a gap-bound attempt reports its closure through the
-                // verify document (`bound_gap`) and issues no receipt in this
-                // slice; a cage that did not admit the edit is the terminal
-                // refusal the receipt would otherwise have carried.
-                let receipt_result = if gap_bound {
-                    if cage_after.verdict.status
-                        == crate::edit_cage::EditCageVerdictStatus::Compliant
-                    {
-                        Ok(())
-                    } else {
-                        Err(format!(
-                            "repair attempt `{}` ended `{}` at its edit cage ({}); gap `{}` is not reported closed for an attempt the cage refused",
-                            cage_after.attempt_id.as_str(),
-                            crate::app::repair_attempt::repair_attempt_state_for_finish(
-                                &cage_after
-                            )
+                // #9103: a gap-bound attempt's receipt is bound to the gap its
+                // verify document closed (`bound_gap`); a cage that did not
+                // admit the edit is a terminal refusal with no closure
+                // reported, so no receipt is attempted for it.
+                let receipt_result = if gap_bound
+                    && cage_after.verdict.status
+                        != crate::edit_cage::EditCageVerdictStatus::Compliant
+                {
+                    Err(format!(
+                        "repair attempt `{}` ended `{}` at its edit cage ({}); gap `{}` is not reported closed for an attempt the cage refused",
+                        cage_after.attempt_id.as_str(),
+                        crate::app::repair_attempt::repair_attempt_state_for_finish(&cage_after)
                             .as_label(),
-                            cage_after.verdict.status.as_label(),
-                            attempt.seam_id
-                        ))
-                    }
+                        cage_after.verdict.status.as_label(),
+                        attempt.seam_id
+                    ))
                 } else {
                     run_agent_receipt_for_attempt(
                         AgentReceiptOptions {
@@ -2209,7 +2230,7 @@ fn run_agent_repair_phase(
                 // verify document it was built from. The compatibility
                 // projection above can be replaced by a later finish; this
                 // retain is the surviving authority for this attempt.
-                if receipt_result.is_ok() && !gap_bound {
+                if receipt_result.is_ok() {
                     crate::app::repair_attempt::retain_terminal_evidence_from(
                         &root,
                         store_ref,
@@ -2373,6 +2394,9 @@ fn run_agent_repair_phase(
             // The verify document keeps every field, name, and value under
             // `verify`, and the status report rides beside it under
             // `agent_status`.
+            // A gap-bound attempt (#9103) leads its narration with the gap
+            // closure the verify document recorded; the receipt lines follow.
+            let gap_lines = gap_closure_summary_lines(&document);
             let envelope = serde_json::json!({
                 "schema_version": REPAIR_AFTER_RESULT_SCHEMA_VERSION,
                 "kind": "repair_after_result",
@@ -2382,37 +2406,9 @@ fn run_agent_repair_phase(
             let combined = serde_json::to_string_pretty(&envelope).map_err(|error| {
                 format!("serialize after-phase result document failed: {error}")
             })?;
-            // A gap-bound attempt issues no receipt in C2b, so it must never
-            // summarize or name `agent-receipt.json`: a stale seam receipt at
-            // that path would read as this attempt's result. Its closure line
-            // comes from the verify document's `bound_gap`.
-            //
-            // Deliberate for C2b: the seam receipt's trusted-head, ancestry
-            // and analysis-outcome re-checks are skipped on this path.
-            // Closure is established by the `agent verify --gap-id` run on
-            // hash-bound snapshots above; the bound receipt that would
-            // re-check them is C2c.
-            if gap_bound {
-                let summary_lines = gap_closure_summary_lines(&document);
-                if json {
-                    println!("{combined}");
-                    for line in &summary_lines {
-                        eprintln!("ripr: {line}");
-                    }
-                } else {
-                    print!(
-                        "{}",
-                        gap_after_phase_human_stdout(&summary_lines, &verify_json)
-                    );
-                }
-                eprintln!(
-                    "ripr: after phase complete. Verify result: {}",
-                    verify_json.display()
-                );
-                return Ok(());
-            }
             let receipt_path = root.join("target/ripr/reports/agent-receipt.json");
-            let summary_lines = repair_after_summary_lines(&receipt_path);
+            let mut summary_lines = gap_lines;
+            summary_lines.extend(repair_after_summary_lines(&receipt_path));
             // The movement summary goes to stdout when stdout is the human
             // channel, and to stderr as narration beside the `--json`
             // document; never both, so a terminal shows it once.
@@ -2624,6 +2620,12 @@ fn authored_test_changed(
 /// so the lines name the incomparability cause the artifacts record — a
 /// baseline born ambiguous when one was — and the fresh-attempt route from a
 /// clean state.
+///
+/// #8991: when the refusal is the inline-region cage reporting that the
+/// selected file does not parse after the attempt's edit, the first line is
+/// the plain "`<file>` does not parse after this attempt's edit — fix the
+/// syntax error and start the attempt again." statement; the refused-path
+/// listing and the bounded-recovery detail below it are unchanged.
 fn repair_after_cage_recovery_lines(
     root: &Path,
     store: Option<&Path>,
@@ -2640,6 +2642,22 @@ fn repair_after_cage_recovery_lines(
     }
     let attempt_id = after.attempt_id.as_str();
     let mut lines = Vec::new();
+    // #8991: when the inline-region observation reports the selected file
+    // unparseable, lead with the plain statement. The observation parses the
+    // whole file, so the failure may sit in the newly written test or in
+    // production code beside it; the line names the file, not the test. The
+    // bounded-recovery detail below is unchanged.
+    if let Some(violation) = after
+        .verdict
+        .violations
+        .iter()
+        .find(|violation| crate::edit_cage::refusal_is_unparseable_selected_file(violation))
+    {
+        lines.push(format!(
+            "`{}` does not parse after this attempt's edit — fix the syntax error and start the attempt again.",
+            violation.path
+        ));
+    }
     if !after.current {
         lines.push(format!(
             "attempt `{attempt_id}` is stale: repository HEAD moved from {} to {} after its before phase.",
@@ -3282,25 +3300,6 @@ fn gap_closure_summary_lines(verify: &serde_json::Value) -> Vec<String> {
         text("after_classification"),
         text("file"),
     )]
-}
-
-/// Human stdout of a gap-bound after phase: the closure line and the verify
-/// document, with no receipt line (this attempt issues none).
-fn gap_after_phase_human_stdout(summary_lines: &[String], verify_path: &Path) -> String {
-    let mut out = String::new();
-    for line in summary_lines {
-        let mut chars = line.chars();
-        if let Some(first) = chars.next() {
-            out.extend(first.to_uppercase());
-            out.push_str(chars.as_str());
-            out.push('\n');
-        }
-    }
-    out.push_str(&format!(
-        "  verify result (JSON): {}; add --json to print the result document here\n",
-        verify_path.display()
-    ));
-    out
 }
 
 /// Stdout of an after phase without `--json`: the movement line the receipt
@@ -4581,13 +4580,114 @@ mod tests {
         }
         Ok(())
     }
+
+    /// #8991: when the cage refusal is that the selected file does not parse
+    /// after the attempt's edit, the narration leads with the plain
+    /// fix-the-syntax-error statement naming the file, and the existing bounded-recovery
+    /// detail — the refused-path listing, the region observation, and the
+    /// CRLF-aware undo route — still follows verbatim below it.
+    #[test]
+    fn unparseable_selected_file_refusal_leads_with_the_plain_hint() -> Result<(), String> {
+        let after = crate::app::repair_attempt::RepairAttemptAfter {
+            attempt_id: crate::app::repair_attempt::RepairAttemptId::parse(
+                "repair-attempt-0123456789abcdef01234567",
+            )?,
+            repository_head: "b".repeat(40),
+            delta_sha256: format!("sha256:{}", "0".repeat(64)),
+            packet_sha256: format!("sha256:{}", "1".repeat(64)),
+            current: true,
+            verdict: crate::edit_cage::EditCageVerdict {
+                status: crate::edit_cage::EditCageVerdictStatus::Violated,
+                changed_paths: vec!["src/lib.rs".to_string()],
+                violations: vec![crate::edit_cage::EditCageViolation {
+                    kind: crate::edit_cage::EditCageViolationKind::OutsideInlineTestRegion,
+                    path: "src/lib.rs".to_string(),
+                    reason: "the edit is not a pure insertion of test functions into the selected file's inline test module (`mod tests`: unparseable); production code, the module declaration, and existing tests must stay byte-identical".to_string(),
+                }],
+            },
+        };
+        let lines = repair_after_cage_recovery_lines(
+            Path::new("."),
+            None,
+            "seam:sample",
+            &"b".repeat(40),
+            &after,
+            None,
+        );
+        let first = lines
+            .first()
+            .ok_or_else(|| "the refusal must narrate at least one line".to_string())?;
+        assert_eq!(
+            first,
+            "`src/lib.rs` does not parse after this attempt's edit — fix the syntax error and start the attempt again.",
+            "the refusal must lead with the plain statement: {lines:?}"
+        );
+        let joined = lines.join("\n");
+        for needle in [
+            "the edit cage refused 1 path(s)",
+            "`mod tests`: unparseable",
+            "attempt `repair-attempt-0123456789abcdef01234567` is terminal",
+            "undo the refused changes",
+            "`core.autocrlf` can rewrite CRLF",
+        ] {
+            assert!(
+                joined.contains(needle),
+                "the recovery detail must follow the hint, missing `{needle}`: {joined}"
+            );
+        }
+        Ok(())
+    }
+
+    /// Negative experiment: an inline-region refusal for any other reason
+    /// (here a production edit) must not lead with the parse hint; without
+    /// the region binding the hint would read as a general syntax complaint
+    /// on a refusal that names no parse failure.
+    #[test]
+    fn other_inline_region_refusals_do_not_lead_with_the_parse_hint() -> Result<(), String> {
+        let after = crate::app::repair_attempt::RepairAttemptAfter {
+            attempt_id: crate::app::repair_attempt::RepairAttemptId::parse(
+                "repair-attempt-0123456789abcdef01234567",
+            )?,
+            repository_head: "b".repeat(40),
+            delta_sha256: format!("sha256:{}", "0".repeat(64)),
+            packet_sha256: format!("sha256:{}", "1".repeat(64)),
+            current: true,
+            verdict: crate::edit_cage::EditCageVerdict {
+                status: crate::edit_cage::EditCageVerdictStatus::Violated,
+                changed_paths: vec!["src/lib.rs".to_string()],
+                violations: vec![crate::edit_cage::EditCageViolation {
+                    kind: crate::edit_cage::EditCageViolationKind::OutsideInlineTestRegion,
+                    path: "src/lib.rs".to_string(),
+                    reason: "the edit is not a pure insertion of test functions into the selected file's inline test module (`mod tests`: production_edit); production code, the module declaration, and existing tests must stay byte-identical".to_string(),
+                }],
+            },
+        };
+        let lines = repair_after_cage_recovery_lines(
+            Path::new("."),
+            None,
+            "seam:sample",
+            &"b".repeat(40),
+            &after,
+            None,
+        );
+        let joined = lines.join("\n");
+        assert!(
+            !joined.contains("does not parse"),
+            "a non-parse refusal must not carry the parse hint: {joined}"
+        );
+        assert!(
+            joined.contains("the edit cage refused 1 path(s)"),
+            "the refusal keeps its existing narration: {joined}"
+        );
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod repair_summary_tests {
     use super::{
-        SharedWorkflowArtifacts, WORKFLOW_ARTIFACT_BACKUP_SUFFIX, gap_after_phase_human_stdout,
-        gap_closure_summary_lines, repair_after_summary_lines, repair_receipt_summary_lines,
+        SharedWorkflowArtifacts, WORKFLOW_ARTIFACT_BACKUP_SUFFIX, gap_closure_summary_lines,
+        repair_after_summary_lines, repair_receipt_summary_lines,
     };
 
     #[test]
@@ -4670,53 +4770,68 @@ mod repair_summary_tests {
         assert!(repair_receipt_summary_lines("not json").is_empty());
     }
 
-    #[test]
-    fn gap_bound_tracking_preserves_the_prior_analysis_outcome_on_success() -> Result<(), String> {
-        let root = std::env::temp_dir().join(format!(
-            "ripr-gap-track-{}-{}",
+    fn temp_root(label: &str) -> Result<std::path::PathBuf, String> {
+        Ok(std::env::temp_dir().join(format!(
+            "ripr-gap-track-{label}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_err(|error| error.to_string())?
                 .as_nanos()
-        ));
-        let outcome = root.join(crate::agent::loop_commands::WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT);
-        let parent = outcome.parent().ok_or("outcome has no parent")?;
-        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        std::fs::write(&outcome, b"prior-outcome-bytes").map_err(|error| error.to_string())?;
-        let tracked = SharedWorkflowArtifacts::track(&root, true);
-        // The gap path writes only its own artifacts.
-        tracked.resolve(true, false, true);
-        let kept = std::fs::read(&outcome).map_err(|error| format!("outcome deleted: {error}"));
-        let leftovers = parent
-            .read_dir()
-            .map_err(|error| error.to_string())?
-            .filter_map(Result::ok)
-            .any(|entry| {
-                entry
-                    .file_name()
-                    .to_string_lossy()
-                    .ends_with(WORKFLOW_ARTIFACT_BACKUP_SUFFIX)
-            });
-        let _ = std::fs::remove_dir_all(&root);
-        if kept? != b"prior-outcome-bytes" || leftovers {
-            return Err("gap-bound success altered the prior analysis outcome".to_string());
+        )))
+    }
+
+    /// A gap-bound after phase now writes its own analysis outcome (its
+    /// receipt reads it), so it is tracked like the seam path: success keeps
+    /// the fresh bytes and a terminal refusal restores the prior ones.
+    #[test]
+    fn gap_bound_tracking_covers_the_analysis_outcome_it_now_writes() -> Result<(), String> {
+        let outcome_rel = crate::agent::loop_commands::WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT;
+        for (label, phase_ok, terminal, expected) in [
+            ("ok", true, false, b"fresh-outcome".as_slice()),
+            ("refused", false, true, b"prior-outcome".as_slice()),
+        ] {
+            let root = temp_root(label)?;
+            let outcome = root.join(outcome_rel);
+            let parent = outcome.parent().ok_or("outcome has no parent")?;
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            std::fs::write(&outcome, b"prior-outcome").map_err(|error| error.to_string())?;
+            let tracked = SharedWorkflowArtifacts::track(&root, true);
+            std::fs::write(&outcome, b"fresh-outcome").map_err(|error| error.to_string())?;
+            tracked.resolve(phase_ok, terminal, true);
+            let kept = std::fs::read(&outcome).map_err(|error| error.to_string());
+            let leftovers = parent
+                .read_dir()
+                .map_err(|error| error.to_string())?
+                .filter_map(Result::ok)
+                .any(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .ends_with(WORKFLOW_ARTIFACT_BACKUP_SUFFIX)
+                });
+            let _ = std::fs::remove_dir_all(&root);
+            if kept? != expected || leftovers {
+                return Err(format!(
+                    "{label}: gap-bound tracking left the wrong analysis outcome"
+                ));
+            }
         }
         Ok(())
     }
 
     #[test]
-    fn gap_after_human_output_names_closure_and_no_receipt() -> Result<(), String> {
+    fn gap_closure_narration_names_the_gap_and_its_classifications() -> Result<(), String> {
         let verify = serde_json::json!({"bound_gap": {
             "gap_id": "g1", "before_classification": "weakly_exposed",
             "after_classification": "exposed", "file": "src/a.ts", "line": 7, "closed": true}});
         let lines = gap_closure_summary_lines(&verify);
-        let out =
-            gap_after_phase_human_stdout(&lines, std::path::Path::new("/r/agent-verify.json"));
-        if !out.starts_with("Gap g1 closed: weakly_exposed -> exposed at src/a.ts:7.")
-            || out.to_lowercase().contains("receipt")
-        {
-            return Err(format!("unexpected gap output: {out}"));
+        if lines != vec!["gap g1 closed: weakly_exposed -> exposed at src/a.ts:7.".to_string()] {
+            return Err(format!("unexpected closure narration: {lines:?}"));
+        }
+        // An unbound verify document narrates no closure.
+        if !gap_closure_summary_lines(&serde_json::json!({})).is_empty() {
+            return Err("an unbound verify document narrated a closure".to_string());
         }
         Ok(())
     }

@@ -936,11 +936,7 @@ fn validate_artifact_identity(
 
     let actual_head = git_output(&expected_root, &["rev-parse", "HEAD"])?;
     let actual_head = actual_head.trim();
-    let actual_worktree_dirty = git_output(
-        &expected_root,
-        &["status", "--porcelain", "--untracked-files=no"],
-    )
-    .map(|status| !status.trim().is_empty())?;
+    let actual_worktree_dirty = git_worktree_dirty(&expected_root)?;
     // Lineage presence (#2922 PR A): a well-formed head that does not name a
     // commit held by the checked repository is rejected, not merely disclosed
     // as historical. Git liveness is established by the HEAD and status reads
@@ -1365,12 +1361,29 @@ pub(crate) fn resolve_commit_rev(root: &Path, rev: &str) -> Result<String, Strin
 /// The artifact producer's bounded worktree probe, shared with limitation
 /// disclosure. A successful HEAD read alone does not establish this status.
 pub(crate) fn current_git_worktree_status(root: &Path) -> Result<&'static str, String> {
-    let status = git_output(root, &["status", "--porcelain", "--untracked-files=no"])?;
-    Ok(if status.trim().is_empty() {
-        "clean"
-    } else {
+    Ok(if git_worktree_dirty(root)? {
         "dirty"
+    } else {
+        "clean"
     })
+}
+
+/// Whether the worktree differs from HEAD in anything the analysis reads: a
+/// tracked change, or an untracked, non-ignored Rust source. The seam
+/// inventory walks the filesystem, so an untracked production `.rs` file is
+/// analyzed and its seams emitted even though HEAD does not contain it
+/// (#6817). Other untracked files (build output, notes) are not analyzed and
+/// stay out of this probe, so they cannot flip an artifact to dirty.
+fn git_worktree_dirty(root: &Path) -> Result<bool, String> {
+    let tracked = git_output(root, &["status", "--porcelain", "--untracked-files=no"])?;
+    if !tracked.trim().is_empty() {
+        return Ok(true);
+    }
+    let untracked_sources = git_output(
+        root,
+        &["ls-files", "--others", "--exclude-standard", "--", "*.rs"],
+    )?;
+    Ok(!untracked_sources.trim().is_empty())
 }
 
 /// A HEAD read that also detects an A-B-A swap between two reads (#5930).
@@ -3945,6 +3958,61 @@ mod tests {
                     "a declared-dirty artifact must stay DirtyWorktree on a clean worktree"
                         .to_string(),
                 );
+            }
+            Ok(())
+        })();
+        let cleanup =
+            std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"));
+        result?;
+        cleanup?;
+        Ok(())
+    }
+
+    #[test]
+    fn untracked_rust_sources_make_the_worktree_dirty() -> Result<(), String> {
+        let root = temporary_git_root()?;
+        let result = (|| -> Result<(), String> {
+            commit_fixture_file(&root)?;
+            let raw = commit_content(&repo_exposure_raw_with_placeholder(&root)?)?;
+            let clean = |label: &str| -> Result<(), String> {
+                if current_git_worktree_status(&root)? != "clean" {
+                    return Err(format!("{label}: producer must report clean"));
+                }
+                let validated = validate_repo_exposure_artifact(&root, &raw, "test before")
+                    .map_err(|error| format!("{label}: validation failed: {error}"))?;
+                if validated.currentness != ArtifactCurrentness::Current {
+                    return Err(format!("{label}: verifier must report current"));
+                }
+                Ok(())
+            };
+            clean("baseline")?;
+            // Controls: files the analysis never reads stay clean.
+            std::fs::write(root.join("notes.txt"), "scratch\n")
+                .map_err(|error| format!("write notes: {error}"))?;
+            std::fs::write(root.join(".gitignore"), "ignored.rs\n")
+                .map_err(|error| format!("write ignore: {error}"))?;
+            run_git(&root, &["add", ".gitignore"])?;
+            run_git(&root, &["commit", "--quiet", "-m", "ignore"])?;
+            std::fs::write(root.join("ignored.rs"), "fn ignored() {}\n")
+                .map_err(|error| format!("write ignored: {error}"))?;
+            let raw_after_commit = commit_content(&repo_exposure_raw_with_placeholder(&root)?)?;
+            let still_clean = validate_repo_exposure_artifact(&root, &raw_after_commit, "t")
+                .map_err(|error| format!("control validation failed: {error}"))?;
+            if current_git_worktree_status(&root)? != "clean"
+                || still_clean.currentness != ArtifactCurrentness::Current
+            {
+                return Err("untracked non-Rust and gitignored Rust files must stay clean".into());
+            }
+            // An untracked Rust source is analyzed input, so it is dirty.
+            std::fs::write(root.join("extra.rs"), "pub fn extra() {}\n")
+                .map_err(|error| format!("write extra: {error}"))?;
+            if current_git_worktree_status(&root)? != "dirty" {
+                return Err("untracked Rust source must make the producer report dirty".into());
+            }
+            let dirty = validate_repo_exposure_artifact(&root, &raw_after_commit, "t")
+                .map_err(|error| format!("dirty validation failed: {error}"))?;
+            if dirty.currentness != ArtifactCurrentness::DirtyWorktree {
+                return Err("untracked Rust source must disclose DirtyWorktree".into());
             }
             Ok(())
         })();

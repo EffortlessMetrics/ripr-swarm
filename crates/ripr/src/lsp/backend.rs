@@ -1727,6 +1727,15 @@ impl Backend {
             .unwrap_or(false)
     }
 
+    /// A copy of the negotiated client profile; a poisoned store fails
+    /// closed to the unsupported (generic-client) profile.
+    fn client_feature_profile(&self) -> ClientFeatureProfile {
+        self.client_features
+            .lock()
+            .map(|features| features.clone())
+            .unwrap_or_else(|_| ClientFeatureProfile::unsupported())
+    }
+
     /// Whether the client negotiated `publishDiagnostics` version support
     /// (#1747). Unnegotiated or poisoned stores fail closed to `None`
     /// versions — the previous wire shape.
@@ -2513,6 +2522,7 @@ impl Backend {
         let root = self.workspace_root_authority();
         let config = self.analysis_config();
         let configuration_failure = self.configuration_failure();
+        let client_profile = self.client_feature_profile();
         let snapshot_state = self.latest_analysis.lock().ok().and_then(|snapshot| {
             snapshot.as_ref().map(|value| {
                 (
@@ -2520,7 +2530,12 @@ impl Backend {
                     value
                         .component_outcomes
                         .iter()
-                        .map(|outcome| outcome.status_payload(value.input_identity_id().as_deref()))
+                        .map(|outcome| {
+                            outcome.status_payload(
+                                value.input_identity_id().as_deref(),
+                                &client_profile,
+                            )
+                        })
                         .collect::<Vec<_>>(),
                     value.analysis_outcome.clone(),
                     withheld_unknown_summary(value),
@@ -5091,7 +5106,10 @@ impl Backend {
         if previous == signature {
             return;
         }
-        if let Some(message) = super::component_outcome::degradation_log_message(outcomes) {
+        if let Some(message) = super::component_outcome::degradation_log_message(
+            outcomes,
+            &self.client_feature_profile(),
+        ) {
             self.client.log_message(MessageType::WARNING, message).await;
         } else if previous.is_some() {
             self.client

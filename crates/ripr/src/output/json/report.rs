@@ -811,6 +811,12 @@ fn finding_json_with_config_and_counts(
         true,
     );
     float_field(out, indent + 1, "confidence", finding.confidence, true);
+    // #5531: carry the typed scope for repo findings only, so ledger consumers
+    // of the rendered check JSON read the scope, not an evidence line. Omitted
+    // for diff scope to keep diff-mode bytes identical.
+    if finding.analysis_scope == crate::domain::AnalysisScope::Repo {
+        field(out, indent + 1, "analysis_scope", "repo", true);
+    }
     out.push_str(&format!("{}\"probe\": {{\n", "  ".repeat(indent + 1)));
     field(out, indent + 2, "id", &finding.probe.id.0, true);
     field(

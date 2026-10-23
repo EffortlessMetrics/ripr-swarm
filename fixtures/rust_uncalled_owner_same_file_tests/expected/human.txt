@@ -21,6 +21,13 @@ Start here:
     ripr's static model does not yet trace. If none does, add a co-located test that reaches and
     observes the changed behavior so a discriminator exists
   Evidence: reach no · infection no · propagation yes · observation no · discriminator no
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach no: No test is seen calling untested_rounding; tests share only its file or a name token: discount_applies_at_100, discount_small_unchanged
     - infection no: No test reaches the changed owner, so no test can activate this change
     - 9 more detail line(s) in --format human-full

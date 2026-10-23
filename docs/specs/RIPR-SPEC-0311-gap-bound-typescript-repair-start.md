@@ -91,12 +91,35 @@ existed with no way to begin the attempt.
    cage ends the attempt terminally with the `repair_after_failure` envelope
    and no closure is reported. A compliant finish prints the
    `repair_after_result` envelope whose `verify.bound_gap` carries the closure.
-   No receipt is issued for a gap attempt in this slice, and `agent status`
-   says so instead of offering seam-bound `--seam-id` commands. The shared
+   A compliant finish issues the gap-bound receipt (item 8). The shared
    `validate_agent_gap_record_packet` stays the only actionability authority.
 7. Let-bound, imported and reach-barrier variants remain unrouted. Seam
    attempt manifests omit `gap_binding`, so their bytes and before commitment
    are unchanged.
+8. Gap-Bound Receipt (C2c): a compliant gap-bound finish writes the ordinary
+   `target/ripr/reports/agent-receipt.json` for the gap (`seam.seam_id` and
+   `provenance.seam_id` are the gap id) from the verify document that closed
+   it. The receipt carries one additive member, `bound_gap` (`gap_id`,
+   `before_classification`, `after_classification`, `file`, `line`,
+   `closed: true`), copied only from a verify document whose bound gap is the
+   receipt's seam, and `repair_attempt.gap_binding` (`base`, `base_commit`).
+   Seam receipts omit both members, so their bytes are unchanged. Issuance is
+   fail-closed: a receipt for a gap refuses unless the verify document carries
+   a closed `bound_gap` for that gap, and receipt validation recomputes the
+   closure from the two snapshots, so an unbound pair, a `bound_gap` naming a
+   gap that did not close, or an edited closure is refused
+   (`[gap_binding]`/`[not_canonical]`) and no receipt is written. A refused,
+   absent or cage-refused finish issues no receipt. The receipt reads the
+   after snapshot as its analysis outcome (the same complete, diff-scoped
+   producer document against the attempt's own base). The attempt retains the
+   receipt and verify document as terminal evidence, and the stored-receipt
+   reader refuses a gap attempt's receipt whose verify document lacks the
+   closed `bound_gap` or whose `bound_gap` differs from it. `agent status`
+   then reads the retained receipt as showing the gap closed (advisory plus
+   improved static grip) and offers no `--seam-id` command. The receipt is
+   static exposure evidence: it runs no test, reports no runtime mutation
+   outcome and makes no sufficiency claim (`verification_not_run`,
+   `runtime_mutation_execution: false`).
 
 ## Required Evidence
 
@@ -110,10 +133,16 @@ existed with no way to begin the attempt.
   with negative start assertions, and Python assertions are unchanged.
 - Installed after-phase journeys: positive closure, not-closed refusal with
   retry, absent gap is not closure, cage violation, retry budget.
+- Gap-bound receipt: the receipt names the closed gap, the attempt and the
+  resolved base commit and is retained and read by status; an unbound pair, a
+  forged `bound_gap` and an edited closure are refused with no receipt written;
+  a not-closed, absent or cage-refused finish writes no receipt; the closure
+  rule and receipt rendering have unit negatives.
 
 ## Non-Goals
 
-- Receipts and verification run for gap attempts (later slices).
+- Verification-run execution for gap attempts (a later slice); the receipt
+  reports `verification_not_run`.
 - Runtime mutation outcomes or sufficiency claims; results are static exposure
   evidence only.
 
@@ -134,6 +163,12 @@ existed with no way to begin the attempt.
    reverting the production change (the gap vanishes) exits 3 with `absence is
    not closure evidence`; a closing test committed beside `src/extra.ts` ends
    the attempt terminally; the sixth refusal stops on the retry budget.
+6. After the closing finish, `target/ripr/reports/agent-receipt.json` has
+   `status: advisory`, `bound_gap.closed: true` for the gap, and the attempt id
+   and `gap_binding`; `agent status --json` reports it `issued_for_attempt` and
+   `shows_gap_closed`. `ripr agent receipt --seam-id <gap>` over a verify
+   document produced without `--gap-id` is refused with "requires an agent
+   verify document bound to that gap".
 
 ## Test Mapping
 
@@ -143,7 +178,10 @@ existed with no way to begin the attempt.
   `gap_bound_after_phase_refuses_a_gap_that_is_not_closed_and_stays_retryable`,
   `gap_bound_after_phase_does_not_treat_an_absent_gap_as_closed`,
   `gap_bound_after_phase_enforces_the_edit_cage`,
-  `gap_bound_after_phase_stops_when_the_retry_budget_is_spent`.
+  `gap_bound_after_phase_stops_when_the_retry_budget_is_spent`,
+  `gap_bound_after_phase_human_output_names_closure_and_replaces_a_stale_receipt`,
+  `gap_bound_receipt_requires_the_verify_closure_and_rejects_forgery`,
+  `typescript_status_warning_keeps_the_no_start_claim_for_refused_variants`.
 - `crates/ripr/src/cli/agent.rs`, `crates/ripr/src/app/repair_attempt/mod.rs`,
   `crates/ripr/src/app/agent_status.rs` and
   `crates/ripr/src/output/agent_seam_packets.rs` unit tests named in the
@@ -152,10 +190,17 @@ existed with no way to begin the attempt.
 ## Implementation Mapping
 
 - `crates/ripr/src/app/gap_bound_repair.rs`: lookup, start spelling, manual
-  verify route.
+  verify route, and `default_check_gap_start`, the admission `ripr agent
+  status` consults so its `pilot_routed_to_check_no_repair_target` warning
+  names the start check prints and keeps the "offers no start" claim only when
+  check offers none (#10001).
 - `crates/ripr/src/cli/commands/agent.rs`: `run_gap_bound_before_phase`.
 - `crates/ripr/src/app/repair_attempt/mod.rs`: `RepairAttemptGapBinding`,
-  `begin_gap_bound_repair_attempt_with_identity`.
+  `begin_gap_bound_repair_attempt_with_identity`,
+  `validate_gap_bound_receipt_closure`, `attempt_gap_binding_from`.
+- `crates/ripr/src/app/agent_receipt.rs`: the canonical verify render
+  recomputes a `bound_gap` closure from the snapshots;
+  `crates/ripr/src/output/agent_receipt.rs`: `bound_gap_for_seam`.
 - `crates/ripr/src/app/task_first.rs`, `app/navigation.rs`,
   `output/human/triage.rs`: the printed start line.
 

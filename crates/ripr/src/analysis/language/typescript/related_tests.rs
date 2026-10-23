@@ -1370,6 +1370,8 @@ pub(crate) fn module_entry_owner(
         exported_as_default: entry.exported_as_default,
         class_default_export: false,
         default_object_member: false,
+        commonjs_default_export: false,
+        commonjs_whole_function: false,
         method_kind: TypeScriptMethodKind::Ordinary,
         module_entries: Vec::new(),
         params: Vec::new(),
@@ -1404,6 +1406,7 @@ pub(crate) fn module_initializer_observer_relation(
             return expect_actual_references_member(&test.body_text, &import.local, &owner.name);
         }
         import.imported.as_deref() == Some(owner.name.as_str())
+            && !owner.commonjs_whole_function
             && !local_identifier_declared_in_test_body(&test.body_text, &import.local)
             && expect_actual_references_identifier(&test.body_text, &import.local)
     })
@@ -1444,11 +1447,15 @@ fn module_value_use_relation(
             return false;
         }
         if import.namespace {
-            return contains_member_reference(body, &import.local, &owner.name)
+            return !owner.commonjs_whole_function
+                && contains_member_reference(body, &import.local, &owner.name)
                 && !local_identifier_declared_in_test_body(body, &import.local);
         }
         import.imported.as_deref().is_some_and(|imported| {
-            imported == owner.name || (imported == "default" && owner.exported_as_default)
+            (imported == owner.name && !owner.commonjs_whole_function)
+                || (imported == "default"
+                    && owner.exported_as_default
+                    && !owner.commonjs_whole_function)
         }) && !local_identifier_declared_in_test_body(body, &import.local)
             && contains_identifier_reference(body, &import.local)
     })
@@ -2282,6 +2289,7 @@ pub(crate) fn import_alias_owner_locals<'t>(
             !import.namespace
                 && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
                 && import.imported.as_deref() == Some(owner.name.as_str())
+                && !owner.commonjs_whole_function
                 && import.local != owner.name
                 && contains_call_name(&test.body_text, &import.local)
                 && !local_identifier_declared_in_test_body(&test.body_text, &import.local)
@@ -2351,7 +2359,7 @@ pub(crate) fn default_import_owner_locals<'t>(
     test.imports_in_file
         .iter()
         .filter(|import| {
-            !import.namespace
+            (!import.namespace || commonjs_default_binding(import, owner))
                 && import.imported.as_deref() == Some("default")
                 && import.local != owner.name
                 && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
@@ -2560,13 +2568,18 @@ fn test_references_owner(
             return false;
         }
         if import.namespace {
-            return contains_member_reference(body, &import.local, &owner.name);
+            // `k.triple` is a property of a CommonJS function export, not it.
+            return !owner.commonjs_whole_function
+                && contains_member_reference(body, &import.local, &owner.name);
         }
         // Same default-export rule as `import_references_owner_call` (#4103):
         // a default import binds the owner only when the owner is the
         // module's default export.
         import.imported.as_deref().is_some_and(|imported| {
-            imported == owner.name || (imported == "default" && owner.exported_as_default)
+            (imported == owner.name && !owner.commonjs_whole_function)
+                || (imported == "default"
+                    && owner.exported_as_default
+                    && !owner.commonjs_whole_function)
         }) && !local_identifier_declared_in_test_body(body, &import.local)
             && contains_identifier_reference(body, &import.local)
     })
@@ -2995,7 +3008,7 @@ fn owner_name_import_binding_mismatch(
         .iter()
         .filter(|import| import.local == owner.name)
         .map(|import| {
-            if import.namespace {
+            if import.namespace && !commonjs_default_binding(import, owner) {
                 return Some(OwnerBindingMismatch::Unrelated);
             }
             match import_source_resolution(
@@ -3018,7 +3031,9 @@ fn owner_name_import_binding_mismatch(
                         if imported == "default" {
                             !owner.exported_as_default
                         } else {
-                            imported != owner.name.as_str()
+                            // A named binding of a CommonJS function export is
+                            // a property of the function, not the owner.
+                            imported != owner.name.as_str() || owner.commonjs_whole_function
                         }
                     })
                     .then_some(OwnerBindingMismatch::Unrelated),
@@ -3039,14 +3054,32 @@ fn owner_export_imported_from_unrelated_source(
     })
 }
 
+/// A literal `require()` binding (recorded as a default-named namespace
+/// binding) of a module whose whole export is the owner function
+/// (`module.exports = <function>`, RIPR-SPEC-0243 rule 19).
+pub(crate) fn commonjs_default_binding(import: &TypeScriptImport, owner: &TypeScriptOwner) -> bool {
+    import.namespace
+        && import.imported.as_deref() == Some("default")
+        && owner.commonjs_default_export
+}
+
 fn import_references_owner_call(
     import: &TypeScriptImport,
     test: &TypeScriptTest,
     owner: &TypeScriptOwner,
 ) -> bool {
     let body_text = test.body_text.as_str();
+    // RIPR-SPEC-0243 rule 19: `require()` of a CommonJS `module.exports =
+    // <function>` module returns the function itself, so the bare local call
+    // reaches the owner. The shadow guard matches the default-import arm.
+    if commonjs_default_binding(import, owner) {
+        return contains_call_name(body_text, &import.local)
+            && !local_identifier_declared_in_test_body(body_text, &import.local)
+            && !test.written_locals_in_file.contains(&import.local);
+    }
     if import.namespace {
-        return contains_member_call_name(body_text, &import.local, &owner.name);
+        return !owner.commonjs_whole_function
+            && contains_member_call_name(body_text, &import.local, &owner.name);
     }
     // RIPR-SPEC-0243 rule 5: a default import of a module whose `export
     // default { name }` object holds the owner reaches it as
@@ -3066,7 +3099,10 @@ fn import_references_owner_call(
     // local when the owner IS that default export. An anonymous default
     // already matches via `owner.name == "default"`.
     import.imported.as_deref().is_some_and(|imported| {
-        imported == owner.name || (imported == "default" && owner.exported_as_default)
+        (imported == owner.name && !owner.commonjs_whole_function)
+            || (imported == "default"
+                && owner.exported_as_default
+                && !owner.commonjs_whole_function)
     }) && contains_call_name(body_text, &import.local)
         // Shadow guard (#4102): the same test-body declaration guard the
         // alias arm applies — a locally re-declared `local` reaches the
@@ -3242,6 +3278,67 @@ fn out_dir_map_for(root: &Path) -> Option<TsOutDirMap> {
 struct RunResolverCache {
     directory_modules: HashMap<(PathBuf, String), Option<String>>,
     out_dir_maps: HashMap<PathBuf, Option<TsOutDirMap>>,
+    /// The committed-snapshot reader's verdict per config directory
+    /// (RIPR-SPEC-0258, #7708): `Some(mentions_vitest)` when the directory's
+    /// configs are clean, `None` when one refuses. Keyed by the directory and
+    /// whether it may be a symlink (the analysis root).
+    config_directories: HashMap<(PathBuf, bool), Option<bool>>,
+    /// Tracked `*.snap` files per analysis root (`None`: unknown).
+    tracked_snapshots: HashMap<PathBuf, Option<std::sync::Arc<HashSet<String>>>>,
+}
+
+/// Memoize `compute` for one analysis run, keyed by `key`, in the field
+/// `slot` picks. Outside a [`DirectoryModuleCacheScope`] nothing is stored,
+/// so no answer outlives the run that computed it.
+fn run_memoized<K: Clone + Eq + std::hash::Hash, V: Clone>(
+    key: &K,
+    slot: impl Fn(&mut RunResolverCache) -> &mut HashMap<K, V>,
+    compute: impl FnOnce() -> V,
+) -> V {
+    let cached = RUN_RESOLVER_CACHE.with(|cache| {
+        cache.try_borrow_mut().ok().and_then(|mut cache| {
+            cache
+                .as_mut()
+                .and_then(|cache| slot(cache).get(key).cloned())
+        })
+    });
+    if let Some(value) = cached {
+        return value;
+    }
+    let value = compute();
+    RUN_RESOLVER_CACHE.with(|cache| {
+        if let Ok(mut cache) = cache.try_borrow_mut()
+            && let Some(cache) = cache.as_mut()
+        {
+            slot(cache).insert(key.clone(), value.clone());
+        }
+    });
+    value
+}
+
+/// Per-run memo of one config directory's snapshot-config verdict.
+pub(crate) fn run_cached_config_directory(
+    directory: &Path,
+    allow_symlink: bool,
+    compute: impl FnOnce() -> Option<bool>,
+) -> Option<bool> {
+    run_memoized(
+        &(directory.to_path_buf(), allow_symlink),
+        |cache| &mut cache.config_directories,
+        compute,
+    )
+}
+
+/// Per-run memo of the tracked `*.snap` files under `root`.
+pub(crate) fn run_cached_tracked_snapshots(
+    root: &Path,
+    compute: impl FnOnce() -> Option<std::sync::Arc<HashSet<String>>>,
+) -> Option<std::sync::Arc<HashSet<String>>> {
+    run_memoized(
+        &root.to_path_buf(),
+        |cache| &mut cache.tracked_snapshots,
+        compute,
+    )
 }
 
 thread_local! {
