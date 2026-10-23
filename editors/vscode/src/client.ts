@@ -1884,6 +1884,11 @@ export class RiprClientController {
       });
       return;
     }
+    const pullFailure = configurationPullFailureStatus(status);
+    if (pullFailure) {
+      this.updateStatus(pullFailure);
+      return;
+    }
     const failure = status.failure && typeof status.failure === 'object'
       ? status.failure as Record<string, unknown>
       : undefined;
@@ -4018,6 +4023,15 @@ interface RiprAnalysisStatusPayload {
   retry_command?: string | null;
   retry_recovery?: { kind?: string | null; detail?: string | null } | null;
   failure?: unknown;
+  /** #9917: the session-configuration transport disclosure; only the last
+   * `workspace/configuration` pull outcome is read here. */
+  input_authority?: {
+    configuration_pull?: {
+      state?: string;
+      failure?: { kind?: string; message?: string } | null;
+      recovery_route?: string | null;
+    } | null;
+  } | null;
   pending?: boolean;
   root_state?: string;
   effective_root?: string | null;
@@ -4053,6 +4067,31 @@ function analysisStatusPayload(params: unknown): RiprAnalysisStatusPayload | und
     return undefined;
   }
   return candidate as RiprAnalysisStatusPayload;
+}
+
+/**
+ * A rejected `workspace/configuration` pull is fail-closed on the server: none
+ * of the pulled ripr settings apply and every governed value falls back to its
+ * default (#2031). Without this the editor keeps showing a healthy-looking
+ * status while the user's settings are ignored (#9917). The server's message
+ * names the offending key; the recovery route is a corrected configuration.
+ */
+export function configurationPullFailureStatus(
+  status: Pick<RiprAnalysisStatusPayload, 'input_authority'>
+): RiprStatusState | undefined {
+  const pull = status.input_authority?.configuration_pull;
+  if (!pull || pull.state !== 'failed') {
+    return undefined;
+  }
+  const message = typeof pull.failure?.message === 'string' && pull.failure.message.trim()
+    ? pull.failure.message
+    : 'The language server rejected the workspace configuration.';
+  return {
+    kind: 'analysisFailed',
+    summary: 'ripr ignored your settings: the workspace configuration was rejected.',
+    detail: `${message}\nUntil a valid configuration is pulled, ripr uses default settings.`,
+    nextStep: 'Correct the setting named above in your VS Code settings (saving them re-sends the configuration), or run ripr: Restart Server.'
+  };
 }
 
 function analysisStatusDetail(status: RiprAnalysisStatusPayload): string {
