@@ -309,6 +309,22 @@ Recognized resource routes keep their existing missing/stale-identity
 errors rather than receiving this generic route list. Listing a template
 is not evidence that a resource with a particular identity exists.
 
+### Resource URI trailing-slash tolerance (#9895)
+
+Every id-bearing resource route — `ripr://snapshot/{snapshot_id}`,
+`ripr://gap/{canonical_id}`, `ripr://repair-attempt/{attempt_id}`,
+`ripr://receipt/{receipt_id}`, `ripr://repair-card/{canonical_id}`, and
+the well-known `ripr://workspace/status` — normalizes exactly one trailing
+slash before the id capture: `ripr://gap/{id}/` addresses the same item
+as `ripr://gap/{id}`, and the read returns the identical document. Clients
+— especially LLMs hand-assembling `ripr://` links — not uncommonly append
+one slash. A second trailing slash is not a normalization artifact and
+still misses: `ripr://gap/{id}//` fails closed instead of resolving to a
+near-miss id, as does a slash that would leave the id empty
+(`ripr://gap//`). The single-segment grammars (`snapshot`, `repair-attempt`,
+`receipt`) stay strict inside the id, and this tolerance never turns an
+unknown route into a recognized one.
+
 ## Required Evidence
 
 - `cargo test -p ripr --lib mcp::workspace` — session state machine,
@@ -347,9 +363,11 @@ is not evidence that a resource with a particular identity exists.
   `resource_reads_match_tools_after_refresh` pins gap tool/resource
   parsed-document equality plus the snapshot envelope
   (`ripr-mcp-snapshot-v1`, identity, typed outcome) after refresh
-  (#7145). Resource payloads are pretty-printed while tool payloads are
-  compact by design, so the control compares parsed documents, not
-  serialized bytes.
+  (#7145), and the #9895 trailing-slash tolerance: one appended slash on
+  the snapshot, gap, and repair-card URIs returns the identical document,
+  while a second slash fails closed. Resource payloads are pretty-printed
+  while tool payloads are compact by design, so the control compares
+  parsed documents, not serialized bytes.
 - `cargo test -p ripr --lib mcp::transport` — bounded framing, typed-shape
   recovery, and the #5267 control: repeated pre-initialize violations each
   receive a correlated `-32602` answer, the session then completes a normal
