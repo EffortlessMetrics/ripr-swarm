@@ -47,7 +47,11 @@ pub(super) fn collect_owners_from_statements(
     // interpreter, so it is an owner like a top-level one (#9423).
     if class_context.is_none() {
         for stmt in live_conditional_functions(source, statements) {
+            let first = out.len();
             push_function_owner(stmt, function_context, out);
+            for owner in &mut out[first..] {
+                owner.version_conditional = true;
+            }
         }
     }
     for stmt in statements {
@@ -252,6 +256,7 @@ fn owner_from_function(
             ..Default::default()
         },
         foreign_writes: Default::default(),
+        version_conditional: false,
     }
 }
 
@@ -352,6 +357,7 @@ fn owner_from_class(
         term_facts: Default::default(),
         class_facts: Default::default(),
         foreign_writes: Default::default(),
+        version_conditional: false,
     }
 }
 
@@ -387,6 +393,7 @@ pub(super) fn module_owner(
         term_facts: Default::default(),
         class_facts: Default::default(),
         foreign_writes: Default::default(),
+        version_conditional: false,
     }
 }
 

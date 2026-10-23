@@ -1,5 +1,5 @@
 import sys
-sys.version_info = (2, 7)
+sys.version_info, extra = (2, 7), 0
 
 if sys.version_info >= (3, 0):
     def versioned():

@@ -3532,6 +3532,9 @@ id = "RIPR-SPEC-0028"
 name = "Python preview static facts"
 spec = "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/module_value_tests.rs::prior_assertions_and_generator_tests_cannot_lend_unreached_credit",
+  "crates/ripr/src/analysis/language/python/module_value_tests.rs::foreign_conditional_bindings_are_not_certain_owners",
+  "crates/ripr/src/analysis/language/python/module_value_tests.rs::structural_foreign_and_test_reader_targets_withhold_credit",
   "crates/ripr/src/analysis/language/python/module_value_tests.rs::review_9861_workspace_reader_replacement_withholds_credit",
   "crates/ripr/src/analysis/language/python/module_value_tests.rs::review_9861_walrus_reader_replacement_withholds_credit",
   "crates/ripr/src/analysis/language/python/module_value_tests.rs::review_9861_replaced_version_guard_or_callable_keeps_module_abstention",
@@ -3643,6 +3646,11 @@ tests = [
   "crates/ripr/tests/python_parse_nesting.rs::unbalanced_bracket_string_literals_do_not_trip_the_nesting_budget",
 ]
 fixtures = [
+  "fixtures/python_module_generator_test",
+  "fixtures/python_module_prior_failing_assert",
+  "fixtures/python_module_test_reader_replacement",
+  "fixtures/python_conditional_foreign_callable_write",
+  "fixtures/python_conditional_foreign_version_write",
   "fixtures/python_module_reader_replacement",
   "fixtures/python_conditional_version_attribute_write",
   "fixtures/python_conditional_walrus_replacement",

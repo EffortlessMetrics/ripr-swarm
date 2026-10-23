@@ -11,3 +11,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_module_continuation_return (2)
+
+Reason:
+RIPR-SPEC-0028 and RIPR-SPEC-0108: executed unchanged test cannot observe this edited callable or value; pin structural identity and reachability refusal
+
+Command:
+`cargo xtask goldens bless python_module_continuation_return --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

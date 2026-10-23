@@ -1107,6 +1107,7 @@ mod tests {
             term_facts: Default::default(),
             class_facts: Default::default(),
             foreign_writes: Default::default(),
+            version_conditional: false,
         }
     }
 

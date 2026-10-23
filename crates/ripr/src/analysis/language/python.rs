@@ -297,6 +297,8 @@ struct PythonOwner {
     /// files; only filled for the module owner of a changed file
     /// (`module_value.rs`, #9423).
     foreign_writes: module_value::ForeignWrites,
+    /// Owner admitted through a decided interpreter-version condition.
+    version_conditional: bool,
 }
 
 /// One declared parameter of a Python function owner.
@@ -967,18 +969,20 @@ impl PythonAdapter {
             || !workspace_read.limits.is_empty()
             || !workspace_read.io_failures.is_empty();
         for changed in &python_changed_files {
+            let foreign = module_value::ForeignWrites::scan(
+                &changed.path,
+                workspace_read
+                    .sources
+                    .iter()
+                    .map(|(file, source)| (file.as_path(), source.as_str())),
+                workspace_incomplete,
+            );
+            conditional_defs::retain_workspace_certain(&mut all_owners, &changed.path, &foreign);
             for owner in all_owners
                 .iter_mut()
                 .filter(|owner| owner.is_module_owner() && owner.file == changed.path)
             {
-                owner.foreign_writes = module_value::ForeignWrites::scan(
-                    &changed.path,
-                    workspace_read
-                        .sources
-                        .iter()
-                        .map(|(file, source)| (file.as_path(), source.as_str())),
-                    workspace_incomplete,
-                );
+                owner.foreign_writes = foreign.clone();
             }
         }
         for test in &mut all_tests {

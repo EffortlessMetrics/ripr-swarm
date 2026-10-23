@@ -72,6 +72,21 @@ pub(super) fn live_conditional_functions<'a>(source: &str, module: &'a [Stmt]) -
     defs
 }
 
+/// A foreign module may replace either the callable or the version attribute
+/// before this module/test imports it. Such a def is not a certain owner.
+pub(super) fn retain_workspace_certain(
+    owners: &mut Vec<super::PythonOwner>,
+    file: &std::path::Path,
+    foreign: &super::module_value::ForeignWrites,
+) {
+    owners.retain(|owner| {
+        owner.file != file
+            || !owner.version_conditional
+            || (!foreign.may_rebind(&owner.name, file)
+                && !foreign.may_rebind("version_info", std::path::Path::new("sys.py")))
+    });
+}
+
 /// The statements of the arm a decided condition chain certainly runs.
 fn live_arm(if_stmt: &ast::StmtIf) -> Option<&[Stmt]> {
     match decided_version_condition(&if_stmt.test)? {

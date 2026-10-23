@@ -114,13 +114,16 @@ impl ForeignWrites {
     /// mentions the name or the module's file stem. An unfilled value (a
     /// context that never scanned) rebinds nothing it knows of; the diff
     /// pipeline always fills it.
-    fn may_rebind(&self, name: &str, module_file: &Path) -> bool {
+    pub(super) fn may_rebind(&self, name: &str, module_file: &Path) -> bool {
         let stem = module_file
             .file_stem()
             .and_then(|stem| stem.to_str())
             .unwrap_or_default();
         self.unknown
-            || self.attributes.iter().any(|attribute| attribute == name)
+            || self
+                .attributes
+                .iter()
+                .any(|attribute| attribute == name || attribute == "*")
             || self.dynamic_words.iter().any(|word| word == name)
             || (!stem.is_empty() && self.dynamic_words.iter().any(|word| word == stem))
     }
@@ -303,6 +306,15 @@ fn credits<'a>(
             if !straight_line_assertion(test, assertion) {
                 continue;
             }
+            let Some(preceding) = test
+                .assertions
+                .iter()
+                .filter(|prior| prior.line < assertion.line)
+                .map(assertion_expression)
+                .collect::<Option<Vec<_>>>()
+            else {
+                continue;
+            };
             // The constant read directly.
             if !constant_spellings.is_empty()
                 && flips(
@@ -312,6 +324,7 @@ fn credits<'a>(
                     &constant_spellings,
                     &[],
                     (None, None),
+                    &preceding,
                 )
             {
                 out.push(credit(
@@ -338,6 +351,7 @@ fn credits<'a>(
                         &constant_spellings,
                         &spellings,
                         (Some(old_reader), Some(new_reader)),
+                        &preceding,
                     )
                 {
                     continue;
@@ -386,20 +400,24 @@ fn flips(
     constant_spellings: &[String],
     reader_spellings: &[String],
     readers: (Option<&Reader>, Option<&Reader>),
+    preceding: &[Expr],
 ) -> bool {
     let outcome = |value: &Value, reader: Option<&Reader>| {
-        evaluate(
-            expression,
-            &Scope {
-                constant: name,
-                value,
-                parameters: None,
-                constant_spellings,
-                reader_spellings,
-                reader,
-            },
-        )
-        .map(|result| result.truthy())
+        let scope = Scope {
+            constant: name,
+            value,
+            parameters: None,
+            constant_spellings,
+            reader_spellings,
+            reader,
+        };
+        if !preceding
+            .iter()
+            .all(|prior| evaluate(prior, &scope).is_some_and(|value| value.truthy()))
+        {
+            return None;
+        }
+        evaluate(expression, &scope).map(|result| result.truthy())
     };
     outcome(values.0, readers.0) == Some(true) && outcome(values.1, readers.1) == Some(false)
 }
@@ -634,6 +652,10 @@ const LEAVING_CALLS: [&str; 12] = [
 /// reaches: nothing before it returns, raises, branches, loops, enters a
 /// context or calls a skipping function.
 fn straight_line_assertion(test: &PythonTest, assertion: &PythonAssertion) -> bool {
+    // A call of a generator test does not execute its body.
+    if super::mentions_python_name(&test.body_text, "yield") {
+        return false;
+    }
     let lines: Vec<&str> = test.body_text.lines().collect();
     let Some(header) = lines.iter().position(|line| {
         let line = line.trim_start();

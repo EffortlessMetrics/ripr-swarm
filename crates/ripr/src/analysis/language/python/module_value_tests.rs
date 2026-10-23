@@ -769,3 +769,81 @@ fn continuation_lines_cannot_hide_a_return_before_the_assertion() -> Check {
     }
     Ok(())
 }
+
+#[test]
+fn structural_foreign_and_test_reader_targets_withhold_credit() -> Check {
+    for write in [
+        "(settings.over_limit) = lambda n: True",
+        "settings.over_limit, other = (lambda n: True), 0",
+        "settings . over_limit = lambda n: True",
+    ] {
+        let source = format!("from hostile import settings\n{write}\n");
+        assert_abstains(&classify_in_workspace(
+            &[("app.py", &source)],
+            false,
+            false,
+            PINNING_TEST,
+        )?);
+        let test = format!(
+            "from hostile import settings\n{write}\n\ndef test_it():\n    assert settings.over_limit(11)\n"
+        );
+        assert_ne!(classify_limit(&test)?.class, ExposureClass::Exposed);
+    }
+    Ok(())
+}
+
+#[test]
+fn foreign_conditional_bindings_are_not_certain_owners() -> Check {
+    let source = "import sys\nif sys.version_info >= (3, 0):\n    def versioned():\n        return 'newer'\nelse:\n    def versioned():\n        return 'new'\n";
+    let file = Path::new("hostile/settings.py");
+    for writer in [
+        "import sys\nsys.version_info = (2, 7)\n",
+        "from hostile import settings\nsettings.versioned = lambda: 'new'\n",
+    ] {
+        let mut owners = owners_of(source);
+        assert_eq!(
+            owners
+                .iter()
+                .filter(|owner| owner.version_conditional)
+                .count(),
+            1
+        );
+        let foreign = super::module_value::ForeignWrites::scan(
+            file,
+            [(Path::new("app.py"), writer)].into_iter(),
+            false,
+        );
+        super::conditional_defs::retain_workspace_certain(&mut owners, file, &foreign);
+        assert!(owners.iter().all(|owner| !owner.version_conditional));
+    }
+    let mut owners = owners_of(source);
+    let read = "import sys\nversions = {sys.version_info: 'current'}\n";
+    let foreign = super::module_value::ForeignWrites::scan(
+        file,
+        [(Path::new("app.py"), read)].into_iter(),
+        false,
+    );
+    super::conditional_defs::retain_workspace_certain(&mut owners, file, &foreign);
+    assert_eq!(
+        owners
+            .iter()
+            .filter(|owner| owner.version_conditional)
+            .count(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn prior_assertions_and_generator_tests_cannot_lend_unreached_credit() -> Check {
+    for body in [
+        "    assert False\n    assert over_limit(11)",
+        "    value = (yield 1)\n    assert over_limit(11)",
+    ] {
+        assert_abstains(&classify_limit(&limit_test(body))?);
+    }
+    assert_credited(&classify_limit(&limit_test(
+        "    assert over_limit(100)\n    assert over_limit(11)",
+    ))?);
+    Ok(())
+}

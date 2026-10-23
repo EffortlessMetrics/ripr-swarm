@@ -5,19 +5,19 @@ Spec: RIPR-SPEC-0108
 
 ## Given
 
-An unchanged Python assertion imports the module affected by a single-line edit.
-The assertion observes a replacement callable or a dead definition, or returns before the assertion.
+An unchanged test has the `version-unpacked-write` identity or reachability counterexample.
 
 ## When
 
-The changed constant or conditional function body is analyzed by `ripr check`.
+The single changed module constant or conditional return is analyzed.
 
 ## Then
 
-The nonempty finding remains `static_unknown`: this assertion does not observe the changed behavior.
-Actual Python execution passes on both source revisions.
+One nonempty `static_unknown` finding withholds credit for the changed behavior.
+The unchanged Python observation is the same before and after the edit.
 
 ## Must Not
 
-Credit an unreached body by evaluating its stale definition or by trusting physical continuation indentation.
-The honesty corpus independently rejects promotion even if a golden is re-blessed.
+Credit a replaced callable, dead branch, or assertion the test never reaches.
+The honesty corpus independently rejects promotion after an incorrect re-bless.
+Direct generator invocation is a CPython observation, not a pytest execution claim.

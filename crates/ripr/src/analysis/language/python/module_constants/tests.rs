@@ -384,3 +384,28 @@ fn attribute_write_facts_distinguish_assignments_from_version_comparisons() {
         );
     }
 }
+
+#[test]
+fn structural_attribute_targets_cover_replacements_without_confusing_reads() {
+    for source in [
+        "import sys\n(sys.version_info) = (2, 7)\n",
+        "import sys\n(sys . version_info,) = ((2, 7),)\n",
+        "import sys\nsys.version_info, other = (2, 7), 0\n",
+        "import sys\ndef rewrite():\n    sys.version_info: tuple = (2, 7)\n",
+        "for receiver.version_info in versions:\n    pass\n",
+    ] {
+        assert_eq!(
+            super::assigned_attributes(source),
+            ["version_info"],
+            "{source}"
+        );
+    }
+    for source in [
+        "import sys\nversions = {sys.version_info: 'current'}\n",
+        "import sys\nsys.version_info: tuple\n",
+        "import sys\nassert sys.version_info >= (3, 0)\n",
+    ] {
+        assert!(super::assigned_attributes(source).is_empty(), "{source}");
+    }
+    assert_eq!(super::assigned_attributes("def broken("), ["*"]);
+}
