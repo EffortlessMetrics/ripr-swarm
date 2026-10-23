@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Related tests: when the 8-row window is full, a test that calls the owner by name but whose relation was demoted to `weak_token_substring` (receiver type unresolved among same-named owners) now replaces a trailing file-location-only row instead of being dropped. It is never the primary related test, keeps its low-confidence and `no_call_path` disclosure, and credits no oracle (#9175).
