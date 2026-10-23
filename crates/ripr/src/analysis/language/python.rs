@@ -64,6 +64,7 @@ mod classify;
 mod conditional_defs;
 mod deleted_lines;
 mod guard_activation;
+mod message_pin;
 mod module_value;
 mod wrapped_call;
 use classify::{PythonNoBehaviorContext, classify_change_with_context};
@@ -357,6 +358,27 @@ impl PythonOwner {
     }
 }
 
+/// Closed set of Python test frameworks the adapter classifies tests under.
+///
+/// Every consumer matches this exhaustively, so adding a variant is a compile
+/// error until each verify-command, placement and activation site decides it.
+/// `capability_disposition_tests` additionally binds each variant to its
+/// `python/<framework>/diff/repair_routing` capability cell.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PythonFramework {
+    Pytest,
+    Unittest,
+}
+
+impl PythonFramework {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pytest => "pytest",
+            Self::Unittest => "unittest",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PythonTest {
     name: String,
@@ -384,7 +406,7 @@ struct PythonTest {
     parametrize: Option<parametrize::PythonParametrizeCases>,
     /// Parameters Hypothesis `@given(...)` supplies (#6601); never fixtures.
     generated_inputs: Vec<String>,
-    framework: &'static str,
+    framework: PythonFramework,
     assertions: Vec<PythonAssertion>,
     /// Whether RIPR can say this test has no assertion, or only that it
     /// recognized none (#5571).
@@ -1237,6 +1259,9 @@ mod bool_oracle_tests;
 mod conftest_admission_tests;
 
 #[cfg(test)]
+mod source_facts_tests;
+
+#[cfg(test)]
 mod deleted_lines_tests;
 
 #[cfg(test)]
@@ -1247,6 +1272,9 @@ mod dunder_entry_tests;
 
 #[cfg(test)]
 mod helper_assertions_tests;
+
+#[cfg(test)]
+mod capability_disposition_tests;
 
 #[cfg(test)]
 mod helper_owner_call_tests;

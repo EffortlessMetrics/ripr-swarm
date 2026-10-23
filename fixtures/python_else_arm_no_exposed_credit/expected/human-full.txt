@@ -1,0 +1,80 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_else_arm_no_exposed_credit/input
+config: <cwd>/fixtures/python_else_arm_no_exposed_credit/input/ripr.toml
+
+Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Changed file(s) by language: python = 1
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+
+WARNING src/sign.py:5
+  id: probe:src_sign.py:python_preview:6169374f
+
+Changed
+  after:          return -2
+
+Probe
+  family: return_value
+  delta:  value
+  owner:  python:src/sign.py::sign
+  canonical gap: gap:python:src/sign.py:sign:return_value:return_value:-2
+
+Language
+  language: python
+  status: preview
+  owner kind: function
+
+Static exposure
+  weakly_exposed (warning, confidence 0.40)
+
+Evidence
+  - reach yes: 1 related Python test(s) found for owner `sign`
+  - infection weak: Related tests reach the changed owner, but every strong related test call provably fails the guarding arm, so the changed line never executes under an observed input
+  - propagation yes: Changed Python return value is already at the owner output boundary
+  - observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)
+  - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
+  - local flow reaches returned value: return -2 (line 5)
+  - related test tests/test_sign.py:4 test_positive_sign uses strong exact value oracle: assert sign(5) == 1
+  - source function argument value x = 5 at line 5
+
+Weakness
+  - A strong Python oracle reaches `sign`, but static evidence does not place a related test input inside the guarding arm `not (x > 0)`; every observed input leaves the changed line unexecuted (observation_unverified). Add a test input that satisfies the guarding condition
+  - missing discriminator not (x > 0): the changed line sits in the `else` arm of an `if`/`elif` chain (`x > 0`) that is entered only when none of them hold, and each strong related test input is kept off it by this chain or an enclosing guard; observed x = 5; the changed line never executes under an observed input
+
+Python repair card (preview/advisory)
+  card version: python_repair_card.v1
+  canonical gap: gap:python:src/sign.py:sign:return_value:return_value:-2
+  authority: preview_advisory_only (python/preview)
+  repair action: strengthen_existing_test
+  changed owner: sign
+  changed behavior: return_value changed at src/sign.py:5: `return -2`
+  current test evidence: tests/test_sign.py:4 test_positive_sign currently has oracle_strength=strong, oracle_kind=exact_value: assert sign(5) == 1
+  missing discriminator: not (x > 0)
+  recommended test shape: Strengthen the existing pytest exact return-value assertion for `not (x > 0)`.
+  suggested assertion: Assert the returned value equals the expected value for the changed inputs.
+  suggested file: tests/test_sign.py
+  suggested test: test_positive_sign
+  pytest node: tests/test_sign.py::test_positive_sign
+  verify: python -m pytest tests/test_sign.py::test_positive_sign (high)
+  receipt: unavailable_until_python_gap_ledger
+  receipt guidance: Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command.
+  stop conditions:
+    - Stop if imports, fixtures, or test setup cannot call the changed owner.
+    - Stop if the expected value for the missing discriminator is ambiguous.
+    - Stop if adding the test appears to require a production-code edit.
+  limits:
+    - Syntax-first Python preview evidence only.
+    - No source edits, generated tests, mutation execution, provider calls, or gate authority.
+    - Verify success alone is not a gap-closure receipt.
+
+Next step
+  Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `not (x > 0)`
+Drill in:
+  ripr explain --root <cwd>/fixtures/python_else_arm_no_exposed_credit/input --diff <cwd>/fixtures/python_else_arm_no_exposed_credit/diff.patch --mode fast probe:src_sign.py:python_preview:6169374f
+  ripr context --root <cwd>/fixtures/python_else_arm_no_exposed_credit/input --diff <cwd>/fixtures/python_else_arm_no_exposed_credit/diff.patch --mode fast --at probe:src_sign.py:python_preview:6169374f
+
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

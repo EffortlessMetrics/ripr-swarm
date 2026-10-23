@@ -2,6 +2,9 @@
 //! Run the same tests against correct and deliberately wrong libraries;
 //! compilation success and one executed test precede outcome assertions.
 
+#[path = "owner_pin_execution/shared_execution.rs"]
+mod shared_execution;
+
 use ripr::{
     CheckInput, ExposureClass, Mode, OutputFormat, ProbeFamily, check_workspace, render_check,
 };
@@ -14,6 +17,11 @@ mod field_projected_collection;
 
 #[path = "owner_pin_execution/literal_json_output.rs"]
 mod literal_json_output;
+
+#[path = "owner_pin_execution/effect_assertion_sweep.rs"]
+mod effect_assertion_sweep;
+#[path = "owner_pin_execution/effect_assertions.rs"]
+mod effect_assertions;
 
 struct Scratch(PathBuf);
 

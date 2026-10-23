@@ -19,6 +19,11 @@ Start here:
   Related test: tests/ledger_tests.rs:4 apply_returns_ok_on_success (assertion too weak to tell the old behavior from the new)
   Next step: Replace broad assertions with exact equality or a property that constrains the changed returned value
   Evidence: reach yes · infection yes · propagation weak · observation yes · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: Related tests appear to reach apply: apply_returns_ok_on_success
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 6 more detail line(s) in --format human-full

@@ -1,3 +1,4 @@
+use super::PythonFramework;
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::source_utils::normalized_path;
 use super::{
@@ -325,7 +326,7 @@ pub(super) fn verify_command_for_test(test: &PythonTest) -> Option<String> {
 pub(super) fn verify_command_for_test_on(test: &PythonTest, windows: bool) -> Option<String> {
     let path = normalized_path(&test.file);
     match test.framework {
-        "pytest" => {
+        PythonFramework::Pytest => {
             let node = test.qualified_name.replace('.', "::");
             // #8752: the quoting grammar must match the host's default shell
             // or the suggested command fails for exactly the paths that need
@@ -344,7 +345,7 @@ pub(super) fn verify_command_for_test_on(test: &PythonTest, windows: bool) -> Op
                 crate::domain::PYTEST_VERIFY_PROGRAM
             ))
         }
-        "unittest" => {
+        PythonFramework::Unittest => {
             let module = unittest_module_for_path(&path)?;
             let selector = if windows {
                 shell_quote_file_arg_for_host(&format!("{module}.{}", test.qualified_name), true)?
@@ -357,7 +358,6 @@ pub(super) fn verify_command_for_test_on(test: &PythonTest, windows: bool) -> Op
             };
             Some(format!("python -m unittest {selector}"))
         }
-        _ => None,
     }
 }
 
@@ -443,7 +443,7 @@ pub(super) fn python_repair_placement_on(
         .nth(1)
         .map(|_| candidate.test.line);
     match candidate.test.framework {
-        "pytest" => {
+        PythonFramework::Pytest => {
             let node = candidate.test.qualified_name.replace('.', "::");
             let node_id = format!("{path}::{node}");
             Some(PythonRepairPlacement {
@@ -457,7 +457,7 @@ pub(super) fn python_repair_placement_on(
                 location_reason: "strengthen existing weak pytest relation",
             })
         }
-        "unittest" => Some(PythonRepairPlacement {
+        PythonFramework::Unittest => Some(PythonRepairPlacement {
             repair_action: "strengthen_existing_test",
             suggested_test_file: path,
             suggested_test_name: candidate.test.name.clone(),
@@ -467,7 +467,6 @@ pub(super) fn python_repair_placement_on(
             verify_command_confidence: "high",
             location_reason: "strengthen existing weak unittest relation",
         }),
-        _ => None,
     }
 }
 

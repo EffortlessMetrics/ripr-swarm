@@ -25,9 +25,12 @@ parser checks and real owner callers.
 
 ## Then
 
-The `.or_default()` SideEffect finding remains `weakly_exposed` with weak
-discrimination in both orientations. Both nonempty parser equality rows stay
-visible as `same_test_file` / `observation_unconfirmed` and lend no strong credit.
+The `.or_default()` SideEffect finding reads `reachable_unrevealed` with
+`no` discrimination in both orientations: effect assertions need execution
+admission (#8927), and the retained module's aggregation `assert_eq!` sits
+beside a `json!` invocation whose arguments mention `format`, so its standard
+macro binding is not established and it is not credited. The parser-only
+orientation rows stay visible as `same_test_file` and lend no credit.
 A direct persisted-state effect observer retains strong discrimination in the
 public positive control.
 

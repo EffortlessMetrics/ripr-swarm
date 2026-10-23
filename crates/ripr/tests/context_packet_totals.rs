@@ -119,6 +119,7 @@ fn context_packet_related_test_totals_accept_legacy_omitted_and_null_metadata() 
 
 fn sample_finding() -> Finding {
     Finding {
+        analysis_scope: ripr::AnalysisScope::Diff,
         id: "probe:src_lib_rs:9:error_path".to_string(),
         canonical_gap: None,
         probe: Probe {

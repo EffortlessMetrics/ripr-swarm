@@ -30,6 +30,8 @@ pub(super) enum AgentCommand {
     Repair(AgentRepairOptions),
 }
 
+use crate::app::gap_bound_repair::GAP_BOUND_REPAIR_GAP_PREFIX;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct AgentStartOptions {
     pub(super) root: PathBuf,
@@ -161,6 +163,13 @@ pub(super) struct AgentRepairOptions {
     /// `--root` was typed, so the root is used as given (#8872).
     pub(super) root_explicit: bool,
     pub(super) seam_id: Option<String>,
+    /// Canonical TypeScript gap to start a gap-bound repair attempt from
+    /// (#9103, RIPR-SPEC-0311). Exclusive with `seam_id`; before phase only.
+    /// The attempt records the gap id in the manifest's seam identity slot.
+    pub(super) gap_id: Option<String>,
+    /// Diff base a gap-bound attempt analyzes. `ripr check` findings are
+    /// diff-scoped, so the base is recorded for the later after phase.
+    pub(super) base: Option<String>,
     pub(super) attempt_id: Option<String>,
     pub(super) phase: AgentRepairPhase,
     /// Optional digest-bound reference into the accepted Python repair-trust
@@ -326,6 +335,8 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
     let mut root = PathBuf::from(".");
     let mut root_explicit = false;
     let mut seam_id: Option<String> = None;
+    let mut gap_id: Option<String> = None;
+    let mut base: Option<String> = None;
     let mut attempt_id: Option<String> = None;
     let mut phase: Option<AgentRepairPhase> = None;
     let mut trust_manifest: Option<PathBuf> = None;
@@ -353,6 +364,22 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                     return Err("agent repair --seam-id requires a non-empty ID".to_string());
                 }
                 seam_id = Some(value.to_string());
+            }
+            "--gap-id" => {
+                i += 1;
+                let value = expect_value(args, i, "--gap-id")?;
+                if value.trim().is_empty() {
+                    return Err("agent repair --gap-id requires a non-empty ID".to_string());
+                }
+                gap_id = Some(value.to_string());
+            }
+            "--base" => {
+                i += 1;
+                let value = expect_value(args, i, "--base")?;
+                if value.trim().is_empty() {
+                    return Err("agent repair --base requires a non-empty ref".to_string());
+                }
+                base = Some(value.to_string());
             }
             "--attempt" => {
                 i += 1;
@@ -445,6 +472,41 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
     }
     let phase = phase.unwrap_or(AgentRepairPhase::Before);
 
+    // A gap-bound start (#9103, RIPR-SPEC-0311) selects its subject by
+    // canonical TypeScript gap id and the diff base `ripr check` printed.
+    // It is exclusive with `--seam-id` and belongs to the before phase: the
+    // after and verify phases select the recorded attempt.
+    if seam_id.is_some() && gap_id.is_some() {
+        return Err("agent repair takes either --seam-id or --gap-id".to_string());
+    }
+    if let Some(gap) = gap_id.as_deref() {
+        if phase != AgentRepairPhase::Before {
+            return Err(
+                "agent repair --gap-id and --base are only valid with --phase before; the later phases select the recorded attempt with --attempt"
+                    .to_string(),
+            );
+        }
+        if !crate::app::gap_bound_repair::is_gap_bound_subject(gap) {
+            return Err(match crate::app::task_first::non_rust_item_language(gap) {
+                Some(language) if language != "TypeScript" => format!(
+                    "agent repair --gap-id `{gap}` is not a TypeScript gap: {}",
+                    crate::app::task_first::no_seam_inventory_reason(language, "")
+                ),
+                _ => format!(
+                    "agent repair --gap-id accepts only a canonical TypeScript preview gap (`{GAP_BOUND_REPAIR_GAP_PREFIX}<id>`) as `ripr check` prints it; got `{gap}`"
+                ),
+            });
+        }
+        if base.is_none() {
+            return Err(
+                "agent repair --gap-id requires --base <ref>; the gap's findings are diff-scoped, so the base the check ran against must be recorded"
+                    .to_string(),
+            );
+        }
+    } else if base.is_some() {
+        return Err("agent repair --base is only valid with --gap-id".to_string());
+    }
+
     // The trust flags are a pair and belong to the before phase only: the
     // after phase consumes the retained binding artifact, never a fresh
     // manifest path.
@@ -477,6 +539,13 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
         }
         (None, None) => None,
     };
+
+    if gap_id.is_some() && python_repair_trust.is_some() {
+        return Err(
+            "agent repair --gap-id does not take the Python repair-trust flags; a gap-bound start carries no Python trust binding"
+                .to_string(),
+        );
+    }
 
     // The authorization signals are a pair; an authorization without a
     // binding to authorize (or a binding without authorization) is refused
@@ -564,7 +633,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                         .to_string(),
                 );
             }
-            if seam_id.is_none() {
+            if seam_id.is_none() && gap_id.is_none() {
                 let pilot_root = crate::agent::loop_commands::shell_arg(
                     &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
                 );
@@ -604,6 +673,8 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
         root,
         root_explicit,
         seam_id,
+        gap_id,
+        base,
         attempt_id,
         phase,
         python_repair_trust,
@@ -1437,6 +1508,8 @@ mod tests {
                 root: PathBuf::from("repo"),
                 root_explicit: true,
                 seam_id: Some("seam:sample".to_string()),
+                gap_id: None,
+                base: None,
                 attempt_id: None,
                 phase: AgentRepairPhase::Before,
                 python_repair_trust: None,
@@ -1469,6 +1542,8 @@ mod tests {
                 root: PathBuf::from("repo"),
                 root_explicit: true,
                 seam_id: None,
+                gap_id: None,
+                base: None,
                 attempt_id: Some("repair-attempt-0123456789abcdef01234567".to_string()),
                 phase: AgentRepairPhase::After,
                 python_repair_trust: None,
@@ -1507,6 +1582,8 @@ mod tests {
                 root: PathBuf::from("repo"),
                 root_explicit: true,
                 seam_id: Some("seam:sample".to_string()),
+                gap_id: None,
+                base: None,
                 attempt_id: None,
                 phase: AgentRepairPhase::Before,
                 python_repair_trust: None,
@@ -1644,6 +1721,8 @@ mod tests {
                 root: PathBuf::from("."),
                 root_explicit: false,
                 seam_id: Some("seam:sample".to_string()),
+                gap_id: None,
+                base: None,
                 attempt_id: None,
                 phase: AgentRepairPhase::After,
                 python_repair_trust: None,
@@ -1711,6 +1790,95 @@ mod tests {
             error.contains("--verify-rollback requires --verify-authorized"),
             "verify-phase rollback reported {error}"
         );
+        Ok(())
+    }
+
+    const TS_GAP: &str = "gap:typescript:typescript_preview:1a2b3c4d";
+
+    #[test]
+    fn agent_repair_gap_id_parses_a_gap_bound_before_start() -> Result<(), String> {
+        let command = parse_agent_args(&args(&[
+            "repair", "--gap-id", TS_GAP, "--base", "HEAD~1", "--root", "repo", "--phase", "before",
+        ]))?;
+        let AgentCommand::Repair(options) = command else {
+            return Err("expected a repair command".to_string());
+        };
+        if options.gap_id.as_deref() != Some(TS_GAP)
+            || options.base.as_deref() != Some("HEAD~1")
+            || options.seam_id.is_some()
+            || options.phase != AgentRepairPhase::Before
+        {
+            return Err(format!("gap-bound options not parsed: {options:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn agent_repair_gap_id_is_exclusive_and_typescript_only() -> Result<(), String> {
+        let cases: [(Vec<&str>, &str); 7] = [
+            (
+                vec![
+                    "repair",
+                    "--seam-id",
+                    "seam:x",
+                    "--gap-id",
+                    TS_GAP,
+                    "--base",
+                    "b",
+                ],
+                "agent repair takes either --seam-id or --gap-id",
+            ),
+            (
+                vec!["repair", "--gap-id", "gap:rust:src/lib.rs:1", "--base", "b"],
+                "accepts only a canonical TypeScript preview gap",
+            ),
+            (
+                vec![
+                    "repair",
+                    "--gap-id",
+                    "gap:python:python_preview:1a2b3c4d",
+                    "--base",
+                    "b",
+                ],
+                "covers Rust files only",
+            ),
+            (vec!["repair", "--gap-id", TS_GAP], "requires --base <ref>"),
+            (
+                vec!["repair", "--seam-id", "seam:x", "--base", "b"],
+                "--base is only valid with --gap-id",
+            ),
+            (
+                vec![
+                    "repair", "--gap-id", TS_GAP, "--base", "b", "--phase", "after",
+                ],
+                "only valid with --phase before",
+            ),
+            (
+                vec![
+                    "repair",
+                    "--gap-id",
+                    TS_GAP,
+                    "--base",
+                    "b",
+                    "--python-repair-trust-manifest",
+                    "m.json",
+                    "--python-repair-trust-attempt",
+                    "repair-attempt-0123456789abcdef01234567",
+                    "--edit-authorized",
+                    "--edit-authority",
+                    "agent",
+                ],
+                "does not take the Python repair-trust flags",
+            ),
+        ];
+        for (argv, needle) in cases {
+            let err = parse_agent_args(&args(&argv))
+                .err()
+                .ok_or_else(|| format!("{argv:?} must be refused"))?;
+            if !err.contains(needle) {
+                return Err(format!("{argv:?}: expected `{needle}` in `{err}`"));
+            }
+        }
         Ok(())
     }
 

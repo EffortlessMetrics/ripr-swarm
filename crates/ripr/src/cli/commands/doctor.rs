@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 
 pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
     let mut json_output = false;
+    let mut timings = false;
     let mut profile = output::doctor::DoctorProfile::Analysis;
     let mut root: Option<String> = None;
     let mut arguments = args.iter();
@@ -28,6 +29,10 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
                 return Ok(());
             }
             "--json" => json_output = true,
+            // #9807: timing fields are volatile, so the default `--json`
+            // document omits them and stays byte-stable across runs;
+            // `--timings` restores the pre-#9807 projection.
+            "--timings" => timings = true,
             "--profile" => {
                 profile = match arguments.next().map(String::as_str) {
                     Some("analysis") => output::doctor::DoctorProfile::Analysis,
@@ -51,7 +56,7 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
                     // directory named after the flag (#4318 review). The
                     // pre-#4318 parser answered `missing value for --root`
                     // here. Other dash-prefixed paths stay legitimate values.
-                    Some("--help" | "-h" | "--json" | "--profile" | "--root") => {
+                    Some("--help" | "-h" | "--json" | "--timings" | "--profile" | "--root") => {
                         return Err(CommandError::from("missing value for --root".to_string()));
                     }
                     Some(value) => value,
@@ -96,6 +101,7 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
             &detected,
             run_started,
             language_detection_elapsed,
+            timings,
         );
     }
 
@@ -167,6 +173,7 @@ fn doctor_json(
     detected: &[LanguageId],
     run_started: std::time::Instant,
     language_detection_elapsed: std::time::Duration,
+    timings: bool,
 ) -> Result<(), CommandError> {
     let evaluation =
         output::doctor::evaluate_doctor_core_with_config_for_profile(root, detected, profile);
@@ -198,7 +205,14 @@ fn doctor_json(
     }
     report.attach_canonical_next_action(root);
     report.elapsed_ms = Some(run_started.elapsed().as_millis() as u64);
-    println!("{}", report.render_json()?);
+    // #9807: timing fields are volatile, so the default `--json` document
+    // renders without them and stays byte-stable across runs that changed
+    // nothing; `--timings` restores the full projection.
+    if timings {
+        println!("{}", report.render_json()?);
+    } else {
+        println!("{}", report.render_json_stable()?);
+    }
     // #5102: a rendered report with failed checks is a completed typed
     // answer (exit 3); render failures above stay could-not-complete (2).
     output::doctor::doctor_report_result(&report).map_err(CommandError::Decision)
@@ -373,12 +387,21 @@ fn cache_status(root: &Path, perl_cache_dir: Option<&Path>) -> output::doctor::D
         std::env::var(analysis::seam_cache::CACHE_DIR_ENV).is_ok_and(|v| !v.trim().is_empty());
     let size_bytes = dir_size_bytes(&cache_dir);
     let artifact_roots = analysis::ripr_artifact_roots(root, &cache_dir, perl_cache_dir);
+    // #9858: when nothing exists yet, ripr_artifact_ignore has nothing to
+    // probe and reports NoArtifacts; a non-Cargo project then gets no ignore
+    // guidance before its first write, so probe the would-be root anyway.
+    let artifact_ignore = match ripr_artifact_ignore(root, &artifact_roots) {
+        output::doctor::DoctorArtifactIgnore::NoArtifacts => {
+            preemptive_artifact_ignore(root, &artifact_roots)
+        }
+        verdict => verdict,
+    };
     output::doctor::DoctorCacheStatus {
         cache_dir: output::path::human_path(&cache_dir),
         relocated_by_env: relocated,
         size_bytes,
         size_display: format_bytes(size_bytes),
-        artifact_ignore: ripr_artifact_ignore(root, &artifact_roots),
+        artifact_ignore,
         artifact_tracking: ripr_artifact_tracking(root, &artifact_roots),
     }
 }
@@ -627,6 +650,10 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
     if config.is_ok() {
         if let Some(defaults) = environment.facts.config_defaults.as_ref() {
             match &defaults.source_path {
+                // A root that is not a directory is already reported as the
+                // failure; a parent `ripr.toml` found by upward discovery must
+                // not read as a healthy loaded workspace config.
+                _ if !root.is_dir() => {}
                 Some(path) => {
                     workspace.push(format!("Config: loaded {CONFIG_FILE_NAME}"));
                     lines.push(format!("- Config path: {}", display_text(path)));
@@ -712,11 +739,22 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
     } else {
         cache.cache_dir.clone()
     };
-    lines.push(format!(
-        "✓ Cache: {} ({})",
-        display_text(&cache_loc),
-        cache.size_display
-    ));
+    let cache_skip_reason = if cache.relocated_by_env {
+        None
+    } else {
+        output::doctor::root_unusable_skip_reason(root)
+    };
+    if let Some(reason) = cache_skip_reason {
+        // The default cache lives under the unusable root; a ✓ would claim
+        // a usable cache for a root that cannot hold one.
+        lines.push(format!("- Cache check skipped: {reason}"));
+    } else {
+        lines.push(format!(
+            "✓ Cache: {} ({})",
+            display_text(&cache_loc),
+            cache.size_display
+        ));
+    }
     // Keep the historical `- Cache location:` / `- Cache size:` spellings on
     // verbose so JSON/human parity still names the same words.
     if !cache.relocated_by_env && !root.is_dir() {
@@ -2719,53 +2757,17 @@ fn ripr_artifact_ignore(
     artifact_roots: &[PathBuf],
 ) -> output::doctor::DoctorArtifactIgnore {
     use output::doctor::DoctorArtifactIgnore;
-    let present: Vec<&Path> = artifact_roots
+    let present: Vec<PathBuf> = artifact_roots
         .iter()
         .filter(|relative| root.join(relative).is_dir())
-        .map(PathBuf::as_path)
+        .cloned()
         .collect();
     if present.is_empty() {
         return DoctorArtifactIgnore::NoArtifacts;
     }
-    let mut uncovered: Vec<String> = Vec::new();
-    for relative in &present {
-        let pathspec = analysis::artifact_root_pathspec(relative);
-        // The probe passes the PLAIN root: check-ignore takes pathnames,
-        // not pathspecs — its ignore-rule globs match against the literal
-        // characters of the pathname, so a rule like `/build/cache*/`
-        // covers a directory literally named `build/cache*` only when the
-        // pathname keeps its literal star. The earlier escaped form made
-        // the rule miss and doctor demand an ignore that already existed
-        // (PR #8901 review, coderabbit; verified against git 2.47:
-        // `git check-ignore -- 'build/cache\*'` answers "not ignored"
-        // while `-- 'build/cache*'` is covered). A root without glob
-        // characters is byte-identical in both forms, so ordinary configs
-        // are unaffected. `--no-index` asks only whether ignore RULES
-        // cover the path: without it, a tracked descendant (the exact
-        // state #7663 addresses: ripr reports already committed into
-        // history) makes check-ignore answer "not ignored" even when
-        // `/target/ripr/` is configured, so doctor would demand a rule
-        // that already exists. Exit 1 means the path is positively not
-        // ignored; exit 0 means covered; any other outcome (not a
-        // repository, git unavailable, deadline) keeps doctor honest by
-        // reporting `NotChecked` instead of claiming a checked fact it
-        // could not establish. Tracked descendants are a separate fact the
-        // ignore verdict deliberately does not fold in (#8257 review
-        // follow-up).
-        let probe = match crate::git::run_git_output_with_deadline(
-            root,
-            &["check-ignore", "--no-index", "-q", "--", &pathspec],
-            Some(std::time::Duration::from_secs(5)),
-        ) {
-            Ok(probe) => probe,
-            Err(_) => return DoctorArtifactIgnore::NotChecked,
-        };
-        match probe.status.code() {
-            Some(0) => {}
-            Some(1) => uncovered.push(pathspec),
-            _ => return DoctorArtifactIgnore::NotChecked,
-        }
-    }
+    let Some(uncovered) = uncovered_artifact_roots(root, &present) else {
+        return DoctorArtifactIgnore::NotChecked;
+    };
     if uncovered.is_empty() {
         return DoctorArtifactIgnore::Ignored;
     }
@@ -2775,11 +2777,107 @@ fn ripr_artifact_ignore(
              `git add -A` would commit ripr's own reports into your history. \
              Add this line to .gitignore: {}",
             artifact_roots_display(&uncovered),
-            uncovered
-                .iter()
-                .map(|root| analysis::artifact_root_gitignore_entry(Path::new(root)))
-                .collect::<Vec<_>>()
-                .join(", ")
+            artifact_gitignore_entries(&uncovered),
+        ),
+    }
+}
+
+/// The exact `.gitignore` entries for the uncovered roots, one wording on
+/// every surface that names the repair.
+fn artifact_gitignore_entries(uncovered: &[String]) -> String {
+    uncovered
+        .iter()
+        .map(|root| analysis::artifact_root_gitignore_entry(Path::new(root)))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The repository-relative artifact roots git positively reports as not
+/// covered by ignore rules. `git check-ignore --no-index` applies the full
+/// ignore semantics (nested `.gitignore` files, `.git/info/exclude`, global
+/// excludes) without letting already-tracked descendants veto the answer, so
+/// it decides coverage rather than a line-by-line reimplementation. The probe
+/// passes the PLAIN root: check-ignore takes pathnames, not pathspecs, and its
+/// ignore-rule globs match the literal characters of the pathname (PR #8901
+/// review, coderabbit; verified against git 2.47). `--no-index` asks only
+/// whether ignore RULES cover the path: without it, a tracked descendant (the
+/// exact state #7663 addresses: ripr reports already committed into history)
+/// makes check-ignore answer "not ignored" even when `/target/ripr/` is
+/// configured, so doctor would demand a rule that already exists. Exit 1 means
+/// the path is positively not ignored; exit 0 means covered; any other outcome
+/// (not a repository, git unavailable, deadline) returns `None` so the caller
+/// reports `NotChecked`/`NoArtifacts` instead of claiming a checked fact it
+/// could not establish. Tracked descendants are a separate fact the ignore
+/// verdict deliberately does not fold in (#8257 review follow-up).
+///
+/// Probing a root that does not exist yet is valid (that is what
+/// `--no-index` is for) and is exactly what the first-run pre-emptive
+/// warning needs (#9858).
+pub(crate) fn uncovered_artifact_roots(
+    root: &Path,
+    artifact_roots: &[PathBuf],
+) -> Option<Vec<String>> {
+    let mut uncovered: Vec<String> = Vec::new();
+    for relative in artifact_roots {
+        let pathspec = analysis::artifact_root_pathspec(relative);
+        // A directory-only ignore rule (`/target/ripr/`) cannot match a path
+        // git cannot see as a directory: on a first run the artifact root
+        // does not exist yet, so probe it with a trailing slash. An existing
+        // root answers identically in both forms (verified against git
+        // 2.47), so the present-artifact verdict is unchanged (#9858).
+        let probe_path = if root.join(relative).is_dir() {
+            pathspec.clone()
+        } else {
+            format!("{pathspec}/")
+        };
+        let probe = match crate::git::run_git_output_with_deadline(
+            root,
+            &["check-ignore", "--no-index", "-q", "--", &probe_path],
+            Some(std::time::Duration::from_secs(5)),
+        ) {
+            Ok(probe) => probe,
+            Err(_) => return None,
+        };
+        match probe.status.code() {
+            Some(0) => {}
+            Some(1) => uncovered.push(pathspec),
+            _ => return None,
+        }
+    }
+    Some(uncovered)
+}
+
+/// #9858: on the first run in a non-Cargo project nothing exists under
+/// `target/ripr` yet, so `ripr_artifact_ignore` reports `NoArtifacts` and the
+/// newcomer who runs `ripr doctor` before anything else gets no ignore
+/// guidance, then `ripr pilot` leaves a `target/` tree their VCS flags, one
+/// `git add .` from being committed. Python/TypeScript templates never ignore
+/// Cargo-conventional `target/`, so probe the would-be root anyway and warn
+/// before the first write. Cargo projects keep the historical first-run
+/// silence: Rust behavior is identical. A probe that cannot establish
+/// coverage (not a git repository, git unavailable, deadline) stays
+/// `NotChecked`-quiet like the existing verdict.
+fn preemptive_artifact_ignore(
+    root: &Path,
+    artifact_roots: &[PathBuf],
+) -> output::doctor::DoctorArtifactIgnore {
+    use output::doctor::DoctorArtifactIgnore;
+    if root.join("Cargo.toml").is_file() {
+        return DoctorArtifactIgnore::NoArtifacts;
+    }
+    let Some(uncovered) = uncovered_artifact_roots(root, artifact_roots) else {
+        return DoctorArtifactIgnore::NotChecked;
+    };
+    if uncovered.is_empty() {
+        return DoctorArtifactIgnore::Ignored;
+    }
+    DoctorArtifactIgnore::Unignored {
+        warning: format!(
+            "~ ripr will write artifacts under {} in this project (not covered by \
+             git ignore rules); `git add -A` would commit ripr's own reports \
+             into your history. Add this line to .gitignore: {}",
+            artifact_roots_display(&uncovered),
+            artifact_gitignore_entries(&uncovered),
         ),
     }
 }
@@ -4934,6 +5032,69 @@ mod tests {
     }
 
     #[test]
+    fn preemptive_artifact_ignore_warns_before_the_first_write() -> Result<(), String> {
+        use output::doctor::DoctorArtifactIgnore;
+        let root = unique_command_test_dir("artifact-preemptive");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let empty_excludes = root.join("empty-excludes");
+        std::fs::write(&empty_excludes, "").map_err(|error| error.to_string())?;
+        for args in [
+            ["init"].as_slice(),
+            ["config", "user.email", "ripr@example.invalid"].as_slice(),
+            ["config", "user.name", "ripr tests"].as_slice(),
+            [
+                "config",
+                "core.excludesFile",
+                empty_excludes.to_str().ok_or("non-utf8 excludes path")?,
+            ]
+            .as_slice(),
+        ] {
+            crate::git::run_git(&root, args).map_err(|error| error.to_string())?;
+        }
+        // Nothing exists yet: the existing verdict has nothing to probe.
+        assert_eq!(
+            ripr_artifact_ignore(&root, &default_artifact_roots(&root)),
+            DoctorArtifactIgnore::NoArtifacts
+        );
+        // A non-Cargo project is warned before the first write, with the
+        // exact entry to add (#9858). The subject clause says ripr *will
+        // write*; the consequence and entry match the existing-artifact
+        // warning word for word.
+        match preemptive_artifact_ignore(&root, &default_artifact_roots(&root)) {
+            DoctorArtifactIgnore::Unignored { warning } => {
+                assert!(
+                    warning.contains("will write artifacts under target/ripr"),
+                    "{warning}"
+                );
+                assert!(warning.contains("/target/ripr/"), "{warning}");
+                assert!(warning.starts_with("~ "), "{warning}");
+            }
+            other => return Err(format!("expected Unignored, got {other:?}")),
+        }
+        // A Cargo project keeps the historical first-run silence: Rust
+        // behavior is unchanged.
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"x\"\nversion = \"0.0.0\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            preemptive_artifact_ignore(&root, &default_artifact_roots(&root)),
+            DoctorArtifactIgnore::NoArtifacts
+        );
+        // The covering entry silences the pre-emptive arm too.
+        std::fs::remove_file(root.join("Cargo.toml")).map_err(|error| error.to_string())?;
+        std::fs::write(root.join(".gitignore"), "/target/ripr/\n")
+            .map_err(|error| error.to_string())?;
+        assert_eq!(
+            preemptive_artifact_ignore(&root, &default_artifact_roots(&root)),
+            DoctorArtifactIgnore::Ignored
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
     fn ripr_artifact_ignore_probes_a_relocated_cache_root() -> Result<(), String> {
         // #8751: when RIPR_CACHE_DIR moves the artifact base inside the
         // repository (e.g. `.ripr-cache` to keep `target/` clean), the
@@ -6971,7 +7132,7 @@ mod tests {
     /// The report must not run against a path named after a flag.
     #[test]
     fn doctor_reports_a_missing_root_value_when_a_known_flag_follows() {
-        for flag in ["--json", "--profile", "--root", "--help", "-h"] {
+        for flag in ["--json", "--timings", "--profile", "--root", "--help", "-h"] {
             assert_eq!(
                 doctor(&args(&["--root", flag])),
                 Err(CommandError::Failure(
@@ -7243,6 +7404,7 @@ mod tests {
                 &detect_languages(&dir),
                 std::time::Instant::now(),
                 std::time::Duration::ZERO,
+                false,
             ),
             Err(CommandError::Decision("doctor found issues".to_string()))
         );
@@ -7284,6 +7446,17 @@ mod tests {
     #[test]
     fn doctor_json_flag_accepts_explicit_root() -> Result<(), String> {
         doctor(&args(&["--json", "--root", "."])).map_err(|error| error.message().to_string())
+    }
+
+    /// #9807: `--timings` is a documented flag in every position doctor
+    /// accepts flags: alongside `--json` it opts into the volatile timing
+    /// fields, and alone it leaves the human output (which already prints
+    /// its run-time summary) unchanged.
+    #[test]
+    fn doctor_timings_flag_is_accepted_with_and_without_json() -> Result<(), String> {
+        doctor(&args(&["--json", "--timings", "--root", "."]))
+            .map_err(|error| error.message().to_string())?;
+        doctor(&args(&["--timings"])).map_err(|error| error.message().to_string())
     }
 
     // --- preview_language_enable_suggestions tests ---
