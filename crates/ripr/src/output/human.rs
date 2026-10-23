@@ -191,6 +191,9 @@ fn render_no_scope_note(output: &CheckOutput) -> String {
     }
 }
 
+/// The caveat an empty range adds beyond the triage `Safe next action` (#9922).
+const EMPTY_RANGE_CAVEAT_NOTE: &str = "\nNote: deleted files, submodule pointer changes and files ripr does not analyze are not counted, so this empty result does NOT mean no behavior changed.\n";
+
 /// The note an empty human result carries. An explicit `--base` that resolves
 /// to a range with no analyzable changed files (for example `--base HEAD`, or
 /// the base branch while on it) used to print only "No diff-derived static
@@ -254,7 +257,14 @@ pub(crate) fn render_bounded_with_config_and_navigation(
             triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
         }
         if let Some(note) = empty_scope_note(output) {
-            out.push_str(&note);
+            // #9922: the triage block above already states the empty range
+            // and names the compared base in its `Safe next action`, so the
+            // note keeps only the caveat it adds instead of saying it twice.
+            if output.no_scope_provided && output.base.is_some() {
+                out.push_str(EMPTY_RANGE_CAVEAT_NOTE);
+            } else {
+                out.push_str(&note);
+            }
         }
         render_working_tree_disclosure(&mut out, output);
         render_preview_language_advisories(&mut out, output);
@@ -3715,9 +3725,13 @@ mod tests {
         );
         assert!(
             rendered.contains(
-                "Note: the working tree has no analyzable changed files against `main` (diff from the merge base of `main` and HEAD to the working tree), so there was nothing to analyze."
+                "Note: deleted files, submodule pointer changes and files ripr does not analyze are not counted, so this empty result does NOT mean no behavior changed."
             ),
             "{rendered}"
+        );
+        assert!(
+            !rendered.contains("so there was nothing to analyze"),
+            "the empty range is stated once, by the safe next action: {rendered}"
         );
         assert!(
             rendered.contains(
@@ -3741,7 +3755,11 @@ mod tests {
         committed.untracked_working_tree_source_paths = vec!["src/new.rs".to_string()];
         let committed_rendered = render(&committed);
         assert!(
-            committed_rendered.contains("`main...HEAD` has no analyzable changed files"),
+            committed_rendered.contains("does NOT mean no behavior changed"),
+            "{committed_rendered}"
+        );
+        assert!(
+            !committed_rendered.contains("so there was nothing to analyze"),
             "{committed_rendered}"
         );
         assert!(
