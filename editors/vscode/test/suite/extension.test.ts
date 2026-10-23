@@ -864,7 +864,7 @@ suite('Extension Smoke', () => {
       assert.ok(!/default settings/i.test(controller.status.detail ?? ''), 'no default-settings claim');
       assert.ok((controller.status.nextStep ?? '').includes('Restart Server'), 'names a recovery action');
       assert.ok(statusItem.text.includes('failed'), `the real item shows the failure: ${describe()}`);
-      assert.ok(statusItem.backgroundColor !== undefined, 'the real item carries the error colors');
+      assert.strictEqual((statusItem.backgroundColor as { id?: string } | undefined)?.id, 'statusBarItem.errorBackground', 'the real item carries the error colors');
 
       // A second, decided rejection stays visible.
       mark = frames.length;
@@ -884,7 +884,9 @@ suite('Extension Smoke', () => {
         `recovery is a healthy status, not an unrelated failure: ${describe()}`);
       assert.ok(!/includeUnchangedTests/i.test(itemText()), `the real item dropped the rejection: ${describe()}`);
       assert.ok(!statusItem.text.includes('failed'), `the real item text is no longer failed: ${describe()}`);
-      assert.strictEqual(statusItem.backgroundColor, undefined, 'error background is cleared');
+      const recoveredBackground = (statusItem.backgroundColor as { id?: string } | undefined)?.id;
+      assert.notStrictEqual(recoveredBackground, 'statusBarItem.errorBackground',
+        `the error background is cleared (a legitimate warning state may remain): ${describe()}`);
       assert.strictEqual(statusItem.color, undefined, 'error foreground is cleared');
     } finally {
       controller.handleAnalysisStatus = originalHandle;
