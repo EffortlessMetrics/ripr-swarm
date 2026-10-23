@@ -216,6 +216,37 @@ impl<E: Into<CommandError>> From<E> for BeforePhaseError {
     }
 }
 
+/// The gap binding for a published gap-bound attempt: the base commit is the
+/// one the retained before snapshot recorded (#9103).
+fn gap_binding_from_snapshot(
+    base: &str,
+    snapshot: &std::path::Path,
+) -> Result<crate::app::repair_attempt::RepairAttemptGapBinding, String> {
+    let raw = std::fs::read_to_string(snapshot)
+        .map_err(|error| format!("read {} failed: {error}", snapshot.display()))?;
+    let document: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|error| format!("parse {} failed: {error}", snapshot.display()))?;
+    let base_commit = document
+        .pointer("/artifact/analysis/base_revision")
+        .and_then(serde_json::Value::as_str)
+        .filter(|commit| {
+            commit.len() == 40
+                && commit
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        })
+        .ok_or_else(|| {
+            format!(
+                "{} does not record the full base commit the gap-bound start resolved",
+                snapshot.display()
+            )
+        })?;
+    Ok(crate::app::repair_attempt::RepairAttemptGapBinding {
+        base: base.to_string(),
+        base_commit: Some(base_commit.to_string()),
+    })
+}
+
 fn drive_before_phase_inner(
     mut options: agent::AgentRepairOptions,
 ) -> Result<(String, String), BeforePhaseError> {
@@ -457,10 +488,16 @@ fn persist_before_repair_attempt(
     // snapshot carries its own role so no consumer reads it as a repo-exposure
     // document.
     let gap_binding = match (&options.gap_id, &options.base) {
-        (Some(_), Some(base)) => Some(crate::app::repair_attempt::RepairAttemptGapBinding {
-            base: base.clone(),
-            base_commit: crate::agent::artifact::resolve_commit_rev(root, base)?,
-        }),
+        // The base commit is read back from the before snapshot the start
+        // just wrote, never re-resolved from the caller's ref: a ref that
+        // moved between the two reads cannot split the snapshot's base from
+        // the manifest's.
+        (Some(_), Some(base)) => Some(gap_binding_from_snapshot(
+            base,
+            &root
+                .join("target/ripr/workflow")
+                .join(crate::app::gap_bound_repair::GAP_BOUND_BEFORE_SNAPSHOT_FILE),
+        )?),
         _ => None,
     };
     let gap_before_snapshot = root
@@ -590,7 +627,7 @@ fn persist_before_repair_attempt(
         // #9103: the gap-bound after phase enforces this cage, so the
         // guidance matches the seam-bound one except for the committed test.
         eprintln!(
-            "ripr: before phase complete. Next: add or strengthen one focused test in the packet's test file and commit it (leave production code unchanged), then run the command printed below. The after phase enforces the edit cage and closes the gap only when it reads exposed; editing any file outside that test surface fails the attempt terminally."
+            "ripr: before phase complete. Next: add or strengthen one focused test in the packet's test file and commit it (leave production code unchanged), then run the command printed below. The after phase checks closure first: a gap that does not read exposed is refused and the attempt stays retryable; once the gap reads exposed, the edit cage ends the attempt terminally if any file outside that test surface changed."
         );
     } else if policy.inline_test_module_target {
         // #5210: the cage admits only new test functions inserted into the
@@ -653,6 +690,40 @@ fn persist_before_repair_attempt(
 
 #[cfg(test)]
 mod tests {
+    /// The manifest binding is read from the retained before snapshot, so a
+    /// ref that moved after the snapshot was produced cannot split the two.
+    #[test]
+    fn gap_binding_takes_the_snapshot_base_not_a_fresh_resolution() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("ripr-gap-binding-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+        let snapshot = dir.join("before.check-findings.json");
+        let commit_a = "a".repeat(40);
+        std::fs::write(
+            &snapshot,
+            serde_json::json!({"artifact": {"analysis": {"base_revision": commit_a}}}).to_string(),
+        )
+        .map_err(|error| error.to_string())?;
+        let binding = super::gap_binding_from_snapshot("main", &snapshot);
+        let short = dir.join("short.json");
+        std::fs::write(
+            &short,
+            serde_json::json!({"artifact": {"analysis": {"base_revision": "main"}}}).to_string(),
+        )
+        .map_err(|error| error.to_string())?;
+        let refused = super::gap_binding_from_snapshot("main", &short);
+        let _ = std::fs::remove_dir_all(&dir);
+        let binding = binding?;
+        if binding.base != "main" || binding.base_commit.as_deref() != Some(commit_a.as_str()) {
+            return Err(format!(
+                "binding did not take the snapshot base: {binding:?}"
+            ));
+        }
+        if refused.is_ok() {
+            return Err("a non-commit snapshot base was accepted".to_string());
+        }
+        Ok(())
+    }
+
     use super::*;
 
     #[test]

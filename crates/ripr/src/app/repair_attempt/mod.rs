@@ -140,7 +140,20 @@ pub(crate) struct RepairAttemptGapBinding {
     /// relative base such as `HEAD~1` names a different commit once the
     /// focused test is committed, which would shrink the diff and make the
     /// gap vanish.
-    pub(crate) base_commit: String,
+    ///
+    /// Absent on a marker written by the C2a build, which recorded only the
+    /// symbolic spelling. That ref is never re-resolved as if it were the
+    /// original immutable base: such an attempt's after phase refuses with a
+    /// fresh-start recipe instead (see [`Self::is_legacy`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) base_commit: Option<String>,
+}
+
+impl RepairAttemptGapBinding {
+    /// A C2a-era marker without the resolved base commit.
+    pub(crate) fn is_legacy(&self) -> bool {
+        self.base_commit.is_none()
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -962,8 +975,8 @@ pub(crate) struct ResolvedRepairAttempt {
     /// check-findings snapshot, and `seam_id` holds the canonical gap id.
     pub(crate) gap_base: Option<String>,
     /// The full commit `gap_base` resolved to at the before phase (see
-    /// [`RepairAttemptGapBinding::base_commit`]); `Some` exactly when
-    /// `gap_base` is.
+    /// [`RepairAttemptGapBinding::base_commit`]); `None` for a seam-bound
+    /// attempt and for a legacy (C2a) gap-bound marker that never recorded it.
     pub(crate) gap_base_commit: Option<String>,
 }
 
@@ -2311,7 +2324,7 @@ pub(crate) fn resolve_awaiting_repair_attempt_from(
     let gap_base_commit = manifest
         .gap_binding
         .as_ref()
-        .map(|binding| binding.base_commit.clone());
+        .and_then(|binding| binding.base_commit.clone());
     let before_role = if gap_base.is_some() {
         crate::app::gap_bound_repair::GAP_BOUND_BEFORE_SNAPSHOT_ROLE
     } else {
@@ -2920,6 +2933,7 @@ impl DivergedHeadRecovery {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn diverged_head_recovery(
     root_display: &str,
     attempt_id: &str,
@@ -4134,7 +4148,7 @@ mod tests {
         gap_bound.seam_id = TS_GAP.to_string();
         gap_bound.gap_binding = Some(RepairAttemptGapBinding {
             base: "HEAD~1".to_string(),
-            base_commit: "a".repeat(40),
+            base_commit: Some("a".repeat(40)),
         });
         let gap_json =
             serde_json::to_string_pretty(&gap_bound).map_err(|error| error.to_string())?;

@@ -1405,11 +1405,16 @@ impl SharedWorkflowArtifacts {
         } else {
             "after.repo-exposure.json"
         };
-        let paths = vec![
+        let mut paths = vec![
             root.join("target/ripr/workflow").join(after_snapshot),
             root.join("target/ripr/workflow/agent-verify.json"),
-            root.join(crate::agent::loop_commands::WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT),
         ];
+        // A gap-bound attempt writes no analysis outcome (it issues no
+        // receipt), so it must not back up and then discard the prior one on
+        // success: track only the artifacts this phase writes.
+        if !gap_bound {
+            paths.push(root.join(crate::agent::loop_commands::WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT));
+        }
         let mut backups = Vec::with_capacity(paths.len());
         for path in &paths {
             let mut backup_name = path
@@ -1801,6 +1806,28 @@ fn run_agent_repair_phase(
                 attempt.seam_id,
                 root.display()
             );
+            // A C2a-era gap marker recorded only the symbolic base. It is not
+            // re-resolved as if it were the original immutable base: the
+            // attempt refuses with a fresh start instead.
+            if attempt.gap_base.is_some() && attempt.gap_base_commit.is_none() {
+                let store_flag = crate::app::repair_attempt::quoted_store_flag(store_ref);
+                let start = crate::app::gap_bound_repair::repair_start_command(
+                    &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
+                    &store_flag,
+                    &attempt.seam_id,
+                    attempt.gap_base.as_deref(),
+                );
+                refusal.narrate(format!(
+                    "attempt `{}` was started by an earlier ripr build that recorded only the symbolic base `{}`, not the commit it named; the after phase will not re-resolve that ref as if it were the original base. Start a fresh attempt: `{start}`",
+                    attempt.attempt_id.as_str(),
+                    attempt.gap_base.as_deref().unwrap_or_default(),
+                ));
+                refusal.typed = true;
+                return Err(format!(
+                    "repair attempt `{}` has no recorded base commit (legacy gap-bound marker); start a fresh attempt",
+                    attempt.attempt_id.as_str()
+                ));
+            }
             // The attempt authority owns the retry budget: a spent budget is a
             // stop state, not another retry.
             let prior_refusals = crate::app::repair_attempt::load_repair_attempt_manifest_from(
@@ -1841,7 +1868,7 @@ fn run_agent_repair_phase(
             // and restore the pre-attempt state when the cage refuses.
             refusal.workflow_artifacts = Some(SharedWorkflowArtifacts::track(
                 &root,
-                attempt.gap_base_commit.is_some(),
+                attempt.gap_base.is_some(),
             ));
 
             // The retained before snapshot and packet are the transaction's
@@ -1853,7 +1880,7 @@ fn run_agent_repair_phase(
             // diff-scoped check its before phase ran, against the commit the
             // base resolved to then, and compares by gap id. Seam-bound
             // attempts keep the repo-exposure snapshot.
-            let gap_bound = attempt.gap_base_commit.is_some();
+            let gap_bound = attempt.gap_base.is_some();
             let after = if let Some(base_commit) = attempt.gap_base_commit.as_deref() {
                 let after = root
                     .join("target/ripr/workflow")
@@ -1935,13 +1962,14 @@ fn run_agent_repair_phase(
                     crate::app::repair_attempt::AfterPhaseHeadAdmission::RefusedDiverged {
                         current_head,
                     } => {
-                        for line in crate::app::repair_attempt::diverged_head_recovery(
+                        for line in crate::app::repair_attempt::diverged_head_recovery_for_subject(
                             &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
                             attempt.attempt_id.as_str(),
                             &attempt.seam_id,
                             &attempt.repository_head,
                             &current_head,
                             &crate::app::repair_attempt::quoted_store_flag(store_ref),
+                            attempt.gap_base.as_deref(),
                         )
                         .lines()
                         {
@@ -4558,8 +4586,8 @@ mod tests {
 #[cfg(test)]
 mod repair_summary_tests {
     use super::{
-        gap_after_phase_human_stdout, gap_closure_summary_lines, repair_after_summary_lines,
-        repair_receipt_summary_lines,
+        SharedWorkflowArtifacts, WORKFLOW_ARTIFACT_BACKUP_SUFFIX, gap_after_phase_human_stdout,
+        gap_closure_summary_lines, repair_after_summary_lines, repair_receipt_summary_lines,
     };
 
     #[test]
@@ -4640,6 +4668,41 @@ mod repair_summary_tests {
     fn repair_summary_is_empty_when_the_receipt_lacks_movement() {
         assert!(repair_receipt_summary_lines(r#"{"seam": {"seam_id": "s"}}"#).is_empty());
         assert!(repair_receipt_summary_lines("not json").is_empty());
+    }
+
+    #[test]
+    fn gap_bound_tracking_preserves_the_prior_analysis_outcome_on_success() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-gap-track-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_nanos()
+        ));
+        let outcome = root.join(crate::agent::loop_commands::WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT);
+        let parent = outcome.parent().ok_or("outcome has no parent")?;
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        std::fs::write(&outcome, b"prior-outcome-bytes").map_err(|error| error.to_string())?;
+        let tracked = SharedWorkflowArtifacts::track(&root, true);
+        // The gap path writes only its own artifacts.
+        tracked.resolve(true, false, true);
+        let kept = std::fs::read(&outcome).map_err(|error| format!("outcome deleted: {error}"));
+        let leftovers = parent
+            .read_dir()
+            .map_err(|error| error.to_string())?
+            .filter_map(Result::ok)
+            .any(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(WORKFLOW_ARTIFACT_BACKUP_SUFFIX)
+            });
+        let _ = std::fs::remove_dir_all(&root);
+        if kept? != b"prior-outcome-bytes" || leftovers {
+            return Err("gap-bound success altered the prior analysis outcome".to_string());
+        }
+        Ok(())
     }
 
     #[test]
