@@ -171,6 +171,70 @@ fn function_pointer_runtime_controls_observe_the_same_value() -> Result<(), Stri
     Ok(())
 }
 
+#[test]
+fn function_pointer_standard_glob_keeps_observation_and_macro_refusal() -> Result<(), String> {
+    // The inline facade mirrors serde_core: its own module name does not
+    // shadow the standard crate in the nested glob's resolution scope.
+    let facade = "mod lib { mod core { pub use core::*; } }";
+    for (case, body, observes) in [
+        (
+            "standard_facade",
+            "let f: fn(u32) -> u32 = call_through_pointer; assert_eq!(f(2), 6);",
+            true,
+        ),
+        (
+            "shadowed_assertion",
+            "macro_rules! assert_eq { ($($ignored:tt)*) => {} } let f: fn(u32) -> u32 = call_through_pointer; assert_eq!(f(2), 6);",
+            false,
+        ),
+    ] {
+        let subject = format!("{}\n{facade}\n", source(body));
+        let scratch = Scratch::create()?;
+        std::fs::create_dir(scratch.0.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            scratch.0.join("Cargo.toml"),
+            "[package]\nname = \"pointer-glob\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(scratch.0.join("src/lib.rs"), &subject)
+            .map_err(|error| error.to_string())?;
+        std::fs::write(scratch.0.join("change.diff"), DIFF).map_err(|error| error.to_string())?;
+        let report = check_workspace(CheckInput {
+            root: scratch.0.clone(),
+            diff_file: Some(scratch.0.join("change.diff")),
+            mode: Mode::Fast,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        let changed: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|finding| {
+                finding.probe.family == ProbeFamily::ReturnValue && finding.probe.location.line == 2
+            })
+            .collect();
+        assert_eq!(changed.len(), 1, "{case}: one changed return value");
+        assert_eq!(
+            changed[0].class == ExposureClass::Exposed,
+            observes,
+            "{case}"
+        );
+        for (label, replacement, should_fail) in [
+            ("neutral", "3 * x", false),
+            ("wrong_value", "4 * x", observes),
+        ] {
+            source_runtime_control(
+                &subject.replacen("3 * x", replacement, 1),
+                &format!("pointer_glob_{case}_{label}"),
+                1,
+                should_fail,
+            )?;
+        }
+    }
+    Ok(())
+}
+
 const MASK_CASES: &[(&str, &str, bool)] = &[
     (
         "partial",
