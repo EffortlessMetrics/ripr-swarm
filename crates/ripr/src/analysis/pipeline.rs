@@ -2195,12 +2195,12 @@ fn repo_not_selected_outcomes(
         if selected {
             continue;
         }
-        let label = if is_javascript_family_path(path) {
-            LanguageId::JavaScript.as_str()
+        let (resolved, label) = if is_javascript_family_path(path) {
+            (LanguageId::JavaScript, LanguageId::JavaScript.as_str())
         } else {
-            language.as_str()
+            (*language, language.as_str())
         };
-        counts.entry(label).or_insert((*language, 0)).1 += 1;
+        counts.entry(label).or_insert((resolved, 0)).1 += 1;
     }
     counts
         .into_iter()
