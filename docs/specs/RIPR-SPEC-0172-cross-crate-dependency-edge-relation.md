@@ -268,19 +268,25 @@ call.
 
 Cargo compiles and runs a package's root `build.rs` before the package, as a
 separate crate; no test of the package can call into it. A probe in a root
-`build.rs` (no `src`, `tests`, `examples` or `benches` directory above it)
-therefore relates no test through a name, stem or substring token, unless a
-test file of the script's own package (files deduplicated; a test in another
-package does not count) spells `build.rs` or `OUT_DIR` (an `include!`,
-`#[path]` or generated-source mount), in which case the ordinary rules apply. A `package.build = "tools/gen.rs"` script is not
-recognised and keeps the ordinary rules. The path is judged
-relative to the analysis root, so a checkout under a `src` directory is not
-mistaken for a module. A mount is an `include!` or `#[path]` line naming
-`build.rs`, or an `include!` of the `OUT_DIR` output; comments and bare string
-mentions do not count. The `no_static_path` next step for a root build script
-does not ask for a co-located test: it names building the package and
-inspecting the script's output, or moving the logic into a callable library
-function. Fixture:
+`build.rs` (judged on the analysis-root-relative path, with no `src`, `tests`,
+`examples` or `benches` directory above it) therefore relates no test through a
+name, stem or substring token, unless an indexed source file of the script's own
+package mounts it. The package is the script's directory; a file belongs to it
+through a `src`, `tests`, `examples` or `benches` directory directly below, so
+a workspace member's or nested package's file does not count, while library,
+binary and test-helper files all do. A mount is an `include!` or `#[path]`
+whose arguments (read whole, across lines, after masking comments and string
+literals) hold a string-literal path with an exact `build.rs` component, or the
+`OUT_DIR` environment variable. A comment, a string mention, `mybuild.rs` and
+`build.rs.bak` are not mounts. A `package.build = "tools/gen.rs"` script is not
+recognised and keeps the ordinary rules; a mount in a file the index does not
+hold is not seen. When a mount exists the ordinary rules apply and the
+standard next step is kept. When none does, the `no_static_path` next step (and
+the closing human-output note) does not ask for a co-located test: it names
+building the package and inspecting the script's output, or moving the logic
+into a callable library function. One helper, `root_build_script_unmounted`,
+decides both the relation gate and the wording. Repo-mode seams never come from
+a build script, so `test_grip_evidence` needs no guard. Fixture:
 `fixtures/rust_build_script_no_test_reach`.
 
 ## Implementation Mapping

@@ -240,6 +240,23 @@ impl RelatedTestCandidateIndex {
         self
     }
 
+    /// Whether `probe` sits in a root build script no package source mounts:
+    /// the exact answer the related-test gate uses (same root-relative path).
+    pub(in crate::analysis) fn probe_in_unmounted_build_script(
+        &self,
+        probe: &Probe,
+        owner_fn: Option<&FunctionSummary>,
+        index: &RustIndex,
+    ) -> bool {
+        probe_index_path(
+            &probe.location.file,
+            self.analysis_root.as_deref(),
+            owner_fn,
+            index,
+        )
+        .is_some_and(|relative| root_build_script_unmounted(index, &relative))
+    }
+
     /// Record which tests the diff adds or changes, so they lead their
     /// confidence tier (#8387). Never admits a test or raises a confidence.
     pub(in crate::analysis) fn with_diff_touched(
@@ -718,16 +735,11 @@ fn find_related_tests_with_candidates<'a>(
         RelatedTestCandidates::FullScan => None,
     };
     let probe_path = probe_index_path(&probe.location.file, analysis_root, owner_fn, index);
-    // #9173: Cargo compiles and runs a build script before the package, as a
-    // separate crate, so no test of the package can call into it. Judged on
-    // the root-relative path, so a checkout under `/work/src/shop` is not
-    // mistaken for a `src` module. Unless a test file of its package really
-    // mounts it (`include!`/`#[path]` of `build.rs`, or the generated
-    // `OUT_DIR` output), no name, stem or substring signal may relate a test
-    // to it.
-    if let Some(relative) = probe_path.as_deref()
-        && is_root_build_script(relative)
-        && !package_test_file_mounts_build_script(index, relative)
+    // #9173: a root build script is unreachable from package tests unless one
+    // really mounts it; see `root_build_script_unmounted`.
+    if probe_path
+        .as_deref()
+        .is_some_and(|relative| root_build_script_unmounted(index, relative))
     {
         return Vec::new();
     }
@@ -2477,33 +2489,191 @@ pub(in crate::analysis) fn is_root_build_script(path: &str) -> bool {
         && !parts.any(|part| matches!(part, "src" | "tests" | "examples" | "benches"))
 }
 
-/// Whether a test file in the build script's own package really mounts it:
-/// an `include!` or `#[path]` line naming `build.rs`, or an `include!` of
-/// the `OUT_DIR` output. Comment lines and bare string mentions do not
-/// count. Files are deduplicated; a test elsewhere in the workspace does not
-/// count.
-fn package_test_file_mounts_build_script(index: &RustIndex, script: &str) -> bool {
+/// The one authority for "no package test can reach this build script": the
+/// root-relative `path` is a root `build.rs` and no source file of its own
+/// package mounts it (#9173). Both the related-test gate and the
+/// `no_static_path` next step read this answer.
+pub(in crate::analysis) fn root_build_script_unmounted(index: &RustIndex, path: &str) -> bool {
+    is_root_build_script(path) && !package_mounts_build_script(index, path)
+}
+
+/// Whether any indexed source file of the build script's own package mounts
+/// it. The package is the script's directory; a file belongs to it only
+/// through a conventional target directory (`src`, `tests`, `examples`,
+/// `benches`) directly below, so a workspace member (`member/tests/x.rs`)
+/// or a nested package (`a/b/src/lib.rs` for `a/build.rs`) does not count.
+/// Library, binary and test-helper files all count.
+fn package_mounts_build_script(index: &RustIndex, script: &str) -> bool {
     let package_dir = script.strip_suffix("build.rs").unwrap_or("");
-    let files: BTreeSet<&Path> = index
-        .tests()
-        .iter()
-        .map(|test| test.file.as_path())
-        .collect();
-    files.into_iter().any(|file| {
-        normalize_path(file).starts_with(package_dir)
-            && index
-                .files()
-                .get(file)
-                .is_some_and(|facts| source_mounts_build_script(&facts.data().source))
+    index.files().iter().any(|(file, facts)| {
+        let normalized = normalize_path(file);
+        let Some(rest) = normalized.strip_prefix(package_dir) else {
+            return false;
+        };
+        let first = rest.split('/').next().unwrap_or("");
+        rest.contains('/')
+            && matches!(first, "src" | "tests" | "examples" | "benches")
+            && source_mounts_build_script(&facts.data().source)
     })
 }
 
+/// Whether `source` mounts a build script: an `include!` or `#[path]` whose
+/// arguments hold a string-literal path with a `build.rs` component, or the
+/// `OUT_DIR` generated-source environment variable. Comments and string
+/// literals are masked first, so a mention in either, `mybuild.rs`, and
+/// `build.rs.bak` do not count; a multi-line argument list is read whole.
 fn source_mounts_build_script(source: &str) -> bool {
-    source.lines().any(|line| {
-        let code = line.split("//").next().unwrap_or("");
-        (code.contains("include!") || code.contains("#[path"))
-            && (code.contains("build.rs") || code.contains("OUT_DIR"))
+    if !source.contains("include!") && !source.contains("#[path") {
+        return false;
+    }
+    let (masked, literals) = mask_comments_and_literals(source);
+    ["include!", "#[path"].iter().any(|needle| {
+        masked.match_indices(needle).any(|(at, _)| {
+            let args = &masked[at + needle.len()..];
+            let span = &args[..balanced_end(args)];
+            literal_ids(span).any(|id| {
+                literals.get(id).is_some_and(|literal| {
+                    literal == "OUT_DIR"
+                        || literal.split(['/', '\\']).any(|part| part == "build.rs")
+                })
+            })
+        })
     })
+}
+
+/// Replace comments with spaces and every string literal with `"<n>"`
+/// (`n` indexes the returned literal contents), so structure scans cannot be
+/// fooled by text inside comments or strings. Char literals become `' '`.
+fn mask_comments_and_literals(source: &str) -> (String, Vec<String>) {
+    let chars: Vec<char> = source.chars().collect();
+    let mut masked = String::with_capacity(source.len());
+    let mut literals = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let next = chars.get(i + 1).copied();
+        if c == '/' && next == Some('/') {
+            while i < chars.len() && chars[i] != '\n' {
+                i += 1;
+            }
+        } else if c == '/' && next == Some('*') {
+            let mut depth = 0usize;
+            while i < chars.len() {
+                if chars[i] == '/' && chars.get(i + 1) == Some(&'*') {
+                    depth += 1;
+                    i += 2;
+                } else if chars[i] == '*' && chars.get(i + 1) == Some(&'/') {
+                    depth -= 1;
+                    i += 2;
+                    if depth == 0 {
+                        break;
+                    }
+                } else {
+                    if chars[i] == '\n' {
+                        masked.push('\n');
+                    }
+                    i += 1;
+                }
+            }
+            masked.push(' ');
+        } else if c == 'r'
+            && (next == Some('"') || next == Some('#'))
+            && raw_string_hashes(&chars, i).is_some()
+            && !masked.ends_with(|prev: char| prev.is_alphanumeric() || prev == '_')
+        {
+            let hashes = raw_string_hashes(&chars, i).unwrap_or(0);
+            let start = i + 2 + hashes;
+            let mut end = start;
+            while end < chars.len()
+                && !(chars[end] == '"' && (0..hashes).all(|k| chars.get(end + 1 + k) == Some(&'#')))
+            {
+                end += 1;
+            }
+            literals.push(chars[start..end.min(chars.len())].iter().collect());
+            masked.push_str(&format!("\"{}\"", literals.len() - 1));
+            i = (end + 1 + hashes).min(chars.len());
+        } else if c == '"' {
+            let mut literal = String::new();
+            i += 1;
+            while i < chars.len() && chars[i] != '"' {
+                if chars[i] == '\\' && i + 1 < chars.len() {
+                    literal.push(chars[i + 1]);
+                    i += 2;
+                } else {
+                    literal.push(chars[i]);
+                    i += 1;
+                }
+            }
+            i += 1;
+            literals.push(literal);
+            masked.push_str(&format!("\"{}\"", literals.len() - 1));
+        } else if c == '\'' && is_char_literal(&chars, i) {
+            i += 1;
+            if chars.get(i) == Some(&'\\') {
+                i += 1;
+            }
+            while i < chars.len() && chars[i] != '\'' {
+                i += 1;
+            }
+            i += 1;
+            masked.push_str("' '");
+        } else {
+            masked.push(c);
+            i += 1;
+        }
+    }
+    (masked, literals)
+}
+
+/// The `#` count of a raw string opening at `at` (`r"`, `r#"`), if it is one.
+fn raw_string_hashes(chars: &[char], at: usize) -> Option<usize> {
+    let mut hashes = 0;
+    while chars.get(at + 1 + hashes) == Some(&'#') {
+        hashes += 1;
+    }
+    (chars.get(at + 1 + hashes) == Some(&'"')).then_some(hashes)
+}
+
+/// `'x'` and `'\n'` are char literals; `'a` followed by anything else is a
+/// lifetime or label.
+fn is_char_literal(chars: &[char], at: usize) -> bool {
+    match chars.get(at + 1) {
+        Some('\\') => true,
+        Some(_) => chars.get(at + 2) == Some(&'\''),
+        None => false,
+    }
+}
+
+/// Length of the argument group that starts `args`: through the matching
+/// close of an opening bracket, or up to the first unmatched close (`]` of
+/// `#[path = "..."]`).
+fn balanced_end(args: &str) -> usize {
+    let mut depth = 0usize;
+    for (at, c) in args.char_indices() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                if depth == 0 {
+                    return at;
+                }
+                depth -= 1;
+                if depth == 0 {
+                    return at + 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    args.len()
+}
+
+/// The literal indexes named by `"<n>"` placeholders in masked text.
+fn literal_ids(masked: &str) -> impl Iterator<Item = usize> + '_ {
+    masked
+        .split('"')
+        .skip(1)
+        .step_by(2)
+        .filter_map(|id| id.parse().ok())
 }
 
 /// Whether a test file is named for the probe's source stem: the stem is a
@@ -10888,22 +11058,62 @@ try_parse_summary(raw).map_err(Into::into)"
         }
     }
 
-    /// #9173: a test file of the build script's own package that mounts it
-    /// (`include!`, `#[path]`, `OUT_DIR`) restores the ordinary name-token
-    /// relation; a mounting test in another package does not.
+    /// #9173: the mount scanner reads structure, not text. Each negative
+    /// fails if comment/string masking, argument joining or exact-component
+    /// matching is removed.
     #[test]
-    fn mounting_test_file_restores_build_script_relation() -> Result<(), String> {
+    fn mount_scanner_reads_structure_not_text() {
+        for mount in [
+            "include!(\"../build.rs\");",
+            "include!(\n    \"../build.rs\"\n);",
+            "include!( concat!(env!(\"OUT_DIR\"), \"/gen.rs\") );",
+            "#[path = \"../build.rs\"]\nmod script;",
+            "#[path=\"..\\\\build.rs\"] mod script;",
+            "/* old */ include!(r#\"../build.rs\"#);",
+            "let c = 'x'; include!(\"../build.rs\");",
+        ] {
+            assert!(source_mounts_build_script(mount), "mount: {mount}");
+        }
+        for plain in [
+            "// include!(\"../build.rs\");",
+            "/* include!(\"../build.rs\"); */",
+            "/* /* nested */ include!(\"../build.rs\"); */",
+            "let s = \"include!(\\\"../build.rs\\\")\";",
+            "let s = r#\"#[path = \"../build.rs\"]\"#;",
+            "include!(\"../mybuild.rs\");",
+            "include!(\"../build.rs.bak\");",
+            "include!(\"../fixtures/data.rs\"); // build.rs OUT_DIR",
+            "mod build; let _ = \"build.rs\";",
+        ] {
+            assert!(!source_mounts_build_script(plain), "plain: {plain}");
+        }
+    }
+
+    /// #9173: a source file of the build script's own package that mounts it
+    /// (`src/lib.rs`, `tests/common/mod.rs`, a test) restores the ordinary
+    /// relation; a mount in a workspace member, a nested package, or an
+    /// unrelated mention does not.
+    #[test]
+    fn mounting_package_source_restores_build_script_relation() -> Result<(), String> {
         let expression = ".arg(\"--cap-lints=allow\")";
-        let index_with = |test_path: &str, source: &str| -> Result<RustIndex, String> {
-            let file_facts = crate::analysis::syntax::ra::summarize_file_with_parser(
-                std::path::Path::new(test_path),
-                source,
-            )
-            .map_err(|error| error.to_string())?;
+        const TEST: &str = "#[test]\nfn test_allow_attributes() {}\n";
+        const MOUNT: &str = "include!(\"../build.rs\");\n";
+        let index_with = |files: &[(&str, &str)]| -> Result<RustIndex, String> {
+            let mut tests = Vec::new();
+            let mut file_map = BTreeMap::new();
+            for (path, source) in files {
+                let facts = crate::analysis::syntax::ra::summarize_file_with_parser(
+                    std::path::Path::new(path),
+                    source,
+                )
+                .map_err(|error| error.to_string())?;
+                tests.extend(facts.tests.clone());
+                file_map.insert(PathBuf::from(path), facts);
+            }
             Ok(RustIndex::from_owned(
                 crate::analysis::facts::OwnedRustIndex {
-                    tests: file_facts.tests.clone(),
-                    files: std::iter::once((PathBuf::from(test_path), file_facts)).collect(),
+                    tests,
+                    files: file_map.into_iter().collect(),
                     ..Default::default()
                 },
             ))
@@ -10912,26 +11122,42 @@ try_parse_summary(raw).map_err(Into::into)"
             let probe = probe(file, expression);
             find_related_tests(&probe, None, index, true, None, None).len()
         };
+        let mounted = format!("{MOUNT}{TEST}");
 
-        for mount in [
-            "include!(\"../build.rs\");\n#[test]\nfn test_allow_attributes() {}\n",
-            "#[path = \"../build.rs\"]\nmod script;\n#[test]\nfn test_allow_attributes() {}\n",
-            "include!(concat!(env!(\"OUT_DIR\"), \"/gen.rs\"));\n#[test]\nfn test_allow_attributes() {}\n",
+        // Mounted from a test, the library root, or a test helper module.
+        for files in [
+            vec![("tests/lints.rs", mounted.as_str())],
+            vec![("tests/lints.rs", TEST), ("src/lib.rs", MOUNT)],
+            vec![("tests/lints.rs", TEST), ("src/main.rs", MOUNT)],
+            vec![("tests/lints.rs", TEST), ("tests/common/mod.rs", MOUNT)],
         ] {
-            let index = index_with("tests/lints.rs", mount)?;
-            assert_eq!(related_for(&index, "build.rs"), 1, "mount: {mount}");
+            let index = index_with(&files)?;
+            assert_eq!(related_for(&index, "build.rs"), 1, "mounted: {files:?}");
         }
 
-        let plain = index_with("tests/lints.rs", "#[test]\nfn test_allow_attributes() {}\n")?;
+        // Unmounted, or only mentioned in a comment.
+        let plain = index_with(&[("tests/lints.rs", TEST)])?;
         assert_eq!(related_for(&plain, "build.rs"), 0);
+        let commented = index_with(&[
+            ("tests/lints.rs", TEST),
+            ("src/lib.rs", "// include!(\"../build.rs\");\n"),
+        ])?;
+        assert_eq!(related_for(&commented, "build.rs"), 0);
 
-        // A mounting test in a different package does not re-enable it.
-        let other_package = index_with(
-            "other/tests/lints.rs",
-            "include!(\"../build.rs\");\n#[test]\nfn test_allow_attributes() {}\n",
-        )?;
-        assert_eq!(related_for(&other_package, "member/build.rs"), 0);
-        assert_eq!(related_for(&other_package, "other/build.rs"), 1);
+        // Root package versus a workspace member: the member's mount does
+        // not re-enable the root script, and the root's mount does not
+        // re-enable the member's.
+        let workspace = index_with(&[
+            ("tests/lints.rs", TEST),
+            ("member/tests/lints.rs", &mounted),
+        ])?;
+        assert_eq!(related_for(&workspace, "build.rs"), 0);
+        assert!(related_for(&workspace, "member/build.rs") > 0);
+
+        // Nested packages: `a/b` mounting its own script does not enable `a`.
+        let nested = index_with(&[("a/tests/lints.rs", TEST), ("a/b/tests/lints.rs", &mounted)])?;
+        assert_eq!(related_for(&nested, "a/build.rs"), 0);
+        assert!(related_for(&nested, "a/b/build.rs") > 0);
         Ok(())
     }
 

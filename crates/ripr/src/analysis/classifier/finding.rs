@@ -177,6 +177,8 @@ pub(in crate::analysis) fn build_finding(
         // related test does not have; the strongest related oracle is
         // already exact, so name the input that is actually missing.
         Some(step)
+    } else if class == ExposureClass::NoStaticPath && context.unmounted_build_script {
+        Some(crate::domain::BUILD_SCRIPT_NO_STATIC_PATH_NEXT_STEP.to_string())
     } else {
         recommended_next_step(
             context.probe,

@@ -65,8 +65,8 @@
       "stop_reasons": [],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "ripr found no static test path to this change — this is not a coverage assessment. A Cargo build script runs before the package compiles, so no package test can call it. Check the change by building the package and inspecting the script's output or effect (its `cargo:` directives or generated files), or move the logic into a library function that a test can call.",
-      "suggested_next_action": "ripr found no static test path to this change — this is not a coverage assessment. A Cargo build script runs before the package compiles, so no package test can call it. Check the change by building the package and inspecting the script's output or effect (its `cargo:` directives or generated files), or move the logic into a library function that a test can call.",
+      "recommended_next_step": "ripr found no static test path to this change — this is not a coverage assessment. A Cargo build script runs before the package compiles and no package source includes it, so no package test can call it. Check the change by building the package and inspecting the script's output or effect (its `cargo:` directives or generated files), or move the logic into a library function that a test can call.",
+      "suggested_next_action": "ripr found no static test path to this change — this is not a coverage assessment. A Cargo build script runs before the package compiles and no package source includes it, so no package test can call it. Check the change by building the package and inspecting the script's output or effect (its `cargo:` directives or generated files), or move the logic into a library function that a test can call.",
       "language": "rust",
       "source_currentness": "candidate_current"
     }

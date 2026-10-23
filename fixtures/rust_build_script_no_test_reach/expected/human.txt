@@ -16,9 +16,10 @@ Start here:
   Canonical gap: gap:rust:build.rs:lint_cap:return_value:return_value:lit2d2d6361702d6c696e74733d616c6c6f77
   Changed behavior: "--cap-lints=allow"
   Next step: ripr found no static test path to this change — this is not a coverage assessment. A
-    Cargo build script runs before the package compiles, so no package test can call it. Check the
-    change by building the package and inspecting the script's output or effect (its `cargo:`
-    directives or generated files), or move the logic into a library function that a test can call
+    Cargo build script runs before the package compiles and no package source includes it, so no
+    package test can call it. Check the change by building the package and inspecting the script's
+    output or effect (its `cargo:` directives or generated files), or move the logic into a library
+    function that a test can call
   Evidence: reach no · infection unknown · propagation yes · observation no · discriminator no
     - reach no: No static test path found for the changed owner
     - infection unknown: No reachable tests were found, so infection cannot be established
@@ -38,4 +39,5 @@ Note: ripr found no static test path for any of the 1 changed expression(s) in t
   analyzed: 1 changed Rust file(s), 1 changed expression(s), and 0 statically linked related
   test(s). This is not a coverage assessment. A test may already exercise these changes through
   macros, helper-call chains, or integration tests that ripr's static model does not yet trace; if
-  none does, add co-located tests that observe the changed behavior.
+  none does, build the package and inspect the build script's output or effect, or move the logic
+  into a library function that a test can call.

@@ -229,13 +229,6 @@ fn contains_macro_invocation(expression: &str) -> bool {
     false
 }
 
-/// #9173: a root build script runs under Cargo before the package compiles, so
-/// "add a co-located test" cannot close the gap; point at what can.
-const BUILD_SCRIPT_NO_STATIC_PATH_NEXT_STEP: &str = "ripr found no static test path to this change \u{2014} this is not a coverage assessment. \
-A Cargo build script runs before the package compiles, so no package test can call it. \
-Check the change by building the package and inspecting the script's output or effect (its `cargo:` directives or generated files), \
-or move the logic into a library function that a test can call.";
-
 pub(in crate::analysis) fn recommended_next_step(
     probe: &Probe,
     class: &ExposureClass,
@@ -286,13 +279,6 @@ pub(in crate::analysis) fn recommended_next_step(
             } else {
                 Some("Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect.".to_string())
             }
-        }
-        ExposureClass::NoStaticPath
-            if super::related_tests::is_root_build_script(
-                &probe.location.file.to_string_lossy().replace('\\', "/").trim_start_matches("./").to_string(),
-            ) =>
-        {
-            Some(BUILD_SCRIPT_NO_STATIC_PATH_NEXT_STEP.to_string())
         }
         ExposureClass::NoStaticPath => Some(crate::domain::NO_STATIC_PATH_NEXT_STEP.to_string()),
         ExposureClass::InfectionUnknown | ExposureClass::PropagationUnknown | ExposureClass::StaticUnknown => Some(uncertainty_next_step(class, stop_reasons, false)),
@@ -536,23 +522,6 @@ mod tests {
                 &"No detected assertion observes the changed value, error, field, or effect"
                     .to_string()
             )
-        );
-    }
-
-    #[test]
-    fn root_build_script_no_static_path_does_not_ask_for_a_colocated_test() {
-        let mut script = probe(ProbeFamily::ReturnValue, "\"--cap-lints=allow\"");
-        script.location = SourceLocation::new("./build.rs", 7, 1);
-        let step = recommended_next_step(&script, &ExposureClass::NoStaticPath, false, &[])
-            .unwrap_or_default();
-        assert_eq!(step, BUILD_SCRIPT_NO_STATIC_PATH_NEXT_STEP);
-        assert!(!step.contains("co-located test"), "{step}");
-
-        // Discriminating control: an ordinary module keeps the standard text.
-        let module = probe(ProbeFamily::ReturnValue, "value + 1");
-        assert_eq!(
-            recommended_next_step(&module, &ExposureClass::NoStaticPath, false, &[]).as_deref(),
-            Some(crate::domain::NO_STATIC_PATH_NEXT_STEP)
         );
     }
 

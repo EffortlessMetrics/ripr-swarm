@@ -88,6 +88,8 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
     .with_owner_caller_names(candidate_index.owner_caller_names())
     .with_diff_touched(candidate_index.diff_touched());
     context.propagation_origin = propagation_origin;
+    context.unmounted_build_script =
+        candidate_index.probe_in_unmounted_build_script(probe, owner_fn, index);
     let reveal_expression = parser_expression_for_probe(
         index,
         &probe.location.file,
