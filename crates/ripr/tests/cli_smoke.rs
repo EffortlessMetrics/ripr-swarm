@@ -24691,6 +24691,101 @@ fn check_base_head_with_clean_worktree_does_not_show_unanalyzed_working_tree_dis
     ignore_remove_dir_all(&root);
 }
 
+/// RIPR-SPEC-0122 (#9244): the human `after:` row of a match-arm finding says
+/// it is the arm head only when the head is unchanged over a changed body, and
+/// stays silent for a pattern-only multiline edit. Real producer to render.
+#[test]
+fn check_human_full_marks_head_only_match_arm_after_row() -> Result<(), String> {
+    let wrap = |arm: &str, scrutinee: &str| {
+        format!(
+            "pub fn f(x: i32) -> i32 {{\n    match {scrutinee} {{\n{arm}        _ => 0,\n    }}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn f_is_positive() {{\n        assert!(f(1) >= 0);\n    }}\n}}\n"
+        )
+    };
+    // (label, old arm, new arm, scrutinee, expects the note)
+    let cases: [(&str, &str, &str, &str, bool); 5] = [
+        (
+            "inline-body",
+            "        0 => 10,\n",
+            "        0 => 20,\n",
+            "x",
+            true,
+        ),
+        (
+            "inline-to-multiline",
+            "        0 => 10,\n",
+            "        0 =>\n            20,\n",
+            "x",
+            true,
+        ),
+        (
+            "multiline-pattern-only",
+            "        0..=3 =>\n            10,\n",
+            "        0..=4 =>\n            10,\n",
+            "x",
+            false,
+        ),
+        (
+            "literal-arrow",
+            "        1 if \"a=>b\".len() == 4 => 10,\n",
+            "        1 if \"a=>b\".len() == 4 => 20,\n",
+            "x",
+            true,
+        ),
+        (
+            "comment-arrow",
+            "        0 /* => */ => 10,\n",
+            "        0 /* => */ => 20,\n",
+            "x",
+            true,
+        ),
+    ];
+    for (label, old_arm, new_arm, scrutinee, expects_note) in cases {
+        let root = unique_temp_workspace(&format!("arm-head-note-{label}"));
+        std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+        run_git(&root, &["init"])?;
+        run_git(&root, &["config", "user.email", "test@test.com"])?;
+        run_git(&root, &["config", "user.name", "Test"])?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"arm-head-note\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|err| format!("write manifest: {err}"))?;
+        std::fs::write(root.join("src/lib.rs"), wrap(old_arm, scrutinee))
+            .map_err(|err| format!("write base: {err}"))?;
+        run_git(&root, &["add", "."])?;
+        run_git(&root, &["commit", "-m", "base"])?;
+        std::fs::write(root.join("src/lib.rs"), wrap(new_arm, scrutinee))
+            .map_err(|err| format!("write head: {err}"))?;
+        run_git(&root, &["commit", "-am", "edit arm"])?;
+        let root_arg = root.to_string_lossy().into_owned();
+        let output = run_ripr(&[
+            "check",
+            "--root",
+            &root_arg,
+            "--base",
+            "HEAD~1",
+            "--format",
+            "human-full",
+            "--quiet",
+        ]);
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        if !stdout.contains("  after:  ") {
+            return Err(format!("{label}: no Changed block produced:\n{stdout}"));
+        }
+        let has_note = stdout.contains("(arm head only; open the arm at ");
+        if has_note != expects_note {
+            return Err(format!(
+                "{label}: expected note={expects_note}, got {has_note}:\n{stdout}"
+            ));
+        }
+        if has_note && stdout.contains("the new arm body is at") {
+            return Err(format!("{label}: note must not claim a body coordinate"));
+        }
+        ignore_remove_dir_all(&root);
+    }
+    Ok(())
+}
+
 /// RIPR-SPEC-0116: `ripr check --base HEAD --worktree --json` analyzes the
 /// user's uncommitted tracked edit instead of reporting the committed `HEAD`
 /// diff as empty.

@@ -13,6 +13,7 @@ WARNING ./src/work_queue.rs:30
 Changed
   before: (true, false) => "request_identity_v1",
   after:  (true, false) =>
+          (arm head only; open the arm at ./src/work_queue.rs:30 to read its new body)
 
 Probe
   family: match_arm
