@@ -252,3 +252,40 @@ fn literal_tests_in_a_macro_that_is_not_the_identity_add_no_test() -> Result<(),
     }
     Ok(())
 }
+
+#[test]
+fn a_function_local_weak_alias_in_a_wrapped_test_is_never_stronger_than_by_hand()
+-> Result<(), String> {
+    // `assert_eq` is rebound to a weak helper inside the test body. By hand
+    // the rebinding is visible; wrapped, it must not let the exemption turn
+    // the call into a recognized strong oracle.
+    let body = "fn weak_alias() {\n            use crate::weak::weak as assert_eq;\n            assert_eq!(gate(10), true);\n        }\n";
+    let hand_written = TempRepo::create(&format!("    #[test]\n    {body}"))?.predicate()?;
+    let wrapped = TempRepo::create(&format!(
+        "{IDENTITY}    suite! {{\n        #[test]\n        {body}    }}\n"
+    ))?
+    .predicate()?;
+    for finding in [&hand_written, &wrapped] {
+        assert!(
+            !matches!(
+                finding.class,
+                ExposureClass::Exposed | ExposureClass::WeaklyExposed
+            ),
+            "{finding:?}"
+        );
+    }
+    assert_eq!(
+        hand_written.class,
+        ExposureClass::ReachableUnrevealed,
+        "{hand_written:?}"
+    );
+    // Fail closed: never stronger than the hand-written twin.
+    assert!(
+        matches!(
+            wrapped.class,
+            ExposureClass::ReachableUnrevealed | ExposureClass::StaticUnknown
+        ),
+        "{wrapped:?}"
+    );
+    Ok(())
+}

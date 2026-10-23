@@ -75,6 +75,21 @@ pub(super) fn passthrough_invocation_starts(root: &SyntaxNode) -> BTreeSet<TextS
     let (_, local_macros) = local_macro_names(root);
     identity_invocations(root, &local_macros)
         .into_iter()
+        .filter(|(call, _, _)| {
+            // A function-local `use`/`extern crate` can alias or rebind a
+            // macro name (`use crate::weak::weak as assert_eq;`), and a
+            // macro-scope attribute can change what resolves. The expansion
+            // is still indexed, but the call keeps counting as a possible
+            // binding site so the mention stays ambiguous.
+            !call.syntax().descendants_with_tokens().any(|element| {
+                element.as_token().is_some_and(|token| {
+                    matches!(
+                        token.text(),
+                        "use" | "extern" | "macro_use" | "no_implicit_prelude"
+                    )
+                })
+            })
+        })
         .map(|(call, _, _)| call.syntax().text_range().start())
         .collect()
 }
@@ -131,20 +146,31 @@ fn shadowed_between(
 ) -> bool {
     let from = definition.syntax().text_range().end();
     let to = call.syntax().text_range().start();
-    root.descendants()
-        .filter_map(ast::MacroCall::cast)
-        .filter(|other| is_item_position(other.syntax()))
-        .filter(|other| {
-            let start = other.syntax().text_range().start();
-            start >= from && start < to
-        })
-        .any(|other| {
-            other
-                .path()
-                .map(|path| path.syntax().text().to_string())
-                .as_deref()
-                != Some(name)
-        })
+    // An out-of-line `mod x;` (a `#[macro_use]` one in particular) pulls in
+    // an unseen file that could redefine the name.
+    let out_of_line_mod = root
+        .descendants()
+        .filter_map(ast::Module::cast)
+        .any(|module| {
+            let start = module.syntax().text_range().start();
+            module.item_list().is_none() && start >= from && start < to
+        });
+    out_of_line_mod
+        || root
+            .descendants()
+            .filter_map(ast::MacroCall::cast)
+            .filter(|other| is_item_position(other.syntax()))
+            .filter(|other| {
+                let start = other.syntax().text_range().start();
+                start >= from && start < to
+            })
+            .any(|other| {
+                other
+                    .path()
+                    .map(|path| path.syntax().text().to_string())
+                    .as_deref()
+                    != Some(name)
+            })
 }
 
 /// Unique same-file definitions that re-emit their input unchanged.
@@ -284,6 +310,8 @@ fn literal_test_items(tree: &SyntaxNode, local_macros: &BTreeSet<String>) -> Opt
 #[cfg(test)]
 mod tests {
     use super::super::expand_local_test_macros;
+    use super::super::nesting::parse_clean_source_file;
+    use super::passthrough_invocation_starts;
 
     const SUITE: &str = "macro_rules! suite {\n    ($($t:tt)*) => { $($t)* };\n}\n\n";
 
@@ -417,8 +445,30 @@ mod tests {
             expand_local_test_macros(&format!("mod m {{ {SUITE} }}\nsuite! {{ {body} }}\n"))
                 .is_empty()
         );
+        // An out-of-line module between definition and call may redefine it.
+        assert!(expand(&format!("#[macro_use]\nmod other;\nsuite! {{ {body} }}\n")).is_empty());
         // Control.
         assert_eq!(expand(&format!("suite! {{ {body} }}\n")).len(), 1);
+    }
+
+    #[test]
+    fn binding_capable_tokens_keep_the_call_a_possible_binding_site() {
+        let starts = |body: &str| {
+            let source = format!("{SUITE}suite! {{ {body} }}\n");
+            let parse = parse_clean_source_file(&source).map(|parse| parse.syntax_node());
+            parse.map(|root| passthrough_invocation_starts(&root).len())
+        };
+        assert_eq!(starts("#[test] fn a() { f(); }"), Some(1));
+        for body in [
+            "#[test] fn a() { use crate::weak::weak as assert_eq; assert_eq!(f(), 1); }",
+            "#[test] fn a() { extern crate weak as assert_eq; f(); }",
+            "#[macro_use] #[test] fn a() { f(); }",
+            "#[no_implicit_prelude] #[test] fn a() { f(); }",
+        ] {
+            assert_eq!(starts(body), Some(0), "{body}");
+            // Still expanded: the tests stay indexed.
+            assert_eq!(expand(&format!("suite! {{ {body} }}\n")).len(), 1, "{body}");
+        }
     }
 
     #[test]
