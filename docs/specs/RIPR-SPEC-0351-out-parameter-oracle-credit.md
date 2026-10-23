@@ -52,7 +52,9 @@ wrote.
 An `assert_eq!` is admitted as an oracle for a direct call of the changed
 method when every link is syntactic and exact:
 
-1. The changed method has a receiver and a `&mut` parameter its body uses.
+1. The changed method has a receiver and a `&mut` parameter its body visibly writes (a mutating
+   method on it, `write!`/`writeln!` into it, or an assignment through a
+   dereference, field or index) and never rebinds, shadows or reassigns.
 2. One operand of the assertion is a bare local. The other operand does not
    mention it.
 3. In the same test body, that local is bound exactly once by
@@ -84,6 +86,14 @@ assertion reads the call's out-parameter; it grants no strength or reach.
   a second pass and a call in another test are each not credited.
 
 ## Known Limits
+
+- An expected value equal to the local's initial state or an empty literal
+  is not credited (it cannot notice a write). Other expected values are not
+  evaluated: like every exact-value oracle, the helper decides that a
+  discriminator exists, not that the test passes.
+
+- A parameter that is only read, or only passed onward to a helper, is not an
+  out-parameter here; the writer list is fixed and conservative.
 
 - Only `assert_eq!` and only a bare local operand are recognised.
 - Out-parameters reached through fields, helper wrappers or returned

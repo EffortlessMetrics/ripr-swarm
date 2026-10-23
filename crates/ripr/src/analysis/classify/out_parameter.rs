@@ -85,6 +85,7 @@ pub(in crate::analysis) fn assertion_out_parameter(
                 test,
                 assertion,
                 &operand,
+                &compact(other),
             )
         });
     let parameter = admitted.next()?;
@@ -118,9 +119,11 @@ fn owner_out_parameters(owner: &FunctionSummary) -> Option<Vec<(usize, String)>>
             pattern.ref_token().is_none()
                 && pattern.pat().is_none()
                 && ty.mut_token().is_some()
-                && pattern
-                    .name()
-                    .is_some_and(|name| mentions_token(body.syntax(), name.text()))
+                && pattern.name().is_some_and(|name| {
+                    mentions_token(body.syntax(), name.text())
+                        && !name_rebound_in(body.syntax(), name.text())
+                        && name_written_in(body.syntax(), name.text())
+                })
         })
         .filter_map(|(at, parameter)| match parameter.pat() {
             Some(ast::Pat::IdentPat(pattern)) => {
@@ -132,6 +135,107 @@ fn owner_out_parameters(owner: &FunctionSummary) -> Option<Vec<(usize, String)>>
     (!positions.is_empty()).then_some(positions)
 }
 
+/// Whether the owner body can rebind or reassign `name` (a `let`, any
+/// pattern binding including closure and match-arm parameters, a plain
+/// assignment, or a binding keyword before the name inside a macro), so a
+/// later use may no longer be the `&mut` parameter. Fail closed.
+fn name_rebound_in(body: &SyntaxNode, name: &str) -> bool {
+    let bound = body.descendants().any(|node| {
+        ast::IdentPat::cast(node.clone())
+            .and_then(|pattern| pattern.name())
+            .is_some_and(|bound| strip_raw(bound.text()) == name)
+            || ast::BinExpr::cast(node).is_some_and(|binary| {
+                matches!(binary.op_kind(), Some(ast::BinaryOp::Assignment { .. }))
+                    && binary.lhs().is_some_and(|lhs| {
+                        strip_raw(&compact(&lhs.syntax().text().to_string())) == name
+                    })
+            })
+    });
+    bound || {
+        let masked = mask_comments_and_strings(&body.text().to_string());
+        let words: Vec<&str> = masked
+            .split(|ch: char| !(ch == '_' || ch.is_ascii_alphanumeric()))
+            .filter(|word| !word.is_empty())
+            .collect();
+        words
+            .windows(2)
+            .any(|pair| pair[1] == name && matches!(pair[0], "let" | "mut" | "ref"))
+    }
+}
+
+/// Whether the owner body visibly writes through `name`: a mutating method
+/// called on it, a `write!`/`writeln!` into it, or an assignment through a
+/// dereference, field or index of it. Passing it onward or only reading it is
+/// not a write (fail closed).
+fn name_written_in(body: &SyntaxNode, name: &str) -> bool {
+    const WRITERS: &[&str] = &[
+        "push",
+        "push_str",
+        "push_back",
+        "push_front",
+        "insert",
+        "extend",
+        "extend_from_slice",
+        "append",
+        "write_str",
+        "write_char",
+        "write_fmt",
+        "write_all",
+        "write",
+        "clear",
+        "truncate",
+        "remove",
+        "pop",
+        "resize",
+        "set",
+        "replace_range",
+        "retain",
+        "drain",
+        "sort",
+        "swap",
+        "fill",
+    ];
+    let is_name = |text: String| strip_raw(&compact(&text)) == name;
+    body.descendants().any(|node| {
+        if let Some(call) = ast::MethodCallExpr::cast(node.clone()) {
+            return call
+                .name_ref()
+                .is_some_and(|method| WRITERS.contains(&strip_raw(method.text())))
+                && call
+                    .receiver()
+                    .is_some_and(|receiver| is_name(receiver.syntax().text().to_string()));
+        }
+        if let Some(binary) = ast::BinExpr::cast(node.clone()) {
+            return matches!(binary.op_kind(), Some(ast::BinaryOp::Assignment { .. }))
+                && binary.lhs().is_some_and(|lhs| {
+                    let text = compact(&lhs.syntax().text().to_string());
+                    let root = text
+                        .trim_start_matches('*')
+                        .split(['.', '['])
+                        .next()
+                        .unwrap_or_default();
+                    (text.starts_with('*') || text.contains('.') || text.contains('['))
+                        && strip_raw(root) == name
+                });
+        }
+        if let Some(mac) = ast::MacroCall::cast(node) {
+            let is_write = mac.path().is_some_and(|path| {
+                matches!(path.syntax().text().to_string().trim(), "write" | "writeln")
+            });
+            return is_write
+                && mac.token_tree().is_some_and(|tree| {
+                    let text = compact(&tree.syntax().text().to_string());
+                    let inner = text.trim_start_matches(['(', '[', '{']);
+                    inner
+                        .split(',')
+                        .next()
+                        .is_some_and(|first| strip_raw(first) == name)
+                });
+        }
+        false
+    })
+}
+
 fn local_written_by_owner_call(
     owner: &FunctionSummary,
     out_parameters: &[(usize, String)],
@@ -140,6 +244,7 @@ fn local_written_by_owner_call(
     test: &TestSummary,
     assertion: &OracleFact,
     local: &str,
+    expected: &str,
 ) -> Option<String> {
     let parse = parse_clean_source_file(&test.body)?;
     let tree = parse.tree();
@@ -178,6 +283,22 @@ fn local_written_by_owner_call(
         return None;
     };
     if !is_owned_local_definition(&items[*definition_at], local) {
+        return None;
+    }
+    // An expected value equal to the local's initial state (or an empty
+    // literal) cannot notice the method writing through it.
+    let initial = ast::Stmt::cast(items[*definition_at].clone())
+        .and_then(|statement| match statement {
+            ast::Stmt::LetStmt(definition) => definition.initializer(),
+            _ => None,
+        })
+        .map(|initializer| compact(&initializer.syntax().text().to_string()))?;
+    if expected == initial
+        || matches!(
+            expected,
+            "\"\"" | "String::new()" | "Vec::new()" | "vec![]" | "Default::default()"
+        )
+    {
         return None;
     }
     let call = &items[*call_at];

@@ -18235,6 +18235,10 @@ tests = [
   "crates/ripr/tests/out_parameter_oracle.rs::a_call_in_another_test_is_not_credited",
   "crates/ripr/tests/out_parameter_oracle.rs::a_mut_self_owner_keeps_receiver_exclusive_positions",
   "crates/ripr/tests/out_parameter_oracle.rs::loop_closure_macro_and_alias_mentions_are_not_credited",
+  "crates/ripr/tests/out_parameter_oracle.rs::a_callee_local_shadow_of_the_out_parameter_gets_no_credit",
+  "crates/ripr/tests/out_parameter_oracle.rs::an_expected_value_equal_to_the_initial_state_is_not_credited",
+  "crates/ripr/tests/out_parameter_oracle.rs::a_read_only_out_parameter_is_not_credited",
+  "crates/ripr/tests/out_parameter_oracle.rs::a_same_named_method_on_another_or_unresolved_receiver_is_not_credited",
 ]
 code = [
   "crates/ripr/src/analysis/classify/out_parameter.rs",
