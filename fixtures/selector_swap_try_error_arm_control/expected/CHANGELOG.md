@@ -28,6 +28,19 @@ Updated:
 ## Pending — selector_swap_try_error_arm_control (3)
 
 Reason:
+RIPR-SPEC-0122: infection_unknown next step names a concrete action (#9244 item 5); wording only, no classification change
+
+Command:
+`cargo xtask goldens bless selector_swap_try_error_arm_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — selector_swap_try_error_arm_control (4)
+
+Reason:
 RIPR-SPEC-0122: #9373 item 1 selected Evidence legend coverage for the newly accepted fixture, preserving its current facts and all five stage values.
 
 Operation:

@@ -278,7 +278,7 @@ Updated:
 ## Pending — match_arm_controls (24)
 
 Reason:
-RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
+RIPR-SPEC-0122: infection_unknown next step names a concrete action (#9244 item 5); wording only, no classification change
 
 Command:
 `cargo xtask goldens bless match_arm_controls --reason "..."`
@@ -290,7 +290,7 @@ Updated:
 ## Pending — match_arm_controls (25)
 
 Reason:
-RIPR-SPEC-0122: #9373 item 1 review repair; missing discriminators include absent assertions as well as inputs
+RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
 
 Command:
 `cargo xtask goldens bless match_arm_controls --reason "..."`
@@ -300,6 +300,18 @@ Updated:
 - `expected/human.txt`
 
 ## Pending — match_arm_controls (26)
+
+Reason:
+RIPR-SPEC-0122: #9373 item 1 review repair; missing discriminators include absent assertions as well as inputs
+
+Command:
+`cargo xtask goldens bless match_arm_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — match_arm_controls (27)
 
 Reason:
 RIPR-SPEC-0122: #9373 item 1 observation-gloss repair; report independent related test/assertion evidence without implying that the changed arm executes.

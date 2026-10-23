@@ -17,8 +17,9 @@ Start here:
   Changed behavior: amount >= 100
   Missing discriminator (1 of 2): No detected boundary input for the changed predicate
   Related test: tests/pricing.rs:16 fixture_builder_case_has_no_discount
-  Next step: Trace the related test input through the local or computed operand, including
-    default/empty cases, to check whether the change matters. ripr.toml does not support
+  Next step: Open the related test and trace its input through the local or computed operand
+    (including default and empty cases) to see which side of the changed condition it exercises,
+    then name an input that would exercise the other side. ripr.toml does not support
     fixture/builder value mappings. A related test mentions a fixture, builder, or generator;
     inspect its produced input before deciding another case is needed. Add or strengthen a test only
     if this inspection finds a gap. Compare the original and changed implementations with a focused
