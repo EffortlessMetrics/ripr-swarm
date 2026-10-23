@@ -751,6 +751,34 @@ fn pre_call_contract_discloses_committed_scope_on_wire_and_help() -> Result<(), 
         .get("description")
         .and_then(Value::as_str)
         .ok_or_else(|| "ripr_refresh omitted its description".to_string())?;
+    // #9360: measure the delivered metadata, not the source constant. Keep
+    // this independent of the descriptor implementation and retain the
+    // behavior disclosures below: deleting useful instructions is not a fix.
+    if description.len() > 2100 {
+        return Err(format!(
+            "ripr_refresh description exceeds its 2100-byte budget: {} bytes",
+            description.len()
+        ));
+    }
+    for required in [
+        "bounded static analysis",
+        "last-known-good snapshot",
+        "wait and retry",
+        "`--root <repository>`",
+        "omitting `base`",
+        "starting with `-` or naming no commit fails closed",
+        "analysis_failed names candidate branches",
+        "cancelled attempt still commits as a completed snapshot when it finishes",
+        "only transport teardown abandons one before it commits",
+        "a superseded attempt is never committed",
+        "config_invalid",
+        "unsupported_profile",
+        "never edits source, executes verification or mutation commands, or prepares a repair",
+    ] {
+        if !description.contains(required) {
+            return Err(format!("refresh description lost {required:?}"));
+        }
+    }
     if refresh
         .pointer("/inputSchema/properties")
         .and_then(Value::as_object)
