@@ -17,6 +17,11 @@ use super::{
     baseline_created_at, non_empty_path_arg, read_optional_text_for_report, write_text_file,
 };
 
+/// Recovery route for a missing gate-decision input, in the sibling commands'
+/// vocabulary (#9851): `baseline create --from` / `baseline update --current`
+/// consume the artifact `ripr gate evaluate` writes.
+const GATE_DECISION_RECOVERY: &str = "Run `ripr gate evaluate --gap-ledger <gap-ledger> --out <gate-decision.json> --out-md <gate-decision.md>` first, or pass the correct path";
+
 pub(in crate::cli) fn baseline(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         help::print_baseline_help();
@@ -40,13 +45,11 @@ pub(in crate::cli) fn baseline(args: &[String]) -> Result<(), String> {
 
 fn baseline_create(args: &[String]) -> Result<(), String> {
     let options = parse_baseline_create_options(args)?;
-    let gate_decision_json =
-        crate::bounded_input::read_to_string(&options.from).map_err(|err| {
-            format!(
-                "read baseline create source {} failed: {err}",
-                output::baseline::display_path(&options.from)
-            )
-        })?;
+    let gate_decision_json = crate::bounded_input::read_required_input(
+        "read baseline create source",
+        &options.from,
+        Some(GATE_DECISION_RECOVERY),
+    )?;
     let created_at = baseline_created_at()?;
     let source_report = output::baseline::display_path(&options.from);
     let report = output::baseline::baseline_create_report_from_gate_decision_json(
@@ -142,18 +145,16 @@ fn baseline_update(args: &[String]) -> Result<(), String> {
     }
     let baseline_path = output::baseline_update::display_path(&options.baseline);
     let current_path = output::baseline_update::display_path(&options.current);
-    let baseline_json = crate::bounded_input::read_to_string(&options.baseline).map_err(|err| {
-        format!(
-            "read baseline update baseline {} failed: {err}",
-            output::baseline_update::display_path(&options.baseline)
-        )
-    })?;
-    let current_json = crate::bounded_input::read_to_string(&options.current).map_err(|err| {
-        format!(
-            "read baseline update current gate-decision {} failed: {err}",
-            output::baseline_update::display_path(&options.current)
-        )
-    })?;
+    let baseline_json = crate::bounded_input::read_required_input(
+        "read baseline update baseline",
+        &options.baseline,
+        Some(GATE_DECISION_RECOVERY),
+    )?;
+    let current_json = crate::bounded_input::read_required_input(
+        "read baseline update current gate-decision",
+        &options.current,
+        Some(GATE_DECISION_RECOVERY),
+    )?;
     let report = output::baseline_update::build_baseline_update_remove_resolved(
         output::baseline_update::BaselineUpdateInput {
             baseline_path,
@@ -401,6 +402,61 @@ mod tests {
             ),
             r"chosen baseline.json already exists; rerun `ripr baseline create --from 'gate $it'\''s.json' --out 'chosen baseline.json' --force` to overwrite it"
         );
+    }
+
+    #[test]
+    fn baseline_create_missing_source_names_path_and_recovery_route() -> Result<(), String> {
+        let err = baseline(&args(&[
+            "create",
+            "--from",
+            "missing-gate-decision.json",
+            "--out",
+            "unused-baseline.json",
+        ]))
+        .err()
+        .ok_or("missing --from source must fail")?;
+        assert!(
+            err.starts_with("read baseline create source missing-gate-decision.json failed:"),
+            "{err}"
+        );
+        assert!(err.contains("not found"), "{err}");
+        assert!(
+            err.contains("ripr gate evaluate --gap-ledger"),
+            "error should name the gate-evaluate recovery route, got: {err}"
+        );
+        assert!(!err.contains("os error"), "{err}");
+        Ok(())
+    }
+
+    #[test]
+    fn baseline_update_missing_current_names_recovery_route() -> Result<(), String> {
+        let dir = unique_command_test_dir("baseline-update-missing-current");
+        std::fs::create_dir_all(&dir).map_err(|error| format!("create dir: {error}"))?;
+        let baseline_path = dir.join("baseline.json");
+        std::fs::write(&baseline_path, "{\"entries\":[]}")
+            .map_err(|error| format!("write baseline: {error}"))?;
+        let err = baseline(&args(&[
+            "update",
+            "--baseline",
+            &baseline_path.to_string_lossy(),
+            "--current",
+            "missing-gate-decision.json",
+            "--remove-resolved",
+        ]))
+        .err()
+        .ok_or("missing --current source must fail")?;
+        assert!(
+            err.starts_with("read baseline update current gate-decision"),
+            "{err}"
+        );
+        assert!(err.contains("not found"), "{err}");
+        assert!(
+            err.contains("ripr gate evaluate --gap-ledger"),
+            "error should name the gate-evaluate recovery route, got: {err}"
+        );
+        assert!(!err.contains("os error"), "{err}");
+        std::fs::remove_dir_all(&dir).map_err(|error| format!("remove dir: {error}"))?;
+        Ok(())
     }
 
     #[test]
