@@ -1171,8 +1171,10 @@ division, not a regex. These are fail-open only for files that already defeat
 the masker.
 21. **CommonJS function exports (#9181).** Adopted: rule 19, because
     minimist exports one function and reads `no_static_path` while its
-    own suite fails every mutant of the line, and the ESM twin already relates. The claim is limited to the
-    shapes where the exported value is statically the declared function.
+    own suite fails every mutant of the line, and the ESM twin already relates. The gate is a bounded refusal
+    corpus, not a proof that the export is known: it refuses the module-object
+    routes it can name, and the claim is limited to shapes where the exported
+    value is the declared function.
     Rejected: crediting `require()` of an ES module's default export
     (runtime namespace object) and an arbitrary `module.exports = expr`.
 

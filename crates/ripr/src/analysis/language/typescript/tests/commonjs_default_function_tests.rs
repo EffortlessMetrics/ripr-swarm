@@ -308,6 +308,10 @@ const SHAPES: &[(&str, &str)] = &[
         "if (typeof module !== 'undefined') { run(); }\n",
     ),
     ("main-check", "if (require.main === module) { run(); }\n"),
+    ("container", "const holder = [module];\nsetTimeout(() => { holder[0].exports = 0; });\n"),
+    ("deferred-write", "Promise.resolve().then(() => { module.exports = 0; });\n"),
+    ("deferred-timer", "setTimeout(() => { module.exports = 0; }, 0);\n"),
+    ("object-holder", "const o = { m: module };\no.m.exports = 0;\n"),
     (
         "postfix-division",
         "let i = 0; i++ / 2; module.exports = 0;\n",

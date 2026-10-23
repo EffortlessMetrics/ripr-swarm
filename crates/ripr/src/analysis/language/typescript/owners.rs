@@ -704,8 +704,8 @@ fn names_the_module_object_in_text(source: &str) -> bool {
         .any(|spelling| source.contains(spelling))
 }
 
-/// The file-level proof that `module.exports` holds one statically known
-/// value (RIPR-SPEC-0243 rule 19). On masked, whitespace-free text the bare
+/// The file-level refusal corpus for `module.exports` (RIPR-SPEC-0243 rule
+/// 19): a bounded list of module-object routes it can name, not a proof. On masked, whitespace-free text the bare
 /// identifier `module` must occur only as `module.exports=` (exactly once, not
 /// `==`/`=>`) or as the base of a property access `module.exports.name`; any
 /// other use (an alias, `module?.exports`, `module[...]`, compound or update
