@@ -1033,6 +1033,77 @@ fn post_initialize_ping_with_handshake_meta_returns_an_empty_result() -> Result<
     Ok(())
 }
 
+/// A second well-formed `initialize` on an initialized session is a state
+/// violation, not a missing method (#9895): it answers `-32600` naming the
+/// already-initialized session and the session keeps serving.
+#[test]
+fn second_initialize_answers_already_initialized_and_the_session_recovers() -> Result<(), String> {
+    let root = workspace_root()?;
+    let initialize = |id: u64| {
+        line(json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": { "name": "ripr-integration-test", "version": "1" }
+            }
+        }))
+    };
+    let request_bytes = [
+        initialize(1)?,
+        line(json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }))?,
+        initialize(2)?,
+        line(json!({ "jsonrpc": "2.0", "id": 3, "method": "ping" }))?,
+        line(json!({ "jsonrpc": "2.0", "id": 4, "method": "tools/list" }))?,
+    ]
+    .concat();
+    let output = run_mcp(&root, &[&request_bytes])?;
+    let responses = response_lines(&output)?;
+    if responses.len() != 4 {
+        return Err(format!(
+            "expected four replies, got {}: {responses:?}",
+            responses.len()
+        ));
+    }
+    if responses[0].get("result").is_none() {
+        return Err(format!("first initialize must succeed: {}", responses[0]));
+    }
+    let second = &responses[1];
+    if second.get("id") != Some(&json!(2)) {
+        return Err(format!("second initialize lost its id: {second}"));
+    }
+    if second.pointer("/error/code").and_then(Value::as_i64) != Some(-32600) {
+        return Err(format!(
+            "second initialize must answer -32600 invalid request: {second}"
+        ));
+    }
+    if !second
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        .is_some_and(|message| message.contains("already initialized"))
+    {
+        return Err(format!(
+            "second initialize message must say already initialized: {second}"
+        ));
+    }
+    if responses[2].get("result") != Some(&json!({})) {
+        return Err(format!("ping must still work afterwards: {}", responses[2]));
+    }
+    if responses[3]
+        .pointer("/result/tools")
+        .and_then(Value::as_array)
+        .is_none_or(|tools| tools.is_empty())
+    {
+        return Err(format!(
+            "tools/list must still work afterwards: {}",
+            responses[3]
+        ));
+    }
+    Ok(())
+}
+
 #[test]
 fn malformed_params_of_a_served_method_answer_invalid_params_and_the_session_recovers()
 -> Result<(), String> {

@@ -570,4 +570,6 @@ unsupported or discovery-only requested version is answered with
 `io.modelcontextprotocol/clientCapabilities` in `params._meta` and an
 unsupported version is refused. After `initialize`, `ping` returns an empty
 result even when `params._meta` carries that handshake shape; after
-`server/discover`, `ping` remains method-not-found.
+`server/discover`, `ping` remains method-not-found. A second `initialize` on an
+initialized session is answered `-32600` (invalid request) with a message saying
+the session is already initialized; the session keeps serving.
