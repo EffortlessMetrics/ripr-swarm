@@ -103,6 +103,12 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         ));
     }
 
+    // #9922: refuse a root with nothing to inspect before any output dir or
+    // cache is created under it.
+    if let Some(message) = pilot_root_without_workspace(&options.root) {
+        return Err(message);
+    }
+
     crate::atomic_file::ensure_default_output_contained(&options.root)?;
     let config = load_for_root(&options.root)?;
     // Refuse an invalid RIPR_PILOT_SEAM_BUDGET (#4529) before the analysis
@@ -761,6 +767,23 @@ fn pilot_stdout<'a>(format: PilotStdoutFormat, json: &'a str, terminal: &'a str)
 /// working directory.
 const DEFAULT_PILOT_OUT_DIR: &str = "target/ripr/pilot";
 
+/// #9922: a root with no `Cargo.toml` and no source file in any language ripr
+/// reads is not a workspace; `ripr pilot` there used to print "RIPR pilot
+/// complete" with no recommendation and write `target/ripr/` into the folder.
+/// Returns the refusal message, or `None` when the root has something to inspect.
+fn pilot_root_without_workspace(root: &Path) -> Option<String> {
+    let has_inspectable_content = root.join("Cargo.toml").is_file()
+        || !analysis::workspace_rust_files(root).is_empty()
+        || !analysis::workspace_preview_language_files(root).is_empty()
+        || !analysis::workspace_unanalyzed_source_languages(root).is_empty();
+    (!has_inspectable_content).then(|| {
+        format!(
+            "pilot root {} has no Cargo.toml and no source files to inspect; pass --root <dir> for the directory that contains your workspace (nothing was written)",
+            root.display()
+        )
+    })
+}
+
 /// The default packet directory sits under `--root`, where the cache already
 /// goes and where `ripr agent status --root` reads `pilot-summary.json`
 /// (#5324). Anchoring it at the working directory wrote the packet beside
@@ -930,6 +953,33 @@ mod tests {
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn pilot_refuses_root_without_workspace_and_accepts_cargo_root() -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!("ripr-pilot-root-{}", std::process::id()));
+        let empty = base.join("readme-only");
+        let cargo = base.join("cargo");
+        let io = |error: std::io::Error| error.to_string();
+        std::fs::create_dir_all(&empty).map_err(io)?;
+        std::fs::create_dir_all(&cargo).map_err(io)?;
+        std::fs::write(empty.join("README.md"), "hi\n").map_err(io)?;
+        std::fs::write(cargo.join("Cargo.toml"), "[package]\nname = \"x\"\n").map_err(io)?;
+
+        let message = pilot_root_without_workspace(&empty)
+            .ok_or_else(|| "README-only root must be refused".to_string())?;
+        assert!(
+            message.contains("no Cargo.toml and no source files"),
+            "{message}"
+        );
+        assert!(message.contains("nothing was written"), "{message}");
+        assert_eq!(pilot_root_without_workspace(&cargo), None);
+
+        let result = pilot(&args(&["--root", &empty.to_string_lossy()]));
+        assert!(result.is_err());
+        assert!(!empty.join("target").exists(), "refusal must write nothing");
+        let _ = std::fs::remove_dir_all(&base);
+        Ok(())
     }
 
     #[test]
