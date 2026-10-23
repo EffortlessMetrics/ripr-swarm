@@ -220,7 +220,6 @@
   "limitations": [
    "the scripted rows bind the retained fixture snapshots by content digest and recorded git identity; the frozen-candidate run through the #4510 harness rebinds live process and package identities",
    "the eight negative-variant rows retain the verbatim `Safe next action:` line of `ripr check` and the verbatim `agent repair --gap-id` refusal line, compared against the real binary by the installed journey test; every other scripted output byte is a semantic summary of the printed route, not a literal transcript",
-   "the status warning pilot_routed_to_check_no_repair_target still says `ripr check` offers no `ripr agent repair` start even when the subsequent check prints the gap-bound start (agent_status.rs); this inherited messaging limitation stays visible and is not changed by this fixture-only slice",
    "recorded command output bytes other than the negative-variant diagnostics are semantic summaries of the printed route, not literal observations; the real installed run may print equivalent concrete roots and attempt ids",
    "all ten snapshots (base, head and eight variants) carry the same full npm lockfile (#9104), and the installed node/npm/vitest identities belong to the journey environment recorded in the transcript"
   ],

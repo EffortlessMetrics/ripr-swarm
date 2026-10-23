@@ -1876,7 +1876,38 @@ fn routed_code_phrase(languages: &[String]) -> String {
     }
 }
 
-fn pilot_routed_to_check_message(routes: &PilotCheckRoutes, root_display: &str) -> String {
+/// The gap-bound `ripr agent repair` start the next routed `ripr check` would
+/// print, or `None` (#10001). Status consults the same admission check uses
+/// ([`default_check_gap_start`], which ends in the shared agent-packet
+/// validator) rather than assuming the route offers no start; only a
+/// TypeScript-family route can be admitted, and anything undecidable keeps
+/// the "offers no start" wording (fail-closed).
+///
+/// [`default_check_gap_start`]: crate::app::gap_bound_repair::default_check_gap_start
+fn pilot_routed_gap_start(
+    root: &Path,
+    root_display: &str,
+    routes: &PilotCheckRoutes,
+) -> Option<String> {
+    routes
+        .enabled_languages
+        .iter()
+        .any(|language| language == "typescript" || language == "javascript")
+        .then_some(())?;
+    let route = crate::app::gap_bound_repair::default_check_gap_start(root)?;
+    Some(crate::app::gap_bound_repair::gap_bound_start_command(
+        root_display,
+        "",
+        &route.gap_id,
+        &route.base,
+    ))
+}
+
+fn pilot_routed_to_check_message(
+    routes: &PilotCheckRoutes,
+    root_display: &str,
+    gap_start: Option<&str>,
+) -> String {
     let mut message =
         "the last complete `ripr pilot` run ranked no seam and produced no repair card".to_string();
     if !routes.commands.is_empty() {
@@ -1886,10 +1917,17 @@ fn pilot_routed_to_check_message(routes: &PilotCheckRoutes, root_display: &str) 
             .map(|command| format!("`{command}`"))
             .collect::<Vec<_>>()
             .join(", ");
-        message.push_str(&format!(
-            ": it routed {} to {commands}, which reviews changes diff-first and offers no `ripr agent repair` start, and running pilot again unchanged routes there again. Read the findings from {commands}, add or strengthen a test for the changed behavior by hand, then rerun {commands} to see whether static evidence now finds a discriminator",
-            routed_code_phrase(&routes.enabled_languages)
-        ));
+        let code = routed_code_phrase(&routes.enabled_languages);
+        match gap_start {
+            // `ripr check` admits a gap-bound start for its selected finding,
+            // so the warning must not say it offers none (#10001).
+            Some(start) => message.push_str(&format!(
+                ": it routed {code} to {commands}, which reviews changes diff-first and prints the gap-bound start `{start}` for its selected finding, and running pilot again unchanged routes there again. Run {commands} and that start, or add or strengthen a test for the changed behavior by hand and rerun {commands} to see whether static evidence now finds a discriminator"
+            )),
+            None => message.push_str(&format!(
+                ": it routed {code} to {commands}, which reviews changes diff-first and offers no `ripr agent repair` start, and running pilot again unchanged routes there again. Read the findings from {commands}, add or strengthen a test for the changed behavior by hand, then rerun {commands} to see whether static evidence now finds a discriminator"
+            )),
+        }
     }
     if !routes.disabled_config_languages.is_empty() {
         let entries = routes
@@ -1962,7 +2000,11 @@ fn legacy_next_command(
             warnings.push(AgentStatusWarning {
                 kind: "pilot_routed_to_check_no_repair_target".to_string(),
                 artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
-                message: pilot_routed_to_check_message(&routes, root_display),
+                message: pilot_routed_to_check_message(
+                    &routes,
+                    root_display,
+                    pilot_routed_gap_start(root, root_display, &routes).as_deref(),
+                ),
             });
             // #5205/#5248 review: a packet can route preview files to check
             // AND exclude Rust (Rust disabled while preview files are
