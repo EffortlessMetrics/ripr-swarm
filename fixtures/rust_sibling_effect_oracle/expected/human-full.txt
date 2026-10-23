@@ -29,7 +29,7 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Changed behavior appears to influence call effect: .or_insert_with(BTreeSet::new)
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
   - local flow reaches call effect: .or_insert_with(BTreeSet::new) (line 137)
   - related test src/sensors/ripr_limits.rs:337 module_evidence_retains_single_pass_duplicates_benign_and_unavailable uses strong exact value oracle: assert_eq!(missing["sources"][0]["state"], "unavailable"); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - related test src/sensors/ripr_limits.rs:194 module_note_line_byte_boundary_excludes_line_terminators uses weak relational check oracle: assert!(contexts.iter().all(|context| context.len() <= 1024)); misses: assertion too weak to tell the old behavior from the new
@@ -83,7 +83,7 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Changed behavior appears to influence call effect: .or_default()
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
   - local flow reaches call effect: .or_default() (line 137)
   - related test src/sensors/ripr_limits.rs:238 module_note_orientation_sentence_accepts_optional_next_step uses strong exact value oracle: assert_eq!(parse_note(&oriented), expected); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - related test src/sensors/ripr_limits.rs:238 module_note_orientation_sentence_accepts_optional_next_step uses strong whole object equality oracle: assert_eq!(

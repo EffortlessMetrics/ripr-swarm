@@ -6680,6 +6680,69 @@ mod tests {
         );
     }
 
+    #[test]
+    fn human_evidence_spells_the_unconfirmed_observation_in_words() {
+        // #9244: the producer's `(observation_unverified)` marker stays the
+        // machine value in the stage summary (JSON keys on it); the human
+        // window says the same thing without the raw token.
+        use crate::output::discriminator_line::discriminator_evidence_line;
+        let marker = "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)";
+        let mut finding = sample_finding();
+        finding.ripr.reveal.discriminate = stage(StageState::Weak, Confidence::Medium, marker);
+        finding.ripr.reveal.observe = stage(
+            StageState::Yes,
+            Confidence::Medium,
+            "Observed; the changed value is never named (observation_unverified)",
+        );
+
+        // Machine side: the shared line and the stage summary keep the token.
+        assert!(
+            discriminator_evidence_line(&finding).contains("(observation_unverified)"),
+            "machine value must stay in the shared line"
+        );
+        assert!(
+            finding
+                .ripr
+                .reveal
+                .discriminate
+                .summary
+                .contains("(observation_unverified)")
+        );
+
+        let rendered = render_finding(&finding);
+        assert!(
+            !rendered.contains("observation_unverified"),
+            "human output leaked the raw token:\n{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression\n"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("observation yes: Observed; the changed value is never named\n"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn plain_observation_wording_handles_each_embedded_spelling() {
+        use super::evidence_lines::plain_observation_wording;
+        assert_eq!(
+            plain_observation_wording("unexecuted (observation_unverified). Add a test input."),
+            "unexecuted. Add a test input."
+        );
+        assert_eq!(
+            plain_observation_wording("no flow; observation_unverified — discriminate unknown."),
+            "no flow; the observation is unconfirmed — discriminate unknown."
+        );
+        assert_eq!(
+            plain_observation_wording("Strong oracle found"),
+            "Strong oracle found"
+        );
+    }
+
     pub(super) fn bounded_output_with_findings(findings: Vec<Finding>) -> CheckOutput {
         let count = findings.len();
         CheckOutput {

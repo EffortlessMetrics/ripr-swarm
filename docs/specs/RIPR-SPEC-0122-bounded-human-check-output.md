@@ -549,6 +549,19 @@ because the write run resolves it the same way; when nothing resolves, the
 command carries `--base <ref>` followed by the resolution error, so the
 suggested write cannot fail on the same missing base.
 
+### Plain wording for an unconfirmed observation (#9244)
+
+The producer's `observation` and `discriminator` stage summaries end with the
+machine marker `(observation_unverified)`. The per-finding human evidence lines (bounded and
+`human-full`, and `ripr explain`) drop that parenthetical and spell any bare
+occurrence of the token as "the observation is unconfirmed"; the preceding
+words ("Discriminator unconfirmed: no assertion text references this probe's
+changed expression") already say it in prose. The JSON stage summaries and the
+shared discriminator evidence line keep the marker unchanged, because
+downstream consumers key on it. The grouped evidence rows of the shared
+(multi-finding) rendering use a separate projection and are covered by a
+sibling change.
+
 ## Non-Claims
 
 - Bounded human output is not runtime mutation evidence.
@@ -594,6 +607,8 @@ suggested write cannot fail on the same missing base.
 
 ## Test Mapping
 
+- `crates/ripr/src/output/human.rs::tests::human_evidence_spells_the_unconfirmed_observation_in_words`
+- `crates/ripr/src/output/human.rs::tests::plain_observation_wording_handles_each_embedded_spelling`
 - `crates/ripr/src/output/human.rs::tests::no_static_path_weakness_list_drops_restated_evidence` (a `no_static_path` finding's Weakness list and digest pointer omit the three generic entries its Evidence block already states as `no`; distinct entries and other classes are unchanged)
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_refusal_preserves_the_requested_probe_family`
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub`
