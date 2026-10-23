@@ -1053,6 +1053,11 @@ fn closure_callback_helpers_that_may_not_observe_the_closure_grant_nothing()
             "        run_test(true, || gate(11));\n",
         ),
         (
+            "callback invoked only inside an assertion macro argument",
+            "    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        assert_eq!(f(), want);\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
             "closure whose only call is under an async block",
             CALLBACK_HELPER,
             "        run_test(true, || async { gate(11) });\n",

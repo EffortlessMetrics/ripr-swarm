@@ -156,6 +156,30 @@ fn selected_typescript_gap(check_output: &str) -> Result<String, String> {
     Ok(format!("gap:typescript:{}:{}", parts[2], parts[3]))
 }
 
+/// The gap and base tokens of the first `ripr agent repair --gap-id <gap>
+/// --base <base> ...` start in `text`, wherever it sits on its line (the
+/// root may hold spaces, so only the leading tokens are read).
+#[cfg(feature = "lang-typescript")]
+fn gap_start_tokens(text: &str) -> Option<(String, String)> {
+    let at = text.find("ripr agent repair --gap-id ")?;
+    let tokens: Vec<&str> = text[at..].split_whitespace().collect();
+    let value_after = |flag: &str| -> Option<String> {
+        let position = tokens.iter().position(|token| *token == flag)?;
+        Some(tokens.get(position + 1)?.trim_matches('\'').to_string())
+    };
+    Some((value_after("--gap-id")?, value_after("--base")?))
+}
+
+/// Moves the materialized repository onto a feature branch whose default
+/// comparison base (`main`) is the base commit, so a plain `ripr check --root`
+/// (the command pilot routes to, which carries no `--base`) analyzes the head
+/// diff instead of the empty `main`-against-`main` comparison.
+#[cfg(feature = "lang-typescript")]
+fn onto_feature_branch(root: &Path) -> Result<(), String> {
+    fixture_git_ok(root, &["checkout", "-q", "-b", "feature"])?;
+    fixture_git_ok(root, &["branch", "-f", "main", "HEAD~1"])
+}
+
 /// Published repair-attempt manifests under the root. The before-phase lock
 /// directory exists after any attempt to start; a manifest only after a start.
 #[cfg(feature = "lang-typescript")]
@@ -411,6 +435,45 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
         "Status selects no next command",
         "status terminates after pilot",
     )?;
+    // #9103: the pilot/status route does not cycle. Status names the route back
+    // to `ripr check` (which printed the gap-bound start above) and offers no
+    // `ripr pilot` command, so pilot -> status -> pilot cannot recur.
+    need(
+        &status,
+        "pilot_routed_to_check_no_repair_target",
+        "status names why it selects no command",
+    )?;
+    if status.contains("ripr pilot --root") && !status.contains("ripr check --root") {
+        return Err(format!("status cycled back to pilot:\n{status}"));
+    }
+    // #10001: the routed warning derives from the gap-start admission the
+    // next `ripr check --root` uses. That check prints a start, so status
+    // must not claim `ripr check` offers none, and the start it names is the
+    // one check prints.
+    onto_feature_branch(&root)?;
+    let (routed_ok, routed_check) = ripr(&decoy, &["check", "--root", &root_arg])?;
+    expect_exit(routed_ok, true, "routed check")?;
+    let (status_ok, status) = ripr(&decoy, &["agent", "status", "--root", &root_arg])?;
+    expect_exit(status_ok, true, "agent status on the feature branch")?;
+    let check_start = gap_start_tokens(&routed_check)
+        .ok_or_else(|| format!("the routed check printed no gap-bound start:\n{routed_check}"))?;
+    if status.contains("offers no `ripr agent repair` start") {
+        return Err(format!(
+            "status says check offers no start though check prints one:\n{status}"
+        ));
+    }
+    need(
+        &status,
+        "prints the gap-bound start",
+        "status names the start check prints",
+    )?;
+    let status_start = gap_start_tokens(&status)
+        .ok_or_else(|| format!("status names no gap-bound start:\n{status}"))?;
+    if status_start != check_start {
+        return Err(format!(
+            "status start {status_start:?} differs from check start {check_start:?}:\n{status}"
+        ));
+    }
     decoy_untouched(&decoy)?;
 
     // An unknown gap id is refused and leaves no attempt or gap artifact.
@@ -749,11 +812,107 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
                 return Err(format!("{variant} left an attempt behind:\n{start}"));
             }
             decoy_untouched(&vdecoy)?;
+            // The committed scripted row retains the product's verbatim
+            // diagnostics: the `Safe next action:` line of `check` and the
+            // `agent repair --gap-id` refusal line, for this exact gap.
+            let row_id = format!(
+                "installed_typescript_{}_variant_unresolved",
+                variant.trim_start_matches("variant-").replace('-', "_")
+            );
+            let corpus: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(
+                    Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("../../fixtures/blind_journey_execute/corpus.json"),
+                )
+                .map_err(|error| format!("corpus: {error}"))?,
+            )
+            .map_err(|error| format!("corpus json: {error}"))?;
+            let row = corpus["scenarios"]
+                .as_array()
+                .and_then(|rows| rows.iter().find(|row| row["id"] == row_id.as_str()))
+                .ok_or_else(|| format!("no scripted row {row_id}"))?;
+            let recorded = |subject: &str, field: &str| -> Result<String, String> {
+                row["journey"]["actions"]
+                    .as_array()
+                    .and_then(|actions| actions.iter().find(|a| a["subject"] == subject))
+                    .and_then(|a| a[field].as_str())
+                    .map(str::to_string)
+                    .ok_or_else(|| format!("{row_id}: no {subject} {field}"))
+            };
+            let recorded_check = recorded("ripr check", "output_bytes")?;
+            if !out.lines().any(|line| line.trim() == recorded_check) {
+                return Err(format!(
+                    "{row_id}: scripted check line differs from product output:\n{recorded_check}\n--- actual:\n{out}"
+                ));
+            }
+            let recorded_before = recorded("ripr agent repair before", "output_bytes")?;
+            if !start.lines().any(|line| line == recorded_before) {
+                return Err(format!(
+                    "{row_id}: scripted refusal differs from product output:\n{recorded_before}\n--- actual:\n{start}"
+                ));
+            }
+            let recorded_input = recorded("ripr agent repair before", "input_bytes")?;
+            if !recorded_input.contains(&format!("--gap-id {variant_gap} ")) {
+                return Err(format!(
+                    "{row_id}: scripted start names another gap than {variant_gap}: {recorded_input}"
+                ));
+            }
         } else if !projected {
             return Err(format!(
                 "{variant} now fails closed; flip its row to true (#9107):\n{out}"
             ));
         }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn typescript_status_warning_keeps_the_no_start_claim_for_refused_variants() -> Result<(), String> {
+    // #10001 negative control: the status warning is derived from the same
+    // admission as `ripr check`, so a finding check refuses keeps the claim
+    // that check offers no `ripr agent repair` start.
+    let toml = "[languages]\nenabled = [\"typescript\"]\n";
+    for variant in [
+        "variant-let-binding",
+        "variant-reassignment",
+        "variant-shadowing",
+        "variant-imported-constant",
+        "variant-object-namespace-write",
+        "variant-enum-computed-initializer",
+        "variant-nonliteral-arithmetic",
+        "variant-reach-barrier",
+    ] {
+        let (_guard, root, decoy) = materialize(
+            "blind_journey_installed_typescript",
+            variant,
+            "tsneg",
+            Some(toml),
+        )?;
+        let root_arg = root.to_string_lossy().into_owned();
+        onto_feature_branch(&root)?;
+        let (check_ok, check) = ripr(&decoy, &["check", "--root", &root_arg])?;
+        expect_exit(check_ok, true, variant)?;
+        if check.contains("nothing was in scope") {
+            return Err(format!("{variant}: the control analyzed no diff:\n{check}"));
+        }
+        if gap_start_tokens(&check).is_some() {
+            return Err(format!("{variant}: check printed a start:\n{check}"));
+        }
+        let (pilot_ok, _) = ripr(&decoy, &["pilot", "--root", &root_arg])?;
+        expect_exit(pilot_ok, true, variant)?;
+        let (status_ok, status) = ripr(&decoy, &["agent", "status", "--root", &root_arg])?;
+        expect_exit(status_ok, true, variant)?;
+        need(&status, "pilot_routed_to_check_no_repair_target", variant)?;
+        need(
+            &status,
+            "offers no `ripr agent repair` start",
+            "a refused variant keeps the warning",
+        )?;
+        if status.contains("prints the gap-bound start") || gap_start_tokens(&status).is_some() {
+            return Err(format!("{variant}: status names a start:\n{status}"));
+        }
+        decoy_untouched(&decoy)?;
     }
     Ok(())
 }

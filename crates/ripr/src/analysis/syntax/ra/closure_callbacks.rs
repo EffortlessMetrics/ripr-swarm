@@ -40,9 +40,8 @@ pub(crate) struct InvokedCallbackParam {
 /// Argument positions at which a direct call to `helper` in `test_text`
 /// passes a closure literal whose body makes a call that runs when the
 /// closure is invoked (not one under a nested closure, `async` block or `fn`).
-/// A call under a closure,
-/// `async` block or nested `fn` of the test may never run and is ignored.
-/// `None` when the text does not parse cleanly.
+/// The helper call itself must be a statement the test body reaches
+/// unconditionally and in order. `None` when the text does not parse cleanly.
 pub(crate) fn closure_argument_positions(test_text: &str, helper: &str) -> Option<BTreeSet<usize>> {
     let parse = parse_clean_source_file(test_text)?;
     let function = parse

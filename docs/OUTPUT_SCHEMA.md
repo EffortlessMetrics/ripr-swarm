@@ -326,8 +326,8 @@ the JSON on stdout, and the human decision prose on stderr. If the stdout
 write itself fails, no document was delivered and the command exits `2`.
 
 Schema `0.2` replaces `0.1` for all ready and refused stub documents (#7762).
-The field set is unchanged; the new refusal-kind spelling requires the new
-version. Consumers must recognize `0.2`, dispatch on `state`, and distinguish
+Ready stub documents add `already_present`; the new refusal-kind spelling
+requires the new version. Consumers must recognize `0.2`, dispatch on `state`, and distinguish
 `selector_ambiguous` (choose a specific path or seam ID) from `seam_not_found`
 (correct or re-list the selector). Legacy `0.1` did not distinguish ambiguity
 from absence. The disclosure fields introduced in `0.1` (#7290) remain:
@@ -340,13 +340,24 @@ from absence. The disclosure fields introduced in `0.1` (#7290) remain:
   from the shared grip-to-exposure table (`strongly_gripped` → `exposed`,
   `weakly_gripped` → `weakly_exposed`, `ungripped` → `no_static_path`, …),
   else `null`. No per-surface translation fork.
-- `warnings` — when the class is omitted from agent packet/repair results,
-  one string reusing that omission reason, for example
-  `seam <id> is configured off for strongly_gripped seams and is not included in agent results`.
-  Empty when the class is included in agent results or the grip is unknown.
+- `warnings` — one string naming why the class carries omission prose. A
+  `strongly_gripped` seam is exposed because its tests already discriminate
+  it, so the warning says exactly that (`seam <id> is strongly_gripped:
+  existing tests already discriminate it, so a stub would add nothing`); the
+  default `Off` severity for the class is the agent-brief rendering policy,
+  not user configuration, so the packet/brief "configured off" wording is not
+  reused here (#8891). A class a user severity actually disables keeps the
+  packet wording, for example `seam <id> is configured off for
+  weakly_gripped seams and is not included in agent results`. Empty when the
+  class is included in agent results or the grip is unknown.
   Human output prints the same strings. Serving a strongly_gripped seam as
   a scaffold remains `state: ready` / exit 0; the warning is disclosure,
   not a refusal.
+- `already_present` — `true` when the placement already holds the identical
+  test function ripr would write (a second run for the same seam recomputes
+  byte-identical text). A repeated `--write` then reports the stub as already
+  written instead of appending a `_2`-suffixed duplicate; `written` stays
+  `false` for that run (#8891).
 
 Existing fields (`placement`, `test_name`, `text`, `fill_ins`,
 `derived_inputs`, `written`, `run_command`, and the refusal `refusal`
@@ -2659,6 +2670,13 @@ segments, `*` and `?` stay within one segment), optionally narrowed by
 Expired entries are not applied; expired and unmatched selectors surface as
 warnings. A missing or malformed policy fails the run (fail-closed): the run
 never silently emits unfiltered counts as if a policy had been applied.
+
+`findings[].analysis_scope` (#5531) is distinct from the top-level
+`analysis_scope` object (partial/limited scope disclosure). It is the typed
+per-finding scope, emitted as the single value `"repo"` for findings produced
+by a repo-mode run and omitted for diff-scoped findings (diff bytes are
+unchanged). Consumers such as the gap ledger read it instead of the legacy
+`analysis_scope: repo` evidence line; any other value is rejected by the schema.
 
 Three surfaces change when the flag is present:
 
@@ -19243,7 +19261,7 @@ targeted-rerun receipt shape:
     "invalidation_status": "not_available",
     "input_fingerprint": {
       "schema_version": "1.97",
-      "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
+      "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
       "cfg_features_hash": "…",
@@ -19325,16 +19343,26 @@ targeted-rerun receipt shape:
 }
 ```
 
-`input_fingerprint.analyzer_version` names the build, not only the package
-version: `<version>+<commit>` for a clean build, with `-dirty+src:<digest>`
-appended for a build with uncommitted source changes, or `<version>+unknown+src:<digest>`
-when no commit is recorded. Two builds of one version therefore report
-`input_changed:analyzer_version` against each other's receipts.
+`input_fingerprint.analyzer_version` names the source build and its compiled
+language features, not only the package version. Its source prefix is
+`<version>+<commit>` for a clean build,
+`<version>+<commit>-dirty+src:<digest>` for uncommitted source changes, or
+`<version>+unknown+src:<digest>` when no commit is recorded. If a dirty or
+commit-less build has no source digest, `process:<pid>:<nanos>` replaces
+`src:<digest>` so persisted entries are not reused across processes.
+Every form ends with
+`+languages:rust=<bit>,typescript=<bit>,python=<bit>,perl=<bit>`, in that order,
+where each bit is exactly `0` or `1`. These are the analyzer's compiled Cargo
+features; `cfg_features_hash` separately identifies the analyzed workspace's
+feature configuration. Different source or language-feature identities report
+`input_changed:analyzer_version` against each other's receipts, even when the
+package version and cache generations match. Treat the complete identity as
+opaque when comparing receipts.
 
 `cache.schema_version` and `cache.input_fingerprint.schema_version` version
-the file-fact cache and its input identity, not this report. They move
-whenever cache identity changes, so a consumer dispatches on the top-level
-`schema_version` and treats the nested values as opaque. Nested
+the file-fact cache and its input identity, not this report. They change with
+those cache contracts, independently of analyzer identity. A consumer dispatches
+on the top-level `schema_version` and treats the nested values as opaque. Nested
 `analyzer_version` is the producing build identity described above and also
 moves.
 

@@ -1,0 +1,63 @@
+{
+  "case_id": "perl-moose-is-adult-boundary",
+  "subject_id": "authored-perl-moose-profile",
+  "diff": "cases/perl-moose-is-adult-boundary.diff",
+  "anchor": {
+    "file": "lib/Profile.pm",
+    "line": 19
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "moose_ok_far_from_boundary",
+  "hard_case": "The tests use ages 30 and 5, so a boundary move between them survives; only a move past five fails.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43, Test::Deep 1.204, Moose 2.2207",
+    "mutants": [
+      {
+        "replacement": "18 < $self->age ? 1 : 0",
+        "mutated_line": "return 18 < $self->age ? 1 : 0;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 18 no longer counts as adult"
+      },
+      {
+        "replacement": "19 <= $self->age ? 1 : 0",
+        "mutated_line": "return 19 <= $self->age ? 1 : 0;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 18 no longer counts as adult"
+      },
+      {
+        "replacement": "4 <= $self->age ? 1 : 0",
+        "mutated_line": "return 4 <= $self->age ? 1 : 0;",
+        "outcome": "tests_failed",
+        "failing_test": "t/profile.t: five is not an adult",
+        "equivalence_review": "not equivalent: five now counts as adult"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "ok($p->is_adult) for 30 and ok(!$kid->is_adult) for 5 never reach 18. Spec cells: RIPR-SPEC-0064 oracle strength (ok), RIPR-SPEC-0235 method-receiver reach.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-moose-is-adult-boundary.json",
+    "sha256": "b8836ca02dcff0fbafebd4b9e2b18030fe0a64c5881d07e4508918ad1505a819",
+    "provenance": "producer"
+  }
+}

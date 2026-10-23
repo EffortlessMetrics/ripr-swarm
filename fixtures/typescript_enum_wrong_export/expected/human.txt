@@ -25,6 +25,13 @@ Start here:
     discriminator `level == Level.High`; no actionable repair packet is emitted until verify,
     receipt, and edit-boundary fields are available
   Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: 1 related test(s) found for owner `weight`
     - infection unknown: TypeScript preview adapter does not yet model infection
     - 4 more detail line(s) in --format human-full

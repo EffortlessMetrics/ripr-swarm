@@ -99,8 +99,10 @@ could not be verified without trusting hand-authored JSON.
 
 ## Non-Goals
 
-- The journey flips (D, a later slice of #9103); the gap-bound `agent repair`
-  start and attempt landed as C2a/C2b.
+- Gap-bound repair start, after phase and receipt (C2a/C2b/C2c) and the
+  TypeScript journey-row flips (D) all landed under #9103; this spec owns only
+  the findings artifact and gap-id verify. Verification-run execution for gap
+  attempts remains outside it.
 - Signing, runtime mutation proof, or Python enablement.
 - Plain `agent receipt` over a pair still binds the pair; the gap-bound receipt
   (RIPR-SPEC-0311 item 8) is issued only over a verify document that closed the

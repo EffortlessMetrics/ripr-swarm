@@ -997,6 +997,8 @@ const SHARDED_MANIFEST_DIGEST_DOMAIN: &str = "ripr-cache:ShardedCacheManifest:v1
 
 mod export;
 mod scoped_inventory;
+#[cfg(test)]
+mod semantic_identity_tests;
 mod store;
 pub(crate) use export::export_current;
 #[cfg(test)]
