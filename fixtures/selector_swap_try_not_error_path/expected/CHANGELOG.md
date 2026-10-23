@@ -38,3 +38,16 @@ Source-only reviewed edit; no native fixture or goldens-bless command executed b
 
 Updated:
 - `expected/human.txt`
+
+## Pending — selector_swap_try_not_error_path (4)
+
+Reason:
+RIPR-SPEC-0319: human-full gains a Next line under static limitations and stop reasons
+
+Command:
+`cargo xtask goldens bless selector_swap_try_not_error_path --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

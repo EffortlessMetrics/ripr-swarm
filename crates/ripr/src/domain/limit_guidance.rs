@@ -17,7 +17,7 @@ impl StaticLimitKind {
     /// Every kind, so tests can walk the vocabulary. The ordinal test keeps
     /// this list in step with the enum.
     #[cfg(test)]
-    pub(crate) const ALL: [StaticLimitKind; 26] = [
+    pub(crate) const ALL: [StaticLimitKind; 29] = [
         StaticLimitKind::DynamicDispatch,
         StaticLimitKind::Metaprogramming,
         StaticLimitKind::MissingImportGraph,
@@ -44,6 +44,9 @@ impl StaticLimitKind {
         StaticLimitKind::RustDebugAssertionProfileUnresolved,
         StaticLimitKind::RustCallFactBudget,
         StaticLimitKind::RustFrameworkOracleUnresolved,
+        StaticLimitKind::RustPinnedShapeUnresolved,
+        StaticLimitKind::RustImplicitCallUnresolved,
+        StaticLimitKind::RustCallerLoopSelectorUnresolved,
     ];
 
     /// What to do so ripr can settle this limitation. One imperative
@@ -153,6 +156,20 @@ impl StaticLimitKind {
             StaticLimitKind::RustFrameworkOracleUnresolved => {
                 "Add a direct `assert_eq!` on the changed value beside the environment, mock, \
                  expect-test or snapshot check."
+            }
+            StaticLimitKind::RustPinnedShapeUnresolved => {
+                "Move the changed code out of the closure, returned-value statement or \
+                 `let ... else` exit into a directly returned form, so the test's exact \
+                 `assert_eq!` pins it."
+            }
+            StaticLimitKind::RustImplicitCallUnresolved => {
+                "Call the changed method explicitly by its fully qualified path in the test, \
+                 instead of relying on an operator, `Drop`, `Deref` or other implicit trait \
+                 call, and assert on its result."
+            }
+            StaticLimitKind::RustCallerLoopSelectorUnresolved => {
+                "Add a test that drives the iterator with one concrete input and asserts the \
+                 changed arm's item directly, rather than only comparing the collected sequence."
             }
         }
     }
@@ -297,9 +314,12 @@ mod tests {
                 StaticLimitKind::RustDebugAssertionProfileUnresolved => 23,
                 StaticLimitKind::RustCallFactBudget => 24,
                 StaticLimitKind::RustFrameworkOracleUnresolved => 25,
+                StaticLimitKind::RustPinnedShapeUnresolved => 26,
+                StaticLimitKind::RustImplicitCallUnresolved => 27,
+                StaticLimitKind::RustCallerLoopSelectorUnresolved => 28,
             }
         }
-        const COUNT: usize = 26;
+        const COUNT: usize = 29;
         assert_eq!(StaticLimitKind::ALL.len(), COUNT);
         let ordinals: Vec<usize> = StaticLimitKind::ALL.iter().copied().map(ordinal).collect();
         assert_eq!(
