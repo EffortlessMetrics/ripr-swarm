@@ -334,11 +334,15 @@ for a `#` comment in field expression text (Python 3.12), the string's own
 delimiter nested in a field (3.12), a single-line f-string with a field of its
 own inside a field (3.12 same-quote nesting), a field or nested literal that is
 not closed, and nesting deeper than four levels. A colon that may or may not be
-the spec colon hides. Known limits, all misses (a real call stays hidden; no
-case that invents a call is known): a replacement field on the same line as the
-opening quote or on any line of a single-line f-string is hidden by the
-line-prefix quote check, and a real call after a field the scanner gave up on is
-hidden too (#9230).
+the spec colon hides. The triple-quoted scanning here gives up and hides
+rather than inventing a call for the cases above. Known limits: inside
+triple-quoted f-strings a replacement field on the same line as the opening
+quote is hidden by the line-prefix quote check, and a real call after a field the
+scanner gave up on is hidden too (misses). Separately, and not changed by this
+change, top-level single-line f-strings that use Python 3.12 same-quote nesting
+(`f"{ "helper(1)" }"`, `f"{y["helper(1)"]}"`) or a newline inside a
+replacement field (`f"{\n y\n}  helper(1)"`) can expose text that is not a
+call (#9230).
 
 A pytest test that names a module-level `@pytest.fixture` function (in its own
 module or a `conftest.py` up its directory chain, nearest wins) as a parameter
