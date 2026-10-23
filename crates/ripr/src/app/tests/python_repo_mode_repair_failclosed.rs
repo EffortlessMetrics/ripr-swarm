@@ -15,6 +15,16 @@ const TEST: &str = "from src.pricing import Stock\n\ndef test_reserve_ok():\n   
 const DIFF: &str = "diff --git a/src/pricing.py b/src/pricing.py\nindex 1111111..2222222 100644\n--- a/src/pricing.py\n+++ b/src/pricing.py\n@@ -1,5 +1,5 @@\n class Stock:\n     def reserve(self, qty):\n-        if qty >= 10:\n+        if qty > 10:\n             return \"backorder\"\n         return \"ok\"\n";
 
 fn run(label: &str, repo: bool, format: crate::OutputFormat) -> Result<String, String> {
+    run_with_scopes(label, repo, format).map(|(rendered, _)| rendered)
+}
+
+/// Rendered output plus the typed `analysis_scope` of every finding the
+/// producer returned for the fixture source (#5531).
+fn run_with_scopes(
+    label: &str,
+    repo: bool,
+    format: crate::OutputFormat,
+) -> Result<(String, Vec<crate::domain::AnalysisScope>), String> {
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|error| format!("system time: {error}"))?
@@ -23,7 +33,7 @@ fn run(label: &str, repo: bool, format: crate::OutputFormat) -> Result<String, S
         "ripr-py-repo-failclosed-{label}-{}-{stamp}",
         std::process::id()
     ));
-    let output = (|| -> Result<String, String> {
+    let output = (|| -> Result<(String, Vec<crate::domain::AnalysisScope>), String> {
         for (path, contents) in [
             ("ripr.toml", CONFIG),
             ("src/pricing.py", SOURCE),
@@ -57,7 +67,20 @@ fn run(label: &str, repo: bool, format: crate::OutputFormat) -> Result<String, S
         } else {
             crate::app::check_workspace_with_config(input, &config)?
         };
-        crate::render_check(&output, &format)
+        let scopes = output
+            .findings
+            .iter()
+            .filter(|finding| {
+                finding
+                    .probe
+                    .location
+                    .file
+                    .to_string_lossy()
+                    .contains("pricing.py")
+            })
+            .map(|finding| finding.analysis_scope)
+            .collect();
+        Ok((crate::render_check(&output, &format)?, scopes))
     })();
     let cleanup = fs::remove_dir_all(&root)
         .map_err(|error| format!("remove fixture {}: {error}", root.display()));
@@ -128,6 +151,29 @@ fn repo_mode_python_human_output_renders_no_repair_card() -> Result<(), String> 
         || repo.contains("python_repair_card")
     {
         return Err(format!("repo human output routes a repair card:\n{repo}"));
+    }
+    Ok(())
+}
+
+/// #5531: the producers set the typed scope by construction: every repo-run
+/// finding is `Repo`, and the diff control stays `Diff`.
+#[test]
+fn producer_sets_typed_analysis_scope_python() -> Result<(), String> {
+    let (_, repo) = run_with_scopes("scope-repo", true, crate::OutputFormat::Json)?;
+    if repo.is_empty()
+        || repo
+            .iter()
+            .any(|s| *s != crate::domain::AnalysisScope::Repo)
+    {
+        return Err(format!("repo run findings must all be Repo: {repo:?}"));
+    }
+    let (_, diff) = run_with_scopes("scope-diff", false, crate::OutputFormat::Json)?;
+    if diff.is_empty()
+        || diff
+            .iter()
+            .any(|s| *s != crate::domain::AnalysisScope::Diff)
+    {
+        return Err(format!("diff control findings must all be Diff: {diff:?}"));
     }
     Ok(())
 }
