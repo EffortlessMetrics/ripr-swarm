@@ -17,6 +17,18 @@ const DEFAULT_IGNORED_DIRS: &[&str] = &[
     "node_modules",
 ];
 
+/// Whether any directory component of a repo-relative `/`-separated path is
+/// one the workspace walk never enters. The single owner of that rule, so a
+/// consumer deciding "would the producer have analyzed this file" cannot drift
+/// from `visit` (#9599).
+pub(crate) fn path_enters_ignored_dir(path: &str) -> bool {
+    let mut components = path.split('/').collect::<Vec<_>>();
+    components.pop();
+    components
+        .iter()
+        .any(|component| DEFAULT_IGNORED_DIRS.contains(component))
+}
+
 /// Changed source files that are not regular files in the working tree.
 ///
 /// Sparse checkout, local deletes and symlinks drop these from disk walks, so the

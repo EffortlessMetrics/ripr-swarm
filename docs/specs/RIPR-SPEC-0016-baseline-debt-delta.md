@@ -284,8 +284,29 @@ bucket:
   --remove-resolved` keeps it through the shared
   `absence_not_evaluated_reason` predicate. A `gap_ledger_artifact` scope lists
   only the surviving ledger records' anchor files, not the files analyzed, so it
-  always yields `not_evaluated` until the ledger path discloses real analyzed
-  files (limitation tracked in #9599).
+  always yields `not_evaluated`. The ledger path can instead carry a producer
+  coverage disclosure (#9599): a ledger built from a complete `ripr check
+  --format repo-exposure-json` run (`run_status: complete`, no seam limit, no
+  parse-declined or skipped generated Rust files, and a stamped Rust-workspace
+  corpus identity from a producer-issued, content-committed artifact) records
+  `analysis_coverage` with a digest of its exact, complete record set.
+  `gate evaluate` emits the `rust_workspace_complete` scope only on the
+  gap-ledger path, only while that digest still matches the ledger's records,
+  and only while the disclosed corpus hash equals the gated tree's corpus; a
+  filtered, edited or stale ledger, or an evaluation with no loadable root,
+  falls back to `gap_ledger_artifact`. A `rust_workspace_complete` scope in a
+  `--pr-guidance` document is dropped. Under `rust_workspace_complete` an absent
+  entry resolves only when its path is a normalized relative `.rs` path (no
+  `..`, `.`, empty, absolute, drive-prefixed, backslash or surrounding-space
+  spelling) outside the directories the producer's walk skips; every other path
+  stays `not_evaluated`. The digest is tamper-evident, not authentication, and a
+  hand-edited gate-decision is out of scope for this contract.
+  Accepted limits, stated plainly: the contract does not authenticate the
+  producer. A ledger rewritten by someone who recomputes `records_digest` on a
+  tree whose corpus still matches earns the scope; `baseline diff` and `baseline
+  update` trust a hand-edited gate-decision file; and symlinked paths are not
+  distinguished from the files they point at (the walk and the path rule are
+  textual).
   Coverage is file-level by construction: the seam selector matches every seam in
   a working-set file (changed line, changed owner, related test, else same-file),
   so a seam in a covered file is either present in the decisions or counted in

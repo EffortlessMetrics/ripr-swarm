@@ -1217,9 +1217,26 @@ fn unresolved_source_location_json() -> Value {
 
 /// Scope disclosure for a gate decision built from a gap ledger (issue #9301
 /// F2): the same shape review-comments emits for a ledger artifact.
+///
+/// With a verified producer `coverage` (a complete whole-Rust-workspace
+/// repo-exposure run whose record set is intact, #9599) the scope is
+/// `rust_workspace_complete`; otherwise the record-derived
+/// `gap_ledger_artifact` scope, which baseline resolution never trusts.
 pub(crate) fn gap_ledger_analysis_scope_json(
     records: &[crate::output::gap_decision_ledger::GapRecord],
+    coverage: Option<&Value>,
 ) -> Value {
+    if let Some(coverage) = coverage {
+        return json!({
+            "scope": "rust_workspace_complete",
+            "run_status": "complete",
+            "basis": "repo_exposure_complete_run",
+            "corpus": coverage.get("corpus").cloned().unwrap_or(Value::Null),
+            "records_total": records.len(),
+            "records_digest": coverage.get("records_digest").cloned().unwrap_or(Value::Null),
+            "downstream_consumable": true,
+        });
+    }
     analysis_scope_json(&ReviewCommentsAnalysisScope::gap_ledger_artifact(records))
 }
 
@@ -1606,6 +1623,25 @@ fn push_analysis_scope_summary(lines: &mut Vec<String>, value: Option<&Value>) {
                 .to_string(),
         );
     }
+    if let Some(declined) = scope
+        .get("parser_declined_files")
+        .and_then(Value::as_array)
+        .filter(|files| !files.is_empty())
+    {
+        let listed = declined
+            .iter()
+            .filter_map(Value::as_str)
+            .map(code_span)
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!(
+            "- limitation: `parser_declined_files`; no seams were extracted from: {listed}, so a baselined gap in them is not evaluated, not resolved"
+        ));
+        lines.push(
+            "- repair: split the file below the Rust parse budget, fix the parse error or save it as UTF-8, then re-run"
+                .to_string(),
+        );
+    }
     if let (Some(limitation), Some(route)) = (
         scope.get("limitation").and_then(Value::as_str),
         scope.get("repair_route").and_then(Value::as_str),
@@ -1741,6 +1777,47 @@ mod tests {
             !rendered.contains("dropped file(s): src/@octocat/"),
             "raw path must not appear outside a code span:\n{rendered}"
         );
+    }
+
+    /// #9734: parser-declined files are listed as a limitation (markup kept
+    /// inert) and the line is absent when none were declined, so existing
+    /// fixtures stay byte-stable.
+    #[test]
+    fn parser_declined_files_markdown_names_the_limitation_and_stays_inert() {
+        let scope = json!({
+            "scope": "diff_scoped_changed_files",
+            "run_status": "limited_diff_scope",
+            "production_files_considered": 1,
+            "classified_seams_considered": 0,
+            "parser_declined_files": ["src/@octocat/`deep`.rs", "src/b.rs"]
+        });
+        let mut lines = Vec::new();
+        push_analysis_scope_summary(&mut lines, Some(&scope));
+        let rendered = lines.join("\n");
+        assert!(
+            rendered.contains(&format!(
+                "- limitation: `parser_declined_files`; no seams were extracted from: {}, {}, so a baselined gap in them is not evaluated, not resolved",
+                code_span("src/@octocat/`deep`.rs"),
+                code_span("src/b.rs")
+            )),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("- repair: split the file below the Rust parse budget"),
+            "{rendered}"
+        );
+
+        let mut none = Vec::new();
+        for empty in [json!([]), json!(null)] {
+            let mut scope = scope.clone();
+            scope["parser_declined_files"] = empty;
+            none.clear();
+            push_analysis_scope_summary(&mut none, Some(&scope));
+            assert!(
+                !none.join("\n").contains("parser_declined_files"),
+                "{none:?}"
+            );
+        }
     }
 
     use crate::analysis::ClassifiedSeam;

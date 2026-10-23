@@ -112,6 +112,7 @@ pub(super) fn read_gap_ledger_impl(
     input: &GateEvaluateInput,
     config_errors: &mut Vec<String>,
     consumed: &mut ConsumedInputHashes,
+    coverage: &mut Option<Value>,
 ) -> Option<Vec<GapRecord>> {
     let path = input.gap_ledger.as_ref()?;
     let resolved = resolve_root_path(&input.root, path);
@@ -186,6 +187,12 @@ pub(super) fn read_gap_ledger_impl(
                 }
                 return Some(Vec::new());
             }
+            // #9599: a producer coverage disclosure counts only while it still
+            // describes exactly this record set.
+            if let Ok(value) = serde_json::from_str::<Value>(&text) {
+                *coverage = gap_decision_ledger::verified_analysis_coverage(&value, &records)
+                    .filter(|coverage| ledger_corpus_is_current(&input.root, coverage));
+            }
             Some(records)
         }
         Err(error) => {
@@ -196,6 +203,19 @@ pub(super) fn read_gap_ledger_impl(
             Some(Vec::new())
         }
     }
+}
+
+/// #9599: the disclosed corpus must still be the tree being gated. A ledger
+/// from an older tree, an unreadable workspace or a missing/unloadable config
+/// keeps the ledger fail-closed (`gap_ledger_artifact`).
+fn ledger_corpus_is_current(root: &std::path::Path, coverage: &Value) -> bool {
+    let Ok(config) = crate::config::load_for_root(root) else {
+        return false;
+    };
+    matches!(
+        crate::output::gap_source_subject::check_rust_corpus_subject(root, Some(coverage), &config),
+        crate::output::gap_source_subject::CorpusSubjectCheck::Current
+    )
 }
 
 pub(super) fn read_recommendation_calibration_impl(

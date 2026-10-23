@@ -221,9 +221,20 @@ scoped seams, entries in non-Rust changed files, a scope missing the
 `cap_omitted_seams`/`omitted_by_policy` disclosure, and any malformed scope
 fail closed too. A gate decision whose review-comments source drops any seam by
 policy keeps every absent entry `not_evaluated`. A gate decision built from
-`--gap-ledger` currently always yields `not_evaluated`, because the ledger
-disclosure lists only surviving records' anchor files (limitation tracked in
-#9599); use a `--pr-guidance` gate decision to retire baselined gaps. To retire a gap, feed
+`--gap-ledger` yields `not_evaluated` unless the ledger carries an
+`analysis_coverage` disclosure: `ripr reports gap-ledger --repo-exposure` over a
+complete `ripr check --format repo-exposure-json` run (no seam limit, no
+parser-declined or generated-skipped Rust files) records that the whole Rust
+workspace was analyzed, bound to the ledger's exact records and to the corpus of
+the tree `gate evaluate` runs on (so generate the ledger and evaluate the gate on
+the same checkout). With it, an absent baseline entry on a normalized relative
+Rust path outside `target`/`fixtures`/`.git`-style directories resolves; a
+filtered, edited or stale ledger, a limited run, and other paths stay
+`not_evaluated` (#9599). The digest is tamper-evident, not authentication. Accepted limits: a ledger rewritten by someone who recomputes the digest on a
+matching current tree still earns the scope (no producer authentication);
+`baseline diff`/`update` trust a hand-edited gate-decision; symlinked paths are
+not distinguished. Without it, use a
+`--pr-guidance` gate decision to retire baselined gaps. To retire a gap, feed
 `update` a gate decision whose scope covers the gap's file, normally the PR
 that fixes it.
 

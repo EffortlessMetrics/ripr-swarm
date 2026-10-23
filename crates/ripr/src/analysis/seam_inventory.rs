@@ -8384,6 +8384,62 @@ marker = "libtest_mimic::Trial"
     }
 
     #[test]
+    fn changed_production_files_partition_parsed_from_parser_declined() -> Result<(), String> {
+        // #9734: a changed production file the parser declines (nesting
+        // budget, non-UTF-8) falls back to lexical facts and yields no seams,
+        // so it is reported as declined, never as covered. Unchanged declined
+        // files and changed non-production files appear in neither list.
+        let root = make_tempdir("covered-declined-partition")?;
+        let nested = format!(
+            "pub fn deep() {{ {}{} }}\n",
+            "{".repeat(400),
+            "}".repeat(400)
+        );
+        write_file(
+            &root.join("src/lib.rs"),
+            "pub mod ok;\npub mod deep;\npub mod raw;\npub mod stale;\n",
+        )?;
+        write_file(
+            &root.join("src/ok.rs"),
+            "pub fn early(n: i32) -> bool { n >= 10 }\n",
+        )?;
+        write_file(&root.join("src/deep.rs"), &nested)?;
+        write_file(&root.join("src/stale.rs"), &nested)?;
+        std::fs::write(
+            root.join("src/raw.rs"),
+            b"pub fn raw(n: i32) -> bool { n >= 3 } // \xff\xfe\n",
+        )
+        .map_err(|err| format!("write raw.rs: {err}"))?;
+        write_file(
+            &root.join("tests/boundary.rs"),
+            "#[test] fn boundary() { assert!(early(10)); }\n",
+        )?;
+        let inventory = inventory_diff_scoped_classified_seams_at_with_config(
+            &root,
+            &RiprConfig::default(),
+            &[
+                PathBuf::from("src/ok.rs"),
+                PathBuf::from("src/deep.rs"),
+                PathBuf::from("src/raw.rs"),
+                PathBuf::from("tests/boundary.rs"),
+            ],
+            &[],
+        )?;
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(
+            inventory.changed_production_files,
+            [PathBuf::from("src/ok.rs")]
+        );
+        let mut declined = inventory.parser_declined_files.clone();
+        declined.sort();
+        assert_eq!(
+            declined,
+            [PathBuf::from("src/deep.rs"), PathBuf::from("src/raw.rs")]
+        );
+        Ok(())
+    }
+
+    #[test]
     fn scoped_sets_match_exactly_one_valid_sibling() -> Result<(), String> {
         // Portable control for the invalid-byte regression below: with
         // ordinary names, scoping one sibling never pulls in the other.
