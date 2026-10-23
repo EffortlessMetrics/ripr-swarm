@@ -3287,6 +3287,10 @@ fn resolve_agent_start_out_dir(root: &Path, out_dir: &Path) -> PathBuf {
 mod root_tests;
 
 #[cfg(test)]
+#[path = "agent_refusal_tests.rs"]
+mod refusal_tests;
+
+#[cfg(test)]
 mod tests {
     use super::super::tests::{
         args, outcome_after_json, outcome_before_json, unique_command_test_dir,
