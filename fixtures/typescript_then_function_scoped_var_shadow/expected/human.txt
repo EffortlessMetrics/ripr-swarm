@@ -1,0 +1,42 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/typescript_then_function_scoped_var_shadow/input
+config: <cwd>/fixtures/typescript_then_function_scoped_var_shadow/input/ripr.toml
+
+Summary: 1 probe (0 exposed, 0 weak, 0 unrevealed, 0 no path, 1 unknown); 1 of 1 finding unsuppressed
+
+Changed file(s) by language: typescript = 1
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+
+Start here:
+  State: preview language, advisory only
+  Safe next action: this TypeScript preview finding's repair packet is not ready (TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
+  File: src/total.ts:2
+  Language: typescript
+  Language status: preview
+  Static exposure: unknown (severity: note, confidence 0.40)
+  Why unknown: the analysis could not determine a static exposure state
+  Changed behavior: return 30;
+  Analyzer limit: Related tests reach `total` but hold assertion-like code the TypeScript extractor could not resolve (a `.then` with a rejection handler or an async `forEach` callback); the…
+  Related test: tests/total.test.ts:3 function scoped var shadow
+  Next step — TypeScript preview advisory: the related test asserts inside a callback the extractor
+    cannot resolve (a `.then` with a rejection handler or an async `forEach`); no new assertion is
+    needed on that evidence, and no repair packet is emitted
+  Evidence: reach yes · infection unknown · propagation unknown · observation unknown · discriminator unknown
+    - reach yes: 1 related test(s) found for owner `total`
+    - infection unknown: TypeScript preview adapter does not yet model infection
+    - 5 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/typescript_then_function_scoped_var_shadow/input --diff <cwd>/fixtures/typescript_then_function_scoped_var_shadow/diff.patch --mode fast probe:src_total.ts:typescript_preview:44386250
+  ripr context --root <cwd>/fixtures/typescript_then_function_scoped_var_shadow/input --diff <cwd>/fixtures/typescript_then_function_scoped_var_shadow/diff.patch --mode fast --at probe:src_total.ts:typescript_preview:44386250
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_total.ts:typescript_preview:44386250 --root <cwd>/fixtures/typescript_then_function_scoped_var_shadow/input` for the full gate's answer
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+
+Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

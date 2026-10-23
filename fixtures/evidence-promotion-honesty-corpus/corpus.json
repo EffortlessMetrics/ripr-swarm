@@ -5,6 +5,54 @@
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
   "cases": [
     {
+      "id": "ts_then_function_scoped_var_cannot_confirm_return",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_then_function_scoped_var_shadow",
+      "vector": "nested_block_var_captures_callback_receiver_outside_block",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
+      "id": "ts_then_inline_receiver_shadow_cannot_confirm_return",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_then_inline_receiver_shadow",
+      "vector": "returned_then_asserts_on_inline_receiver_shadow_instead_of_owner",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
       "id": "rust_competing_reverse_effect_oracle_side_effect",
       "language": "rust",
       "tier": "pure",

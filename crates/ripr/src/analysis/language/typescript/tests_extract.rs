@@ -2659,7 +2659,7 @@ pub(super) fn collect_registration_scope_names(
     }
 }
 
-fn collect_hoisted_names(
+pub(super) fn collect_hoisted_names(
     statement: &Statement<'_>,
     out: &mut Vec<String>,
     block_functions_are_lexical: bool,
@@ -3268,6 +3268,12 @@ fn test_name_and_assertions_from_registration(
     // row; any other table keeps the row-parameter assertions.
     if call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
         && let Some(assertions) = table_row_assertions(call, callback, source, bindings)
+    {
+        return Some((name, assertions));
+    }
+    if let Argument::ArrowFunctionExpression(arrow) = callback
+        && let Some(assertions) =
+            collect_test_arrow_expression_assertions(arrow, source, receiver.as_deref(), bindings)
     {
         return Some((name, assertions));
     }
