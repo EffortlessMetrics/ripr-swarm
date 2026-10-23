@@ -461,7 +461,7 @@ item_not_found         result_too_large    attempt_not_found
 config_invalid         workspace_ambiguous static_limitation
 cancelled              superseded          attempt_invalid
 seam_not_found         policy_omitted      witness_unavailable
-identity_unnameable    budget_overflow
+identity_unnameable    budget_overflow     incomplete_inventory
 ```
 
 Before the first successful refresh the evidence tools fail with
@@ -471,9 +471,12 @@ bound to a snapshot that is no longer current, while superseded tombstones
 older than the 64-entry session bound read `attempt_not_found` instead
 (oldest-first eviction); `attempt_invalid` reports a
 durable manifest that fails canonical validation; `seam_not_found`,
-`identity_unnameable`, and `budget_overflow` are reachable on the repair-card
-read (an item no seam owner-discriminated binds, an unnameable portable
-workspace identity, a card over its detail budget); `policy_omitted` and
+`identity_unnameable`, `budget_overflow`, and `incomplete_inventory` are
+reachable on the repair-card read (an item no seam owner-discriminated binds,
+an unnameable portable workspace identity, a card over its detail budget, a
+truncated or unverified repo-wide seam inventory). The card uses the CLI-pinned
+`incomplete_inventory` code, while the list/get/prepare readiness fields keep
+`seam_inventory_truncated`. `policy_omitted` and
 `witness_unavailable` stay named for wire stability even though this adapter
 cannot reach them; the rest stay reserved for the slices that own those
 states (they are named now so the wire contract
@@ -509,10 +512,15 @@ human-readable message. The same routes remain available separately in
 valid resource identities; listing a template does not promise its resource
 currently exists. Recognized snapshot, gap and repair resource routes retain
 their typed missing/stale-identity errors without the generic route list.
-A client that negotiated an older protocol version gets resource-not-found
-(`-32002`) for a resource miss; current clients get Invalid Params (`-32602`).
-The SDK maps the code, while the adapter preserves the same bounded message
-and structured recovery routes in both lifecycles.
+Identity misses on those routes (`item_not_found`, `attempt_not_found`) keep
+resource-not-found: a client that negotiated an older protocol version gets
+`-32002`; current clients get Invalid Params (`-32602`). Every other typed
+resource failure is a server state or a bound, not an identity claim —
+`no_snapshot`, `stale_snapshot`, `analysis_in_flight`,
+`workspace_unavailable` and `result_too_large` answer Internal Error
+(`-32603`) on every protocol version, with the same human sentence, the
+same structured recovery routes, and the stable typed state in
+`error.data.code` in both lifecycles.
 The instructions (returned by both `initialize` and `server/discover`) and the
 tool descriptions state positively what each tool returns, its bounds, and
 what it does not do. Protocol errors keep standard JSON-RPC codes. The pinned

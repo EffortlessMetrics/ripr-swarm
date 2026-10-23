@@ -901,7 +901,19 @@ fn render_all_no_path_disclosure(out: &mut String, output: &CheckOutput) {
                 == Some(crate::domain::StaticLimitKind::CrossLanguageOracleVisibilityUnresolved)
         })
         .count();
-    let repair = if cross_language_count == output.findings.len() {
+    // #9173: a root build script no package source includes cannot be called
+    // by a test; its findings carry their own remedy.
+    let build_script_count = output
+        .findings
+        .iter()
+        .filter(|finding| {
+            finding.recommended_next_step.as_deref()
+                == Some(crate::domain::BUILD_SCRIPT_NO_STATIC_PATH_NEXT_STEP)
+        })
+        .count();
+    let repair = if build_script_count == output.findings.len() && build_script_count > 0 {
+        "build the package and inspect the build script's output or effect, or move the logic into a library function that a test can call"
+    } else if cross_language_count == output.findings.len() {
         "add or check tests in the bindings' other language that observe the changed behavior"
     } else if cross_language_count > 0 {
         "add co-located tests that observe the changed behavior, or, for a language binding, tests in the binding's other language"
@@ -2403,6 +2415,18 @@ mod tests {
             finding.activation.missing_discriminators.clear();
         }
         finding
+    }
+
+    /// #5531: the same carded finding stamped as repo-scoped gets no repair
+    /// card (no repo-mode Python repair_routing cell); unstamped keeps it.
+    #[test]
+    fn repo_scoped_python_finding_gets_no_repair_card() {
+        let carded = python_preview_finding(11, true);
+        assert!(crate::output::python_repair_card::python_repair_card(&carded).is_some());
+        let mut repo = carded.clone();
+        repo.evidence
+            .push(crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
+        assert!(crate::output::python_repair_card::python_repair_card(&repo).is_none());
     }
 
     /// #7587: a deleted or moved Python line is base-side evidence and names

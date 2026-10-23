@@ -567,11 +567,12 @@ discriminator evidence line keep the marker unchanged, because downstream
 consumers key on it. With two or more owner-bearing findings, `human-full`
 renders every evidence row through the shared catalogue, a separate projection
 that this change does not touch; every row of that multi-finding catalogue is
-covered by #9928. The TypeScript and Python controls run the built binary on
-the boundary-gap and error-path shapes with the token as a parameter name, as a
-longer identifier, and as an unpaired-backtick message, and require the
-producer's `missing proof` expression to print unchanged in the human Evidence
-row.
+covered by #9928. The TypeScript controls run the built binary on the boundary-gap shape with the
+token as a parameter name and as part of a longer identifier; the Python controls
+run it on the error-path shape with the raised message as an unpaired-backtick
+string and as the bare token. All require the producer's `missing proof`
+expression to print unchanged in the human Evidence row.
+
 
 This item does not rewrite the Python Weakness section text (python
 `classify.rs`, rendered through `weakness_lines`), the LSP hover, pilot output
