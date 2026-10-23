@@ -39,13 +39,13 @@ fn import_line_ranges_cover_every_scope_and_multiline_spans() {
         "    b,\n",
         "    c,\n",
         ")\n",
-        "x = 1\n",
+        "flag = 1\n",
         "def f():\n",
         "    import json\n",
         "    return json\n",
-        "class C:\n",
+        "class Cls:\n",
         "    from d import e\n",
-        "if x:\n",
+        "if flag:\n",
         "    import g\n",
         "else:\n",
         "    import h\n",
@@ -57,22 +57,22 @@ fn import_line_ranges_cover_every_scope_and_multiline_spans() {
         "    import k\n",
         "finally:\n",
         "    import l\n",
-        "for _ in x:\n",
+        "for _ in flag:\n",
         "    import m\n",
         "else:\n",
         "    import n\n",
-        "while x:\n",
+        "while flag:\n",
         "    import o\n",
         "    break\n",
-        "with x:\n",
+        "with flag:\n",
         "    import p\n",
         "async def af():\n",
         "    import q\n",
-        "    async with x:\n",
+        "    async with flag:\n",
         "        import r\n",
-        "    async for _ in x:\n",
+        "    async for _ in flag:\n",
         "        import s\n",
-        "match x:\n",
+        "match flag:\n",
         "    case 1:\n",
         "        import t\n",
     );
@@ -146,7 +146,7 @@ fn docstring_ranges_keep_lines_shared_with_code_analyzable() {
 #[test]
 fn docstring_ranges_cover_nested_scopes_and_skip_non_docstrings() {
     let source = concat!(
-        "class C:\n",
+        "class Cls:\n",
         "    \"\"\"class doc\"\"\"\n",
         "    def m(self):\n",
         "        '''method doc'''\n",
@@ -228,13 +228,13 @@ fn malformed_snapshot_observation_is_exactly_the_limitation_weight() -> Result<(
         + limitation.evidence.len()
         + limitation.missing.len();
     assert_eq!(source_fact_snapshot_observation(&facts), expected);
-    assert!(source_fact_snapshot_observation(&facts_of("ok.py", "x = 1\n")) > 0);
+    assert!(source_fact_snapshot_observation(&facts_of("ok.py", "flag = 1\n")) > 0);
     Ok(())
 }
 
 #[test]
 fn snapshot_observation_grows_with_extracted_facts() {
-    let small = facts_of("m.py", "x = 1\n");
+    let small = facts_of("m.py", "flag = 1\n");
     let large = facts_of("m.py", "x = 1\n\ndef f(a):\n    return a + 1\n");
     assert!(source_fact_snapshot_observation(&large) > source_fact_snapshot_observation(&small));
 }
@@ -370,7 +370,7 @@ fn statement_forms_emit_owner_attributed_facts() {
 
 #[test]
 fn module_fact_spans_the_whole_source_and_empty_module_is_clean() -> Result<(), String> {
-    let source = "x = 1\n";
+    let source = "flag = 1\n";
     let facts = facts_of("m.py", source);
     let module = facts
         .facts
