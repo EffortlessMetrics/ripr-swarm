@@ -936,6 +936,11 @@ pub(in crate::analysis) struct OwnerReach<'g, 'a> {
     /// The owner is, or is reached from, a trait method the language calls
     /// without naming it, so any test may run it.
     implicit_dispatch: bool,
+    /// The name walk is blind to the path: some `macro_rules!` body names
+    /// the owner (a production function may reach it through a macro hop),
+    /// or a chain past `MAX_TRANSITIVE_DEPTH` reaches it. Any test may run it
+    /// (#9167 review).
+    path_untraced: bool,
 }
 
 impl OwnerReach<'_, '_> {
@@ -947,7 +952,7 @@ impl OwnerReach<'_, '_> {
     /// indexed functions with no name path to the owner rule it out. Macro
     /// bodies are the caller's concern.
     pub(in crate::analysis) fn test_may_reach(&self, test: &TestFact) -> bool {
-        if self.implicit_dispatch {
+        if self.implicit_dispatch || self.path_untraced {
             return true;
         }
         test.calls.iter().any(|call| {
@@ -1277,6 +1282,8 @@ impl<'a> TransitiveReachIndex<'a> {
             owner_name: owner_name.to_string(),
             reaching,
             implicit_dispatch,
+            path_untraced: graph.macro_may_mention(owner_name)
+                || graph.walk_past_bound(owner_name, |_| Some(())).is_some(),
         }
     }
 

@@ -10365,6 +10365,50 @@ return Err(\"typed pin\".into());
             );
             assert_eq!(observe.state, StageState::Yes, "{}", observe.summary);
         }
+        let ret_probe = probe(ProbeFamily::ReturnValue, "input + 2");
+        let strong = || {
+            vec![oracle(
+                "assert_eq!(other(1), 2);",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )]
+        };
+        // An opaque macro in the proximity test's body may expand to an owner
+        // call, so it keeps crediting.
+        let opaque = test_with_body_assertions("opaque", "run_cases!(other, 1);", strong());
+        let (observe, _, _) = reveal_evidence_proximity_reach(
+            &ret_probe,
+            &[
+                (&reaching, RelationReason::DirectOwnerCall),
+                (&opaque, RelationReason::SameTestFile),
+            ],
+            &|_| false,
+        );
+        assert_eq!(observe.state, StageState::Yes, "{}", observe.summary);
+        // The same rule covers a same-module relation.
+        let module_test = test_with_assertions("module_test", strong());
+        let related = [
+            (&reaching, RelationReason::DirectOwnerCall),
+            (&module_test, RelationReason::SameModule),
+        ];
+        let (observe, _, _) = reveal_evidence_proximity_reach(&ret_probe, &related, &|_| false);
+        assert_eq!(observe.state, StageState::No, "{}", observe.summary);
+        // Shared-variant probes keep their own confirmation-withheld path:
+        // the proximity strength is still credited (not `no_call_path`).
+        let arm = probe(ProbeFamily::MatchArm, "Mode::Frozen => -1,");
+        let (_, _, rows) = reveal_evidence_proximity_reach(
+            &arm,
+            &[
+                (&reaching, RelationReason::DirectOwnerCall),
+                (&unrelated, RelationReason::SameTestFile),
+            ],
+            &|_| false,
+        );
+        assert!(
+            rows.iter()
+                .all(|row| row.miss != Some(RelatedTestMiss::NoCallPath)),
+            "{rows:?}"
+        );
     }
 
     /// MatchArm: assertion containing the specific VARIANT token confirms the arm.

@@ -16,6 +16,14 @@ const FIXTURE_SOURCE: &str =
     include_str!("../../../fixtures/proximity_unrelated_oracle_not_credited/input/src/lib.rs");
 
 fn finding(source: &str) -> Result<Value, String> {
+    finding_for(
+        source,
+        include_str!("../../../fixtures/proximity_unrelated_oracle_not_credited/diff.patch"),
+        "input + 2",
+    )
+}
+
+fn finding_for(source: &str, diff_text: &str, expression: &str) -> Result<Value, String> {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let scratch = Scratch(std::env::temp_dir().join(format!(
         "ripr-proximity-oracle-{}-{}",
@@ -30,11 +38,7 @@ fn finding(source: &str) -> Result<Value, String> {
     .map_err(|e| e.to_string())?;
     std::fs::write(scratch.0.join("src/lib.rs"), source).map_err(|e| e.to_string())?;
     let diff = scratch.0.join("change.diff");
-    std::fs::write(
-        &diff,
-        include_str!("../../../fixtures/proximity_unrelated_oracle_not_credited/diff.patch"),
-    )
-    .map_err(|e| e.to_string())?;
+    std::fs::write(&diff, diff_text).map_err(|e| e.to_string())?;
     let report = check_workspace(CheckInput {
         root: scratch.0.clone(),
         diff_file: Some(diff),
@@ -49,7 +53,7 @@ fn finding(source: &str) -> Result<Value, String> {
         .as_array()
         .ok_or("missing findings")?
         .iter()
-        .find(|f| f["probe"]["expression"] == "input + 2")
+        .find(|f| f["probe"]["expression"] == expression)
         .cloned()
         .ok_or_else(|| "missing return-value finding".to_string())
 }
@@ -89,6 +93,27 @@ fn same_file_test_that_reaches_the_owner_through_a_helper_keeps_credit() -> Resu
         rows.iter()
             .any(|r| r["name"] == "other_test" && r["miss"] != "no_call_path"),
         "a test reaching the owner through a helper must keep oracle credit: {rows:?}"
+    );
+    Ok(())
+}
+
+/// Review of #9225: a same-file test that reaches the owner through a
+/// production function and a `macro_rules!` hop (outer -> call_inner! -> inner)
+/// is not unrelated; the name walk cannot see that hop, so it keeps credit,
+/// and a chain past the walk bound does too.
+#[test]
+fn production_macro_hop_keeps_proximity_credit() -> Result<(), String> {
+    let diff = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn inner(x: u8) -> u8 {\n-    x + 1\n+    x + 2\n }\n";
+    let source = "pub fn inner(x: u8) -> u8 {\n    x + 2\n}\n\nmacro_rules! call_inner {\n    ($x:expr) => {\n        inner($x)\n    };\n}\n\npub fn outer(x: u8) -> u8 {\n    call_inner!(x)\n}\n\npub fn smoke() -> u8 {\n    inner(1)\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn smoke_test() {\n        let _ = smoke();\n    }\n\n    #[test]\n    fn outer_triples() {\n        assert_eq!(outer(4), 6);\n    }\n}\n";
+    let actual = finding_for(source, diff, "x + 2")?;
+    let rows = actual["related_tests"].as_array().ok_or("missing rows")?;
+    let outer = rows
+        .iter()
+        .find(|r| r["name"] == "outer_triples")
+        .ok_or("missing outer_triples row")?;
+    assert_ne!(
+        outer["miss"], "no_call_path",
+        "a macro hop to the owner is not an unrelated test: {outer:?}"
     );
     Ok(())
 }
