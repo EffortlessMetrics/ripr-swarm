@@ -1006,10 +1006,10 @@ impl OwnerPinSyntax {
             merge_macro_site_rank(&mut rebinding, &mut may_rebind, rank);
         }
         for (root, names) in &retained.by_root {
-            if test_roots.is_none_or(|roots| roots.contains(root)) {
-                if let Some(rank) = names.get(name) {
-                    merge_macro_site_rank(&mut rebinding, &mut may_rebind, rank);
-                }
+            if test_roots.is_none_or(|roots| roots.contains(root))
+                && let Some(rank) = names.get(name)
+            {
+                merge_macro_site_rank(&mut rebinding, &mut may_rebind, rank);
             }
         }
         rebinding
