@@ -2540,15 +2540,21 @@ fn empty_gap_pages_keep_structured_outcomes_at_the_response_bound() -> Result<()
                 .pointer("/result/structuredContent/failure/recovery")
                 .and_then(Value::as_str)
                 .ok_or("empty-page refusal omitted recovery")?;
-            if !recovery.contains("ripr://snapshot/{snapshot_id}")
-                || !recovery.contains("ripr_get_gap")
+            // #9895 discrimination: this overflow is the echoed filter's
+            // fault — the same shell with an empty echo fits — so the
+            // recovery must name the shrinkable cause (narrow the filter
+            // and retry ripr_list_gaps), not the snapshot identity route,
+            // and the refusal itself must stay inside the wire bound.
+            if !recovery.contains("narrow the file/class/language filter")
+                || !recovery.contains("retry ripr_list_gaps")
+                || recovery.contains("ripr://snapshot/")
                 || serde_json::to_vec(&refused)
                     .map_err(|error| error.to_string())?
                     .len()
                     > RESPONSE_BOUND
             {
                 return Err(format!(
-                    "empty {field} refusal lost its bounded identity recovery"
+                    "empty {field} refusal must name the filter, not the identity route: {recovery}"
                 ));
             }
         }
@@ -3768,6 +3774,56 @@ fn resource_reads_match_tools_after_refresh() -> Result<(), String> {
         return Err(format!(
             "encoded repair-card resource id did not decode to the same document:\nencoded={card_encoded}\ntool={card_tool}"
         ));
+    }
+
+    // Trailing-slash tolerance (#9895): clients — especially LLMs
+    // hand-assembling links — not uncommonly append one slash to a resource
+    // URI. Every id route normalizes exactly one; the document must be
+    // identical to the slash-less read.
+    let snapshot_slash = read_resource_document(
+        &mut session,
+        "snapshot-resource-slash",
+        &format!("ripr://snapshot/{snapshot_id}/"),
+        REPLY_TIMEOUT,
+    )?;
+    if snapshot_slash != snapshot {
+        return Err(format!(
+            "one trailing slash must not change the snapshot document:\nslash={snapshot_slash}\nplain={snapshot}"
+        ));
+    }
+    let gap_slash = read_resource_document(
+        &mut session,
+        "gap-resource-slash",
+        &format!("ripr://gap/{canonical_id}/"),
+        REPLY_TIMEOUT,
+    )?;
+    if gap_slash != gap_tool {
+        return Err(format!(
+            "one trailing slash must not change the gap document:\nslash={gap_slash}\ntool={gap_tool}"
+        ));
+    }
+    let card_slash = read_resource_document(
+        &mut session,
+        "card-resource-slash",
+        &format!("ripr://repair-card/{canonical_id}/"),
+        REPLY_TIMEOUT,
+    )?;
+    if card_slash != card_tool {
+        return Err(format!(
+            "one trailing slash must not change the repair-card document:\nslash={card_slash}\ntool={card_tool}"
+        ));
+    }
+    // A second slash is not a normalization artifact: the read must fail
+    // closed instead of resolving to a near-miss id.
+    if read_resource_document(
+        &mut session,
+        "gap-resource-double-slash",
+        &format!("ripr://gap/{canonical_id}//"),
+        REPLY_TIMEOUT,
+    )
+    .is_ok()
+    {
+        return Err("two trailing slashes must not resolve".into());
     }
 
     // Attempt pair: prepare the B4 item, then read both routes.

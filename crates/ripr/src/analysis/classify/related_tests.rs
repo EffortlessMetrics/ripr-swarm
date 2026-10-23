@@ -257,6 +257,22 @@ impl RelatedTestCandidateIndex {
         .is_some_and(|relative| root_build_script_unmounted(index, &relative))
     }
 
+    /// #9871: the probe's file as the index keys it (root-relative), the same
+    /// resolution the related-test gate uses.
+    pub(in crate::analysis) fn probe_index_file(
+        &self,
+        probe: &Probe,
+        index: &RustIndex,
+    ) -> Option<std::path::PathBuf> {
+        probe_index_path(
+            &probe.location.file,
+            self.analysis_root.as_deref(),
+            None,
+            index,
+        )
+        .map(std::path::PathBuf::from)
+    }
+
     /// Record which tests the diff adds or changes, so they lead their
     /// confidence tier (#8387). Never admits a test or raises a confidence.
     pub(in crate::analysis) fn with_diff_touched(

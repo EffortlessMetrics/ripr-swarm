@@ -217,10 +217,14 @@ official SDK transport:
   route pins the snapshot identity,
   filters, and explicit limit, so
   a refresh between pages fails closed with `stale_snapshot` instead of
-  mixing snapshots. Only a listing that cannot fit even one page — for
-  example an omission disclosure alone over the ceiling — fails closed
-  with `result_too_large` naming `ripr://snapshot/{snapshot_id}` as the
-  identity route.
+  mixing snapshots. Only a listing that cannot fit even one page fails
+  closed with `result_too_large`: when the echoed filter value itself is
+  what pushes the shell past the bound — the same shell with an empty
+  filter echo fits — the refusal names the filter as the shrinkable bound,
+  because the snapshot identity route cannot fix a filter-driven overflow;
+  for every other non-pageable disclosure (for example an omission
+  disclosure alone over the ceiling) the refusal names
+  `ripr://snapshot/{snapshot_id}` as the identity route (#9895).
 - Every served file path renders relative to the analyzed workspace
   root, so a file under the root never appears as an absolute host path
   and the snapshot identity stays portable across checkouts (#5254
@@ -309,6 +313,22 @@ Recognized resource routes keep their existing missing/stale-identity
 errors rather than receiving this generic route list. Listing a template
 is not evidence that a resource with a particular identity exists.
 
+### Resource URI trailing-slash tolerance (#9895)
+
+Every id-bearing resource route — `ripr://snapshot/{snapshot_id}`,
+`ripr://gap/{canonical_id}`, `ripr://repair-attempt/{attempt_id}`,
+`ripr://receipt/{receipt_id}`, `ripr://repair-card/{canonical_id}`, and
+the well-known `ripr://workspace/status` — normalizes exactly one trailing
+slash before the id capture: `ripr://gap/{id}/` addresses the same item
+as `ripr://gap/{id}`, and the read returns the identical document. Clients
+— especially LLMs hand-assembling `ripr://` links — not uncommonly append
+one slash. A second trailing slash is not a normalization artifact and
+still misses: `ripr://gap/{id}//` fails closed instead of resolving to a
+near-miss id, as does a slash that would leave the id empty
+(`ripr://gap//`). The single-segment grammars (`snapshot`, `repair-attempt`,
+`receipt`) stay strict inside the id, and this tolerance never turns an
+unknown route into a recognized one.
+
 ## Required Evidence
 
 - `cargo test -p ripr --lib mcp::workspace` — session state machine,
@@ -347,9 +367,11 @@ is not evidence that a resource with a particular identity exists.
   `resource_reads_match_tools_after_refresh` pins gap tool/resource
   parsed-document equality plus the snapshot envelope
   (`ripr-mcp-snapshot-v1`, identity, typed outcome) after refresh
-  (#7145). Resource payloads are pretty-printed while tool payloads are
-  compact by design, so the control compares parsed documents, not
-  serialized bytes.
+  (#7145), and the #9895 trailing-slash tolerance: one appended slash on
+  the snapshot, gap, and repair-card URIs returns the identical document,
+  while a second slash fails closed. Resource payloads are pretty-printed
+  while tool payloads are compact by design, so the control compares
+  parsed documents, not serialized bytes.
 - `cargo test -p ripr --lib mcp::transport` — bounded framing, typed-shape
   recovery, and the #5267 control: repeated pre-initialize violations each
   receive a correlated `-32602` answer, the session then completes a normal
@@ -455,7 +477,11 @@ is not evidence that a resource with a particular identity exists.
   — real committed analysis with nonempty subjects before filtering, fitting
   empty pages, independently sized structured-envelope overflow below the
   raw-document ceiling, raw-document overflow, the `file` and `language` filters,
-  typed refusals bound to the current snapshot, and same-session recovery.
+  typed refusals bound to the current snapshot, echo-driven refusals naming
+  the filter rather than the snapshot identity route, and same-session recovery.
+- `crates/ripr/src/mcp/workspace.rs::tests::list_gaps_overflow_recovery_names_the_shrinkable_cause`
+  — filter-driven shell overflow names the filter; shell-driven overflow
+  keeps the snapshot identity route.
 - `crates/ripr/tests/mcp_stdio.rs::oversized_request_id_is_rejected_with_null_id_and_the_session_survives`
   — a request id whose serialized form exceeds 16384 bytes (including one
   that fits the input cap but not the output cap) is answered with a
