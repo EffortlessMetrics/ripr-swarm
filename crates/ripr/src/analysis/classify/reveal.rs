@@ -2872,7 +2872,7 @@ fn self_computed_cap(strength: OracleStrength, self_computed: bool) -> OracleStr
 /// follow-up): a guard reads its condition and a plain `assert!` its
 /// comparison, so an `assert_eq!` spelled in a message, comment or guard
 /// body cannot switch the reader.
-fn equality_operands(text: &str) -> Option<[String; 2]> {
+pub(in crate::analysis::classify) fn equality_operands(text: &str) -> Option<[String; 2]> {
     let reads_equality = crate::analysis::extract::err_return_guard_twin(text).is_some()
         || super::owner_pin::is_plain_macro(text, "assert");
     if !reads_equality && text.contains("assert_eq!") {
