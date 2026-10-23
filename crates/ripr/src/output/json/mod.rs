@@ -214,6 +214,35 @@ mod tests {
         assert!(rendered.contains("\"base\": \"origin/main\""));
     }
 
+    /// RIPR-SPEC-0051: the exhaustive text and JSON forms retain source details
+    /// that a compact Markdown summary may normalize onto one line.
+    #[test]
+    fn given_source_controls_when_rendered_then_json_round_trips_and_text_spells_controls()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = "`a``b``` | \\\"\n\t  next\r\n\u{0}\u{1b}\u{85}\u{202e}🦀";
+        let mut output = sample_output(None);
+        let finding = output
+            .findings
+            .first_mut()
+            .ok_or("fixture needs a finding")?;
+        finding.probe.expression = source.to_string();
+        finding.probe.before = None;
+        finding.probe.after = None;
+        let text = crate::output::human::render_finding(finding);
+        let changed = text
+            .split_once("\nChanged\n")
+            .and_then(|(_, tail)| tail.split_once("\nProbe\n"))
+            .map(|(changed, _)| changed)
+            .ok_or("full human report needs Changed and Probe sections")?;
+        assert_eq!(
+            changed,
+            "  expr:   `a``b``` | \\\"\n\t  next\\u{0d}\n\\u{00}\\u{1b}\\u{85}\\u{202e}🦀\n"
+        );
+        let json: serde_json::Value = serde_json::from_str(&render(&output))?;
+        assert_eq!(json["findings"][0]["probe"]["expression"], source);
+        Ok(())
+    }
+
     // --- Property-based tests (#2751) ---
     //
     // The JSON report is assembled by hand so that its field order stays

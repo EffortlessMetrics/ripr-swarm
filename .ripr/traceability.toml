@@ -3119,6 +3119,16 @@ id = "RIPR-SPEC-0025"
 name = "PR inline comment publisher"
 spec = "docs/specs/RIPR-SPEC-0025-pr-inline-comment-publisher.md"
 tests = [
+  "crates/ripr/src/output/pr_inline_comment_publish_plan.rs::context_transition_regression::given_html_then_indented_code_when_neutralized_then_code_does_not_become_live_prose",
+  "crates/ripr/src/output/pr_inline_comment_publish_plan.rs::context_transition_regression::given_blank_before_indented_code_when_neutralized_then_literal_code_is_preserved",
+  "crates/ripr/src/output/pr_inline_comment_publish_plan.rs::given_block_boundaries_when_comment_prose_is_rendered_then_html_stays_literal",
+  "crates/ripr/src/output/pr_inline_comment_publish_plan.rs::given_intentional_markdown_when_comment_prose_is_rendered_then_formatting_is_preserved",
+  "crates/ripr/src/output/pr_inline_comment_publish_plan.rs::given_link_destinations_when_comment_prose_is_rendered_then_link_values_are_preserved",
+  "crates/ripr/src/output/markdown.rs::given_link_destinations_when_prose_is_neutralized_then_values_are_preserved",
+  "crates/ripr/src/output/markdown.rs::given_link_labels_when_prose_is_neutralized_then_only_visible_text_is_escaped",
+  "crates/ripr/src/output/markdown.rs::given_reference_code_labels_when_neutralized_then_links_still_resolve",
+  "crates/ripr/src/output/markdown.rs::given_reference_label_prose_when_neutralized_then_matching_and_safety_hold",
+  "crates/ripr/src/output/markdown.rs::given_reference_images_when_code_labels_are_preserved_then_existing_images_still_resolve",
   "crates/ripr/src/output/pr_inline_comment_publish_plan.rs::inline_comment_publish_plan_matches_fixture_corpus",
   "crates/ripr/src/output/pr_inline_comment_publish_plan.rs::inline_comment_body_prefers_gap_repair_card",
   "crates/ripr/src/output/pr_inline_comment_publish_plan.rs::inline_comment_publish_plan_blocks_missing_dedupe_and_placement",
@@ -3161,6 +3171,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/output/pr_inline_comment_publish_plan.rs",
+  "crates/ripr/src/output/markdown.rs",
   "crates/ripr/src/output/mod.rs",
   "crates/ripr/src/cli/command.rs",
   "crates/ripr/src/cli/commands.rs",
@@ -5326,6 +5337,10 @@ id = "RIPR-SPEC-0051"
 name = "First successful PR UX"
 spec = "docs/specs/RIPR-SPEC-0051-first-successful-pr-ux.md"
 tests = [
+  "crates/ripr/src/output/ci_summary/tests.rs::given_ci_summary_why_markup_when_rendered_then_one_literal_span",
+  "crates/ripr/src/output/ci_summary/tests.rs::given_changed_behavior_delimiters_when_rendered_then_one_literal_code_span",
+  "crates/ripr/src/output/ci_summary/tests.rs::given_changed_behavior_fallback_when_rendered_then_delimiters_stay_literal",
+  "crates/ripr/src/output/json/mod.rs::tests::given_source_controls_when_rendered_then_json_round_trips_and_text_spells_controls",
   "crates/ripr/src/output/first_pr.rs::tests::preflight_recovery_commands_pair_shell_forms_for_apostrophe_root_and_refs",
   "crates/ripr/src/output/first_pr.rs::tests::preflight_diff_failure_carries_the_same_shell_recovery_steps",
   "crates/ripr/src/output/first_pr/preflight.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults",
@@ -5385,6 +5400,7 @@ fixtures = [
 code = [
   "crates/ripr/src/output/markdown.rs",
   "crates/ripr/src/output/first_pr.rs",
+  "crates/ripr/src/output/ci_summary.rs",
   "crates/ripr/src/output/first_pr/freshness.rs",
   "crates/ripr/src/output/first_pr/options.rs",
   "crates/ripr/src/output/first_pr/validation.rs",
