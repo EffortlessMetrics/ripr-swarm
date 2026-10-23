@@ -433,12 +433,18 @@ fn the_masker_reads_postfix_division_and_regex_literals() {
 fn masker_misreads_cannot_hide_a_module_write() -> Result<(), String> {
     for (label, tail) in [
         ("brace-division", "let a = {} / 2; module.exports = 0;\n"),
-        ("of-division", "var of = 4; var q = of / 2; module.exports = 0;\n"),
+        (
+            "of-division",
+            "var of = 4; var q = of / 2; module.exports = 0;\n",
+        ),
         ("arguments", "arguments[2].exports = 0;\n"),
         ("require-bracket", "require['main'].exports = 0;\n"),
         ("process-bracket", "process['mainModule'].exports = 0;\n"),
         ("require-alias", "const r = require;\nr.main.exports = 0;\n"),
-        ("module-cache", "require('module')._cache[__filename].exports = 0;\n"),
+        (
+            "module-cache",
+            "require('module')._cache[__filename].exports = 0;\n",
+        ),
     ] {
         for (form, head) in [("inline", ANONYMOUS), ("declared", DECLARED)] {
             refused(&format!("cjs-{form}-{label}"), &format!("{head}{tail}"))?;
@@ -461,7 +467,8 @@ fn member_and_named_imports_of_a_function_export_do_not_reach_it() -> Result<(),
 }
 
 #[test]
-fn rebound_test_bindings_through_grouped_or_global_targets_are_not_credited() -> Result<(), String> {
+fn rebound_test_bindings_through_grouped_or_global_targets_are_not_credited() -> Result<(), String>
+{
     for tail in ["(f) = (x) => x * 3;", "globalThis.f = (x) => x * 3;"] {
         let test_source = format!(
             "let f = require('../src/k.js');\n{tail}\n\ntest('triples', () => {{\n  expect(f(2)).toBe(6);\n}});\n"
@@ -470,9 +477,16 @@ fn rebound_test_bindings_through_grouped_or_global_targets_are_not_credited() ->
         assert_eq!(class, ExposureClass::NoStaticPath, "{tail}");
     }
     use crate::analysis::language::typescript::tests_extract::strict_identifier_writes;
-    for write in ["f! = g;", "(f as any) = g;", "(f) = g;", "globalThis.f = g;"] {
+    for write in [
+        "f! = g;",
+        "(f as any) = g;",
+        "(f) = g;",
+        "globalThis.f = g;",
+    ] {
         assert!(
-            strict_identifier_writes(write).iter().any(|(name, _)| name == "f"),
+            strict_identifier_writes(write)
+                .iter()
+                .any(|(name, _)| name == "f"),
             "{write}"
         );
     }
