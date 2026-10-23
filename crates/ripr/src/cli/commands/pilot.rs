@@ -1525,6 +1525,8 @@ mod tests {
         use crate::testing::unwritable_output::OutputDirFixture;
 
         let env = OutputDirFixture::unwritable("pilot-ro", "pilot")?;
+        std::fs::write(env.root.join("Cargo.toml"), "[package]\nname = \"x\"\n")
+            .map_err(|error| error.to_string())?;
         if crate::testing::access_denial::skip_unless_denied(
             "unwritable_out_dir_names_out_not_out_dir",
             env.denies_creation()?,
@@ -1789,6 +1791,8 @@ mod tests {
         use crate::testing::unwritable_output::OutputDirFixture;
 
         let env = OutputDirFixture::occupying_file("pilot-file", "pilot")?;
+        std::fs::write(env.root.join("Cargo.toml"), "[package]\nname = \"x\"\n")
+            .map_err(|error| error.to_string())?;
         let root = OutputDirFixture::path_arg(&env.root)?;
         let out = OutputDirFixture::path_arg(&env.target)?;
         let error = match pilot(&args(&["--root", root, "--out", out])) {
