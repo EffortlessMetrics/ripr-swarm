@@ -395,13 +395,13 @@ fn given_a_nested_f_string_in_a_field_then_only_its_live_fields_are_visible() {
     }
     for body in [
         // Text, spec text, `{{` and plain nested literals stay hidden.
-        "assert f\"\"\"o:\n{\nf'''inner:\nlive(1)\n'''\n}\n\"\"\" == x\n",
-        "assert f\"\"\"o:\n{\nf'''inner:\n{{\nlive(1)\n}}\n'''\n}\n\"\"\" == x\n",
-        "assert f\"\"\"o:\n{\nf'''inner:\n{x:\nlive(1)\n}\n'''\n}\n\"\"\" == x\n",
-        "assert f\"\"\"o:\n{\n'''inner:\n{\nlive(1)\n}\n'''\n}\n\"\"\" == x\n",
-        "assert f\"\"\"o:\n{\nb'''inner:\n{\nlive(1)\n}\n'''\n}\n\"\"\" == x\n",
+        "assert f\"\"\"out:\n{\nf'''inner:\nlive(1)\n'''\n}\n\"\"\" == x\n",
+        "assert f\"\"\"out:\n{\nf'''inner:\n{{\nlive(1)\n}}\n'''\n}\n\"\"\" == x\n",
+        "assert f\"\"\"out:\n{\nf'''inner:\n{x:\nlive(1)\n}\n'''\n}\n\"\"\" == x\n",
+        "assert f\"\"\"out:\n{\n'''inner:\n{\nlive(1)\n}\n'''\n}\n\"\"\" == x\n",
+        "assert f\"\"\"out:\n{\nb'''inner:\n{\nlive(1)\n}\n'''\n}\n\"\"\" == x\n",
         // A comment inside the nested field.
-        "assert f\"\"\"o:\n{\nf'''i:\n{x # (\n}\nlive(1)\n}}\n'''\n}\n\"\"\" == x\n",
+        "assert f\"\"\"out:\n{\nf'''in:\n{x # (\n}\nlive(1)\n}}\n'''\n}\n\"\"\" == x\n",
     ] {
         assert!(!related_tests::contains_call_name(body, "live"), "{body:?}");
     }
