@@ -21,7 +21,7 @@ Start here:
   Canonical gap: gap:python:src/validation.py:require_positive:exception_path:error_path:valueerror_positive_required
   Changed behavior: raise ValueError("positive required")
   Missing discriminator (1 of 2): Related Python test reaches `require_positive` but the strongest extracted oracle is `broad_error`; add or strengthen a focused assertion for the exact exception type/message
-  Related test: tests/test_validation.py:6 test_rejects_zero_value
+  Related test: tests/test_validation.py:6 test_rejects_zero_value (assertion too weak to tell the old behavior from the new)
   Suggested test file: tests/test_validation.py
   Suggested test: test_rejects_zero_value
   Test node: tests/test_validation.py::test_rejects_zero_value

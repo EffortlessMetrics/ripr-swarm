@@ -1,0 +1,44 @@
+{
+  "case_id": "py-idioms-parametrize-middle-boundary",
+  "subject_id": "authored-py-pytest-idioms",
+  "diff": "cases/py-idioms-parametrize-middle-boundary.diff",
+  "anchor": {
+    "file": "idioms/grading.py",
+    "line": 4
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "pytest_parametrize_ids_boundary_unpinned",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, Hypothesis 6.168.3, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "if score >= 81:",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: a score of 80 grades C"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "No parametrized score sits at 80 or 81, so moving the B cutoff by one changes no tested input.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
