@@ -41,9 +41,10 @@
   },
   "reasoning": "The test calls gate(10) with `let _ =` and asserts only gate(100), so the inverted comparison fails and moving the edge to `>` survives. Spec cells: RIPR-SPEC-0186 example 3.",
   "labeling_observation": {
-    "ripr_commit": "2939c0d6",
+    "ripr_commit": "93eb4b2d75e02fce559cd0e55d2b04f4172a3ce7",
     "full_checkout_verdict": "gap",
     "full_checkout_classifications": [
+      "exposed",
       "weakly_exposed"
     ],
     "excerpt_parity": "matched"

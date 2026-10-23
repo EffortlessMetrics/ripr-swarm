@@ -49,10 +49,11 @@
   },
   "reasoning": "order_discount(10) is pinned to 5 and order_discount(9) to 0 in one test, so every listed mutant of the private predicate fails. Spec cells: RIPR-SPEC-0186 example 6.",
   "labeling_observation": {
-    "ripr_commit": "2939c0d6",
-    "full_checkout_verdict": "credited",
+    "ripr_commit": "93eb4b2d75e02fce559cd0e55d2b04f4172a3ce7",
+    "full_checkout_verdict": "gap",
     "full_checkout_classifications": [
-      "exposed"
+      "exposed",
+      "weakly_exposed"
     ],
     "excerpt_parity": "matched"
   },
