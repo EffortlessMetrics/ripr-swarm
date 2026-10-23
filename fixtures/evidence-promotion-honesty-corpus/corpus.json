@@ -10654,6 +10654,20 @@
       ]
     },
     {
+      "id": "rust_method_entry_private_method_pin",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/helper_chain_method_entry",
+      "vector": "public_entry_exact_assertion_pins_private_method_return_value_through_method_hops",
+      "control": "must_stay_exposed",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
+      ]
+    },
+    {
       "id": "rust_committed_golden_expected_file",
       "language": "rust",
       "tier": "pure",
@@ -11170,6 +11184,60 @@
         },
         {
           "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "rust_radix_literal_off_boundary_input",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/radix_literal_boundary_off",
+      "vector": "radix_prefixed_literal_input_is_not_read_as_zero_so_off_boundary_input_cannot_promote",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_radix_literal_matching_boundary_input",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/radix_literal_boundary_match",
+      "vector": "radix_prefixed_literal_input_spelled_as_the_boundary_stays_exposed",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "exposed"
         }
       ]
     }

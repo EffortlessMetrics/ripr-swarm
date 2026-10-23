@@ -14807,6 +14807,9 @@ fn doctor_missing_root_recommends_recovery_and_outside_git_recommends_runnable_c
         || !stdout.contains("- Safe next action: fix the selected root first (see below); no check command can run until it exists")
         || stdout.contains("Recommended first command: ripr check --root")
         || stderr.contains("working-tree change probe failed")
+        || stdout.contains("✓ Cache:")
+        || stdout.contains("✓ Workspace:")
+        || !stdout.contains("- Cache check skipped: the root directory does not exist")
     {
         return Err(format!(
             "a missing root must not blame the tools\nstdout:\n{stdout}\nstderr:\n{stderr}"

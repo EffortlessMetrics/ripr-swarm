@@ -377,6 +377,24 @@ pub(crate) fn state_establishes_capability(state: SupportState) -> bool {
     )
 }
 
+/// Whether any registered cell, whatever its framework (`any`, `pytest`,
+/// `unittest`, ...), establishes `family` for `language` in `mode`. A
+/// combination with no registered cell is `not_proven` and never implied by a
+/// neighboring mode or language. Framework-agnostic on purpose: callers that
+/// hold only a `Finding` know the language and scope, not the framework.
+pub(crate) fn family_established_for_any_framework(
+    language: LanguageId,
+    mode: AnalysisMode,
+    family: CapabilityFamily,
+) -> bool {
+    CAPABILITY_CELLS.iter().any(|cell| {
+        cell.language == language
+            && cell.mode == mode
+            && cell.family == family
+            && state_establishes_capability(cell.state)
+    })
+}
+
 /// Cells for one language, in registry order.
 #[cfg(test)]
 pub(crate) fn cells_for(language: LanguageId) -> impl Iterator<Item = &'static CapabilityCell> {
@@ -571,6 +589,24 @@ mod tests {
         assert_eq!(ts.len(), js.len());
         assert!(ts.iter().all(|id| id.starts_with("typescript/")));
         assert!(js.iter().all(|id| id.starts_with("javascript/")));
+    }
+
+    #[test]
+    fn python_repo_repair_routing_is_not_established_but_diff_is() {
+        assert!(family_established_for_any_framework(
+            LanguageId::Python,
+            Diff,
+            RepairRouting
+        ));
+        assert!(!family_established_for_any_framework(
+            LanguageId::Python,
+            Repo,
+            RepairRouting
+        ));
+        assert!(finding_is_repo_scoped(&[
+            REPO_SCOPE_EVIDENCE_LINE.to_string()
+        ]));
+        assert!(!finding_is_repo_scoped(&["owner: f".to_string()]));
     }
 
     #[test]
