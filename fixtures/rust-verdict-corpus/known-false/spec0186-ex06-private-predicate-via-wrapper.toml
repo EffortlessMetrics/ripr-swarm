@@ -1,0 +1,3 @@
+case = "spec0186-ex06-private-predicate-via-wrapper"
+issue = 9849
+reason = "The return_value twin of a private predicate pinned only through a public wrapper stays observation_unverified, so the row reads gap (#9849)."
