@@ -7646,7 +7646,7 @@ fn has_non_bitwise_pipe(masked: &str) -> bool {
 
 /// `Option`/`Result`/`bool` methods that evaluate or apply an argument only
 /// on some inputs.
-const CONDITIONAL_COMBINATORS: &[&str] = &[
+pub(super) const CONDITIONAL_COMBINATORS: &[&str] = &[
     "and",
     "and_then",
     "filter",
