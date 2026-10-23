@@ -128,10 +128,10 @@ impl ArithmeticPin {
                 }
                 match item {
                     ast::Item::MacroCall(_) => return None,
-                    ast::Item::Use(import) => {
-                        if import_binds_protected(&import.use_tree()?, None, &protected, 0)? {
-                            return None;
-                        }
+                    ast::Item::Use(import)
+                        if import_binds_protected(&import.use_tree()?, None, &protected, 0)? =>
+                    {
+                        return None;
                     }
                     ast::Item::ExternCrate(external) => {
                         let name = if let Some(rename) = external.rename() {
@@ -350,8 +350,14 @@ impl Number {
         match (self, other) {
             (Self::Signed(a), Self::Signed(b)) => a == b,
             (Self::Unsigned(a), Self::Unsigned(b)) => a == b,
-            (Self::Float32(a), Self::Float32(b)) => f32::from_bits(a) == f32::from_bits(b),
-            (Self::Float64(a), Self::Float64(b)) => f64::from_bits(a) == f64::from_bits(b),
+            // Exact Rust equality, including signed zero. A tolerance could
+            // conceal a distinct returned value; non-finite values refuse upstream.
+            (Self::Float32(a), Self::Float32(b)) => {
+                f32::from_bits(a).partial_cmp(&f32::from_bits(b)) == Some(std::cmp::Ordering::Equal)
+            }
+            (Self::Float64(a), Self::Float64(b)) => {
+                f64::from_bits(a).partial_cmp(&f64::from_bits(b)) == Some(std::cmp::Ordering::Equal)
+            }
             _ => false,
         }
     }

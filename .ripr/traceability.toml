@@ -16530,6 +16530,15 @@ id = "RIPR-SPEC-0265"
 name = "Rust closures in iterator adaptors"
 spec = "docs/specs/RIPR-SPEC-0265-rust-closures-in-iterator-adaptors.md"
 tests = [
+  "crates/ripr/tests/returned_closure_pin.rs::returned_closure_attribution::direct_result_observed",
+  "crates/ripr/tests/returned_closure_pin.rs::returned_closure_attribution::qualified_result_observed_despite_rival_import",
+  "crates/ripr/tests/returned_closure_pin.rs::returned_closure_attribution::applied_result_overwritten",
+  "crates/ripr/tests/returned_closure_pin.rs::returned_closure_attribution::applied_result_shadowed",
+  "crates/ripr/tests/returned_closure_pin.rs::returned_closure_attribution::returned_closure_replaced_before_invocation",
+  "crates/ripr/tests/returned_closure_pin.rs::returned_closure_attribution::qualified_rival_assertion_after_discarded_owner_result",
+  "crates/ripr/tests/returned_closure_pin.rs::returned_closure_attribution::imported_rival_assertion_after_discarded_owner_result",
+  "crates/ripr/tests/returned_closure_pin.rs::returned_closure_attribution::exact_assertion_inside_uninvoked_closure",
+
   "crates/ripr/tests/returned_closure_pin.rs::token_coincidence_cannot_replace_a_returned_closure_pin",
   "crates/ripr/tests/returned_closure_pin.rs::effective_body_values_must_discriminate_every_arithmetic_node",
   "crates/ripr/tests/returned_closure_pin.rs::typed_discriminating_arithmetic_and_literal_captures_keep_credit",

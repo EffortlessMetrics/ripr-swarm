@@ -2,10 +2,10 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/returned_closure_arithmetic_masking/input
 
-Summary: 6 probes (0 exposed, 1 weak, 0 unrevealed, 0 no path, 5 unknown); 6 of 6 findings unsuppressed
+Summary: 11 probes (0 exposed, 5 weak, 0 unrevealed, 0 no path, 6 unknown); 11 of 11 findings unsuppressed
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 1 changed file(s), 12 changed line(s), 6 candidate line(s), 6 probe(s), 6 finding(s)
+  Counts: 1 changed file(s), 22 changed line(s), 11 candidate line(s), 11 probe(s), 11 finding(s)
 
 Start here:
   State: a test gap to inspect or repair
@@ -16,7 +16,7 @@ Start here:
   Canonical gap: gap:rust:src/lib.rs:token_unused:return_value:return_value:move_argument_captured*argument
   Changed behavior: move |argument| captured * argument
   Missing discriminator: No strong discriminator was detected
-  Related test (1 of 6 matched rows): src/lib.rs:35 token_unused_pin (ripr could not confirm that this assertion observes the changed behavior)
+  Related test (1 of 11 matched rows): src/lib.rs:58 token_unused_pin (ripr could not confirm that this assertion observes the changed behavior)
   Next step: The related test `token_unused_pin` already asserts an exact value; the gap is not the
     assertion shape. Add a test input where the changed branch behaves differently and keep the
     exact assertion
@@ -32,11 +32,16 @@ Next: drill into the top finding:
 No test stub here: the owner returns `impl Trait`, which cannot be compared
 
 Hidden:
-  5 lower-priority finding(s) omitted from default human output.
+  10 lower-priority finding(s) omitted from default human output.
     - ./src/lib.rs:4 (unknown)
     - ./src/lib.rs:7 (unknown)
     - ./src/lib.rs:10 (unknown)
     - ./src/lib.rs:13 (unknown)
     - ./src/lib.rs:16 (unknown)
+    - ./src/lib.rs:22 (weak)
+    - ./src/lib.rs:25 (weak)
+    - ./src/lib.rs:28 (weak)
+    - ./src/lib.rs:31 (weak)
+    - ./src/lib.rs:34 (unknown)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

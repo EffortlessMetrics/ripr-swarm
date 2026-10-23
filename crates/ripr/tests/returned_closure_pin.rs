@@ -639,3 +639,177 @@ fn token_coincidence_cannot_replace_a_returned_closure_pin() -> Result<(), Strin
     }
     Ok(())
 }
+
+// Attribution controls for RIPR-SPEC-0265 rule 5. Reach and a strong oracle
+// must observe the changed closure result, rather than a replaced value or
+// a same-name rival. Native +/- fixture pairs are retained separately.
+mod returned_closure_attribution {
+    use super::*;
+
+    fn attribution_finding(body: &str) -> Result<Finding, String> {
+        let lib = format!(
+            r#"pub fn make_adder(captured: i32) -> impl Fn(i32) -> i32 {{
+    move |argument| captured + argument
+}}
+
+mod rival {{
+    pub fn make_adder(captured: i32) -> impl Fn(i32) -> i32 {{
+        move |argument| captured + argument
+    }}
+}}
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+    #[test]
+    fn pinned() {{
+        {body}
+    }}
+}}
+"#
+        );
+        finding(
+            &lib,
+            2,
+            "    move |argument| captured - argument",
+            "    move |argument| captured + argument",
+            ProbeFamily::ReturnValue,
+        )
+    }
+
+    #[test]
+    fn direct_result_observed() -> Result<(), String> {
+        let finding = attribution_finding(r#"assert_eq!(make_adder(2)(3), 5);"#)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{:?} {:?}",
+            finding.class,
+            limit(&finding)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn qualified_result_observed_despite_rival_import() -> Result<(), String> {
+        let finding = attribution_finding(
+            r#"use crate::rival::make_adder;
+let _rival = make_adder(2);
+assert_eq!(crate::make_adder(2)(3), 5);"#,
+        )?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{:?} {:?}",
+            finding.class,
+            limit(&finding)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn applied_result_overwritten() -> Result<(), String> {
+        let finding = attribution_finding(
+            r#"let mut captured = make_adder(2)(3);
+std::hint::black_box(captured);
+captured = 5;
+assert_eq!(captured, 5);"#,
+        )?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{:?} {:?}",
+            finding.class,
+            limit(&finding)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn applied_result_shadowed() -> Result<(), String> {
+        let finding = attribution_finding(
+            r#"let captured = make_adder(2)(3);
+std::hint::black_box(captured);
+let captured = 5;
+assert_eq!(captured, 5);"#,
+        )?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{:?} {:?}",
+            finding.class,
+            limit(&finding)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn returned_closure_replaced_before_invocation() -> Result<(), String> {
+        let finding = attribution_finding(
+            r#"let mut captured: Box<dyn Fn(i32) -> i32> = Box::new(make_adder(2));
+std::hint::black_box(&captured);
+captured = Box::new(|argument| argument + 2);
+assert_eq!(captured(3), 5);"#,
+        )?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{:?} {:?}",
+            finding.class,
+            limit(&finding)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn qualified_rival_assertion_after_discarded_owner_result() -> Result<(), String> {
+        let finding = attribution_finding(
+            r#"let _ignored = crate::make_adder(2)(3);
+let captured = 5;
+assert_eq!(crate::rival::make_adder(2)(3), captured);"#,
+        )?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{:?} {:?}",
+            finding.class,
+            limit(&finding)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn imported_rival_assertion_after_discarded_owner_result() -> Result<(), String> {
+        let finding = attribution_finding(
+            r#"use crate::rival::make_adder;
+let _ignored = crate::make_adder(2)(3);
+let captured = 5;
+assert_eq!(make_adder(2)(3), captured);"#,
+        )?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{:?} {:?}",
+            finding.class,
+            limit(&finding)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn exact_assertion_inside_uninvoked_closure() -> Result<(), String> {
+        let finding = attribution_finding(
+            r#"let _deferred = || assert_eq!(make_adder(2)(3), 5);
+let captured = 5;
+assert_eq!(captured, 5);"#,
+        )?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{:?} {:?}",
+            finding.class,
+            limit(&finding)
+        );
+        Ok(())
+    }
+}
