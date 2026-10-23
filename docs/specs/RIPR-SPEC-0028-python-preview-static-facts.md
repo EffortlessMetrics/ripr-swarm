@@ -324,12 +324,17 @@ call on a line of a multiline field is visible, while the string's own text, a
 different-delimiter triple-quoted literal, newlines and braces included), the
 literal format-spec text after a field's top-level `:` (only a nested `{...}`
 inside the spec is code again), and a field not closed before the string ends
-stay hidden (#8787). A colon that may or may not be the spec colon hides.
-Known limits, all hide-only (a real call is missed, never invented): a
-replacement field on the same line as the opening quote or on any line of a
-single-line f-string is hidden by the line-prefix quote check, a triple-quoted
-f-string with nested same-type quotes (Python 3.12) mis-lexes, and a `#`
-comment inside a Python 3.12 multiline field is not skipped (#9230).
+stay hidden (#8787). A nested f-string literal (up to four levels) in a field has
+its own replacement fields scanned by the same rules, so only real field code is
+visible; its text, a plain or `b` nested literal, a `#` comment in field
+expression text (Python 3.12), and the string's own delimiter nested in a field
+(3.12) make the scanner give up and hide the rest of the text. A colon that may
+or may not be the spec colon hides. Known limits, all misses (a real call stays
+hidden, none found to invent a call): a replacement field on the same line as
+the opening quote or on any line of a single-line f-string is hidden by the
+line-prefix quote check, the rest of a text after a field the scanner gives up
+on is hidden even when a real call follows, and 3.12 nested same-type quotes
+and `#` comments are therefore treated conservatively rather than parsed (#9230).
 
 A pytest test that names a module-level `@pytest.fixture` function (in its own
 module or a `conftest.py` up its directory chain, nearest wins) as a parameter

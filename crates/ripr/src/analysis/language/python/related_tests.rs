@@ -2722,10 +2722,13 @@ fn inside_triple_quoted_string(text: &str, idx: usize) -> bool {
                 cursor += delimiter.len();
             } else if formatted && rest.starts_with("{{") {
                 cursor += 2;
-            } else if let Some(field) = (formatted && rest.starts_with('{'))
-                .then(|| fstring_field_scan(rest, delimiter, idx - cursor))
-                .flatten()
-            {
+            } else if formatted && rest.starts_with('{') {
+                // A field the scanner cannot prove closed (unterminated, a
+                // comment, or the string's own delimiter nested inside it)
+                // hides the rest of the text: a miss, never an invented call.
+                let Some(field) = fstring_field_scan(rest, delimiter, idx - cursor, 0) else {
+                    return true;
+                };
                 if field.target_hidden {
                     return true;
                 }
@@ -2783,6 +2786,10 @@ struct FStringField {
     target_hidden: bool,
 }
 
+/// Nesting bound for f-string literals inside replacement fields; deeper
+/// nesting hides the rest of the text.
+const MAX_NESTED_FSTRING_DEPTH: usize = 4;
+
 /// Where the scanner is inside one replacement field.
 enum FieldMode {
     /// Expression text; the count is the open `(`, `[` and dict/set `{` depth.
@@ -2797,11 +2804,20 @@ enum FieldMode {
 /// (hidden) except for nested `{...}` replacement fields, which are code again.
 /// A colon that is unsure to be the spec colon hides (a miss, never a false
 /// call). `None` when the field is not closed before the string's own closing
-/// delimiter (or a nested triple-quoted literal is unterminated), so the `{`
-/// stays literal text and the string keeps hiding its content. `target` is a
+/// delimiter, the delimiter is nested in the field, a nested triple-quoted
+/// literal is unterminated, or a `#` comment appears in expression text; the
+/// caller then hides the rest of the text. `target` is a
 /// byte offset into `rest`; the result records whether a nested string literal
 /// or spec text covers it.
-fn fstring_field_scan(rest: &str, delimiter: &str, target: usize) -> Option<FStringField> {
+fn fstring_field_scan(
+    rest: &str,
+    delimiter: &str,
+    target: usize,
+    depth: usize,
+) -> Option<FStringField> {
+    if depth > MAX_NESTED_FSTRING_DEPTH {
+        return None;
+    }
     let bytes = rest.as_bytes();
     let mut stack: Vec<FieldMode> = Vec::new();
     let mut index = 0;
@@ -2869,6 +2885,9 @@ fn fstring_field_scan(rest: &str, delimiter: &str, target: usize) -> Option<FStr
                         *nest -= 1;
                     }
                 }
+                // A comment (Python 3.12) can hold brackets and braces that
+                // unbalance the field: give up and hide.
+                b'#' => return None,
                 b':' if *nest == 0 => {
                     *mode = FieldMode::Spec;
                     index += 1;
@@ -2882,6 +2901,25 @@ fn fstring_field_scan(rest: &str, delimiter: &str, target: usize) -> Option<FStr
                         .into_iter()
                         .find(|triple| literal.starts_with(triple))
                     {
+                        Some(triple) if string_prefix_is_f_string(rest, index) => {
+                            // An f-string nested in a field: its own fields are
+                            // code, scanned by the same rules.
+                            let nested = nested_fstring_scan(
+                                literal,
+                                triple,
+                                target.checked_sub(index).unwrap_or(usize::MAX),
+                                depth + 1,
+                            )?;
+                            if nested.target_hidden {
+                                return hidden(index + nested.len);
+                            }
+                            if target >= index && target < index + nested.len {
+                                // A live field inside the nested literal.
+                                index += nested.len;
+                                continue;
+                            }
+                            nested.len
+                        }
                         Some(triple) => triple_literal_len(literal, triple)?,
                         None => single_line_string_len(literal),
                     };
@@ -2892,6 +2930,70 @@ fn fstring_field_scan(rest: &str, delimiter: &str, target: usize) -> Option<FStr
                 }
                 _ => index += 1,
             },
+        }
+    }
+    None
+}
+
+/// Extent of a nested triple-quoted f-string literal.
+struct NestedFString {
+    /// Byte length through the closing delimiter.
+    len: usize,
+    /// The scanned offset sits in the literal's own text or a hidden part of a
+    /// field; otherwise it is in a live field or outside the literal.
+    target_hidden: bool,
+}
+
+/// Scan the f-string literal at the start of `rest` (opened by `triple`):
+/// literal text and `{{` are hidden, replacement fields use
+/// `fstring_field_scan`. `None` when unterminated or a field is unsafe.
+fn nested_fstring_scan(
+    rest: &str,
+    triple: &str,
+    target: usize,
+    depth: usize,
+) -> Option<NestedFString> {
+    let hidden = |len: usize| {
+        Some(NestedFString {
+            len,
+            target_hidden: true,
+        })
+    };
+    let bytes = rest.as_bytes();
+    if target < triple.len() {
+        return hidden(triple.len());
+    }
+    let mut index = triple.len();
+    while index < bytes.len() {
+        let tail = &bytes[index..];
+        if bytes[index] == b'\\' {
+            if target >= index && target < index + 2 {
+                return hidden(index + 2);
+            }
+            index += 2;
+        } else if tail.starts_with(triple.as_bytes()) {
+            let len = index + triple.len();
+            return Some(NestedFString {
+                len,
+                target_hidden: target >= index && target < len,
+            });
+        } else if tail.starts_with(b"{{") {
+            if target == index || target == index + 1 {
+                return hidden(index + 2);
+            }
+            index += 2;
+        } else if bytes[index] == b'{' {
+            let field =
+                fstring_field_scan(&rest[index..], triple, target.wrapping_sub(index), depth)?;
+            if field.target_hidden {
+                return hidden(index + field.len);
+            }
+            index += field.len;
+        } else {
+            if index == target {
+                return hidden(index + 1);
+            }
+            index += 1;
         }
     }
     None

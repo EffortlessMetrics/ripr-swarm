@@ -367,6 +367,47 @@ fn given_a_nested_triple_quoted_literal_in_a_field_then_its_text_stays_hidden() 
 }
 
 #[test]
+fn given_a_comment_or_same_delimiter_literal_in_a_field_then_the_rest_stays_hidden() {
+    for body in [
+        // A bracket in a 3.12 field comment must not unbalance the field.
+        "assert f\"\"\"\n{x  # (\n}\nhelper(1)\n}}\n\"\"\" == y\n",
+        "assert f\"\"\"\n{x  # {\n}\nhelper(1)\n}}\n\"\"\" == y\n",
+        // The string's own delimiter nested in a field (3.12).
+        "x = f\"\"\"{\n  \"\"\"\n  helper(0)\n  \"\"\"\n}\"\"\"\n",
+        "x = f'''{\n  '''\n  helper(0)\n  '''\n}'''\n",
+        "x = f\"\"\"{x:\n  \"\"\"\n  helper(0)\n  \"\"\"\n}\"\"\"\n",
+    ] {
+        assert!(!sees_call(body), "{body:?}");
+    }
+    // A `#` in format-spec text is literal and does not hide a later call.
+    assert!(sees_call("x = f\"\"\"{x:#x}\"\"\"\nhelper(1)\n"));
+}
+
+#[test]
+fn given_a_nested_f_string_in_a_field_then_only_its_live_fields_are_visible() {
+    for body in [
+        "assert f\"\"\"outer:\n{\nf'''inner:\n{\nlive(1)\n}\n'''\n}\n\"\"\" == x\n",
+        "assert f'''outer:\n{\nf\"\"\"inner:\n{\nlive(1)\n}\n\"\"\"\n}\n''' == x\n",
+        "assert f\"\"\"outer:\r\n{\r\nrf'''inner:\r\n{\r\nlive(1)\r\n}\r\n'''\r\n}\r\n\"\"\" == x\r\n",
+        "assert f\"\"\"outer:\n{\nFR'''inner:\n{x:{\nlive(1)\n}}\n'''\n}\n\"\"\" == x\n",
+    ] {
+        assert!(related_tests::contains_call_name(body, "live"), "{body:?}");
+    }
+    for body in [
+        // Text, spec text, `{{` and plain nested literals stay hidden.
+        "assert f\"\"\"o:\n{\nf'''inner:\nlive(1)\n'''\n}\n\"\"\" == x\n",
+        "assert f\"\"\"o:\n{\nf'''inner:\n{{\nlive(1)\n}}\n'''\n}\n\"\"\" == x\n",
+        "assert f\"\"\"o:\n{\nf'''inner:\n{x:\nlive(1)\n}\n'''\n}\n\"\"\" == x\n",
+        "assert f\"\"\"o:\n{\n'''inner:\n{\nlive(1)\n}\n'''\n}\n\"\"\" == x\n",
+        "assert f\"\"\"o:\n{\nb'''inner:\n{\nlive(1)\n}\n'''\n}\n\"\"\" == x\n",
+        // A comment inside the nested field.
+        "assert f\"\"\"o:\n{\nf'''i:\n{x # (\n}\nlive(1)\n}}\n'''\n}\n\"\"\" == x\n",
+    ] {
+        assert!(!related_tests::contains_call_name(body, "live"), "{body:?}");
+    }
+}
+
+#[test]
 fn given_real_field_expressions_then_calls_in_them_stay_visible() {
     for body in [
         "assert f\"\"\"v\n{\n    helper(1)\n}\"\"\" == x\n",
@@ -443,7 +484,11 @@ fn given_literal_spec_or_nested_literal_text_then_the_classifier_credits_no_call
         "    assert f\"\"\"v\n{\n    '''\n    helper(0)\n    '''\n}\"\"\" == 'v'\n",
         "    assert f'''v\n{\n    \"\"\"\n    helper(0)\n    \"\"\"\n}''' == 'v'\n",
         "    assert f\"\"\"v\n{ len('''\n  { helper(0) }\n  }''') }\"\"\" == 'v'\n",
+        "    assert f\"\"\"\n{x  # (\n}\nhelper(0)\n}}\n\"\"\" == 'v'\n",
+        "    x = f\"\"\"{\n  \"\"\"\n  helper(0)\n  \"\"\"\n}\"\"\"\n    assert x == 'v'\n",
+        "    x = f\'\'\'{\n  \'\'\'\n  helper(0)\n  \'\'\'\n}\'\'\'\n    assert x == 'v'\n",
     ] {
+        let body = body.replace('\n', "\n    ");
         let tests = format!("from src.version import helper\n\n\ndef test_x():\n{body}");
         let finding = direct_call_finding(&tests)?;
         assert!(!call_credit(&finding), "{body:?}: {finding:?}");
@@ -462,6 +507,7 @@ fn given_real_field_calls_then_the_classifier_credits_a_syntactic_call() -> Resu
         "    assert f\"\"\"v\n{ (lambda:\n    helper(0))() }\"\"\" == 'v'\n",
         "    assert f\"\"\"v\n{ \"}\"\n    + str(helper(0)) }\"\"\" == 'v'\n",
     ] {
+        let body = body.replace('\n', "\n    ");
         let tests = format!("from src.version import helper\n\n\ndef test_x():\n{body}");
         let finding = direct_call_finding(&tests)?;
         assert!(call_credit(&finding), "{body:?}: {finding:?}");
