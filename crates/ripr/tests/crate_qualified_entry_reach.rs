@@ -352,7 +352,9 @@ fn an_entry_in_a_binary_crate_does_not_link() -> Result<(), String> {
         ],
     };
     let baseline = format!("use qual_reach::order_discount;\n{}", test_file(BARE));
-    assert_eq!(binary(baseline).relation()?.as_deref(), LINKED);
+    // A binary-only package has no library to import from: refused (the
+    // imported route proves the library's declaration chain).
+    assert_eq!(binary(baseline).relation()?, None);
     assert_eq!(
         binary(test_file(&qualified("qual_reach"))).relation()?,
         None
@@ -1145,6 +1147,77 @@ fn the_library_must_bind_the_imported_module_path_to_the_entrys_file() -> Result
                 assert_ne!(classification, "exposed", "{lib}");
             }
         }
+    }
+    Ok(())
+}
+
+/// The declaration chain from the library root must reach the indexed
+/// definition's file: a `#[path]` that compiles `src/cmp.rs` under another
+/// name while an inline `cmp` re-exports std, a matching-name direct remap and
+/// a wrong-ancestry orphan all refuse; the genuine `pub mod cmp;` links.
+#[test]
+fn the_declaration_chain_must_reach_the_definitions_file() -> Result<(), String> {
+    let tests = format!("use qual_reach::cmp::order_discount;\n{}", test_file(BARE));
+    let package = |lib: &str| Package {
+        manifest: manifest("qual_reach", None),
+        diff_path: "src/cmp.rs",
+        nested: false,
+        files: vec![
+            ("src/lib.rs", lib.to_string()),
+            ("src/cmp.rs", LIB.to_string()),
+            ("tests/api.rs", tests.clone()),
+        ],
+    };
+    let genuine = package("pub mod cmp;\n");
+    assert_eq!(
+        genuine.relation()?.as_deref(),
+        LINKED,
+        "genuine chain links"
+    );
+    assert_eq!(
+        genuine.classification()?,
+        "exposed",
+        "genuine chain renders"
+    );
+    for lib in [
+        "#[path = \"cmp.rs\"]\npub mod actual;\npub mod cmp {\n    pub use std::cmp::max as order_discount;\n}\n",
+        "#[path = \"cmp.rs\"]\npub mod cmp;\n",
+        "pub mod wrapper {\n    pub mod cmp {}\n}\n",
+        "pub mod cmp;\npub mod other {\n    pub mod cmp {}\n}\n",
+    ] {
+        let candidate = package(lib);
+        match candidate.outcome() {
+            Err(error) if error.contains("no predicate finding") => {}
+            Err(error) => return Err(error),
+            Ok((relation, classification)) => {
+                assert_eq!(relation, None, "{lib}");
+                assert_ne!(classification, "exposed", "{lib}");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A nearer binding inside the test body (a function-local import of another
+/// path, a `let`, a closure parameter) shadows the exact-looking file-level
+/// import: unrelated, with rendered classification. The plain import links.
+#[test]
+fn a_nearer_binding_inside_the_test_body_shadows_the_import() -> Result<(), String> {
+    let import = "use qual_reach::inner::order_discount;\n";
+    for body in [
+        "    use foreign::order_discount;\n    assert_eq!(order_discount(10), 5);",
+        "    let order_discount = foreign::order_discount;\n    assert_eq!(order_discount(10), 5);",
+        "    let f = |order_discount: fn(u32) -> u32| order_discount(10);\n    assert_eq!(f(foreign::order_discount), 5);",
+        "    mod order_discount {}\n    assert_eq!(order_discount(10), 5);",
+    ] {
+        let package = module_package(
+            "src/inner.rs",
+            MODULE_LIB,
+            format!("{import}{}", test_file(body)),
+            vec![],
+        );
+        assert_ne!(package.relation()?.as_deref(), LINKED, "{body}");
+        assert_ne!(package.classification()?, "exposed", "{body}");
     }
     Ok(())
 }

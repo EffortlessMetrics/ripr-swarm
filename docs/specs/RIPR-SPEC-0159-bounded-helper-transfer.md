@@ -306,6 +306,15 @@ can only hint that a caller "may lead here" without changing anything.
   `pub mod foreign { pub use std::cmp::max; }`), an aliased tail, or an entry
   whose definition path is unknown refuses.
 
+  The library must also bind that module path to the entry's file: every
+  file-module segment is declared once by an unconditional, un-remapped
+  out-of-line `mod <segment>;` at the top level of the previous file, with no
+  other module of that name beside it, and the chain from `src/lib.rs` must
+  end at the indexed definition's file (a `#[path]` that compiles the file
+  under another name, a same-named inline module, or an orphan declared only
+  inside another module refuses). A `#[path]` on an unrelated declaration and a
+  binary root that also declares the module do not refuse.
+
   Known limits (a proper path resolver is a follow-up to #8999): the bare-call
   route credits only a direct `use <lib>::..` import (list imports included)
   where nothing in the test file can shadow the library name. Valid but

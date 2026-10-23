@@ -1972,9 +1972,9 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
     // The library must actually bind that module path to the entry's file: no
     // cfg-selected alternate, `#[path]` remap, duplicate declaration or
     // spliced macro item on any segment.
-    let module_bound = entry_module
-        .as_deref()
-        .is_some_and(|module| super::call_identity::library_module_path_is_bound(index, module));
+    let module_bound = entry_module.as_deref().is_some_and(|module| {
+        super::call_identity::library_module_path_is_bound(index, caller, module)
+    });
     // A crate-root `pub use [crate::|self::]<module path>::<entry>;` re-exports
     // the entry from its own definition. Only top-level root `use` items
     // count (never a `use` inside a decoy module); every root binding of the
@@ -2082,6 +2082,31 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
                 spelled == *module || (spelled.is_empty() && root_reexports_entry(module))
             })
     };
+    // A nearer binding of the entry's name by an import that does not start
+    // at the library (a function-local `use other::<entry>;`) shadows the
+    // exact-looking file-level import.
+    let foreign_binding = |source: &str| {
+        super::reveal::flattened_use_paths(source)
+            .iter()
+            .any(|import| {
+                let first = import
+                    .path
+                    .trim_start_matches("::")
+                    .split("::")
+                    .next()
+                    .map(unraw);
+                let bound = import
+                    .alias
+                    .as_deref()
+                    .or_else(|| import.path.rsplit("::").next())
+                    .map(unraw);
+                bound.as_deref() == Some(caller.name.as_str())
+                    && first.as_deref() != Some(crate_name)
+            })
+    };
+    if foreign_binding(&test.body) || body_pattern_binds_name(&test.body, &caller.name) {
+        return false;
+    }
     if !suffix_resolves(&facts.source) || !suffix_resolves(&test.body) {
         return false;
     }
@@ -2123,6 +2148,31 @@ fn declares_value_named(source: &str, name: &str) -> bool {
             return false;
         };
         named.as_deref() == Some(name)
+    })
+}
+
+/// Whether the test body binds `name` by a pattern (a `let`, a closure or
+/// function parameter, a match arm) or declares an item of that name, any of
+/// which shadows the imported entry.
+fn body_pattern_binds_name(body: &str, name: &str) -> bool {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+    let name = name.strip_prefix("r#").unwrap_or(name);
+    let wrapped = format!("fn __ripr_test_body() {{\n{body}\n}}\n");
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&wrapped) else {
+        return true;
+    };
+    parse.tree().syntax().descendants().any(|node| {
+        if let Some(pattern) = ast::IdentPat::cast(node.clone()) {
+            return pattern
+                .name()
+                .is_some_and(|n| n.text().trim_start_matches("r#") == name);
+        }
+        if let Some(module) = ast::Module::cast(node.clone()) {
+            return module
+                .name()
+                .is_some_and(|n| n.text().trim_start_matches("r#") == name);
+        }
+        false
     })
 }
 

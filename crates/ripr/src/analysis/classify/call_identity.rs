@@ -1057,10 +1057,83 @@ pub(super) fn source_may_splice_items(source: &str, item_position_macros: bool) 
 /// Whether every segment of the entry's definition module path is bound by
 /// exactly one unconditional, un-remapped library declaration (binary roots are
 /// ignored), so `<lib>::<path>` names the file the entry was read from.
-pub(super) fn library_module_path_is_bound(index: &RustIndex, module: &[String]) -> bool {
+pub(super) fn library_module_path_is_bound(
+    index: &RustIndex,
+    function: &FunctionSummary,
+    module: &[String],
+) -> bool {
     module
         .iter()
         .all(|segment| !module_declaration_is_ambiguous(index, segment, true))
+        && library_declaration_chain_reaches_file(index, &function.file)
+}
+
+/// Walk the declaration chain from `src/lib.rs`: each file-module segment of
+/// `file` must be declared by exactly one out-of-line, unconditional,
+/// un-remapped `mod <segment>;` at the top level of the previous file, with no
+/// other module of that name there, and the declared module's file must be
+/// the next link. The last link must be `file` itself, so a same-named inline
+/// module, or a `#[path]` that sends the file to another name, never binds the
+/// path to the indexed definition.
+fn library_declaration_chain_reaches_file(index: &RustIndex, file: &Path) -> bool {
+    use ra_ap_syntax::{AstNode, ast, ast::HasModuleItem, ast::HasName};
+    let Some(segments) = file_module_segments(file) else {
+        return false;
+    };
+    let target = super::related_tests::normalize_path(file);
+    let mut current = PathBuf::from("src/lib.rs");
+    for segment in &segments {
+        let Some(facts) = index.files().get(&current) else {
+            return false;
+        };
+        let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&facts.source) else {
+            return false;
+        };
+        let named = |module: &ast::Module| {
+            module
+                .name()
+                .is_some_and(|name| name.text().trim_start_matches("r#") == segment)
+        };
+        let same_named: Vec<ast::Module> = parse
+            .tree()
+            .items()
+            .filter_map(|item| match item {
+                ast::Item::Module(module) if named(&module) => Some(module),
+                _ => None,
+            })
+            .collect();
+        let [declaration] = same_named.as_slice() else {
+            return false;
+        };
+        if declaration.item_list().is_some()
+            || super::owner_pin::has_cfg_attr(declaration)
+            || ast::HasAttrs::attrs(declaration)
+                .any(|attr| has_path_attribute(&attr.syntax().text().to_string()))
+        {
+            return false;
+        }
+        let normalized = super::related_tests::normalize_path(&current);
+        let directory = match normalized.rsplit_once('/') {
+            Some((directory, name)) if name == "lib.rs" || name == "mod.rs" => {
+                directory.to_string()
+            }
+            Some((directory, name)) => {
+                format!("{directory}/{}", name.trim_end_matches(".rs"))
+            }
+            None => return false,
+        };
+        let flat = PathBuf::from(format!("{directory}/{segment}.rs"));
+        let nested = PathBuf::from(format!("{directory}/{segment}/mod.rs"));
+        current = match (
+            index.files().get(&flat).is_some(),
+            index.files().get(&nested).is_some(),
+        ) {
+            (true, false) => flat,
+            (false, true) => nested,
+            _ => return false,
+        };
+    }
+    super::related_tests::normalize_path(&current) == target
 }
 
 /// Whether the root package's `src/` files declare `mod <segment>` other than
