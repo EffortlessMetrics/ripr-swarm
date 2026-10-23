@@ -139,6 +139,16 @@ impl TypeScriptAdmissionContext {
             .collect();
         let known_require =
             program_require_is_known(statements, &esm_imports, block_functions_are_lexical);
+        // Only a non-`const` declaration holding a `require()` needs the scan.
+        let scan = statements
+            .iter()
+            .any(|statement| {
+                matches!(statement, Statement::VariableDeclaration(declaration)
+                    if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const
+                        && declaration.declarations.iter().any(require_declarator))
+            })
+            .then(|| BindingScan::of_source(program.source_text))
+            .flatten();
         let mut context = Self {
             block_functions_are_lexical,
             imports: imports.to_vec(),
@@ -148,7 +158,8 @@ impl TypeScriptAdmissionContext {
                     matches!(statement, Statement::ImportDeclaration(_))
                         || matches!(statement, Statement::VariableDeclaration(declaration)
                             if known_require && !declaration.declare
-                                && declaration.kind == oxc_ast::ast::VariableDeclarationKind::Const)
+                                && (declaration.kind == oxc_ast::ast::VariableDeclarationKind::Const
+                                    || !unwritten_declarator_locals(declaration, scan.as_ref()).is_empty()))
                 })
                 .flat_map(|statement| {
                     let mut imports =
@@ -173,6 +184,10 @@ impl TypeScriptAdmissionContext {
                                     namespace: false,
                                 });
                             }
+                        }
+                        if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const {
+                            let kept = unwritten_declarator_locals(declaration, scan.as_ref());
+                            imports.retain(|import| kept.contains(&import.local));
                         }
                     }
                     imports
@@ -293,6 +308,91 @@ impl TypeScriptAdmissionContext {
     fn import_class(&self, import: &TypeScriptImport) -> ImportClass {
         classify_source(&import.source, &self.test_dir)
     }
+}
+
+/// The writes and function-declaration names of one file, computed once.
+/// `None` when the masked source is unreadable (parse-width mismatch,
+/// `eval`, `with`, `\u` escapes), so nothing qualifies.
+struct BindingScan {
+    writes: Vec<(String, usize)>,
+    functions: Vec<(String, usize)>,
+}
+
+impl BindingScan {
+    fn of_source(source: &str) -> Option<Self> {
+        let code = super::tests_extract::byte_preserving_code_mask(source)
+            .filter(|code| !super::tests_extract::file_is_opaque(code))?;
+        Some(Self {
+            writes: super::tests_extract::strict_identifier_writes(&code),
+            functions: super::tests_extract::function_declaration_names(&code),
+        })
+    }
+
+    /// `name` is written, or re-bound by a function declaration, outside the
+    /// declarator spanning `span`.
+    fn writes_outside(&self, name: &str, span: oxc_span::Span) -> bool {
+        let outside =
+            |offset: &usize| (*offset as u32) < span.start || (*offset as u32) >= span.end;
+        self.writes
+            .iter()
+            .any(|(written, offset)| written == name && outside(offset))
+            || self
+                .functions
+                .iter()
+                .any(|(declared, offset)| declared == name && outside(offset))
+    }
+}
+
+/// A declarator initialized by `require("...")` or a member of it.
+fn require_declarator(declarator: &oxc_ast::ast::VariableDeclarator<'_>) -> bool {
+    let Some(init) = declarator
+        .init
+        .as_ref()
+        .map(Expression::get_inner_expression)
+    else {
+        return false;
+    };
+    let call = match init {
+        Expression::StaticMemberExpression(member) => &member.object,
+        other => other,
+    };
+    require_string_literal_source(call.get_inner_expression()).is_some()
+}
+
+/// The binding names of the declarators of a `var`/`let` declaration whose own
+/// bindings the file never writes (RIPR-SPEC-0243 rule 1; pre-ES2015 CommonJS
+/// binds `var test = require('tape')`), so each is as immutable as a `const`.
+/// Only `require()`-initialized declarators can yield a runner import, so only
+/// they are judged; an unrelated written declarator
+/// (`var counter = 0, test = require('tape'); counter++`) does not withdraw
+/// the runner declarator. A reassignment, update, loop target, wrapped target
+/// or block-level function declaration of the name refuses.
+fn unwritten_declarator_locals(
+    declaration: &oxc_ast::ast::VariableDeclaration<'_>,
+    scan: Option<&BindingScan>,
+) -> Vec<String> {
+    use oxc_ast::ast::VariableDeclarationKind::{Let, Var};
+    let Some(scan) = scan else {
+        return Vec::new();
+    };
+    if !matches!(declaration.kind, Var | Let) {
+        return Vec::new();
+    }
+    let mut locals = Vec::new();
+    for declarator in declaration
+        .declarations
+        .iter()
+        .filter(|d| require_declarator(d))
+    {
+        let names = declarator.id.get_binding_identifiers();
+        if names
+            .iter()
+            .all(|id| !scan.writes_outside(id.name.as_str(), declarator.span))
+        {
+            locals.extend(names.iter().map(|id| id.name.to_string()));
+        }
+    }
+    locals
 }
 
 /// A bounded fixture-extension registration: one immutable top-level result
