@@ -19,7 +19,7 @@ import {
   resolutionFailureRecovery
 } from './serverResolver';
 import { setupFilePath, hasUnsafeShellMetacharacter, redirectTargetMatches, redirectStaysInWorkspace, serverShellArg, isWindowsHost, normalizePath, sameWorkspaceRoot, rootMatchesWorkspace, objectField, stringField, boundedStringField, arrayLength, numberFieldValue, TEST_RUNNER_VERIFY_COMMAND_PREFIXES, testRunnerCommandLeavesScope } from './packetJson';
-import { riprDocumentSelectorsForWorkspace, extensionVersion, traceFromConfig, currentWorkspaceRootState, workspaceRootStateNoWorkspace, workspaceRootStateLabel, workspaceRootStateDetail, workspaceRootPickItems } from './workspaceHelpers';
+import { riprDocumentSelectorsForWorkspace, integerSetting, extensionVersion, traceFromConfig, currentWorkspaceRootState, workspaceRootStateNoWorkspace, workspaceRootStateLabel, workspaceRootStateDetail, workspaceRootPickItems } from './workspaceHelpers';
 import type { WorkspaceRootPickItem } from './workspaceHelpers';
 import { statusText, statusSummary, statusBarColors, canProjectFirstUsefulAction, shouldShowMainStatusBar } from './statusRender';
 import type { RiprStatusKind, RiprStatusState, FirstUsefulActionStatus, StatusBarColors } from './statusRender';
@@ -197,8 +197,8 @@ function lspConfigurationForResource(scopeUri: string | undefined): Record<strin
     includeUnchangedTests: config.get<boolean>('includeUnchangedTests'),
     seamDiagnostics: explicitSetting<boolean>(config, 'seamDiagnostics'),
     diagnosticProfile: explicitSetting<string>(config, 'diagnosticProfile'),
-    gitTimeoutMs: config.get<number>('gitTimeoutMs'),
-    refreshDeadlineMs: config.get<number>('refreshDeadlineMs')
+    gitTimeoutMs: integerSetting(config.get<number>('gitTimeoutMs')),
+    refreshDeadlineMs: integerSetting(config.get<number>('refreshDeadlineMs'))
   };
 }
 
