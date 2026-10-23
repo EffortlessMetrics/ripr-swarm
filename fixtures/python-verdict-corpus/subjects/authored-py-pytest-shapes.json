@@ -1,0 +1,93 @@
+{
+  "subject_id": "authored-py-pytest-shapes",
+  "origin": "authored",
+  "version_label": "authored@3608bb9a",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "pyproject.toml",
+      "sha256": "c2325d966f9a45558e2e6d3f0fe09ae9dc91e9ce0df96f723aef64f966629604"
+    },
+    {
+      "path": "shapes/__init__.py",
+      "sha256": "30b0cae297c7451342ca9d547f45db8ea14efb62aad60e750ca3b25ea855a33a"
+    },
+    {
+      "path": "shapes/aio.py",
+      "sha256": "154b1ec01240835e019b398fcc52cc448f2043a37fce96b1f137d9a25231efa1"
+    },
+    {
+      "path": "shapes/comps.py",
+      "sha256": "4a864c1a5641e08821844dde8bc8a6d6aac40b171e9ead4bd00470f91fbbe44a"
+    },
+    {
+      "path": "shapes/ctx.py",
+      "sha256": "913e555a45dbca0e15e3aa9655a4140257efbf80f961003db93a7d814e70e5e4"
+    },
+    {
+      "path": "shapes/decorators.py",
+      "sha256": "25b3b8e8c0d746f4984befe69ee6b1732f850f38856d055868001f4e6abfb3ee"
+    },
+    {
+      "path": "shapes/matching.py",
+      "sha256": "57e4e4bcc6ec5fc7dd2e2d0c0e4e9564f6972316ac06a64f47b22438ac4e0096"
+    },
+    {
+      "path": "shapes/models.py",
+      "sha256": "497c6fb5df5a030fc1cfc665dac9033e984e995ede4eb59fbad4290be69956af"
+    },
+    {
+      "path": "shapes/money.py",
+      "sha256": "c99290e73c879db9424fc88e9ab296b99ad8e8b47b5344668878037202ec2d16"
+    },
+    {
+      "path": "shapes/rates/__init__.py",
+      "sha256": "61ec08bbaa7243f400f233833c13a6b18187b0191e04938bdc0ba11984eb6fcc"
+    },
+    {
+      "path": "shapes/rates/quote.py",
+      "sha256": "d78779a4bbc6b430cbc65a4661d4367d5ef61f64f5c050a5ab3cc76527f52912"
+    },
+    {
+      "path": "shapes/rates/table.py",
+      "sha256": "952162fa5e8890646b6e80e9c17356a6ee1584fe7bd4977570962928de0c9333"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/test_aio.py",
+      "sha256": "fa74bc873862caaed69eed0e4e5084586659ae0f3db40a4e0f4a71beac6cdb97"
+    },
+    {
+      "path": "tests/test_comps.py",
+      "sha256": "54dc79e4f737dd45fcb856f925b88401571c3e219099ace547b92b6c826092b7"
+    },
+    {
+      "path": "tests/test_ctx.py",
+      "sha256": "f9d1af5bf58a2570cdcfc66d8ff908bf2e31a2545af418ecb54fbbb74341d8c4"
+    },
+    {
+      "path": "tests/test_decorators.py",
+      "sha256": "c4bdd3ba72cac699203cc69c83f3e0b22f7102dd321a369ea6b38b8ba7648cfc"
+    },
+    {
+      "path": "tests/test_matching.py",
+      "sha256": "2c5b6b37fd7b9682feb97f1dd363a7a009af92cbb604f96ad39f7bf57d6847e1"
+    },
+    {
+      "path": "tests/test_models.py",
+      "sha256": "c36c17ab2897a5dfe91b4cb0c418669c251f18643cb27f2691c6a78a03f8742d"
+    },
+    {
+      "path": "tests/test_money.py",
+      "sha256": "935f5a5a6a02442c3ca6c9329f57a0bf4feba58af2fa56c0ccb330278d571fec"
+    },
+    {
+      "path": "tests/test_rates.py",
+      "sha256": "ecf0c0e6ba4ba2241b643cfc0295b1175a4911ad932d5f0d0b8d12a8dc09e9e1"
+    }
+  ]
+}

@@ -50,6 +50,7 @@ result means.
 - [Source-of-truth doctrine](source-of-truth/README.md) — proposals, specs, ADRs, plans, policy, proof, and closeout.
 - [Spec/proposal system](SPEC_PROPOSAL_SYSTEM.md) — how proposals become reviewed specifications and implementation work.
 - [Documentation system](DOCUMENTATION.md) — document roles and maintenance rules.
+- [Release website maintenance](site/README.md) — static landing page source and local checks.
 - [Knowledge library](LIBRARY.md) — curated reusable learnings.
 - [PyPI and npm distribution plan](PYPI_NPM_DISTRIBUTION.md) — proposed package architecture, implementation issues and installed-use acceptance; not a release announcement.
 - [Claim package registries](how-to/claim-package-registries.md) — maintainer account, namespace, trusted-publisher and first-publication checklist.

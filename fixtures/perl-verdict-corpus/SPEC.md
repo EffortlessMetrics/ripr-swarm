@@ -4,16 +4,24 @@ Spec: RIPR-SPEC-0245
 
 ## Given
 
-Four small authored Perl distributions under `subjects/`, our own code under
+Seven small authored Perl distributions under `subjects/`, our own code under
 this repository's license: `authored-perl-testmore-shop` (Test::More),
 `authored-perl-test2-ledger` (Test2::V0),
-`authored-perl-testexception-account` (Test::Exception) and
-`authored-perl-hostile-source` (hostile constructs — string `eval`, heredocs,
-`# line` directives, dynamic subs — under Test::More). Each case is a
+`authored-perl-testexception-account` (Test::Exception),
+`authored-perl-testdeep-inventory` (Test::Deep),
+`authored-perl-moose-profile` (Moose and blessed hashes),
+`authored-perl-idioms-toolkit` (closures, wantarray, local, regexes) and
+`authored-perl-hostile-source` (decoys, AUTOLOAD, generated subs). Each case is a
 one-line behavior-preserving rewrite under `cases/` with the fact packet the
 pinned `perl-ripr-facts` producer wrote for that diff under `packets/`.
 Each case is labeled with what `prove -l t` discriminates when each listed
 hand-written mutant of the rewritten line is applied.
+
+A rewrite is behavior-preserving over the plain numeric, string and list
+arguments its subject's tests and callers use. Operator-overloaded objects are
+outside that domain: swapping the operands of `*` or `+`, or replacing `+=`
+with `+`, can dispatch to a different overload handler, and no case claims
+equivalence there.
 
 Cases named `perl-0235-*` start from another case's producer packet and edit
 it to carry a RIPR-SPEC-0235 fact the producer cannot emit yet. Their

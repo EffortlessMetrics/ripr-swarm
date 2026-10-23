@@ -849,9 +849,13 @@ fn resolve_at(
         Some(kind) => format!("{} {noun}", kind.family),
         None => noun.to_string(),
     };
-    Err(TestStubError::NotFound(format!(
-        "no {noun} is in the function at {file}:{line}; nearest: {}",
+    let nearest = if listed.is_empty() {
+        "none".to_string()
+    } else {
         listed.join(", ")
+    };
+    Err(TestStubError::NotFound(format!(
+        "no {noun} is in the function at {file}:{line}; nearest: {nearest}"
     )))
 }
 

@@ -28,6 +28,11 @@ Start here:
   Verify command: python -m pytest tests/test_pricing.py::test_discounts_far_above_threshold (high)
   Next step — Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `amount == DISCOUNT_THRESHOLD`
   Evidence: reach yes · infection weak · propagation weak · observation yes · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: 2 related Python test(s) found for owner `discounted_total`
     - infection weak: Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary
     - 8 more detail line(s) in --format human-full
@@ -35,7 +40,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_same_stem_sibling_owner_not_related/input --diff <cwd>/fixtures/python_same_stem_sibling_owner_not_related/diff.patch --mode fast probe:pricing.py:python_preview:2267e505
   ripr context --root <cwd>/fixtures/python_same_stem_sibling_owner_not_related/input --diff <cwd>/fixtures/python_same_stem_sibling_owner_not_related/diff.patch --mode fast --at probe:pricing.py:python_preview:2267e505
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:pricing.py:python_preview:2267e505 --root <cwd>/fixtures/python_same_stem_sibling_owner_not_related/input` for the full gate's answer
+  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `pricing.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
 
 Hidden:
   3 lower-priority finding(s) omitted from default human output (Python preview: 3).

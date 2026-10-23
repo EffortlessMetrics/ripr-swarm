@@ -16,6 +16,11 @@ name: First-run install
 # Wall-time metrics compare only against a baseline from the same runner class.
 # While ungated, a failed install still leaves the job green (the receipt records
 # the failed row); only the gated run fails the job on it.
+# The `first-run-main` job is the companion measurement: it walks the same
+# crates with a ripr built from the checked-out commit instead of the published
+# release, so a fix to the first-run verdicts shows up before it ships. It is
+# advisory and ungated; the install lane above stays the published-release
+# reading and owns the baseline (#9276).
 # The timed install runs under its own CARGO_HOME (see `cargo xtask first-run`),
 # so crates downloaded while building xtask do not shorten install_seconds (#6803).
 
@@ -40,7 +45,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
 
       - name: Walk the first-run path against the published ripr
         run: cargo xtask first-run --install-published
@@ -66,5 +73,47 @@ jobs:
             target/ripr/first-run/first-run.*
             target/ripr/first-run/first-run-rows.jsonl
             target/ripr/first-run/install_published.stderr.log
+            target/ripr/reports/dx-scoreboard.*
+          if-no-files-found: warn
+
+  first-run-main:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      - name: Build ripr from this commit
+        run: cargo build --locked -p ripr --bin ripr
+
+      - name: Walk the first-run path against the ripr built from this commit
+        run: >-
+          cargo xtask first-run
+          --ripr target/debug/ripr
+          --out target/ripr/first-run-main
+
+      - name: Record the scoreboard
+        run: cargo xtask dx-scoreboard --boards first_run --ingest target/ripr/first-run-main/first-run-rows.jsonl
+
+      # The scoreboard header carries no analyzer identity for a caller-supplied
+      # binary, so bind the measured executable to this commit here.
+      - name: Bind the measured binary to this commit
+        run: echo "Measured binary \`$(target/debug/ripr --version)\` built from \`$GITHUB_SHA\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload first-run reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: first-run-main
+          path: |
+            target/ripr/first-run-main/first-run.*
+            target/ripr/first-run-main/first-run-rows.jsonl
             target/ripr/reports/dx-scoreboard.*
           if-no-files-found: warn

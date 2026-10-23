@@ -1,0 +1,13 @@
+diff --git a/src/counter.ts b/src/counter.ts
+index 0000000..1111111 100644
+--- a/src/counter.ts
++++ b/src/counter.ts
+@@ -2,7 +2,7 @@
+   private value = 0;
+ 
+   private bump(n: number): number {
+-    return n + 1;
++    return n + 2;
+   }
+ 
+   next(): number {

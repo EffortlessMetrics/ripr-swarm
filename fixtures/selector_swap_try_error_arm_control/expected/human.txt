@@ -1,0 +1,38 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/selector_swap_try_error_arm_control/input
+
+Summary: 1 probe (0 exposed, 1 weak, 0 unrevealed, 0 no path); 1 of 1 finding unsuppressed
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+
+Start here:
+  State: a test gap to inspect or repair
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
+  File: ./src/lib.rs:11
+  Static exposure: weak (severity: warning, confidence 0.92)
+  Why weak: a related test reaches this change but does not observe the exact changed value
+  Canonical gap: gap:rust:src/lib.rs:impl Scheduler::next:error_variant:error_path:let_idx=self.queue.iter_.enumerate_.min_by_key___t_t.prio_.map_i___i_.ok_or_queueerror_closed
+  Changed behavior: let idx = self.queue.iter().enumerate().min_by_key(|(_, t)| t.prio).map(|(i, _)| i).ok_or(QueueError::Closed)?;
+  Missing discriminator (1 of 2): QueueError::Closed
+  Related test: src/lib.rs:18 single (no assertion pins `QueueError::Closed`)
+  Next step: Assert the exact error variant or payload instead of only is_err()
+  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    - reach yes: Related tests appear to reach next: single
+    - infection yes: Reachable tests can plausibly activate this changed behavior
+    - 6 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/selector_swap_try_error_arm_control/input --diff <cwd>/fixtures/selector_swap_try_error_arm_control/diff.patch --mode fast probe:src_lib.rs:error_path:d4885999
+  ripr context --root <cwd>/fixtures/selector_swap_try_error_arm_control/input --diff <cwd>/fixtures/selector_swap_try_error_arm_control/diff.patch --mode fast --at probe:src_lib.rs:error_path:d4885999
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:error_path:d4885999 --root <cwd>/fixtures/selector_swap_try_error_arm_control/input` for the full gate's answer
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json

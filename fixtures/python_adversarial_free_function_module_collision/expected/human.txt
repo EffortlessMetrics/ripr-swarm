@@ -22,6 +22,11 @@ Start here:
   Changed behavior: return payload.strip() == "ok"
   Missing discriminator: No Python test references `validate(`; add a pytest or unittest test that calls the changed owner
   Evidence: reach no · infection yes · propagation yes · observation no · discriminator no
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach no: 0 related Python test(s) found for owner `validate`
     - infection yes: Changed Python return expression can alter the owner return value: `return payload.strip() == "ok"`
     - 4 more detail line(s) in --format human-full
@@ -29,7 +34,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_adversarial_free_function_module_collision/input --diff <cwd>/fixtures/python_adversarial_free_function_module_collision/diff.patch --mode fast probe:src_handler.py:python_preview:c48883f0
   ripr context --root <cwd>/fixtures/python_adversarial_free_function_module_collision/input --diff <cwd>/fixtures/python_adversarial_free_function_module_collision/diff.patch --mode fast --at probe:src_handler.py:python_preview:c48883f0
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_handler.py:python_preview:c48883f0 --root <cwd>/fixtures/python_adversarial_free_function_module_collision/input` for the full gate's answer
+  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/handler.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
 
 More:
   Full evidence: rerun with --format human-full

@@ -295,9 +295,11 @@ fn fixture_cache_process_child() -> Result<(), String> {
         .ok_or("child fixture needs name")?;
     let cache = crate::fixture_cache_dir(name)?;
     let run = crate::run_fixture(&fixture)?;
+    let violations = run.comparison_violations_for_tests();
     assert!(
-        run.comparisons_all_match(),
-        "owned fixture must retain its authored goldens"
+        violations.is_empty(),
+        "owned fixture must retain its authored goldens:\n{}",
+        violations.join("\n")
     );
     assert!(
         !snapshot(&cache)?.is_empty(),

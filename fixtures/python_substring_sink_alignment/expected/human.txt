@@ -21,13 +21,18 @@ Start here:
   Canonical gap: gap:python:src/pack.py:pack:predicate_boundary:predicate:len_buffer<=limit
   Changed behavior: if len(buffer) <= limit:
   Missing discriminator (1 of 2): A strong Python oracle reaches `pack`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an…
-  Related test: tests/test_pack.py:4 test_pack_returns_buffered_output
+  Related test: tests/test_pack.py:4 test_pack_returns_buffered_output (ripr could not confirm that this assertion observes the changed behavior)
   Suggested test file: tests/test_pack.py
   Suggested test: test_pack_returns_buffered_output
   Test node: tests/test_pack.py::test_pack_returns_buffered_output
   Verify command: python -m pytest tests/test_pack.py::test_pack_returns_buffered_output (high)
   Next step — Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `buffer == limit`
   Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: 1 related Python test(s) found for owner `pack`
     - infection yes: Changed Python predicate can alter branch selection: `if len(buffer) <= limit:`
     - 6 more detail line(s) in --format human-full
@@ -35,7 +40,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_substring_sink_alignment/input --diff <cwd>/fixtures/python_substring_sink_alignment/diff.patch --mode fast probe:src_pack.py:python_preview:cfc61771
   ripr context --root <cwd>/fixtures/python_substring_sink_alignment/input --diff <cwd>/fixtures/python_substring_sink_alignment/diff.patch --mode fast --at probe:src_pack.py:python_preview:cfc61771
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_pack.py:python_preview:cfc61771 --root <cwd>/fixtures/python_substring_sink_alignment/input` for the full gate's answer
+  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/pack.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
 
 More:
   Full evidence: rerun with --format human-full

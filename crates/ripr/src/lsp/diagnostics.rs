@@ -3230,9 +3230,12 @@ fn diagnostic_range_for_finding(
         // replaced by a saved-line search. Absent maps keep the heuristic.
         return crate::lsp::position::range_from_encoded_origin(origin, position_encoding);
     }
-    let line = finding.probe.location.line.saturating_sub(1) as u32;
+    let analyzer_line = finding.probe.location.line.saturating_sub(1) as u32;
     let column = finding.probe.location.column;
-    let saved_line = saved_line_for_finding(root, finding);
+    let (line, saved_line) = match saved_line_for_finding(root, finding) {
+        Some((line, text)) => (line, Some(text)),
+        None => (analyzer_line, None),
+    };
     crate::lsp::position::expression_span_range_on_saved_line(
         line,
         column,
@@ -3242,11 +3245,89 @@ fn diagnostic_range_for_finding(
     )
 }
 
-fn saved_line_for_finding(root: &Path, finding: &Finding) -> Option<String> {
+/// The saved line an editor shows for a finding, with its editor line index.
+fn saved_line_for_finding(root: &Path, finding: &Finding) -> Option<(u32, String)> {
     let path = absolute_finding_path(root, finding);
     let contents = std::fs::read_to_string(path).ok()?;
     let line_index = finding.probe.location.line.saturating_sub(1);
-    contents.lines().nth(line_index).map(str::to_owned)
+    saved_editor_line(&contents, line_index, &finding.probe.expression)
+}
+
+/// Resolve the analyzer's zero-based line to the editor line holding the
+/// finding.
+///
+/// The analyzer numbers lines by `\n`, as git does, so a bare `\r` is not a
+/// line break there. Editors end a line at `\n`, `\r\n` or a bare `\r`
+/// (#8589). When the analyzer line holds a bare `\r`, it spans several editor
+/// lines: locate the expression inside it and return the editor line it falls
+/// on, or the analyzer line's first editor line when the expression is empty
+/// or absent. Without a bare `\r` both models agree and the line is unchanged.
+pub(super) fn saved_editor_line(
+    contents: &str,
+    analyzer_index: usize,
+    expression: &str,
+) -> Option<(u32, String)> {
+    let mut start = 0usize;
+    let mut analyzer_line = None;
+    for (index, raw) in contents.split_inclusive('\n').enumerate() {
+        if index == analyzer_index {
+            analyzer_line = Some((start, raw));
+            break;
+        }
+        start += raw.len();
+    }
+    let (line_start, raw) = analyzer_line?;
+    let text = raw
+        .strip_suffix('\n')
+        .map_or(raw, |line| line.strip_suffix('\r').unwrap_or(line));
+    // A bare `\r` on an earlier analyzer line also shifts this line's editor
+    // index, so the shortcut needs the whole prefix and line to be free of one.
+    if !has_bare_cr(&contents[..line_start + text.len()]) {
+        return Some((analyzer_index as u32, text.to_owned()));
+    }
+    let offset = if expression.is_empty() {
+        0
+    } else {
+        text.find(expression).unwrap_or(0)
+    };
+    let (line, editor_text) = editor_line_containing(contents, line_start + offset);
+    Some((line, editor_text.to_owned()))
+}
+
+fn has_bare_cr(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    bytes
+        .iter()
+        .enumerate()
+        .any(|(index, &byte)| byte == b'\r' && bytes.get(index + 1) != Some(&b'\n'))
+}
+
+/// The editor line (terminators `\n`, `\r\n`, bare `\r`) that holds a byte
+/// offset, with its text excluding the terminator.
+fn editor_line_containing(contents: &str, byte: usize) -> (u32, &str) {
+    let bytes = contents.as_bytes();
+    let mut line = 0u32;
+    let mut start = 0usize;
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let terminator_len = match bytes[index] {
+            b'\n' => 1,
+            b'\r' if bytes.get(index + 1) == Some(&b'\n') => 2,
+            b'\r' => 1,
+            _ => 0,
+        };
+        if terminator_len == 0 {
+            index += 1;
+            continue;
+        }
+        if byte <= index {
+            return (line, &contents[start..index]);
+        }
+        line += 1;
+        index += terminator_len;
+        start = index;
+    }
+    (line, &contents[start..])
 }
 
 fn related_information_for_finding(
@@ -5235,6 +5316,7 @@ mod diagnostic_policy_tests {
 
     fn policy_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:pricing:42:predicate".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -6226,7 +6308,10 @@ mod diagnostic_policy_tests {
         // message names the current profile, so the agent can see it is not
         // "full".
         let outcome = seam_inventory_not_enabled_outcome(&LspAnalysisConfig::default());
-        let payload = outcome.status_payload(Some("snapshot:1"));
+        let payload = outcome.status_payload(
+            Some("snapshot:1"),
+            &crate::lsp::client_features::ClientFeatureProfile::unsupported(),
+        );
         if payload["state"].as_str() != Some("unavailable")
             || payload["kind"].as_str() != Some("seam_diagnostics_not_enabled")
         {
@@ -6261,7 +6346,10 @@ mod diagnostic_policy_tests {
             enable_seam_diagnostics: false,
             ..LspAnalysisConfig::default()
         };
-        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(Some("s:2"));
+        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(
+            Some("s:2"),
+            &crate::lsp::client_features::ClientFeatureProfile::unsupported(),
+        );
         let recovery = payload["recovery"].as_str().unwrap_or_default();
         if !recovery.contains("seam_diagnostics = true") {
             return Err(format!(
@@ -6277,7 +6365,10 @@ mod diagnostic_policy_tests {
             ..LspAnalysisConfig::default()
         };
         config.repo_config.languages.enabled = vec![LanguageId::TypeScript];
-        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(Some("s:3"));
+        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(
+            Some("s:3"),
+            &crate::lsp::client_features::ClientFeatureProfile::unsupported(),
+        );
         let recovery = payload["recovery"].as_str().unwrap_or_default();
         if !recovery.contains("rust") {
             return Err(format!(
@@ -6292,7 +6383,10 @@ mod diagnostic_policy_tests {
             session_options: Some(serde_json::json!({ "diagnosticProfile": "actionable" })),
             ..LspAnalysisConfig::default()
         };
-        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(Some("s:4"));
+        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(
+            Some("s:4"),
+            &crate::lsp::client_features::ClientFeatureProfile::unsupported(),
+        );
         let recovery = payload["recovery"].as_str().unwrap_or_default();
         if !recovery.contains("session setting") || !recovery.contains("ripr.diagnosticProfile") {
             return Err(format!(
@@ -6319,7 +6413,10 @@ mod diagnostic_policy_tests {
             session_options: Some(serde_json::json!({ "seamDiagnostics": false })),
             ..LspAnalysisConfig::default()
         };
-        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(Some("s:5"));
+        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(
+            Some("s:5"),
+            &crate::lsp::client_features::ClientFeatureProfile::unsupported(),
+        );
         let recovery = payload["recovery"].as_str().unwrap_or_default();
         if !recovery.contains("session setting") || !recovery.contains("ripr.seamDiagnostics") {
             return Err(format!(
@@ -6350,6 +6447,7 @@ mod lsp_next_step_parity_tests {
 
     fn complete_ts_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_discount.ts:typescript_preview:2396aec1".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -6477,7 +6575,10 @@ mod lsp_next_step_parity_tests {
             return Err("expected rendered finding hover".to_string());
         };
         assert!(content.value.contains(&finding.id));
-        assert!(content.value.contains("no_static_path"));
+        // The hover header leads with the plain class word (#9367); the raw
+        // schema token stays on `Diagnostic.code` for the Problems panel.
+        assert!(content.value.contains("no path"));
+        assert!(!content.value.contains("no_static_path"));
         assert_eq!(hover.range, Some(diagnostic.range));
         let params = tower_lsp_server::ls_types::CodeActionParams {
             text_document: tower_lsp_server::ls_types::TextDocumentIdentifier {
