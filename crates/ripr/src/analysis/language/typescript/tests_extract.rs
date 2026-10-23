@@ -2937,7 +2937,12 @@ pub(crate) fn test_from_statement<'s, 'a>(
             ),
             None => source[call.span.start as usize..call.span.end as usize].to_string(),
         },
-        reach_body_text: unused_function_reach_body(call, referenced, source),
+        reach_body_text: unused_function_reach_body(
+            call,
+            referenced,
+            source,
+            source_type_for(file),
+        ),
         assertions,
         // Populated by `extract_tests` (the only public extractor) once
         // per file before the test is returned to the caller.
@@ -2962,6 +2967,19 @@ pub(crate) fn test_from_statement<'s, 'a>(
 /// before comparing identifier offsets with parser spans.
 pub(super) fn byte_preserving_code_mask(source: &str) -> Option<String> {
     let masked = super::classifier::ts_mask_literals_and_comments(source);
+    preserve_mask_byte_width(source, &masked)
+}
+
+pub(super) fn byte_preserving_code_mask_for_source_type(
+    source: &str,
+    source_type: SourceType,
+) -> Option<String> {
+    let masked =
+        super::classifier::ts_mask_literals_and_comments_for_source_type(source, source_type);
+    preserve_mask_byte_width(source, &masked)
+}
+
+fn preserve_mask_byte_width(source: &str, masked: &str) -> Option<String> {
     if source.chars().count() != masked.chars().count() {
         return None;
     }
@@ -2986,6 +3004,7 @@ fn unused_function_reach_body(
     call: &oxc_ast::ast::CallExpression<'_>,
     referenced: Option<&oxc_ast::ast::Function<'_>>,
     source: &SourceText<'_>,
+    source_type: SourceType,
 ) -> Option<String> {
     let call_text = &source[call.span.start as usize..call.span.end as usize];
     let (start, body, statements) = if let Some(function) = referenced {
@@ -3004,7 +3023,7 @@ fn unused_function_reach_body(
             .as_slice(),
         )
     };
-    let code = byte_preserving_code_mask(body)?;
+    let code = byte_preserving_code_mask_for_source_type(body, source_type)?;
     if file_is_opaque(&code) {
         return None;
     }

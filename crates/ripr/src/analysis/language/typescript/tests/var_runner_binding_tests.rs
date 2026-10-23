@@ -426,3 +426,317 @@ fn review_9936_mask_adapter_preserves_unicode_source_offsets() -> Result<(), Str
     }
     Ok(())
 }
+
+#[test]
+fn review_9936_genuine_division_and_comparison_controls() -> Result<(), String> {
+    for (tail, expected) in [
+        (
+            "const q = n /`2`.length; test = null; const r = 8 / 2;",
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "const q = n /`2`.length; test = null; // done",
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "const q = n /[+`2`][0]; test = null; const r = 8 / 2;",
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "const q = n /`${(test = null, 2)}`.length; const r = 8 / 2;",
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "const q = n /`x/ test = null`.length;",
+            ExposureClass::Exposed,
+        ),
+        (
+            "const q = n</`/.source.length; test = null;",
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "const q = n</x test = null/.source.length;",
+            ExposureClass::Exposed,
+        ),
+        ("const q = n /`test = null`.length;", ExposureClass::Exposed),
+        (
+            "const q = n++ /[+`${(test = null, 2)}`][0] / 2;",
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "const obj = { if(x: number) { return x; } }; const q = obj.if(n) /[+`${(test = null, 2)}`][0] / 2;",
+            ExposureClass::NoStaticPath,
+        ),
+    ] {
+        let source = tape_test(
+            "var test = require('tape');",
+            &format!("let n = 8; const s = 'sample'; {tail}"),
+        );
+        assert_eq!(
+            class_for_file("masker-division-review-control", "test/k.test.ts", &source)?,
+            expected,
+            "{tail}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn review_9936_control_head_regex_masks_escaped_and_later_backticks() -> Result<(), String> {
+    for head in [
+        "if ((n))",
+        "if /* comment */ (n)",
+        "while (false)",
+        "for (; false;)",
+    ] {
+        for regex in ["/a`/", "/[\\`]/", "/test = null`/", "/[/'\"`]/"] {
+            for written in [false, true] {
+                let tail = format!(
+                    "const n = true; const s = ''; {head} {regex}.test(s);{}",
+                    if written { " test = null;" } else { "" }
+                );
+                let source = tape_test("var test = require('tape');", &tail);
+                assert_eq!(
+                    class_for_file("masker-control-head-review", "test/k.test.ts", &source)?,
+                    if written {
+                        ExposureClass::NoStaticPath
+                    } else {
+                        ExposureClass::Exposed
+                    },
+                    "{tail}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn review_9936_nested_jsx_and_expression_braces_preserve_writes() -> Result<(), String> {
+    for jsx in [
+        "<div data-x={1 < 2 ? 1 : 0}>text<span /></div>",
+        "<><div /><p>text</p></>",
+        "<div>{true ? <span>text</span> : <b />}</div>",
+    ] {
+        for written in [false, true] {
+            let source = tape_test(
+                "var test = require('tape');",
+                &format!(
+                    "const node = {jsx};{}",
+                    if written { " test = null;" } else { "" }
+                ),
+            );
+            assert_eq!(
+                class_for_file("masker-nested-jsx-review", "test/k.test.tsx", &source)?,
+                if written {
+                    ExposureClass::NoStaticPath
+                } else {
+                    ExposureClass::Exposed
+                },
+                "{jsx}; written={written}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn review_9936_type_assertions_do_not_open_jsx_tags() -> Result<(), String> {
+    for (tail, expected) in [
+        (
+            "const b = n</T>`/.source.length; test = null;",
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "const b = n</T>test = null/.source.length;",
+            ExposureClass::Exposed,
+        ),
+    ] {
+        let tail = format!("type T = number; const n = 8; const typed = <T>n; {tail}");
+        let source = tape_test("var test = require('tape');", &tail);
+        assert_eq!(
+            class_for_file("masker-type-assertion-review", "test/k.test.ts", &source)?,
+            expected,
+            "{tail}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn review_9936_jsx_text_does_not_open_code_literals_or_comments() -> Result<(), String> {
+    for text in [
+        "if (n) /a",
+        "// text",
+        "/* text",
+        "`text",
+        "\"text",
+        "'text",
+    ] {
+        let source = tape_test(
+            "var test = require('tape');",
+            &format!("const node = <div>{text} {{test = null}}</div>;"),
+        );
+        assert_eq!(
+            class_for_file("masker-jsx-text-review", "test/k.test.tsx", &source)?,
+            ExposureClass::NoStaticPath,
+            "{text}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn review_9936_private_control_keyword_method_is_a_call() -> Result<(), String> {
+    for (operand, expected) in [
+        ("+`${(test = null, 2)}`", ExposureClass::NoStaticPath),
+        ("+`test = null`", ExposureClass::Exposed),
+    ] {
+        let tail = format!(
+            "class C {{ #if(x: number) {{ return x; }} f() {{ return this.#if(8) /({operand}) / 2; }} }} new C().f();"
+        );
+        let source = tape_test("var test = require('tape');", &tail);
+        assert_eq!(
+            class_for_file("masker-private-control-review", "test/k.test.ts", &source)?,
+            expected,
+            "{tail}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn review_9936_identical_source_uses_the_native_file_syntax() -> Result<(), String> {
+    let tail = "const a = 8, g = 2; const x: any = 0; type div = any; const v = <div>x</div>; test = null; const y = a /g;";
+    let source = tape_test("var test = require('tape');", tail);
+    for (file, expected) in [
+        ("test/k.test.ts", ExposureClass::Exposed),
+        ("test/k.test.tsx", ExposureClass::NoStaticPath),
+    ] {
+        assert_eq!(
+            class_for_file("masker-native-syntax-review", file, &source)?,
+            expected,
+            "{file}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn review_9936_jsx_text_is_not_an_executable_write() -> Result<(), String> {
+    let source = tape_test(
+        "var test = require('tape');",
+        "const node = <div>test = null</div>;",
+    );
+    assert_eq!(
+        class_for_file("masker-jsx-text-negative", "test/k.test.tsx", &source)?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn review_9936_for_await_body_regex_keeps_real_and_fake_writes_separate() -> Result<(), String> {
+    for written in [false, true] {
+        let tail = format!(
+            "async function f() {{ const s = ''; for await (const x of []) /test = null`/.test(s); }}{}",
+            if written { " test = null;" } else { "" }
+        );
+        let source = tape_test("var test = require('tape');", &tail);
+        assert_eq!(
+            class_for_file("masker-for-await-review", "test/k.test.ts", &source)?,
+            if written {
+                ExposureClass::NoStaticPath
+            } else {
+                ExposureClass::Exposed
+            }
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn review_9936_generic_jsx_and_attributes_preserve_only_executable_writes() -> Result<(), String> {
+    for (expression, written) in [
+        ("<Component<number> />", false),
+        (
+            "<Component<() => number>><Component<string> /></Component>",
+            false,
+        ),
+        ("<div test=\"text\" />", false),
+        ("<div test={test} />", false),
+        ("<div test={test = null} />", true),
+        ("<div data-x={<span>test = null `é</span>} />", false),
+        ("<div data-x={<span>{test = null}</span>} />", true),
+        ("<div data-x=<>test = null</> />", false),
+        ("<div data-x=<>{test = null}</> />", true),
+        ("<div {...{value: <span>test = null</span>}} />", false),
+        ("<div {...{value: <span>{test = null}</span>}} />", true),
+    ] {
+        for trailing_write in [false, true] {
+            let source = tape_test(
+                "var test = require('tape');",
+                &format!(
+                    "declare function Component<T>(props: any): any; const node = {expression};{}",
+                    if trailing_write { " test = null;" } else { "" }
+                ),
+            );
+            assert_eq!(
+                class_for_file("masker-jsx-attribute-review", "test/k.test.tsx", &source)?,
+                if written || trailing_write {
+                    ExposureClass::NoStaticPath
+                } else {
+                    ExposureClass::Exposed
+                },
+                "{expression}; trailing_write={trailing_write}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn review_9936_tsx_comparison_and_generic_arrow_are_code() -> Result<(), String> {
+    for expression in ["a <<b > c", "<T extends unknown>(x: T) => x"] {
+        for written in [false, true] {
+            let source = tape_test(
+                "var test = require('tape');",
+                &format!(
+                    "const a = 8, b = 1, c = 0; const q = {expression};{}",
+                    if written { " test = null;" } else { "" }
+                ),
+            );
+            assert_eq!(
+                class_for_file("masker-tsx-code-review", "test/k.test.tsx", &source)?,
+                if written {
+                    ExposureClass::NoStaticPath
+                } else {
+                    ExposureClass::Exposed
+                },
+                "{expression}; written={written}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn review_9936_for_member_then_await_is_division() -> Result<(), String> {
+    for (operand, expected) in [
+        ("+`${(test = null, 2)}`", ExposureClass::NoStaticPath),
+        ("+`test = null`", ExposureClass::Exposed),
+    ] {
+        let source = tape_test(
+            "var test = require('tape');",
+            &format!(
+                "async function f() {{ const obj = {{ for: 0 }}; obj.for\n await(8) /({operand}) /2; }} f();"
+            ),
+        );
+        assert_eq!(
+            class_for_file("masker-for-member-await-review", "test/k.test.ts", &source)?,
+            expected,
+            "{operand}"
+        );
+    }
+    Ok(())
+}

@@ -854,6 +854,41 @@ fn ts_mask_typeof_consumed_owner_names(
 /// expected (at the start, or after an operator or opening punctuation);
 /// elsewhere it is division.
 pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
+    let prepared = super::literal_mask::prepare(text, None);
+    ts_mask_lexically(
+        &prepared.code,
+        !prepared.regex_known,
+        &prepared.operand_ends,
+    )
+}
+
+/// Preserve the parser's syntax kind: identical bytes can mean JSX code in
+/// `.tsx` and a type assertion followed by a regex literal in `.ts`.
+pub(crate) fn ts_mask_literals_and_comments_for_source_type(
+    text: &str,
+    source_type: SourceType,
+) -> String {
+    let prepared = super::literal_mask::prepare(text, Some(source_type));
+    ts_mask_lexically(
+        &prepared.code,
+        !prepared.regex_known,
+        &prepared.operand_ends,
+    )
+}
+
+fn ts_mask_lexically(
+    text: &str,
+    regex_allowed: bool,
+    operand_ends: &std::collections::BTreeSet<usize>,
+) -> String {
+    fn next_char(
+        chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+        offset: &mut usize,
+    ) -> Option<char> {
+        let c = chars.next()?;
+        *offset += c.len_utf8();
+        Some(c)
+    }
     #[derive(Clone, Copy)]
     enum Mode {
         Code,
@@ -915,30 +950,6 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
                 && !word_after_dot
                 && STRING_OPERAND_KEYWORDS.contains(&word))
     }
-    // Whether the text after a division-position `/` reads as a regex literal
-    // whose body holds a backtick: it starts with a backtick or a `[` class
-    // and reaches an unescaped closing `/` on the same line.
-    fn regex_with_backtick_follows(rest: &std::iter::Peekable<std::str::Chars<'_>>) -> bool {
-        let mut chars = rest.clone();
-        if !matches!(chars.peek(), Some('`' | '[')) {
-            return false;
-        }
-        let (mut in_class, mut tick) = (false, false);
-        while let Some(c) = chars.next() {
-            match c {
-                '\\' => {
-                    chars.next();
-                }
-                '\n' | '\r' => return false,
-                '`' => tick = true,
-                '[' => in_class = true,
-                ']' => in_class = false,
-                '/' if !in_class => return tick,
-                _ => {}
-            }
-        }
-        false
-    }
     let mut out = String::with_capacity(text.len());
     let mut mode = Mode::Code;
     // The last non-whitespace code character, to tell a regex from division.
@@ -958,7 +969,9 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
     // One entry per open `${`: the brace depth inside that interpolation.
     let mut interpolations: Vec<usize> = Vec::new();
     let mut chars = text.chars().peekable();
-    while let Some(c) = chars.next() {
+    let mut source_offset = 0usize;
+    while let Some(c) = next_char(&mut chars, &mut source_offset) {
+        let at = source_offset - c.len_utf8();
         if let Mode::RegexFlags = mode {
             if c.is_ascii_alphabetic() {
                 out.push(' ');
@@ -981,27 +994,19 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
                         out.push(c);
                     }
                     '/' if chars.peek() == Some(&'/') => {
-                        chars.next();
+                        next_char(&mut chars, &mut source_offset);
                         mode = Mode::LineComment;
                         out.push_str("  ");
                     }
                     '/' if chars.peek() == Some(&'*') => {
-                        chars.next();
+                        next_char(&mut chars, &mut source_offset);
                         mode = Mode::BlockComment;
                         out.push_str("  ");
                     }
-                    // `</div>`: a `/` glued to a `<` closes a JSX element, so
-                    // it is never a regex start (#9936).
-                    '/' if prev == Some('<') && !after_space => out.push(c),
-                    '/' if !postfix_op && operand_expected(prev, &word, word_after_dot) => {
-                        mode = Mode::Regex { in_class: false };
-                        out.push(c);
-                    }
-                    // A `/` read as division that is glued to a backtick or a
-                    // class and closes later on the line around a backtick is a
-                    // regex literal (`if (x) /`/.test(s)`), not a division by a
-                    // template string (#9936).
-                    '/' if regex_with_backtick_follows(&chars) => {
+                    '/' if regex_allowed
+                        && !postfix_op
+                        && operand_expected(prev, &word, word_after_dot) =>
+                    {
                         mode = Mode::Regex { in_class: false };
                         out.push(c);
                     }
@@ -1031,7 +1036,7 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
                     continue;
                 }
                 if (c == '+' || c == '-') && !after_space && prev == Some(c) {
-                    postfix_op = op_after_operand;
+                    postfix_op = op_after_operand && !postfix_op;
                 } else {
                     if c == '+' || c == '-' {
                         op_after_operand = !operand_expected(prev, &word, word_after_dot);
@@ -1066,7 +1071,7 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
             }
             Mode::Quote(quote) => {
                 if c == '\\' {
-                    chars.next();
+                    next_char(&mut chars, &mut source_offset);
                     out.push_str("  ");
                 } else if c == quote || c == '\n' {
                     mode = Mode::Code;
@@ -1078,14 +1083,14 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
             }
             Mode::Template => {
                 if c == '\\' {
-                    chars.next();
+                    next_char(&mut chars, &mut source_offset);
                     out.push_str("  ");
                 } else if c == '`' {
                     mode = Mode::Code;
                     prev = Some(c);
                     out.push(c);
                 } else if c == '$' && chars.peek() == Some(&'{') {
-                    chars.next();
+                    next_char(&mut chars, &mut source_offset);
                     interpolations.push(0);
                     mode = Mode::Code;
                     prev = Some('{');
@@ -1096,7 +1101,7 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
             }
             Mode::Regex { in_class } => {
                 if c == '\\' {
-                    chars.next();
+                    next_char(&mut chars, &mut source_offset);
                     out.push_str("  ");
                 } else if c == '\n' {
                     mode = Mode::Code;
@@ -1127,13 +1132,23 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
             }
             Mode::BlockComment => {
                 if c == '*' && chars.peek() == Some(&'/') {
-                    chars.next();
+                    next_char(&mut chars, &mut source_offset);
                     mode = Mode::Code;
                     out.push_str("  ");
                 } else {
                     out.push(' ');
                 }
             }
+        }
+        if operand_ends.contains(&at) {
+            mode = Mode::Code;
+            prev = Some(')');
+            word.clear();
+            word_after_dot = false;
+            after_space = false;
+            dots = 0;
+            postfix_op = false;
+            op_after_operand = false;
         }
     }
     out
@@ -5806,7 +5821,9 @@ pub(crate) fn classify_change_with_alias_state(
             &owner.name,
             &owner.params,
             owner.start_line,
-            module_source.as_deref(),
+            module_source
+                .as_deref()
+                .map(|source| (source, source_type_for(&owner.file))),
         );
         mock_facts.admit_spy_files(
             related_candidates
