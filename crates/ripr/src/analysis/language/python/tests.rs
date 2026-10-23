@@ -29,14 +29,20 @@ fn detect_python_test_framework_reads_setup_cfg_and_tox_sections() -> Result<(),
     std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
     std::fs::write(root.join("setup.cfg"), "[tool:pytest]\naddopts = -q\n")
         .map_err(|err| format!("write setup.cfg: {err}"))?;
-    assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+    assert_eq!(
+        super::detect_python_test_framework(&root),
+        Some(PythonFramework::Pytest)
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
     let root = unique_test_root("tox");
     std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
     std::fs::write(root.join("tox.ini"), "[pytest]\naddopts = -q\n")
         .map_err(|err| format!("write tox.ini: {err}"))?;
-    assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+    assert_eq!(
+        super::detect_python_test_framework(&root),
+        Some(PythonFramework::Pytest)
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
@@ -47,7 +53,10 @@ fn detect_python_test_framework_reads_conftest_py() -> Result<(), String> {
     std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
     std::fs::write(root.join("conftest.py"), "import pytest\n")
         .map_err(|err| format!("write conftest.py: {err}"))?;
-    assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+    assert_eq!(
+        super::detect_python_test_framework(&root),
+        Some(PythonFramework::Pytest)
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
@@ -58,14 +67,20 @@ fn detect_python_test_framework_reads_pytest_ini_and_pyproject() -> Result<(), S
     std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
     std::fs::write(root.join("pytest.ini"), "[pytest]\n")
         .map_err(|err| format!("write pytest.ini: {err}"))?;
-    assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+    assert_eq!(
+        super::detect_python_test_framework(&root),
+        Some(PythonFramework::Pytest)
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
     let root = unique_test_root("pyproject");
     std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
     std::fs::write(root.join("pyproject.toml"), "[tool.pytest.ini_options]\n")
         .map_err(|err| format!("write pyproject.toml: {err}"))?;
-    assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+    assert_eq!(
+        super::detect_python_test_framework(&root),
+        Some(PythonFramework::Pytest)
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
@@ -79,7 +94,10 @@ fn detect_python_test_framework_recognizes_from_unittest_import() -> Result<(), 
         "from unittest import TestCase\n\nclass TestPricing(TestCase):\n    pass\n",
     )
     .map_err(|err| format!("write test file: {err}"))?;
-    assert_eq!(super::detect_python_test_framework(&root), Some("unittest"));
+    assert_eq!(
+        super::detect_python_test_framework(&root),
+        Some(PythonFramework::Unittest)
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
@@ -130,7 +148,10 @@ fn detect_python_test_framework_detects_pytest_from_test_file_import() -> Result
         "import pytest\n\n@pytest.mark.parametrize('n', [1])\ndef test_n(n):\n    assert n == 1\n",
     )
     .map_err(|err| format!("write test file: {err}"))?;
-    assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+    assert_eq!(
+        super::detect_python_test_framework(&root),
+        Some(PythonFramework::Pytest)
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
@@ -144,7 +165,10 @@ fn detect_python_test_framework_recognizes_from_pytest_import() -> Result<(), St
         "from pytest import mark\n\n@mark.parametrize('n', [1])\ndef test_n(n):\n    assert n == 1\n",
     )
     .map_err(|err| format!("write test file: {err}"))?;
-    assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+    assert_eq!(
+        super::detect_python_test_framework(&root),
+        Some(PythonFramework::Pytest)
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
@@ -164,7 +188,10 @@ fn detect_python_test_framework_prefers_config_markers_over_unittest_imports() -
         "import unittest\n\nclass TestPricing(unittest.TestCase):\n    pass\n",
     )
     .map_err(|err| format!("write test file: {err}"))?;
-    assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+    assert_eq!(
+        super::detect_python_test_framework(&root),
+        Some(PythonFramework::Pytest)
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
@@ -187,9 +214,12 @@ fn detect_python_test_frameworks_reports_both_on_mixed_import_evidence() -> Resu
     .map_err(|err| format!("write unittest file: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        vec!["pytest", "unittest"]
+        vec![PythonFramework::Pytest, PythonFramework::Unittest]
     );
-    assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+    assert_eq!(
+        super::detect_python_test_framework(&root),
+        Some(PythonFramework::Pytest)
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
@@ -209,7 +239,7 @@ fn detect_python_test_frameworks_reports_both_when_config_and_unittest_coexist()
     .map_err(|err| format!("write test file: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        vec!["pytest", "unittest"]
+        vec![PythonFramework::Pytest, PythonFramework::Unittest]
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
@@ -227,7 +257,10 @@ fn detect_python_test_frameworks_ignores_unittest_mock_only_imports() -> Result<
         "from unittest import mock\n\ndef test_api():\n    assert True\n",
     )
     .map_err(|err| format!("write test file: {err}"))?;
-    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec![PythonFramework::Pytest]
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
     let root = unique_test_root("mock-and-testcase");
@@ -239,7 +272,7 @@ fn detect_python_test_frameworks_ignores_unittest_mock_only_imports() -> Result<
     .map_err(|err| format!("write test file: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        vec!["unittest"]
+        vec![PythonFramework::Unittest]
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
@@ -253,7 +286,10 @@ fn detect_python_test_frameworks_ignores_unittest_mock_only_imports() -> Result<
         "from unittest import (mock)\n\ndef test_api():\n    assert True\n",
     )
     .map_err(|err| format!("write test file: {err}"))?;
-    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec![PythonFramework::Pytest]
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
     let root = unique_test_root("mock-paren-multiline");
@@ -265,7 +301,10 @@ fn detect_python_test_frameworks_ignores_unittest_mock_only_imports() -> Result<
         "from unittest import (\n    mock,\n)\n\ndef test_api():\n    assert True\n",
     )
     .map_err(|err| format!("write test file: {err}"))?;
-    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec![PythonFramework::Pytest]
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
     let root = unique_test_root("mock-paren-comment");
@@ -277,7 +316,10 @@ fn detect_python_test_frameworks_ignores_unittest_mock_only_imports() -> Result<
         "from unittest import (\n    mock,  # patching\n)\n\ndef test_api():\n    assert True\n",
     )
     .map_err(|err| format!("write test file: {err}"))?;
-    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec![PythonFramework::Pytest]
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
     let root = unique_test_root("mock-backslash");
@@ -289,7 +331,10 @@ fn detect_python_test_frameworks_ignores_unittest_mock_only_imports() -> Result<
         "from unittest import \\\n    mock\n\ndef test_api():\n    assert True\n",
     )
     .map_err(|err| format!("write test file: {err}"))?;
-    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec![PythonFramework::Pytest]
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
     let root = unique_test_root("testcase-backslash");
@@ -301,7 +346,7 @@ fn detect_python_test_frameworks_ignores_unittest_mock_only_imports() -> Result<
     .map_err(|err| format!("write test file: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        vec!["unittest"]
+        vec![PythonFramework::Unittest]
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
@@ -314,7 +359,7 @@ fn detect_python_test_frameworks_ignores_unittest_mock_only_imports() -> Result<
     .map_err(|err| format!("write test file: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        vec!["unittest"]
+        vec![PythonFramework::Unittest]
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
@@ -336,7 +381,7 @@ fn detect_python_test_frameworks_does_not_complete_a_truncated_import() -> Resul
         .map_err(|err| format!("write truncated lookalike: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        Vec::<&str>::new()
+        Vec::<PythonFramework>::new()
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
@@ -351,7 +396,7 @@ fn detect_python_test_frameworks_does_not_complete_a_truncated_import() -> Resul
         .map_err(|err| format!("write newline-in-extra: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        vec!["unittest"]
+        vec![PythonFramework::Unittest]
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
@@ -368,7 +413,7 @@ fn detect_python_test_frameworks_does_not_complete_a_truncated_import() -> Resul
         .map_err(|err| format!("write complete-at-bound: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        vec!["unittest"]
+        vec![PythonFramework::Unittest]
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
@@ -386,7 +431,7 @@ fn detect_python_test_frameworks_reads_only_the_file_prefix() -> Result<(), Stri
         .map_err(|err| format!("write late file: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        Vec::<&str>::new()
+        Vec::<PythonFramework>::new()
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
@@ -398,7 +443,7 @@ fn detect_python_test_frameworks_reads_only_the_file_prefix() -> Result<(), Stri
         .map_err(|err| format!("write early file: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        vec!["unittest"]
+        vec![PythonFramework::Unittest]
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
@@ -415,7 +460,7 @@ fn detect_python_test_frameworks_reports_both_when_one_file_imports_both() -> Re
     .map_err(|err| format!("write test file: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        vec!["pytest", "unittest"]
+        vec![PythonFramework::Pytest, PythonFramework::Unittest]
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
@@ -436,9 +481,12 @@ fn detect_python_test_frameworks_admits_django_tests_py_modules() -> Result<(), 
     .map_err(|err| format!("write tests.py: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        vec!["unittest"]
+        vec![PythonFramework::Unittest]
     );
-    assert_eq!(super::detect_python_test_framework(&root), Some("unittest"));
+    assert_eq!(
+        super::detect_python_test_framework(&root),
+        Some(PythonFramework::Unittest)
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
     // `test.py` at the root on the same terms.
@@ -451,7 +499,7 @@ fn detect_python_test_frameworks_admits_django_tests_py_modules() -> Result<(), 
     .map_err(|err| format!("write test.py: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        vec!["unittest"]
+        vec![PythonFramework::Unittest]
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
@@ -461,7 +509,10 @@ fn detect_python_test_frameworks_admits_django_tests_py_modules() -> Result<(), 
     std::fs::create_dir_all(&shop).map_err(|err| format!("create shop dir: {err}"))?;
     std::fs::write(shop.join("test_pricing.py"), "import pytest\n")
         .map_err(|err| format!("write test_pricing.py: {err}"))?;
-    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec![PythonFramework::Pytest]
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
     // A `*_test.py` sibling at the root is admitted as well.
@@ -469,7 +520,10 @@ fn detect_python_test_frameworks_admits_django_tests_py_modules() -> Result<(), 
     std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
     std::fs::write(root.join("pricing_test.py"), "import pytest\n")
         .map_err(|err| format!("write pricing_test.py: {err}"))?;
-    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec![PythonFramework::Pytest]
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
@@ -485,7 +539,7 @@ fn detect_python_test_frameworks_rejects_lookalike_imports_in_tests_py() -> Resu
         .map_err(|err| format!("write tests.py: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        Vec::<&str>::new()
+        Vec::<PythonFramework>::new()
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
@@ -495,7 +549,7 @@ fn detect_python_test_frameworks_rejects_lookalike_imports_in_tests_py() -> Resu
         .map_err(|err| format!("write tests.py: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        Vec::<&str>::new()
+        Vec::<PythonFramework>::new()
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
@@ -511,7 +565,10 @@ fn detect_python_test_framework_detects_unittest_from_code_evidence() -> Result<
         "import unittest\n\nclass TestPricing(unittest.TestCase):\n    pass\n",
     )
     .map_err(|err| format!("write test file: {err}"))?;
-    assert_eq!(super::detect_python_test_framework(&root), Some("unittest"));
+    assert_eq!(
+        super::detect_python_test_framework(&root),
+        Some(PythonFramework::Unittest)
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
@@ -543,7 +600,7 @@ fn detect_python_test_frameworks_scan_is_starvation_free_and_deterministic() -> 
         .map_err(|err| format!("write test file: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        vec!["unittest"]
+        vec![PythonFramework::Unittest]
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
@@ -557,7 +614,10 @@ fn detect_python_test_frameworks_scan_is_starvation_free_and_deterministic() -> 
     }
     std::fs::write(tests_dir.join("test_core.py"), "import pytest\n")
         .map_err(|err| format!("write test file: {err}"))?;
-    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec![PythonFramework::Pytest]
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
@@ -577,7 +637,7 @@ fn detect_python_test_frameworks_ignores_imports_inside_string_literals() -> Res
     .map_err(|err| format!("write tests.py: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        Vec::<&str>::new()
+        Vec::<PythonFramework>::new()
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
@@ -591,7 +651,7 @@ fn detect_python_test_frameworks_ignores_imports_inside_string_literals() -> Res
     .map_err(|err| format!("write test file: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        Vec::<&str>::new()
+        Vec::<PythonFramework>::new()
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
@@ -606,7 +666,7 @@ fn detect_python_test_frameworks_ignores_imports_inside_string_literals() -> Res
     .map_err(|err| format!("write test file: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        vec!["unittest"]
+        vec![PythonFramework::Unittest]
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
@@ -626,7 +686,10 @@ fn detect_python_test_frameworks_ignores_comment_and_string_quote_delimiters() -
         "# use \"\"\" for docstrings\nimport pytest\n",
     )
     .map_err(|err| format!("write test file: {err}"))?;
-    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec![PythonFramework::Pytest]
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
     // A bare quoted delimiter in a comment alone is not evidence either.
@@ -636,7 +699,7 @@ fn detect_python_test_frameworks_ignores_comment_and_string_quote_delimiters() -
         .map_err(|err| format!("write test file: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        Vec::<&str>::new()
+        Vec::<PythonFramework>::new()
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
@@ -651,7 +714,7 @@ fn detect_python_test_frameworks_ignores_comment_and_string_quote_delimiters() -
     .map_err(|err| format!("write test file: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        vec!["unittest"]
+        vec![PythonFramework::Unittest]
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
@@ -680,7 +743,7 @@ fn detect_python_test_frameworks_pins_backslash_continuation_limitation() -> Res
     .map_err(|err| format!("write test file: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        Vec::<&str>::new(),
+        Vec::<PythonFramework>::new(),
         "the backslash-continuation limitation is pinned: the phantom triple string hides the import"
     );
     // Positive control: the identical import counts when the string line
@@ -695,7 +758,7 @@ fn detect_python_test_frameworks_pins_backslash_continuation_limitation() -> Res
     .map_err(|err| format!("write test file: {err}"))?;
     assert_eq!(
         super::detect_python_test_frameworks(&root),
-        vec!["unittest"],
+        vec![PythonFramework::Unittest],
         "without the continuation backslash the line-1 string closes and the import is code"
     );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
@@ -718,7 +781,10 @@ fn detect_python_test_frameworks_test_named_directories_do_not_starve_the_scan()
     }
     std::fs::write(tests_dir.join("test_z.py"), "import pytest\n")
         .map_err(|err| format!("write test file: {err}"))?;
-    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec![PythonFramework::Pytest]
+    );
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
@@ -949,7 +1015,7 @@ class TestInherits(SharedMixin):
     );
     let collected: Vec<(&str, &str)> = tests
         .iter()
-        .map(|test| (test.qualified_name.as_str(), test.framework))
+        .map(|test| (test.qualified_name.as_str(), test.framework.as_str()))
         .collect();
     assert_eq!(
         collected,
@@ -1070,12 +1136,12 @@ class PriceTests(unittest.TestCase):
     assert!(tests[0].parametrized);
     assert_eq!(tests[0].fixtures, vec!["amount".to_string()]);
     assert_eq!(tests[0].qualified_name, "test_apply_discount");
-    assert_eq!(tests[0].framework, "pytest");
+    assert_eq!(tests[0].framework, PythonFramework::Pytest);
     assert_eq!(tests[1].fixtures, vec!["client".to_string()]);
     assert_eq!(tests[1].qualified_name, "TestPytestStyle.test_class_style");
-    assert_eq!(tests[1].framework, "pytest");
+    assert_eq!(tests[1].framework, PythonFramework::Pytest);
     assert_eq!(tests[2].qualified_name, "PriceTests.test_apply_method");
-    assert_eq!(tests[2].framework, "unittest");
+    assert_eq!(tests[2].framework, PythonFramework::Unittest);
     assert!(
         tests
             .iter()

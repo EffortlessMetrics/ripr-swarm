@@ -927,6 +927,10 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
     // Consecutive `.` ending at `prev`: three is a spread (`[...'p']`), while
     // a sentence's `.` in JSX text (`Hi. "Bye {p(1)}`) is not.
     let mut dots = 0usize;
+    // `++`/`--` that directly follows an operand is postfix, so a `/` after
+    // it is division (`i++ / 2`), never a regex start.
+    let mut postfix_op = false;
+    let mut op_after_operand = false;
     // One entry per open `${`: the brace depth inside that interpolation.
     let mut interpolations: Vec<usize> = Vec::new();
     let mut chars = text.chars().peekable();
@@ -962,7 +966,7 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
                         mode = Mode::BlockComment;
                         out.push_str("  ");
                     }
-                    '/' if operand_expected(prev, &word, word_after_dot) => {
+                    '/' if !postfix_op && operand_expected(prev, &word, word_after_dot) => {
                         mode = Mode::Regex { in_class: false };
                         out.push(c);
                     }
@@ -990,6 +994,16 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
                 if matches!(mode, Mode::LineComment | Mode::BlockComment) {
                     after_space = true;
                     continue;
+                }
+                if (c == '+' || c == '-') && !after_space && prev == Some(c) {
+                    postfix_op = op_after_operand;
+                } else {
+                    if c == '+' || c == '-' {
+                        op_after_operand = !operand_expected(prev, &word, word_after_dot);
+                    }
+                    if !c.is_whitespace() {
+                        postfix_op = false;
+                    }
                 }
                 if is_word_char(c) {
                     // Whitespace ends a word: `x as` is two words.
@@ -6106,6 +6120,31 @@ pub(crate) fn classify_change_with_alias_state(
             workspace_root,
         },
     );
+    // RIPR-SPEC-0246 rule 7: a setup hook that calls the owner outside every
+    // test body. It reads an actionable gap, never a credit.
+    let hook_owner_unknown = !ladder_exposed
+        && !reach_only_through_module_entry
+        && static_limit.is_none()
+        && strong_oracle_present
+        && !observation_confirmed
+        && matches!(verdict.class, ExposureClass::WeaklyExposed)
+        && matches!(probe_shape.family, ProbeFamily::SideEffect)
+        && super::hook_owner_guard::setup_hook_calls_owner(
+            &related_candidates,
+            owner,
+            reexport_index,
+            alias_map,
+            workspace_root,
+        );
+    if hook_owner_unknown {
+        verdict.class = ExposureClass::StaticUnknown;
+        verdict.observe_state = StageState::Unknown;
+        verdict.discriminate_state = StageState::Unknown;
+        verdict.missing = vec![format!(
+            "A synchronous mocha setup hook calls `{}` outside every test body, and no related test asserts the changed effect through a call it makes; whether a test observes what the hook set is not established either way.",
+            owner.name
+        )];
+    }
     let TsLadderVerdict {
         class,
         observe_state,
@@ -6114,9 +6153,10 @@ pub(crate) fn classify_change_with_alias_state(
     } = verdict;
     let static_unknown_by_mock = matches!(class, ExposureClass::StaticUnknown)
         && !ladder_unresolved_unknown
-        && !ladder_entry_unknown;
-    let unresolved_callback_unknown =
-        matches!(class, ExposureClass::StaticUnknown) && ladder_unresolved_unknown;
+        && !ladder_entry_unknown
+        && !hook_owner_unknown;
+    let unresolved_callback_unknown = matches!(class, ExposureClass::StaticUnknown)
+        && (ladder_unresolved_unknown || hook_owner_unknown);
     let entry_reach_unknown = matches!(class, ExposureClass::StaticUnknown) && ladder_entry_unknown;
     // Collect named TS-specific limitations (RIPR-SPEC-0085 §PR4 taxonomy).
     // These are ADDITIVE evidence lines; existing `static_limit_kind` is
@@ -6241,6 +6281,8 @@ pub(crate) fn classify_change_with_alias_state(
         "TypeScript preview adapter: every exposing test file mocks a module the changed line calls; discriminate unknown (RIPR-SPEC-0243 rule 8).".to_string()
     } else if ladder_entry_unknown {
         "TypeScript preview adapter: the related tests reach the changed owner only through a same-module caller; discriminate unknown (RIPR-SPEC-0027).".to_string()
+    } else if hook_owner_unknown {
+        "TypeScript preview adapter: a synchronous mocha setup hook calls the changed owner outside every test body; discriminate unknown (RIPR-SPEC-0246 rule 7).".to_string()
     } else if ladder_unresolved_unknown {
         "TypeScript preview adapter: the related tests hold assertion-like code in a callback the extractor cannot resolve; discriminate unknown (RIPR-SPEC-0246 rule 4).".to_string()
     } else if ladder_exposed && !matches!(class, ExposureClass::Exposed) {
@@ -6310,6 +6352,9 @@ pub(crate) fn classify_change_with_alias_state(
         }
         ExposureClass::StaticUnknown if ladder_entry_unknown => {
             "TypeScript preview advisory: the related test reaches the changed owner only through a same-module caller, so no new assertion is needed on that evidence; no repair packet is emitted.".to_string()
+        }
+        ExposureClass::StaticUnknown if hook_owner_unknown => {
+            "TypeScript preview advisory: a mocha setup hook calls the changed owner outside every test body, so a test may observe the state it set; no new assertion is needed on that evidence, and no repair packet is emitted.".to_string()
         }
         ExposureClass::StaticUnknown if ladder_unresolved_unknown => {
             "TypeScript preview advisory: the related test asserts inside a callback the extractor cannot resolve (a `.then` with a rejection handler or an async `forEach`); no new assertion is needed on that evidence, and no repair packet is emitted.".to_string()
@@ -8071,14 +8116,19 @@ fn module_entry_reach_summary(
     } else {
         called.join(", ")
     };
+    let scope = if owner.class_name.is_some() {
+        "same-class"
+    } else {
+        "same-module"
+    };
     if discriminator_unknown {
         return format!(
-            "Related tests reach `{}` only through same-module callers ({}); static evidence cannot confirm whether the changed behavior reaches their assertions, so the discriminator is not established either way.",
+            "Related tests reach `{}` only through {scope} callers ({}); static evidence cannot confirm whether the changed behavior reaches their assertions, so the discriminator is not established either way.",
             owner.name, entries
         );
     }
     format!(
-        "Related tests reach `{}` only through same-module callers ({}); static evidence cannot confirm the changed behavior reaches their assertions. Add a test whose exact-value assertion depends on the changed behavior of `{}`.",
+        "Related tests reach `{}` only through {scope} callers ({}); static evidence cannot confirm the changed behavior reaches their assertions. Add a test whose exact-value assertion depends on the changed behavior of `{}`.",
         owner.name, entries, owner.name
     )
 }

@@ -64,6 +64,7 @@ mod bun_bridge;
 #[cfg(test)]
 mod capability_disposition_tests;
 mod catch_arm_guard;
+mod class_entries;
 mod classifier;
 mod committed_snapshot;
 mod custom_matcher_guard;
@@ -76,6 +77,7 @@ mod enum_member_guard;
 mod error_payload_guard;
 mod field_update_guard;
 mod guard_entry_guard;
+mod hook_owner_guard;
 mod instance_class_guard;
 #[cfg(test)]
 mod line_index_tests;
@@ -162,6 +164,7 @@ pub(crate) use boolean_pin_guard::*;
 pub(crate) use boundary_input::*;
 pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
+pub(crate) use class_entries::*;
 pub(crate) use classifier::*;
 pub(crate) use committed_snapshot::*;
 pub(crate) use custom_matcher_guard::*;
