@@ -18371,8 +18371,8 @@ fn pilot_projects_python_repair_card_for_git_diff() -> Result<(), String> {
     run_git(&root, &["add", "src/pricing.py"])?;
     run_git(&root, &["commit", "-m", "change threshold boundary"])?;
     // An uncommitted edit to another tracked Python file makes the working
-    // tree the current change. The scope line names Rust seam ranking only,
-    // and the Python card is still chosen from the committed diff.
+    // tree the current change. With no Rust seam ranked, the scope line names
+    // the Python ranking the card below it comes from (#9857).
     std::fs::write(
         root.join("tests/test_pricing.py"),
         "from src.pricing import calculate_discount\n\n\ndef test_calculate_discount_smoke():\n    result = calculate_discount(125, 100)\n    assert result  # note\n",
@@ -18399,7 +18399,7 @@ fn pilot_projects_python_repair_card_for_git_diff() -> Result<(), String> {
         "recommended repair: strengthen test_calculate_discount_smoke in tests/test_pricing.py",
         "verify: python -m pytest tests/test_pricing.py::test_calculate_discount_smoke",
         "receipt status: unavailable_until_python_gap_ledger",
-        "  scope: change-first (Rust seams on lines changed since origin/main rank first)\n",
+        "  scope: change-first (python (preview) seams on lines changed since origin/main rank first)\n",
     ] {
         assert!(stdout.contains(needle), "missing stdout needle: {needle}");
     }
@@ -18439,6 +18439,209 @@ fn pilot_projects_python_repair_card_for_git_diff() -> Result<(), String> {
 
     ignore_remove_dir_all(&root);
     ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
+/// #9858 review follow-up: the first-run `target/ripr` ignore note must
+/// probe the selected root's ignore rules in the same coordinate system as
+/// the packet directory the run actually wrote. The default packet dir is
+/// `root/target/ripr/pilot` for every spelled root; an explicit bare
+/// `--out target/ripr/pilot` with a non-dot root resolves against the
+/// process cwd, and an out_dir that lexically starts with `target/ripr`
+/// but climbs out via `..` lands elsewhere — both must stay silent rather
+/// than claim the root's `target/ripr` is uncovered when the artifacts
+/// landed outside the artifact root. Each child command gets an explicit
+/// cwd; the test process cwd never changes.
+#[test]
+#[cfg(feature = "lang-python")]
+fn pilot_artifact_note_uses_the_selected_root_at_the_cli() -> Result<(), String> {
+    const FILES: &[(&str, &str)] = &[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"pilot-note-root\"\nversion = \"0.0.0\"\n",
+        ),
+        (
+            "src/pricing.py",
+            "def calculate_discount(amount, threshold):\n    if amount > threshold:\n        return amount - 10\n    return amount\n",
+        ),
+        (
+            "tests/test_pricing.py",
+            "from src.pricing import calculate_discount\n\n\ndef test_calculate_discount_smoke():\n    result = calculate_discount(125, 100)\n    assert result\n",
+        ),
+    ];
+
+    let make_sandbox = |label: &str| -> Result<(PathBuf, PathBuf), String> {
+        let sandbox = unique_temp_workspace(label);
+        let repo = sandbox.join("repo");
+        for (path, text) in FILES {
+            let path = repo.join(path);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|err| format!("create {}: {err}", parent.display()))?;
+            }
+            std::fs::write(&path, text)
+                .map_err(|err| format!("write {}: {err}", path.display()))?;
+        }
+        run_git(&repo, &["init"])?;
+        run_git(&repo, &["config", "user.email", "ripr@example.invalid"])?;
+        run_git(&repo, &["config", "user.name", "RIPR Test"])?;
+        // Establish no effective ignore rule: fixture-local empty excludes,
+        // empty info/exclude, and no .gitignore, so the uncovered positive
+        // stimulus is real.
+        let empty_excludes = sandbox.join("empty-excludes");
+        std::fs::write(&empty_excludes, "").map_err(|err| format!("write excludes: {err}"))?;
+        run_git(
+            &repo,
+            &[
+                "config",
+                "core.excludesFile",
+                &empty_excludes.to_string_lossy(),
+            ],
+        )?;
+        std::fs::write(repo.join(".git/info/exclude"), "")
+            .map_err(|err| format!("write info/exclude: {err}"))?;
+        run_git(&repo, &["add", "."])?;
+        run_git(&repo, &["commit", "-m", "base"])?;
+        run_git(&repo, &["update-ref", "refs/remotes/origin/main", "HEAD"])?;
+        std::fs::write(
+            repo.join("src/pricing.py"),
+            "def calculate_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n",
+        )
+        .map_err(|err| format!("write change: {err}"))?;
+        run_git(&repo, &["add", "src/pricing.py"])?;
+        run_git(&repo, &["commit", "-m", "change threshold boundary"])?;
+        // An uncommitted edit makes the working tree the current change.
+        std::fs::write(
+            repo.join("tests/test_pricing.py"),
+            "from src.pricing import calculate_discount\n\n\ndef test_calculate_discount_smoke():\n    result = calculate_discount(125, 100)\n    assert result  # note\n",
+        )
+        .map_err(|err| format!("write uncommitted edit: {err}"))?;
+        Ok((sandbox, repo))
+    };
+
+    // (label, child cwd relative to sandbox, args after `pilot`, expected
+    // packet dir relative to sandbox, whether the ignore note must fire)
+    let rows: [(&str, &str, Vec<String>, &str, bool); 5] = [
+        (
+            "dot-root",
+            "repo",
+            vec!["--root".to_string(), ".".to_string()],
+            "repo/target/ripr/pilot",
+            true,
+        ),
+        ("abs-root", "", vec![], "repo/target/ripr/pilot", true),
+        (
+            "rel-root",
+            "",
+            vec!["--root".to_string(), "repo".to_string()],
+            "repo/target/ripr/pilot",
+            true,
+        ),
+        (
+            "bare-out",
+            "",
+            vec![
+                "--root".to_string(),
+                "repo".to_string(),
+                "--out".to_string(),
+                "target/ripr/pilot".to_string(),
+            ],
+            "target/ripr/pilot",
+            false,
+        ),
+        (
+            "dotdot-out",
+            "",
+            vec![
+                "--root".to_string(),
+                "repo".to_string(),
+                "--out".to_string(),
+                "repo/target/ripr/../reports".to_string(),
+            ],
+            "repo/target/reports",
+            false,
+        ),
+    ];
+
+    for (label, cwd_rel, args, packet_rel, expect_note) in rows {
+        let (sandbox, repo) = make_sandbox(&format!("pilot-note-{label}"))?;
+        let repo_string = repo.to_string_lossy().into_owned();
+        let mut argv: Vec<&str> = vec!["pilot"];
+        argv.extend(args.iter().map(String::as_str));
+        if label == "abs-root" {
+            argv.extend(["--root", repo_string.as_str()]);
+        }
+        let cwd = if cwd_rel.is_empty() {
+            sandbox.clone()
+        } else {
+            sandbox.join(cwd_rel)
+        };
+        let cache_dir = sandbox.join("cache");
+        let output = run_command_with_env(
+            env!("CARGO_BIN_EXE_ripr"),
+            &cwd,
+            &argv,
+            &[("RIPR_CACHE_DIR", &cache_dir.to_string_lossy())],
+        )
+        .map_err(|err| format!("spawn pilot ({label}): {err}"))?;
+        assert!(
+            output.status.success(),
+            "pilot must succeed for row {label}:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let packet_dir = sandbox.join(packet_rel);
+        for file in [
+            "pilot-summary.json",
+            "pilot-summary.md",
+            "repo-exposure.json",
+            "repo-exposure.md",
+            "agent-seam-packets.json",
+        ] {
+            assert!(
+                packet_dir.join(file).is_file(),
+                "row {label}: expected packet file {}",
+                packet_dir.join(file).display()
+            );
+        }
+        let summary_json = std::fs::read_to_string(packet_dir.join("pilot-summary.json"))
+            .map_err(|err| format!("read summary ({label}): {err}"))?;
+        let summary: serde_json::Value = serde_json::from_str(&summary_json)
+            .map_err(|err| format!("parse summary ({label}): {err}"))?;
+        assert_eq!(summary["status"], "complete", "row {label}: {summary_json}");
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("language: python (preview)"),
+            "row {label}: stdout lost the Python preview scope:\n{stdout}"
+        );
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let note_lines: Vec<&str> = stderr
+            .lines()
+            .filter(|line| line.starts_with("ripr note:"))
+            .collect();
+        assert_eq!(
+            !note_lines.is_empty(),
+            expect_note,
+            "row {label}: note presence mismatch, stderr:\n{stderr}"
+        );
+        for note in &note_lines {
+            assert!(
+                note.contains("/target/ripr/"),
+                "row {label}: note must name the /target/ripr/ entry:\n{note}"
+            );
+        }
+        if !expect_note {
+            assert!(
+                !repo.join("target/ripr/pilot").exists(),
+                "row {label}: explicit bare --out must write outside the repo, \
+                 so an implementation silently rebasing it cannot satisfy the test"
+            );
+        }
+        ignore_remove_dir_all(&sandbox);
+    }
     Ok(())
 }
 
