@@ -1186,7 +1186,10 @@ fn rejection_arms_survive_the_stdio_transport() -> Result<(), String> {
     let snapshot = by_id
         .get("missing-snapshot")
         .ok_or("missing snapshot response")?;
-    if snapshot.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
+    // #9854: `no_snapshot` is a session state, not an identity miss, so the
+    // JSON-RPC code is InternalError; the typed state stays in `data.code`
+    // and the human sentence is unchanged.
+    if snapshot.pointer("/error/code").and_then(Value::as_i64) != Some(-32603)
         || snapshot.pointer("/error/message").and_then(Value::as_str)
             != Some("unavailable snapshot resource: no_snapshot")
         || snapshot.pointer("/error/data/code").and_then(Value::as_str) != Some("no_snapshot")
@@ -1619,7 +1622,10 @@ fn unavailable_workspace_evidence_names_restart_before_any_refresh() -> Result<(
             }
             let resource = id.contains("ripr://");
             let failure = if resource {
-                if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32602) {
+                // #9854: an unavailable root is a server state, so the
+                // resource read answers InternalError; the shared typed
+                // failure (with the restart recovery) rides `data.failure`.
+                if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32603) {
                     return Err(format!("{id} lost resource failure semantics: {reply}"));
                 }
                 reply.pointer("/error/data/failure")
@@ -1828,9 +1834,12 @@ fn gap_tools_fail_closed_before_the_first_refresh() -> Result<(), String> {
     let snapshot = by_id
         .get("snapshot")
         .ok_or_else(|| format!("snapshot response missing: {responses:?}"))?;
-    if snapshot.pointer("/error/code").and_then(Value::as_i64) != Some(-32602) {
+    // #9854: before the first refresh the snapshot resource is a session
+    // state (`no_snapshot`), so the code is InternalError with the typed
+    // state preserved in `data.code` — not a resource-miss categorization.
+    if snapshot.pointer("/error/code").and_then(Value::as_i64) != Some(-32603) {
         return Err(format!(
-            "unknown snapshot resource must stay a current-version resource miss: {snapshot}"
+            "unknown snapshot resource must answer InternalError with its typed state: {snapshot}"
         ));
     }
     if snapshot.pointer("/error/data/code").and_then(Value::as_str) != Some("no_snapshot") {
@@ -4254,6 +4263,115 @@ fn truncated_seam_inventory_refuses_repair_readiness_over_stdio() -> Result<(), 
         .ok_or("`ripr repair` must refuse under the same seam limit")?;
     if !refusal.contains("inventory is truncated") {
         return Err(format!("CLI truncation refusal changed shape: {refusal}"));
+    }
+    Ok(())
+}
+
+/// #9231 production path: `ripr_get_repair_card` shares the truncation fact
+/// with list/get/prepare. Under `RIPR_REPO_EXPOSURE_SEAM_LIMIT=1` the card
+/// refuses with the `incomplete_inventory` kind `ripr agent card` itself
+/// uses, where the complete-inventory control ships a ready card.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn truncated_seam_inventory_refuses_repair_card_over_stdio() -> Result<(), String> {
+    const REFRESH_TIMEOUT: Duration = Duration::from_mins(3);
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    let root = install_b4_repair_ready_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    std::fs::write(root.join(".gitignore"), "/target\n").map_err(|error| error.to_string())?;
+    // A second seam makes `limit=1` a real truncation (analyzed 1 < total 2).
+    let mut source =
+        std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?;
+    source.push_str("\npub fn sign(x: i32) -> i32 {\n    if x > 0 { 1 } else { 2 }\n}\n");
+    std::fs::write(root.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
+    commit_fixture(&root, "add a second seam")?;
+
+    // Control: complete inventory, the card ships with repair_ready true.
+    let mut control = SequentialStdio::spawn(&root)?;
+    control.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+    let refresh = control.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
+    structured_tool_success(&refresh, "ripr_refresh")?;
+    let list = control.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
+    let list = structured_tool_success(&list, "ripr_list_gaps")?;
+    let ready_id = list["items"]
+        .as_array()
+        .ok_or("list omitted items")?
+        .iter()
+        .find(|item| item["repair_packet_ready"] == true)
+        .and_then(|item| item["canonical_id"].as_str())
+        .ok_or_else(|| format!("control must yield a repair-ready item: {list}"))?
+        .to_string();
+    let card = control.call_tool(
+        "card",
+        "ripr_get_repair_card",
+        json!({ "canonical_id": ready_id }),
+        REPLY_TIMEOUT,
+    )?;
+    let card = structured_tool_success(&card, "ripr_get_repair_card")?;
+    if card.pointer("/card/readiness/repair_ready") != Some(&json!(true)) {
+        return Err(format!("control card must be repair-ready: {card}"));
+    }
+    let seam_id = card
+        .pointer("/card/subject/seam_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("control card omitted subject.seam_id: {card}"))?
+        .to_string();
+    drop(control);
+
+    // Truncated: same repository, seam limit 1.
+    let mut session =
+        SequentialStdio::spawn_with_env(&root, &[("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "1")])?;
+    session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+    let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
+    structured_tool_success(&refresh, "ripr_refresh")?;
+    let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
+    let list = structured_tool_success(&list, "ripr_list_gaps")?;
+    let items = list["items"].as_array().ok_or("list omitted items")?;
+    if !items
+        .iter()
+        .any(|item| item["canonical_id"] == ready_id.as_str())
+    {
+        return Err(format!("truncated refresh lost {ready_id}: {list}"));
+    }
+    for item in items {
+        let id = item["canonical_id"].as_str().ok_or("item omitted id")?;
+        let reply = session.call_tool(
+            &format!("card-{id}"),
+            "ripr_get_repair_card",
+            json!({ "canonical_id": id }),
+            REPLY_TIMEOUT,
+        )?;
+        let failure = reply
+            .pointer("/result/structuredContent/failure")
+            .ok_or_else(|| format!("card for {id} must refuse under truncation: {reply}"))?;
+        if failure.get("code") != Some(&json!("incomplete_inventory"))
+            || reply.pointer("/result/structuredContent/card").is_some()
+            || !failure.to_string().contains("seam inventory is truncated")
+        {
+            return Err(format!(
+                "card for {id} must refuse as incomplete_inventory: {reply}"
+            ));
+        }
+    }
+    drop(session);
+
+    // The CLI refuses the same seam's card for the same condition.
+    let output = worktree_ripr()
+        .args(["agent", "card", "--root"])
+        .arg(&root)
+        .args(["--seam-id", &seam_id, "--json"])
+        .env("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "1")
+        .output()
+        .map_err(|error| format!("spawn ripr agent card: {error}"))?;
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    if output.status.success() || !combined.contains("truncated by the repo seam limit") {
+        return Err(format!(
+            "`ripr agent card` must refuse under the same seam limit: {combined}"
+        ));
     }
     Ok(())
 }
