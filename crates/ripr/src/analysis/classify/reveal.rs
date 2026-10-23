@@ -1953,6 +1953,16 @@ fn analyze_related_assertions(
             && !is_proximity_only(*reason)
     });
 
+    // The owner-reaching test's own assertion may sit inside a macro the
+    // index cannot read (`assert_rate!(owner(4), 12)`), so a sibling's
+    // oracle is not provably unrelated; the established allowance holds.
+    let reaching_test_has_opaque_macro = related_tests.iter().any(|(test, reason)| {
+        *reason != RelationReason::SeamCalleeCall
+            && !name_only(*reason)
+            && !is_proximity_only(*reason)
+            && invokes_opaque_macro(&test.body)
+    });
+
     let names_shared_variant = matches!(probe.family, ProbeFamily::MatchArm)
         || (matches!(
             probe.family,
@@ -1979,6 +1989,7 @@ fn analyze_related_assertions(
         let unrelated_proximity = owner_reaching_related
             && !names_shared_variant
             && is_proximity_only(*reason)
+            && !reaching_test_has_opaque_macro
             && !invokes_opaque_macro(&test.body)
             && !(return_admission.proximity_may_reach_owner)(test);
         let credits_oracle = credits(*reason) && !unrelated_proximity;
@@ -10633,6 +10644,20 @@ return Err(\"typed pin\".into());
             &[
                 (&reaching, RelationReason::DirectOwnerCall),
                 (&opaque, RelationReason::SameTestFile),
+            ],
+            &|_| false,
+        );
+        assert_eq!(observe.state, StageState::Yes, "{}", observe.summary);
+        // An owner-reaching test whose assertion sits in an unreadable macro
+        // may carry the oracle itself, so a sibling's oracle stays credited.
+        let macro_reaching =
+            test_with_body_assertions("macro_reaching", "assert_rate!(owner(4), 12);", Vec::new());
+        let unrelated_sibling = test_with_assertions("unrelated_sibling", strong());
+        let (observe, _, _) = reveal_evidence_proximity_reach(
+            &ret_probe,
+            &[
+                (&macro_reaching, RelationReason::DirectOwnerCall),
+                (&unrelated_sibling, RelationReason::SameTestFile),
             ],
             &|_| false,
         );
