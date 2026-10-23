@@ -294,8 +294,13 @@ An invocation whose tokens contain `use`, `extern`, `macro_use` or
 expanded, but keeps counting as a possible macro-binding site, so an assertion
 mention in it stays ambiguous instead of being credited.
 
-The expansion is the invocation's own text, indexed with the same pinning,
-assertion admission and shadow rules as a generated test. Macros defined in
+A non-test `fn` declared in the invocation's own module (directly, or inside
+any item-position macro call there, the invocation included) is refused
+outright: the expansion is summarised alone, so a local `fn gate` would shadow
+the glob-imported callee unseen. The expansion is the invocation's own text,
+indexed with the same pinning and assertion admission as a generated test;
+file-level shadowing is enforced by that refusal, not by the generated-test
+path. Macros defined in
 another file, imported or `#[macro_use]` macros (`tokio`-style `cfg_*!`
 wrappers, `proptest!`, `rstest` macros) stay unindexed.
 
@@ -431,6 +436,7 @@ end of the file, which is an approximation for an edit in progress.
 - `crates/ripr/src/analysis/syntax/passthrough_item_macros.rs::tests::an_unseen_item_macro_between_definition_and_call_blocks_the_proof`
 - `crates/ripr/src/analysis/syntax/passthrough_item_macros.rs::tests::unknown_imported_duplicate_late_and_pathed_macros_expand_nothing`
 - `crates/ripr/src/analysis/syntax/passthrough_item_macros.rs::tests::rebinding_and_nested_module_variants_expand_nothing`
+- `crates/ripr/src/analysis/syntax/passthrough_item_macros.rs::tests::a_local_fn_in_the_invocations_module_blocks_the_proof`
 - `crates/ripr/src/analysis/syntax/passthrough_item_macros.rs::tests::binding_capable_tokens_keep_the_call_a_possible_binding_site`
 - `crates/ripr/src/analysis/syntax/passthrough_item_macros.rs::tests::invocation_tokens_that_could_generate_gate_or_rename_items_expand_nothing`
 - `crates/ripr/src/analysis/facts/macro_generated_tests.rs::tests::literal_tests_in_an_identity_macro_are_indexed_at_the_invocation`
@@ -438,6 +444,7 @@ end of the file, which is an approximation for an edit in progress.
 - `crates/ripr/tests/macro_generated_tests.rs::literal_tests_in_a_macro_that_is_not_the_identity_add_no_test`
 - `crates/ripr/tests/macro_generated_tests.rs::a_function_local_weak_alias_in_a_wrapped_test_is_never_stronger_than_by_hand`
 - `crates/ripr/tests/macro_generated_tests.rs::an_import_alias_after_the_identity_definition_adds_no_test`
+- `crates/ripr/tests/macro_generated_tests.rs::a_local_fn_shadowing_the_callee_never_promotes_a_wrapped_test`
 - `crates/ripr/tests/helper_wrapper_reach.rs::exact_pin_through_a_local_macro_argument_abstains_as_not_forwarded`
 - `crates/ripr/tests/helper_wrapper_reach.rs::any_exact_oracle_on_a_macro_argument_caller_abstains`
 - `crates/ripr/tests/helper_wrapper_reach.rs::macro_argument_without_the_owner_or_an_exact_pin_keeps_the_gap`

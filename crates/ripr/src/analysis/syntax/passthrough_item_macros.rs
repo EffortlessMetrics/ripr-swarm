@@ -32,6 +32,10 @@
 //! - the tokens parse cleanly as complete `fn` items, at least one with a
 //!   literal `#[test]`.
 //!
+//! A non-test `fn` declared in the invocation's module (or inside any
+//! item-position macro call there) shadows a glob-imported callee that the
+//! isolated expansion cannot see, so the proof is refused.
+//!
 //! The expansion is the invocation's own text, so the ordinary file-fact
 //! producer extracts the calls and assertions of the literal bodies.
 
@@ -129,9 +133,94 @@ fn identity_invocations(
         else {
             continue;
         };
+        if shadowed_by_local_fn(&call, &text) {
+            continue;
+        }
         accepted.push((call, name, text));
     }
     accepted
+}
+
+fn is_test_fn(function: &ast::Fn) -> bool {
+    function.attrs().any(|attr| {
+        attr.syntax()
+            .text()
+            .to_string()
+            .split_whitespace()
+            .collect::<String>()
+            == "#[test]"
+    })
+}
+
+fn non_test_fn_names(text: &str, names: &mut BTreeSet<String>) {
+    let Some(parse) = parse_clean_source_file(text) else {
+        return;
+    };
+    for item in parse.tree().items() {
+        if let ast::Item::Fn(function) = item
+            && !is_test_fn(&function)
+            && let Some(name) = function.name()
+        {
+            names.insert(name.text().to_string());
+        }
+    }
+}
+
+/// Whether a non-test `fn` declared in the invocation's own module (directly
+/// or inside any item-position macro call there, this one included) is named
+/// like something the wrapped tests mention. Such an item shadows a glob
+/// import of the real callee, but the expansion is summarised alone and never
+/// sees it, so the proof is refused instead of promoting a call to the wrong
+/// function.
+fn shadowed_by_local_fn(call: &ast::MacroCall, text: &str) -> bool {
+    let items: Vec<ast::Item> = match call
+        .syntax()
+        .ancestors()
+        .skip(1)
+        .find_map(ast::Module::cast)
+    {
+        Some(module) => module
+            .item_list()
+            .map(|list| list.items().collect())
+            .unwrap_or_default(),
+        None => call
+            .syntax()
+            .ancestors()
+            .last()
+            .and_then(ast::SourceFile::cast)
+            .map(|file| file.items().collect())
+            .unwrap_or_default(),
+    };
+    let mut declared = BTreeSet::new();
+    non_test_fn_names(text, &mut declared);
+    for item in items {
+        match item {
+            ast::Item::Fn(function) if !is_test_fn(&function) => {
+                if let Some(name) = function.name() {
+                    declared.insert(name.text().to_string());
+                }
+            }
+            ast::Item::MacroCall(other) => {
+                if let Some(tree) = other.token_tree() {
+                    let full = tree.syntax().text().to_string();
+                    if let Some(inner) = full.get(1..full.len().saturating_sub(1)) {
+                        non_test_fn_names(inner, &mut declared);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if declared.is_empty() {
+        return false;
+    }
+    parse_clean_source_file(text).is_some_and(|parse| {
+        parse
+            .syntax_node()
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .any(|token| token.kind() == SyntaxKind::IDENT && declared.contains(token.text()))
+    })
 }
 
 /// Whether another item-position macro call sits between the definition and
@@ -350,6 +439,25 @@ mod tests {
         // Positive control: another identity call in between is harmless.
         let sibling = format!("{SUITE}{call}{call}");
         assert_eq!(expand_local_test_macros(&sibling).len(), 2);
+    }
+
+    #[test]
+    fn a_local_fn_in_the_invocations_module_blocks_the_proof() {
+        let shadow = "fn gate(_x: u32) -> bool { true }";
+        let test = "#[test] fn a() { assert_eq!(gate(10), true); }";
+        // Beside the test inside the same invocation.
+        assert!(expand(&format!("suite! {{ {shadow} {test} }}\n")).is_empty());
+        // Hand-written in the same module.
+        assert!(expand(&format!("{shadow}\nsuite! {{ {test} }}\n")).is_empty());
+        // In a second invocation of the same module.
+        assert!(expand(&format!("suite! {{ {shadow} }}\nsuite! {{ {test} }}\n")).is_empty());
+        // A fn in an unrelated enclosing module does not shadow.
+        assert_eq!(
+            expand(&format!("{shadow}\nmod tests {{ suite! {{ {test} }} }}\n")).len(),
+            1
+        );
+        // Control.
+        assert_eq!(expand(&format!("suite! {{ {test} }}\n")).len(), 1);
     }
 
     #[test]

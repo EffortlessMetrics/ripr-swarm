@@ -311,3 +311,40 @@ fn an_import_alias_after_the_identity_definition_adds_no_test() -> Result<(), St
     }
     Ok(())
 }
+
+#[test]
+fn a_local_fn_shadowing_the_callee_never_promotes_a_wrapped_test() -> Result<(), String> {
+    // A local `fn gate` in the same module shadows the glob-imported real
+    // `gate`. Each expansion is summarised alone, so the wrapped test must
+    // be refused rather than credited with the real callee.
+    let shadow = "    fn gate(_input: u32) -> bool {\n        true\n    }\n\n";
+    let test = "    #[test]\n    fn ten_is_open() {\n        assert_eq!(gate(10), true);\n    }\n";
+    let cases = [
+        // (wrapped, hand-written twin)
+        (
+            format!("{IDENTITY}    suite! {{\n{shadow}{test}    }}\n"),
+            format!("{shadow}{test}"),
+        ),
+        (
+            format!("{IDENTITY}{shadow}    suite! {{\n{test}    }}\n"),
+            format!("{shadow}{test}"),
+        ),
+        (
+            format!("{IDENTITY}    suite! {{\n{shadow}    }}\n    suite! {{\n{test}    }}\n"),
+            format!("{shadow}{test}"),
+        ),
+    ];
+    for (wrapped_source, twin_source) in cases {
+        let twin = TempRepo::create(&twin_source)?.predicate()?;
+        let wrapped = TempRepo::create(&wrapped_source)?.predicate()?;
+        assert!(
+            !matches!(
+                wrapped.class,
+                ExposureClass::Exposed | ExposureClass::WeaklyExposed
+            ) || wrapped.class == twin.class,
+            "{wrapped_source}\nwrapped {wrapped:?}\ntwin {twin:?}"
+        );
+        assert_ne!(wrapped.class, ExposureClass::Exposed, "{wrapped_source}");
+    }
+    Ok(())
+}
