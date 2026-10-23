@@ -24,7 +24,7 @@ those five lines are added; classification, stages and evidence are unchanged.
 ## Pending — python_protocol_entry_bracketed_rebind_no_exposed_credit (2)
 
 Reason:
-RIPR-SPEC-0122: regenerate human.txt for main's bounded evidence legend wording (#9244); landed stale on main when #9207 and #9244 merged; formatting only, no class change
+RIPR-SPEC-0122: compose the bounded Summary terms legend from #10004 with the protocol-entry fixture from #9207; add only its two short-human legend lines, preserving JSON, full-human output, stimulus and classification.
 
 Command:
 `cargo xtask goldens bless python_protocol_entry_bracketed_rebind_no_exposed_credit --reason "..."`

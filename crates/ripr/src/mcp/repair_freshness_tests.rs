@@ -567,7 +567,12 @@ fn selected_action_parity(
         cli.next_action.as_ref().map(|action| action.step.as_str()),
         expected_step
     );
-    let expected_command = cli
+    // #10009: decision parity with the CLI is on the *action* (step and
+    // presence); the rendered command intentionally differs in the root
+    // binding — the CLI binds the selected repository for paste-and-run,
+    // the bounded MCP projection renders the portable root `.` and never
+    // names the host-local checkout (ADR 0022).
+    let cli_command = cli
         .next_action
         .as_ref()
         .map(|action| action.command.as_str());
@@ -575,10 +580,46 @@ fn selected_action_parity(
     let document = session
         .repair_attempt_document(id.as_str(), Some(root), None)
         .map_err(|failure| failure.detail)?;
+    assert_eq!(
+        document["next_command"].is_null(),
+        cli_command.is_none(),
+        "MCP/CLI next-action presence diverged"
+    );
+    if let (Some(mcp_rendered), Some(cli_rendered)) =
+        (document["next_command"].as_str(), cli_command)
+    {
+        // The CLI display renders the bound root with stable separators
+        // (#4287) and shell-quotes it when the spelling needs one (spaces,
+        // quotes, backslashes), so compare against the rendered token, not
+        // the raw path: a literal-backslash Unix root must not fail here
+        // only because its display carries quoting.
+        let host_root = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::display_path(root),
+        );
+        assert!(
+            cli_rendered.contains(host_root.as_str()),
+            "CLI restart display must bind the selected repository: {cli_rendered}"
+        );
+        // The MCP projection must not name the host root in ANY spelling:
+        // raw, display, or shell-quoted.
+        for spelling in [
+            root.to_string_lossy().into_owned(),
+            crate::agent::loop_commands::display_path(root),
+            host_root,
+        ] {
+            assert!(
+                !mcp_rendered.contains(spelling.as_str()),
+                "MCP projection leaked the host-local root ({spelling}): {mcp_rendered}"
+            );
+        }
+        assert!(
+            mcp_rendered.contains("--root ."),
+            "MCP projection must render the portable root: {mcp_rendered}"
+        );
+    }
+    assert_eq!(document["attempt_id"], id.as_str());
     // The primary RED discriminator is semantic: the inherited projection
     // offers the stored after even when the CLI finishes or restarts before.
-    assert_eq!(document["next_command"], json!(expected_command));
-    assert_eq!(document["attempt_id"], id.as_str());
     assert_eq!(document["seam_id"], manifest.seam_id);
     assert_eq!(document["currentness"]["state"], "current");
     assert_eq!(document["currentness"]["state"], cli.attempt.currentness);
@@ -592,8 +633,8 @@ fn selected_action_parity(
             .as_str()
             .ok_or_else(|| "missing awaiting next_command".to_string())?;
         assert!(
-            rendered.starts_with("ripr continue --root "),
-            "ordinary after-phase projection must name `ripr continue`: {rendered}"
+            rendered.starts_with("ripr continue --root . "),
+            "ordinary after-phase projection must name `ripr continue` with the portable root: {rendered}"
         );
         assert!(
             !rendered.contains("--phase after"),
