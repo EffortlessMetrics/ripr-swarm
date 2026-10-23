@@ -17909,3 +17909,56 @@ fn unresolved_workspace_package_import_names_the_manifest() -> Result<(), String
     );
     Ok(())
 }
+
+/// #10021: the per-line owner lookup must return the same owner the old
+/// linear scan returned — the FIRST same-file owner in extraction order
+/// whose span contains the line (the outer owner of a nested line) — while
+/// running in O(log n) over the start-line-sorted slice and its prefix-max
+/// of end lines.
+#[test]
+fn owner_index_for_line_matches_the_linear_scan_semantics() {
+    let owner_at = |name: &str, start: usize, end: usize| {
+        let mut owner = test_owner(name, "src/lib.ts");
+        owner.start_line = start;
+        owner.end_line = end;
+        owner
+    };
+    // Extraction order: a same-start short owner precedes the wide outer
+    // one (the stable sort must keep that relative order), the outer owner
+    // precedes the nested inner one, and a far-later owner must not be
+    // reachable by its prefix-max end line alone.
+    let owners = vec![
+        owner_at("short_first", 10, 12),
+        owner_at("outer", 10, 100),
+        owner_at("inner", 50, 60),
+        owner_at("later", 200, 300),
+    ];
+    let mut sorted = owners.clone();
+    sorted.sort_by_key(|owner| owner.start_line);
+    let mut prefix_max = Vec::with_capacity(sorted.len());
+    let mut max_end = 0usize;
+    for owner in &sorted {
+        max_end = max_end.max(owner.end_line);
+        prefix_max.push(max_end);
+    }
+
+    // Contained line: the first containing owner in source order (outer,
+    // not the nested inner one — the semantics the changed-line ownership
+    // test pins for the old scan).
+    let outer_idx = owner_index_for_line(&sorted, &prefix_max, 55);
+    assert_eq!(outer_idx, Some(1));
+    assert_eq!(sorted[outer_idx.unwrap()].name, "outer");
+    // Same-start owners keep extraction order: the short sibling that
+    // precedes the wide outer one is found first for its own lines.
+    let short_idx = owner_index_for_line(&sorted, &prefix_max, 11);
+    assert_eq!(short_idx, Some(0));
+    assert_eq!(sorted[short_idx.unwrap()].name, "short_first");
+    // The last owner starts after the line: no containment.
+    assert_eq!(owner_index_for_line(&sorted, &prefix_max, 100), Some(1));
+    assert_eq!(owner_index_for_line(&sorted, &prefix_max, 150), None);
+    assert_eq!(owner_index_for_line(&sorted, &prefix_max, 9), None);
+    // Past every owner.
+    assert_eq!(owner_index_for_line(&sorted, &prefix_max, 301), None);
+    // Empty slice.
+    assert_eq!(owner_index_for_line(&[], &[], 1), None);
+}

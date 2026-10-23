@@ -5534,6 +5534,16 @@ pub(crate) fn classify_change(
 /// (#4106-B) so the `typescript_path_alias_unresolved` advice names the real
 /// fail-closed cause (missing / unparseable / `extends` / unreadable
 /// config) instead of telling the user to enable a flag that is already on.
+///
+/// This entry point owns the owner lookup: it runs once per changed line in
+/// the live driver, so the file comparison must stay allocation-free
+/// (#10021 — `normalized_path` allocated a String per workspace owner per
+/// changed line, which made large diffs in owner-heavy files quadratic: 10k
+/// edited lines in a 100k-owner file cost ~136 s over baseline). The
+/// component-wise Path compare covers the common same-spelling case; the
+/// normalizing compare remains the fallback for divergent spellings (`\`
+/// vs `/`, a leading `./`). The hot per-line driver instead resolves the
+/// owner against a per-file index and calls [`classify_resolved_owner`].
 #[allow(
     clippy::too_many_arguments,
     reason = "10 structurally-distinct context tokens; bundling forces heap allocation; count is stable"
@@ -5553,8 +5563,48 @@ pub(crate) fn classify_change_with_alias_state(
     let changed_file = normalized_path(file);
     let owner = owners
         .iter()
-        .filter(|owner| normalized_path(&owner.file) == changed_file)
+        .filter(|owner| {
+            owner.file.as_path() == file || normalized_path(&owner.file) == changed_file
+        })
         .find(|owner| line >= owner.start_line && line <= owner.end_line)?;
+    classify_resolved_owner(
+        file,
+        line,
+        line_text,
+        old_line_text,
+        owner,
+        owners,
+        all_tests,
+        workspace_root,
+        reexport_index,
+        alias_map,
+        alias_unavailable,
+    )
+}
+
+/// Classify a changed line whose owning production owner was already
+/// resolved. The per-changed-line driver resolves the owner against a
+/// per-file index (#10021) so the hot loop does not re-scan the workspace
+/// owner vec for every changed line; this entry point takes the resolved
+/// owner directly. The lookup-owning sibling above keeps the scan semantics
+/// for the deleted-lines closure and the test-only wrapper.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "11 structurally-distinct context tokens; bundling forces heap allocation; count is stable"
+)]
+pub(crate) fn classify_resolved_owner(
+    file: &Path,
+    line: usize,
+    line_text: &str,
+    old_line_text: Option<&str>,
+    owner: &TypeScriptOwner,
+    owners: &[TypeScriptOwner],
+    all_tests: &[TypeScriptTest],
+    workspace_root: Option<&Path>,
+    reexport_index: &ReExportIndex,
+    alias_map: Option<&TsAliasMap>,
+    alias_unavailable: Option<&TsAliasMapLoadGap>,
+) -> Option<Finding> {
     let related_candidates =
         related_test_candidates(owner, all_tests, workspace_root, reexport_index, alias_map);
     // The changed line's probe family selects which assertion of each

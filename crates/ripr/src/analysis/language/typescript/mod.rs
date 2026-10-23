@@ -230,6 +230,29 @@ pub(crate) fn source_type_for(path: &Path) -> SourceType {
     }
 }
 
+/// First owner in source order whose span contains `line`, over a
+/// start-line-sorted slice and its prefix-max of end lines (#10021).
+/// `file_owners` must be sorted by `start_line` (stable, so equal start
+/// lines keep extraction order); `end_prefix_max[i]` is the maximum
+/// `end_line` over `file_owners[..=i]`. Two binary searches keep the
+/// per-changed-line lookup at O(log n) instead of the old O(n) scan of the
+/// workspace owner vec per line.
+fn owner_index_for_line(
+    file_owners: &[TypeScriptOwner],
+    end_prefix_max: &[usize],
+    line: usize,
+) -> Option<usize> {
+    debug_assert_eq!(file_owners.len(), end_prefix_max.len());
+    // Owners starting after `line` cannot contain it.
+    let hi = file_owners.partition_point(|owner| owner.start_line <= line);
+    // The first index whose prefix-max reaches `line` is the first owner in
+    // source order that can still be live at `line`; every earlier owner
+    // ended before it. Within the start-line-sorted prefix that owner
+    // contains `line` exactly when its own end line reaches it.
+    let idx = end_prefix_max[..hi].partition_point(|max_end| *max_end < line);
+    (idx < hi && line <= file_owners[idx].end_line).then_some(idx)
+}
+
 impl LanguageAdapter for TypeScriptAdapter {
     fn accepts_path(&self, path: &Path) -> bool {
         matches!(route(path), Some(LanguageId::TypeScript))
@@ -617,6 +640,29 @@ impl TypeScriptAdapter {
                 .iter()
                 .map(|removed| removed.text.as_str())
                 .collect();
+            // #10021: the per-line classifier used to scan the workspace
+            // owner vec for every changed line — O(changed lines x workspace
+            // owners), allocation-free per step only after the alloc-free
+            // file compare, still ~140 s for 10k lines in a 100k-owner file.
+            // Resolve against a per-file, start-line-sorted slice with a
+            // prefix-max of end lines instead: O(workspace owners) once per
+            // changed file, then O(log file owners) per line. The stable
+            // sort keeps the extractor's relative order for equal start
+            // lines, so the first containing owner is the same one the old
+            // scan found (the outer owner of a nested line included).
+            let changed_norm = normalized_path(&changed.path);
+            let mut file_owners: Vec<TypeScriptOwner> = all_owners
+                .iter()
+                .filter(|owner| normalized_path(&owner.file) == changed_norm)
+                .cloned()
+                .collect();
+            file_owners.sort_by_key(|owner| owner.start_line);
+            let mut owner_end_prefix_max: Vec<usize> = Vec::with_capacity(file_owners.len());
+            let mut max_end_line = 0usize;
+            for owner in &file_owners {
+                max_end_line = max_end_line.max(owner.end_line);
+                owner_end_prefix_max.push(max_end_line);
+            }
             // Every removed line of a replacement block shares the new-side
             // line where the added run starts, so matching on that coordinate
             // alone finds an old line only for the run's first added line
@@ -669,18 +715,25 @@ impl TypeScriptAdapter {
                 let old_line_text = counterparts
                     .get(&added.line)
                     .map(|removed| removed.text.as_str());
-                if let Some(mut finding) = classify_change_with_alias_state(
-                    &changed.path,
-                    added.line,
-                    &added.text,
-                    old_line_text,
-                    &all_owners,
-                    &all_tests,
-                    Some(&options.root),
-                    &reexport_index,
-                    alias_map_ref,
-                    alias_load_gap.as_ref(),
-                ) {
+                let resolved_finding =
+                    owner_index_for_line(&file_owners, &owner_end_prefix_max, added.line).and_then(
+                        |owner_idx| {
+                            classify_resolved_owner(
+                                &changed.path,
+                                added.line,
+                                &added.text,
+                                old_line_text,
+                                &file_owners[owner_idx],
+                                &file_owners,
+                                &all_tests,
+                                Some(&options.root),
+                                &reexport_index,
+                                alias_map_ref,
+                                alias_load_gap.as_ref(),
+                            )
+                        },
+                    );
+                if let Some(mut finding) = resolved_finding {
                     test_index_consumed = true;
                     finding.evidence.extend(discovery_evidence.clone());
                     // Inject verify-command evidence derived from the strongest
