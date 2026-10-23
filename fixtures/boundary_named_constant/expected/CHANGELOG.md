@@ -261,3 +261,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — boundary_named_constant (23)
+
+Reason:
+RIPR-SPEC-0122: infection_unknown next step names a concrete action (#9244 item 5); wording only, no classification change
+
+Command:
+`cargo xtask goldens bless boundary_named_constant --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

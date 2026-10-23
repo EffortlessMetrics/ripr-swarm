@@ -616,30 +616,7 @@ fn optional_nonnegative_argument(
     arguments: &Option<serde_json::Map<String, Value>>,
     name: &str,
 ) -> Result<Option<usize>, ErrorData> {
-    let Some(arguments) = arguments else {
-        return Ok(None);
-    };
-    match arguments.get(name) {
-        None => Ok(None),
-        Some(value) => {
-            let raw = value.as_u64().ok_or_else(|| {
-                ErrorData::invalid_params(
-                    format!("{name} must be a non-negative integer"),
-                    Some(
-                        serde_json::json!({ "argument": name, "expected": "non-negative integer" }),
-                    ),
-                )
-            })?;
-            usize::try_from(raw).map(Some).map_err(|error| {
-                ErrorData::invalid_params(
-                    format!("{name} is out of range: {error}"),
-                    Some(
-                        serde_json::json!({ "argument": name, "expected": "non-negative integer" }),
-                    ),
-                )
-            })
-        }
-    }
+    optional_integer_argument(arguments, name, 0, u64::MAX)
 }
 
 /// A paging limit (#6021): a JSON integer `>= 1`.
@@ -647,13 +624,139 @@ fn optional_positive_argument(
     arguments: &Option<serde_json::Map<String, Value>>,
     name: &str,
 ) -> Result<Option<usize>, ErrorData> {
-    match optional_nonnegative_argument(arguments, name)? {
-        Some(0) => Err(ErrorData::invalid_params(
-            format!("{name} must be at least 1"),
-            Some(serde_json::json!({ "argument": name, "expected": "integer at least 1" })),
-        )),
-        other => Ok(other),
+    optional_integer_argument(arguments, name, 1, u64::MAX)
+}
+
+/// The shared integer validator behind `offset` and `limit` (#9895). Every
+/// refusal names the real constraint (a whole JSON integer from `minimum` to
+/// the effective maximum: the declared maximum capped at this platform's
+/// `usize::MAX`, so `data.maximum`, the message and the recovery never
+/// disagree on a 32-bit build), why this value misses it, and a
+/// `data.recovery`. A negative number, a non-number, a fractional or exponent-form number and an integer
+/// past `u64::MAX` are different mistakes that used to share the single wrong
+/// sentence "must be a non-negative integer". A JSON number that does not fit
+/// `u64` reaches this adapter as a float, so `18446744073709551616` and `1e30`
+/// are reported as too large instead of as non-integers.
+fn optional_integer_argument(
+    arguments: &Option<serde_json::Map<String, Value>>,
+    name: &str,
+    minimum: u64,
+    maximum: u64,
+) -> Result<Option<usize>, ErrorData> {
+    optional_integer_argument_for_platform(
+        arguments,
+        name,
+        minimum,
+        maximum,
+        u64::try_from(usize::MAX).unwrap_or(u64::MAX),
+    )
+}
+
+/// The bound a request is actually held to: the declared maximum, never above
+/// what the platform's `usize` can represent.
+fn effective_integer_maximum(declared: u64, platform_max: u64) -> u64 {
+    declared.min(platform_max)
+}
+
+/// `optional_integer_argument` with the platform's largest `usize` as a
+/// parameter so the effective-bound behavior is testable on any target.
+fn optional_integer_argument_for_platform(
+    arguments: &Option<serde_json::Map<String, Value>>,
+    name: &str,
+    minimum: u64,
+    declared_maximum: u64,
+    platform_max: u64,
+) -> Result<Option<usize>, ErrorData> {
+    let maximum = effective_integer_maximum(declared_maximum, platform_max);
+    let Some(value) = arguments.as_ref().and_then(|arguments| arguments.get(name)) else {
+        return Ok(None);
+    };
+    let expected = if maximum != u64::MAX {
+        format!("integer at most {maximum}")
+    } else if minimum == 0 {
+        "non-negative integer".to_string()
+    } else {
+        "integer at least 1".to_string()
+    };
+    let refuse = |message: String, recovery: String| {
+        ErrorData::invalid_params(
+            message,
+            Some(serde_json::json!({
+                "argument": name,
+                "expected": expected,
+                "minimum": minimum,
+                "maximum": maximum,
+                "recovery": recovery,
+            })),
+        )
+    };
+    let in_range = format!("send {name} as an integer from {minimum} to {maximum}, or omit it");
+    let Value::Number(number) = value else {
+        let kind = match value {
+            Value::String(_) => "a string",
+            Value::Bool(_) => "a boolean",
+            Value::Null => "null",
+            Value::Array(_) => "an array",
+            _ => "an object",
+        };
+        return Err(refuse(
+            format!("{name} must be a whole JSON integer from {minimum} to {maximum}, not {kind}"),
+            in_range,
+        ));
+    };
+    let raw = if let Some(raw) = number.as_u64() {
+        raw
+    } else if number.as_i64().is_some() || number.as_f64().is_some_and(f64::is_sign_negative) {
+        return Err(refuse(
+            format!("{name} must be at least {minimum}; {number} is negative"),
+            in_range,
+        ));
+    } else if number.as_f64().is_some_and(|float| {
+        // `u64::MAX as f64` rounds up to 2^64, which no `u64` equals.
+        float > maximum as f64 || (maximum == u64::MAX && float >= maximum as f64)
+    }) {
+        return Err(refuse(
+            format!(
+                "{name} is larger than the largest accepted integer {maximum}{}",
+                if maximum == u64::MAX {
+                    " (u64 maximum)"
+                } else {
+                    ""
+                }
+            ),
+            format!(
+                "{in_range}; a smaller value is enough because replies are byte-bounded and continuation walks the rest"
+            ),
+        ));
+    } else {
+        return Err(refuse(
+            format!(
+                "{name} must be a whole JSON integer from {minimum} to {maximum} without a fraction or exponent, not {number}"
+            ),
+            in_range,
+        ));
+    };
+    if raw < minimum {
+        return Err(refuse(
+            format!("{name} must be at least {minimum}"),
+            in_range,
+        ));
     }
+    if raw > maximum {
+        return Err(refuse(
+            format!("{name} must be at most {maximum}"),
+            in_range,
+        ));
+    }
+    // The effective maximum already caps at `usize::MAX`, so this checked
+    // conversion cannot fail for an in-range value; it stays as the guard and
+    // reports the same bound if it ever does.
+    usize::try_from(raw).map(Some).map_err(|_error| {
+        refuse(
+            format!("{name} must be at most {maximum}"),
+            in_range.clone(),
+        )
+    })
 }
 
 /// A paging limit with a typed row cap: a JSON integer `>= 1` and `<= max`.
@@ -665,15 +768,7 @@ fn optional_capped_page_limit(
     name: &str,
     max: usize,
 ) -> Result<Option<usize>, ErrorData> {
-    match optional_positive_argument(arguments, name)? {
-        Some(value) if value > max => Err(ErrorData::invalid_params(
-            format!("{name} must be at most {max}"),
-            Some(
-                serde_json::json!({ "argument": name, "expected": format!("integer at most {max}") }),
-            ),
-        )),
-        other => Ok(other),
-    }
+    optional_integer_argument(arguments, name, 1, u64::try_from(max).unwrap_or(u64::MAX))
 }
 
 /// Resolve one captured resource-id segment through an exact-id lookup with
