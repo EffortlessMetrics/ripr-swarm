@@ -623,9 +623,27 @@ fn malformed_catalog_cursors_preserve_protocol_validation_and_recover() -> Resul
         serde_json::to_value(rmcp::model::ErrorCode::UNSUPPORTED_PROTOCOL_VERSION)
             .map_err(|error| error.to_string())?;
     for (id, meta, code) in [
-        ("missing", json!({}), json!(-32600)),
+        ("missing", json!({}), json!(-32602)),
         ("unsupported", unsupported, unsupported_code),
     ] {
+        let baseline_id = format!("baseline-{id}");
+        let baseline = session.raw_exchange(
+            &line(json!({
+                "jsonrpc": "2.0", "id": baseline_id, "method": "tools/list",
+                "params": {"_meta": meta}
+            }))?,
+            timeout,
+        )?;
+        if baseline.get("id") != Some(&json!(baseline_id))
+            || baseline.pointer("/error/code") != Some(&code)
+            || (id == "missing"
+                && !baseline
+                    .pointer("/error/message")
+                    .and_then(Value::as_str)
+                    .is_some_and(|message| message.contains("request _meta")))
+        {
+            return Err(format!("{id} SDK baseline refusal changed: {baseline}"));
+        }
         let reply = session.raw_exchange(
             &line(json!({
                 "jsonrpc": "2.0", "id": id, "method": "tools/list",
@@ -633,7 +651,7 @@ fn malformed_catalog_cursors_preserve_protocol_validation_and_recover() -> Resul
             }))?,
             timeout,
         )?;
-        if reply.get("id") != Some(&json!(id)) || reply.pointer("/error/code") != Some(&code) {
+        if reply.get("id") != Some(&json!(id)) || reply.get("error") != baseline.get("error") {
             return Err(format!(
                 "{id} SDK refusal must precede cursor validation: {reply}"
             ));
