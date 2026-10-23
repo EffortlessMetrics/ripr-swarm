@@ -423,19 +423,15 @@ fn startup_warning(status: &WorkspaceStatus) -> Option<String> {
     if status.workspace_state != WorkspaceState::Unavailable {
         return None;
     }
-    let cause = status
+    let cause_suffix = status
         .root
         .error_code
-        .map(|code| code.cause(status.root.source));
-    Some(match cause {
-        Some(cause) => format!(
-            "ripr mcp: warning: workspace root unavailable: {cause}; tools will fail closed \
-             with workspace_unavailable. Restart with `--root <repository>`."
-        ),
-        None => "ripr mcp: warning: workspace root unavailable; tools will fail closed with \
-                 workspace_unavailable. Restart with `--root <repository>`."
-            .to_string(),
-    })
+        .map(|code| format!(": {}", code.cause(status.root.source)))
+        .unwrap_or_default();
+    Some(format!(
+        "ripr mcp: warning: workspace root unavailable{cause_suffix}; tools will fail closed \
+         with workspace_unavailable. Restart with `--root <repository>`."
+    ))
 }
 async fn serve<R, W>(
     reader: R,
