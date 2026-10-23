@@ -692,6 +692,14 @@ fn a_reexport_outside_the_crate_roots_top_level_is_not_a_root_export() -> Result
                 "mod internal;\nuse internal::thr;\nfn main() {\n    let _ = thr(1);\n}\n",
             )],
         ),
+        // `crate::thr` in a binary-root test is the binary's, not the lib's.
+        (
+            "pub mod internal;\npub use internal::thr;\n",
+            vec![(
+                "src/main.rs",
+                "use other_dep::thr;\n#[cfg(test)]\nmod t {\n    #[test]\n    fn at() {\n        assert!(!crate::thr(101));\n    }\n}\nfn main() {\n    let _ = thr(1);\n}\n",
+            )],
+        ),
         // An explicit dependency export beats the owner's glob.
         (
             "pub mod internal;\npub use crate::internal::*;\npub use other_dep::thr;\n",

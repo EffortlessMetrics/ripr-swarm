@@ -1542,10 +1542,14 @@ fn qualified_call_names_owner(
         index,
     );
     let (anchored, rest) = match qualifier.split_first() {
+        // `crate` names the test's own crate target: it is the owner's only
+        // when the test file belongs to the owner's target (a `main.rs` or
+        // `src/bin` test is another crate).
         Some((first, rest)) if first == "crate" => (
             package_key(&test.file) == owner_package
                 && !under_tests_dir(&test.file)
-                && !under_tests_dir(&owner.file),
+                && !under_tests_dir(&owner.file)
+                && layout.class(&test.file).as_deref() == Some(owner_crate.as_str()),
             rest,
         ),
         Some((first, rest)) => (
