@@ -148,6 +148,11 @@ pub(crate) enum AssertionContextRefusal {
     ClosureExit,
     /// The same assertion text appears twice on one line.
     DuplicateSpelling,
+    /// The same assertion text appears twice on one line, and at least one
+    /// invocation provably runs. Refused like [`Self::DuplicateSpelling`]
+    /// (the oracle cannot say which one it names), but an effect probe may
+    /// still credit the text: the running copy is the same check (#8927).
+    DuplicateSpellingOneRuns,
     /// The invocation sits where it may not run: names the construct.
     ConditionalPath(&'static str),
     /// The test body's only `return` is the whole body of a root
@@ -2331,6 +2336,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
                     .is_some_and(|owner| owner == *function.syntax())
             })
             .map(|expression| expression.syntax().text_range().start())
+            .chain(root_divergence_start(&function))
             .min();
         let assertions = admitted_assertions(candidates, &function, first_return);
         let helper_assertions = if is_test_function(&function) {
@@ -2364,6 +2370,41 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
     result
 }
 
+/// Where a root statement of `function` never completes: a `loop` with no
+/// `break` (`loop {}`) or a standard-library `process::exit` / `abort` call.
+/// Like an earlier `return`, it keeps every later invocation from running
+/// (#8927). Nested statements do not count: only the body's own list.
+fn root_divergence_start(function: &ast::Fn) -> Option<TextSize> {
+    function
+        .body()?
+        .stmt_list()?
+        .statements()
+        .filter_map(|statement| match statement {
+            ast::Stmt::ExprStmt(statement) => statement.expr(),
+            _ => None,
+        })
+        .find(|expression| match expression {
+            ast::Expr::LoopExpr(body) => !body
+                .syntax()
+                .descendants()
+                .any(|node| ast::BreakExpr::can_cast(node.kind())),
+            ast::Expr::CallExpr(call) => call.expr().is_some_and(|callee| {
+                let path: String = callee
+                    .syntax()
+                    .text()
+                    .to_string()
+                    .split_whitespace()
+                    .collect();
+                matches!(
+                    path.strip_prefix("::").unwrap_or(&path),
+                    "std::process::exit" | "std::process::abort"
+                )
+            }),
+            _ => false,
+        })
+        .map(|expression| expression.syntax().text_range().start())
+}
+
 /// `#[test]`, `#[tokio::test]` and other attributes whose last segment is
 /// `test`: the functions the admission is queried for.
 fn is_test_function(function: &ast::Fn) -> bool {
@@ -2388,19 +2429,29 @@ fn admitted_assertions(
         .into_iter()
         .map(|(key, calls)| {
             // OracleFact has line/text, not an offset. No identical spelling
-            // on the same line may borrow another invocation's context.
-            let admitted = if calls.len() == 1 {
-                eager_path(calls[0].clone(), function, false, first_return).map_err(|construct| {
-                    match (construct == EARLIER_RETURN)
-                        .then(|| sole_return_guard(function))
-                        .flatten()
-                    {
-                        Some(condition) => AssertionContextRefusal::GuardedReturn(condition),
-                        None => AssertionContextRefusal::ConditionalPath(construct),
-                    }
+            // on the same line may borrow another invocation's context; the
+            // refusal records whether some invocation provably runs, which
+            // only the effect admission may use (`A; return; A;`, #8927).
+            let verdicts = calls
+                .iter()
+                .map(|call| {
+                    eager_path(call.clone(), function, false, first_return).map_err(|construct| {
+                        match (construct == EARLIER_RETURN)
+                            .then(|| sole_return_guard(function))
+                            .flatten()
+                        {
+                            Some(condition) => AssertionContextRefusal::GuardedReturn(condition),
+                            None => AssertionContextRefusal::ConditionalPath(construct),
+                        }
+                    })
                 })
-            } else {
-                Err(AssertionContextRefusal::DuplicateSpelling)
+                .collect::<Vec<_>>();
+            let admitted = match verdicts.as_slice() {
+                [only] => only.clone(),
+                _ if verdicts.iter().any(|verdict| verdict.is_ok()) => {
+                    Err(AssertionContextRefusal::DuplicateSpellingOneRuns)
+                }
+                _ => Err(AssertionContextRefusal::DuplicateSpelling),
             };
             (key, admitted)
         })
@@ -3971,14 +4022,14 @@ fn is_trusted_macro(path: &str, trusted: &[&str]) -> bool {
 }
 
 /// A macro path that may be one of the `leaves` assertions: the bare name,
-/// or `assert_eq` under a `std`/`core` root (#7857). A qualified candidate
+/// or `assert_eq` / `assert` under a `std`/`core` root (#7857, #8927). A qualified candidate
 /// is admitted only when [`has_escape`] finds its root unrebound, so a
 /// rebinding refuses the whole test with the path named.
 fn names_candidate_assertion(path: &str, leaves: &[&str]) -> bool {
     let path: String = path.split_whitespace().collect();
     let unrooted = path.strip_prefix("::").unwrap_or(&path);
     match unrooted.split_once("::") {
-        Some(("std" | "core", "assert_eq")) => leaves.contains(&"assert_eq"),
+        Some(("std" | "core", leaf @ ("assert_eq" | "assert"))) => leaves.contains(&leaf),
         Some(_) => false,
         None => leaves.contains(&unrooted),
     }
@@ -3986,13 +4037,15 @@ fn names_candidate_assertion(path: &str, leaves: &[&str]) -> bool {
 
 /// `std::assert_eq!` or `::core::assert_eq!` under a root nothing in the
 /// file can rebind runs as the standard macro, so it is no escape (#7857).
-/// Only `assert_eq` qualifies: the pin reads no other qualified macro, and
-/// the classify side adds the workspace root proof for the credited one.
+/// Only `assert_eq` and `assert` qualify: the pin reads no other qualified
+/// macro, and the classify side adds the workspace root proof for the
+/// credited one.
 fn is_standard_qualified_macro(path: &str, call: &ast::MacroCall, trusted: &[&str]) -> bool {
     // The parser keeps the spacing of `std :: assert_eq`.
     let path: String = path.split_whitespace().collect();
-    path.rsplit("::").next() == Some("assert_eq")
-        && trusted.contains(&"assert_eq")
+    path.rsplit("::")
+        .next()
+        .is_some_and(|leaf| matches!(leaf, "assert_eq" | "assert") && trusted.contains(&leaf))
         && std_macro_root_is_unrebound(&path, call.syntax())
 }
 

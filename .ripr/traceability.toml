@@ -11852,6 +11852,9 @@ name = "cross-crate test relation through dependency edges"
 spec = "docs/specs/RIPR-SPEC-0172-cross-crate-dependency-edge-relation.md"
 tests = [
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_ambiguous_owner_when_cross_crate_dependent_test_calls_owner_then_edge_admits",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::root_build_script_probe_relates_no_name_token_test",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::mounting_package_source_restores_build_script_relation",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::mount_scanner_reads_structure_not_text",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_forward_dev_dependency_edge_when_cross_crate_test_calls_owner_then_admits",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_nested_use_path_import_when_cross_crate_test_calls_owner_then_admits",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_brace_list_use_import_when_cross_crate_test_calls_owner_then_admits",
@@ -11908,6 +11911,7 @@ fixtures = [
   "fixtures/same_name_sibling_file_test",
   "fixtures/same_name_qualified_other_module",
   "fixtures/glob_import_qualified_other_module",
+  "fixtures/rust_build_script_no_test_reach",
 ]
 code = [
   "crates/ripr/src/analysis/classify/related_tests.rs",
@@ -11929,6 +11933,8 @@ outputs = [
   "fixtures/same_name_qualified_other_module/expected/human-full.txt",
   "fixtures/glob_import_qualified_other_module/expected/check.json",
   "fixtures/glob_import_qualified_other_module/expected/human.txt",
+  "fixtures/rust_build_script_no_test_reach/expected/check.json",
+  "fixtures/rust_build_script_no_test_reach/expected/human.txt",
 ]
 metrics = [
   "unit_test_pass_rate",
@@ -13280,6 +13286,9 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/tests/owner_pin_execution/effect_assertions.rs::effect_assertions_require_execution_but_keep_reachable_oracles",
+  "crates/ripr/tests/owner_pin_execution/effect_assertions.rs::effect_assertion_contexts_match_executed_mutant_controls",
+  "crates/ripr/tests/owner_pin_execution/effect_assertion_sweep.rs::effect_assertion_dead_context_sweep_refuses_every_never_run_assertion",
   "crates/ripr/tests/owner_pin_execution.rs::tokio_spawned_task_counts_only_when_joined_and_unwrapped",
   "crates/ripr/tests/invisible_change.rs::an_input_where_pow_bases_agree_does_not_expose_the_change",
   "crates/ripr/tests/invisible_change.rs::an_input_below_the_cap_does_not_expose_a_raised_cap",
@@ -13596,6 +13605,9 @@ tests = [
   "crates/ripr/src/analysis/classifier/evidence.rs::a_local_non_plain_drop_guard_keeps_return_value_exposed",
 ]
 fixtures = [
+  "fixtures/effect_assertion_after_return",
+  "fixtures/effect_assertion_in_false_block",
+  "fixtures/effect_assertion_uncalled_closure",
   "fixtures/rust_trait_default_import",
   "fixtures/rust_trait_default_shadow",
   "fixtures/rust_trait_impl_import",

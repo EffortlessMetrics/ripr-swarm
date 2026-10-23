@@ -4410,7 +4410,11 @@ fn shared_return_admission_uses_the_outer_invocation_identity() {
         "pretty_assertions::assert_eq!(weight(input), 12);",
         "similar_asserts :: assert_eq !(weight(input), 12);",
     ] {
-        assert!(is_admission_gated_assert_eq(assertion), "{assertion}");
+        assert_eq!(
+            OwnerPinSyntax::assertion_macro_name(assertion).as_deref(),
+            Some("assert_eq"),
+            "{assertion}"
+        );
     }
     for assertion in [
         "assert!({ assert_eq!(weight(input), 12); true });",
@@ -4419,8 +4423,21 @@ fn shared_return_admission_uses_the_outer_invocation_identity() {
         "pretty_assertions::nested::assert_eq!(weight(input), 12);",
         "matches!(value, Some(_));",
         "match value { _ => assert_eq!(weight(input), 12) }",
+        // A leading prefix token is not part of the macro path (#8927).
+        "if matches!(1, 2) { assert_eq!(weight(input), 12); }",
+        "if !cfg!(test) { assert_eq!(weight(input), 12); }",
+        "if cfg!(any()) { assert_eq!(weight(input), 12); }",
+        "if!cfg!(test) { assert_eq!(weight(input), 12); }",
+        "matches!(1, 2) && { assert_eq!(weight(input), 12); true };",
+        "!true && { assert_eq!(weight(input), 12); true };",
+        "if ::core::matches!(1, 2) { assert_eq!(weight(input), 12); }",
+        "while ::std::cfg!(any()) { assert_eq!(weight(input), 12); }",
     ] {
-        assert!(!is_admission_gated_assert_eq(assertion), "{assertion}");
+        assert_ne!(
+            OwnerPinSyntax::assertion_macro_name(assertion).as_deref(),
+            Some("assert_eq"),
+            "{assertion}"
+        );
     }
 }
 
@@ -7482,6 +7499,7 @@ fn analyzer_limit_refusals_are_limits_of_ripr_reading() {
         syntax(AssertionContextRefusal::UnidentifiedTest),
         syntax(AssertionContextRefusal::AsyncTest),
         syntax(AssertionContextRefusal::DuplicateSpelling),
+        syntax(AssertionContextRefusal::DuplicateSpellingOneRuns),
         syntax(AssertionContextRefusal::StaleSource),
         syntax(AssertionContextRefusal::TestAttribute(
             "#[cfg(any(feature = \"std\", not(no_core_net)))]".to_string(),
