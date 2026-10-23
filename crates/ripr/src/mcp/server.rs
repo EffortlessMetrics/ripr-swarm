@@ -630,10 +630,12 @@ fn optional_nonnegative_argument(
                 return Err(non_negative_integer_error(name));
             };
             let Some(raw) = number.as_u64() else {
-                let integral_too_large = number.is_f64()
-                    && number
-                        .as_f64()
-                        .is_some_and(|float| float > 0.0 && float.fract() == 0.0);
+                // Only magnitudes at or past 2^64 are out of range;
+                // smaller integral floats (5.0, 1e2) keep the type error
+                // (#9895 review).
+                let integral_too_large = number
+                    .as_f64()
+                    .is_some_and(|float| float >= u64::MAX as f64 && float.fract() == 0.0);
                 return Err(if integral_too_large {
                     out_of_range_error(name)
                 } else {
@@ -655,13 +657,15 @@ fn non_negative_integer_error(name: &str) -> ErrorData {
 }
 
 fn out_of_range_error(name: &str) -> ErrorData {
+    // `usize` is the paging bound (`usize::try_from` above), so the named
+    // maximum stays accurate on 32-bit platforms too (#9895 review).
     ErrorData::invalid_params(
         format!(
             "{name} is out of range: the supported maximum is {}",
-            u64::MAX
+            usize::MAX
         ),
         Some(
-            serde_json::json!({ "argument": name, "expected": format!("non-negative integer at most {}", u64::MAX) }),
+            serde_json::json!({ "argument": name, "expected": format!("non-negative integer at most {}", usize::MAX) }),
         ),
     )
 }

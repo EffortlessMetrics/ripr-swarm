@@ -1382,7 +1382,7 @@ fn paging_argument_parsers_pin_type_range_and_absence() -> Result<(), String> {
         refused.message,
         format!(
             "limit is out of range: the supported maximum is {}",
-            u64::MAX
+            usize::MAX
         )
     );
     let data = refused
@@ -1392,8 +1392,16 @@ fn paging_argument_parsers_pin_type_range_and_absence() -> Result<(), String> {
     assert_eq!(data["argument"], serde_json::json!("limit"));
     assert_eq!(
         data["expected"],
-        serde_json::json!(format!("non-negative integer at most {}", u64::MAX))
+        serde_json::json!(format!("non-negative integer at most {}", usize::MAX))
     );
+    // An integral float below 2^64 (serde_json stores 5.0 as f64) keeps
+    // the type error: only magnitudes at or past 2^64 are out of range.
+    let small_float = argument_map(serde_json::json!({"limit": 5.0}));
+    let refused = optional_positive_argument(&small_float, "limit")
+        .err()
+        .ok_or("5.0 must be refused")?;
+    assert_eq!(refused.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    assert_eq!(refused.message, "limit must be a non-negative integer");
     Ok(())
 }
 

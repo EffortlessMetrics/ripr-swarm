@@ -2423,12 +2423,13 @@ fn huge_page_limit_names_the_range_not_the_type() -> Result<(), String> {
         tool_call("too-large", json!({ "limit": 2f64.powi(64) }))?,
         tool_call("fractional", json!({ "limit": 1.5 }))?,
         tool_call("negative", json!({ "limit": -1 }))?,
+        tool_call("integral-float", json!({ "limit": 5.0 }))?,
         tool_call("valid", json!({ "limit": 1 }))?,
     ]
     .concat();
     let output = run_mcp(&root, &[&input])?;
     let responses = response_lines(&output)?;
-    if responses.len() != 5 {
+    if responses.len() != 6 {
         return Err(format!("expected 5 replies, got {}", responses.len()));
     }
     let reply = |id: &str| {
@@ -2439,9 +2440,13 @@ fn huge_page_limit_names_the_range_not_the_type() -> Result<(), String> {
             .cloned()
     };
     let too_large = reply("too-large")?;
+    let expected_range = format!(
+        "limit is out of range: the supported maximum is {}",
+        usize::MAX
+    );
     if too_large.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
         || too_large.pointer("/error/message").and_then(Value::as_str)
-            != Some("limit is out of range: the supported maximum is 18446744073709551615")
+            != Some(expected_range.as_str())
     {
         return Err(format!(
             "2^64 must name the range, not the type: {too_large}"
@@ -2450,6 +2455,7 @@ fn huge_page_limit_names_the_range_not_the_type() -> Result<(), String> {
     for (id, expected) in [
         ("fractional", "limit must be a non-negative integer"),
         ("negative", "limit must be a non-negative integer"),
+        ("integral-float", "limit must be a non-negative integer"),
     ] {
         let refused = reply(id)?;
         if refused.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
