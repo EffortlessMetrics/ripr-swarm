@@ -11,3 +11,16 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_guarded_write_call_overwrite (2)
+
+Reason:
+RIPR-SPEC-0108 / #9833 / #9868: produce the required full human classification projection; literal one-finding/class and anti-clean controls preserve native old/new semantics.
+
+Command:
+`cargo xtask goldens bless python_guarded_write_call_overwrite --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

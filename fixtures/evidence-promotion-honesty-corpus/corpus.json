@@ -3406,6 +3406,9 @@
           "count": 1
         },
         {
+          "type": "must_not_report_clean"
+        },
+        {
           "type": "must_not_promote"
         },
         {
@@ -3448,6 +3451,9 @@
           "count": 1
         },
         {
+          "type": "must_not_report_clean"
+        },
+        {
           "type": "must_not_promote"
         },
         {
@@ -3467,6 +3473,9 @@
         {
           "type": "expected_finding_count",
           "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
         },
         {
           "type": "must_not_promote"
@@ -3490,6 +3499,9 @@
           "count": 1
         },
         {
+          "type": "must_not_report_clean"
+        },
+        {
           "type": "must_not_promote"
         },
         {
@@ -3509,6 +3521,9 @@
         {
           "type": "expected_finding_count",
           "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
         },
         {
           "type": "must_not_promote"
@@ -3532,6 +3547,9 @@
           "count": 1
         },
         {
+          "type": "must_not_report_clean"
+        },
+        {
           "type": "must_not_promote"
         },
         {
@@ -3551,6 +3569,9 @@
         {
           "type": "expected_finding_count",
           "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
         },
         {
           "type": "must_not_promote"
@@ -3574,6 +3595,9 @@
           "count": 1
         },
         {
+          "type": "must_not_report_clean"
+        },
+        {
           "type": "must_not_promote"
         },
         {
@@ -3593,6 +3617,9 @@
         {
           "type": "expected_finding_count",
           "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
         },
         {
           "type": "must_not_promote"
@@ -3616,6 +3643,9 @@
           "count": 1
         },
         {
+          "type": "must_not_report_clean"
+        },
+        {
           "type": "must_not_promote"
         },
         {
@@ -3635,6 +3665,9 @@
         {
           "type": "expected_finding_count",
           "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
         },
         {
           "type": "must_not_promote"
@@ -3658,6 +3691,9 @@
           "count": 1
         },
         {
+          "type": "must_not_report_clean"
+        },
+        {
           "type": "must_not_promote"
         },
         {
@@ -3677,6 +3713,9 @@
         {
           "type": "expected_finding_count",
           "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
         },
         {
           "type": "must_not_promote"
@@ -3719,6 +3758,9 @@
         {
           "type": "expected_finding_count",
           "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
         },
         {
           "type": "must_not_promote"
