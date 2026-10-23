@@ -191,6 +191,9 @@ fn render_no_scope_note(output: &CheckOutput) -> String {
     }
 }
 
+/// The caveat an empty range adds beyond the triage `Safe next action` (#9922).
+const EMPTY_RANGE_CAVEAT_NOTE: &str = "\nNote: deleted files, submodule pointer changes and files ripr does not analyze are not counted, so this empty result does NOT mean no behavior changed.\n";
+
 /// The note an empty human result carries. An explicit `--base` that resolves
 /// to a range with no analyzable changed files (for example `--base HEAD`, or
 /// the base branch while on it) used to print only "No diff-derived static
@@ -254,7 +257,14 @@ pub(crate) fn render_bounded_with_config_and_navigation(
             triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
         }
         if let Some(note) = empty_scope_note(output) {
-            out.push_str(&note);
+            // #9922: the triage block above already states the empty range
+            // and names the compared base in its `Safe next action`, so the
+            // note keeps only the caveat it adds instead of saying it twice.
+            if output.no_scope_provided && output.base.is_some() {
+                out.push_str(EMPTY_RANGE_CAVEAT_NOTE);
+            } else {
+                out.push_str(&note);
+            }
         }
         render_working_tree_disclosure(&mut out, output);
         render_preview_language_advisories(&mut out, output);
@@ -3715,9 +3725,13 @@ mod tests {
         );
         assert!(
             rendered.contains(
-                "Note: the working tree has no analyzable changed files against `main` (diff from the merge base of `main` and HEAD to the working tree), so there was nothing to analyze."
+                "Note: deleted files, submodule pointer changes and files ripr does not analyze are not counted, so this empty result does NOT mean no behavior changed."
             ),
             "{rendered}"
+        );
+        assert!(
+            !rendered.contains("so there was nothing to analyze"),
+            "the empty range is stated once, by the safe next action: {rendered}"
         );
         assert!(
             rendered.contains(
@@ -3741,7 +3755,11 @@ mod tests {
         committed.untracked_working_tree_source_paths = vec!["src/new.rs".to_string()];
         let committed_rendered = render(&committed);
         assert!(
-            committed_rendered.contains("`main...HEAD` has no analyzable changed files"),
+            committed_rendered.contains("does NOT mean no behavior changed"),
+            "{committed_rendered}"
+        );
+        assert!(
+            !committed_rendered.contains("so there was nothing to analyze"),
             "{committed_rendered}"
         );
         assert!(
@@ -5454,6 +5472,110 @@ mod tests {
             return Err(format!("escaped path missing in:\n{rendered}"));
         }
         Ok(())
+    }
+
+    /// #9175: the human window lists the first five related tests, so a
+    /// retained demoted row in the second slot is shown, with its
+    /// disclosure, and the sixth row is not.
+    #[test]
+    fn render_finding_shows_a_retained_demoted_row_in_the_first_five_related_tests() {
+        use crate::domain::{RelatedTestMiss, RelationReason};
+        let mut finding = sample_finding();
+        let template = finding.related_tests[0].clone();
+        let row = |name: &str, reason: RelationReason| RelatedTest {
+            name: name.to_string(),
+            line: 10,
+            relation_reason: Some(reason),
+            relation_confidence: Some(reason.confidence()),
+            miss: Some(RelatedTestMiss::NoCallPath),
+            ..template.clone()
+        };
+        finding.related_tests = vec![
+            row("primary", RelationReason::DirectOwnerCall),
+            row("retained_demoted", RelationReason::WeakTokenSubstring),
+            row("doc_a", RelationReason::SameTestFile),
+            row("doc_b", RelationReason::SameTestFile),
+            row("doc_c", RelationReason::SameTestFile),
+            row("doc_sixth", RelationReason::SameTestFile),
+        ];
+        let rendered = render_finding(&finding);
+        let rows: Vec<&str> = rendered
+            .lines()
+            .filter(|line| line.trim_start().starts_with("- related test "))
+            .collect();
+        assert!(
+            rows.iter().any(|row| row.contains("retained_demoted")),
+            "{rows:#?}"
+        );
+        assert!(
+            rows.iter().all(|row| !row.contains("doc_sixth")),
+            "{rows:#?}"
+        );
+    }
+
+    fn five_human_related_rows(finding: &Finding) -> Vec<String> {
+        render_finding(finding)
+            .lines()
+            .filter(|line| line.trim_start().starts_with("- related test "))
+            .map(str::to_string)
+            .collect()
+    }
+
+    const RETAINED: &str = "truncate_to_zero_releases_shared_reference";
+
+    /// #9175 producer to consumer: a parser-backed finding with seven
+    /// location tests and three distinct-text assertions of a demoted
+    /// owner-calling test (total 10, window 8, one identity, primary
+    /// protected) renders exactly five related-test rows including it.
+    #[test]
+    fn render_finding_from_parser_backed_demoted_test_lists_it_in_the_five_rows() {
+        let finding = crate::analysis::retention_fixture_finding(7, "truncated.truncate(0)", 3);
+        assert_eq!(finding.related_tests_total(), 10);
+        assert_eq!(finding.related_tests.len(), 8);
+        assert_eq!(
+            finding
+                .related_tests
+                .iter()
+                .filter(|test| test.name == RETAINED)
+                .count(),
+            1
+        );
+        assert_ne!(finding.related_tests[0].name, RETAINED, "primary protected");
+        let rows = five_human_related_rows(&finding);
+        assert_eq!(rows.len(), 5, "{rows:#?}");
+        let retained: Vec<_> = rows.iter().filter(|row| row.contains(RETAINED)).collect();
+        assert_eq!(retained.len(), 1, "{rows:#?}");
+        let demoted = finding
+            .related_tests
+            .iter()
+            .find(|test| test.name == RETAINED);
+        assert_eq!(
+            demoted.map(|test| test.relation_reason),
+            Some(Some(crate::domain::RelationReason::WeakTokenSubstring))
+        );
+        assert!(
+            retained[0].contains("no call to the changed code found; linked by name only"),
+            "disclosure stays visible: {}",
+            retained[0]
+        );
+    }
+
+    #[test]
+    fn render_finding_from_parser_backed_controls_do_not_list_a_wrong_call() {
+        let wrong = crate::analysis::retention_fixture_finding(9, "truncated.clear()", 1);
+        assert!(
+            five_human_related_rows(&wrong)
+                .iter()
+                .all(|row| !row.contains(RETAINED))
+        );
+        let no_overflow = crate::analysis::retention_fixture_finding(2, "truncated.truncate(0)", 1);
+        assert!(no_overflow.related_tests.len() <= 8);
+        assert!(
+            no_overflow
+                .related_tests
+                .iter()
+                .any(|test| test.name == RETAINED)
+        );
     }
 
     #[test]

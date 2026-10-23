@@ -2820,3 +2820,122 @@ fn exception_class_change_is_not_a_message_only_change() -> Result<(), String> {
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }
+
+// #9919: the guarded-arm gate EXCLUDES a call, so it may only decide from
+// literals it reads exactly. A non-decimal numeric literal or an escaped
+// string literal is not read through its parsed value, so the comparison is
+// unreadable and the verdict stays what the oracle alone gives.
+#[test]
+fn unreadable_guard_literals_fail_open_to_the_oracle_verdict() -> Result<(), String> {
+    for (source, call) in [
+        // `"A" == "\x41"` holds in Python, so quote("A") enters the arm.
+        (
+            "def quote(name):\n    if name == \"\\x41\":\n        return 42\n    return 0\n",
+            "quote(\"A\")",
+        ),
+        (
+            "def quote(name):\n    if name == \"A\":\n        return 42\n    return 0\n",
+            "quote(\"\\x41\")",
+        ),
+        // `16 == 0x10` holds in Python, so quote(16) enters the arm.
+        (
+            "def quote(x):\n    if x == 0x10:\n        return 42\n    return 0\n",
+            "quote(16)",
+        ),
+        (
+            "def quote(x):\n    if x == 16:\n        return 42\n    return 0\n",
+            "quote(0x10)",
+        ),
+    ] {
+        let tests = format!(
+            "from src.subject import quote\n\ndef test_quote():\n    assert {call} == 42\n"
+        );
+        let finding = classify_added_case(source, &tests, 3, "        return 42")?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{source} {call}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn plain_decimal_and_plain_string_guard_literals_still_evaluate() -> Result<(), String> {
+    for (source, call) in [
+        (
+            "def quote(name):\n    if name == \"A\":\n        return 42\n    return 0\n",
+            "quote(\"B\")",
+        ),
+        (
+            "def quote(x):\n    if x == 16:\n        return 42\n    return 0\n",
+            "quote(5)",
+        ),
+    ] {
+        let tests = format!(
+            "from src.subject import quote\n\ndef test_quote():\n    assert {call} == 42\n"
+        );
+        let finding = classify_added_case(source, &tests, 3, "        return 42")?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::WeaklyExposed,
+            "{source} {call}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+// `!=` guards are read through the same equality owner. An early exit on
+// `name != "\x41"` is NOT taken by "A" in Python (they are equal), so the
+// fallthrough return runs; reading the raw text would call it taken.
+#[test]
+fn unreadable_guard_literal_inequality_fails_open() -> Result<(), String> {
+    let finding = classify_added_case(
+        "def quote(name):\n    if name != \"\\x41\":\n        return 0\n    return 42\n",
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(\"A\") == 42\n",
+        4,
+        "    return 42",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+// A loop header that opens a multi-line string is masked as string text, so
+// the walk would skip it and read the `if` before it as the guard (or the
+// chain head of a `for`/`else`). The header is unreadable: fail open.
+#[test]
+fn loop_header_opening_a_multiline_string_fails_open() -> Result<(), String> {
+    for (source, test_call, line, after) in [
+        // for/else after an unrelated `if`: f(5) completes the loop and
+        // enters the `else`.
+        (
+            "def f(xs, x):\n    if x > 0:\n        y = 1\n    for s in (\"\"\"\na\"\"\", \"b\"):\n        pass\n    else:\n        return 2\n",
+            "f([], 5)",
+            7,
+            "        return 2",
+        ),
+        // The loop body is not under the earlier `if`: f(-1) runs it.
+        (
+            "def f(x):\n    if x > 0:\n        return 1\n    for s in (\"\"\"\na\"\"\", \"b\"):\n        return 2\n",
+            "f(-1)",
+            6,
+            "        return 2",
+        ),
+        (
+            "def f(x):\n    if x > 0:\n        return 1\n    while x < 0 and \"\"\"\n\"\"\":\n        return 2\n",
+            "f(-1)",
+            6,
+            "        return 2",
+        ),
+    ] {
+        let tests =
+            format!("from src.subject import f\n\ndef test_f():\n    assert {test_call} == 2\n");
+        let finding = classify_added_case(source, &tests, line, after)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{source}: {finding:?}"
+        );
+    }
+    Ok(())
+}
