@@ -11504,6 +11504,78 @@
         }
       ],
       "control": "must_stay_weakly_exposed"
+    },
+    {
+      "id": "rust_shared_target_macro_context_return_value",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/shared_target_assertion_return",
+      "vector": "shared_role_representative_does_not_prove_assertion_execution_context",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
+      "id": "rust_shared_target_macro_context_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/shared_target_assertion_effect",
+      "vector": "shared_role_representative_does_not_prove_assertion_execution_context",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
+      "id": "rust_shared_target_macro_context_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/shared_target_assertion_effect",
+      "vector": "shared_role_representative_does_not_prove_assertion_execution_context",
+      "probe_family": "call_deletion",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
     }
   ]
 }
