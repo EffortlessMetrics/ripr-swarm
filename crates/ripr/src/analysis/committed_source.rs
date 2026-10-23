@@ -23,7 +23,7 @@
 
 use crate::core_error::CoreError;
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -325,6 +325,26 @@ pub(crate) fn snapshot_inputs_differ_in(root: &Path, directory: &Path) -> bool {
             .as_ref()
             .is_some_and(|overlay| overlay.snapshot_inputs_differ_in(root, directory))
     })
+}
+
+/// Root-relative `/`-separated paths of every tracked `*.snap` file under
+/// `root`, from one `ls-files` call, or `None` when the repository cannot
+/// answer (no repository, the tool unavailable, over the output limit). A
+/// `--worktree` run installs no overlay, so a `.snap` file the working tree
+/// holds but the repository does not track (untracked or ignored) is a local
+/// file CI never sees (#7708); this list lets the snapshot reader tell.
+/// `None` means "unknown", and the caller keeps the working-tree read it
+/// always did.
+pub(crate) fn tracked_snapshot_files(root: &Path) -> Option<HashSet<String>> {
+    let listing = git_bytes(root, &["ls-files", "-z", "--", "*.snap"], None).ok()?;
+    Some(
+        listing
+            .split(|byte| *byte == 0)
+            .filter(|path| !path.is_empty())
+            .filter_map(|path| std::str::from_utf8(path).ok())
+            .map(str::to_string)
+            .collect(),
+    )
 }
 
 /// Read `root.join(relative)` as source bytes: committed bytes for a dirty

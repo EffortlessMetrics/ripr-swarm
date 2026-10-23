@@ -16194,6 +16194,10 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::snapshot_calls_counts_each_spelling",
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::non_matcher_snapshot_names_do_not_refuse_an_honest_call",
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::line_comment_ending_in_any_line_terminator_keeps_honest_call_strong",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::untracked_or_ignored_snapshot_file_stays_medium",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::snapshot_file_outside_a_repository_is_read_as_before",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::config_walk_and_tracked_list_are_memoized_per_run_only",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::memoized_config_verdict_is_per_directory",
   "crates/ripr/src/analysis/committed_source/tests.rs::porcelain_parser_records_unrouted_snapshot_inputs",
   "crates/ripr/src/analysis/committed_source/tests.rs::snapshot_inputs_differ_only_in_their_own_directory",
 ]
