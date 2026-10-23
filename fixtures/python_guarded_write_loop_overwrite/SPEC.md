@@ -1,6 +1,8 @@
 # Fixture: python_guarded_write_loop_overwrite
 
-Spec: RIPR-SPEC-0260; governing #9833 and review repair #9868.
+Spec: RIPR-SPEC-0260
+
+Governing issue: #9833; review repair: #9868.
 
 ## Given
 
