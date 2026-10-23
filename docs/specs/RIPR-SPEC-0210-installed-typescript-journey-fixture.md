@@ -134,9 +134,11 @@ variants retain the verbatim not-ready diagnostics of `ripr check` and of the
 refused `agent repair --gap-id ... --phase before` (compared against the real
 binary by the installed journey test) and are offered no gap-bound start. All
 other scripted output bytes are semantic summaries, not literal transcripts. The
-inherited status warning that `ripr check` "offers no `ripr agent repair` start"
-(`pilot_routed_to_check_no_repair_target`) stays visible as a limitation even
-when the subsequent check prints the gap-bound start. The receipt is static exposure evidence only
+status warning `pilot_routed_to_check_no_repair_target` derives from the same
+gap-start admission the routed `ripr check` uses (#10001): when check prints the
+gap-bound start, the warning names that start instead of claiming `ripr check`
+"offers no `ripr agent repair` start", and for the eight refused variants it
+keeps that claim; the installed journey test pins both. The receipt is static exposure evidence only
 (`verification_not_run`); the printed Vitest command remains a separate axis.
 The retained cyclic row stays as a negative control proving the executor still
 derives `product_discoverability_failure` for a route that cycles without a

@@ -280,6 +280,18 @@ Updated:
 ## Pending — python_named_constant_boundary_repair_gap (24)
 
 Reason:
+RIPR-SPEC-0122: bounded evidence legend defines the Summary count terms (#9244 item 4)
+
+Command:
+`cargo xtask goldens bless python_named_constant_boundary_repair_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_named_constant_boundary_repair_gap (25)
+
+Reason:
 RIPR-SPEC-0224: Python related-test row gains missing_input when its own direct calls never reach the changed predicate boundary (#5491)
 
 Command:

@@ -1,0 +1,57 @@
+{
+  "case_id": "perl-moose-builder-join",
+  "subject_id": "authored-perl-moose-profile",
+  "diff": "cases/perl-moose-builder-join.diff",
+  "anchor": {
+    "file": "lib/Profile.pm",
+    "line": 14
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "string_format",
+  "test_shape": "moose_lazy_builder",
+  "hard_case": "The owner is a lazy builder reached through an attribute accessor, not a direct call.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43, Test::Deep 1.204, Moose 2.2207",
+    "mutants": [
+      {
+        "replacement": "join('-', $self->first_name, $self->last_name)",
+        "mutated_line": "return join('-', $self->first_name, $self->last_name);",
+        "outcome": "tests_failed",
+        "failing_test": "t/profile.t: builder joins the names",
+        "equivalence_review": "not equivalent: the separator changes"
+      },
+      {
+        "replacement": "join(' ', $self->last_name, $self->first_name)",
+        "mutated_line": "return join(' ', $self->last_name, $self->first_name);",
+        "outcome": "tests_failed",
+        "failing_test": "t/profile.t: builder joins the names",
+        "equivalence_review": "not equivalent: the names swap"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "is($p->full_name, 'Ada Lovelace') compares the whole string. Spec cells: RIPR-SPEC-0064 oracle strength (is), RIPR-SPEC-0235 method-receiver reach.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-moose-builder-join.json",
+    "sha256": "c1a80b8698f6666f1c283fb3b30ca2cae16275d89281975a6daefc2f892231c4",
+    "provenance": "producer"
+  }
+}

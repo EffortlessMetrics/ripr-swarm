@@ -174,18 +174,24 @@ decisive stages behind a remainder count (#4324):
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
 ```
 
-The five-line legend immediately follows the compact line, once for the selected
+The seven-line legend immediately follows the compact line, once for the selected
 digest, including an exposed finding when selected. It explains static evidence,
 not execution or test adequacy. `weak` means partial evidence across the stages,
 and `no` means evidence was not found, never that a behavior is impossible.
+The final two lines define the words the `Summary:` count line prints (probe,
+exposed, weak, unrevealed, no path) in the same static vocabulary (#9244 item 4);
+the `unknown` count is already defined by the `States` line (`unknown/opaque =
+analysis limited`). They claim no runtime mutation outcome.
 No legend renders when there is no selected digest (empty, all-suppressed,
 base-side-only, or unresolved-currentness-only findings). The legend adds a fixed
-five lines; it does not expand the per-stage detail window. Full human and
-machine formats retain their existing contracts. This addresses item 1 only;
-the shared class vocabulary and per-class discoverability in items 2 and 3 are
-unchanged.
+seven lines; it does not expand the per-stage detail window. Full human and
+machine formats retain their existing contracts. This addresses item 1 and #9244
+item 4 only; the shared class vocabulary and per-class discoverability in items 2
+and 3 are unchanged.
 
 Stages summarize independent static signals. Observation can reflect a
 matching assertion, an extracted test check, or a preview adapter's related-test
@@ -642,6 +648,11 @@ every other probe family print no note either. The probe fields and every
 machine output are unchanged; the note is static guidance only and claims no
 runtime outcome.
 
+Body presence includes a string or character literal even without a trailing
+comma. Comment-only text, including the producer's `/* old body unread */`
+placeholder, does not establish a body. A complete literal `after:` body is
+not a head-only row and prints no note.
+
 ## Non-Claims
 
 - Bounded human output is not runtime mutation evidence.
@@ -691,6 +702,8 @@ runtime outcome.
 - `crates/ripr/src/output/human.rs::tests::render_finding_adds_no_arm_note_when_the_after_row_is_complete`
 - `crates/ripr/src/output/human.rs::tests::render_finding_arm_note_ignores_arrows_in_literals_and_comments`
 - `crates/ripr/tests/cli_smoke.rs::check_human_full_marks_head_only_match_arm_after_row`
+- `crates/ripr/src/output/human.rs::tests::render_finding_arm_note_preserves_literal_body_presence`
+- `crates/ripr/tests/cli_smoke.rs::check_human_full_keeps_a_final_literal_arm_body_note_without_a_comma`
 - `crates/ripr/src/analysis/classify/decision.rs::tests::infection_unknown_next_step_names_a_concrete_action`
 - `crates/ripr/src/output/human.rs::tests::human_evidence_spells_the_unconfirmed_observation_in_words`
 - `crates/ripr/src/output/human.rs::tests::plain_observation_wording_handles_each_producer_form`
