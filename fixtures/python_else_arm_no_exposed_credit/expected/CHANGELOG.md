@@ -38,3 +38,17 @@ Source-only literal/slot comparison; no native fixture or goldens-bless command 
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_else_arm_no_exposed_credit (4)
+
+Reason:
+RIPR-SPEC-0122: #9373 item 1 observation-gloss repair; report independent related test/assertion evidence without implying that the changed arm executes.
+
+Operation:
+Manual edit: replaced only the observation clause in the existing five-line bounded Evidence legend with `observation = related test/assertion evidence`.
+
+Execution:
+Source-only reviewed edit; no native fixture or goldens-bless command executed because local storage admission is unavailable.
+
+Updated:
+- `expected/human.txt`

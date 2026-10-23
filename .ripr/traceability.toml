@@ -9929,6 +9929,8 @@ tests = [
   "crates/ripr/src/output/human.rs::tests::digest_next_step_line_counts_its_label_against_the_budget",
   "crates/ripr/src/output/human.rs::tests::digest_names_all_five_stage_states_and_keeps_the_remainder_disclosure",
   "crates/ripr/src/output/human.rs::tests::bounded_evidence_legend_explains_stages_and_states_once",
+  "crates/ripr/src/output/human.rs::tests::bounded_evidence_legend_observation_does_not_claim_changed_arm_execution",
+  "crates/ripr/src/output/human.rs::tests::bounded_evidence_legend_observation_allows_relation_only_preview",
   "crates/ripr/src/output/human.rs::tests::bounded_evidence_legend_keeps_empty_full_and_json_surfaces",
   "crates/ripr/tests/cli_smoke/discarded_matches.rs::bounded_legend_capture_projection_is_exact_and_preserves_evidence",
   "crates/ripr/src/output/human.rs::tests::digest_compact_discriminator_token_mirrors_the_full_evidence_line",

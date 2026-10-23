@@ -6563,7 +6563,7 @@ mod tests {
             "reach = test path to changed owner",
             "infection = inputs can activate change",
             "propagation = changed effect reaches output",
-            "observation = assertion observes changed effect",
+            "observation = related test/assertion evidence",
             "discriminator = assertion distinguishes intended from wrong behavior",
             "yes = evidence found",
             "weak = partial evidence",
@@ -6583,6 +6583,123 @@ mod tests {
         exposed.class = ExposureClass::Exposed;
         let rendered = render(&bounded_output_with_findings(vec![exposed]));
         assert_eq!(rendered.matches("    Stages (static evidence):").count(), 1);
+    }
+
+    /// A strong check can observe the owner's unchanged arm while the edited
+    /// arm never runs. Observation is an independent signal, not infection.
+    #[test]
+    fn bounded_evidence_legend_observation_does_not_claim_changed_arm_execution()
+    -> Result<(), String> {
+        let packet: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/python_else_arm_no_exposed_credit/expected/check.json"
+        )))
+        .map_err(|error| error.to_string())?;
+        let findings = packet["findings"]
+            .as_array()
+            .ok_or("counterexample needs findings")?;
+        assert_eq!(findings.len(), 1);
+        let evidence = &findings[0];
+        assert_eq!(evidence["classification"], "weakly_exposed");
+        assert_eq!(evidence["ripr"]["infect"]["state"], "weak");
+        assert_eq!(evidence["ripr"]["observe"]["state"], "yes");
+        assert_eq!(evidence["ripr"]["discriminate"]["state"], "weak");
+        assert_eq!(
+            evidence["related_tests"][0]["oracle"],
+            "assert sign(5) == 1"
+        );
+        let owner_source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/python_else_arm_no_exposed_credit/input/src/sign.py"
+        ));
+        let test_source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/python_else_arm_no_exposed_credit/input/tests/test_sign.py"
+        ));
+        assert!(owner_source.contains("if x > 0:\n        return 1\n    else:\n        return -2"));
+        assert!(test_source.contains("assert sign(5) == 1"));
+        let input = evidence["activation"]["observed_values"][0]["value"]
+            .as_str()
+            .and_then(|value| value.strip_prefix("x = "))
+            .ok_or("counterexample needs its observed argument")?
+            .parse::<i64>()
+            .map_err(|error| error.to_string())?;
+        assert!(
+            input > 0,
+            "the observed call must take the unchanged if arm"
+        );
+
+        let summary = |name: &str| {
+            evidence["ripr"][name]["summary"]
+                .as_str()
+                .ok_or_else(|| format!("counterexample needs {name} summary"))
+        };
+        assert!(summary("infect")?.contains("changed line never executes"));
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.probe.family = ProbeFamily::ReturnValue;
+        finding.probe.expression = "return -2".to_string();
+        finding.ripr.reach = stage(StageState::Yes, Confidence::Low, summary("reach")?);
+        finding.ripr.infect = stage(StageState::Weak, Confidence::Low, summary("infect")?);
+        finding.ripr.propagate = stage(StageState::Yes, Confidence::Low, summary("propagate")?);
+        finding.ripr.reveal.observe = stage(StageState::Yes, Confidence::Low, summary("observe")?);
+        finding.ripr.reveal.discriminate =
+            stage(StageState::Weak, Confidence::Low, summary("discriminate")?);
+        finding.related_tests[0].oracle = Some("assert sign(5) == 1".to_string());
+        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "not (x > 0)".to_string(),
+            reason: "every observed input takes the unchanged if arm".to_string(),
+            flow_sink: None,
+        }];
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &RiprConfig::default(),
+            Path::new("."),
+        );
+        assert!(digest.contains(
+            "  Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator weak\n"
+        ));
+        assert!(digest.contains("observation = related test/assertion evidence"));
+        assert!(!digest.contains("observation = assertion observes changed effect"));
+        Ok(())
+    }
+
+    /// Perl preview copies relation evidence into observe, even without an
+    /// assertion. Exercise that production mapper, not a stronger fake stage.
+    #[cfg(feature = "lang-perl")]
+    #[test]
+    fn bounded_evidence_legend_observation_allows_relation_only_preview() -> Result<(), String> {
+        let mut packet: serde_json::Value =
+            serde_json::from_str(crate::analysis::language::EXACT_RETURN_PACKET)
+                .map_err(|error| error.to_string())?;
+        assert_eq!(packet["relations"].as_array().map(Vec::len), Some(1));
+        packet["oracles"] = serde_json::json!([]);
+        let relation = packet["relations"][0]
+            .as_object_mut()
+            .ok_or("relation-only packet needs its relation")?;
+        assert!(relation.remove("oracle_id").is_some());
+        let text = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+        let finding = crate::analysis::language::only_finding(&text)?;
+        assert!(!finding.related_tests.is_empty());
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .all(|test| test.oracle.is_none())
+        );
+        assert_eq!(finding.ripr.reach.state, StageState::Yes);
+        assert_eq!(finding.ripr.reveal.observe.state, StageState::Yes);
+        assert_eq!(finding.ripr.infect.state, StageState::Unknown);
+        assert_ne!(finding.class, ExposureClass::Exposed);
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &RiprConfig::default(),
+            Path::new("."),
+        );
+        assert!(digest.contains("observation yes"));
+        assert!(digest.contains("observation = related test/assertion evidence"));
+        assert!(!digest.contains("observation = assertion observes changed effect"));
+        Ok(())
     }
 
     #[test]

@@ -170,7 +170,7 @@ decisive stages behind a remainder count (#4324):
 ```text
   Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator missing
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
-      propagation = changed effect reaches output; observation = assertion observes changed effect;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
@@ -186,6 +186,12 @@ five lines; it does not expand the per-stage detail window. Full human and
 machine formats retain their existing contracts. This addresses item 1 only;
 the shared class vocabulary and per-class discoverability in items 2 and 3 are
 unchanged.
+
+Stages summarize independent static signals. Observation can reflect a
+matching assertion, an extracted test check, or a preview adapter's related-test
+evidence. An observation `yes` alone establishes neither changed-arm execution
+nor observation of its changed effect; consult the infection and discriminator
+evidence.
 
 Every stage always carries an evidence line, so the compact line names all
 five stages for every finding and never silently drops one. The `missing` state
