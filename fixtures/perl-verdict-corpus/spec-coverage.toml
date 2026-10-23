@@ -24,7 +24,7 @@ floor = 32
 # Raise the floors and lower the ceiling as coverage grows and credits are
 # fixed; the opposite edit is a reviewed change with a reason.
 [grid]
-cell_floor = 8
+cell_floor = 9
 trap_floor = 0
 false_credit_ceiling = 0
 
