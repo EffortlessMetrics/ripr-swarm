@@ -42,6 +42,7 @@ use run_status::{PartialRunReason, PythonRepoRunStatus};
 use std::path::{Path, PathBuf};
 
 use super::super::detect_python_test_framework;
+use super::PythonFramework;
 
 /// The selected Python repo analysis input for one workspace.
 ///
@@ -72,7 +73,7 @@ pub(in crate::analysis::language::python) struct PythonRepoInput {
     /// Primary test framework from the shared producer
     /// (`detect_python_test_framework`, pytest-first) at the workspace root.
     /// Doctor prints the full set via `detect_python_test_frameworks` (#7664).
-    pub(in crate::analysis::language::python) test_framework: Option<&'static str>,
+    pub(in crate::analysis::language::python) test_framework: Option<PythonFramework>,
 }
 
 /// Select the Python repo analysis input with an explicit working-set limit.
@@ -282,7 +283,7 @@ mod tests {
         // The framework comes from the shared producer, not a repo-mode
         // re-derivation. The root `conftest.py` is pytest evidence; the
         // primary-of-set Option stays pytest. Doctor prints the full set (#7664).
-        assert_eq!(input.test_framework, Some("pytest"));
+        assert_eq!(input.test_framework, Some(PythonFramework::Pytest));
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())
     }
