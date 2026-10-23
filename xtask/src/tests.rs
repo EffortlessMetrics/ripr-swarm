@@ -9738,7 +9738,7 @@ fn allow_attribute_detection_sees_suppressions_after_char_literals() {
     // A lifetime tick is not a char literal and must not hide a suppression.
     let text = concat!(
         "#",
-        "[cfg_attr(test, allow(dead_code), expect(warnings), x = 'a)]"
+        "[cfg_attr(test, allow(dead_code), x = 'a, expect(warnings))]"
     );
     assert_eq!(
         guarded_allow_attributes_in_text(text, &guarded)
