@@ -3835,6 +3835,35 @@ mod tests {
     }
 
     #[test]
+    fn reports_gap_ledger_hinted_recovery_route_parses_and_root_only_does_not() -> Result<(), String>
+    {
+        // #9851 review follow-up: the producer command named in the
+        // missing-gap-ledger diagnostics must parse — the old root-only
+        // example was rejected by this parser, so following the hint
+        // reached another usage error and wrote nothing.
+        let options = parse_gap_decision_ledger_options(&args(&[
+            "--root",
+            ".",
+            "--repo-exposure",
+            "target/ripr/reports/repo-exposure.json",
+            "--out",
+            "gap-ledger.json",
+        ]))
+        .map_err(|err| format!("hinted recovery route must parse: {err}"))?;
+        assert_eq!(options.out, std::path::PathBuf::from("gap-ledger.json"));
+        // Negative control: the retired root-only example still returns
+        // the required-source diagnostic.
+        assert_eq!(
+            parse_gap_decision_ledger_options(&args(&["--root", "."])),
+            Err(
+                "reports gap-ledger requires --records PATH, --repo-exposure PATH, or --check-output PATH"
+                    .to_string()
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
     fn reports_ts_limitations_requires_check_output_input() {
         assert_eq!(
             reports(&args(&["ts-limitations"])),

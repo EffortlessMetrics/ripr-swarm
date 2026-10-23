@@ -91,7 +91,9 @@ fn read_gap_ledger(path: &Path) -> Result<String, String> {
         );
         if err.kind() == std::io::ErrorKind::NotFound {
             message.push_str(
-                ". Generate it first (for example `ripr reports gap-ledger --root .`), or pass the correct path",
+                ". Generate it first (for example `ripr reports gap-ledger --root . \
+                 --repo-exposure target/ripr/reports/repo-exposure.json --out gap-ledger.json`), \
+                 or pass the correct path",
             );
         }
         message
@@ -216,7 +218,7 @@ mod tests {
         );
         assert!(err.contains("not found"), "{err}");
         assert!(
-            err.contains("ripr reports gap-ledger --root ."),
+            err.contains("ripr reports gap-ledger --root . --repo-exposure"),
             "error should name the gap-ledger recovery route, got: {err}"
         );
         assert!(!err.contains("os error"), "{err}");

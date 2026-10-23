@@ -22,6 +22,14 @@ use super::{
 /// consume the artifact `ripr gate evaluate` writes.
 const GATE_DECISION_RECOVERY: &str = "Run `ripr gate evaluate --gap-ledger <gap-ledger> --out <gate-decision.json> --out-md <gate-decision.md>` first, or pass the correct path";
 
+/// Recovery route for a missing `--baseline` ledger (#9851 review follow-up):
+/// `baseline update` requires the reviewed historical-debt ledger with kind
+/// `gate_baseline` and an `entries` array, which only `baseline create`
+/// writes — pointing at `gate evaluate` hands the caller a gate-decision
+/// artifact the consumer still rejects. The route chains through a
+/// gate-decision file: create adopts it, update consumes the adoption.
+const BASELINE_LEDGER_RECOVERY: &str = "Run `ripr baseline create --from <gate-decision.json> --out <baseline.json>` first, or pass the correct path";
+
 pub(in crate::cli) fn baseline(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         help::print_baseline_help();
@@ -148,7 +156,7 @@ fn baseline_update(args: &[String]) -> Result<(), String> {
     let baseline_json = crate::bounded_input::read_required_input(
         "read baseline update baseline",
         &options.baseline,
-        Some(GATE_DECISION_RECOVERY),
+        Some(BASELINE_LEDGER_RECOVERY),
     )?;
     let current_json = crate::bounded_input::read_required_input(
         "read baseline update current gate-decision",
@@ -453,6 +461,42 @@ mod tests {
         assert!(
             err.contains("ripr gate evaluate --gap-ledger"),
             "error should name the gate-evaluate recovery route, got: {err}"
+        );
+        assert!(!err.contains("os error"), "{err}");
+        std::fs::remove_dir_all(&dir).map_err(|error| format!("remove dir: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn baseline_update_missing_baseline_points_at_baseline_create() -> Result<(), String> {
+        // #9851 review follow-up: a missing --baseline ledger must name the
+        // command that actually produces the reviewed historical-debt
+        // ledger. The gate-evaluate route hands the caller a gate-decision
+        // artifact whose kind the update consumer still rejects.
+        let dir = unique_command_test_dir("baseline-update-missing-baseline");
+        std::fs::create_dir_all(&dir).map_err(|error| format!("create dir: {error}"))?;
+        let current_path = dir.join("current.json");
+        std::fs::write(&current_path, "{\"entries\":[]}")
+            .map_err(|error| format!("write current: {error}"))?;
+        let err = baseline(&args(&[
+            "update",
+            "--baseline",
+            "missing-baseline.json",
+            "--current",
+            &current_path.to_string_lossy(),
+            "--remove-resolved",
+        ]))
+        .err()
+        .ok_or("missing --baseline source must fail")?;
+        assert!(err.starts_with("read baseline update baseline"), "{err}");
+        assert!(err.contains("not found"), "{err}");
+        assert!(
+            err.contains("ripr baseline create --from"),
+            "error should name the baseline-create recovery route, got: {err}"
+        );
+        assert!(
+            !err.contains("ripr gate evaluate"),
+            "the missing-baseline route must not point at gate evaluate, got: {err}"
         );
         assert!(!err.contains("os error"), "{err}");
         std::fs::remove_dir_all(&dir).map_err(|error| format!("remove dir: {error}"))?;

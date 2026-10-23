@@ -257,7 +257,9 @@ fn cross_reference_receipt(
         if err.kind() == std::io::ErrorKind::NotFound {
             format!(
                 "receipt check --ledger {displayed} unreadable: not found. Generate it first \
-                 (for example `ripr reports gap-ledger --root .`), or pass the correct path"
+                 (for example `ripr reports gap-ledger --root . \
+                 --repo-exposure target/ripr/reports/repo-exposure.json --out gap-ledger.json`), \
+                 or pass the correct path"
             )
         } else {
             format!("receipt check --ledger {displayed} unreadable: {err}")
