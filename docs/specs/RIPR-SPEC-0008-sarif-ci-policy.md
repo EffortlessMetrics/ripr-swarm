@@ -135,6 +135,12 @@ same text, because an absolute root prefix is removed before rendering. A
 relative root keeps its spelling, since it already names a path under the
 invoking directory.
 
+Path separators follow the native host: Windows backslashes become `/`,
+while a literal backslash in a Unix filename remains part of that filename.
+In particular, `src/a\b.rs` on Unix must emit `src/a%5Cb.rs`, distinct from
+`src/a/b.rs`; its fingerprint retains the literal backslash too. Existing
+fingerprints for ordinary slash-separated paths remain unchanged.
+
 The physical location `uri` is that path percent-encoded as an RFC 3986
 relative reference: every byte of the UTF-8 path outside `A-Z a-z 0-9 - . _ ~ /` is written
 as `%XX` (so `é` becomes `%C3%A9`), so a space, `#`, `?`, `%` or `:` in a file name cannot change which file
@@ -275,6 +281,9 @@ then fail-on-new-warning mode reports the new result and exits non-zero.
 
 Implemented renderer tests:
 
+- `crates/ripr/src/output/sarif.rs::tests::sarif_artifact_paths_escape_without_reinterpreting_names`
+- `crates/ripr/src/output/sarif.rs::tests::sarif_native_backslashes_do_not_alias_directories`
+- `crates/ripr/src/output/sarif.rs::tests::sarif_native_windows_separators_are_uri_slashes`
 - `crates/ripr/src/output/sarif.rs::tests::sarif_renders_findings_with_stable_rule_ids`
 - `crates/ripr/src/output/sarif.rs::tests::sarif_renders_seams_with_stable_rule_ids`
 - `crates/ripr/src/output/sarif.rs::tests::sarif_uses_configured_finding_severity`
