@@ -1160,10 +1160,7 @@ fn position_macro_lines(source: &str) -> std::collections::BTreeSet<usize> {
 /// masked file so a name inside a string or comment does not count. An
 /// invocation that never closes runs to the end of the file, which keeps its
 /// probes.
-fn macro_invocation_lines(
-    source: &str,
-    names: &[&str],
-) -> std::collections::BTreeSet<usize> {
+fn macro_invocation_lines(source: &str, names: &[&str]) -> std::collections::BTreeSet<usize> {
     let masked = mask_comments_and_strings(source);
     let bytes = masked.as_bytes();
     let newlines = bytes
@@ -3033,11 +3030,7 @@ mod tests {
     #[test]
     fn a_reindented_split_position_macro_keeps_its_probe() {
         let new_source = "pub fn value() -> u32 {\n    column\n  !()\n}\n";
-        let reindented = block_probes(
-            new_source,
-            &[(2, "    column")],
-            &[(2, 2, "  column")],
-        );
+        let reindented = block_probes(new_source, &[(2, "    column")], &[(2, 2, "  column")]);
         assert!(
             !reindented.is_empty(),
             "a reindented split column!() keeps its probe: {reindented:?}"
