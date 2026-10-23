@@ -578,6 +578,11 @@ impl OwnerCallIdentity {
     /// the owner is the root package. From any other crate: the import
     /// names the manifests give the owner's library (`MemberCrates`).
     fn own_crate_names(&self, test: &TestSummary, index: &RustIndex) -> BTreeSet<String> {
+        let Some(owner_root) =
+            super::owner_pin::target_root(&self.owner_file, index, &BTreeSet::new())
+        else {
+            return BTreeSet::new();
+        };
         let test_package = package_key(&test.file);
         let same_package = test_package == self.owner_package;
         let mut names = BTreeSet::new();
@@ -592,11 +597,7 @@ impl OwnerCallIdentity {
         {
             names.extend(index.package_names.iter().cloned());
         }
-        if let Some(owner_root) =
-            super::owner_pin::target_root(&self.owner_file, index, &BTreeSet::new())
-        {
-            names.extend(index.member_crates.import_names(&test.file, &owner_root));
-        }
+        names.extend(index.member_crates.import_names(&test.file, &owner_root));
         names
     }
 
@@ -1580,6 +1581,7 @@ mod tests {
             index.extend_tests(facts.tests.iter().cloned());
             index.insert_file_only(PathBuf::from(path), facts);
         }
+        crate::analysis::facts::compose_fixture_source_roles(&mut index, Path::new(""));
         index
     }
 
