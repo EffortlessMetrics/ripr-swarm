@@ -67,9 +67,11 @@ bind:
   (the same readable-comparison evaluation as an early exit), the finding
   fails closed to `weakly_exposed` with missing discriminator
   `not (X)` (one `not (...)` per chain condition, joined by `and`); the reason
-  says each call satisfies at least one chain condition and takes an earlier
-  arm. A call that fails every chain condition enters the arm and keeps the
-  existing verdict, as do a chain condition containing `or`/`not`, an
+  says the line sits in the else arm, which is entered only when none of the
+  chain conditions hold, and each strong related test input is kept off it by
+  this chain or an enclosing guard. A call that fails every chain condition enters the arm and keeps the
+  existing verdict, as do a chain condition containing `or`/`not` or a conditional expression
+  (`a if b else c`), an
   unreadable row, and an `else` that closes a `for`/`while`/`try`.
 - Equality follows Python semantics for scalar literals: `True == 1` and
   `False == 0` hold, and `2 == True` does not, so a bool call argument is
@@ -141,6 +143,14 @@ text is display only and never feeds a decision:
 - `analysis::language::python::classify::tests::guarded_arm_*` and the
   `or_guard_*`, `unreadable_strong_call_*`, `rebound_parameter_*`, and
   `bool_numeric_guard_*` cases cover the end-to-end verdicts.
+- `analysis::language::python::classify::tests::else_arm_*` (including
+  `else_text_inside_a_docstring_is_not_an_else_arm` and
+  `nested_else_reason_does_not_claim_the_inner_chain_excluded_an_outer_guard_row`)
+  cover the else-arm verdicts and reason.
+- `analysis::language::python::guard_activation::tests::walk_guards_*` and
+  `conditional_expressions_are_not_a_single_comparison` cover the chain walk
+  (if/elif reading, no bridging across unrelated headers, loop-else fail-open)
+  and the conditional-expression fail-open.
 
 ## Implementation Mapping
 

@@ -630,9 +630,13 @@ fn condition_holds(
     Some(true)
 }
 
-/// True when `text` applies `or` or `not` outside string literals.
+/// True when `text` applies `or`, `not` or a conditional expression
+/// (`a if b else c`) outside string literals; none of them is the single
+/// comparison this reader extracts.
 fn has_boolean_operator(text: &str) -> bool {
-    keyword_outside_quotes(text, "or") || keyword_outside_quotes(text, "not")
+    ["or", "not", "if", "else"]
+        .iter()
+        .any(|keyword| keyword_outside_quotes(text, keyword))
 }
 
 /// True when `keyword` appears in `text` outside quotes, bounded by
@@ -1129,6 +1133,15 @@ mod tests {
         let no_body = "def quote(total):\n    if total > 1:\n    elif total > 0:\n        return 2\n    else:\n        return 3\n";
         assert_eq!(chain(no_body, 4), None);
         Ok(())
+    }
+
+    #[test]
+    fn conditional_expressions_are_not_a_single_comparison() {
+        assert!(has_boolean_operator("x > 1 if flag else 0"));
+        assert!(has_boolean_operator("(x > 1) if flag else (x > 2)"));
+        assert!(has_boolean_operator("x > 1 or flag"));
+        assert!(!has_boolean_operator("total > 1000 and kind == 'else if'"));
+        assert!(!has_boolean_operator("elsewhere > 1 and iffy < 2"));
     }
 
     #[test]

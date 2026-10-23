@@ -17221,6 +17221,7 @@ tests = [
   "crates/ripr/src/analysis/language/python/classify/tests.rs::else_arm_that_does_not_close_an_if_chain_stays_exposed",
   "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::walk_guards_reads_the_if_elif_chain_of_an_else_arm",
   "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::walk_guards_never_bridges_unrelated_headers_into_a_chain",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::conditional_expressions_are_not_a_single_comparison",
   "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::walk_guards_fails_open_on_loop_else",
 ]
 code = [

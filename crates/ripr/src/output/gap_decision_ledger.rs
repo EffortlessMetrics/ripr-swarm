@@ -4867,7 +4867,7 @@ mod tests {
         // longer related, so `python_adversarial_free_function_module_collision`
         // and the `legacy.py` finding of `python_src_layout_package_import`
         // read `no_static_path` and drop their two orthogonal cards.
-        // #9184: `python_else_arm_no_strong_call` downgrades a changed else-arm
+        // #9184: `python_else_arm_no_exposed_credit` downgrades a changed else-arm
         // return to `weakly_exposed` (RIPR-SPEC-0260); the card is direct-aligned.
         if (direct, no_strong, orthogonal, family_selection) != (7, 27, 14, 1) {
             return Err(format!(
