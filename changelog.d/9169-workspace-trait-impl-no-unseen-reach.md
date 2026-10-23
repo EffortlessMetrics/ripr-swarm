@@ -4,6 +4,8 @@
   lend it a strong oracle: the finding is `no_static_path`, not `weakly_exposed`
   with "Strong oracle found". A test related only by a shared name token never
   credits an oracle (RIPR-SPEC-0108; #9169).
+  Actual foreign imports keep that allowance across legal whitespace and
+  comments; import-like text in comments and strings does not count (#9169).
   Trade-off: a related test that shares only a name token with an owner (common
   names such as `new`, `fmt`, `process`, including an unresolved receiver) no
   longer lends a strong oracle, so some findings read `reachable_unrevealed`

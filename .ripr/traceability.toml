@@ -8492,6 +8492,8 @@ spec = "docs/specs/RIPR-SPEC-0108-evidence-promotion-honesty-meta-gate.md"
 tests = [
   "crates/ripr/src/analysis/classify/reach.rs::tests::a_workspace_trait_impl_method_gets_no_unseen_reach_allowance",
   "crates/ripr/src/analysis/classify/reach.rs::tests::trait_identity_follows_the_path_and_the_files_foreign_imports",
+  "crates/ripr/src/analysis/classify/reach.rs::tests::foreign_trait_import_syntax_reaches_both_consumers",
+  "crates/ripr/tests/implicit_call_limit.rs::foreign_operator_import_syntax_keeps_unseen_reach_possible",
   "crates/ripr/src/analysis/classify/reach.rs::tests::a_workspace_trait_impl_method_keeps_the_name_and_external_docs_allowances",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::name_only_test_cannot_supply_the_oracle_for_reach_from_another_test",
   "crates/ripr/tests/snapshot_field_admission.rs::snapshot_of_another_receiver_cannot_close_the_owner_field",

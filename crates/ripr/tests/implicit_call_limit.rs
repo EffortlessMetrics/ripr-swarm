@@ -541,3 +541,49 @@ mod tests {
     let edit = diff(line, "        self.0 + 2", "        self.0 + 1");
     unreached(lib, &edit, line, "local trait named Add")
 }
+
+/// #9169: a colliding workspace trait cannot erase real std operator reach
+/// just because the foreign import uses legal whitespace or follows comments.
+#[test]
+fn foreign_operator_import_syntax_keeps_unseen_reach_possible() -> Result<(), String> {
+    for import in [
+        "use std::ops::Add;",
+        "use\nstd::ops::Add;",
+        "use/* gap */std::ops::Add;",
+        "// use crate::placeholder\nuse std::ops::Add;",
+        "// because imports follow\nuse std::ops::Add;",
+    ] {
+        let lib = format!(
+            "{import}\nmod local {{ pub trait Add {{ fn marker(&self); }} }}\n\
+             #[derive(Debug, PartialEq)]\npub struct Money(pub i64);\n\
+             impl Add for Money {{\n    type Output = Money;\n\
+                 fn add(self, rhs: Money) -> Money {{\n        Money(self.0 + rhs.0)\n    }}\n}}\n\
+             #[cfg(test)] mod tests {{\n    use super::*;\n\
+                 #[test] fn operator_works() {{ assert_eq!(Money(2) + Money(3), Money(5)); }}\n}}\n"
+        );
+        let line = line_of(&lib, "Money(self.0 + rhs.0)")?;
+        let edit = diff(
+            line,
+            "        Money(self.0 - rhs.0)",
+            "        Money(self.0 + rhs.0)",
+        );
+        let findings = findings_on(&lib, &edit, line)?;
+        if findings
+            .iter()
+            .any(|finding| finding.ripr.reach.state.as_str() != "weak")
+        {
+            return Err(format!(
+                "{import}: every finding must retain weak foreign reach, got {:?}",
+                findings
+                    .iter()
+                    .map(|f| (
+                        f.class.as_str(),
+                        f.ripr.reach.state.as_str(),
+                        f.static_limit_kind
+                    ))
+                    .collect::<Vec<_>>()
+            ));
+        }
+    }
+    Ok(())
+}

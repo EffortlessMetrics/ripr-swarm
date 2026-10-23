@@ -209,8 +209,9 @@ impl UnseenReachNames {
             .iter()
             .filter_map(|(path, file)| {
                 let imported: HashSet<String> = foreign_imported_names(&file.source)
-                    .filter(|name| workspace_traits.contains(*name))
-                    .map(str::to_string)
+                    .unwrap_or_else(|| workspace_traits.clone())
+                    .into_iter()
+                    .filter(|name| workspace_traits.contains(name))
                     .collect();
                 (!imported.is_empty()).then(|| (path.clone(), imported))
             })
@@ -338,10 +339,9 @@ fn workspace_trait_names(index: &RustIndex) -> HashSet<String> {
 fn implements_workspace_trait(owner: &FunctionSummary, index: &RustIndex) -> bool {
     matches!(owner.item.container, FunctionContainer::TraitImpl { .. })
         && implements_trait_in(owner, &workspace_trait_names(index), &|name| {
-            index
-                .files()
-                .get(&owner.file)
-                .is_some_and(|file| foreign_imported_names(&file.source).any(|n| n == name))
+            index.files().get(&owner.file).is_some_and(|file| {
+                foreign_imported_names(&file.source).is_none_or(|names| names.contains(name))
+            })
         })
 }
 
@@ -376,34 +376,61 @@ fn implements_trait_in(
     }
 }
 
-/// Each identifier of every `use` item whose path starts outside the
-/// workspace (not `crate`, `self` or `super`), so a name imported from
-/// `std::ops` or a dependency shows up here.
-fn foreign_imported_names(source: &str) -> impl Iterator<Item = &str> {
-    let mut statements = Vec::new();
-    let mut rest = source;
-    while let Some(at) = rest.find("use ") {
-        let boundary = rest[..at]
-            .chars()
-            .next_back()
-            .is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
-        let after = &rest[at + 4..];
-        let end = after.find(';').unwrap_or(after.len());
-        if boundary {
-            let body = after[..end].trim_start();
-            let root = body
-                .split(|c: char| !(c.is_alphanumeric() || c == '_'))
-                .next()
-                .unwrap_or("");
-            if !matches!(root, "crate" | "self" | "super") {
-                statements.push(&after[..end]);
-            }
-        }
-        rest = &after[end..];
+/// Identifiers in actual foreign-rooted `use` trees. The syntax tree excludes
+/// comments, strings and unexpanded macro tokens; whitespace does not change
+/// an import. `None` leaves the foreign-trait possibility open for unreadable
+/// source, rather than claiming a workspace identity from an incomplete scan.
+fn foreign_imported_names(source: &str) -> Option<HashSet<String>> {
+    if !source.contains("use") {
+        return Some(HashSet::new());
     }
-    statements
-        .into_iter()
-        .flat_map(identifiers_outside_fn_definition)
+    let parse = crate::analysis::syntax::parse_clean_source_file(source)?;
+    let mut names = HashSet::new();
+    fn collect(tree: &ast::UseTree, foreign: Option<bool>, names: &mut HashSet<String>) {
+        let foreign = foreign.or_else(|| {
+            tree.path()
+                .and_then(|path| path.segments().next())
+                .and_then(|segment| segment.name_ref())
+                .map(|root| !matches!(root.text().as_str(), "crate" | "self" | "super"))
+        });
+        match foreign {
+            Some(true) => {
+                names.extend(
+                    tree.syntax()
+                        .descendants_with_tokens()
+                        .filter_map(|element| {
+                            let token = element.into_token()?;
+                            (token.kind() == ra_ap_syntax::SyntaxKind::IDENT).then(|| {
+                                token
+                                    .text()
+                                    .strip_prefix("r#")
+                                    .unwrap_or(token.text())
+                                    .to_string()
+                            })
+                        }),
+                );
+            }
+            None => {
+                if let Some(list) = tree.use_tree_list() {
+                    for child in list.use_trees() {
+                        collect(&child, None, names);
+                    }
+                }
+            }
+            Some(false) => {}
+        }
+    }
+    for item in parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Use::cast)
+    {
+        if let Some(tree) = item.use_tree() {
+            collect(&tree, None, &mut names);
+        }
+    }
+    Some(names)
 }
 
 /// Parser-backed owner ids carry their impl segment
@@ -994,6 +1021,72 @@ mod tests {
             "// trait Step\nconst S: &str = \"trait Step\";\n",
             vec![owner.clone()]
         ));
+    }
+
+    /// #9169: real parser facts feed both unseen-reach consumers. Only actual
+    /// foreign imports can preserve dispatch when a workspace trait collides.
+    #[test]
+    fn foreign_trait_import_syntax_reaches_both_consumers() -> Result<(), String> {
+        for (imports, foreign) in [
+            ("use std::ops::Add;", true),
+            ("use\nstd::ops::Add;", true),
+            ("use/* gap */std::ops::Add;", true),
+            ("// use crate::placeholder\nuse std::ops::Add;", true),
+            ("// because imports follow\nuse std::ops::Add;", true),
+            ("use std/* gap */::ops::{Add};", true),
+            ("use std::ops::{Add as Add};", true),
+            ("use {std::ops::Add};", true),
+            ("use {crate::local::Marker, std::ops::Add};", true),
+            ("use crates_x::Add;", true),
+            ("use self_cell::Add;", true),
+            ("use superconsole::Add;", true),
+            ("use crate::local::Add;", false),
+            ("use {crate::local::Add};", false),
+            ("use crate::local::{/* Add */ Add};", false),
+            ("// use std::ops::Add;\nuse crate::local::Add;", false),
+            ("/* use std::ops::Add; */\nuse crate::local::Add;", false),
+            (
+                "const NOTE: &str = \"use std::ops::Add;\";\nuse crate::local::Add;",
+                false,
+            ),
+            (
+                "macro_rules! import { () => { use std::ops::Add; } }\nuse crate::local::Add;",
+                false,
+            ),
+        ] {
+            let source = format!(
+                "{imports}\nmod local {{ pub trait Add {{ fn marker(&self); }} }}\n\
+                 pub struct Num;\nimpl Add for Num {{ fn add(self, rhs: Self) -> Self {{ rhs }} }}\n"
+            );
+            let path = PathBuf::from("src/lib.rs");
+            let facts = crate::analysis::rust_index::summarize_file(path.clone(), source);
+            assert!(!facts.used_lexical_fallback, "parser premise: {imports}");
+            let mut index = RustIndex::default();
+            index.insert_file(path, facts, true);
+            let owner = index
+                .functions()
+                .iter()
+                .find(|function| {
+                    function.name == "add"
+                        && matches!(function.item.container, FunctionContainer::TraitImpl { .. })
+                })
+                .ok_or_else(|| format!("premise: parsed impl owner for {imports}"))?;
+            assert_eq!(
+                workspace_trait_names(&index),
+                HashSet::from(["Add".to_string()])
+            );
+            assert_eq!(
+                owner_may_be_reached_unseen(owner, &index),
+                foreign,
+                "per-owner: {imports}"
+            );
+            assert_eq!(
+                UnseenReachNames::build(&index).may_reach_unseen(owner),
+                foreign,
+                "batch: {imports}"
+            );
+        }
+        Ok(())
     }
 
     #[test]
