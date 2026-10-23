@@ -721,6 +721,26 @@ This packet is a projection of the compared static artifacts. It must not
 create new analyzer facts, run analysis, run mutation testing, edit source,
 generate tests, call providers, change policy, or become a CI gate.
 
+### Unknown check format names the common formats, not the full catalog
+
+```text
+Given a first-run user who mistypes `ripr check --format`,
+when the value is not an accepted format and no single format is close,
+then the error names the common analysis formats (human, human-full, json,
+github, sarif) and points at `ripr check --help --all` for the exhaustive
+list, instead of printing all 23 accepted names.
+
+When exactly one accepted format is close enough (near miss), the error
+still names that one correction first and then points at the exhaustive
+reference.
+```
+
+Rationale: the accepted-format catalog mixes everyday analysis formats with
+badge, repo-report, and agent-packet names a first run never needs. A typo
+should meet the five formats that answer "how do I read the output" plus a
+pointer, not a wall of report plumbing (#9359); the near-miss suggestion from
+#4318 stays because naming the one fix is faster than any pointer.
+
 ### Public install exposes the loop
 
 ```text
@@ -753,6 +773,11 @@ baseline failure policy.
 ## Test Mapping
 
 Current tests and reports that support the contract:
+
+- `crates/ripr/src/cli/parse.rs::tests::given_format_strings_when_parse_format_then_returns_expected_result` (unknown format error names common formats and the exhaustive pointer; near miss still suggests one correction)
+- `crates/ripr/src/cli/mod.rs::tests::run_dispatches_check_parse_errors`
+- `crates/ripr/src/cli/mod.rs::tests::run_treats_a_repeated_global_verbose_as_one_enable`
+- `crates/ripr/src/cli/execute.rs::tests::execute_dispatches_subcommand_args_without_reparsing_argv`
 
 - `crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_sparse_missing_changed_file_and_recovers_same_head`
 - `crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_mixed_missing_changed_file_even_with_changed_recommendation`

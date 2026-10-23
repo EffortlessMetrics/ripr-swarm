@@ -2599,7 +2599,8 @@ fn import_references_owner_call(
     // reaches the owner. The shadow guard matches the default-import arm.
     if commonjs_default_binding(import, owner) {
         return contains_call_name(body_text, &import.local)
-            && !local_identifier_declared_in_test_body(body_text, &import.local);
+            && !local_identifier_declared_in_test_body(body_text, &import.local)
+            && !test.written_locals_in_file.contains(&import.local);
     }
     if import.namespace {
         return contains_member_call_name(body_text, &import.local, &owner.name);

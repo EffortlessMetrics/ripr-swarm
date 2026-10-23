@@ -780,6 +780,10 @@ pub(crate) enum DoctorPerlExporterState {
     Incompatible,
     /// No candidate answered `--version`.
     NotFound,
+    /// A PATH hit resolved inside the analyzed checkout and was not run
+    /// (#5349): doctor does not execute code from the checkout it diagnoses
+    /// unless the user sets the repo-Perl opt-in.
+    Refused,
 }
 
 /// The Perl fact exporter doctor probed for.

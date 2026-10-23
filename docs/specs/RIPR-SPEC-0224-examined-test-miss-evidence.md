@@ -276,8 +276,12 @@ admission state, computed fail-closed from the test's syntax:
 A related test whose state is not `recognized_assertion_present` adds the
 evidence line `test_assertion_admission: <state> (<test>)` to its finding.
 The line is evidence only: it changes no verdict, ranking, miss or
-actionability. Blind spots the scan cannot see (conftest and setup files,
-runner plugins) are tracked in #6657 and #6889.
+actionability. For Python, a `conftest.py` on the test's directory chain that
+declares an `autouse` fixture, a `pytest_runtest_*` hook or `pytest_plugins`,
+or a test-item hook (`pytest_collection_modifyitems` and similar), or that imports names from any module outside a short standard-library list (the name may be an autouse fixture or hook), builds an autouse fixture decorator, aliases the fixture decorator or an external fixture, star-imports or imports relatively, passes `**options` to `fixture`, or that could not be read, withholds `extraction_complete_no_assertion` from
+every test in its scope (#6657). Remaining blind spots (dynamically registered
+plugins, plugins or `usefixtures` set in pytest ini `addopts`, sibling-module helpers, TypeScript setup files) are tracked in #6657
+and #6889.
 
 ### Family-relevant assertion selection (Python)
 

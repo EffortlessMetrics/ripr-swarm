@@ -654,7 +654,11 @@ fn commonjs_default_gate(code: &str) -> bool {
         while at < chars.len() && is_space(chars[at]) {
             at += 1;
         }
-        let before = if start == 0 { None } else { Some(chars[start - 1]) };
+        let before = if start == 0 {
+            None
+        } else {
+            Some(chars[start - 1])
+        };
         if word(before) && word(chars.get(at).copied()) {
             compact.push(' ');
         }
@@ -1742,44 +1746,4 @@ fn span_hits_changed_line(
     let start_line = source.line_for_offset(span.start as usize);
     let end_line = source.line_for_offset(span.end as usize);
     (start_line..=end_line).find(|line| changed.contains(line))
-}
-
-/// Drop a `let`/`var` `require()` binding the file writes again
-/// (`let f = require('./k'); f = other;`): after the write the name no longer
-/// holds the required module, so a call through it proves nothing about the
-/// owner (RIPR-SPEC-0243 rule 15). `const` bindings cannot be rebound.
-pub(crate) fn drop_rebound_require_bindings(
-    imports: &mut Vec<TypeScriptImport>,
-    program: &oxc_ast::ast::Program<'_>,
-) {
-    let Some(code) = super::tests_extract::byte_preserving_code_mask(program.source_text) else {
-        return;
-    };
-    for stmt in &program.body {
-        let Statement::VariableDeclaration(var_decl) = stmt else {
-            continue;
-        };
-        if var_decl.kind == oxc_ast::ast::VariableDeclarationKind::Const {
-            continue;
-        }
-        for declarator in &var_decl.declarations {
-            let Some(init) = &declarator.init else {
-                continue;
-            };
-            if require_string_literal_source(init).is_none() {
-                continue;
-            }
-            let Some(name) = binding_identifier_name(&declarator.id) else {
-                continue;
-            };
-            let (start, end) = (declarator.span.start as usize, declarator.span.end as usize);
-            let (Some(before), Some(after)) = (code.get(..start), code.get(end..)) else {
-                continue;
-            };
-            let outside = format!("{before} {after}");
-            if super::tests_extract::identifier_written_in(&outside, name) {
-                imports.retain(|import| !(import.namespace && import.local == name));
-            }
-        }
-    }
 }

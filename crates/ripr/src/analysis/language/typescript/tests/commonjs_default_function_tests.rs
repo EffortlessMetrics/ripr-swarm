@@ -159,7 +159,7 @@ fn assertion_on_an_unrelated_value_is_not_credited() -> Result<(), String> {
     // The changed result is computed but never observed.
     let test = "const t = require('../src/k.js');\n\ntest('triples', () => {\n  t(2);\n  expect(1 + 1).toBe(2);\n});\n";
     let class = class_for("cjs-unobserved", ANONYMOUS, test)?;
-    assert_eq!(class, ExposureClass::NoStaticPath);
+    assert_eq!(class, ExposureClass::WeaklyExposed);
     Ok(())
 }
 
@@ -194,7 +194,7 @@ fn the_inline_form_needs_the_single_assignment_gate() -> Result<(), String> {
         ),
         (
             "cjs-gate-optional",
-            "function other(x) { return x; }\nmodule?.exports = other;\n",
+            "function other(x) { return x; }\nmodule?.exports;\n",
         ),
         ("cjs-gate-compound", "module.exports &&= null;\n"),
         ("cjs-gate-plus", "module.exports += 1;\n"),
@@ -278,5 +278,69 @@ fn a_rebound_let_require_binding_does_not_call_the_owner() -> Result<(), String>
         class_for("cjs-unwritten-let", owner, test)?,
         ExposureClass::Exposed
     );
+    Ok(())
+}
+
+#[test]
+fn a_later_whole_slot_overwrite_leaves_the_inline_function_unmarked() {
+    for source in [
+        "module.exports = function (x) {\n  // triple\n  return x * 3;\n};\nmodule.exports = 0;\n",
+        "module.exports = function (x) {\n  // triple\n  return x * 3;\n};\nmodule . exports = 0;\n",
+        "module.exports = function (x) {\n  // triple\n  return x * 3;\n};\nmodule\n  .exports = 0;\n",
+    ] {
+        assert!(
+            marks(source).iter().all(|(_, _, marked)| !marked),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn a_spaced_overwrite_leaves_the_declared_function_unmarked() {
+    let source = "function triple(x) {\n  // triple\n  return x * 3;\n}\n\nmodule.exports = triple;\nmodule . exports = 0;\n";
+    assert!(marks(source).iter().all(|(_, _, marked)| !marked));
+}
+
+#[test]
+fn a_reassigned_require_binding_is_not_credited() -> Result<(), String> {
+    for test_source in [
+        "let f = require('../src/k.js');\nf = (x) => x * 3;\n\ntest('triples', () => {\n  expect(f(2)).toBe(6);\n});\n",
+        "var f = require('../src/k.js');\nf++;\n\ntest('triples', () => {\n  expect(f(2)).toBe(6);\n});\n",
+    ] {
+        let class = class_for("cjs-reassigned-binding", ANONYMOUS, test_source)?;
+        assert_eq!(class, ExposureClass::NoStaticPath, "{test_source}");
+    }
+    Ok(())
+}
+
+#[test]
+fn indirect_and_exotic_module_writes_refuse_the_gate() -> Result<(), String> {
+    let head = "module.exports = function (x) {\n  // triple\n  return x * 3;\n};\n";
+    for (label, tail) in [
+        ("cjs-exotic-delete", "delete module.exports;\n"),
+        ("cjs-exotic-reflect", "Reflect.set(module, 'exports', 0);\n"),
+        ("cjs-exotic-bracket-spaced", "module [ 'exports' ] = 0;\n"),
+        ("cjs-exotic-bracket-newline", "module\n['exports'] = 0;\n"),
+        ("cjs-exotic-vtab", "module\u{b}.exports = 0;\n"),
+        ("cjs-exotic-nbsp", "module\u{a0}.exports = 0;\n"),
+        ("cjs-exotic-line-sep", "module\u{2028}.exports = 0;\n"),
+        ("cjs-exotic-bom", "module\u{feff}.exports = 0;\n"),
+        ("cjs-exotic-paren", "(module.exports) = 0;\n"),
+        ("cjs-exotic-array", "[module.exports] = [0];\n"),
+        ("cjs-exotic-object", "({ a: module.exports } = { a: 0 });\n"),
+        ("cjs-exotic-for-of", "for (module.exports of []);\n"),
+    ] {
+        gated_off(label, &format!("{head}{tail}"))?;
+    }
+    let declared =
+        "function triple(x) {\n  // triple\n  return x * 3;\n}\nmodule.exports = triple;\n";
+    gated_off(
+        "cjs-exotic-declared-delete",
+        &format!("{declared}delete module.exports;\n"),
+    )?;
+    gated_off(
+        "cjs-exotic-declared-compound",
+        &format!("{declared}module.exports &&= 0;\n"),
+    )?;
     Ok(())
 }
