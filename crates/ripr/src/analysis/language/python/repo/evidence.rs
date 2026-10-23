@@ -669,6 +669,10 @@ fn build_production_file_evidence(
                 finding.id = suffixed.clone();
                 finding.probe.id.0 = suffixed;
             }
+            // Scope stamp (#5531): consumers holding only a `Finding` look the
+            // capability cell up from this, so repo-mode evidence can never
+            // borrow the diff-mode repair-routing cell.
+            finding.mark_repo_scoped();
             findings.push(finding);
         }
     }
