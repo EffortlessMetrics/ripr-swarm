@@ -201,13 +201,19 @@ Note: `<base>...HEAD` has no analyzable changed files, so there was nothing to a
 ```
 
 A working-tree read (`--worktree`) names `the working tree has no analyzable
-changed files against `<base>`` instead of the range. The explicit-base and
-default-base notes share this wording in the human (full), GitHub and JSON
-outputs (#9033, #9222); the bounded human render of a default-base empty range
-shortens it to the caveat because the triage line already names the range
-(#9922): `no_scope` with zero changed files also covers ranges that only
-delete files, change submodule pointers or touch ripr artifacts, so neither
-note claims that no behavior changed.
+changed files against `<base>`` instead of the range.
+
+For qualifying empty Git ranges, human-full retains the range explanation and
+caveat. Bounded human output shortens the note to the caveat only when
+`no_scope_provided` is true and a base exists, because the triage line already
+names the comparison (#9922). Explicit `--base` and `--worktree` provide scope
+and keep the full note for those qualifying empty ranges. GitHub and JSON
+retain their existing `no_scope_provided`-gated disclosures; explicit-base
+empty ranges do not add the GitHub no-scope annotation or JSON
+`scope_disclosures` (#9033, #9222). `no_scope` with zero changed files also
+covers ranges that only delete files, change submodule pointers or touch ripr
+artifacts, so deletion-only, submodule and excluded-artifact ranges still carry
+no assurance that no behavior changed.
 
 ### Non-claims
 
