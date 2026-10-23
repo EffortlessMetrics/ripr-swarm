@@ -361,7 +361,7 @@ pub(crate) struct AssertionContext<'a> {
     match_object_consts: &'a [MatchObjectConst],
     /// Whether the receiver (`done`) is named exactly once in the whole test
     /// body, so the one call that settles the test is the one a credited
-    /// callback holds (RIPR-SPEC-0246 rule 7).
+    /// callback holds (RIPR-SPEC-0246 rule 9).
     receiver_named_once: bool,
     /// The test body's top-level literal table `const`s a `for...of` loop may
     /// read (RIPR-SPEC-0243 rule 11). Empty inside a nested statement.
@@ -964,7 +964,7 @@ fn receiver_chain_has_computed_member(receiver: &Expression<'_>) -> bool {
     }
 }
 
-/// RIPR-SPEC-0246 rule 7: the assertions of a callback handed to a call in a
+/// RIPR-SPEC-0246 rule 9: the assertions of a callback handed to a call in a
 /// test that takes a `done` callback, read as the test's own when the
 /// callback must settle the test.
 ///

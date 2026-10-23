@@ -22,6 +22,11 @@ Start here:
   Changed behavior: if column_index >= len(self.columns) - 1:
   Missing discriminator: No Python test references `_get_padding_width(`; add a pytest or unittest test that calls the changed owner
   Evidence: reach no · infection yes · propagation weak · observation no · discriminator no
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach no: 0 related Python test(s) found for owner `_get_padding_width`
     - infection yes: Changed Python predicate can alter branch selection: `if column_index >= len(self.columns) - 1:`
     - 4 more detail line(s) in --format human-full

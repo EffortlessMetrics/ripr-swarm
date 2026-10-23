@@ -851,7 +851,7 @@ fn refused_nested_callback_assertion_reads_static_unknown() -> Result<(), String
     Ok(())
 }
 
-/// RIPR-SPEC-0246 rule 7: a callback handed to a call, in a test that takes
+/// RIPR-SPEC-0246 rule 9: a callback handed to a call, in a test that takes
 /// `done`, whose body asserts and then calls `done()` must run for the test
 /// to pass, so its assertions are the test's own.
 #[test]
@@ -868,7 +868,7 @@ fn done_settled_callback_assertions_are_the_tests_own() {
     );
 }
 
-/// Discriminating negatives for rule 7: each shape lets the test pass
+/// Discriminating negatives for rule 9: each shape lets the test pass
 /// without the asserting statements, or reads `done` as something else.
 #[test]
 fn done_callback_shapes_that_can_skip_the_assertion_collect_nothing() {

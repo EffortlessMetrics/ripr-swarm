@@ -67,7 +67,7 @@ use super::super::static_limits::{
     implicit_dunder_dispatch_limit, static_limit_for_focused_change,
 };
 use super::super::workspace::owner_for_changed_line;
-use super::super::{PythonOwner, PythonTest};
+use super::super::{PythonFramework, PythonOwner, PythonTest};
 use super::roles::PythonFileRole;
 use super::run_status::{PartialRunReason, PythonRepoRunStatus};
 use super::{CapRecoveryRoute, DiscoveryCounts, PythonRepoInput, RepoWorkingSetLimit};
@@ -98,7 +98,7 @@ pub(in crate::analysis::language::python) struct PythonRepoEvidence {
     /// Operator recovery routes retained for capped runs (#2109).
     pub(in crate::analysis::language::python) recovery_routes: &'static [CapRecoveryRoute],
     /// Test framework detected by the shared producer at the workspace root.
-    pub(in crate::analysis::language::python) test_framework: Option<&'static str>,
+    pub(in crate::analysis::language::python) test_framework: Option<PythonFramework>,
     /// Per-file input identity for every selected file, sorted by path.
     pub(in crate::analysis::language::python) files: Vec<PythonRepoFileRecord>,
     /// Production-owner evidence (behavior items + related-test evidence),
@@ -669,6 +669,10 @@ fn build_production_file_evidence(
                 finding.id = suffixed.clone();
                 finding.probe.id.0 = suffixed;
             }
+            // Scope stamp (#5531): consumers holding only a `Finding` look the
+            // capability cell up from this, so repo-mode evidence can never
+            // borrow the diff-mode repair-routing cell.
+            finding.mark_repo_scoped();
             findings.push(finding);
         }
     }
@@ -724,7 +728,7 @@ fn build_behavior_item(
     let focus = PythonAssertionFocus::for_change(family.clone(), text, None);
     let related = related_tests_for_candidates(candidates, Some(&focus));
     let related = related.as_slice();
-    let static_limit = static_limit_for_focused_change(text, &focus, owner, candidates)
+    let static_limit = static_limit_for_focused_change(text, None, &focus, owner, candidates)
         .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, candidates))
         .map(|limit| limit.kind);
     let canonical_gap = static_limit
