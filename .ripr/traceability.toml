@@ -8572,6 +8572,7 @@ fixtures = [
   "fixtures/benches_harness_evidence",
   "fixtures/error_path_operand_error_lexeme",
   "fixtures/evidence-promotion-honesty-corpus",
+  "fixtures/typescript_then_inline_receiver_shadow",
   "fixtures/evidence-promotion-honesty-corpus/patches/semver-matches-greater.diff",
   "fixtures/evidence-promotion-honesty-corpus/reports/scope-clean-complete-empty-may-be-clean.json",
   "fixtures/evidence-promotion-honesty-corpus/reports/scope-limited-empty-not-clean.json",
@@ -16275,6 +16276,9 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::floating_or_unsafe_then_collects_nothing",
   "crates/ripr/tests/typescript_implicit_promise_return.rs::implicit_return_keeps_the_supported_then_discriminator",
   "crates/ripr/tests/typescript_implicit_promise_return.rs::only_the_returned_supported_expression_can_supply_credit",
+  "crates/ripr/tests/typescript_implicit_promise_return.rs::inline_receiver_bindings_cannot_supply_promise_credit",
+  "crates/ripr/tests/typescript_implicit_promise_return.rs::independent_nested_bindings_keep_promise_credit",
+  "crates/ripr/tests/typescript_implicit_promise_return.rs::nested_binding_used_inside_its_scope_withholds_credit",
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::awaited_subtest_on_the_receiver_is_collected",
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::copy_for_identity_change_needs_an_identity_matcher",
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::identity_copy_subject_reads_both_directions",
@@ -16292,11 +16296,13 @@ tests = [
 ]
 fixtures = [
   "fixtures/typescript-verdict-corpus",
+  "fixtures/typescript_then_inline_receiver_shadow",
 ]
 code = [
   "crates/ripr/src/analysis/language/typescript/catch_arm_guard.rs",
   "crates/ripr/src/analysis/language/typescript/classifier.rs",
   "crates/ripr/src/analysis/language/typescript/oracle.rs",
+  "crates/ripr/src/analysis/language/typescript/related_tests.rs",
   "crates/ripr/src/analysis/language/typescript/table_rows.rs",
 ]
 outputs = [

@@ -122,7 +122,8 @@ assertions are collected as the test's own:
   single argument, a receiver `p` on one line in which `then`, `catch`
   and `finally` never appear as a word and whose member chain has no
   computed step (a computed name such as `"th" + "en"` cannot be read),
-  and a body that declares none of the names `p` reads: the runner waits
+  and no body declaration that captures a name `p` reads at a direct
+  reference or parameter-substitution site: the runner waits
   for the returned or awaited promise, so the body runs before the test
   settles. With one plain parameter the body reads with `v` replaced by
   `(p)`, the expression whose resolved value the assertion observes. With
@@ -134,6 +135,12 @@ assertions are collected as the test's own:
   `return`, a `void` or sequence expression, an uncalled arrow, and a promise
   returned from a discarded `forEach` callback gain no credit. Literal table
   expansion and nested callback return analysis retain their existing bounds.
+  Inline plain declarations after a brace or semicolon obey the same binding
+  guard as multiline declarations. A binding in an independent nested block
+  does not capture a reference or substitution outside that block. Declarator
+  names themselves are not uses, including non-first declarators. The shared
+  lexical scope model retains its documented regex and cross-block `var`
+  limitations; this is not general promise or binding dataflow analysis.
 - `await t.test(name, [options,] (t2) => body)`, where `t` is the test
   callback's own receiver, `name` is present and is a string or template
   literal, and
@@ -147,7 +154,7 @@ empty array; an `async` or generator `forEach` callback, or one without
 exactly one parameter; a `.then` whose promise is neither returned to the
 runner nor awaited (it may settle after the test); a `.then` with a
 rejection handler (it can swallow the change), a chained or multi-line
-receiver, or a body that re-declares a receiver name; a subtest that is
+receiver, or a body binding that captures a receiver name; a subtest that is
 not awaited, not on the test's receiver, or skipped or todo (a todo
 failure does not fail the parent); and any body the rule 11 row reader
 refuses. A subtest with no name, a non-literal name, or options without a

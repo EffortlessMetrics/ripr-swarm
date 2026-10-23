@@ -848,11 +848,28 @@ fn collect_nested_callback_assertions(
             {
                 return;
             }
-            if let Some(body) = callback_body_text(callback, text)
-                && receiver_identifiers(receiver)
-                    .any(|name| !scan_body_lexical_facts(body, name).declarations.is_empty())
-            {
-                return;
+            if let Some(body) = callback_body_text(callback, text) {
+                // Substitution happens at parameter uses. A receiver binding
+                // in an independent nested block cannot capture those uses,
+                // nor a direct receiver reference outside that block.
+                let parameter_uses = first_plain_parameter(callback)
+                    .map(|name| scan_body_lexical_facts(body, name).uses)
+                    .unwrap_or_default();
+                if receiver_identifiers(receiver).any(|name| {
+                    let scan = scan_body_lexical_facts(body, name);
+                    scan.uses.iter().chain(&parameter_uses).any(|offset| {
+                        scan.declarations.iter().any(|declaration| {
+                            declaration_scope_binds(
+                                declaration
+                                    .scope
+                                    .and_then(|frame| scan.scopes.get(frame).copied()),
+                                *offset,
+                            )
+                        })
+                    })
+                }) {
+                    return;
+                }
             }
             if callback_parameter_count(callback) == Some(0) {
                 if let Some(statements) = function_body_statements_from_argument(callback) {
@@ -1005,7 +1022,7 @@ fn callback_body_text<'s>(callback: &oxc_ast::ast::Argument<'_>, text: &'s str) 
 }
 
 /// The identifiers a `.then` receiver reads, so a body that re-declares one
-/// of them refuses the substitution.
+/// of them at a substitution or direct-reference site refuses the substitution.
 fn receiver_identifiers(receiver: &str) -> impl Iterator<Item = &str> {
     receiver
         .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
