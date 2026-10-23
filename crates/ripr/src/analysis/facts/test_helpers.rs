@@ -246,8 +246,21 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
                 _ => assertions,
             };
             credited_helpers.push(&helper.name);
-            credited.calls.extend(helper.calls.iter().cloned());
-            credited.assertions.extend(assertions);
+            // Idempotent credit (#8547): a reused index has already been
+            // through this pass once, so a helper fact already on the test
+            // must not be appended again. The helper's calls sit on the
+            // helper's lines, outside the test's span, so an exact fact
+            // already present can only be this credit.
+            for call in helper.calls.iter().cloned() {
+                if !credited.calls.contains(&call) {
+                    credited.calls.push(call);
+                }
+            }
+            for assertion in assertions {
+                if !credited.assertions.contains(&assertion) {
+                    credited.assertions.push(assertion);
+                }
+            }
         }
         if !credited_helpers.is_empty() {
             widened.insert(

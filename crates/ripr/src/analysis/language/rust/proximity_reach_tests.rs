@@ -1031,6 +1031,40 @@ fn classify_workers_follow_the_callers_cancellation() -> Result<(), String> {
     Ok(())
 }
 
+/// #9211: the workspace macro-site scan a classify run needs is paid before
+/// the probes are queued, fanned out over the classify pool, not run in line
+/// on whichever worker reaches it first while its siblings sleep on the memo.
+#[test]
+fn the_classify_run_fans_the_workspace_macro_scan_out_before_its_probes() -> Result<(), String> {
+    use std::hash::{Hash, Hasher};
+
+    let source = format!("{}\n// convoy-9211-unique-fixture\n", shared_reach_source());
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    source.as_str().hash(&mut hasher);
+    let fixture_hash = hasher.finish();
+    let fixture = Fixture::new("convoy-9211", &source)?;
+    let findings = with_classify_threads(4, || fixture.arm_findings())?;
+    assert_eq!(findings.len(), 2, "both probes must classify");
+
+    let log = crate::analysis::classify::SCAN_LOG
+        .lock()
+        .map_err(|e| e.to_string())?;
+    let decisions: Vec<bool> = log
+        .iter()
+        .filter(|(hash, _)| *hash == fixture_hash)
+        .map(|(_, fanned_out)| *fanned_out)
+        .collect();
+    assert!(
+        !decisions.is_empty(),
+        "the run must scan the fixture's macro sites"
+    );
+    assert!(
+        decisions.iter().all(|fanned_out| *fanned_out),
+        "a scan ran in line on a classify worker: {decisions:?}"
+    );
+    Ok(())
+}
+
 #[test]
 fn nested_scans_run_in_line_on_a_pool_worker_only() -> Result<(), String> {
     use crate::analysis::classify::nested_parallelism_allowed;

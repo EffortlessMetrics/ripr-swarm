@@ -113,6 +113,73 @@ pub(crate) fn memoize_with<T: Clone + 'static>(
     value
 }
 
+/// [`memoize`] for many sources at once, with the products the scope has not
+/// yet seen computed on the rayon pool.
+///
+/// The results are exactly what `sources.iter().map(|s| memoize(product, 0,
+/// s, || compute(s)))` returns, in order, and `compute` runs once per
+/// distinct source that is not already in the scope. The memo itself is only
+/// touched on the calling thread: workers run `compute` and nothing else, so
+/// the thread-local scope still holds every product afterwards. A call from a
+/// rayon worker, which must not block on a nested fan-out, computes in line.
+///
+/// `compute` runs on pool workers that have no scope of their own, so unlike
+/// [`memoize`] it must not rely on memoizing other products: a nested
+/// `memoize` there recomputes and nothing reaches the caller's scope. Keys use
+/// discriminator 0 and no extra query, matching `memoize`.
+pub(crate) fn memoize_many<T: Clone + Send + 'static>(
+    product: Product,
+    sources: &[&str],
+    compute: impl Fn(&str) -> T + Sync,
+) -> Vec<T> {
+    use rayon::prelude::*;
+    let fan_out = rayon::current_thread_index().is_none();
+    let run = |items: &[&str]| -> Vec<T> {
+        if fan_out {
+            items.par_iter().map(|source| compute(source)).collect()
+        } else {
+            items.iter().map(|source| compute(source)).collect()
+        }
+    };
+    if MEMO.with(|memo| memo.borrow().depth == 0) {
+        return run(sources);
+    }
+    let keys: Vec<Key> = sources
+        .iter()
+        .map(|source| key(product, 0, "", source))
+        .collect();
+    let recall = |key: &Key| {
+        MEMO.with(|memo| {
+            memo.borrow()
+                .entries
+                .get(key)
+                .and_then(|value| value.downcast_ref::<T>())
+                .cloned()
+        })
+    };
+    let mut seen = std::collections::HashSet::new();
+    let missing: Vec<usize> = keys
+        .iter()
+        .enumerate()
+        .filter(|(_, key)| recall(key).is_none() && seen.insert(**key))
+        .map(|(position, _)| position)
+        .collect();
+    let missing_sources: Vec<&str> = missing.iter().map(|position| sources[*position]).collect();
+    let computed = run(&missing_sources);
+    MEMO.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        for (position, value) in missing.iter().zip(computed) {
+            memo.entries.insert(keys[*position], Rc::new(value));
+        }
+    });
+    // Every key is stored now; a source repeated in `sources` reads the one
+    // product computed for its text, as the serial calls would.
+    keys.iter()
+        .zip(sources)
+        .map(|(key, source)| recall(key).unwrap_or_else(|| compute(source)))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Product, enter, memoize};
@@ -180,6 +247,75 @@ mod tests {
         let first: u8 = memoize(Product::ExternalDocs, 0, "abc", || 1u8);
         let second: u16 = memoize(Product::ExternalDocs, 0, "abc", || 2u16);
         assert_eq!((first, second), (1, 2));
+    }
+
+    #[test]
+    fn memoize_many_matches_serial_memoize_and_fills_the_scope() {
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let compute = |source: &str| {
+            calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            source.len()
+        };
+        let sources = ["a", "bb", "a", "ccc"];
+        // No scope: every call computes, like `memoize`.
+        let unscoped = super::memoize_many(Product::ExternalDocs, &sources, compute);
+        assert_eq!(unscoped, vec![1, 2, 1, 3]);
+        assert_eq!(calls.swap(0, std::sync::atomic::Ordering::Relaxed), 4);
+        let _scope = enter();
+        let scoped = super::memoize_many(Product::ExternalDocs, &sources, compute);
+        assert_eq!(scoped, vec![1, 2, 1, 3]);
+        assert_eq!(
+            calls.swap(0, std::sync::atomic::Ordering::Relaxed),
+            3,
+            "a repeated text is computed once"
+        );
+        // The products now sit in this thread's scope for the serial path.
+        let serial = Cell::new(0);
+        assert_eq!(counted(&serial, Product::ExternalDocs, 0, "bb"), 2);
+        assert_eq!(serial.get(), 0, "the batch stored its products");
+        let again = super::memoize_many(Product::ExternalDocs, &sources, compute);
+        assert_eq!(again, vec![1, 2, 1, 3]);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 0);
+        // A different product is a different entry.
+        let other = super::memoize_many(Product::LocalTestMacros, &["a"], compute);
+        assert_eq!(other, vec![1]);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn memoize_many_computes_in_line_on_a_pool_worker_and_shares_keys() {
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(2).build();
+        assert!(pool.is_ok(), "test pool must build");
+        let Ok(pool) = pool else {
+            return;
+        };
+        let sources = ["a", "bb", "a", "ccc"];
+        let (answers, stored_threads) = pool.install(|| {
+            let _scope = enter();
+            let caller = std::thread::current().id();
+            let threads = std::sync::Mutex::new(Vec::new());
+            let answers = super::memoize_many(Product::ExternalDocs, &sources, |source| {
+                if let Ok(mut seen) = threads.lock() {
+                    seen.push(std::thread::current().id());
+                }
+                source.len()
+            });
+            // The worker's own scope now serves the serial and the `""`-extra forms.
+            let serial = Cell::new(0);
+            assert_eq!(counted(&serial, Product::ExternalDocs, 0, "bb"), 2);
+            assert_eq!(serial.get(), 0, "the batch stored under the plain key");
+            let extra = super::memoize_with(Product::ExternalDocs, 0, "", "ccc", || 99usize);
+            assert_eq!(extra, 3);
+            let seen = threads.lock().map(|seen| seen.clone()).unwrap_or_default();
+            (answers, (caller, seen))
+        });
+        assert_eq!(answers, vec![1, 2, 1, 3]);
+        let (caller, seen) = stored_threads;
+        assert_eq!(seen.len(), 3, "a repeated text is computed once");
+        assert!(
+            seen.iter().all(|id| *id == caller),
+            "a pool worker computes in line instead of fanning out"
+        );
     }
 
     #[test]

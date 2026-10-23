@@ -151,18 +151,12 @@ impl TypeScriptAdmissionContext {
                         || matches!(statement, Statement::VariableDeclaration(declaration)
                             if known_require && !declaration.declare
                                 && (declaration.kind == oxc_ast::ast::VariableDeclarationKind::Const
-                                    || !unwritten_binding_locals(declaration, code.as_deref()).is_empty()))
+                                    || unwritten_binding_declaration(declaration, code.as_deref())))
                 })
                 .flat_map(|statement| {
                     let mut imports =
                         extract_imports_from_statements(std::slice::from_ref(statement));
                     if let Statement::VariableDeclaration(declaration) = statement {
-                        if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const {
-                            // Per declarator: a written sibling does not
-                            // withhold a clean runner binding.
-                            let clean = unwritten_binding_locals(declaration, code.as_deref());
-                            imports.retain(|import| clean.iter().any(|name| *name == import.local));
-                        }
                         for declarator in &declaration.declarations {
                             let Some(Expression::StaticMemberExpression(member)) = declarator
                                 .init
@@ -182,6 +176,10 @@ impl TypeScriptAdmissionContext {
                                     namespace: false,
                                 });
                             }
+                        }
+                        if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const {
+                            let kept = unwritten_declarator_locals(declaration, code.as_deref());
+                            imports.retain(|import| kept.contains(&import.local));
                         }
                     }
                     imports
@@ -311,7 +309,18 @@ impl TypeScriptAdmissionContext {
 /// update, a `for (x of ...)` target or a redeclaration with an initializer
 /// elsewhere refuses. Without a readable masked source (parse-width mismatch,
 /// `eval`, `with`, `\u` escapes) nothing qualifies.
-fn unwritten_binding_locals(
+fn unwritten_binding_declaration(
+    declaration: &oxc_ast::ast::VariableDeclaration<'_>,
+    code: Option<&str>,
+) -> bool {
+    !unwritten_declarator_locals(declaration, code).is_empty()
+}
+
+/// The binding names of the declarators of a `var`/`let` declaration whose own
+/// bindings the file never writes. An unrelated declarator that is written
+/// (`var counter = 0, test = require('tape'); counter++`) does not withdraw
+/// the runner declarator; each declarator is judged on its own bindings.
+fn unwritten_declarator_locals(
     declaration: &oxc_ast::ast::VariableDeclaration<'_>,
     code: Option<&str>,
 ) -> Vec<String> {
@@ -322,26 +331,8 @@ fn unwritten_binding_locals(
     if !matches!(declaration.kind, Var | Let) {
         return Vec::new();
     }
-    // Only `require()`-initialized declarators can yield a runner import, so
-    // other declarators (and their text scans) are ignored; at least one must
-    // exist. Each such binding is checked once, against the text outside its
-    // own declarator.
-    let mut clean = Vec::new();
+    let mut locals = Vec::new();
     for declarator in &declaration.declarations {
-        let Some(init) = declarator
-            .init
-            .as_ref()
-            .map(Expression::get_inner_expression)
-        else {
-            continue;
-        };
-        let call = match init {
-            Expression::StaticMemberExpression(member) => &member.object,
-            other => other,
-        };
-        if super::owners::require_string_literal_source(call.get_inner_expression()).is_none() {
-            continue;
-        }
         let outside = format!(
             "{}{}",
             &code[..declarator.span.start as usize],
@@ -355,64 +346,12 @@ fn unwritten_binding_locals(
             .collect();
         if names
             .iter()
-            .all(|name| binding_is_never_rebound(&outside, name))
+            .all(|name| !super::tests_extract::identifier_written_in(&outside, name))
         {
-            clean.extend(names);
+            locals.extend(names);
         }
     }
-    clean
-}
-
-/// `true` when masked `text` (a file minus one declarator) provably never
-/// rebinds `name`. Beyond `identifier_written_in`, every occurrence must be
-/// a plain read or call: an occurrence followed by `)` `]` `}` `,` `!` or
-/// `as` may be a parenthesised, non-null, cast or destructuring assignment
-/// target (`(test) = x`, `(test)++`, `test! = x`, `[test] = a`,
-/// `for ({test} of xs)`) and refuses, as does one preceded by `function` or
-/// `class` (Annex B block re-binding) or by a global receiver
-/// (`globalThis.test = x`, `this.test = x`). Fail-closed: a refusal only
-/// withholds a relation.
-fn binding_is_never_rebound(text: &str, name: &str) -> bool {
-    if super::tests_extract::identifier_written_in(text, name) {
-        return false;
-    }
-    let word = |ch: Option<char>| {
-        ch.is_some_and(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
-    };
-    for (at, _) in text.match_indices(name) {
-        let before_text = &text[..at];
-        let after_text = &text[at + name.len()..];
-        if word(before_text.chars().next_back()) || word(after_text.chars().next()) {
-            continue;
-        }
-        let before = before_text.trim_end();
-        if let Some(receiver) = before.strip_suffix('.')
-            && !before.ends_with("...")
-        {
-            let receiver = receiver.trim_end();
-            if ["globalThis", "this", "window", "self", "global"]
-                .iter()
-                .any(|global| receiver.ends_with(global))
-            {
-                return false;
-            }
-            continue;
-        }
-        if ["function", "class"].iter().any(|keyword| {
-            before.ends_with(keyword)
-                && !word(before[..before.len() - keyword.len()].chars().next_back())
-        }) {
-            return false;
-        }
-        let rest = after_text.trim_start();
-        if rest.starts_with([')', ']', '}', ','])
-            || (rest.starts_with('!') && !rest.starts_with("!="))
-            || (rest.starts_with("as") && !word(rest[2..].chars().next()))
-        {
-            return false;
-        }
-    }
-    true
+    locals
 }
 
 /// A bounded fixture-extension registration: one immutable top-level result

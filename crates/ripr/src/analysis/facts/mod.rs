@@ -1,4 +1,30 @@
 mod build;
+/// Test-only count of the index-build phases (`index_parse` /
+/// `index_cached_parse`) started on the observing thread, mirroring the
+/// phase names the latency trace emits (#8547 build-count proof). Thread
+/// local, so parallel tests never pollute each other's counts; the parse
+/// phases themselves run on the caller's thread even when their inner
+/// batch work uses rayon.
+#[cfg(test)]
+pub(crate) mod index_build_probe {
+    use std::cell::Cell;
+
+    thread_local! {
+        static BUILDS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(super) fn record() {
+        BUILDS.with(|builds| builds.set(builds.get() + 1));
+    }
+
+    /// Run `work` with a zeroed counter and return its result plus the
+    /// number of index-build phases it started.
+    pub(crate) fn observe<T>(work: impl FnOnce() -> T) -> (T, usize) {
+        BUILDS.with(|builds| builds.set(0));
+        let result = work();
+        (result, BUILDS.with(Cell::get))
+    }
+}
 mod doctests;
 pub(crate) use build::CachedRustIndex;
 use build::MissAttribution;
@@ -147,6 +173,122 @@ pub(crate) fn build_analysis_index_from_loaded_files(
     build_cached_index_with_test_harnesses(root, files, registrations, MissAttribution::Skipped)
 }
 
+/// Reuse an already-built cached index as the index for `files` (#8547):
+/// files whose indexed source still matches the loaded bytes are kept
+/// as-is, new or changed files are parsed through the file-fact cache and
+/// inserted, files no longer in the list are removed, and the shared
+/// post-parse phases re-run once over the merged index. When nothing
+/// changed, the index is returned untouched, so one check invocation
+/// builds its workspace index once and reuses it instead of re-decoding
+/// the fact cache and re-running post-processing per consumer.
+pub(crate) fn reuse_cached_index_with_loaded_files(
+    mut cached: build::CachedRustIndex,
+    root: &Path,
+    files: &[(PathBuf, Vec<u8>)],
+    registrations: &[TestHarnessRegistration],
+) -> Result<build::CachedRustIndex, String> {
+    let kept: std::collections::BTreeSet<&Path> =
+        files.iter().map(|(path, _)| path.as_path()).collect();
+    let mut extras: Vec<(PathBuf, Vec<u8>)> = Vec::new();
+    for (path, bytes) in files {
+        let current = cached.index.files().get(path).is_some_and(|facts| {
+            // The stored source is the decoded text (BOM stripped, invalid
+            // bytes replaced), so compare against the same decoding.
+            let source: &str = facts.data().source.as_ref();
+            build::rust_source_text(bytes).text == source
+        });
+        if !current {
+            extras.push((path.clone(), bytes.clone()));
+        }
+    }
+    let dropped: Vec<PathBuf> = cached
+        .index
+        .files()
+        .iter()
+        .map(|(path, _)| path.clone())
+        .filter(|path| !kept.contains(path.as_path()))
+        .collect();
+    if extras.is_empty() && dropped.is_empty() {
+        return Ok(cached);
+    }
+    // Post-processing is only incrementally exact when the file set grows by
+    // leaf additions. A dropped file can retract module provenance and helper
+    // credits already applied to retained files, and an added or changed file
+    // with an `include!` directive can re-parent already rebased function
+    // identities; none of those can be undone in place, so fail closed to a
+    // fresh build over exactly `files` (verdicts equal a non-reusing build).
+    // A changed file (an extra replacing an indexed path) retracts too:
+    // `remove_file` leaves include parents/targets/limitations and module
+    // provenance derived from the old bytes in place.
+    let retracts = !dropped.is_empty()
+        || extras
+            .iter()
+            .any(|(path, _)| cached.index.files().get(path).is_some());
+    let rebases_includes = extras
+        .iter()
+        .any(|(_, bytes)| bytes.windows(8).any(|w| w == b"include!"));
+    if retracts || rebases_includes {
+        drop(cached);
+        return build_cached_index_with_test_harnesses(
+            root,
+            files,
+            registrations,
+            MissAttribution::Skipped,
+        );
+    }
+    for path in &dropped {
+        cached.index.remove_file(path);
+    }
+    if !extras.is_empty() {
+        let stats = index_phase("index_cached_parse", || {
+            build::extend_index_from_loaded_files_with_cache(&mut cached.index, root, &extras)
+        })?;
+        cached.file_fact_cache.hits += stats.hits;
+        cached.file_fact_cache.misses += stats.misses;
+        cached.file_fact_cache.corrupt_ignored += stats.corrupt_ignored;
+        cached.file_fact_cache.stores += stats.stores;
+        cached.file_fact_cache.store_errors += stats.store_errors;
+        cached
+            .file_fact_cache
+            .invalidated_files
+            .extend(stats.invalidated_files);
+        cached
+            .file_fact_cache
+            .store_failures
+            .extend(stats.store_failures);
+        cached.file_fact_cache.store_failures_dropped += stats.store_failures_dropped;
+        // An added file that makes module composition unknowable (lexical
+        // fallback emits no `mod` declarations; an unknown `#[path]` target
+        // may compile any file) flips workspace-wide `outside_module_tree`
+        // provenance that retained files already carry and that composition
+        // only writes when non-empty, so the stale claim cannot be undone in
+        // place. Fail closed to a fresh build.
+        let unknowable = extras.iter().any(|(path, _)| {
+            cached.index.files().get(path).is_some_and(|facts| {
+                facts.used_lexical_fallback
+                    || facts.module_declarations.iter().any(|declaration| {
+                        declaration.path_target == model::ModulePathTarget::Unknown
+                    })
+            })
+        });
+        if unknowable {
+            drop(cached);
+            return build_cached_index_with_test_harnesses(
+                root,
+                files,
+                registrations,
+                MissAttribution::Skipped,
+            );
+        }
+    }
+    let mut hash = crate::analysis::seam_cache::FilesContentHashBuilder::new();
+    for (path, bytes) in files {
+        hash.push(path, bytes);
+    }
+    cached.files_content_hash = hash.finish();
+    post_process_cached_index(cached, root, registrations)
+}
+
 fn build_cached_index_with_test_harnesses(
     root: &Path,
     files: &[(PathBuf, Vec<u8>)],
@@ -257,6 +399,10 @@ pub(crate) use model::source_digest;
 /// Phase tracing extends the existing opt-in latency stream; normal output is
 /// unchanged. A cancelled intermediate index is never returned as complete.
 fn index_phase<T>(name: &str, work: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    #[cfg(test)]
+    if matches!(name, "index_parse" | "index_cached_parse") {
+        index_build_probe::record();
+    }
     crate::analysis::cancellation::checkpoint()?;
     let started = std::time::Instant::now();
     let trace = std::env::var_os("RIPR_REPO_EXPOSURE_LATENCY_TRACE").is_some();

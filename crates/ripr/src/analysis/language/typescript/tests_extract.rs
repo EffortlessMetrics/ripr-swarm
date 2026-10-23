@@ -2005,7 +2005,14 @@ fn destructuring_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
             _ => continue,
         };
         let rest = text[close + 1..].trim_start();
-        if !rest.starts_with('=') || rest[1..].starts_with(['=', '>']) {
+        let assigned = rest.starts_with('=') && !rest[1..].starts_with(['=', '>']);
+        // `for ([name] of ...)` / `for ({ name } in ...)` write their targets.
+        let loop_bound = ["of", "in"].iter().any(|keyword| {
+            rest.strip_prefix(keyword).is_some_and(|tail| {
+                tail.starts_with(|c: char| c.is_whitespace() || "([{'\"`".contains(c))
+            })
+        });
+        if !assigned && !loop_bound {
             continue;
         }
         let mut depth = 0usize;
@@ -3608,6 +3615,7 @@ impl UnextractedTestFinder<'_> {
             Statement::TryStatement(try_stmt) => {
                 self.visit_statements(&try_stmt.block.body);
                 if self.gap.is_none()
+                    && !super::oracle::try_catch_is_unreachable(try_stmt)
                     && let Some(handler) = &try_stmt.handler
                 {
                     self.visit_statements(&handler.body.body);
