@@ -3918,6 +3918,8 @@ fn stable_repo_path_arg(path: String, field: &str) -> Result<String, String> {
 }
 
 #[cfg(test)]
+mod capability_disposition_tests;
+#[cfg(test)]
 mod fact_index_projection_tests;
 #[cfg(test)]
 mod fact_index_tests;
