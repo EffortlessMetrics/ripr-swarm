@@ -280,8 +280,9 @@ fn run_mcp_with_input_custody(
     })
 }
 
-/// Expected single operator warning for an unusable root (RIPR-SPEC-0211).
-const UNUSABLE_ROOT_WARNING: &str = "ripr mcp: warning: workspace root unavailable (not a usable repository root); tools will fail closed with workspace_unavailable. Restart with `--root <repository>`.\n";
+/// Prefix of the single operator warning for an unusable root (RIPR-SPEC-0211).
+/// The reason and next step that follow are asserted per cause (#9895).
+const UNUSABLE_ROOT_WARNING_PREFIX: &str = "ripr mcp: warning: workspace root unavailable (";
 
 fn response_lines(output: &Output) -> Result<Vec<Value>, String> {
     response_lines_expecting_stderr(output, "")
@@ -290,7 +291,16 @@ fn response_lines(output: &Output) -> Result<Vec<Value>, String> {
 /// Like `response_lines`, but for a session started on an unusable root: stderr
 /// must be exactly the one startup warning, nothing more.
 fn response_lines_with_root_warning(output: &Output) -> Result<Vec<Value>, String> {
-    response_lines_expecting_stderr(output, UNUSABLE_ROOT_WARNING)
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    if !stderr.starts_with(UNUSABLE_ROOT_WARNING_PREFIX)
+        || !stderr.ends_with('\n')
+        || stderr.lines().count() != 1
+    {
+        return Err(format!(
+            "expected exactly one unusable-root warning line, got {stderr:?}"
+        ));
+    }
+    response_lines_expecting_stderr(output, &stderr)
 }
 
 fn response_lines_expecting_stderr(
@@ -3501,10 +3511,30 @@ fn unusable_root_warns_once_on_stderr_and_keeps_stdout_clean() -> Result<(), Str
             .map_err(|error| error.to_string())
     };
     let mut failures = Vec::new();
-    for (label, root) in [
-        ("nonexistent", base.join("missing")),
-        ("file", file.clone()),
-        ("non-git dir", plain_dir.clone()),
+    // Each cause must state its own reason and a concrete next step, and must
+    // not collapse to the old circular "not a usable repository root" (#9895).
+    for (label, root, code, reason, next_step) in [
+        (
+            "nonexistent",
+            base.join("missing"),
+            "root_missing",
+            "the configured root does not exist",
+            "check the path for typos",
+        ),
+        (
+            "file",
+            file.clone(),
+            "root_not_directory",
+            "the configured root is not a directory",
+            "not a file inside it",
+        ),
+        (
+            "non-git dir",
+            plain_dir.clone(),
+            "repository_marker_missing",
+            "no repository marker (.git, Cargo.toml",
+            "run `git init` there",
+        ),
     ] {
         let output = run(&root)?;
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -3512,6 +3542,18 @@ fn unusable_root_warns_once_on_stderr_and_keeps_stdout_clean() -> Result<(), Str
             failures.push(format!(
                 "{label}: expected one warning line, got {stderr:?}"
             ));
+        }
+        for needle in [code, reason, next_step] {
+            if !stderr.contains(needle) {
+                failures.push(format!("{label}: warning lacks {needle:?}: {stderr:?}"));
+            }
+        }
+        if stderr.contains("not a usable repository root") {
+            failures.push(format!("{label}: warning is still circular: {stderr:?}"));
+        }
+        let path_text = root.to_string_lossy();
+        if stderr.contains(path_text.as_ref()) {
+            failures.push(format!("{label}: warning must not carry the path"));
         }
         if !output.stdout.is_empty() {
             failures.push(format!("{label}: stdout must stay protocol-only"));
