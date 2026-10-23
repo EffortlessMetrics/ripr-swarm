@@ -792,48 +792,99 @@ suite('Extension Smoke', () => {
       prototype.showStatus = originalShowStatus;
     }
     assert.ok(observed && typeof observed.status.kind === 'string', 'failed to observe the activated controller');
-    const controller = observed;
+    const controller = observed as unknown as {
+      status: { kind: string; summary?: string; detail?: string; nextStep?: string };
+      client?: { isRunning(): boolean };
+      statusBar?: { text: string; tooltip?: unknown; backgroundColor?: unknown; color?: unknown };
+      handleAnalysisStatus(params: unknown): void;
+    };
+    assert.ok(controller.statusBar, 'the activated controller owns the real status item');
+    const statusItem = controller.statusBar;
+    const startedClient = controller.client;
+    if (!startedClient || !startedClient.isRunning()) {
+      throw new Error('a real client must be running before the journey');
+    }
+
+    // Pass-through observation of the real `ripr/analysisStatus` frames: the
+    // wrapper records each frame and then runs the production handler.
+    interface PullFrame { state?: string; pull?: string; failureKind?: string }
+    const frames: PullFrame[] = [];
+    const originalHandle = controller.handleAnalysisStatus;
+    controller.handleAnalysisStatus = function (this: unknown, params: unknown) {
+      const frame = (params ?? {}) as {
+        state?: string;
+        input_authority?: { configuration_pull?: { state?: string; failure?: { kind?: string } | null } };
+      };
+      frames.push({
+        state: frame.state,
+        pull: frame.input_authority?.configuration_pull?.state,
+        failureKind: frame.input_authority?.configuration_pull?.failure?.kind
+      });
+      return Reflect.apply(originalHandle, this, [params]);
+    };
+
     const isRejection = () => controller.status.kind === 'analysisFailed'
       && (controller.status.summary ?? '').includes('rejected your latest settings');
-    const describeStatus = () => JSON.stringify(controller.status);
+    const itemText = () => `${statusItem.text}\n${String(statusItem.tooltip ?? '')}`;
+    const describe = () => `status=${JSON.stringify(controller.status)} item=${JSON.stringify(itemText())} frames=${JSON.stringify(frames.slice(-8))}`;
     const waitUntil = async (predicate: () => boolean, label: string, timeoutMs = 60000): Promise<void> => {
       const deadline = Date.now() + timeoutMs;
       while (!predicate()) {
-        assert.ok(Date.now() < deadline, `timed out: ${label}; status=${describeStatus()}`);
+        assert.ok(Date.now() < deadline, `timed out: ${label}; ${describe()}`);
         await sleep(50);
       }
     };
+    // A decided pull of the given kind that arrived after `since`.
+    const pullAfter = (since: number, pull: string, failureKind?: string) =>
+      frames.slice(since).some((frame) => frame.pull === pull
+        && (failureKind === undefined || frame.failureKind === failureKind));
 
     const uri = workspaceFileUri('src/lib.rs');
     const config = vscode.workspace.getConfiguration('ripr', uri);
     const previous = config.inspect<boolean>('includeUnchangedTests')?.workspaceValue;
-    const setInvalid = (value: unknown) =>
+    const update = (value: unknown) =>
       config.update('includeUnchangedTests', value, vscode.ConfigurationTarget.Workspace);
     try {
-      // An accepted non-default value first, so correction returns to a
-      // previously effective value rather than the schema default.
-      await config.update('includeUnchangedTests', false, vscode.ConfigurationTarget.Workspace);
-      await waitUntil(() => !isRejection(), 'accepted baseline pull');
+      // An accepted non-default value, established by a real applied pull, so
+      // correction returns to a previously effective value.
+      let mark = frames.length;
+      await update(false);
+      await waitUntil(() => pullAfter(mark, 'applied'), 'baseline pull applied');
+      assert.ok(!isRejection(), `baseline shows no rejection: ${describe()}`);
 
-      await setInvalid('not-a-boolean');
-      await waitUntil(isRejection, 'rejection is shown for an invalid type');
+      mark = frames.length;
+      await update('not-a-boolean');
+      await waitUntil(() => pullAfter(mark, 'failed', 'config_pull_invalid') && isRejection(),
+        'invalid type is rejected and shown');
       assert.ok(/includeUnchangedTests|include_unchanged_tests/i.test(controller.status.detail ?? ''),
-        `rejection names the offending setting: ${describeStatus()}`);
+        `rejection names the offending setting: ${describe()}`);
       assert.ok(!/default settings/i.test(controller.status.detail ?? ''), 'no default-settings claim');
       assert.ok((controller.status.nextStep ?? '').includes('Restart Server'), 'names a recovery action');
+      assert.ok(statusItem.text.includes('failed'), `the real item shows the failure: ${describe()}`);
+      assert.ok(statusItem.backgroundColor !== undefined, 'the real item carries the error colors');
 
-      // A second rejected pull stays visible; nothing repaints over it.
-      await setInvalid(7);
-      await sleep(1500);
-      assert.ok(isRejection(), `re-rejection stays visible: ${describeStatus()}`);
+      // A second, decided rejection stays visible.
+      mark = frames.length;
+      await update(7);
+      await waitUntil(() => pullAfter(mark, 'failed', 'config_pull_invalid'), 'second invalid pull decided');
+      assert.ok(isRejection(), `re-rejection stays visible: ${describe()}`);
 
-      // Restoring the previously accepted value clears it with no restart,
-      // save or explicit refresh.
-      await config.update('includeUnchangedTests', false, vscode.ConfigurationTarget.Workspace);
-      await waitUntil(() => !isRejection(), 'correction clears the rejection');
-      assert.ok(!/includeUnchangedTests/i.test(controller.status.detail ?? ''),
-        `cleared status no longer carries the rejection: ${describeStatus()}`);
+      // Restoring the previously accepted value is a new applied pull that
+      // clears the item with the same client, and no restart, save or refresh.
+      mark = frames.length;
+      await update(false);
+      await waitUntil(() => pullAfter(mark, 'applied'), 'correction pull applied');
+      await waitUntil(() => !isRejection(), 'rejection cleared after the applied pull');
+      assert.strictEqual(controller.client, startedClient, 'correction must not replace the client');
+      assert.ok(startedClient.isRunning(), 'the same client keeps running');
+      assert.ok(!['serverFailed', 'noWorkspace', 'serverUnavailable', 'analysisFailed'].includes(controller.status.kind),
+        `recovery is a healthy status, not an unrelated failure: ${describe()}`);
+      assert.ok(!/includeUnchangedTests/i.test(itemText()), `the real item dropped the rejection: ${describe()}`);
+      assert.ok(!statusItem.text.includes('failed'), `the real item text is no longer failed: ${describe()}`);
+      assert.strictEqual(statusItem.backgroundColor, undefined, 'error background is cleared');
+      assert.strictEqual(statusItem.color, undefined, 'error foreground is cleared');
     } finally {
+      controller.handleAnalysisStatus = originalHandle;
       await config.update('includeUnchangedTests', previous, vscode.ConfigurationTarget.Workspace);
       await sleep(500);
     }
