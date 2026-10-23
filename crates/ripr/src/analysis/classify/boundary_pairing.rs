@@ -54,11 +54,11 @@ pub(in crate::analysis) struct WrapperEntryPairing<'a> {
 /// and a name bound from `entry(10)` do not observe the helper's result.
 pub(in crate::analysis) fn wrapper_return_boundary_pinned(
     owner: &FunctionSummary,
-    test: &TestSummary,
     assertion: &OracleFact,
-    entry: WrapperEntryPairing<'_>,
+    chain: &HelperChain,
+    activation: &ActivationEvidence,
 ) -> bool {
-    let Some(hop) = entry.chain.hops.last() else {
+    let Some(hop) = chain.hops.last() else {
         return false;
     };
     let name = hop.caller.name.as_str();
@@ -73,14 +73,9 @@ pub(in crate::analysis) fn wrapper_return_boundary_pinned(
         && assertion.kind == OracleKind::ExactValue
         && assertion.strength == OracleStrength::Strong
         && whole_call
-        && chain_forwards_owner_result(&owner.name, entry.chain)
+        && chain_forwards_owner_result(&owner.name, chain)
         && assertion_names_one_entry_call(owner, name, assertion)
-        && assertion_observes_boundary_entry_call(
-            owner,
-            name,
-            assertion,
-            &(entry.test_activation)(test),
-        )
+        && assertion_observes_boundary_entry_call(owner, name, assertion, activation)
 }
 
 /// True when some related test both feeds a boundary input to the owner and

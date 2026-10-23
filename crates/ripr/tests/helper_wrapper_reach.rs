@@ -245,8 +245,8 @@ fn boolean_return_twin_does_not_borrow_other_calls_or_short_circuit_gates() -> R
     let finding = family_finding(&split, BULK_DIFF, "return_value")?;
     assert_ne!(finding["classification"], "exposed", "{finding}");
 
-    let source =
-        bulk_source(FORWARDING, BOUNDARY_TESTS).replace("10 <= qty", "(10 <= qty) || true");
+    let source = bulk_source(FORWARDING, "        assert_eq!(order_discount(10), 5);")
+        .replace("10 <= qty", "(10 <= qty) || true");
     let diff = BULK_DIFF
         .replace("qty >= 10", "(qty >= 10) || true")
         .replace("10 <= qty", "(10 <= qty) || true");

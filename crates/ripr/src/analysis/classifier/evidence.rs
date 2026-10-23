@@ -700,19 +700,10 @@ impl ClassifiedProbeEvidence {
             predicate.family = ProbeFamily::Predicate;
             predicate
         });
-        let wrapper_activation = |test: &TestSummary| {
-            activation_and_boundary_input(
-                wrapper_boundary_probe.as_ref().unwrap_or(context.probe),
-                context.owner_fn,
-                &[test],
-                &flow_sinks,
-                context.helper_chain.as_ref(),
-                context.index,
-                context.workspace_complete,
-                context.test_value_facts,
-            )
-            .activation
-        };
+        // Reveal asks once per assertion. Compute the whole-test activation
+        // only once per original test, and borrow its rows instead of copying
+        // them for each assertion. File/name/coordinate retain provenance.
+        let wrapper_activations = RefCell::new(BTreeMap::new());
         let reveal = reveal_outcome(
             context.probe,
             reveal_expression,
@@ -734,15 +725,25 @@ impl ClassifiedProbeEvidence {
                             .owner_fn
                             .zip(context.helper_chain.as_ref())
                             .is_some_and(|(owner, chain)| {
-                                wrapper_return_boundary_pinned(
-                                    owner,
-                                    test,
-                                    assertion,
-                                    WrapperEntryPairing {
-                                        chain,
-                                        test_activation: &wrapper_activation,
-                                    },
-                                )
+                                let mut cached = wrapper_activations.borrow_mut();
+                                let activation = cached
+                                    .entry((test.file.clone(), test.start_line, test.name.clone()))
+                                    .or_insert_with(|| {
+                                        activation_and_boundary_input(
+                                            wrapper_boundary_probe
+                                                .as_ref()
+                                                .unwrap_or(context.probe),
+                                            context.owner_fn,
+                                            &[test],
+                                            &flow_sinks,
+                                            context.helper_chain.as_ref(),
+                                            context.index,
+                                            context.workspace_complete,
+                                            context.test_value_facts,
+                                        )
+                                        .activation
+                                    });
+                                wrapper_return_boundary_pinned(owner, assertion, chain, activation)
                             })
                 },
                 assertion_admitted: &assertion_admitted,

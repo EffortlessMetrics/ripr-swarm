@@ -1,6 +1,8 @@
 # Fixture: rust_wrapper_boolean_return_discarded
 
-Spec: RIPR-SPEC-0186, RIPR-SPEC-0159
+Spec: RIPR-SPEC-0186
+
+Helper result forwarding follows RIPR-SPEC-0159.
 
 ## Given
 
