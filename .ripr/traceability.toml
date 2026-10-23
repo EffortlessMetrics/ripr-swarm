@@ -9909,6 +9909,7 @@ id = "RIPR-SPEC-0122"
 name = "bounded human check output"
 spec = "docs/specs/RIPR-SPEC-0122-bounded-human-check-output.md"
 tests = [
+  "crates/ripr/src/analysis/classify/decision.rs::tests::infection_unknown_next_step_names_a_concrete_action",
   "crates/ripr/src/output/human.rs::tests::human_evidence_spells_the_unconfirmed_observation_in_words",
   "crates/ripr/src/output/human.rs::tests::shared_evidence_rows_spell_the_unconfirmed_observation_in_words",
   "crates/ripr/src/output/human.rs::tests::plain_observation_wording_handles_each_producer_form",
@@ -18377,6 +18378,11 @@ name = "A complete TypeScript packet offers a gap-bound repair start"
 spec = "docs/specs/RIPR-SPEC-0311-gap-bound-typescript-repair-start.md"
 tests = [
   "crates/ripr/tests/installed_python_typescript_journeys.rs::typescript_literal_threshold_packet_is_complete_and_controls_fail_closed",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::gap_bound_after_phase_closes_the_gap_on_positive_evidence",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::gap_bound_after_phase_refuses_a_gap_that_is_not_closed_and_stays_retryable",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::gap_bound_after_phase_does_not_treat_an_absent_gap_as_closed",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::gap_bound_after_phase_enforces_the_edit_cage",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::gap_bound_after_phase_stops_when_the_retry_budget_is_spent",
   "crates/ripr/src/cli/agent.rs::tests::agent_repair_gap_id_parses_a_gap_bound_before_start",
   "crates/ripr/src/cli/agent.rs::tests::agent_repair_gap_id_is_exclusive_and_typescript_only",
   "crates/ripr/src/app/repair_attempt/mod.rs::tests::cage_policy_binds_a_typescript_gap_packet_to_its_test_file",
@@ -18391,6 +18397,7 @@ fixtures = []
 code = [
   "crates/ripr/src/app/gap_bound_repair.rs",
   "crates/ripr/src/app/repair_attempt/mod.rs",
+  "crates/ripr/src/app/agent_status.rs",
   "crates/ripr/src/cli/commands/agent.rs",
 ]
 outputs = [
