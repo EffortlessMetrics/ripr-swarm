@@ -17,6 +17,17 @@
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
 floor = 51
 
+# Operator grid and false-credit traps (verdict_corpus_grid.rs). `cell_floor`
+# is the count of covered operator-by-truth cells (7 operators x credited,
+# gap, partial); `trap_floor` the count of trap cases the tests cannot
+# discriminate; `false_credit_ceiling` how many of those ripr may credit.
+# Raise the floors and lower the ceiling as coverage grows and credits are
+# fixed; the opposite edit is a reviewed change with a reason.
+[grid]
+cell_floor = 21
+trap_floor = 17
+false_credit_ceiling = 0
+
 # LSP Repair Packet Command
 [[spec]]
 id = "RIPR-SPEC-0077"
@@ -76,6 +87,18 @@ reason = "output wording or disclosure; the classification is unchanged, so a ve
 id = "RIPR-SPEC-0091"
 scope = "out"
 reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# Error-Seam unwrap_err / expect_err Variant Binding
+[[spec]]
+id = "RIPR-SPEC-0106"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a Python case cannot label them"
+
+# ErrorPath Requires a Variant-Observing Oracle
+[[spec]]
+id = "RIPR-SPEC-0107"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a Python case cannot label them"
 
 # Disclose Unanalyzed Working Tree When Using `--base`
 [[spec]]
@@ -178,6 +201,12 @@ reason = "output wording or disclosure; the classification is unchanged, so a ve
 id = "RIPR-SPEC-0170"
 scope = "out"
 reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# guarded Result match observations
+[[spec]]
+id = "RIPR-SPEC-0175"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a Python case cannot label them"
 
 # Rust repair-trust route-yield ladder
 [[spec]]
@@ -599,6 +628,15 @@ reason = "acceptance examples are bullet prose, not numbered; no corpus case cit
 id = "RIPR-SPEC-0285"
 scope = "out"
 reason = "doctor/repo-input framework-scan admission, ordering, and string-awareness hygiene; not an exposure-verdict example a corpus case labels"
+[[unmeasured]]
+id = "RIPR-SPEC-0291"
+reason = "acceptance examples are prose, not numbered; agent-brief start-command root rendering is not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0289"
+scope = "out"
+reason = "edit-cage refusal narration wording; not an exposure-verdict example a corpus case labels"
+
 [[spec]]
 id = "RIPR-SPEC-0290"
 scope = "out"
@@ -624,8 +662,47 @@ scope = "out"
 reason = "probe-seeding hygiene for wrapped Rust signatures; not an exposure-verdict example a corpus case labels"
 
 
+[[spec]]
+id = "RIPR-SPEC-0309"
+scope = "out"
+reason = "check --path/--exclude diff-scope filter for oversized diffs; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0310"
+scope = "out"
+reason = "check-findings-json verify artifact contract; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0311"
+scope = "out"
+reason = "gap-bound TypeScript repair start from a complete packet; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0318"
+scope = "out"
+reason = "pilot next-step text for an uncommitted inline-module target; not an exposure-verdict example a corpus case labels"
+
 # Release ledger direct-main contract
 [[spec]]
 id = "RIPR-SPEC-0301"
 scope = "out"
 reason = "release-process tooling (xtask release-ledger); its examples validate a commit ledger, not an exposure verdict a corpus case labels"
+
+# Every false verdict the corpus still scores, with its owning issue.
+# `verdict-corpus check` fails when a false row is not listed here and when a
+# listed row is no longer false, so a bless cannot absorb a new false verdict
+# and a fixed row leaves this list and cannot silently return. Adding an entry
+# is a reviewed edit that names the owner; the fix belongs in the case, the
+# spec or the analyzer, never in an exclusion.
+
+# Rust bounded value transfer
+[[spec]]
+id = "RIPR-SPEC-0158"
+scope = "out"
+reason = "Rust analyzer transfer rule over Rust syntax; a Python case cannot label it"
+
+# Rust bounded helper-call transfer
+[[spec]]
+id = "RIPR-SPEC-0159"
+scope = "out"
+reason = "Rust analyzer transfer rule over Rust syntax; a Python case cannot label it"

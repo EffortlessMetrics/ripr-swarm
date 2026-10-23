@@ -109,8 +109,13 @@ fn run_result(
         env.insert(name.to_string(), value.to_string());
     }
     let summary = scratch.0.join("summary");
+    // Passed as a file, not `-c <script>`: Windows argv quoting mangles a
+    // multi-line script before bash sees it (#9272).
+    let script = scratch.0.join("result.sh");
+    fs::write(&script, result_shell(step)?).map_err(|e| e.to_string())?;
     let output = Command::new("bash")
-        .args(["-e", "-c", &result_shell(step)?])
+        .arg("-e")
+        .arg(&script)
         .env_clear()
         .envs(env)
         .env("PATH", std::env::var_os("PATH").ok_or("PATH unavailable")?)
@@ -281,8 +286,11 @@ fn manual_admission_producer_does_not_supply_pr_qualification() -> Result<(), St
         .collect::<Vec<_>>()
         .join("\n");
     let outputs = scratch.0.join("outputs");
+    let script = scratch.0.join("action.sh");
+    fs::write(&script, &shell).map_err(|e| e.to_string())?;
     let output = Command::new("bash")
-        .args(["-e", "-c", &shell])
+        .arg("-e")
+        .arg(&script)
         .env_clear()
         .env("PATH", std::env::var_os("PATH").ok_or("PATH unavailable")?)
         .env("GITHUB_ACTION_PATH", action)

@@ -6,6 +6,7 @@ pub(crate) mod committed_source;
 pub(crate) mod consumed_source;
 pub(crate) mod diagnostic_origin;
 mod diff;
+mod diff_scope_filter;
 mod extract;
 mod facts;
 mod generated_rust_corpus;
@@ -18,6 +19,7 @@ pub(crate) mod language_outcome;
 pub(crate) mod new_test_target;
 pub(crate) mod path_glob;
 mod pipeline;
+pub(crate) use extract::mask_comments_and_strings;
 pub(crate) use pipeline::NON_TEXT_ONLY_DETAIL;
 mod probes;
 pub(crate) mod repair_route;
@@ -46,6 +48,8 @@ mod witness;
 mod workspace;
 
 pub(crate) use diff::parse_unified_diff_bounded_with_metadata;
+pub(crate) use diff_scope_filter::DiffIntake;
+pub use diff_scope_filter::DiffScopeFilter;
 
 /// Shared pinned PR-evidence diff assembly (#3930, #4004): the one named
 /// owner for packet diff presentation, consumed by the product route and the
@@ -95,6 +99,16 @@ pub(crate) use probes::{
 pub(crate) use rust_index::DeclinedRustFile;
 #[cfg(test)]
 pub(crate) use rust_index::{FileFacts, RaRustSyntaxAdapter, RustIndex, RustSyntaxAdapter};
+/// Parser-backed related-test retention fixture for consumer tests (#9175);
+/// a narrow cfg(test) entry so output tests need no analysis internals.
+#[cfg(test)]
+pub(crate) fn retention_fixture_finding(
+    docs: usize,
+    demoted_call: &str,
+    demoted_asserts: usize,
+) -> crate::domain::Finding {
+    classifier::tests::retention_finding(docs, demoted_call, demoted_asserts)
+}
 pub use seam_cache::cache_layer_names;
 pub(crate) use seam_classification::ClassifiedSeam;
 #[cfg(test)]
@@ -103,6 +117,7 @@ pub(crate) use seam_classification::SeamGripClassCounts;
 pub(crate) use seam_classification::classify_seam;
 #[cfg(test)]
 pub(crate) use seam_inventory::apply_pilot_seam_budget_inner;
+pub(crate) use seam_inventory::file_fact_store_failure_rows;
 #[cfg(test)]
 pub(crate) use seam_inventory::inventory_seams_from_index;
 pub(crate) use seam_inventory::{
@@ -130,6 +145,7 @@ pub(crate) use workspace::DiffOnlySource;
 pub(crate) use workspace::PathDependencyAdjacency;
 pub(crate) use workspace::SourceRoleContext;
 pub(crate) use workspace::apply_module_graph_evidence;
+pub(crate) use workspace::classify_with;
 pub(crate) use workspace::context_for_files;
 pub(crate) use workspace::is_test_surface_path;
 pub(crate) use workspace::seeds_diff_probes;
@@ -152,6 +168,13 @@ pub(crate) fn workspace_unanalyzed_source_languages(root: &Path) -> Vec<(&'stati
         *counts.entry(language).or_default() += 1;
     }
     counts.into_iter().collect()
+}
+
+/// Whether the root holds any regular source file ripr reads, routes to a
+/// preview adapter or names as an unanalyzed language, in one short-circuiting
+/// walk; see `workspace::has_inspectable_source_file`.
+pub(crate) fn workspace_has_inspectable_source(root: &Path) -> bool {
+    workspace::has_inspectable_source_file(root)
 }
 
 /// Re-export workspace Rust file discovery for the output layer so it can
@@ -315,6 +338,9 @@ pub(crate) fn detect_typescript_test_framework(root: &Path) -> Option<&'static s
 #[cfg(feature = "lang-python")]
 pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
     language::detect_python_test_frameworks(root)
+        .into_iter()
+        .map(|framework| framework.as_str())
+        .collect()
 }
 
 #[cfg(feature = "lang-typescript")]
@@ -1041,7 +1067,7 @@ pub(crate) fn run_analysis_with_oracle_policy_and_rust_config(
     languages: &[language::LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
     language_config: &crate::config::LanguagesConfig,
-    perl_cache_dir: Option<&std::path::Path>,
+    intake: DiffIntake<'_>,
 ) -> Result<AnalysisResult, CoreError> {
     pipeline::run_diff_pipeline_with_oracle_policy_and_rust_config(
         options,
@@ -1049,7 +1075,7 @@ pub(crate) fn run_analysis_with_oracle_policy_and_rust_config(
         languages,
         rust_config,
         language_config,
-        perl_cache_dir,
+        intake,
     )
 }
 
@@ -1059,7 +1085,7 @@ pub(crate) fn run_worktree_analysis_with_oracle_policy_and_rust_config(
     languages: &[language::LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
     language_config: &crate::config::LanguagesConfig,
-    perl_cache_dir: Option<&std::path::Path>,
+    intake: DiffIntake<'_>,
     disclosure_probes: DisclosureProbes,
 ) -> Result<AnalysisResult, CoreError> {
     pipeline::run_worktree_pipeline_with_oracle_policy_and_rust_config(
@@ -1068,7 +1094,7 @@ pub(crate) fn run_worktree_analysis_with_oracle_policy_and_rust_config(
         languages,
         rust_config,
         language_config,
-        perl_cache_dir,
+        intake,
         disclosure_probes,
     )
 }

@@ -36,6 +36,27 @@ pub(crate) struct Ledger {
     /// The oracle-accuracy gate (`verdict_corpus_oracle.rs`).
     #[serde(default)]
     pub(crate) oracle: Option<super::oracle::OracleGate>,
+    /// The operator-grid and trap gate (`verdict_corpus_grid.rs`).
+    #[serde(default)]
+    pub(crate) grid: Option<super::grid::GridGate>,
+    /// Every false verdict the corpus still scores, each with its owner
+    /// (`verdict_corpus_known_false.rs`).
+    #[serde(default)]
+    pub(crate) known_false: Vec<super::known_false::KnownFalse>,
+    /// Coverage axes beyond spec examples: language shapes, test-library
+    /// idioms and hostile inputs, each with the case count `check` protects.
+    #[serde(default)]
+    pub(crate) axis: Vec<LedgerAxis>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LedgerAxis {
+    pub(crate) id: String,
+    pub(crate) description: String,
+    /// Fewest cases tagged with this axis. Raise it when coverage grows;
+    /// lowering it is a reviewed edit with a reason.
+    pub(crate) floor: usize,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -155,7 +176,17 @@ pub(crate) fn load_ledger(corpus_dir: &Path) -> Result<Ledger, String> {
     let path = corpus_dir.join(LEDGER_FILE);
     let text = fs::read_to_string(&path)
         .map_err(|err| format!("read {}: {err}", normalize_path(&path)))?;
-    toml::from_str(&text).map_err(|err| format!("parse {}: {err}", normalize_path(&path)))
+    let mut ledger: Ledger =
+        toml::from_str(&text).map_err(|err| format!("parse {}: {err}", normalize_path(&path)))?;
+    if !ledger.known_false.is_empty() {
+        return Err(format!(
+            "{} lists `[[known_false]]` inline; one file per row under `{}/` keeps parallel fixes from conflicting",
+            normalize_path(&path),
+            super::known_false::KNOWN_FALSE_DIR
+        ));
+    }
+    ledger.known_false = super::known_false::load_entries(corpus_dir)?;
+    Ok(ledger)
 }
 
 /// `RIPR-SPEC-NNNN#K` as (`RIPR-SPEC-NNNN`, K). K is a positive integer
@@ -345,6 +376,7 @@ pub(crate) fn coverage_violations(
             }
         }
     }
+    violations.extend(axis_violations(corpus, ledger));
     let coverage = spec_example_coverage(corpus, ledger, specs);
     if ledger.floor > coverage.coverage.denominator {
         violations.push(format!(
@@ -353,6 +385,102 @@ pub(crate) fn coverage_violations(
         ));
     }
     violations
+}
+
+/// Cases per declared axis, in ledger order.
+fn axis_counts(corpus: &Corpus, ledger: &Ledger) -> Vec<(String, usize, usize)> {
+    ledger
+        .axis
+        .iter()
+        .map(|axis| {
+            let count = corpus
+                .cases
+                .iter()
+                .filter(|case| case.axes.iter().any(|tag| tag == &axis.id))
+                .count();
+            (axis.id.clone(), count, axis.floor)
+        })
+        .collect()
+}
+
+/// Axis law: every tag a case carries is declared once in the ledger, and
+/// no axis holds fewer cases than its floor. A deleted or retagged case
+/// fails here, so an axis cannot shrink silently.
+fn axis_violations(corpus: &Corpus, ledger: &Ledger) -> Vec<String> {
+    let mut violations = Vec::new();
+    let mut declared = BTreeSet::new();
+    for axis in &ledger.axis {
+        if !declared.insert(axis.id.as_str()) {
+            violations.push(format!("{LEDGER_FILE} declares axis `{}` twice", axis.id));
+        }
+        if axis.id.trim().is_empty() {
+            violations.push(format!("{LEDGER_FILE} declares an axis without an id"));
+        }
+        if axis.description.trim().is_empty() {
+            violations.push(format!(
+                "{LEDGER_FILE} declares axis `{}` without a description",
+                axis.id
+            ));
+        }
+    }
+    for case in &corpus.cases {
+        let mut seen = BTreeSet::new();
+        for tag in &case.axes {
+            if !seen.insert(tag.as_str()) {
+                violations.push(format!(
+                    "case `{}` carries axis `{tag}` twice",
+                    case.case_id
+                ));
+            }
+            if !declared.contains(tag.as_str()) {
+                violations.push(format!(
+                    "case `{}` carries axis `{tag}`, which {LEDGER_FILE} does not declare",
+                    case.case_id
+                ));
+            }
+        }
+    }
+    for (id, count, floor) in axis_counts(corpus, ledger) {
+        if count < floor {
+            violations.push(format!(
+                "axis `{id}` holds {count} cases, below its {LEDGER_FILE} floor {floor}"
+            ));
+        }
+    }
+    violations
+}
+
+/// The one-line axis summary `check` prints, for a ledgered corpus that
+/// declares axes. A `--cases` run (`selected`) prints the counts of what it
+/// ran without the floors, which it does not enforce.
+pub(crate) fn axis_note(
+    corpus_dir: &Path,
+    corpus: &Corpus,
+    selected: bool,
+) -> Result<Option<String>, String> {
+    if !corpus_dir.join(LEDGER_FILE).is_file() {
+        return Ok(None);
+    }
+    let ledger = load_ledger(corpus_dir)?;
+    if ledger.axis.is_empty() {
+        return Ok(None);
+    }
+    let parts: Vec<String> = axis_counts(corpus, &ledger)
+        .into_iter()
+        .map(|(id, count, floor)| {
+            if selected {
+                format!("{id} {count}")
+            } else {
+                format!("{id} {count} (floor {floor})")
+            }
+        })
+        .collect();
+    let scope = if selected {
+        " (selected cases only)"
+    } else {
+        ""
+    };
+    Ok(Some(format!("coverage axes{scope} {}", parts.join(", "))))
 }
 
 #[derive(Clone, Debug, Serialize)]

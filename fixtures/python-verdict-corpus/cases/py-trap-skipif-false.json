@@ -1,0 +1,52 @@
+{
+  "case_id": "py-trap-skipif-false",
+  "subject_id": "authored-py-trap-kit",
+  "diff": "cases/py-trap-skipif-false.diff",
+  "anchor": {
+    "file": "trapkit/core.py",
+    "line": 17
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "pytest_mark_skipif_false_control",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return b + a",
+        "mutated_line": "return b + a",
+        "outcome": "tests_failed",
+        "failing_test": "test_skipif_false_total",
+        "equivalence_review": "not equivalent: 7 + 3 is 10, not 21"
+      },
+      {
+        "replacement": "return b / a",
+        "mutated_line": "return b / a",
+        "outcome": "tests_failed",
+        "failing_test": "test_skipif_false_total",
+        "equivalence_review": "not equivalent: 7 / 3 is not 21"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Control for skipped_test: skipif(False) still runs the test.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

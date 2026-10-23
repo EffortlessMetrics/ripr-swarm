@@ -1,5 +1,11 @@
 {
   "schema_version": "0.1",
+  "analysis_scope": {
+    "scope": "diff_scoped_changed_files",
+    "changed_production_files": ["src/gone.rs"],
+    "cap_omitted_seams": 0,
+    "omitted_by_policy": 0
+  },
   "tool": "ripr",
   "status": "advisory",
   "mode": "baseline-check",

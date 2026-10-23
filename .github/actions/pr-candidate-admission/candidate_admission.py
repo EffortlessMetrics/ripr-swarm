@@ -11,10 +11,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+from urllib.parse import quote
 
 PLACEHOLDERS = {
     "",
@@ -66,6 +70,12 @@ GENERATED_DECLARATION_ALLOWED = (
     re.compile(r"^metrics/public-proof/\*\*$"),
 )
 DEFAULT_MAX_GENERATED_LINES = 40000
+# Bounds on the hand-written blobs read to cap count-less files.
+BLOB_READ_TIMEOUT_SECONDS = 30
+# Resolved through PATHEXT so Windows finds gh.exe or a gh.cmd shim; a bare name
+# only matches gh.exe there (#9272).
+GH = shutil.which("gh") or "gh"
+MAX_BLOB_BYTES = 2_000_000
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 TEMPLATE_LINES = {
     "claim": "Governing issue or accepted claim:",
@@ -293,6 +303,8 @@ def generated_totals(
     pr_files: list[dict[str, Any]],
     rules: list[tuple[re.Pattern[str], bool]],
     changed_files: int,
+    total_lines: int | None = None,
+    blob_lines: Callable[[dict[str, Any]], int | None] | None = None,
 ) -> tuple[int, int]:
     """(generated files, generated lines). A truncated file listing cannot
     prove which lines are generated, so it exempts nothing."""
@@ -310,7 +322,58 @@ def generated_totals(
         if changed and all(is_generated(path, rules) for path in paths):
             files += 1
             lines += changed
-    return files, lines
+    return _add_unlisted_stats(pr_files, rules, total_lines, files, lines, blob_lines)
+
+
+def _entry_paths(entry: dict[str, Any]) -> list[str]:
+    paths = [str(entry.get("filename") or "")]
+    if entry.get("previous_filename"):
+        paths.append(str(entry["previous_filename"]))
+    return paths
+
+
+def _add_unlisted_stats(
+    pr_files: list[dict[str, Any]],
+    rules: list[tuple[re.Pattern[str], bool]],
+    total_lines: int | None,
+    files: int,
+    lines: int,
+    blob_lines: Callable[[dict[str, Any]], int | None] | None = None,
+) -> tuple[int, int]:
+    """GitHub drops per-file line counts for the files past its diff budget
+    (they list as zero-line `modified`), while the PR totals still include
+    them. Their combined lines are the PR total minus the listed ones. The
+    hand-written ones among them are bounded by their own line counts at the
+    base and head (`blob_lines`, None when unreadable), and the rest is
+    generated. Any unreadable file keeps the whole residual counted."""
+    if total_lines is None or blob_lines is None:
+        return files, lines
+    # Every zero-line entry is unlisted whatever its status, so an added,
+    # renamed or removed hand-written file is bounded rather than exempted.
+    unlisted = [
+        e
+        for e in pr_files
+        if not (int(e.get("additions") or 0) + int(e.get("deletions") or 0))
+    ]
+    residual = total_lines - sum(
+        int(e.get("additions") or 0) + int(e.get("deletions") or 0) for e in pr_files
+    )
+    declared = [
+        e
+        for e in unlisted
+        if all(is_generated(path, rules) for path in _entry_paths(e))
+    ]
+    if residual <= 0 or not declared:
+        return files, lines
+    bound = 0
+    for entry in unlisted:
+        if entry in declared:
+            continue
+        counted = blob_lines(entry)
+        if counted is None:
+            return files, lines
+        bound += counted
+    return files + len(declared), lines + max(0, residual - bound)
 
 
 def identity_detail(fields: dict[str, str]) -> str:
@@ -679,6 +742,115 @@ def self_test() -> None:
     ]
     assert generated_totals(listed, rules, 7) == (3, 1850)
     assert generated_totals(listed, rules, 8) == (0, 0), "a truncated listing exempts nothing"
+    # Past GitHub's diff budget a file lists with no counts; the residual of the
+    # PR total over the counted lines is exempt after the hand-written stat-less
+    # files are bounded by their own base+head line counts.
+    stat_less = [
+        {"filename": "fixtures/a/package-lock.json", "status": "modified", "additions": 900, "deletions": 800},
+        {"filename": "fixtures/b/package-lock.json", "status": "modified"},
+        {"filename": "fixtures/c/package-lock.json", "status": "modified"},
+        {"filename": "crates/ripr/src/lib.rs", "status": "modified", "additions": 3, "deletions": 0},
+        {"filename": "fixtures/b/package.json", "status": "modified"},
+    ]
+    sizes = {"fixtures/b/package.json": 60, "src/new.rs": 500, "src/gone.rs": 400, "src/moved.rs": 700}
+    bound = lambda entry: sizes.get(entry["filename"])  # noqa: E731
+    assert generated_totals(stat_less, rules, 5) == (1, 1700), "no total, no residual"
+    assert generated_totals(stat_less, rules, 5, 1703 + 2900) == (1, 1700), "no reader, no residual"
+    assert generated_totals(stat_less, rules, 5, 1703 + 2900, bound) == (3, 1700 + 2840)
+    assert generated_totals(stat_less, rules, 5, 1703, bound) == (1, 1700), "no residual lines"
+    assert generated_totals(stat_less, rules, 5, 1703 + 40, bound) == (3, 1700), "a bound above the residual exempts none"
+    assert generated_totals(stat_less, rules, 5, 1703 + 2900, lambda entry: None) == (1, 1700), "an unreadable file keeps the residual counted"
+    # Whatever the status, a count-less hand-written file is bounded, not exempted.
+    for status, name, extra in (
+        ("added", "src/new.rs", {}),
+        ("removed", "src/gone.rs", {}),
+        ("renamed", "src/moved.rs", {"previous_filename": "src/old.rs"}),
+    ):
+        listed_files = stat_less[:4] + [{"filename": name, "status": status, **extra}]
+        assert generated_totals(listed_files, rules, 5, 1703 + 2900, bound) == (
+            3, 1700 + 2900 - sizes[name]
+        ), status
+        assert generated_totals(listed_files, rules, 5, 1703 + 2900, lambda entry: None) == (1, 1700), status
+    # A rename is generated only if both ends are.
+    renamed_lock = stat_less[:3] + [
+        {"filename": "fixtures/d/package-lock.json", "previous_filename": "src/old.rs", "status": "renamed"}
+    ]
+    assert generated_totals(renamed_lock, rules, 4, 1700 + 800, lambda entry: 0) == (3, 2500)
+    assert generated_totals(renamed_lock, rules, 4, 1700 + 800, lambda entry: 900) == (3, 1700)
+    # The live reader bounds a rename at the merge base under its previous name.
+    calls: list[str] = []
+
+    blobs = {
+        "src/old.rs": b"a\nb\nc\n",
+        "src/moved.rs": b"a\n",
+        "img/logo.png": b"\x89PNG\xff\xfe\n",
+    }
+    sizes_by_path = {"src/huge.rs": 5_000_000}
+    mode = {"fail": ""}
+    raw_reads: list[str] = []
+
+    def fake_gh(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        assert kwargs.get("timeout"), "every read has a timeout"
+        url = next(a for a in command if a.startswith("repos/"))
+        calls.append(url)
+        if mode["fail"] == "timeout":
+            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+        if mode["fail"] == "error":
+            return subprocess.CompletedProcess(command, 1, b"", b"HTTP 502")
+        if "/compare/" in url:
+            return subprocess.CompletedProcess(command, 0, b"c" * 40 + b"\n", b"")
+        path = url.split("contents/")[1].split("?")[0]
+        if "--jq" not in command:
+            raw_reads.append(path)
+        if path in sizes_by_path:
+            return subprocess.CompletedProcess(command, 0, str(sizes_by_path[path]).encode(), b"")
+        if path not in blobs:
+            return subprocess.CompletedProcess(command, 1, b"", b"HTTP 404")
+        if "--jq" in command:
+            return subprocess.CompletedProcess(command, 0, str(len(blobs[path])).encode(), b"")
+        return subprocess.CompletedProcess(command, 0, blobs[path], b"")
+
+    head_now = {"sha": "b" * 40}
+
+    def head_gh(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        assert kwargs.get("timeout"), "the head read has a timeout"
+        if head_now["sha"] == "error":
+            return subprocess.CompletedProcess(command, 1, b"", b"HTTP 502")
+        return subprocess.CompletedProcess(command, 0, head_now["sha"].encode() + b"\n", b"")
+
+    snapshot = {"head": {"sha": "b" * 40}}
+    real_run = subprocess.run
+    subprocess.run = head_gh  # type: ignore[assignment]
+    try:
+        assert head_unmoved("o/r", "7", snapshot)
+        head_now["sha"] = "c" * 40
+        assert not head_unmoved("o/r", "7", snapshot), "a moved head discounts nothing"
+        head_now["sha"] = "error"
+        assert not head_unmoved("o/r", "7", snapshot), "an unreadable head discounts nothing"
+        head_now["sha"] = "b" * 40
+        assert not head_unmoved("o/r", "", snapshot), "no PR number discounts nothing"
+        assert not head_unmoved("o/r", "7", {"head": {"sha": "short"}}), "a malformed snapshot head discounts nothing"
+    finally:
+        subprocess.run = real_run
+    real_run = subprocess.run
+    subprocess.run = fake_gh  # type: ignore[assignment]
+    try:
+        reader = gh_blob_lines("o/r", {"base": {"sha": "a" * 40}, "head": {"sha": "b" * 40}})
+        assert reader({"filename": "src/moved.rs", "previous_filename": "src/old.rs"}) == 4
+        assert reader({"filename": "src/fresh.rs"}) == 0
+        assert reader({"filename": "img/logo.png"}) is None, "a binary blob keeps the residual counted"
+        assert reader({"filename": "src/huge.rs"}) is None, "an oversized blob is not downloaded"
+        assert "src/huge.rs" not in raw_reads
+        for failure in ("timeout", "error"):
+            mode["fail"] = failure
+            assert gh_blob_lines("o/r", {"base": {"sha": "a" * 40}, "head": {"sha": "b" * 40}})(
+                {"filename": "src/moved.rs"}
+            ) is None, failure
+        mode["fail"] = ""
+    finally:
+        subprocess.run = real_run
+    assert any(f"ref={'c' * 40}" in call for call in calls), "base read at the merge base"
+    assert not any(f"ref={'a' * 40}" in call and "contents" in call for call in calls), "never at the base tip"
     big = fixture(body=fixture_body(), head=head, additions=3000, deletions=100, changed_files=170)
     assert run(big, [big])["reason"] == "qualification_scope_oversized"
     admitted_big = decide(big, [big], head, False, max_files, max_lines, 20, 1750)
@@ -778,8 +950,92 @@ def self_test() -> None:
     print("candidate-admission self-test: all controls passed")
 
 
+def gh_blob_lines(
+    repository: str, current: dict[str, Any]
+) -> Callable[[dict[str, Any]], int | None]:
+    """Lines of a listed file at the merge base (under its previous name for a
+    rename) plus at the PR head: an upper bound on what the file changed. A
+    path absent at one end counts 0 there; any other read failure, including
+    an unresolvable merge base, is None so the caller counts the file's lines
+    instead."""
+    head = str((current.get("head") or {}).get("sha") or "")
+    tip = str((current.get("base") or {}).get("sha") or "")
+    cache: dict[str, str | None] = {}
+
+    def gh(args: list[str]) -> subprocess.CompletedProcess[bytes]:
+        # Bytes, not text: a binary blob must not raise while decoding. A hung
+        # or missing `gh` is a failed read, never an exception out of admission.
+        try:
+            return subprocess.run(
+                [GH, "api", *args], capture_output=True, check=False, timeout=BLOB_READ_TIMEOUT_SECONDS
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            return subprocess.CompletedProcess(args, 1, b"", b"unavailable")
+
+    def merge_base() -> str | None:
+        if "sha" not in cache:
+            found = ""
+            if SHA_RE.fullmatch(tip) and SHA_RE.fullmatch(head):
+                done = gh([f"repos/{repository}/compare/{tip}...{head}", "--jq", ".merge_base_commit.sha"])
+                found = done.stdout.decode("ascii", "replace").strip() if done.returncode == 0 else ""
+            cache["sha"] = found if SHA_RE.fullmatch(found) else None
+        return cache["sha"]
+
+    def lines_at(path: str, ref: str) -> int | None:
+        url = f"repos/{repository}/contents/{quote(path)}?ref={ref}"
+        # Size first, so an oversized blob is never downloaded.
+        sized = gh([url, "--jq", ".size"])
+        if sized.returncode != 0:
+            return 0 if b"HTTP 404" in sized.stderr else None
+        try:
+            if int(sized.stdout.strip()) > MAX_BLOB_BYTES:
+                return None
+        except ValueError:
+            return None
+        done = gh(["-H", "Accept: application/vnd.github.raw", url])
+        if done.returncode != 0:
+            return 0 if b"HTTP 404" in done.stderr else None
+        data = done.stdout
+        try:
+            data.decode("utf-8")
+        except UnicodeDecodeError:
+            return None  # a binary blob has no line count to bound by
+        return data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0)
+
+    def count(entry: dict[str, Any]) -> int | None:
+        base = merge_base()
+        if base is None or not SHA_RE.fullmatch(head):
+            return None
+        filename = str(entry.get("filename") or "")
+        before = lines_at(str(entry.get("previous_filename") or filename), base)
+        after = lines_at(filename, head)
+        return None if before is None or after is None else before + after
+
+    return count
+
+
+def head_unmoved(repository: str, number: str, current: dict[str, Any]) -> bool:
+    """The file listing is read after the PR snapshot and is mutable. Its
+    generated-file discounts apply only if the PR head still is the snapshot's;
+    any read problem counts as moved, so nothing is discounted."""
+    snapshot = str((current.get("head") or {}).get("sha") or "")
+    if not SHA_RE.fullmatch(snapshot) or not number.isdigit():
+        return False
+    try:
+        done = subprocess.run(
+            [GH, "api", f"repos/{repository}/pulls/{number}", "--jq", ".head.sha"],
+            capture_output=True, check=False, timeout=BLOB_READ_TIMEOUT_SECONDS,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    return done.returncode == 0 and done.stdout.decode("ascii", "replace").strip() == snapshot
+
+
 def generated_from_files(
-    current: dict[str, Any], pr_files: Path | None, attributes: Path | None
+    current: dict[str, Any],
+    pr_files: Path | None,
+    attributes: Path | None,
+    blob_lines: Callable[[dict[str, Any]], int | None] | None = None,
 ) -> tuple[int, int]:
     """(generated files, generated lines) from the fetched PR file listing and
     the base commit's .gitattributes; (0, 0) unless both were supplied."""
@@ -789,6 +1045,8 @@ def generated_from_files(
         load_json(pr_files) or [],
         parse_generated_rules(attributes.read_text(encoding="utf-8")),
         int(current.get("changed_files") or 0),
+        int(current.get("additions") or 0) + int(current.get("deletions") or 0),
+        blob_lines,
     )
 
 
@@ -832,9 +1090,17 @@ def main() -> int:
     if args.max_changed_files < 1 or args.max_changed_lines < 1:
         parser.error("qualification limits must be positive")
     current = load_json(args.current)
+    repository = os.environ.get("ADMISSION_REPOSITORY", "")
     generated_files, generated_lines = generated_from_files(
-        current, args.pr_files, args.generated_attributes
+        current,
+        args.pr_files,
+        args.generated_attributes,
+        gh_blob_lines(repository, current) if repository else None,
     )
+    if generated_files and not head_unmoved(
+        repository, os.environ.get("ADMISSION_PR_NUMBER", ""), current
+    ):
+        generated_files = generated_lines = 0
     result = decide(
         current,
         load_json(args.open_prs),

@@ -15,7 +15,7 @@ This fixture commits one fresh small npm project
 (`fixtures/blind_journey_installed_typescript/repository/`): `src/pricing.ts`
 owns one discount-threshold comparison and `test/pricing.test.ts` is the
 single related Vitest test. `package.json` selects the `vitest run` script and
-every snapshot retains the full `package-lock.json` (vitest 3.2.4, `npm ci`-installable) that backs
+every snapshot retains the full `package-lock.json` (vitest 5.0.5, `npm ci`-installable) that backs
 the npm-runner selection.
 Ten bound snapshots are retained:
 
@@ -50,24 +50,27 @@ exists in the RIPR-SPEC-0205 executor corpus and binds the recorded snapshot
 identities through the manifest's explicit per-scenario
 `scenario_snapshot_bindings` map — each negative variant is bound to its own
 variant snapshot, never to `base` or to another variant. `cargo xtask
-blind-journey-execute` then runs the sixteen scripted
+blind-journey-execute` then runs the seventeen scripted
 installed-TypeScript scenarios through the real executor; each emitted packet
 is stamped and must be accepted by the live RIPR-SPEC-0200 validator, so a
 hand-edited expectation cannot make a wrong journey emit.
 
 The positive row follows only public docs/help and literal product-emitted
 commands — `ripr doctor`, `ripr check`, `ripr pilot`, `ripr agent status`, one
-canonical item selection, the printed `ripr agent repair --phase before` that
-emits the constant-boundary packet naming the owner, the equality input and
-the executable `vitest run test/pricing.test.ts` command, one bounded test
-edit, the exact printed Vitest command between the phases, the printed
-`--phase after`, and the printed receipt route — recorded from a foreign
-launch directory against the selected root.
+canonical item selection, the printed gap-bound `ripr agent repair --gap-id
+<gap> --base 'HEAD~1' --phase before` that emits the constant-boundary packet
+naming the owner, the equality input and the executable `vitest run
+test/pricing.test.ts` command, one bounded test edit, the exact printed Vitest
+command between the phases, and the printed `ripr continue --attempt` after
+phase that closes the gap on positive evidence and issues the gap-bound
+receipt — recorded from a foreign launch directory against the selected root
+(#9103, RIPR-SPEC-0311). The receipt is static evidence only; Python keeps its
+#9102 terminal reason.
 
 ## Then
 
-- The positive row, the interrupted-receipt recovery and the second-root
-  repeat derive `passed_blind_journey` and share one portable identity
+- The positive row, the pilot/status route that resolves to the gap-bound
+  start, the completed-attempt rerun re-observation and the second-root repeat derive `passed_blind_journey` and share one portable identity
   (concrete root spelling is retained evidence, never identity).
 - Each negative variant stops before any edit: packet readiness stays false
   with the precise printed reason for its shape, and the row derives
@@ -76,12 +79,15 @@ launch directory against the selected root.
 - The failing printed Vitest command derives
   `verification_failure_visible` while static movement stays a separate axis;
   the skipped-verification row keeps verification `not_run` despite static
-  movement; the cyclic pilot/agent-status route derives
+  movement; the retained cyclic pilot/agent-status control route derives
   `product_discoverability_failure` with the exact blocked input; the deleted
   before-artifact row stops with `honest_limitation` naming the printed
   recovery; the planted workspace binary derives
-  `candidate_identity_failure`; the interrupted receipt write recovers
-  through a clean rerun and never yields a half-authoritative receipt.
+  `candidate_identity_failure`; the rerun row (id retains `interrupted_receipt_write_recovers`) records
+  a rerun of the printed `ripr continue` on a completed attempt (observed: already
+  complete, no new attempt) followed by a read of the issued receipt; it exercises
+  no process interruption and claims no recovery from a lost receipt write, which
+  stays with the #4510 process-admission surface.
 - Every negative control keeps its own non-positive terminal result; no
   aggregate converts them into success.
 

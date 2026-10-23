@@ -56,6 +56,17 @@ pub(crate) struct RepairRoute {
     pub(crate) uncommitted_target: Option<String>,
 }
 
+/// The gap-bound repair start the check pipeline computed for a TypeScript
+/// finding whose repair packet validates (#9103, RIPR-SPEC-0311): the
+/// canonical gap id and the diff base this run analyzed, which the printed
+/// `ripr agent repair --gap-id ... --base ... --phase before` start replays.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct GapRepairRoute {
+    pub(crate) finding_id: String,
+    pub(crate) gap_id: String,
+    pub(crate) base: String,
+}
+
 /// Why the check pipeline offered no repair start for its selected finding
 /// (#8729). Producer-owned at the decision site in
 /// `app::task_first::check_repair_route`, so the rendered advisory names
@@ -64,6 +75,11 @@ pub(crate) struct RepairRoute {
 pub(crate) enum RepairRouteRefusal {
     /// The finding has no canonical gap to bind a seam from.
     NoCanonicalGap,
+    /// The finding's file belongs to a language adapter whose findings the
+    /// seam inventory behind `ripr repair` cannot bind (#9102). The
+    /// inventory is built from the Rust index only, so no seam exists for
+    /// this file; a terminal state, not a stale id.
+    NoSeamInventory { language: String, file: String },
     /// The root's typed config could not be loaded.
     ConfigUnreadable,
     /// Classifying seams in the finding's file failed.
@@ -92,6 +108,10 @@ impl RepairRouteRefusal {
             Self::NoCanonicalGap => format!(
                 "no repair start offered: the finding carries no canonical gap to bind a seam; {}",
                 gate()
+            ),
+            Self::NoSeamInventory { language, file } => format!(
+                "no repair start offered: {}",
+                super::task_first::no_seam_inventory_reason(language, file)
             ),
             Self::ConfigUnreadable => format!(
                 "no repair start offered: the root's config could not be read; {}",
@@ -130,6 +150,9 @@ impl RepairRouteRefusal {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum CheckRepairRoute {
     Route(RepairRoute),
+    /// A TypeScript finding with a validated repair packet: a gap-bound
+    /// start instead of a seam-bound one (#9103).
+    GapRoute(GapRepairRoute),
     Refused(RepairRouteRefusal),
     Silent,
 }
@@ -148,6 +171,9 @@ pub(crate) struct FindingNavigation {
     /// The repair route the check pipeline computed for its selected
     /// finding (#8166 Slice C). Absent means no route is printed.
     repair_route: Option<RepairRoute>,
+    /// The gap-bound repair start for a TypeScript finding (#9103). Absent
+    /// unless the check pipeline validated the finding's repair packet.
+    gap_repair_route: Option<GapRepairRoute>,
     /// The named refusal when the check pipeline selected a finding but
     /// offered it no repair start (#8729). Absent on a computed route and
     /// on deliberate silence (static-limited findings, no selected
@@ -165,6 +191,7 @@ impl FindingNavigation {
             repair_suffix: String::new(),
             stub_route: None,
             repair_route: None,
+            gap_repair_route: None,
             repair_route_refusal: None,
         }
     }
@@ -181,6 +208,7 @@ impl FindingNavigation {
     pub(crate) fn with_repair_route_outcome(mut self, outcome: CheckRepairRoute) -> Self {
         match outcome {
             CheckRepairRoute::Route(route) => self.repair_route = Some(route),
+            CheckRepairRoute::GapRoute(route) => self.gap_repair_route = Some(route),
             CheckRepairRoute::Refused(refusal) => self.repair_route_refusal = Some(refusal),
             CheckRepairRoute::Silent => {}
         }
@@ -199,6 +227,24 @@ impl FindingNavigation {
         self.repair_route
             .as_ref()
             .filter(|route| route.finding_id == finding_id)
+    }
+
+    /// The gap-bound repair route for `finding_id`, when one was computed.
+    pub(crate) fn gap_repair_route_for(&self, finding_id: &str) -> Option<&GapRepairRoute> {
+        self.gap_repair_route
+            .as_ref()
+            .filter(|route| route.finding_id == finding_id)
+    }
+
+    /// The gap-bound `ripr agent repair` start (#9103): the canonical gap and
+    /// the diff base replace the seam identity, then `--root` as `repair`.
+    pub(crate) fn gap_repair_command(&self, route: &GapRepairRoute) -> String {
+        format!(
+            "ripr agent repair --gap-id {} --base {}{} --phase before",
+            shell_arg(&route.gap_id),
+            shell_arg(&route.base),
+            self.repair_suffix
+        )
     }
 
     /// The `ripr repair` start for one seam identity. Repair reads the live
@@ -295,6 +341,7 @@ pub(crate) fn finding_navigation_with_worktree(
         ),
         stub_route: None,
         repair_route: None,
+        gap_repair_route: None,
         repair_route_refusal: None,
     }
 }
@@ -556,6 +603,22 @@ mod tests {
                 "advisory must name the full-gate recovery: {advisory}"
             );
         }
+        // #9102: a non-Rust finding has no seam to bind, so the full gate
+        // would repeat the refusal; the advisory names the language, file
+        // and manual route instead of routing back to it.
+        let terminal = RepairRouteRefusal::NoSeamInventory {
+            language: "Python".to_string(),
+            file: "pricing/core.py".to_string(),
+        }
+        .advisory(gate);
+        assert!(
+            terminal.starts_with("no repair start offered: ")
+                && terminal.contains("covers Rust files only")
+                && terminal.contains("Python finding in `pricing/core.py`")
+                && terminal.contains("manual route")
+                && !terminal.contains("ripr repair probe:one"),
+            "terminal reason must name language, file and manual route: {terminal}"
+        );
         let budget = RepairRouteRefusal::SeamLimit.advisory(gate);
         assert!(
             budget.contains("seam budget") && budget.contains("wider seam budget"),

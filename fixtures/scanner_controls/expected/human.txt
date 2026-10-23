@@ -17,13 +17,19 @@ Start here:
   Changed behavior: if final_state == "text" {
   Missing discriminator (1 of 2): Changed boundary input is unresolved: boundary operand `final_state` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the…
   Related test (1 of 2 matched rows): tests/classify.rs:12 bound_long_trailing_space_is_blank
-  Next step: Trace the related test input through the local or computed operand, including
-    default/empty cases, to check whether the change matters. ripr.toml does not support
+  Next step: Open the related test and trace its input through the local or computed operand
+    (including default and empty cases) to see which side of the changed condition it exercises,
+    then name an input that would exercise the other side. ripr.toml does not support
     fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap.
     Compare the original and changed implementations with a focused run using the project's
     configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain
     unknown
   Evidence: reach yes · infection unknown · propagation yes · observation yes · discriminator not established
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: Related tests appear to reach classify_bound: bound_long_trailing_space_is_blank, bound_long_word_is_word
     - infection unknown: Changed boundary input is unresolved: boundary operand `final_state` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot…
     - 10 more detail line(s) in --format human-full
@@ -31,7 +37,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/scanner_controls/input --diff <cwd>/fixtures/scanner_controls/diff.patch --mode fast probe:src_lib.rs:predicate:f4ed635d
   ripr context --root <cwd>/fixtures/scanner_controls/input --diff <cwd>/fixtures/scanner_controls/diff.patch --mode fast --at probe:src_lib.rs:predicate:f4ed635d
-  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:predicate:f4ed635d --root <cwd>/fixtures/scanner_controls/input` for the full gate's answer
+  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: boundary_value; incomplete evidence stage: activation); run `ripr repair probe:src_lib.rs:predicate:f4ed635d --root <cwd>/fixtures/scanner_controls/input` for the full gate's answer
 
 Hidden:
   3 lower-priority finding(s) omitted from default human output.

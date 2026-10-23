@@ -25,6 +25,98 @@ fn strip_check_json_canonical_next_action(bytes: &[u8]) -> Vec<u8> {
     stripped.into_bytes()
 }
 
+// Independent literal oracle for the current presentation contract (#9373).
+// These hash-bound reports are historical captures, not current UI goldens.
+const BOUNDED_EVIDENCE_LEGEND: &str = concat!(
+    "    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;\n",
+    "      propagation = changed effect reaches output; observation = related test/assertion evidence;\n",
+    "      discriminator = assertion distinguishes intended from wrong behavior\n",
+    "    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;\n",
+    "      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused\n",
+);
+
+/// Project only the new, exact selected-digest legend out of current human
+/// output. Refuse old/malformed output rather than letting normalization hide
+/// a missing legend or another rendering change. JSON/full never use this.
+fn strip_bounded_evidence_legend(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let value = std::str::from_utf8(bytes).map_err(|error| error.to_string())?;
+    let mut offset = 0;
+    let mut selected_end = None;
+    for line in value.split_inclusive('\n') {
+        if line.starts_with("  Evidence: reach ")
+            && (!line.ends_with('\n') || selected_end.replace(offset + line.len()).is_some())
+        {
+            return Err("expected exactly one complete selected Evidence line".to_string());
+        }
+        offset += line.len();
+    }
+    let start = selected_end.ok_or("missing selected Evidence line")?;
+    if value.matches(BOUNDED_EVIDENCE_LEGEND).count() != 1
+        || value.matches("    Stages (static evidence):").count() != 1
+        || value.matches("    States: yes =").count() != 1
+        || !value[start..].starts_with(BOUNDED_EVIDENCE_LEGEND)
+    {
+        return Err(
+            "expected exactly one literal legend immediately after selected Evidence".to_string(),
+        );
+    }
+    let mut projected = value[..start].to_string();
+    projected.push_str(&value[start + BOUNDED_EVIDENCE_LEGEND.len()..]);
+    Ok(projected.into_bytes())
+}
+
+#[test]
+fn bounded_legend_capture_projection_is_exact_and_preserves_evidence() -> Result<(), String> {
+    let before = concat!(
+        "  Static exposure: unrevealed (severity: warning, confidence: 0.79)\n",
+        "  Evidence: reach yes · infection weak · propagation no · observation no · discriminator missing\n",
+    );
+    let after = "    - reach detail\n    - infection detail\n    - 3 more detail line(s) in --format human-full\n";
+    let retained = format!("{before}{after}");
+    let current = format!("{before}{BOUNDED_EVIDENCE_LEGEND}{after}");
+    assert_eq!(
+        strip_bounded_evidence_legend(current.as_bytes())?,
+        retained.as_bytes()
+    );
+
+    // These false-credit mutations must survive the projection and still
+    // fail the unchanged byte comparison against the canonical report.
+    for (old, wrong) in [
+        ("observation no", "observation yes"),
+        ("discriminator missing", "discriminator yes"),
+        ("Static exposure: unrevealed", "Static exposure: exposed"),
+    ] {
+        let changed = current.replace(old, wrong);
+        let projected = strip_bounded_evidence_legend(changed.as_bytes())?;
+        assert!(
+            std::str::from_utf8(&projected)
+                .map_err(|error| error.to_string())?
+                .contains(wrong)
+        );
+        assert_ne!(projected, retained.as_bytes(), "must retain {wrong}");
+    }
+    for malformed in [
+        retained.clone(),
+        current.replace(
+            "      discriminator = assertion distinguishes intended from wrong behavior\n",
+            "",
+        ),
+        current.replace("weak = partial evidence", "weak = proof"),
+        format!("{before}{after}{BOUNDED_EVIDENCE_LEGEND}"),
+        format!("{before}{BOUNDED_EVIDENCE_LEGEND}{BOUNDED_EVIDENCE_LEGEND}{after}"),
+        format!("unrelated prose:\n{BOUNDED_EVIDENCE_LEGEND}{retained}"),
+        format!("{current}unrelated prose:\n{BOUNDED_EVIDENCE_LEGEND}"),
+        format!("{before}{BOUNDED_EVIDENCE_LEGEND}{after}{before}"),
+        BOUNDED_EVIDENCE_LEGEND.to_string(),
+    ] {
+        assert!(
+            strip_bounded_evidence_legend(malformed.as_bytes()).is_err(),
+            "must refuse missing, changed, misplaced or repeated legend/Evidence: {malformed}"
+        );
+    }
+    Ok(())
+}
+
 /// The independent contract is score(1) == 2. Original/wrong sources differ
 /// only in the returned offset; their patches each describe the actual source.
 /// Discarding a matcher accepts either value, while exact/guarded assertions
@@ -190,7 +282,10 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                 // it projects under the same convention. JSON analysis stays
                 // byte-exact after stripping the check-JSON canonical
                 // next-action member (#7258); dedicated CLI/schema tests own
-                // that field, and these reports are not corpus.json.
+                // that field, and these reports are not corpus.json. The
+                // current bounded human legend (#9373) is independently
+                // pinned and projected out only at its selected-digest slot;
+                // historical capture bytes and all other human fields stay exact.
                 let bound_prefix = format!(
                     "{}/",
                     workspace_root().display().to_string().replace('\\', "/")
@@ -219,6 +314,9 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                         .map_err(|error| format!("{id}: missing canonical {file}: {error}"))?;
                     let actual = if file == "check.json" {
                         strip_check_json_canonical_next_action(&actual)
+                    } else if file == "human.txt" {
+                        strip_bounded_evidence_legend(&actual)
+                            .map_err(|error| format!("{id}: current human legend: {error}"))?
                     } else {
                         actual
                     };

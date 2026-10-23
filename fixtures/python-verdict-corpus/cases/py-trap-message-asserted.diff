@@ -1,0 +1,12 @@
+diff --git a/trapkit/core.py b/trapkit/core.py
+--- a/trapkit/core.py
++++ b/trapkit/core.py
+@@ -62,7 +62,7 @@
+ 
+ 
+ def message_asserted(a, b):
+-    return a * b
++    return b * a
+ 
+ 
+ def swallowed_assert(a, b):

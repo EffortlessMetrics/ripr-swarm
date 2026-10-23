@@ -1,0 +1,44 @@
+{
+  "case_id": "py-hostile-dead-version-branch",
+  "subject_id": "authored-py-pytest-hostile",
+  "diff": "cases/py-hostile-dead-version-branch.diff",
+  "anchor": {
+    "file": "hostile/versioned.py",
+    "line": 11
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "value_return",
+  "test_shape": "pytest_conditional_definition_dead_branch",
+  "hard_case": "the edit sits in a branch no supported interpreter executes",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, Hypothesis 6.168.3, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return \"older\"",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the dead definition returns older"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The else definition never runs on Python 3, so no test can observe it.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

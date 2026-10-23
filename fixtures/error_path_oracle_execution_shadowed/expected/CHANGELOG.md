@@ -337,7 +337,7 @@ Updated:
 ## Pending — error_path_oracle_execution_shadowed (26)
 
 Reason:
-RIPR-SPEC-0310: human-full gains a Next line under static limitations and stop reasons
+RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
 
 Command:
 `cargo xtask goldens bless error_path_oracle_execution_shadowed --reason "..."`
@@ -350,7 +350,47 @@ Updated:
 ## Pending — error_path_oracle_execution_shadowed (27)
 
 Reason:
-RIPR-SPEC-0310: reviewed Next line wording and gap-evidence dedup in human-full
+RIPR-SPEC-0122: #9373 item 1 review repair; missing discriminators include absent assertions as well as inputs
+
+Command:
+`cargo xtask goldens bless error_path_oracle_execution_shadowed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_path_oracle_execution_shadowed (28)
+
+Reason:
+RIPR-SPEC-0122: #9373 item 1 observation-gloss repair; report independent related test/assertion evidence without implying that the changed arm executes.
+
+Operation:
+Manual edit: replaced only the observation clause in the existing five-line bounded Evidence legend with `observation = related test/assertion evidence`.
+
+Execution:
+Source-only reviewed edit; no native fixture or goldens-bless command executed because local storage admission is unavailable.
+
+Updated:
+- `expected/human.txt`
+
+## Pending — error_path_oracle_execution_shadowed (29)
+
+Reason:
+RIPR-SPEC-0319: human-full gains a Next line under static limitations and stop reasons
+
+Command:
+`cargo xtask goldens bless error_path_oracle_execution_shadowed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_path_oracle_execution_shadowed (30)
+
+Reason:
+RIPR-SPEC-0319: reviewed Next line wording and gap-evidence dedup in human-full
 
 Command:
 `cargo xtask goldens bless error_path_oracle_execution_shadowed --reason "..."`

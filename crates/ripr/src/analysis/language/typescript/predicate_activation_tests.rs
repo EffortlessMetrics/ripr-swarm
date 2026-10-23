@@ -805,7 +805,7 @@ fn open_test_body_or_file_is_unresolved_not_missed() -> Result<(), String> {
         (
             "asserting helper",
             format!(
-                "{IMPORT_DISCOUNT}\nfunction expectDiscountAt(n: number, e: number) {{\n  expect(applyDiscount(n)).toBe(e);\n}}\n"
+                "{IMPORT_DISCOUNT}\nfunction expectDiscountAt(n: number, e: number) {{\n  const got = applyDiscount(n);\n  expect(got).toBe(e);\n}}\n"
             ),
             format!("{observed}\n  expectDiscountAt(100, 90);"),
         ),

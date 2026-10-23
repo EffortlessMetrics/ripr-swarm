@@ -872,6 +872,150 @@ fn default_help_keeps_the_task_roles_distinct() -> Result<(), String> {
     Ok(())
 }
 
+/// #9865: the first screen names the global exit vocabulary and the global
+/// `-v`/`--verbose` flag. Before this block, no help surface disclosed
+/// either: the exit contract lived only in docs/EXIT_CODES.md and `-v` only
+/// in the `help --all` preamble.
+#[test]
+fn default_help_discloses_exit_codes_and_global_verbose() -> Result<(), String> {
+    for args in [["--help"].as_slice(), ["help"].as_slice()] {
+        let stdout = normalized(&rendered_help(args)?);
+        for needle in [
+            "Exit codes: 0 completed",
+            "2 could not complete",
+            "3 blocking decision or typed refusal",
+            "130 interrupted",
+            "docs/EXIT_CODES.md",
+            "-v, --verbose",
+            "Extra pipeline diagnostics on stderr",
+        ] {
+            assert_contains(
+                "default help (`ripr --help` / `ripr help`)",
+                &stdout,
+                needle,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// #9864: per-command help renders the catalog `example` field — the same
+/// string `ripr help --json` emits for the command — so a runnable
+/// invocation is on the screen a new user actually reads. `check` keeps its
+/// richer hand-written examples; these cover the other command families,
+/// including parents (`agent`, `swarm`) and catalog-only nested paths
+/// (`gate evaluate`).
+#[test]
+fn per_command_help_renders_the_catalog_example() -> Result<(), String> {
+    for (args, example) in [
+        (
+            &["zero", "status", "--help"][..],
+            "ripr zero status --delta target/ripr/reports/baseline-debt-delta.json",
+        ),
+        (
+            &["cache", "export", "--help"][..],
+            "ripr cache export --out NEW_DIRECTORY",
+        ),
+        (
+            &["baseline", "diff", "--help"][..],
+            "ripr baseline diff --baseline .ripr/gate-baseline.json --current target/ripr/reports/gate-decision.json",
+        ),
+        (&["mcp", "--help"][..], "ripr mcp --stdio"),
+        (
+            &["feedback", "record", "--help"][..],
+            "ripr feedback record --snapshot ID --reason CODE",
+        ),
+        (&["status", "--help"][..], "ripr status --root ."),
+        (
+            &["first-pr", "--help"][..],
+            "ripr first-pr --root . --base BASE --head HEAD",
+        ),
+        (
+            &["gate", "evaluate", "--help"][..],
+            "ripr gate evaluate --pr-guidance PATH",
+        ),
+        (
+            &["agent", "--help"][..],
+            "ripr agent verify --root . --before before.json --after after.json --json",
+        ),
+        (
+            &["swarm", "--help"][..],
+            "ripr swarm ingest --root . --result target/ripr/workflow/agent-result.json",
+        ),
+    ] {
+        let stdout = normalized(&rendered_help(args)?);
+        let route = args[..args.len() - 1].join(" ");
+        assert_contains(&format!("help for `ripr {route}`"), &stdout, example)?;
+    }
+    Ok(())
+}
+
+/// #9867: `ripr help --all <extra>` used to print the full reference and exit
+/// 0 with the extra token silently discarded, so `ripr help --all check`
+/// (meant `ripr help check`) produced the widest possible output with a
+/// success code. The route is now as strict as `help --json`: exactly one
+/// flag, and any trailing argument exits 2 naming the accepted form.
+#[test]
+fn help_all_rejects_trailing_arguments() -> Result<(), String> {
+    for trailing in [&["check"][..], &["foo", "bar"][..]] {
+        let mut argv = vec!["help", "--all"];
+        argv.extend(trailing);
+        let output = run_ripr(&argv)?;
+        assert_eq!(output.status.code(), Some(2), "ripr {argv:?}");
+        assert!(output.stdout.is_empty(), "ripr {argv:?}: {output:?}");
+        assert_contains(
+            "ripr help --all trailing-argument error",
+            &String::from_utf8_lossy(&output.stderr),
+            "usage: ripr help --all (this route accepts no other arguments)",
+        )?;
+    }
+    // The bare selector is unchanged on both spellings.
+    for argv in [&["help", "--all"][..], &["--help", "--all"][..]] {
+        let output = run_ripr(argv)?;
+        assert!(output.status.success(), "ripr {argv:?}: {output:?}");
+    }
+    Ok(())
+}
+
+/// #9867: `--help --all` is a real extended-help grammar only on `check`
+/// (#8163). On every other command the pair exits 2 naming the supported
+/// routes, instead of printing ordinary help while silently discarding
+/// `--all` — the flag can no longer lie.
+#[test]
+fn help_all_flag_pair_is_rejected_outside_check() -> Result<(), String> {
+    for argv in [
+        &["repair", "--help", "--all"][..],
+        &["zero", "status", "--help", "--all"][..],
+        &["agent", "brief", "--help", "--all"][..],
+    ] {
+        let output = run_ripr(argv)?;
+        assert_eq!(output.status.code(), Some(2), "ripr {argv:?}");
+        assert!(output.stdout.is_empty(), "ripr {argv:?}: {output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_contains(
+            &format!("extended-help rejection for `ripr {}`", argv.join(" ")),
+            &stderr,
+            "extended help is available via `ripr help --all`",
+        )?;
+        assert_contains(
+            &format!("extended-help rejection for `ripr {}`", argv.join(" ")),
+            &stderr,
+            "`ripr check --help --all` for check",
+        )?;
+    }
+    // `check` keeps its documented progressive-help grammar, in both
+    // spellings.
+    for argv in [
+        &["check", "--help", "--all"][..],
+        &["help", "check", "--all"][..],
+    ] {
+        let output = run_ripr(argv)?;
+        assert!(output.status.success(), "ripr {argv:?}: {output:?}");
+        assert!(!output.stdout.is_empty(), "ripr {argv:?}: {output:?}");
+    }
+    Ok(())
+}
+
 #[test]
 fn exhaustive_help_keeps_the_same_roles_and_boundaries() -> Result<(), String> {
     let stdout = normalized(&rendered_help(&["help", "--all"])?);
@@ -1049,8 +1193,8 @@ fn calibrate_help_names_how_to_produce_the_imported_artifacts() -> Result<(), St
         "cargo mutants",
         "mutants.out",
         "27.1.0",
-        "RIPR-SPEC-0006",
-        "fixtures/boundary_gap/calibration/runtime-mutants.json",
+        "calibration fixtures",
+        "runtime-mutants.json",
     ] {
         assert_contains(
             "calibrate help (`ripr calibrate cargo-mutants --help`)",
@@ -1240,7 +1384,9 @@ fn agent_repair_help_names_the_primary_transaction_and_its_limits() -> Result<()
         "ripr agent repair [--root PATH] [--store PATH] --attempt ID --phase verify",
         "--store PATH Explicit repair-attempt store, resolved against --root.",
         "The repair command does not generate or apply tests, execute mutation testing, or declare the repository safe to merge.",
-        "Inline `#[cfg(test)]` modules don't qualify their file: a repository whose only tests are inline in non-test-surface files is permanently out of repair scope",
+        "One exception: when a seam's only tests live in one inline `#[cfg(test)]`",
+        "production code outside the module stays",
+        "the file must be committed before the start",
     ] {
         assert_contains(
             "agent repair help (`ripr agent repair --help`)",
@@ -1305,11 +1451,16 @@ fn help_index_routes_agent_repair_to_repair_help() -> Result<(), String> {
 }
 
 /// `check` and `context` must say what each `--mode` value means and where
-/// the full table lives (#4378), not only list the bare names.
+/// the full table lives (#4378), not only list the bare names. `check` reads
+/// the mode table through its `--help --all` reference; `context` has no
+/// extended form (#9867), so its single `--help` screen must carry the table.
 #[test]
 fn mode_help_names_index_scope_and_points_at_the_mode_table() -> Result<(), String> {
-    for command in ["check", "context"] {
-        let help = normalized(&rendered_help(&[command, "--help", "--all"])?);
+    for (command, help_args) in [
+        ("check", ["check", "--help", "--all"].as_slice()),
+        ("context", ["context", "--help"].as_slice()),
+    ] {
+        let help = normalized(&rendered_help(help_args)?);
         for needle in [
             "instant (changed files only, cheapest)",
             "deep and ready (whole workspace, slowest)",

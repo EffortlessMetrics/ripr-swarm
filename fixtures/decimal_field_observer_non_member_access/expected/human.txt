@@ -19,6 +19,11 @@ Start here:
   Related test: tests/config.rs:7 decimal_observation_does_not_name_retries (asserts, but not on the changed value)
   Next step: Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect
   Evidence: reach yes · infection yes · propagation yes · observation no · discriminator no
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: Related tests appear to reach default_config: decimal_observation_does_not_name_retries
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 5 more detail line(s) in --format human-full
@@ -26,7 +31,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/decimal_field_observer_non_member_access/input --diff <cwd>/fixtures/decimal_field_observer_non_member_access/diff.patch --mode fast probe:src_lib.rs:return_value:4b922ba9
   ripr context --root <cwd>/fixtures/decimal_field_observer_non_member_access/input --diff <cwd>/fixtures/decimal_field_observer_non_member_access/diff.patch --mode fast --at probe:src_lib.rs:return_value:4b922ba9
-  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:return_value:4b922ba9 --root <cwd>/fixtures/decimal_field_observer_non_member_access/input` for the full gate's answer
+  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: return_value; incomplete evidence stage: propagation); run `ripr repair probe:src_lib.rs:return_value:4b922ba9 --root <cwd>/fixtures/decimal_field_observer_non_member_access/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/decimal_field_observer_non_member_access/input --at src/lib.rs:7 --kind return_value
 

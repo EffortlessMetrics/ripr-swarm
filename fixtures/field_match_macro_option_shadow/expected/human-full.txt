@@ -13,6 +13,7 @@ WARNING ./src/lib.rs:5
 Changed
   before: None => 601,
   after:  None =>
+          (arm head only; open the arm at ./src/lib.rs:5 to read its new body)
 
 Probe
   family: match_arm
@@ -27,7 +28,7 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Changed behavior appears to influence match arm result: None =>
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
   - local flow reaches match arm result: None => (line 5)
   - related test src/lib.rs:10 selected uses strong whole object equality oracle: assert_eq!(charge(&Lease { elapsed: None, timeout: 600 }), 1001); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - source assertion argument value 1001 at line 12
@@ -74,7 +75,7 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Changed behavior appears to influence match arm result: 601
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
   - local flow reaches match arm result: 601 (line 5)
   - related test src/lib.rs:10 selected uses strong whole object equality oracle: assert_eq!(charge(&Lease { elapsed: None, timeout: 600 }), 1001); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - source assertion argument value 1001 at line 12

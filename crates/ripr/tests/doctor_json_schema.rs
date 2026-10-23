@@ -67,11 +67,25 @@ fn fixture_root(label: &str) -> Result<PathBuf, String> {
     Ok(root)
 }
 
-fn doctor_json(root: &Path) -> Result<Value, String> {
+fn doctor_json_output(root: &Path, extra_args: &[&str]) -> Result<std::process::Output, String> {
+    let root_arg = root.display().to_string();
+    let mut args = vec!["doctor", "--root", root_arg.as_str(), "--json"];
+    args.extend_from_slice(extra_args);
     let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .args(["doctor", "--root", &root.display().to_string(), "--json"])
+        .args(&args)
         .output()
         .map_err(|error| format!("spawn doctor: {error}"))?;
+    if output.stdout.is_empty() {
+        return Err(format!(
+            "doctor --json wrote no stdout; stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(output)
+}
+
+fn doctor_json(root: &Path) -> Result<Value, String> {
+    let output = doctor_json_output(root, &[])?;
     serde_json::from_slice(&output.stdout).map_err(|error| {
         format!(
             "doctor JSON did not parse: {error}\nstdout:\n{}\nstderr:\n{}",
@@ -79,6 +93,53 @@ fn doctor_json(root: &Path) -> Result<Value, String> {
             String::from_utf8_lossy(&output.stderr)
         )
     })
+}
+
+/// #9807: the default `--json` document must be byte-stable across runs that
+/// changed nothing, and `--timings` must be the opt-in that restores the
+/// volatile timing fields.
+#[test]
+fn doctor_json_is_byte_stable_across_runs_and_timings_opts_in() -> Result<(), String> {
+    let root = fixture_root("stable")?;
+    let first = doctor_json_output(&root, &[]);
+    let second = doctor_json_output(&root, &[]);
+    let timed = doctor_json_output(&root, &["--timings"]);
+    let _ = std::fs::remove_dir_all(&root);
+    let first = String::from_utf8(first?.stdout).map_err(|error| format!("utf8: {error}"))?;
+    let second = String::from_utf8(second?.stdout).map_err(|error| format!("utf8: {error}"))?;
+    let timed = String::from_utf8(timed?.stdout).map_err(|error| format!("utf8: {error}"))?;
+
+    if first != second {
+        return Err(format!(
+            "default doctor --json was not byte-stable across two identical runs (#9807):\nfirst:\n{first}\nsecond:\n{second}"
+        ));
+    }
+    for volatile in ["elapsed_ms", "\"segments\""] {
+        if first.contains(volatile) {
+            return Err(format!(
+                "default doctor --json must omit the volatile field {volatile} (#9807):\n{first}"
+            ));
+        }
+        if !timed.contains(volatile) {
+            return Err(format!(
+                "doctor --json --timings must restore the volatile field {volatile} (#9807):\n{timed}"
+            ));
+        }
+    }
+    // The timed projection is the pre-#9807 shape: everything else matches.
+    for pinned in [
+        "\"schema_version\": \"0.4\"",
+        "\"status\":",
+        "\"checks\":",
+        "\"cache\":",
+    ] {
+        if !first.contains(pinned) {
+            return Err(format!(
+                "byte-stable doctor --json lost a pinned field {pinned:?} (#9807):\n{first}"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Check one emitted value against one subschema.

@@ -430,7 +430,10 @@ pub(crate) fn inline_target_is_uncommitted(root: &Path, path: &str) -> bool {
     };
     // `ls-tree` succeeds with empty output for a path HEAD does not carry,
     // so that case stays distinct from a git failure.
-    let Ok(listing) = git_text(&root, &["ls-tree", &head, "--", path]) else {
+    let Ok(listing) = git_text(
+        &root,
+        &["--literal-pathspecs", "ls-tree", &head, "--", path],
+    ) else {
         return false;
     };
     if listing.is_empty() {
@@ -460,7 +463,10 @@ pub(crate) fn inline_target_is_uncommitted(root: &Path, path: &str) -> bool {
     };
     // Empty output means the path is not in the index (a staged deletion):
     // that differs from HEAD. A git failure is not an answer: defer.
-    let Ok(entry) = git_text(&root, &["ls-files", "--stage", "--", path]) else {
+    let Ok(entry) = git_text(
+        &root,
+        &["--literal-pathspecs", "ls-files", "--stage", "--", path],
+    ) else {
         return false;
     };
     let staged = entry.split_ascii_whitespace().nth(1);
@@ -567,6 +573,9 @@ fn committed_changes(
             "--no-renames",
             "--no-ext-diff",
             "--no-textconv",
+            // Ambient `diff.ignoreSubmodules=all` would hide a committed
+            // gitlink change from the attempt's changed-path set.
+            "--ignore-submodules=none",
             "--name-status",
             "-z",
             baseline_head,
@@ -953,7 +962,11 @@ fn inventory_paths(
         }
         let raw_path = raw_path?;
         let path = normalize_repo_relative_path(Path::new(&raw_path))?;
-        if !case_keys.insert(path.to_lowercase()) {
+        if !case_keys.insert(crate::output::path::path_identity_key_on(
+            Path::new(&path),
+            false,
+            true,
+        )) {
             ambiguous = true;
         }
         if inventory.insert(path, ignored_path).is_some() {
@@ -1934,6 +1947,21 @@ pub(crate) fn evaluate_edit_cage(policy: &EditCagePolicy, delta: &AttemptDelta) 
     }
 }
 
+/// True when an `OutsideInlineTestRegion` refusal reports that the selected
+/// file does not parse after the attempt's edit: the region-observation
+/// detail embedded the `unparseable` label (#8991). The observation parses the
+/// whole file, so the label cannot say whether the syntax error is in the
+/// newly written test or in production code beside it; the renderer names the
+/// file and leads with the plain fix-the-syntax-error statement on this case
+/// only, and every other refusal keeps its existing narration. The label
+/// vocabulary is owned by `inline_test_region`'s `reason_label`; the
+/// `` `mod <name>`: <label> `` detail spelling is owned by `evaluate_edit_cage`
+/// above, so a module name (a Rust identifier) can never smuggle the marker in.
+pub(crate) fn refusal_is_unparseable_selected_file(violation: &EditCageViolation) -> bool {
+    violation.kind == EditCageViolationKind::OutsideInlineTestRegion
+        && violation.reason.contains("`: unparseable)")
+}
+
 fn validate_delta(delta: &AttemptDelta) -> Vec<EditCageViolation> {
     delta
         .changes
@@ -2590,6 +2618,68 @@ mod tests {
             untracked_build_lockfile: None,
             inline_test_module_target: false,
         })
+    }
+
+    /// #8991: the predicate is bound to the real producer. An unparseable
+    /// after-source observed by `observe_attempt_inline_region` and refused by
+    /// `evaluate_edit_cage` is recognized, whether the broken text is in the
+    /// new test or in production code, and a production edit is not.
+    #[test]
+    fn unparseable_predicate_agrees_with_the_real_observation_and_cage() -> Result<(), String> {
+        let baseline = inline_test_region::InlineTestRegionBaseline {
+            path: "src/pricing.rs".to_string(),
+            module_name: "tests".to_string(),
+            package_identity: String::new(),
+            source: "pub fn price() {}\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn a() {}\n}\n"
+                .to_string(),
+        };
+        let mut policy = policy()?;
+        policy.selected_target = CagePathRule::exact("src/pricing.rs")?;
+        policy.allowed_edit_surface = vec![CagePathRule::exact("src/pricing.rs")?];
+        policy.forbidden_paths = vec![CagePathRule::exact("Cargo.toml")?];
+        policy.inline_test_module_target = true;
+        let verdict_for = |after: &str| {
+            let observation = inline_test_region::observe_attempt_inline_region(
+                inline_test_region::InlineTargetCopies {
+                    worktree: Ok(after.to_string()),
+                    index_matches: true,
+                    head_matches: true,
+                    baseline: &baseline,
+                },
+            );
+            evaluate_edit_cage(
+                &policy,
+                &AttemptDelta {
+                    comparable: true,
+                    inline_test_region: Some(observation),
+                    changes: vec![AttemptPathChange::modified("src/pricing.rs")],
+                },
+            )
+        };
+        // Broken text in a new test, and broken production code with no new
+        // test: both read unparseable, both are recognized.
+        for broken in [
+            "pub fn price() {}\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn a() {}\n    #[test]\n    fn b() { let = ; }\n}\n",
+            "pub fn price( {}\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn a() {}\n}\n",
+        ] {
+            let verdict = verdict_for(broken);
+            assert_eq!(verdict.violations.len(), 1, "{verdict:?}");
+            assert!(
+                refusal_is_unparseable_selected_file(&verdict.violations[0]),
+                "{verdict:?}"
+            );
+        }
+        // Control: a parseable production edit is refused for another reason
+        // and is not recognized.
+        let verdict = verdict_for(
+            "pub fn price() { let _ = 1; }\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn a() {}\n}\n",
+        );
+        assert_eq!(verdict.violations.len(), 1, "{verdict:?}");
+        assert!(
+            !refusal_is_unparseable_selected_file(&verdict.violations[0]),
+            "{verdict:?}"
+        );
+        Ok(())
     }
 
     #[test]
@@ -4403,6 +4493,53 @@ mod tests {
         assert_eq!(verdict.status, EditCageVerdictStatus::Incomparable);
         assert_eq!(verdict.changed_paths, vec!["tests/pricing.rs".to_string()]);
         assert!(verdict.violations.is_empty());
+        Ok(())
+    }
+
+    /// `--literal-pathspecs`: a target whose name contains glob metacharacters
+    /// must not match a sibling entry (the sibling sorts first here, so the
+    /// first listed entry would otherwise carry the wrong object id).
+    #[test]
+    fn inline_target_check_treats_glob_characters_literally() -> Result<(), String> {
+        let fixture = git_fixture("literal-pathspec")?;
+        fs::write(fixture.root.join("fA.rs"), "pub fn decoy() {}\n")
+            .map_err(|err| format!("write decoy: {err}"))?;
+        fs::write(fixture.root.join("f[AB].rs"), "pub fn target() {}\n")
+            .map_err(|err| format!("write target: {err}"))?;
+        git_ok(&fixture.root, &["add", "."])?;
+        git_ok(&fixture.root, &["commit", "-qm", "glob names"])?;
+        assert!(
+            !inline_target_is_uncommitted(&fixture.root, "f[AB].rs"),
+            "a committed, unchanged target was judged uncommitted via a glob sibling"
+        );
+        Ok(())
+    }
+
+    /// `diff.ignoreSubmodules=all` must not hide a committed gitlink change
+    /// from the changed-path set.
+    #[test]
+    fn committed_changes_keep_a_gitlink_bump_under_ignore_submodules_all() -> Result<(), String> {
+        let fixture = git_fixture("gitlink-committed")?;
+        git_ok(&fixture.root, &["config", "diff.ignoreSubmodules", "all"])?;
+        let baseline = git_text(&fixture.root, &["rev-parse", "HEAD"])?;
+        git_ok(
+            &fixture.root,
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                "160000,2222222222222222222222222222222222222222,vendor/lib",
+            ],
+        )?;
+        git_ok(&fixture.root, &["commit", "-qm", "gitlink"])?;
+        let current = git_text(&fixture.root, &["rev-parse", "HEAD"])?;
+        let changes = committed_changes(&fixture.root, &baseline, &current)?;
+        let paths: Vec<_> = changes
+            .unwrap_or_default()
+            .into_iter()
+            .map(|change| change.path)
+            .collect();
+        assert_eq!(paths, vec![PathBuf::from("vendor/lib")]);
         Ok(())
     }
 }

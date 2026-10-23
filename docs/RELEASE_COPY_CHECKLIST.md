@@ -43,6 +43,9 @@ questions, not new wording, heading, or badge-count gates.
 
 - [ ] The body describes the **shipped release**: what users get and what changed
       since the last public version.
+- [ ] The published body is not empty. Read it back after publication
+      (`gh release view <tag> --repo EffortlessMetrics/ripr --json body`) and
+      confirm it points an upgrader to the upgrade guide (#7474).
 - [ ] Publishing attempts, failures, and recovery commands stay in the changelog's
       `Release recovery` section and [Release recovery](RELEASE.md#recovery).
 - [ ] The first paragraph describes the user benefit before internal vocabulary.

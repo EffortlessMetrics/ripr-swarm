@@ -68,6 +68,10 @@ The default contract is:
   when needed. Commands remain byte-preserving after terminal sanitization,
   including roots with literal line breaks or tabs. If no lossless command root exists, retain the advisory but omit
   the refresh command with the same UTF-8-parent/alias remedy.
+- Every root `init` prints in a command or advisory (success follow-ups,
+  existing-file retries and the workflow refresh note) names the directory
+  without the trailing `/.` that joining the default `.` root onto the working
+  directory leaves behind. A bare filesystem or drive root keeps its spelling.
 - A missing `ripr.toml` and a freshly generated `ripr.toml` should produce
   equivalent default policy behavior, except for filesystem artifacts
   intentionally created by `init` or other commands.
@@ -691,6 +695,16 @@ repository as pilot's scope, and pilot-summary.json records current_change
 state no_change or unavailable.
 ```
 
+### Pilot labels an assertion with placeholders as a shape
+
+A suggested assertion that carries `/* ... */` placeholders for values only the
+developer knows (for example `assert_eq!(total(/* boundary input where a >= b
+*/), /* expected */)`) is printed in the pilot human output as
+`assertion shape: ...`, followed by a note to replace each `/* ... */` comment
+with a real value from the developer's test before using it. Any other
+assertion text keeps its `assertion:` label and gets no note. The structured
+pilot packets keep their existing fields and values unchanged (#9244).
+
 ### Outcome is public CLI
 
 ```text
@@ -720,6 +734,26 @@ same before/after comparison. The packet answers:
 This packet is a projection of the compared static artifacts. It must not
 create new analyzer facts, run analysis, run mutation testing, edit source,
 generate tests, call providers, change policy, or become a CI gate.
+
+### Unknown check format names the common formats, not the full catalog
+
+```text
+Given a first-run user who mistypes `ripr check --format`,
+when the value is not an accepted format and no single format is close,
+then the error names the common analysis formats (human, human-full, json,
+github, sarif) and points at `ripr check --help --all` for the exhaustive
+list, instead of printing all 23 accepted names.
+
+When exactly one accepted format is close enough (near miss), the error
+still names that one correction first and then points at the exhaustive
+reference.
+```
+
+Rationale: the accepted-format catalog mixes everyday analysis formats with
+badge, repo-report, and agent-packet names a first run never needs. A typo
+should meet the five formats that answer "how do I read the output" plus a
+pointer, not a wall of report plumbing (#9359); the near-miss suggestion from
+#4318 stays because naming the one fix is faster than any pointer.
 
 ### Public install exposes the loop
 
@@ -753,6 +787,13 @@ baseline failure policy.
 ## Test Mapping
 
 Current tests and reports that support the contract:
+
+- `crates/ripr/src/output/pilot/render/complete.rs::assertion_shape_tests::placeholder_shape_is_labelled_a_shape_with_a_fill_in_note`
+- `crates/ripr/src/output/pilot/render/complete.rs::assertion_shape_tests::concrete_assertion_keeps_its_label_and_gets_no_note`
+- `crates/ripr/src/cli/parse.rs::tests::given_format_strings_when_parse_format_then_returns_expected_result` (unknown format error names common formats and the exhaustive pointer; near miss still suggests one correction)
+- `crates/ripr/src/cli/mod.rs::tests::run_dispatches_check_parse_errors`
+- `crates/ripr/src/cli/mod.rs::tests::run_treats_a_repeated_global_verbose_as_one_enable`
+- `crates/ripr/src/cli/execute.rs::tests::execute_dispatches_subcommand_args_without_reparsing_argv`
 
 - `crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_sparse_missing_changed_file_and_recovers_same_head`
 - `crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_mixed_missing_changed_file_even_with_changed_recommendation`
