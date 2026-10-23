@@ -422,6 +422,7 @@ end of the file, which is an approximation for an edit in progress.
 - `crates/ripr/src/analysis/syntax/passthrough_item_macros.rs::tests::a_macro_that_is_not_the_identity_expands_nothing`
 - `crates/ripr/src/analysis/syntax/passthrough_item_macros.rs::tests::an_unseen_item_macro_between_definition_and_call_blocks_the_proof`
 - `crates/ripr/src/analysis/syntax/passthrough_item_macros.rs::tests::unknown_imported_duplicate_late_and_pathed_macros_expand_nothing`
+- `crates/ripr/src/analysis/syntax/passthrough_item_macros.rs::tests::rebinding_and_nested_module_variants_expand_nothing`
 - `crates/ripr/src/analysis/syntax/passthrough_item_macros.rs::tests::invocation_tokens_that_could_generate_gate_or_rename_items_expand_nothing`
 - `crates/ripr/src/analysis/facts/macro_generated_tests.rs::tests::literal_tests_in_an_identity_macro_are_indexed_at_the_invocation`
 - `crates/ripr/tests/macro_generated_tests.rs::literal_tests_in_an_identity_macro_read_like_the_hand_written_tests`

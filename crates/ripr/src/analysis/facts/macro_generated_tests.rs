@@ -148,10 +148,9 @@ mod tests {
         Ok(())
     }
 
-    fn indexed_tests(
-        name: &str,
-        test_file: &str,
-    ) -> Result<Vec<(String, usize, bool, usize)>, Box<dyn Error>> {
+    type IndexedTest = (String, usize, bool, usize);
+
+    fn indexed_tests(name: &str, test_file: &str) -> Result<Vec<IndexedTest>, Box<dyn Error>> {
         let dir = temp_dir(name)?;
         let root = dir.0.as_path();
         fs::create_dir_all(root.join("src"))?;

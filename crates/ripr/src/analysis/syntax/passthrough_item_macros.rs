@@ -383,6 +383,45 @@ mod tests {
     }
 
     #[test]
+    fn rebinding_and_nested_module_variants_expand_nothing() {
+        let body = "#[test] fn a() { f(); }";
+        // A second local definition shadowing the name inside an inline module.
+        assert!(
+            expand(&format!(
+                "mod m {{ macro_rules! suite {{ ($($t:tt)*) => {{}}; }} suite! {{ {body} }} }}\n"
+            ))
+            .is_empty()
+        );
+        // A rebinding import alias of the same name.
+        assert!(
+            expand_local_test_macros(&format!(
+                "{SUITE}use other::real as suite;\nsuite! {{ {body} }}\n"
+            ))
+            .is_empty()
+        );
+        // An alias in a nested inline module.
+        assert!(
+            expand_local_test_macros(&format!(
+                "{SUITE}mod m {{ use other::real as suite; suite! {{ {body} }} }}\n"
+            ))
+            .is_empty()
+        );
+        // Textual scope reaches nested inline modules, so an unshadowed
+        // invocation there is still the identity (supported, not a gap).
+        assert_eq!(
+            expand(&format!("mod m {{ mod n {{ suite! {{ {body} }} }} }}\n")).len(),
+            1
+        );
+        // Definition nested in a module, invocation outside its scope.
+        assert!(
+            expand_local_test_macros(&format!("mod m {{ {SUITE} }}\nsuite! {{ {body} }}\n"))
+                .is_empty()
+        );
+        // Control.
+        assert_eq!(expand(&format!("suite! {{ {body} }}\n")).len(), 1);
+    }
+
+    #[test]
     fn invocation_tokens_that_could_generate_gate_or_rename_items_expand_nothing() {
         for tokens in [
             // Not a `#[test]` function.
