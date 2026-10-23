@@ -300,7 +300,7 @@ fn agent_start_prose_lines(written: &AgentStartWritten) -> Vec<String> {
     let mut lines = written
         .paths
         .iter()
-        .map(|path| format!("Wrote {}", path.display()))
+        .map(|path| format!("Wrote {}", output::path::human_path(path)))
         .collect::<Vec<_>>();
     if let Some(next) = &written.next_command {
         lines.push(format!("Next: {next}"));
@@ -658,7 +658,14 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
             // packet surface's `ripr repair <finding-id>` recovery route
             // would repeat the refusal that failed; name the stale state in
             // this command's terms instead (#8685).
-            let message = if seam_id.starts_with("probe:") || seam_id.starts_with("repo-probe:") {
+            let message = if let Some(language) =
+                crate::app::task_first::non_rust_item_language(seam_id)
+            {
+                format!(
+                    "agent repair --seam-id `{seam_id}` names no current seam in the selected root: {}",
+                    crate::app::task_first::no_seam_inventory_reason(language, "")
+                )
+            } else if seam_id.starts_with("probe:") || seam_id.starts_with("repo-probe:") {
                 format!(
                     "agent repair --seam-id `{seam_id}` names no current seam in the selected root; the `ripr check` finding ID is stale or maps to no current seam; run {list}"
                 )
@@ -765,22 +772,30 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
     let after_path = validate_agent_verify_snapshot_path(&options.root, &options.after, "--after")?;
     let before_json = read_agent_verify_snapshot(&before_path, "before")?;
     let after_json = read_agent_verify_snapshot(&after_path, "after")?;
-    let before_identity = crate::agent::artifact::validate_repo_exposure_artifact(
-        &options.root,
-        &before_json,
-        "before",
-    )?;
-    let after_identity = crate::agent::artifact::validate_repo_exposure_artifact(
-        &options.root,
-        &after_json,
-        "after",
-    )?;
+    let before_identity =
+        crate::agent::artifact::validate_verify_snapshot(&options.root, &before_json, "before")?;
+    let after_identity =
+        crate::agent::artifact::validate_verify_snapshot(&options.root, &after_json, "after")?;
     crate::agent::artifact::validate_comparable_pair(&before_identity, &after_identity)
         .map_err(|error| format!("agent verify artifacts are incomparable: {error}"))?;
     crate::agent::artifact::validate_pair_lineage(&options.root, &before_identity, &after_identity)
         .map_err(|error| format!("agent verify artifacts are incomparable: {error}"))?;
     crate::agent::artifact::validate_verify_movement(&before_identity, &after_identity)
         .map_err(|error| format!("agent verify {error}"))?;
+    // `--gap-id` adds a positive closure requirement on top of the pair
+    // checks: the named gap must be open before and `exposed` after.
+    let bound_gap = options
+        .gap_id
+        .as_deref()
+        .map(|gap_id| {
+            crate::agent::artifact::verify_gap_closure(
+                &options.root,
+                &before_json,
+                &after_json,
+                gap_id,
+            )
+        })
+        .transpose()?;
     let artifact_currentness = crate::agent::artifact::pair_currentness_label(
         &before_identity.currentness,
         &after_identity.currentness,
@@ -803,10 +818,18 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
         before_content_sha256: before_identity.content_sha256,
         after_content_sha256: after_identity.content_sha256,
     };
-    output::outcome::render_agent_verify_json_with_currentness(
+    let bound_gap = bound_gap.map(|closure| output::outcome::AgentVerifyBoundGap {
+        gap_id: closure.gap_id,
+        before_classification: closure.before_classification,
+        after_classification: closure.after_classification,
+        file: closure.file,
+        line: closure.line,
+    });
+    output::outcome::render_agent_verify_json_with_bound_gap(
         &report,
         Some(artifact_currentness),
         &binding,
+        bound_gap.as_ref(),
     )
 }
 
@@ -824,7 +847,9 @@ const AGENT_VERIFY_NO_MOVEMENT_PREFIX: &str =
 /// never a substring: path-bearing operational errors echo user-supplied
 /// paths, and a path must not turn an unreadable input into a refusal.
 fn agent_verify_error_is_typed_refusal(error: &str) -> bool {
-    error == AGENT_VERIFY_INPUT_DRIFT_ERROR || error.starts_with(AGENT_VERIFY_NO_MOVEMENT_PREFIX)
+    error == AGENT_VERIFY_INPUT_DRIFT_ERROR
+        || error.starts_with(AGENT_VERIFY_NO_MOVEMENT_PREFIX)
+        || error.starts_with(crate::agent::artifact::GAP_BINDING_REFUSAL_PREFIX)
 }
 
 fn run_agent_verify_execute(options: AgentVerifyExecuteOptions) -> Result<(), CommandError> {
@@ -1909,6 +1934,7 @@ fn run_agent_repair_phase(
                 root_explicit: true,
                 before,
                 after,
+                gap_id: None,
                 json: true,
             };
 
@@ -2355,9 +2381,10 @@ fn write_agent_repo_exposure_snapshot_with_report(
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(root, &report.classified);
     let python_guidance =
         output::render::detect_python_repo_exposure_guidance_pub(root, &report.classified);
-    let generated_skip = output::repo_exposure::GeneratedRustSkip::from_paths(
+    let generated_skip = output::repo_exposure::GeneratedRustSkip::from_parts(
         report.skipped_generated,
         report.naming_only_skips,
+        report.declined_rust_files,
     );
     let context = crate::agent::artifact::RepoExposureArtifactContext::for_repo_exposure(
         root.to_path_buf(),

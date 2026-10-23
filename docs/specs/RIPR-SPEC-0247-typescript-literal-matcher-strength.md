@@ -288,6 +288,25 @@ the call either way. A different spied method, a spy on an object
 imported from another module, `.mockImplementation(...)` after the spy,
 or anything outside the allowed words keeps `mock_expectation` / medium.
 
+**Rule 5. A truthiness assertion on a literal call to a `boolean` owner
+pins the value.** On a Predicate or ReturnValue seam, `assert.ok(f(1))`,
+`assert.notOk(f(1))`, `assert.ok(!f(1))`, `expect(f(1)).toBeTruthy()` and
+`toBeFalsy()` read `exact_value` / strong when all of these hold:
+
+- the owner is a function or arrow function declared `: boolean` exactly
+  (no generic list, `async`, generator, union or `Promise<boolean>`), so
+  the call returns only `true` or `false` and truthiness is equality;
+- the assertion observes the whole owner call (leading `!` aside) through
+  a name the test imports from the owner's module, a rename or a
+  namespace member, and every argument is a number, string, boolean or
+  `null` literal;
+- the test does not declare its own owner name.
+
+Anything else stays `smoke_only` / weak: a non-literal argument, a wrapper
+(`Boolean(f(1))`, `f(1) && x`, `f(1).valueOf()`), an unannotated or
+wider return type, or a method owner. The pin is per call; whether the
+call sits at the changed boundary stays with the row activation witness.
+
 ### Decisions
 
 The owner delegated these choices on 2026-10-04 ("make reasonable
@@ -402,6 +421,15 @@ and the rejected alternative. Recorded on #6654.
    (`jest.spyOn(ns.o, ...)`), on objects the owner's module imports from
    a third module, and tests with more statements; each needs its own
    reach argument and none is in the corpus.
+
+11. **Boolean owner truthiness (rule 5, 2026-10-22; #9532).** Adopted:
+   credit a truthiness assertion as an exact pin when the owner declares
+   `boolean` and the call has literal arguments. Rejected: infer
+   booleanness from the returned expression, which needs type inference
+   ripr does not do. Rejected: credit non-literal arguments, which hides
+   whether the assertion reaches the changed input. Rejected: leave the
+   three `ts-grid-*-exact` rows false actionable, which asks for an
+   assertion that already exists.
 
 ## Required Evidence
 
@@ -571,6 +599,14 @@ and the rejected alternative. Recorded on #6654.
     `describe` wrapper, a top-level statement, a side-effect, empty or
     `type` import, or an import from any other module.
 
+13. `src/adult.ts` is `export function isAdult(age: number): boolean {
+    return age >= 18; }` and the test runs `assert.ok(isAdult(18));
+    assert.ok(!isAdult(17));` (or `expect(isAdult(18)).toBeTruthy()`):
+    `exact_value` / strong. The same with an unannotated, `number` or
+    `boolean | null` return, a variable argument, `Boolean(isAdult(18))`,
+    `isAdult(18) && true`, `isAdult(18).valueOf()` or a test-local
+    `isAdult`: `smoke_only` / weak.
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs`
@@ -604,6 +640,11 @@ and the rejected alternative. Recorded on #6654.
 - `fixtures/typescript-verdict-corpus` pins the eight Problem rows: seven
   `credited`, and `ts-vitest-checkout-notify` still `gap`.
 
+- `crates/ripr/src/analysis/language/typescript/tests/boolean_pin_tests.rs`
+  pins example 13; `fixtures/typescript-verdict-corpus` pins it:
+  `ts-grid-boundary-exact`, `ts-grid-equality-exact` and
+  `ts-grid-logical-exact` read `credited`.
+
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/language/typescript/mock_payload_guard.rs`:
@@ -628,6 +669,9 @@ and the rejected alternative. Recorded on #6654.
 - `crates/ripr/src/analysis/language/typescript/typed_loose_equality_guard.rs`:
   `ts_owner_declares_number_return` and `ts_typed_loose_number_facts`
   (rule 2's typed owner), read by the classifier's pin facts.
+- `crates/ripr/src/analysis/language/typescript/boolean_pin_guard.rs`:
+  `ts_owner_declares_boolean_return` and `ts_boolean_pin_facts` (rule 5),
+  read by the classifier's pin facts.
 - `crates/ripr/src/analysis/language/typescript/oracle.rs`: assertion
   extraction applies rules 2 and 3; `mock_payload_from_assertion` records
   multi-argument literal payloads.

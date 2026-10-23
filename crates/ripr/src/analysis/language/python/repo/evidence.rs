@@ -75,8 +75,8 @@ use crate::domain::{
     DeltaKind, Finding, FindingCanonicalGap, OracleKind, OracleStrength, ProbeFamily, RelatedTest,
     StaticLimitKind,
 };
-use std::collections::BTreeMap;
-use std::path::Path;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 
 /// Native Python repo-mode evidence for one bounded run (#3554).
 ///
@@ -288,6 +288,10 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
     let mut failed = 0usize;
     let mut analyzed = 0usize;
     let mut all_tests: Vec<PythonTest> = Vec::new();
+    // Conftests with implicit setup, and every conftest actually read
+    // (#6657): a chain conftest that was not read cannot be ruled out.
+    let mut implicit_conftests: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut read_conftests: BTreeSet<PathBuf> = BTreeSet::new();
 
     // Evidence sources first, so production items can relate against the
     // full test pool. Owners are intentionally NOT harvested from
@@ -302,6 +306,12 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
             match load_facts(root, relative) {
                 Ok(facts) => {
                     analyzed += 1;
+                    if relative.file_name().and_then(|name| name.to_str()) == Some("conftest.py") {
+                        read_conftests.insert(relative.clone());
+                        if facts.conftest_implicit_setup {
+                            implicit_conftests.insert(relative.clone());
+                        }
+                    }
                     files.push(PythonRepoFileRecord {
                         path: normalized_path(relative),
                         role: role.as_str(),
@@ -330,6 +340,12 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
             }
         }
     }
+
+    super::super::fixtures::taint_admission_by_conftest(
+        &mut all_tests,
+        &implicit_conftests,
+        |conftest| !read_conftests.contains(conftest) && root.join(conftest).is_file(),
+    );
 
     // Production subjects: owners + behavior items, related against the
     // evidence pool built above. The public Finding projection is built in
@@ -708,7 +724,7 @@ fn build_behavior_item(
     let focus = PythonAssertionFocus::for_change(family.clone(), text, None);
     let related = related_tests_for_candidates(candidates, Some(&focus));
     let related = related.as_slice();
-    let static_limit = static_limit_for_focused_change(text, &focus, owner, candidates)
+    let static_limit = static_limit_for_focused_change(text, None, &focus, owner, candidates)
         .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, candidates))
         .map(|limit| limit.kind);
     let canonical_gap = static_limit

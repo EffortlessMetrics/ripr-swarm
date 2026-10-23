@@ -33,11 +33,6 @@ Evidence
   - related test tests/errors.rs:4 try_parse_summary_with_foreign_pin misses: asserts, but not on the changed value; checked `if !matches!(result, Err(_)) { return Err("callee should fail closed".into()); }`
   - source enum variant value OtherError::MalformedSource at line 10
 
-Weakness
-  - No relevant oracle was detected
-  - No static test path reaches the changed owner
-  - No strong discriminator was detected
-
 Next step
   ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists
 Drill in:
@@ -76,8 +71,6 @@ return Err("foreign pin should observe OtherError::MalformedSource".into());
   - source enum variant value OtherError::MalformedSource at line 10
 
 Weakness
-  - No relevant oracle was detected
-  - No static test path reaches the changed owner
   - Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
 
 Next step

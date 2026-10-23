@@ -7,7 +7,7 @@
 //! non-ASCII character, then run the built binary from a foreign working
 //! directory holding a decoy repository, following only product-emitted
 //! routes. They pin what first use actually does today, including the
-//! points where the delegated repair loop ends in a manual route, so a
+//! points where the delegated repair loop ends in a named terminal reason, so a
 //! change in either direction is a visible decision.
 //!
 //! Project verification (pytest, vitest) is not executed here: it needs the
@@ -101,12 +101,16 @@ fn materialize(
     Ok((guard, root, decoy))
 }
 
-fn ripr(launch: &Path, args: &[&str]) -> Result<(bool, String), String> {
-    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+fn ripr_output(launch: &Path, args: &[&str]) -> Result<std::process::Output, String> {
+    Command::new(env!("CARGO_BIN_EXE_ripr"))
         .current_dir(launch)
         .args(args)
         .output()
-        .map_err(|error| format!("spawn ripr {args:?}: {error}"))?;
+        .map_err(|error| format!("spawn ripr {args:?}: {error}"))
+}
+
+fn ripr(launch: &Path, args: &[&str]) -> Result<(bool, String), String> {
+    let output = ripr_output(launch, args)?;
     let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
     text.push_str(&String::from_utf8_lossy(&output.stderr));
     Ok((output.status.success(), text))
@@ -138,8 +142,8 @@ fn need<'a>(text: &'a str, needle: &str, label: &str) -> Result<&'a str, String>
 
 #[cfg(feature = "lang-python")]
 #[test]
-fn python_flat_layout_journey_stays_in_selected_root_and_ends_in_manual_route() -> Result<(), String>
-{
+fn python_flat_layout_journey_stays_in_selected_root_and_ends_in_named_terminal_reason()
+-> Result<(), String> {
     let (_guard, root, decoy) = materialize("blind_journey_installed_python", "head", "py", None)?;
     let root_arg = root.to_string_lossy().into_owned();
 
@@ -163,12 +167,27 @@ fn python_flat_layout_journey_stays_in_selected_root_and_ends_in_manual_route() 
         "Verify command: python -m pytest tests/test_pricing.py::",
         "module-form verify",
     )?;
-    // Observed first-use break: no delegatable repair start for this shape.
+    // #9102: the seam inventory behind `repair` is Rust-only, so a Python
+    // gap has no seam to bind. The product states that precise terminal
+    // reason (not the generic "no seam binds") beside the complete manual
+    // route (gap, test node, verify command) printed above.
     need(
         &check,
-        "no repair start offered",
-        "check offers no repair start",
+        "no repair start offered: the seam inventory behind `ripr repair`",
+        "check names the terminal reason",
     )?;
+    need(
+        &check,
+        "covers Rust files only, so this Python finding in `pricing/core.py` has no seam",
+        "terminal reason names the language and file",
+    )?;
+    if check.contains("no seam in the finding's file binds") {
+        return Err(format!("check kept the generic refusal:\n{check}"));
+    }
+    // No runnable repair start is offered for the unbindable finding.
+    if check.contains("ripr repair probe:") && check.contains("ripr agent repair") {
+        return Err(format!("check offered a repair start:\n{check}"));
+    }
 
     // Feed `repair` the exact finding id that `check` printed, not a literal.
     let probe = check
@@ -176,12 +195,73 @@ fn python_flat_layout_journey_stays_in_selected_root_and_ends_in_manual_route() 
         .find(|token| token.starts_with("probe:"))
         .ok_or_else(|| format!("check printed no probe id:\n{check}"))?;
     let (repair_ok, repair) = ripr(&decoy, &["repair", probe, "--root", &root_arg])?;
-    expect_exit(repair_ok, false, "repair of an unbound finding id")?;
+    expect_exit(repair_ok, false, "repair of an unbindable finding id")?;
     need(
         &repair,
-        "names no seam in the selected root",
-        "repair refuses stale or unbound id",
+        "covers Rust files only, so this Python gap has no seam",
+        "repair states the terminal reason for the Python finding id",
     )?;
+    if repair.contains("is stale") || repair.contains("stale or maps to no current seam") {
+        return Err(format!("repair called the Python id stale:\n{repair}"));
+    }
+
+    // The canonical gap id `check` prints is refused the same way by both
+    // repair entry points, with the language-specific terminal reason.
+    let gap = check
+        .split_whitespace()
+        .find(|token| token.starts_with("gap:python:"))
+        .ok_or_else(|| format!("check printed no python gap id:\n{check}"))?;
+    let (gap_ok, gap_repair) = ripr(&decoy, &["repair", gap, "--root", &root_arg])?;
+    expect_exit(gap_ok, false, "repair of the python gap id")?;
+    need(
+        &gap_repair,
+        "covers Rust files only",
+        "repair of the gap id states the terminal reason",
+    )?;
+    let (agent_ok, agent_repair) = ripr(
+        &decoy,
+        &[
+            "agent",
+            "repair",
+            "--seam-id",
+            gap,
+            "--root",
+            &root_arg,
+            "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(
+        agent_ok,
+        false,
+        "agent repair --phase before of the python gap id",
+    )?;
+    need(
+        &agent_repair,
+        "covers Rust files only",
+        "agent repair states the terminal reason",
+    )?;
+
+    // Alternate: an id that is not a Python gap or preview finding keeps the
+    // generic stale-id guidance and never claims the Python terminal reason.
+    let (stale_ok, stale) = ripr(
+        &decoy,
+        &[
+            "repair",
+            "probe:src_lib.rs:12:predicate",
+            "--root",
+            &root_arg,
+        ],
+    )?;
+    expect_exit(stale_ok, false, "repair of an unrelated stale id")?;
+    need(
+        &stale,
+        "stale or maps to no current seam",
+        "unrelated id keeps stale-id guidance",
+    )?;
+    if stale.contains("covers Rust files only") {
+        return Err(format!("unrelated id got the Python reason:\n{stale}"));
+    }
 
     let (pilot_ok, pilot) = ripr(&decoy, &["pilot", "--root", &root_arg])?;
     expect_exit(pilot_ok, true, "pilot")?;
@@ -268,16 +348,15 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
     decoy_untouched(&decoy)?;
 
     // Variants that must stay unresolved, paired with whether the product
-    // currently fails closed. The two `false` rows are known fail-open
-    // defects (#9107): they pin today's behavior and must flip to `true`
-    // when that issue is fixed.
+    // fails closed. The object-property and enum rows were fail-open
+    // defects until #9107; every row now fails closed.
     let variants = [
         ("variant-let-binding", true),
         ("variant-reassignment", true),
         ("variant-shadowing", true),
         ("variant-imported-constant", true),
-        ("variant-object-namespace-write", false),
-        ("variant-enum-computed-initializer", false),
+        ("variant-object-namespace-write", true),
+        ("variant-enum-computed-initializer", true),
         ("variant-nonliteral-arithmetic", true),
         ("variant-reach-barrier", true),
     ];
@@ -330,4 +409,194 @@ fn typescript_excluded_by_config_is_not_a_clean_result() -> Result<(), String> {
         "names the enabling config",
     )?;
     Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn typescript_check_findings_artifacts_verify_by_gap_id_and_reject_forgery() -> Result<(), String> {
+    let toml = "[languages]\nenabled = [\"typescript\"]\n";
+    let (_guard, root, decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "ts-verify",
+        Some(toml),
+    )?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let base = fixture_git_output(&root, &["rev-parse", "HEAD~1"])?
+        .trim()
+        .to_string();
+    let snapshot_dir = root.join("target").join("ripr");
+    std::fs::create_dir_all(&snapshot_dir).map_err(|error| format!("snapshot dir: {error}"))?;
+    let snapshot = |name: &str| snapshot_dir.join(name);
+    let produce = |name: &str| -> Result<PathBuf, String> {
+        // Stdout only: the artifact is the producer's exact bytes.
+        let output = ripr_output(
+            &decoy,
+            &[
+                "check",
+                "--root",
+                &root_arg,
+                "--base",
+                &base,
+                "--format",
+                "check-findings-json",
+            ],
+        )?;
+        expect_exit(output.status.success(), true, "check-findings-json")?;
+        let path = snapshot(name);
+        std::fs::write(&path, &output.stdout).map_err(|error| format!("write {name}: {error}"))?;
+        Ok(path)
+    };
+
+    let before = produce("before.json")?;
+    let before_text =
+        std::fs::read_to_string(&before).map_err(|error| format!("read before: {error}"))?;
+    need(&before_text, "\"kind\":\"check_findings\"", "producer kind")?;
+    need(&before_text, "gap:typescript:", "typescript gap identity")?;
+
+    // The repair: pin the equality boundary the packet names.
+    let test_file = root.join("test").join("pricing.test.ts");
+    let original =
+        std::fs::read_to_string(&test_file).map_err(|error| format!("read test: {error}"))?;
+    let repaired = original.replacen(
+        "  it(\"discounts an above-threshold subtotal\"",
+        "  it(\"discounts exactly at the threshold\", () => {\n    expect(discountedTotal(10000)).toBe(9500);\n  });\n\n  it(\"discounts an above-threshold subtotal\"",
+        1,
+    );
+    if repaired == original {
+        return Err("repair edit did not apply".to_string());
+    }
+    std::fs::write(&test_file, repaired).map_err(|error| format!("write test: {error}"))?;
+    fixture_git_ok(&root, &["add", "-A"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "pin the threshold"])?;
+    let after = produce("after.json")?;
+
+    let verify_args = |before: &Path, after: &Path| -> Vec<String> {
+        [
+            "agent",
+            "verify",
+            "--json",
+            "--root",
+            &root_arg,
+            "--before",
+            &before.to_string_lossy(),
+            "--after",
+            &after.to_string_lossy(),
+        ]
+        .iter()
+        .map(|arg| (*arg).to_string())
+        .collect()
+    };
+    let run_verify = |before: &Path, after: &Path| -> Result<(bool, String), String> {
+        let args = verify_args(before, after);
+        let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+        ripr(&decoy, &refs)
+    };
+
+    let (ok, verified) = run_verify(&before, &after)?;
+    expect_exit(
+        ok,
+        true,
+        &format!("verify over producer artifacts: {verified}"),
+    )?;
+    need(&verified, "gap:typescript:", "verify names the gap")?;
+    if verified.contains("\"bound_gap\"") {
+        return Err(format!("unbound verify carried a bound_gap:\n{verified}"));
+    }
+
+    // Gap-bound verify (#9103): the printed gap closes between the pair, and
+    // a gap that did not close is a named refusal, never a success.
+    let gap_id = before_text
+        .match_indices("gap:typescript:typescript_preview:")
+        .next()
+        .map(|(start, _)| {
+            before_text[start..]
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, ':' | '_'))
+                .collect::<String>()
+        })
+        .ok_or_else(|| "no typescript gap id in the before artifact".to_string())?;
+    let bound = |gap: &str, before: &Path, after: &Path| -> Result<std::process::Output, String> {
+        let mut args = verify_args(before, after);
+        args.push("--gap-id".to_string());
+        args.push(gap.to_string());
+        let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+        ripr_output(&decoy, &refs)
+    };
+    let closed = bound(&gap_id, &before, &after)?;
+    let closed_text = String::from_utf8_lossy(&closed.stdout).into_owned();
+    expect_exit(closed.status.success(), true, "gap-bound verify")?;
+    need(&closed_text, "\"bound_gap\"", "bound gap reported")?;
+    need(&closed_text, "\"closed\": true", "closure stated")?;
+    need(&closed_text, &gap_id, "bound gap is the named gap")?;
+    let refused = |gap: &str, before: &Path, after: &Path, expected: &str| -> Result<(), String> {
+        let output = bound(gap, before, after)?;
+        if output.status.code() != Some(3) {
+            return Err(format!(
+                "gap-bound refusal must exit 3, got {:?}",
+                output.status.code()
+            ));
+        }
+        if !output.stdout.is_empty() {
+            return Err("gap-bound refusal must leave stdout empty".to_string());
+        }
+        need(
+            &String::from_utf8_lossy(&output.stderr),
+            expected,
+            "named refusal",
+        )
+        .map(|_| ())
+    };
+    refused(
+        "gap:typescript:typescript_preview:00000000",
+        &before,
+        &after,
+        "is absent from the before artifact",
+    )?;
+
+    // Forgery 1: a hand-edited "after" with a flipped finding breaks the commitment.
+    let after_text =
+        std::fs::read_to_string(&after).map_err(|error| format!("read after: {error}"))?;
+    let forged = after_text.replacen(
+        "\"classification\": \"exposed\"",
+        "\"classification\": \"weakly_exposed\"",
+        1,
+    );
+    let forged_path = snapshot("forged.json");
+    std::fs::write(&forged_path, forged).map_err(|error| format!("write forged: {error}"))?;
+    let (ok, out) = run_verify(&before, &forged_path)?;
+    expect_exit(ok, false, "edited artifact")?;
+    need(&out, "content commitment mismatch", "edit is detected")?;
+
+    // Forgery 2: an artifact without the producer envelope is not accepted.
+    let bare = ripr_output(
+        &decoy,
+        &[
+            "check", "--root", &root_arg, "--base", &base, "--format", "json",
+        ],
+    )?;
+    let bare_path = snapshot("bare.json");
+    std::fs::write(&bare_path, &bare.stdout).map_err(|error| format!("write bare: {error}"))?;
+    let (ok, _) = run_verify(&bare_path, &after)?;
+    expect_exit(ok, false, "unenveloped before snapshot")?;
+    // A gap-bound verify over an unenveloped snapshot is an operational error
+    // (exit 2), never a typed gap refusal (exit 3).
+    let not_findings = bound(&gap_id, &bare_path, &after)?;
+    if not_findings.status.code() != Some(2) {
+        return Err(format!(
+            "--gap-id over a non-findings snapshot must exit 2, got {:?}",
+            not_findings.status.code()
+        ));
+    }
+    need(
+        &String::from_utf8_lossy(&not_findings.stderr),
+        "not a canonical repo-exposure artifact",
+        "operational error named",
+    )?;
+
+    // Forgery 3: reversed lineage is incomparable.
+    let (ok, out) = run_verify(&after, &before)?;
+    expect_exit(ok, false, "reversed pair")?;
+    need(&out, "incomparable", "reversed pair named")?;
+    decoy_untouched(&decoy)
 }

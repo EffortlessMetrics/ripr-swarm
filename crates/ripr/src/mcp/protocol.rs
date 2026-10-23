@@ -66,7 +66,7 @@ pub(super) const INSTRUCTIONS: &str = "RIPR is a static analyzer that asks wheth
 
 const STATUS_TOOL_DESCRIPTION: &str = "Report the RIPR workspace and session state. The document contains repository-root discovery state (validated or unavailable, with repository markers, any root error code, and root.git_work_tree when no usable Git work tree is detected: not_detected or marker_invalid), launch-trust and authority facts (source edit, verification execution, mutation execution, and model provider are all none), and a session block: current desired input (workspace diff against the resolved default branch or the explicit ripr_refresh base, with base_revision when present, draft mode), current attempt state (no_snapshot, in_flight, completed, or failed), the last completed snapshot identity, last-known-good state, freshness as of the last refresh, the typed AnalysisOutcome of the committed snapshot, and the analysis profile and support facts: the workspace's own ripr.toml is honored when it loads (project_config: loaded, with its config_identity and enabled languages), built-in defaults apply when none resolves, and a config that cannot be read or parsed is detected_not_loaded. `workspace_state: ready` means only that a repository root was discovered — not that analysis ran or that no issues were found. This tool returns session facts only: no gap evidence. It never edits source, runs tests or mutation, executes verification commands, or loads project-local provider configuration. To run analysis, call ripr_refresh.";
 
-const REFRESH_TOOL_DESCRIPTION: &str = "Run one bounded static analysis of the committed default-branch diff (or, with the optional `base` argument, the committed diff against that revision) through RIPR's shared check authority and commit the completed snapshot into this server's session. In this snapshot, staged and unstaged tracked edits and untracked files are outside the analyzed scope. `ripr check` defaults to the working tree when staged or unstaged tracked edits exist; shared check authority does not mean identical input. Use `ripr check --committed` for committed input, or `ripr check --worktree --format json` for staged and unstaged tracked edits outside MCP. The call blocks until the attempt reaches a terminal state and reports the attempt state: completed (a snapshot identity is returned, bound to the typed AnalysisOutcome), failed (a typed failure code, bounded detail, and recovery; the last-known-good snapshot is kept), in_flight (a concurrent attempt is running; poll ripr_workspace_status), or workspace_unavailable (the root was not usable; restart the server with `--root <repository>`). When the default branch cannot be resolved (for example a repository whose default branch is `trunk`), the attempt fails with analysis_failed and the detail names candidate branches; retry ripr_refresh with `base` set to one of them. `base` is the only way to choose a base from inside MCP; an explicit base starting with `-` or naming no commit fails the attempt closed. Every refresh states its own base: omitting `base` returns to the default branch. Analysis artifacts (including the warm cache under `target/ripr/`) are written beneath the workspace root's `target/` directory; Cargo projects normally gitignore it, and in a repository that does not, those files show as untracked in `git status` but are never source. An attempt runs to a terminal state; cancelling the MCP request never rolls an attempt back or manufactures a snapshot. A cancelled attempt still commits as a completed snapshot when it finishes and only transport teardown abandons one before it commits, while a superseded attempt is never committed. Bounded analysis: the workspace's own ripr.toml is honored through the same resolution the CLI uses (a loaded config, built-in defaults with marker-based language auto-enable when none resolves, draft mode); a configuration that cannot be read or resolved fails the attempt closed with config_invalid. This tool never edits source, executes verification or mutation commands, or prepares a repair. Recovery vocabulary: analysis_failed (retry; run `ripr check --format json` for the full diagnostic), unsupported_profile (narrow the diff), config_invalid (resolve the workspace configuration error the failure names), plus reserved codes (workspace_ambiguous, static_limitation, cancelled, superseded) owned by later slices.";
+const REFRESH_TOOL_DESCRIPTION: &str = "Run one bounded static analysis of the committed default-branch diff (or, with the optional `base` argument, the committed diff against that revision) through RIPR's shared check authority and commit the completed snapshot into this server's session. In this snapshot, staged and unstaged tracked edits and untracked files are outside the analyzed scope. `ripr check` defaults to the working tree when staged or unstaged tracked edits exist; shared check authority does not mean identical input. Use `ripr check --committed` for committed input, or `ripr check --worktree --format json` for staged and unstaged tracked edits outside MCP. The call blocks until the attempt reaches a terminal state and reports the attempt state: completed (a snapshot identity is returned, bound to the typed AnalysisOutcome), failed (a typed failure code, bounded detail, and recovery; the last-known-good snapshot is kept), in_flight (an attempt is already running; the stdio transport answers one request at a time, so wait for it to finish and retry), or workspace_unavailable (the root was not usable; restart the server with `--root <repository>`). When the default branch cannot be resolved (for example a repository whose default branch is `trunk`), the attempt fails with analysis_failed and the detail names candidate branches; retry ripr_refresh with `base` set to one of them. `base` is the only way to choose a base from inside MCP; an explicit base starting with `-` or naming no commit fails the attempt closed. Every refresh states its own base: omitting `base` returns to the default branch. Analysis artifacts (including the warm cache) are written to a cache location, by default beneath the workspace root's `target/` directory, never to source. An attempt runs to a terminal state; cancelling the MCP request never rolls an attempt back or manufactures a snapshot. A cancelled attempt still commits as a completed snapshot when it finishes and only transport teardown abandons one before it commits, while a superseded attempt is never committed. Bounded analysis: the workspace's own ripr.toml is honored through the same resolution the CLI uses (a loaded config, built-in defaults with marker-based language auto-enable when none resolves, draft mode); a configuration that cannot be read or resolved fails the attempt closed with config_invalid. This tool never edits source, executes verification or mutation commands, or prepares a repair. Recovery vocabulary: analysis_failed (retry; run `ripr check --format json` for the full diagnostic), unsupported_profile (narrow the diff), config_invalid (resolve the workspace configuration error the failure names), plus reserved codes (workspace_ambiguous, static_limitation, cancelled, superseded) owned by later slices.";
 
 const LIST_GAPS_TOOL_DESCRIPTION: &str = "Return the deterministic bounded working set of canonical items for the current completed snapshot (or for an explicitly named snapshot_id, which must match the current one or the call fails closed with stale_snapshot and the current identity). The response contains total, eligible, selected, filtered, and omitted counts; selected and complete serialized bytes; every omitted identity with its reason; the snapshot/profile/budget identity and selection basis; the echoed filters; and one small summary per selected item (canonical_id, exposure class, language, file, line, plus the commit-time repair_packet_ready projection with its typed repair_ineligibility reason, null when ready; ripr_get_gap carries the same ready fact with the human reason sentence instead of the typed code). Selection is the shared CLI/LSP budget authority over the snapshot's canonical items; MCP does not re-rank, never truncates silently, and infers no business risk. Overflow is disclosed with reasons and the omitted identities. Optional file, class, language, and repair_ready narrow the stored selection over already-projected commit-time facts before paging (conjunctive; file matches exact, prefix, or trailing-segment paths after `./` normalization), so offset and limit page the narrowed set — one bounded call answers which items touch one file or which are repair-ready, with no per-item ripr_get_gap walk. offset and limit page over the narrowed items in snapshot order; when the whole narrowed set cannot fit one wire response, the call returns the first wire-fitting page and discloses the window through page.has_more and page.next_offset, so walk next_offset to read the rest — the continuation routes are the next page (with the filters pinned) and ripr_get_gap. Before the first successful ripr_refresh on a usable root this tool fails closed with no_snapshot; unavailable roots fail closed with workspace_unavailable and recovery to restart the server with `ripr mcp --stdio --root <repository>`; while an attempt runs it reports analysis_in_flight; only a document that cannot fit even one page fails with result_too_large. Summaries carry no evidence detail beyond the readiness projection; read one item with ripr_get_gap for complete evidence.";
 
@@ -76,19 +76,19 @@ const PREPARE_REPAIR_TOOL_DESCRIPTION: &str = "Evaluate the committed producer r
 
 const GET_REPAIR_ATTEMPT_TOOL_DESCRIPTION: &str = "Read one repair transaction by its attempt identity, without executing anything it names. Session transactions created by ripr_prepare_repair answer first and report their immutable packet, state awaiting_edit, snapshot and root identity binding, and resource links. Otherwise the durable attempt store of this workspace root is inventoried through the shared repair-attempt authority: a valid manifest projects its state, repository head, seam identity, artifact digest bindings, follow-up command display string, typed CommandSpec routes when the retained packet carries valid ones (each projected exactly, with the human display marked as never execution authority and shell_required or manual modes visibly non-direct), limitations, non_claims, and after-phase bindings; the host-local root path is intentionally not projected. A manifest that fails canonical validation fails closed with attempt_invalid; an unknown identity fails closed with attempt_not_found. An attempt prepared against a snapshot that is no longer current fails closed with the reserved superseded state and the current snapshot identity. Superseded tombstones older than the 64-entry session bound read attempt_not_found instead. This tool never edits source, never launches a process, and never executes verification or mutation commands. Equivalent reads: the tool ripr_get_repair_attempt and the resource ripr://repair-attempt/{attempt_id} return the same document.";
 
-const GET_RECEIPT_STATUS_TOOL_DESCRIPTION: &str = "Read the current receipt state for one attempt identity (receipt ids are attempt-bound: one retained receipt per durable attempt). The status vocabulary is awaiting_edit, after_pending, verification_pending, improved, closed, unchanged, regressed, limited, stale, and invalid. Session transactions report awaiting_edit with an explicit null receipt: RIPR performs no verification and issues no receipt, so the external client owns the edit, the verification execution, and the receipt under its own authority. Durable attempts report their producer state mapped onto the same vocabulary, and a finished attempt with a digest-bound terminal receipt projects the receipt document with its exact byte bindings, the shared receipt-lifecycle state, and a terminal status owned by the same AgentReceiptReading as CLI status: advisory plus improved static grip reports improved, complete changed stays open as limited, incomplete producer completeness stays limited except recorded stale or gap-mismatch lifecycle states retain stale or invalid, and invalid producer status stays invalid; advisory regression preserves the trimmed, case-insensitive legacy static_movement.state fallback; receipt presence alone never reports closed; a manifest or receipt that fails canonical validation reports invalid or attempt_invalid rather than a reconstructed state. Status binds exact before/after/verify bytes, repository identity, the candidate item, and currentness, re-validated on every read; nothing is joined by mtime or latest-file convention. Static movement and focused runtime test execution remain separate evidence axes — this document reports static receipt state only. This tool never edits source, never launches a process, and never executes verification or mutation commands. Equivalent reads: the tool ripr_get_receipt_status and the resource ripr://receipt/{receipt_id} return the same document.";
+const GET_RECEIPT_STATUS_TOOL_DESCRIPTION: &str = "Read the current receipt state for one attempt identity (receipt ids are attempt-bound: one retained receipt per durable attempt). The status vocabulary is awaiting_edit, after_pending, verification_pending, improved, closed, unchanged, regressed, limited, stale, and invalid. Session transactions report awaiting_edit with an explicit null receipt: RIPR performs no verification and issues no receipt, so the external client owns the edit, the verification execution, and the receipt under its own authority. Durable attempts report their producer state mapped onto the same vocabulary, and a finished attempt with a digest-bound terminal receipt projects the receipt document with its exact byte bindings, the shared receipt-lifecycle state, and a terminal status owned by the same reading as CLI status: advisory plus improved static grip reports improved, complete changed stays open as limited, incomplete producer completeness stays limited except recorded stale or gap-mismatch lifecycle states retain stale or invalid, and invalid producer status stays invalid; advisory regression preserves the trimmed, case-insensitive legacy static_movement.state fallback; receipt presence alone never reports closed; a manifest or receipt that fails canonical validation reports invalid or attempt_invalid rather than a reconstructed state. Status binds exact before/after/verify bytes, repository identity, the candidate item, and currentness, re-validated on every read; nothing is joined by mtime or latest-file convention. Static movement and focused runtime test execution remain separate evidence axes — this document reports static receipt state only. This tool never edits source, never launches a process, and never executes verification or mutation commands. Equivalent reads: the tool ripr_get_receipt_status and the resource ripr://receipt/{receipt_id} return the same document.";
 
 const STATUS_RESOURCE_DESCRIPTION: &str = "Bounded, read-only workspace discovery, authority, and session status: repository-root discovery state, configuration presence, launch-trust and authority facts, and the current analysis session (attempt state, last completed snapshot identity, typed AnalysisOutcome, profile facts). No gap evidence detail is exposed here; run ripr_refresh, then read items through ripr_get_gap. On an unavailable root the payload carries the same recovery sentence as the ripr_workspace_status tool result as a second text content entry, naming the cause and the restart route (`ripr mcp --stdio --root <repository>`).";
 
-const SNAPSHOT_RESOURCE_TEMPLATE_DESCRIPTION: &str = "Bounded evidence for one completed snapshot: the snapshot identity, the typed AnalysisOutcome, the full canonical item index (identities and locations, not evidence), and the stored bounded-selection summary. Read one item's complete evidence through ripr_get_gap or ripr://gap/{canonical_id}. An unknown or superseded snapshot id is rejected with a typed no_snapshot or stale_snapshot failure. An unavailable root fails closed with workspace_unavailable and recovery to restart the server with `ripr mcp --stdio --root <repository>`.";
+const SNAPSHOT_RESOURCE_TEMPLATE_DESCRIPTION: &str = "Bounded evidence for one completed snapshot: snapshot identity, typed AnalysisOutcome, the canonical item index (identities and locations, not evidence), and the stored selection summary. One item's complete evidence: ripr_get_gap or ripr://gap/{canonical_id}. Unknown or superseded ids fail closed with no_snapshot or stale_snapshot; an unavailable root fails closed with workspace_unavailable — restart the server with `ripr mcp --stdio --root <repository>`.";
 
-const GAP_RESOURCE_TEMPLATE_DESCRIPTION: &str = "One canonical item's complete bounded evidence, identical to the ripr_get_gap tool result: changed behavior, causal attribution, discriminator availability, related tests, and the committed producer repair-readiness block. The item must exist in the current completed snapshot or the read fails closed with item_not_found. Id grammar: the canonical id embeds a raw workspace-relative file path (spaces, `#`, and non-ASCII are literal), so a URI-emitting client may percent-encode those characters — the raw capture is looked up first; if it misses with item_not_found, the segment is percent-decoded once and retried; if the raw lookup succeeds and the decoded form also resolves to a different existing item, the read fails closed with id_ambiguous — while the equivalent ripr_get_gap tool route takes the canonical id as a plain JSON string, which carries no URI encoding, when URI interpolation resists. A document over the response bound fails with result_too_large and recovery to ripr check --committed --format json outside MCP — a bounded summary of the committed diff whose related tests cap per finding and whose findings array can omit findings; retrying this resource cannot shrink the item.";
+const GAP_RESOURCE_TEMPLATE_DESCRIPTION: &str = "One canonical item's complete evidence — changed behavior, causal attribution, discriminator availability, related tests, and the committed producer repair-readiness block; the same document ripr_get_gap returns. The item must exist in the current completed snapshot (else item_not_found). A document over the response bound fails with result_too_large — recovery is `ripr check --committed --format json` outside MCP; retrying this resource cannot shrink the item.";
 
-const REPAIR_ATTEMPT_TEMPLATE_DESCRIPTION: &str = "One repair transaction, identical to the ripr_get_repair_attempt tool result: session transactions created by ripr_prepare_repair, or a durable attempt manifest of this workspace root with its artifact digest bindings and typed CommandSpec routes when the retained packet carries valid ones. Unknown identities fail closed with attempt_not_found; a canonically invalid manifest fails closed with attempt_invalid; a transaction bound to a superseded snapshot fails closed with the reserved superseded state and the current snapshot identity; tombstones older than the 64-entry session bound read attempt_not_found instead. The read never edits source and never executes anything the attempt names.";
+const REPAIR_ATTEMPT_TEMPLATE_DESCRIPTION: &str = "One repair transaction, as returned by ripr_get_repair_attempt: a session transaction from ripr_prepare_repair or a durable manifest with digest bindings and typed CommandSpec routes when valid. Unknown identities fail closed (attempt_not_found), invalid manifests (attempt_invalid), superseded-snapshot bindings (superseded), and tombstones past the 64-entry bound (attempt_not_found). The read never edits source or executes anything the attempt names.";
 
 const RECEIPT_TEMPLATE_DESCRIPTION: &str = "The receipt status document for one attempt identity, identical to the ripr_get_receipt_status tool result: the status vocabulary (awaiting_edit, after_pending, verification_pending, improved, closed, unchanged, regressed, limited, stale, invalid), the digest-bound receipt document when a durable attempt retained one, and the currentness basis. Receipt issuance is external authority — RIPR performs no verification and executes nothing on this read.";
 
-const REPAIR_CARD_TEMPLATE_DESCRIPTION: &str = "One canonical item's bounded repair card, identical to the ripr_get_repair_card tool result: the same repair_card.v1 document `ripr agent card` and the standard language server project, assembled by the shared application authority over the committed snapshot. The card binds the analyzed repository head and the commit-time evidence-scope currentness of its snapshot, names the seam, witness, fix instruction, edit cage, attempt state, and the typed next action when a route is ready, and links the snapshot, gap, repair-attempt, and receipt resources. The item must exist in the current completed snapshot and one classified seam must owner-discriminated bind it, or the read fails closed with item_not_found or seam_not_found. Id grammar: the canonical id embeds a raw workspace-relative file path (spaces, `#`, and non-ASCII are literal), so a URI-emitting client may percent-encode those characters — the raw capture is looked up first; if it misses with item_not_found, the segment is percent-decoded once and retried; if the raw lookup succeeds and the decoded form also resolves to a different existing item, the read fails closed with id_ambiguous — while the equivalent ripr_get_repair_card tool route takes the canonical id as a plain JSON string, which carries no URI encoding, when URI interpolation resists.";
+const REPAIR_CARD_TEMPLATE_DESCRIPTION: &str = "One canonical item's bounded repair card, the same document ripr_get_repair_card returns: the repair_card.v1 document `ripr agent card` and the language server project assemble from the committed snapshot by the shared authority. The card names the seam, witness, fix instruction, edit cage, attempt state, and typed next action. The item must exist in the current snapshot with an owner-discriminated seam binding (else item_not_found or seam_not_found).";
 
 const GET_REPAIR_CARD_TOOL_DESCRIPTION: &str = "Project the bounded repair card for one canonical item of the current completed snapshot: the same versioned repair_card.v1 document `ripr agent card` and the standard language server project (RIPR-SPEC-0215), assembled by the shared application authority from the committed snapshot — never re-derived or weakened by this server. Route disambiguation: prefer this card over ripr_get_gap when the agent intends to repair; ripr_get_gap is the lighter read when only analysis evidence is needed and no fix instruction is wanted. Inputs: canonical_id (required, a canonical item id from ripr_list_gaps) and optional snapshot_id, which must match the current snapshot or the call fails closed with stale_snapshot. The document carries: the item identity and the verbatim card (seam subject, changed behavior, exact blocker or named limitation, fix instruction, edit-cage surfaces, done-when goals, attempt state, and one typed next action when the route gate is open); the analyzed repository head and the commit-time evidence-scope dirty-state probe the card binds (edits after ripr_refresh are visible only after the next refresh); the claim boundary; and links to the snapshot, gap, repair-attempt, and receipt resources. The durable attempt store is re-read at card-read time, so the attempt block matches `ripr agent status` at this moment; in-memory session transactions never ride a card. The card edits nothing, executes nothing, and is never a repair authorization: the external client's approval and sandbox policy remains authoritative for the command the next action names, and the display binds the portable root `.` (never the host-local path). Reachable failure vocabulary: no_snapshot, analysis_in_flight, stale_snapshot, item_not_found, seam_not_found, identity_unnameable, budget_overflow, result_too_large, workspace_unavailable, analysis_failed; policy_omitted and witness_unavailable stay named on the wire for stability. Equivalent reads: the tool ripr_get_repair_card and the resource ripr://repair-card/{canonical_id} return the same document.";
 
@@ -498,6 +498,10 @@ fn list_gaps_tool_descriptor() -> Value {
                 "language": {
                     "type": "string",
                     "minLength": 1,
+                    "enum": crate::domain::LanguageId::ALL
+                        .iter()
+                        .map(crate::domain::LanguageId::as_str)
+                        .collect::<Vec<_>>(),
                     "description": "Narrow to one language wire string (for example `rust` or `python`)."
                 },
                 "repair_ready": {
@@ -751,6 +755,18 @@ fn scope_disclosure_schema() -> Value {
                     "remedy": { "type": "string" }
                 },
                 "required": ["files", "total", "more", "listing_example", "remedy"],
+                "additionalProperties": false
+            },
+            "ignored_edits": {
+                "type": "object",
+                "properties": {
+                    "files": { "type": "array", "items": { "type": "string" }, "minItems": 1, "maxItems": 3 },
+                    "total": { "type": "integer", "minimum": 1 },
+                    "more": { "type": "integer", "minimum": 0 },
+                    "languages_analyzed": { "type": "string" },
+                    "remedy": { "type": "string" }
+                },
+                "required": ["files", "total", "more", "languages_analyzed", "remedy"],
                 "additionalProperties": false
             }
         },
@@ -1089,6 +1105,31 @@ fn gap_list_output_schema() -> Value {
                     "schema_version": { "type": "string", "const": super::gaps::GAP_LIST_SCHEMA_VERSION },
                     "snapshot_id": { "type": "string" },
                     "requested_snapshot_id": { "type": ["string", "null"] },
+                    "outcome": {
+                        "type": "object",
+                        "properties": {
+                            "kind": {
+                                "type": "string",
+                                "enum": [
+                                    "no_scope",
+                                    "no_changed_lines",
+                                    "no_behavioral_candidates",
+                                    "complete_no_findings",
+                                    "complete_with_findings",
+                                    "partial_with_limitations",
+                                    "unsupported_input",
+                                    "analysis_failed"
+                                ]
+                            },
+                            "label": { "type": "string" },
+                            "limitations": {
+                                "type": "array",
+                                "items": { "type": "string" }
+                            }
+                        },
+                        "required": ["kind", "label", "limitations"],
+                        "additionalProperties": false
+                    },
                     "snapshot_profile_budget_identity": { "type": "string" },
                     "selection_basis_version": { "type": "string" },
                     "budget": {
@@ -1170,6 +1211,7 @@ fn gap_list_output_schema() -> Value {
                     "schema_version",
                     "snapshot_id",
                     "requested_snapshot_id",
+                    "outcome",
                     "snapshot_profile_budget_identity",
                     "selection_basis_version",
                     "budget",
@@ -1385,7 +1427,7 @@ mod tests {
     -> Result<(), String> {
         let rows = |count: usize| {
             json!({
-                "schema_version": "ripr-mcp-gap-list-v2",
+                "schema_version": "ripr-mcp-gap-list-v3",
                 "rows": (0..count)
                     .map(|index| {
                         json!({
@@ -1426,7 +1468,7 @@ mod tests {
         }
         let reparsed: Value = serde_json::from_str(small_text)
             .map_err(|error| format!("text copy is not JSON: {error}"))?;
-        if reparsed.get("schema_version") != Some(&json!("ripr-mcp-gap-list-v2")) {
+        if reparsed.get("schema_version") != Some(&json!("ripr-mcp-gap-list-v3")) {
             return Err(format!("text copy drifted from the document: {reparsed}"));
         }
 
@@ -1547,6 +1589,114 @@ mod tests {
             ));
         }
         Ok(())
+    }
+
+    #[test]
+    fn description_length_budgets_keep_session_context_lean() {
+        // #9604 finding 33: every description below is injected into the
+        // model's context for the whole session, so each surface carries a
+        // byte budget. The template budgets were set by the first diet pass;
+        // tool budgets stay interim at the pre-diet maximum and tighten in
+        // the per-tool compression follow-up.
+        const TEMPLATE_BUDGET: usize = 475;
+        const RESOURCE_BUDGET: usize = 650;
+        const INSTRUCTIONS_BUDGET: usize = 2450;
+        const TOOL_BUDGET_INTERIM: usize = 2800;
+        const TOTAL_BUDGET_INTERIM: usize = 23000;
+        for (name, text, budget) in [
+            ("status_tool", STATUS_TOOL_DESCRIPTION, TOOL_BUDGET_INTERIM),
+            (
+                "refresh_tool",
+                REFRESH_TOOL_DESCRIPTION,
+                TOOL_BUDGET_INTERIM,
+            ),
+            (
+                "list_gaps_tool",
+                LIST_GAPS_TOOL_DESCRIPTION,
+                TOOL_BUDGET_INTERIM,
+            ),
+            (
+                "get_gap_tool",
+                GET_GAP_TOOL_DESCRIPTION,
+                TOOL_BUDGET_INTERIM,
+            ),
+            (
+                "prepare_repair_tool",
+                PREPARE_REPAIR_TOOL_DESCRIPTION,
+                TOOL_BUDGET_INTERIM,
+            ),
+            (
+                "get_repair_attempt_tool",
+                GET_REPAIR_ATTEMPT_TOOL_DESCRIPTION,
+                TOOL_BUDGET_INTERIM,
+            ),
+            (
+                "get_receipt_status_tool",
+                GET_RECEIPT_STATUS_TOOL_DESCRIPTION,
+                TOOL_BUDGET_INTERIM,
+            ),
+            (
+                "get_repair_card_tool",
+                GET_REPAIR_CARD_TOOL_DESCRIPTION,
+                TOOL_BUDGET_INTERIM,
+            ),
+            (
+                "status_resource",
+                STATUS_RESOURCE_DESCRIPTION,
+                RESOURCE_BUDGET,
+            ),
+            (
+                "snapshot_resource_template",
+                SNAPSHOT_RESOURCE_TEMPLATE_DESCRIPTION,
+                TEMPLATE_BUDGET,
+            ),
+            (
+                "gap_resource_template",
+                GAP_RESOURCE_TEMPLATE_DESCRIPTION,
+                TEMPLATE_BUDGET,
+            ),
+            (
+                "repair_attempt_resource_template",
+                REPAIR_ATTEMPT_TEMPLATE_DESCRIPTION,
+                TEMPLATE_BUDGET,
+            ),
+            (
+                "receipt_resource_template",
+                RECEIPT_TEMPLATE_DESCRIPTION,
+                TEMPLATE_BUDGET,
+            ),
+            (
+                "repair_card_resource_template",
+                REPAIR_CARD_TEMPLATE_DESCRIPTION,
+                TEMPLATE_BUDGET,
+            ),
+            ("instructions", INSTRUCTIONS, INSTRUCTIONS_BUDGET),
+        ] {
+            assert!(
+                text.len() <= budget,
+                "{name} description is {} chars, over the {budget}-char budget",
+                text.len()
+            );
+        }
+        let total = STATUS_TOOL_DESCRIPTION.len()
+            + REFRESH_TOOL_DESCRIPTION.len()
+            + LIST_GAPS_TOOL_DESCRIPTION.len()
+            + GET_GAP_TOOL_DESCRIPTION.len()
+            + PREPARE_REPAIR_TOOL_DESCRIPTION.len()
+            + GET_REPAIR_ATTEMPT_TOOL_DESCRIPTION.len()
+            + GET_RECEIPT_STATUS_TOOL_DESCRIPTION.len()
+            + GET_REPAIR_CARD_TOOL_DESCRIPTION.len()
+            + STATUS_RESOURCE_DESCRIPTION.len()
+            + SNAPSHOT_RESOURCE_TEMPLATE_DESCRIPTION.len()
+            + GAP_RESOURCE_TEMPLATE_DESCRIPTION.len()
+            + REPAIR_ATTEMPT_TEMPLATE_DESCRIPTION.len()
+            + RECEIPT_TEMPLATE_DESCRIPTION.len()
+            + REPAIR_CARD_TEMPLATE_DESCRIPTION.len()
+            + INSTRUCTIONS.len();
+        assert!(
+            total <= TOTAL_BUDGET_INTERIM,
+            "description total is {total} chars, over the {TOTAL_BUDGET_INTERIM}-char interim budget"
+        );
     }
 
     #[test]
@@ -1717,7 +1867,7 @@ mod tests {
                     "awaiting_edit, after_pending, verification_pending, improved, closed, unchanged, regressed, limited, stale, and invalid",
                     "RIPR performs no verification and issues no receipt",
                     "attempt-bound",
-                    "the same AgentReceiptReading as CLI status",
+                    "the same reading as CLI status",
                     "complete changed stays open as limited",
                     "incomplete producer completeness stays limited",
                     "invalid producer status stays invalid",

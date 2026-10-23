@@ -375,7 +375,7 @@ pub(super) fn resolve_implicit_workspace_root(input: &mut CheckInput) -> Result<
         "{}",
         terminal_safe(format!(
             "ripr: resolved workspace root to {} ({})",
-            root.display(),
+            crate::output::path::human_path(&root),
             reason.disclosure()
         ))
     );
@@ -412,6 +412,8 @@ const CHECK_VALUE_OPTIONS: &[&str] = &[
     "--diff",
     "--candidate-tree",
     "--candidate-base",
+    "--path",
+    "--exclude",
     "--mode",
     "--format",
     "--gap-ledger",
@@ -683,6 +685,8 @@ fn check_inner(
     let mut candidate_tree: Option<String> = None;
     let mut candidate_base: Option<String> = None;
     let mut quiet = false;
+    let mut scope_include: Vec<String> = Vec::new();
+    let mut scope_exclude: Vec<String> = Vec::new();
     if let Some(all) = help_request(args) {
         help::print_check_help(all);
         return Ok(());
@@ -718,6 +722,16 @@ fn check_inner(
             "--candidate-base" => {
                 i += 1;
                 candidate_base = Some(expect_value(args, i, "--candidate-base")?.to_string());
+            }
+            // #9277: repeatable file-scope narrowing. Not a scope provider: it
+            // filters the diff another flag (or the default base) supplies.
+            "--path" => {
+                i += 1;
+                scope_include.push(expect_value(args, i, "--path")?.to_string());
+            }
+            "--exclude" => {
+                i += 1;
+                scope_exclude.push(expect_value(args, i, "--exclude")?.to_string());
             }
             "--worktree" => {
                 scope_explicitly_provided = true;
@@ -967,6 +981,51 @@ fn check_inner(
                 &envelope_input,
                 effective_format,
                 "check --committed cannot be combined with --candidate-tree".to_string(),
+            ));
+        }
+    }
+    // #9277: --path/--exclude narrow a diff's changed files. A repo-scoped
+    // format reads no diff, so accepting them there would claim a bound the
+    // run never applied; refuse instead. Pattern shape errors surface here,
+    // before any analysis starts.
+    if !scope_include.is_empty() || !scope_exclude.is_empty() {
+        let refusal = if input.format.is_repo_scope() {
+            Some(format!(
+                "--path/--exclude narrow a diff and do not apply to the repo-scoped format {}; \
+                 use a diff-scoped format such as --format json",
+                input.format.primary_cli_name()
+            ))
+        } else {
+            if write_artifact.is_some() || gap_ledger.is_some() || output_dir.is_some() {
+                Some(
+                    "--path/--exclude cannot be combined with --write-artifact, --gap-ledger or \
+                     --output-dir: those outputs are reusable as a whole-diff result, and a \
+                     scoped run covers only the chosen files. Drop the scope, or save the \
+                     scoped result from --format json instead"
+                        .to_string(),
+                )
+            } else {
+                match crate::analysis::DiffScopeFilter::new(
+                    std::mem::take(&mut scope_include),
+                    std::mem::take(&mut scope_exclude),
+                ) {
+                    Ok(filter) => {
+                        input.scope = filter;
+                        None
+                    }
+                    Err(error) => Some(error),
+                }
+            }
+        };
+        if let Some(message) = refusal {
+            return Err(super::check_fanout::refuse(
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
+                &envelope_input,
+                effective_format,
+                message,
             ));
         }
     }
@@ -1482,9 +1541,10 @@ fn check_inner(
                     &input.root,
                     &report.classified,
                 );
-                let generated_skip = output::repo_exposure::GeneratedRustSkip::from_paths(
+                let generated_skip = output::repo_exposure::GeneratedRustSkip::from_parts(
                     report.skipped_generated,
                     report.naming_only_skips,
+                    report.declined_rust_files,
                 );
                 let artifact_context =
                     crate::agent::artifact::RepoExposureArtifactContext::for_repo_exposure(
@@ -1784,12 +1844,25 @@ fn check_inner(
         .as_ref()
         .map(|_| app::FindingDrillIn::Commands(navigation.clone()));
     let navigation = if matches!(format, OutputFormat::Human) && analyzed_live_files {
+        // #8547: both routes read seams of the selected finding's file
+        // (the repair route adds its related-test evidence files); they
+        // share one bounded seam index built once for this invocation,
+        // repair first so its wider file set covers the stub route's.
+        let mut seam_index = None;
+        let repair_route = crate::app::task_first::check_repair_route(
+            &limited_check_input.root,
+            &config,
+            &output,
+            &mut seam_index,
+        );
+        let stub_route = app::test_stub::check_stub_route(
+            &limited_check_input.root,
+            &config,
+            &output,
+            &mut seam_index,
+        );
         navigation
-            .with_stub_route(app::test_stub::check_stub_route(
-                &limited_check_input.root,
-                &config,
-                &output,
-            ))
+            .with_stub_route(stub_route)
             // #8166 Slice C: the repair line reuses the producer-owned
             // admission gate over the live seam inventory, for the same
             // live-files reason as the stub route above. Other formats
@@ -1797,11 +1870,7 @@ fn check_inner(
             // the outcome carries the named refusal so a finding offered
             // no repair start renders one advisory line naming why,
             // instead of a silent gap on the triage screen.
-            .with_repair_route_outcome(crate::app::task_first::check_repair_route(
-                &limited_check_input.root,
-                &config,
-                &output,
-            ))
+            .with_repair_route_outcome(repair_route)
     } else {
         navigation
     };

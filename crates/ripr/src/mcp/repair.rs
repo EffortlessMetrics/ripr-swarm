@@ -15,7 +15,7 @@
 //! stays a typed limitation; the tool must not guess it or create a
 //! misleading attempt.
 
-use super::gaps::GapItem;
+use super::gaps::{GapItem, RepairFixSite};
 use super::workspace::{
     AttemptFailure, CODE_ITEM_NOT_FOUND, RECOVERY_REPAIR_TOO_LARGE, WorkspaceSession,
     bounded_document,
@@ -741,13 +741,15 @@ impl WorkspaceSession {
                 "line": fix_site.line,
                 "oracle": fix_site.oracle,
                 "oracle_kind": fix_site.oracle_kind,
-                "established_by": "the strongest directly-related producer test grip (strong oracle, high-confidence direct relation) on a shared test-surface path",
+                "established_by": if fix_site.inline_test_module.is_some() {
+                    "the strongest directly-related producer test grip (strong oracle, high-confidence direct relation), inside the seam's own governed inline test module that the shared repair gate admitted"
+                } else {
+                    "the strongest directly-related producer test grip (strong oracle, high-confidence direct relation) on a shared test-surface path"
+                },
             },
             "allowed_edit_surface": [fix_site_file(item)],
-            "must_not_change": [
-                crate::output::agent_seam_packets::EDIT_CAGE_PRODUCTION_STATEMENT,
-                crate::output::agent_seam_packets::EDIT_CAGE_TERMINALITY_WARNING,
-            ],
+            "inline_test_module": inline_test_module_boundary(&fix_site),
+            "must_not_change": must_not_change(&fix_site),
             "stop_conditions": [
                 "stop if the focused test edit requires changing any file outside allowed_edit_surface",
                 "stop if the repository moves away from the prepared snapshot; re-run ripr_refresh and prepare a fresh transaction",
@@ -827,7 +829,7 @@ impl WorkspaceSession {
             return Err(AttemptFailure::new(
                 super::workspace::CODE_ANALYSIS_IN_FLIGHT,
                 "an analysis attempt is running",
-                "poll ripr_workspace_status until attempt_state leaves in_flight, then retry",
+                "wait for the running attempt to finish (the stdio transport answers one request at a time, so a pipelined request is served after it), then retry",
             ));
         }
         if let Some(transaction) = self.repairs.get(attempt_id) {
@@ -888,7 +890,7 @@ impl WorkspaceSession {
             return Err(AttemptFailure::new(
                 super::workspace::CODE_ANALYSIS_IN_FLIGHT,
                 "an analysis attempt is running",
-                "poll ripr_workspace_status until attempt_state leaves in_flight, then retry",
+                "wait for the running attempt to finish (the stdio transport answers one request at a time, so a pipelined request is served after it), then retry",
             ));
         }
         if let Some(transaction) = self.repairs.get(receipt_id) {
@@ -935,6 +937,35 @@ impl WorkspaceSession {
             RECOVERY_REPAIR_TOO_LARGE,
         )
     }
+}
+
+/// The module confinement of an inline-test fix site (#5516), or null for a
+/// test-surface fix site. New test functions go inside the governed module
+/// only; the CLI before phase captures the same module and the after phase
+/// rejects any other change to the file.
+fn inline_test_module_boundary(fix_site: &RepairFixSite) -> Value {
+    match &fix_site.inline_test_module {
+        Some(module) => json!({
+            "file": fix_site.file,
+            "module": module,
+            "boundary": "add new test functions inside this inline test module only; production code, the module declaration and existing tests stay unchanged",
+        }),
+        None => Value::Null,
+    }
+}
+
+fn must_not_change(fix_site: &RepairFixSite) -> Vec<String> {
+    let production = match &fix_site.inline_test_module {
+        Some(module) => crate::output::agent_seam_packets::inline_test_module_edit_statement(
+            &fix_site.file,
+            module,
+        ),
+        None => crate::output::agent_seam_packets::EDIT_CAGE_PRODUCTION_STATEMENT.to_string(),
+    };
+    vec![
+        production,
+        crate::output::agent_seam_packets::EDIT_CAGE_TERMINALITY_WARNING.to_string(),
+    ]
 }
 
 /// The allowed edit surface file of one ready item; the readiness gate
@@ -1223,11 +1254,15 @@ mod tests {
     }
 
     #[test]
-    fn producer_named_missing_discriminator_keeps_its_typed_refusal() -> Result<(), String> {
+    fn producer_named_missing_discriminator_on_a_non_weak_class_keeps_its_typed_refusal()
+    -> Result<(), String> {
         // The unpopulated state must not swallow the honest actionable
         // refusal: a producer that names the missing discriminator still
         // answers `missing_discriminator`.
+        // A non-weak class: on a weakly exposed finding the named value is
+        // the repair target and no longer refuses (#8717).
         let mut named_missing = super::super::gaps::test_finding()?;
+        named_missing.class = crate::domain::ExposureClass::ReachableUnrevealed;
         named_missing.canonical_gap = None;
         named_missing.activation.missing_discriminators.push(
             crate::domain::MissingDiscriminatorFact {

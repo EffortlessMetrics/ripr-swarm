@@ -93,13 +93,12 @@ pub(crate) struct CompactGripContext<'a> {
     /// repo walk re-paid the first full-index pass O(seams) times and a
     /// ripr-swarm-sized scan never converged. Every cache inside is keyed
     /// by the immutable index this context borrows, so one seam's
-    /// answers cannot alias another's. `Mutex` because `EvidencePass`
-    /// serves seams from the rayon pool: the walk locks it per syntax
-    /// query, so the `RefCell` interiority the #8262 per-run single-pass
-    /// bounds rely on stays single-threaded while parse-heavy segments
-    /// between queries run in parallel. Not window-cleared: nothing in
+    /// answers cannot alias another's. Its memos are `SyncMemo`s, so the
+    /// rayon workers of `EvidencePass` read it directly; an outer lock
+    /// would hold every worker behind one syntax query (the first scan
+    /// ran in line while holding it). Not window-cleared: nothing in
     /// here derives from bytes a window can change, only from the index.
-    pin_syntax: Mutex<crate::analysis::classify::OwnerPinSyntax>,
+    pin_syntax: crate::analysis::classify::OwnerPinSyntax,
 }
 
 /// Candidate generation only: the existing `contains` and `same_module`
@@ -267,21 +266,25 @@ impl<'a> CompactGripContext<'a> {
     }
 
     /// The run-scoped owner-pin syntax every seam of this context shares
-    /// (#8282). Callers pass the mutex down the evidence stages and lock
-    /// it per syntax query; the parse-heavy segments between queries run
-    /// outside the lock, so the shared instance bounds the walk without
-    /// serializing it.
-    pub(in crate::analysis::test_grip_evidence) fn pin_syntax_mutex(
+    /// (#8282).
+    pub(in crate::analysis::test_grip_evidence) fn pin_syntax(
         &self,
-    ) -> &Mutex<crate::analysis::classify::OwnerPinSyntax> {
+    ) -> &crate::analysis::classify::OwnerPinSyntax {
         &self.pin_syntax
+    }
+
+    /// Pay the whole-index macro-site scan once, before the seam workers
+    /// start, so it fans out over the pool instead of running in line on
+    /// the first worker that needs it while the others wait (#9211).
+    pub(in crate::analysis::test_grip_evidence) fn prime_pin_syntax_scan(&self) {
+        self.pin_syntax.prime_workspace_macro_scan(self.index);
     }
 
     /// #8282 test witness: full-index macro-site passes the shared
     /// seam-walk instance paid.
     #[cfg(test)]
     pub(in crate::analysis) fn workspace_scan_passes(&self) -> u32 {
-        memo(&self.pin_syntax).workspace_scan_passes()
+        self.pin_syntax.workspace_scan_passes()
     }
 
     /// Number of indexed functions with exactly `name`; 0 for unknown or
@@ -651,7 +654,7 @@ impl<'a> CompactGripContext<'a> {
             unresolved_reach: Mutex::new(BTreeMap::new()),
             unseen_reach_names: OnceLock::new(),
             shared_grips: Mutex::new(SharedGrips::default()),
-            pin_syntax: Mutex::new(crate::analysis::classify::OwnerPinSyntax::default()),
+            pin_syntax: crate::analysis::classify::OwnerPinSyntax::default(),
         })
     }
 
@@ -2175,6 +2178,11 @@ pub(in crate::analysis::test_grip_evidence) fn call_text_contains_crate_qualifie
     owner_names_by_module_path: &OwnerNamesByModulePath,
 ) -> bool {
     let cleaned = strip_comments_and_strings(text);
+    // Every match needs a literal `crate::` after cleaning, so a call without
+    // one has no candidate module however many modules the table holds.
+    if !cleaned.contains("crate::") {
+        return false;
+    }
     owner_names_by_module_path
         .iter()
         .any(|(module_path, owner_names)| {
@@ -3672,25 +3680,25 @@ pub(in crate::analysis::test_grip_evidence) fn code_contains_qualified_helper_ca
     module_path: &str,
     helper_name: &str,
 ) -> bool {
-    ["", "crate::", "self::", "super::"]
-        .into_iter()
-        .any(|prefix| {
-            code_contains_qualified_helper_call_with_prefix(code, prefix, module_path, helper_name)
-        })
-}
-
-pub(in crate::analysis::test_grip_evidence) fn code_contains_qualified_helper_call_with_prefix(
-    code: &str,
-    prefix: &str,
-    module_path: &str,
-    helper_name: &str,
-) -> bool {
-    let pattern = format!("{prefix}{module_path}::{helper_name}(");
-    code.match_indices(&pattern).any(|(start, _)| {
-        code[..start]
-            .chars()
-            .next_back()
-            .is_none_or(|before| !is_rust_path_identifier_char(before))
+    // One search for the shared `module::helper(` tail; each hit is then
+    // checked against the four admitted spellings (bare, `crate::`, `self::`,
+    // `super::`) by the text just before it. This admits exactly the hits the
+    // former per-prefix searches admitted, with one pattern allocation and
+    // one searcher instead of four.
+    let tail = format!("{module_path}::{helper_name}(");
+    code.match_indices(&tail).any(|(tail_start, _)| {
+        ["", "crate::", "self::", "super::"]
+            .into_iter()
+            .any(|prefix| {
+                code[..tail_start]
+                    .strip_suffix(prefix)
+                    .is_some_and(|before| {
+                        before
+                            .chars()
+                            .next_back()
+                            .is_none_or(|ch| !is_rust_path_identifier_char(ch))
+                    })
+            })
     })
 }
 
@@ -3913,6 +3921,87 @@ mod tests {
                 .candidates("scope_0::target()", "absent_name")
                 .is_empty()
         );
+    }
+
+    // Frozen per-prefix search the single-tail search replaced.
+    fn per_prefix_qualified_helper_call(code: &str, module_path: &str, helper_name: &str) -> bool {
+        ["", "crate::", "self::", "super::"]
+            .into_iter()
+            .any(|prefix| {
+                let pattern = format!("{prefix}{module_path}::{helper_name}(");
+                code.match_indices(&pattern).any(|(start, _)| {
+                    code[..start]
+                        .chars()
+                        .next_back()
+                        .is_none_or(|before| !is_rust_path_identifier_char(before))
+                })
+            })
+    }
+
+    #[test]
+    fn single_tail_qualified_call_search_matches_per_prefix_search() {
+        let cases: [(&str, bool); 16] = [
+            ("pkg::helpers::target()", true),
+            ("crate::pkg::helpers::target()", true),
+            ("self::pkg::helpers::target()", true),
+            ("super::pkg::helpers::target()", true),
+            ("let x = pkg::helpers::target();", true),
+            ("(crate::pkg::helpers::target())", true),
+            ("xpkg::helpers::target()", false),
+            ("xcrate::pkg::helpers::target()", false),
+            ("_self::pkg::helpers::target()", false),
+            ("::pkg::helpers::target()", false),
+            ("a::super::pkg::helpers::target()", false),
+            ("other::crate::pkg::helpers::target()", false),
+            ("pkg::helpers::target", false),
+            ("pkg::helpers::target_x()", false),
+            (
+                "crate::pkg::helpers::target( crate::pkg::helpers::target()",
+                true,
+            ),
+            (
+                "1crate::pkg::helpers::target() pkg::helpers::target()",
+                true,
+            ),
+        ];
+        for (code, expected) in cases {
+            assert_eq!(
+                per_prefix_qualified_helper_call(code, "pkg::helpers", "target"),
+                expected,
+                "frozen oracle disagrees with the fixture for {code}"
+            );
+            assert_eq!(
+                code_contains_qualified_helper_call(code, "pkg::helpers", "target"),
+                expected,
+                "{code}"
+            );
+        }
+        assert!(code_contains_qualified_helper_call("::f()", "", "f"));
+        assert_eq!(
+            code_contains_qualified_helper_call("a::f()", "", "f"),
+            per_prefix_qualified_helper_call("a::f()", "", "f")
+        );
+    }
+
+    #[test]
+    fn crate_qualified_owner_call_needs_a_crate_path() {
+        let owners = OwnerNamesByModulePath::from([(
+            "pkg::helpers".to_string(),
+            BTreeSet::from(["target".to_string()]),
+        )]);
+        for (text, expected) in [
+            ("crate::pkg::helpers::target()", true),
+            ("pkg::helpers::target()", false),
+            ("target()", false),
+            ("crate::pkg::helpers::absent()", false),
+            ("target(\"crate::pkg::helpers::target()\")", false),
+        ] {
+            assert_eq!(
+                call_text_contains_crate_qualified_owner_call(text, "target", &owners),
+                expected,
+                "{text}"
+            );
+        }
     }
 
     #[test]

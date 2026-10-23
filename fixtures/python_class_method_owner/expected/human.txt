@@ -21,7 +21,7 @@ Start here:
   Canonical gap: gap:python:src/factory.py:PriceRule.from_config:return_value:return_value:cls_config[discount]+1
   Changed behavior: return cls(config["discount"] + 1)
   Missing discriminator (1 of 2): Related Python test reaches `from_config` but the strongest extracted oracle is `relational_check`; add or strengthen a focused assertion for the returned value
-  Related test: tests/test_factory.py:4 test_price_rule_from_config
+  Related test: tests/test_factory.py:4 test_price_rule_from_config (assertion too weak to tell the old behavior from the new)
   Suggested test file: tests/test_factory.py
   Suggested test: test_price_rule_from_config
   Test node: tests/test_factory.py::test_price_rule_from_config
@@ -35,7 +35,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_class_method_owner/input --diff <cwd>/fixtures/python_class_method_owner/diff.patch --mode fast probe:src_factory.py:python_preview:ed4a25c1
   ripr context --root <cwd>/fixtures/python_class_method_owner/input --diff <cwd>/fixtures/python_class_method_owner/diff.patch --mode fast --at probe:src_factory.py:python_preview:ed4a25c1
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_factory.py:python_preview:ed4a25c1 --root <cwd>/fixtures/python_class_method_owner/input` for the full gate's answer
+  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/factory.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
 
 More:
   Full evidence: rerun with --format human-full

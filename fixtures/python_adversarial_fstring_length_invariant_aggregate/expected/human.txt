@@ -21,7 +21,7 @@ Start here:
   Canonical gap: gap:python:src/status.py:status_label:return_value:return_value:f_no_code
   Changed behavior: return f"NO:{code}"
   Missing discriminator (1 of 2): A strong Python oracle reaches `status_label`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated.…
-  Related test: tests/test_status.py:4 test_len
+  Related test: tests/test_status.py:4 test_len (ripr could not confirm that this assertion observes the changed behavior)
   Suggested test file: tests/test_status.py
   Suggested test: test_len
   Test node: tests/test_status.py::test_len
@@ -35,7 +35,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_adversarial_fstring_length_invariant_aggregate/input --diff <cwd>/fixtures/python_adversarial_fstring_length_invariant_aggregate/diff.patch --mode fast probe:src_status.py:python_preview:f3e3e6b2
   ripr context --root <cwd>/fixtures/python_adversarial_fstring_length_invariant_aggregate/input --diff <cwd>/fixtures/python_adversarial_fstring_length_invariant_aggregate/diff.patch --mode fast --at probe:src_status.py:python_preview:f3e3e6b2
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_status.py:python_preview:f3e3e6b2 --root <cwd>/fixtures/python_adversarial_fstring_length_invariant_aggregate/input` for the full gate's answer
+  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/status.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
 
 More:
   Full evidence: rerun with --format human-full

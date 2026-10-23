@@ -1,0 +1,65 @@
+{
+  "subject_id": "authored-ts-nodetest-mocks",
+  "origin": "authored",
+  "version_label": "authored@2026-10-22",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "package.json",
+      "sha256": "ae85c96f4f4fab86da6bf43954000cea7cf61605faa84695c2d76bc5b7f9a801"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "27f3758ca9cce54d063a7f0daddc95f0940433563d4869a9e5a7c622ae961381"
+    },
+    {
+      "path": "src/audit.ts",
+      "sha256": "f86ab177683de8370d379f809f562c445e91b8aea44b54b1c5eecd38c967340f"
+    },
+    {
+      "path": "src/flaky.ts",
+      "sha256": "5cbcde3198db68cf05afcd1a1482edbf3ca17b5d47e69565c43163d07bbae7ec"
+    },
+    {
+      "path": "src/notify.ts",
+      "sha256": "c487e51a7665e731a81621ad49ec2da091ba25c3b9dfc62080822762524ea5b9"
+    },
+    {
+      "path": "src/queue.ts",
+      "sha256": "fd491946192414c4c395f5a4d5b72623966c8984b537f9d7ec1b9d32385945d6"
+    },
+    {
+      "path": "src/retry.ts",
+      "sha256": "a38d2934e43b6252f5e8cfd782aff961ce4d8acdbef5a0738f876f9815839925"
+    },
+    {
+      "path": "src/slugify.ts",
+      "sha256": "f080d87f590d584e0d5ba6f1af42d6244db4f06f44deec8ae7cfa30087c2227c"
+    },
+    {
+      "path": "test/audit.test.ts",
+      "sha256": "3ed2196eea02a2d5f82238be701e4f4ddee3714cc62f781733834440d2b764e5"
+    },
+    {
+      "path": "test/flaky.test.ts",
+      "sha256": "59e75ab348b397f20c412365ea3b598536413f0ada1408d03a2242bd093f674a"
+    },
+    {
+      "path": "test/notify.test.ts",
+      "sha256": "40c17aed27d2cf844eed16f9d6da2a92e10d1fb060e027c662d4b76d2ec1cd65"
+    },
+    {
+      "path": "test/queue.test.ts",
+      "sha256": "c05bd1d949918c01d4abe6270777dc95063f38eaa71e683956c72ecef6868350"
+    },
+    {
+      "path": "test/retry.test.ts",
+      "sha256": "f5b724d5c7938ec66f52cfae1ddb8d701c89a2344abcf278e6addf84b6f00655"
+    },
+    {
+      "path": "test/slugify.test.ts",
+      "sha256": "dbf76357ed2eb41685d190e74fcc2fc94d3218b0d91d52cbe89cd12dd707214f"
+    }
+  ]
+}

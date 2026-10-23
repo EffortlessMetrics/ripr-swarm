@@ -1,0 +1,12 @@
+diff --git a/src/core.ts b/src/core.ts
+--- a/src/core.ts
++++ b/src/core.ts
+@@ -39,7 +39,7 @@
+ }
+ 
+ export function resultAsserted(a: number, b: number): number {
+-  return a * b;
++  return b * a;
+ }
+ 
+ export function swallowedAssert(a: number, b: number): number {

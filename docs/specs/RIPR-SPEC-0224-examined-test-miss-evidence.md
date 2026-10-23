@@ -123,21 +123,80 @@ unsupported state as unknown and fabricates no reason conforms.
 
 | miss | Rust | Python | TypeScript | Perl v1 |
 | --- | --- | --- | --- | --- |
-| `no_call_path` | yes | pending #5491 | pending #5495 | no |
-| `no_assertion` | yes | pending #5491 | pending #5495 | no |
-| `assertion_not_observing` | yes | pending #5491 | pending #5495 | no (#3223) |
+| `no_call_path` | yes | pending (blocked on #6657-class blind spots) | no (absence unprovable from one file) | no |
+| `no_assertion` | yes | no (#6657) | no (admission blind spots) | no |
+| `assertion_not_observing` | yes | no (credit-only alignment; `is_unmatched` coupling) | no (decision input via `is_unmatched`) | no (#3223) |
 | `assertion_not_credited` | yes, unsplit until #5446 | no (#5446) | no (#5446) | no |
-| `weak_assertion` | yes | pending #5491 | pending #5495 | no |
-| `missing_input` | yes | pending #5491 | pending #5495 | no (#4061, perl-lsp-swarm#17237, #5562) |
-| `missing_exact_assertion` | yes | pending #5491 | pending #5495 | no |
-| `observation_unconfirmed` | yes | pending #5491 | pending #5495 | yes |
+| `weak_assertion` | yes | yes (weak and smoke only) | yes (weak and smoke only) | no |
+| `missing_input` | yes | pending follow-up (#5491) | no (shared prose over-claims) | no (#4061, perl-lsp-swarm#17237, #5562) |
+| `missing_exact_assertion` | yes | no (no row-owned fact) | no (no row-owned fact) | no |
+| `observation_unconfirmed` | yes | yes (strong assertion not credited by its own row) | yes | yes |
 
 Rust "yes" means the reason is emitted; it does not claim conformance with every
 law above (see Current Rust conformance gaps).
 
+TypeScript (#5495) maps only row-local merged evidence: the owner-path
+disposition (#5523), assertion admission, the family-relevant assertion (#5525)
+and per-row predicate activation (#5527). `weak_assertion` is a row whose own selected oracle is weak or smoke (a medium
+snapshot or mock oracle keeps no miss). `observation_unconfirmed` covers a
+mocked or spied owner call with an admitted assertion (an
+unanchored or unresolved-alias call keeps no miss: its identity is unproved), a
+strong assertion of another behavior family, and a strong row whose own
+boundary input misses the pinned boundary or whose changed-sink observation is
+unproven. Four reasons are withheld on purpose: `no_call_path` (a single-file
+reading cannot prove a call path absent: a heuristic-only row may reach the
+owner through an alias, callback or table, and a shadow or unrelated-import
+rejection refutes only the apparent call, not hooks, helpers or re-exports),
+`assertion_not_observing` (`RelatedTest::is_unmatched` reads it as a decision
+input), `no_assertion` (the single-file admission scan cannot see project setup
+files or runner plugins) and `missing_input` (its shared prose says no test
+input reaches the boundary, stronger than a single-file reading supports). Rows
+with unresolved admission, static-limited findings, `exposed`, `static_unknown`
+and Bun bridge findings keep `miss: null`.
+
 "Pending" means the producer has not mapped that reason yet; the row-evidence
 prerequisites for it are specified in this document. Perl's narrower coverage is
 a capability difference, not a parity failure.
+
+Python (#5491) writes a miss only on a `weakly_exposed` finding without a
+static limit, one row at a time, in `python/row_miss.rs`:
+
+- `weak_assertion`: the family-selected assertion is weak or smoke. A medium
+  assertion (a mock that may pin the changed call) keeps no miss.
+- `observation_unconfirmed`: a strong family-selected assertion that the row,
+  evaluated alone, does not credit as observing the changed sink. Python's
+  alignment only credits; no credit never becomes an affirmative mismatch.
+  A row whose callee is a local stand-in of the owner stays here: stand-in
+  detection is textual and errs toward withholding credit, so it cannot
+  support an affirmative no-call claim.
+
+Python does not yet write:
+
+- `no_call_path`: pending, blocked on the same cross-file blind spots as
+  `no_assertion` (#6657). A `same_stem`, `test_name_similarity` or
+  `fixture_name` row is related by name or location only, and the absence of
+  a call cannot be established while a callback or alias (`map(owner, ...)`,
+  `f = owner`), a `parametrize` or fixture `params` list, `usefixtures`, a
+  module-level `pytestmark`, a conftest or a plugin may still reach the owner.
+  Those rows keep no miss; `dunder_protocol`, fixture-owner, helper-owner and
+  activation-limited rows never carried the claim.
+- `missing_input`: pending follow-up (#5491). It needs a row-owned
+  boundary omission over import-resolved owner calls; until then a strong
+  row that observes nothing keeps only `observation_unconfirmed`, which
+  claims less.
+- `no_assertion`: `extraction_complete_no_assertion` is not an established
+  absence while the cross-file blind spots of #6657 (conftest autouse
+  fixtures, plugins, ini `filterwarnings`, bare sibling imports) are
+  unaccounted for.
+- `assertion_not_observing`: alignment cannot separate an affirmative sibling
+  sink from an unresolved one, and the value marks a row examined-only
+  (`RelatedTest::is_unmatched`), which `oracle_related_tests` and its
+  decisional consumers read; emitting it would move ordering and witnesses.
+- `missing_exact_assertion`: `missing_discriminators` is finding-wide and no
+  row-owned observed-surface fact exists.
+- `assertion_not_credited`: no typed refusal (#5446). Skipped, xfail and
+  expected-failure tests keep the classifier's `static_unknown` and no oracle
+  credit.
 
 ### Projection law
 
@@ -276,8 +335,12 @@ admission state, computed fail-closed from the test's syntax:
 A related test whose state is not `recognized_assertion_present` adds the
 evidence line `test_assertion_admission: <state> (<test>)` to its finding.
 The line is evidence only: it changes no verdict, ranking, miss or
-actionability. Blind spots the scan cannot see (conftest and setup files,
-runner plugins) are tracked in #6657 and #6889.
+actionability. For Python, a `conftest.py` on the test's directory chain that
+declares an `autouse` fixture, a `pytest_runtest_*` hook or `pytest_plugins`,
+or a test-item hook (`pytest_collection_modifyitems` and similar), or that imports names from any module outside a short standard-library list (the name may be an autouse fixture or hook), builds an autouse fixture decorator, aliases the fixture decorator or an external fixture, star-imports or imports relatively, passes `**options` to `fixture`, or that could not be read, withholds `extraction_complete_no_assertion` from
+every test in its scope (#6657). Remaining blind spots (dynamically registered
+plugins, plugins or `usefixtures` set in pytest ini `addopts`, sibling-module helpers, TypeScript setup files) are tracked in #6657
+and #6889.
 
 ### Family-relevant assertion selection (Python)
 
@@ -343,7 +406,7 @@ differs from the strength-only pick the finding adds
 
 ### Owner-path disposition (TypeScript)
 
-Before a TypeScript miss producer (#5495) can say why a related test does not
+So that the TypeScript miss producer (#5495) can say why a related test does not
 catch a change, each candidate must say what it establishes about the
 changed owner. `TypeScriptRelationKind` stays the relation's provenance; each
 `TypeScriptRelatedCandidate` also carries one internal

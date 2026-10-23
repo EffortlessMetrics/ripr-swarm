@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- Runnable doc examples on a library's functions are now tests: an exact `assert_eq!` in a `///` example that calls the function through the crate name (`wire::read_u16(..)` or `use wire::read_u16;`) pins its return value. For that return-value pin, `ignore`, `no_run`, `compile_fail`, `should_panic` and non-Rust fences, examples inside `#[cfg(test)]` modules, on non-`pub` functions or inside HTML comments, `crate::` paths and method calls stay uncredited (#6648).

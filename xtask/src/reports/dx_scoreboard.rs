@@ -47,10 +47,19 @@ const MUTATION_SPOT_CHECK_SCHEMA_VERSION: &str = "ripr-mutation-spot-check-v2";
 const MUTATION_SPOT_CHECK_V1_SCHEMA_VERSION: &str = "ripr-mutation-spot-check-v1";
 /// One JSON object per line from the first-run walk's scoreboard export.
 const FIRST_RUN_ROW_SCHEMA_VERSION: &str = "first_run_row.v1";
+/// The walk's reading of a verdict that is decisive (not `*_unknown`) and
+/// matches what the committed edit's tests catch (`verdict_reading` in
+/// `xtask/src/first_run.rs`).
+const FIRST_RUN_AGREEING_READING: &str = "agrees with the tests";
 const RUST_CORPUS_SMOKE_SCHEMA_VERSION: &str = "ripr-rust-corpus-smoke-v1";
 /// Receipt written by `cargo xtask pilot-ranking score` (pilot's top picks
 /// judged against the checked-in mutation answer key); converted on ingest.
 const PILOT_RANKING_SCHEMA_VERSION: &str = super::pilot_ranking::RECEIPT_SCHEMA_VERSION;
+/// Grain marker for `first_run.over_budget_steps`: step occurrences, not
+/// breached metric rows. Written into the metric's evidence so it survives
+/// ingest into a baseline report's sample detail; a baseline whose samples
+/// do not name it counted breached rows and is not compared.
+const FIRST_RUN_OVER_BUDGET_GRAIN: &str = "step-occurrences-v1";
 /// Row metrics that carry their own per-step time or output-length `budget`.
 const FIRST_RUN_BUDGETED: [&str; 2] = ["secs", "stdout_lines"];
 /// The generated workflow's size, budgeted on its own so a large `init_ci`
@@ -735,9 +744,15 @@ pub(crate) fn first_run_to_input(value: &Value) -> Result<Value, String> {
     };
     let mut friction = friction_in(setup);
     let mut unknown = 0_usize;
+    let mut decisive = 0_usize;
+    let mut read = 0_usize;
     let mut rows = Vec::new();
     for case in cases {
         let name = case["case"].as_str().unwrap_or("case");
+        if let Some(reading) = case["verdict_reading"].as_str() {
+            read += 1;
+            decisive += usize::from(reading == FIRST_RUN_AGREEING_READING);
+        }
         let steps = case["steps"].as_array().map(Vec::as_slice).unwrap_or(&[]);
         friction += friction_in(steps);
         if case["verdict"]
@@ -785,6 +800,12 @@ pub(crate) fn first_run_to_input(value: &Value) -> Result<Value, String> {
     }
     rows.push(json!({"id": "first_run.friction_events", "value": friction}));
     rows.push(json!({"id": "first_run.unknown_verdicts", "value": unknown}));
+    // A receipt from before `verdict_reading` (or one missing a case's
+    // reading) leaves the metric unmeasured: a count over fewer readings than
+    // cases would read as a false drop.
+    if read == cases.len() {
+        rows.push(json!({"id": "first_run.decisive_verdicts", "value": decisive}));
+    }
     Ok(json!({
         "schema_version": INPUT_SCHEMA_VERSION,
         "source": "first-run",
@@ -809,8 +830,11 @@ fn is_source_install_step(name: &str) -> bool {
 ///
 /// - failed steps: `exit` rows that are not 0, and steps with rows but no
 ///   `exit` row (a walk cut off mid-step);
-/// - over-budget steps: `secs` and `stdout_lines` rows over the row's
-///   `budget`;
+/// - over-budget steps: step occurrences with a `secs` or `stdout_lines`
+///   row over the row's `budget` (one occurrence breaching both budgets
+///   counts once, with both rows kept as evidence; the evidence names the
+///   `step-occurrences-v1` grain so a breached-row-grain baseline is not
+///   compared against it);
 /// - over-budget workflows: `workflow_lines` rows over the row's `budget`,
 ///   counted apart because file size says nothing about step speed;
 /// - walk seconds per case (setup excluded), compared per case at 50% plus
@@ -849,9 +873,33 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
     }
     let mut steps: Vec<Step> = Vec::new();
     let mut over = Vec::new();
+    // Budgeted rows grouped by step occurrence, keyed by occurrence
+    // ordinal for the case and step. Exported rows are
+    // occurrence-sequential (`secs`, `exit`, `stdout_lines` per
+    // occurrence), so the nth `secs` row starts occurrence n and a
+    // `stdout_lines` row belongs to the latest occurrence started for
+    // that step (its own ordinal when it precedes any `secs` row). A
+    // missing `stdout_lines` row therefore cannot shift the next
+    // occurrence's output onto an earlier occurrence that only breached
+    // its time budget.
+    struct BudgetOccurrence {
+        case: String,
+        step: String,
+        occurrence: usize,
+        breached: bool,
+    }
+    struct BudgetCounter {
+        case: String,
+        step: String,
+        secs: usize,
+        stdout: usize,
+    }
+    let mut over_occurrences: Vec<BudgetOccurrence> = Vec::new();
+    let mut budget_counters: Vec<BudgetCounter> = Vec::new();
     let mut over_workflow = Vec::new();
     let mut friction = 0.0;
     let mut verdicts = Vec::new();
+    let mut readings = Vec::new();
     for (index, row) in rows.iter().enumerate() {
         let line = index + 1;
         let text = |key: &str| {
@@ -922,13 +970,63 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
                 })?;
                 verdicts.push(format!("{case}={class}"));
             }
+            "verdict_reading" => {
+                let reading = row["value"].as_str().ok_or_else(|| {
+                    format!("row {line} ({case}/{step} verdict_reading): value must be a reading")
+                })?;
+                readings.push(format!("{case}={reading}"));
+            }
             _ => {}
         }
-        if FIRST_RUN_BUDGETED.contains(&metric)
-            && let Some(budget) = row["budget"].as_f64()
-            && value > budget
-        {
-            over.push(format!("{case}/{step} {metric} {value} > {budget}"));
+        if FIRST_RUN_BUDGETED.contains(&metric) {
+            let breached = row["budget"].as_f64().is_some_and(|budget| value > budget);
+            let counter_index = budget_counters
+                .iter()
+                .position(|counter| counter.case == case && counter.step == step)
+                .unwrap_or_else(|| {
+                    budget_counters.push(BudgetCounter {
+                        case: case.to_string(),
+                        step: step.to_string(),
+                        secs: 0,
+                        stdout: 0,
+                    });
+                    budget_counters.len() - 1
+                });
+            let occurrence = budget_counters.get_mut(counter_index).map_or(0, |counter| {
+                if metric == "secs" {
+                    let occurrence = counter.secs;
+                    counter.secs += 1;
+                    occurrence
+                } else {
+                    let occurrence = if counter.secs > 0 {
+                        counter.secs - 1
+                    } else {
+                        counter.stdout
+                    };
+                    counter.stdout += 1;
+                    occurrence
+                }
+            });
+            let index = over_occurrences
+                .iter()
+                .position(|seen| {
+                    seen.case == case && seen.step == step && seen.occurrence == occurrence
+                })
+                .unwrap_or_else(|| {
+                    over_occurrences.push(BudgetOccurrence {
+                        case: case.to_string(),
+                        step: step.to_string(),
+                        occurrence,
+                        breached: false,
+                    });
+                    over_occurrences.len() - 1
+                });
+            if let Some(seen) = over_occurrences.get_mut(index) {
+                seen.breached |= breached;
+            }
+            if breached && let Some(budget) = row["budget"].as_f64() {
+                over.push(format!("{case}/{step} {metric} {value} > {budget}"));
+            }
         }
         if metric == FIRST_RUN_WORKFLOW_LINES
             && let Some(budget) = row["budget"].as_f64()
@@ -982,7 +1080,7 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
     let unknown = verdicts.iter().filter(|v| v.ends_with("_unknown")).count();
     let mut out = vec![
         json!({"id": "first_run.failed_steps", "value": failed.len(), "evidence": list(&failed)}),
-        json!({"id": "first_run.over_budget_steps", "value": over.len(), "evidence": list(&over)}),
+        json!({"id": "first_run.over_budget_steps", "value": over_occurrences.iter().filter(|occurrence| occurrence.breached).count(), "evidence": format!("{FIRST_RUN_OVER_BUDGET_GRAIN}: {}", list(&over))}),
         json!({"id": "first_run.over_budget_workflows", "value": over_workflow.len(), "evidence": list(&over_workflow)}),
     ];
     // An install-only walk ran no cases, so a zero here would read as "no
@@ -990,6 +1088,21 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
     if !cases.is_empty() {
         out.push(json!({"id": "first_run.friction_events", "value": friction}));
         out.push(json!({"id": "first_run.unknown_verdicts", "value": unknown, "evidence": format!("verdicts: {}", list(&verdicts))}));
+        // Rows from a walk that predates `verdict_reading` carry none, so the
+        // count is left unmeasured rather than read as zero decisive verdicts;
+        // a cut-off file with fewer readings than cases is an incomplete
+        // sample, not a lower count.
+        if !readings.is_empty() {
+            let decisive = readings
+                .iter()
+                .filter(|reading| reading.ends_with(&format!("={FIRST_RUN_AGREEING_READING}")))
+                .count();
+            let mut row = json!({"id": "first_run.decisive_verdicts", "value": decisive, "evidence": format!("readings: {}", list(&readings))});
+            if readings.len() < cases.len() {
+                row["completed"] = json!(false);
+            }
+            out.push(row);
+        }
     }
     if let Some(install) = install {
         // The install alone, so a slower compile is visible even when the
@@ -1142,6 +1255,20 @@ fn from_spot_check_v2(base_row: &Value) -> bool {
                 sample["detail"]
                     .as_str()
                     .is_some_and(|detail| detail.contains(MUTATION_SPOT_CHECK_SCHEMA_VERSION))
+            })
+    })
+}
+
+/// A baseline row counts step occurrences only when every one of its
+/// samples names that grain in its evidence. A row recorded before the
+/// grain marker counted breached metric rows, so it names nothing.
+fn from_step_occurrence_grain(base_row: &Value) -> bool {
+    base_row["samples"].as_array().is_some_and(|samples| {
+        !samples.is_empty()
+            && samples.iter().all(|sample| {
+                sample["detail"]
+                    .as_str()
+                    .is_some_and(|detail| detail.contains(FIRST_RUN_OVER_BUDGET_GRAIN))
             })
     })
 }
@@ -2386,6 +2513,15 @@ pub(crate) fn compare_with_baseline(
                 ),
             });
         }
+    }
+    if def.id == "first_run.over_budget_steps" && !from_step_occurrence_grain(base_row) {
+        return json!({
+            "comparable": false,
+            "value": base_row["value"],
+            "reason": format!(
+                "baseline counted breached metric rows, before the {FIRST_RUN_OVER_BUDGET_GRAIN} step-occurrence grain; re-run the first-run walk and record a new baseline to compare this metric"
+            ),
+        });
     }
     // Samples with a repository are judged per repository below.
     let incomplete = |r: &Value| {
