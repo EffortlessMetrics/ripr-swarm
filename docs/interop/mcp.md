@@ -511,10 +511,15 @@ human-readable message. The same routes remain available separately in
 valid resource identities; listing a template does not promise its resource
 currently exists. Recognized snapshot, gap and repair resource routes retain
 their typed missing/stale-identity errors without the generic route list.
-A client that negotiated an older protocol version gets resource-not-found
-(`-32002`) for a resource miss; current clients get Invalid Params (`-32602`).
-The SDK maps the code, while the adapter preserves the same bounded message
-and structured recovery routes in both lifecycles.
+Identity misses on those routes (`item_not_found`, `attempt_not_found`) keep
+resource-not-found: a client that negotiated an older protocol version gets
+`-32002`; current clients get Invalid Params (`-32602`). Every other typed
+resource failure is a server state or a bound, not an identity claim —
+`no_snapshot`, `stale_snapshot`, `analysis_in_flight`,
+`workspace_unavailable` and `result_too_large` answer Internal Error
+(`-32603`) on every protocol version, with the same human sentence, the
+same structured recovery routes, and the stable typed state in
+`error.data.code` in both lifecycles.
 The instructions (returned by both `initialize` and `server/discover`) and the
 tool descriptions state positively what each tool returns, its bounds, and
 what it does not do. Protocol errors keep standard JSON-RPC codes. The pinned

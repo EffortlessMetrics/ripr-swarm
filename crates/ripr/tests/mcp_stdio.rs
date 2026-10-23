@@ -1186,7 +1186,10 @@ fn rejection_arms_survive_the_stdio_transport() -> Result<(), String> {
     let snapshot = by_id
         .get("missing-snapshot")
         .ok_or("missing snapshot response")?;
-    if snapshot.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
+    // #9854: `no_snapshot` is a session state, not an identity miss, so the
+    // JSON-RPC code is InternalError; the typed state stays in `data.code`
+    // and the human sentence is unchanged.
+    if snapshot.pointer("/error/code").and_then(Value::as_i64) != Some(-32603)
         || snapshot.pointer("/error/message").and_then(Value::as_str)
             != Some("unavailable snapshot resource: no_snapshot")
         || snapshot.pointer("/error/data/code").and_then(Value::as_str) != Some("no_snapshot")
@@ -1619,7 +1622,10 @@ fn unavailable_workspace_evidence_names_restart_before_any_refresh() -> Result<(
             }
             let resource = id.contains("ripr://");
             let failure = if resource {
-                if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32602) {
+                // #9854: an unavailable root is a server state, so the
+                // resource read answers InternalError; the shared typed
+                // failure (with the restart recovery) rides `data.failure`.
+                if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32603) {
                     return Err(format!("{id} lost resource failure semantics: {reply}"));
                 }
                 reply.pointer("/error/data/failure")
@@ -1828,9 +1834,12 @@ fn gap_tools_fail_closed_before_the_first_refresh() -> Result<(), String> {
     let snapshot = by_id
         .get("snapshot")
         .ok_or_else(|| format!("snapshot response missing: {responses:?}"))?;
-    if snapshot.pointer("/error/code").and_then(Value::as_i64) != Some(-32602) {
+    // #9854: before the first refresh the snapshot resource is a session
+    // state (`no_snapshot`), so the code is InternalError with the typed
+    // state preserved in `data.code` — not a resource-miss categorization.
+    if snapshot.pointer("/error/code").and_then(Value::as_i64) != Some(-32603) {
         return Err(format!(
-            "unknown snapshot resource must stay a current-version resource miss: {snapshot}"
+            "unknown snapshot resource must answer InternalError with its typed state: {snapshot}"
         ));
     }
     if snapshot.pointer("/error/data/code").and_then(Value::as_str) != Some("no_snapshot") {

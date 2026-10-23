@@ -1107,9 +1107,23 @@ fn json_envelope(uri: &str, text: String) -> Value {
     })
 }
 
-/// Standard resource-miss semantics with the typed failure as data: the
+/// Typed resource-failure semantics with the typed failure as data: the
 /// message stays bounded and human-readable, and `data.code` carries the
 /// typed state (`no_snapshot`, `stale_snapshot`, `item_not_found`, …).
+///
+/// #9854: the JSON-RPC code now categorizes the failure instead of reading
+/// "not found" for every kind. Identity misses — the requested id does not
+/// exist (`item_not_found`, `attempt_not_found`) — keep ResourceNotFound
+/// (`-32002`, upgraded to `-32602` for 2026-07-28 peers by the SDK, keeping
+/// `current_snapshot_id` disclosure). Every other kind is a server state or
+/// a bound, not an identity claim: `no_snapshot`, `stale_snapshot`,
+/// `analysis_in_flight`, `workspace_unavailable`, `result_too_large`,
+/// `attempt_invalid`, `superseded`, `seam_not_found`, … answer InternalError
+/// (`-32603`), the closest standard JSON-RPC code, with the same `data`
+/// payload and the same human sentence. `data.code` stays the stable
+/// machine signal for existing clients, so a client branching on the
+/// JSON-RPC code no longer mistakes a retryable state for a missing
+/// namespace.
 fn resource_failure(
     kind: &str,
     failure: &workspace::AttemptFailure,
@@ -1124,10 +1138,13 @@ fn resource_failure(
     if let Some(snapshot_id) = current_snapshot_id {
         data["current_snapshot_id"] = Value::from(snapshot_id);
     }
-    ErrorData::resource_not_found(
-        format!("unavailable {kind} resource: {}", failure.code),
-        Some(data),
-    )
+    let message = format!("unavailable {kind} resource: {}", failure.code);
+    match failure.code {
+        workspace::CODE_ITEM_NOT_FOUND | repair::CODE_ATTEMPT_NOT_FOUND => {
+            ErrorData::resource_not_found(message, Some(data))
+        }
+        _ => ErrorData::internal_error(message, Some(data)),
+    }
 }
 
 /// Serve adapter that answers `ping` by method name on an `initialize`
