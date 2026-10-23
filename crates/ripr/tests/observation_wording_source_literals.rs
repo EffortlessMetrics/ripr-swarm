@@ -4,7 +4,10 @@
 //!
 //! The TypeScript boundary-gap fixture shape is reused with its `amount`
 //! parameter renamed, so the missing-proof text the TypeScript producer writes
-//! carries the identifier through the real analysis and render path.
+//! carries the identifier through the real analysis and render path. A build
+//! without `lang-typescript` cannot observe this adapter path.
+
+#![cfg(feature = "lang-typescript")]
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
