@@ -172,13 +172,19 @@ Options:
                    second --write for the same seam reports the stub already
                    written instead of suffixing a `_2` duplicate.
   --json           Emit one `rust_test_stub` JSON document (schema_version
-                   `0.2`) with the placement, test name, exact text, the
+                   `0.3`) with the placement, test name, exact text, the
                    `todo!()` fill-ins, derived inputs, run command, and
                    inventory `grip_class` plus check `classification`
                    when known. A strongly_gripped seam stays `state:
                    ready` (exit 0) and discloses the real reason in
                    `warnings` and human output: its tests already
-                   discriminate it.
+                   discriminate it. When the seam's repair route is
+                   established, the ready document also carries
+                   `next_repair`: the `ripr agent repair --seam-id <id>`
+                   start command, the repair packet's admitted edit
+                   surface, and — when the stub's placement differs from
+                   that surface — a `placement_divergence` naming both
+                   files.
 
 The stub calls the changed function with its real receiver and parameters,
 fills a boundary input when the changed comparison names one, and stops at a
