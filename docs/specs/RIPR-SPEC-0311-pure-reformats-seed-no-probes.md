@@ -106,7 +106,10 @@ Neutrality still requires all of:
   `a && b`, separated range dots stay apart, word boundaries are kept;
 - no line holding a position-observing macro (`line!`, `column!`): each
   expands from the source position it sits at, so moving the line moves
-  its value even when every token is unchanged;
+  its value even when every token is unchanged. The caller's whole-file
+  `prose_lines` sets carry each invocation's full span (name through
+  closing delimiter), so a name and its `!` split across lines — where no
+  single line names the macro — is guarded too;
 - no line holding a whitespace character literal (`' '` or a real tab
   between quotes): joining collapses whitespace runs and would erase the
   literal's content from the comparison;
@@ -166,7 +169,11 @@ A token change inside a rewrap (`a + b` -> `a + c`) still seeds its probe.
   `rewrap_normalization_keeps_word_boundaries` (pure-reformat acceptance
   plus word-boundary and operator controls),
   `position_literal_and_joint_punct_guards_keep_reformats_probed`
-  (position-macro, whitespace-literal, and joint-punct controls).
+  (position-macro, whitespace-literal, and joint-punct controls),
+  `a_split_position_macro_keeps_its_rewrap_probed` and
+  `a_reindented_split_position_macro_keeps_its_probe` (a name and `!`
+  split across lines stays probed through the rewrap and reindent
+  paths).
 - Existing guards keep their tests: `a_respelling_inside_stringify_is_not_neutral`,
   `a_prose_line_on_one_side_keeps_a_shifted_rewrap_probed`,
   `rewrap_keeps_separated_dots_apart` (example 5 family).

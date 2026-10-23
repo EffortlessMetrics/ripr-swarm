@@ -980,8 +980,9 @@ fn join_tokens(lines: &[&str]) -> String {
     out
 }
 
-/// 1-based lines of `source` that hold string or comment text, or sit inside a
-/// token-observing macro (see [`token_macro_lines`]), read from the
+/// 1-based lines of `source` that hold string or comment text, or sit inside
+/// a token- or position-observing macro (see [`token_macro_lines`] and
+/// [`position_macro_lines`]), read from the
 /// whole file so a continuation line inside a multi-line literal counts (the
 /// per-line quote check cannot see it). A line whose only masked spans are
 /// character literals (`'x'`) holds code, which the mask also erases.
@@ -997,6 +998,7 @@ fn prose_lines(source: &str) -> std::collections::BTreeSet<usize> {
         .map(|(at, _)| at + 1)
         .collect::<std::collections::BTreeSet<_>>();
     lines.extend(token_macro_lines(source));
+    lines.extend(position_macro_lines(source));
     lines
 }
 
@@ -1138,6 +1140,28 @@ fn has_whitespace_char_literal(line: &str) -> bool {
 /// a name inside a string or comment does not count. An invocation that never
 /// closes runs to the end of the file, which keeps its probes.
 fn token_macro_lines(source: &str) -> std::collections::BTreeSet<usize> {
+    macro_invocation_lines(source, &TOKEN_MACROS)
+}
+
+/// 1-based lines of `source` inside a position-observing macro invocation
+/// (`line!`, `column!`), from the macro name through its closing delimiter,
+/// with the same whole-file read as [`token_macro_lines`]. A name and its `!`
+/// may sit on different lines, where no single line names the macro, so the
+/// per-line [`observes_position`] alone cannot be the guard: a rewrap or
+/// reindent of the split invocation still moves the expansion's position.
+fn position_macro_lines(source: &str) -> std::collections::BTreeSet<usize> {
+    macro_invocation_lines(source, &POSITION_MACROS)
+}
+
+/// 1-based lines of `source` inside an invocation of a macro named in
+/// `names`, from the macro name through its closing delimiter, read from the
+/// masked file so a name inside a string or comment does not count. An
+/// invocation that never closes runs to the end of the file, which keeps its
+/// probes.
+fn macro_invocation_lines(
+    source: &str,
+    names: &[&str],
+) -> std::collections::BTreeSet<usize> {
     let masked = mask_comments_and_strings(source);
     let bytes = masked.as_bytes();
     let newlines = bytes
@@ -1148,7 +1172,7 @@ fn token_macro_lines(source: &str) -> std::collections::BTreeSet<usize> {
         .collect::<Vec<_>>();
     let line_of = |at: usize| newlines.partition_point(|&newline| newline < at) + 1;
     let mut lines = std::collections::BTreeSet::new();
-    let mut bangs = macro_bangs(&masked, &TOKEN_MACROS);
+    let mut bangs = macro_bangs(&masked, names);
     bangs.sort_unstable();
     let mut covered_to = 0usize;
     for (at, after_bang) in bangs {
@@ -2972,6 +2996,50 @@ mod tests {
             &["let v = m!(a -> b);"],
             &["let v = m!(a -", "    > b);"]
         ));
+    }
+
+    /// A position macro whose name and `!` sit on different lines names no
+    /// single line, so the per-line guard reads nothing; the whole-file
+    /// invocation-span scan must still keep the block probed, because the
+    /// rewrap moves the expansion's line.
+    #[test]
+    fn a_split_position_macro_keeps_its_rewrap_probed() {
+        let lines = position_macro_lines("fn f() {\n    line\n    !()\n}\n");
+        assert_eq!(lines, std::collections::BTreeSet::from([2, 3]), "{lines:?}");
+        // The rewrap changes the value (1 -> 2) while the joined token
+        // streams stay identical.
+        let source = "pub fn value() -> u32 {\n    line\n    !()\n}\n";
+        let split = block_probes(
+            source,
+            &[
+                (1, "pub fn value() -> u32 {"),
+                (2, "    line"),
+                (3, "    !()"),
+                (4, "}"),
+            ],
+            &[(1, 1, "pub fn value() -> u32 { line"), (2, 1, "!() }")],
+        );
+        assert!(
+            !split.is_empty(),
+            "a split line!() keeps its probe: {split:?}"
+        );
+    }
+
+    /// Indenting only the name of a split `column!()` moves its expansion
+    /// column while the replaced pair stays trim-equal, so the reindent path
+    /// must be vetoed by the whole-file span scan too.
+    #[test]
+    fn a_reindented_split_position_macro_keeps_its_probe() {
+        let new_source = "pub fn value() -> u32 {\n    column\n  !()\n}\n";
+        let reindented = block_probes(
+            new_source,
+            &[(2, "    column")],
+            &[(2, 2, "  column")],
+        );
+        assert!(
+            !reindented.is_empty(),
+            "a reindented split column!() keeps its probe: {reindented:?}"
+        );
     }
 
     #[test]
