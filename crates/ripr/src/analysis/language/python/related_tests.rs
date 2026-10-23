@@ -861,12 +861,45 @@ fn is_compound_header_colon(head: &str) -> bool {
             | "class"
             | "async"
     );
-    let depth = head.chars().fold(0i32, |depth, ch| match ch {
-        '(' | '[' | '{' => depth + 1,
-        ')' | ']' | '}' => depth - 1,
-        _ => depth,
-    });
-    header && depth == 0
+    header && brackets_balanced_outside_strings(head)
+}
+
+/// Whether every bracket opened in `text` is closed by its own kind, ignoring
+/// string-literal contents (`")"`, `'}'`) and a trailing `#` comment. A
+/// mismatch, an unmatched closer or an unterminated string is not balanced, so
+/// the caller fails closed.
+fn brackets_balanced_outside_strings(text: &str) -> bool {
+    let mut stack: Vec<char> = Vec::new();
+    let mut chars = text.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '(' => stack.push(')'),
+            '[' => stack.push(']'),
+            '{' => stack.push('}'),
+            ')' | ']' | '}' => {
+                if stack.pop() != Some(ch) {
+                    return false;
+                }
+            }
+            '"' | '\'' => {
+                let mut closed = false;
+                while let Some(inner) = chars.next() {
+                    if inner == '\\' {
+                        chars.next();
+                    } else if inner == ch {
+                        closed = true;
+                        break;
+                    }
+                }
+                if !closed {
+                    return false;
+                }
+            }
+            '#' => break,
+            _ => {}
+        }
+    }
+    stack.is_empty()
 }
 
 /// Whether the construction at `idx` is the whole right-hand side of its
