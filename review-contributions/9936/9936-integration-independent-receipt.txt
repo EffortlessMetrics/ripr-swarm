@@ -1,0 +1,29 @@
+Independent integration-source review
+UTC: 2026-10-23T18:36:06.841307+00:00
+Subject tree: 33e261a44efd26285496627dffdde12cc8b6e5a9 (Git type tree)
+Reviewed isolated head: abcadfd89d7db4de544e05b784dc1037e3dad1ff
+Main basis: f63a722a243bcd9574288ccf28ba1ec63f41d549
+Merge base: aea8941af0ade0dc31094c5a96852c0f1d99bec9
+Disposition: integration SOURCE ACCEPTED; not a candidate commit, main landing, product-suite pass, REVIEW_READY or merge clearance.
+Resolved classifier delta over isolated head: only ts_mask_literals_and_comments_division_only, directly ts_mask_lexically(text,false,&BTreeSet::new()); no AST preparation on that path.
+Resolved tests_extract: retains main rewritten_identifier_names, written_locals_in_file population/initializer, identifier_written_strictly, and byte_preserving_division_mask. Shared width adapter changed from owned String to borrowed str with identical character/byte expansion logic. Typed normal mask + unused-function source kind preserved.
+Main owners.rs/types.rs/related_tests.rs/tests/commonjs_default_function_tests.rs blobs unchanged by integration; existing division/strict-write consumers retained.
+Exact-source hashes:
+cb3f27a96da4ba43d3a1051d5aefc64938728cf7920cad867bc12ddeafeee782 6f39efaa12dc18b1ebee51a48d80c94d0db21317 crates/ripr/src/analysis/language/typescript/classifier.rs
+f2a21cd9a11a5ed7c4ee3dc97d1a7c401ced65fb1bd47a29d197e7610bfdc95e 2bad8d396fa90d5f7d4a476d118464281b4efb2f crates/ripr/src/analysis/language/typescript/tests_extract.rs
+6c2259f5d7a90b5fce6995a982cddfa2fc71f66df5fc874533b3264186ab5d7e cc6db45550ae7f991632a1fea8843845eac2d2c4 crates/ripr/src/analysis/language/typescript/literal_mask.rs
+Observed execution: isolated standalone Rust1.95.0 exact extracted classifier + pinned literal_mask module + byte adapters + strict scanner compiled terminal0 using cached matching OXC0.130.0 deps; this is not a complete product build.
+41 prior independent typed/normal controls:41 passed,0 failed; all assert source byte width. Raw masks/write offsets in consumer.log.
+8 division compatibility controls passed. ASCII division outputs equal separately compiled exact-main lexical helper; Unicode byte wrapper preserves original source width. Raw evidence in division-compat.log.
+Discriminating control: `const q = /module.exports = 0/; const t = `x`;` loses fake payload in normal AST-aware mask but retains it in division-only mask. This rejects accidentally routing the division-only helper through AST preparation.
+No Cargo, CI, candidate checkout mutation, publication or canonical branch mutation. Root product driver still targets isolated head; its outcome does not qualify this integration tree.
+Residual: full integration-tree product/adapter proof, canonical author adoption, exact published-head review, hosted checks/protection inspection and normal merge remain pending; context-free ambiguous snippets retain documented lexical fallback.
+Resources: own standalone source/binaries/logs retained in /workspace/9936-integration-independent for contribution handoff; shared review worktree and Cargo targets untouched.
+Artifact SHA256s:
+06162456f17f6b878a755d72508e25b2c8df1486d5f402616ea309433e29cd06  consumer
+dd0d147f5603a67e49f030b748d852515873d5c7a888df3a679ab039f8e53fc7  consumer.log
+a3ad7e0a9de09fbd4f77678529a3f4ba38bc7ec3e62d308588dc92110d358b52  consumer.rs
+5b7e9bd498abff6fb3b28eea193806724311e9fec5bde81d96be6c5893b69461  division-compat.log
+6c2259f5d7a90b5fce6995a982cddfa2fc71f66df5fc874533b3264186ab5d7e  literal_mask.rs
+7c71ced23f814d6a375a80aba4c3f07427c6245f6752d467ae60c9c755088d86  main-masker
+d8966117e12a8bb25e83048e7fd67b78b326cc36e6026d6c89ea459f96104719  main-masker.rs

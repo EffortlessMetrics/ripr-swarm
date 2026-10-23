@@ -1,0 +1,39 @@
+Independent exact-source review receipt
+UTC: 2026-10-23T18:31:53.195903+00:00
+Reviewed head: abcadfd89d7db4de544e05b784dc1037e3dad1ff
+Tree: ca171fc42127e00344fe8e423b17f6abc3ab2dc8
+Production execution basis: fabc2a8aeb5002791fdbd938ff6e398bb718820d; changed source and helper bytes identical at reviewed head except Cargo optional-dependency wiring separately inspected.
+Disposition: SOURCE REVIEW ACCEPTED / REVIEW_INCOMPLETE for product proof, author adoption, current-main integration and hosted checks. No merge clearance.
+Observed source hashes (SHA256, Git blob, path, identical to execution basis):
+da26ccdd5783b07611ebae8e65767cc178b14c9941f64badc0da3021eac29283 d402097fbff8c4c5408ad846ede87207e957be5b crates/ripr/src/analysis/language/typescript/classifier.rs identical=True
+6c2259f5d7a90b5fce6995a982cddfa2fc71f66df5fc874533b3264186ab5d7e cc6db45550ae7f991632a1fea8843845eac2d2c4 crates/ripr/src/analysis/language/typescript/literal_mask.rs identical=True
+2b71126ffb09fe5cbcfca8a17b1a104cfcebfc41200675cdca9a4e01cb317b4b d116563889c7cb6b1fe6a9abd612f8f928d5e2bd crates/ripr/src/analysis/language/typescript/tests_extract.rs identical=True
+e000c2a9570eb04c8f9baf5624ade009f5e42c0161aaa441e59060da3c6fccbd d7cde6160215ac6c72f15af1db48c11bce568456 crates/ripr/src/analysis/language/typescript/admission.rs identical=True
+cd809c2ecfdfa5f4d708bab443756412a502de62d871a52b01cc1540454e5528 55ad72c84e351357c1b8ff1308c725758dce13a0 crates/ripr/src/analysis/language/typescript/mock_payload_guard.rs identical=True
+5069284ffccee92dc9c21a3ef2971730faa626c09f51cd675ac47cbabb1d5842 6266e5c746ec48177adf193f9bbbd159ed54ad13 crates/ripr/src/analysis/language/typescript/mock_payload_guard/spy.rs identical=True
+e63faf98d9c0a7c55cf1faa0cd677521d513f1bef4b88ce9983fcc2baa737ced 3f465cbef708f87d3f6f0b3ee7c393afcb2f60b5 crates/ripr/Cargo.toml identical=False
+
+Validation observed: standalone Rust1.95.0 compiled exact extracted masker + AST plan + explicit-source byte wrapper + strict write scanner (terminal exit0). Used cached OXC0.130.0 dependencies and source-checksummed visitor dependency. This is not a full product/dependency rebuild.
+Rust source assembly adjusts module qualification only: super::literal_mask -> local literal_mask; super::classifier -> root functions; pub(super) visibility adjusted for standalone helper compilation.
+Command: rustc --edition 2024 -A dead_code consumer.rs -L dependency=/workspace/ripr-swarm/target/debug/deps --extern oxc_allocator=liboxc_allocator-63c70161c767fb6e.rlib --extern oxc_ast=liboxc_ast-8c51c2d567d7d518.rlib --extern oxc_ast_visit=/workspace/9936-repair/liboxc_ast_visit.rlib --extern oxc_parser=liboxc_parser-37443d22c8e823bf.rlib --extern oxc_span=liboxc_span-7ad3a525337da68b.rlib -o consumer
+Independent executable controls:41; failures:0. consumer.log retains masks and actual test-write offsets. Every control asserts exact byte width. Includes private keyword members, for-await and obj.for/await ASI, ambiguous identical-byte TS/TSX, generic JSX and constrained generic arrow/shift, JSX attribute false/real writes, nested/direct element/fragment attrs, spread attributes/children, nested regex, combining-mark JSX identifiers, regex/JSX operands followed by division, template JSX, Unicode literal/regex offsets.
+Cases are retained in cases.json.
+Native TypeScript5.9.3: --noEmit --target ES2022 --skipLibCheck native.ts; terminal exit0.
+Native TypeScript5.9.3: --noEmit --jsx preserve --target ES2022 --skipLibCheck native.tsx; terminal exit0.
+Native controls are in native.ts/native.tsx; ambiguous TS/TSX pair uses earlier independently compiled/executed identical-byte proof.
+Source-kind audit: BindingScan + extended registrations take Program.source_type; module-spy guard uses owner file source kind; spy-safe file + spy callback use test file source kind; unused-function pruning receives file source kind.
+Feature boundary: oxc_ast_visit optional and enabled by lang-typescript, matching existing OXC companions.
+Residual: context-free snippets with disagreeing successful parses use original lexical fallback; no universal ambiguity resolution claimed. Class-entry snippet masking remains context-free and weak reach. No additional defect found in reviewed AST preparation or selected strong-admission paths.
+No Cargo, CI, publication, canonical branch mutation, review-worktree mutation or product/full-suite execution by this reviewer. Root owns product driver and later proof.
+Integration judgment: read current-main f63a722a classifier division-only helper, tests_extract byte-mask wrapper and owner consumers. Preserve that independent safety route on adoption. ts_mask_literals_and_comments_division_only must call ts_mask_lexically(text, false, &BTreeSet::new()) directly (or equivalent direct lexical false implementation); it must not call literal_mask::prepare/AST preparation. AST masking would erase the independent division interpretation on which consensus consumers rely. Refresh current-main integration proof and resulting exact-head review after composition.
+Resources: own evidence directory retained for contribution handoff; own standalone consumer executable is review-only, not qualified release/product executable. Shared candidate tree and shared Cargo targets untouched.
+Artifact SHA256s:
+f1fca49cf4d507e507eba0e1edc6669dafbb78b815d9e1af91c071ffcc714844  /workspace/9936-ast-independent/cases.json
+7fa29d280bb5e0514246ef15cc76f9411e247d06096fc5e34f628762c2680680  /workspace/9936-ast-independent/consumer
+cccf0ea6ad6d683dda1f49f60553269036eccce1b399411647bff14d337035e0  /workspace/9936-ast-independent/consumer.log
+29425d339b175381986bcaf440148c1ab3d1ab5c0f36b5411796f0d0dfd5eefc  /workspace/9936-ast-independent/consumer.rs
+6c2259f5d7a90b5fce6995a982cddfa2fc71f66df5fc874533b3264186ab5d7e  /workspace/9936-ast-independent/literal_mask.rs
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  /workspace/9936-ast-independent/native-ts.log
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  /workspace/9936-ast-independent/native-tsx.log
+eeed710d16eefd3bbbece8bc73cde440f78fe890d99920ec4d5b89f6e7712d05  /workspace/9936-ast-independent/native.ts
+73e4d37404167321b20425d27c598002464d5ac63e535bf1b6d736119c4116e5  /workspace/9936-ast-independent/native.tsx

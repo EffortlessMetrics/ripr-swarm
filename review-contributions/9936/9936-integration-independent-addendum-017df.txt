@@ -1,0 +1,14 @@
+Exact-commit binding addendum
+UTC: 2026-10-23T18:45:44.682125+00:00
+Commit: 017df5f102194b398c9f9879df8becda9efdc45b
+Tree: 33e261a44efd26285496627dffdde12cc8b6e5a9
+First parent (source-only portable commit): 653b860a669df2bc1b0b763a442be69ea511382a
+Second parent (main integration basis): f63a722a243bcd9574288ccf28ba1ec63f41d549
+Source-only parent tree: ca171fc42127e00344fe8e423b17f6abc3ab2dc8; exactly equals previously reviewed/tested isolated abcadfd89 tree.
+Observed via immutable git show/rev-parse: commit has exactly the reviewed integration tree and ordered parents; diff between reviewed tree and commit tree is empty.
+Original integration-source receipt: /workspace/9936-integration-independent/receipt.txt
+Original receipt SHA256: eae6e9c82a926b6b84a869e1b0e93c4d598cc15a1a3893753d6510b4bbc6229b
+The original independent integration source acceptance applies unchanged to this exact commit. No repeated executable controls were needed or run: source tree bytes are identical. Existing evidence remains41 standalone normal/typed controls and8 division compatibility controls, not a full product/adapter suite.
+Disposition: source/integration review accepted for this immutable portable commit; no canonical adoption, publication, main landing or merge clearance established by this addendum.
+Product integration driver28145 is owned by root and was reported running; no terminal result was read or claimed here. Any isolated-abc product pass retains its original source identity and is not relabelled as this integration commit.
+No Cargo, CI, checkout/source mutation, canonical branch mutation or publication by reviewer. Retained artifact: this addendum and original receipt/evidence directory.
