@@ -1,3 +1,0 @@
-case = "shape-let-else-branch-pinned"
-issue = 9440
-reason = "Rust exact pin read as gap (#9440)."
