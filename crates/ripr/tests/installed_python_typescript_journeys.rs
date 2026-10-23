@@ -170,6 +170,16 @@ fn gap_start_tokens(text: &str) -> Option<(String, String)> {
     Some((value_after("--gap-id")?, value_after("--base")?))
 }
 
+/// Moves the materialized repository onto a feature branch whose default
+/// comparison base (`main`) is the base commit, so a plain `ripr check --root`
+/// (the command pilot routes to, which carries no `--base`) analyzes the head
+/// diff instead of the empty `main`-against-`main` comparison.
+#[cfg(feature = "lang-typescript")]
+fn onto_feature_branch(root: &Path) -> Result<(), String> {
+    fixture_git_ok(root, &["checkout", "-q", "-b", "feature"])?;
+    fixture_git_ok(root, &["branch", "-f", "main", "HEAD~1"])
+}
+
 /// Published repair-attempt manifests under the root. The before-phase lock
 /// directory exists after any attempt to start; a manifest only after a start.
 #[cfg(feature = "lang-typescript")]
@@ -440,8 +450,11 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
     // next `ripr check --root` uses. That check prints a start, so status
     // must not claim `ripr check` offers none, and the start it names is the
     // one check prints.
+    onto_feature_branch(&root)?;
     let (routed_ok, routed_check) = ripr(&decoy, &["check", "--root", &root_arg])?;
     expect_exit(routed_ok, true, "routed check")?;
+    let (status_ok, status) = ripr(&decoy, &["agent", "status", "--root", &root_arg])?;
+    expect_exit(status_ok, true, "agent status on the feature branch")?;
     let check_start = gap_start_tokens(&routed_check)
         .ok_or_else(|| format!("the routed check printed no gap-bound start:\n{routed_check}"))?;
     if status.contains("offers no `ripr agent repair` start") {
@@ -877,8 +890,12 @@ fn typescript_status_warning_keeps_the_no_start_claim_for_refused_variants() -> 
             Some(toml),
         )?;
         let root_arg = root.to_string_lossy().into_owned();
+        onto_feature_branch(&root)?;
         let (check_ok, check) = ripr(&decoy, &["check", "--root", &root_arg])?;
         expect_exit(check_ok, true, variant)?;
+        if check.contains("nothing was in scope") {
+            return Err(format!("{variant}: the control analyzed no diff:\n{check}"));
+        }
         if gap_start_tokens(&check).is_some() {
             return Err(format!("{variant}: check printed a start:\n{check}"));
         }
