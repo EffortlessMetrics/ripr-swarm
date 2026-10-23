@@ -79,11 +79,14 @@
 //! - closure callback (#9981): a helper that invokes a closure parameter
 //!   (`let got = f(); assert_eq!(got, want);`) is credited only when the
 //!   test passes a closure literal that makes a call at that exact
-//!   parameter position. The parameter must be a plain identifier bound
-//!   nowhere else in the helper and invoked as a statement-level free call
-//!   (not in a nested closure, macro arguments or method chain), and only
-//!   assertions at or after the first invocation are copied. The
-//!   parameter's own call is not added to the test.
+//!   parameter position on an eager path. The parameter must be an immutable
+//!   plain identifier bound nowhere else in the helper and invoked on an
+//!   eager statement path (not in a nested closure, macro arguments or method
+//!   chain). Only unique parser-backed observation sites after that invocation
+//!   are copied; line equality alone cannot establish order. Scanner-only
+//!   spellings without a matching parsed site remain unsupported. The
+//!   parameter's own call is not added to the test. The separate plain-helper
+//!   path's unused/forwarded callback limitation remains tracked by #9997.
 //!
 //! The credited calls sit outside the test's line span. Value resolution
 //! reads only [`TestFact::body_calls`], because a helper call's arguments
@@ -235,7 +238,7 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
             // plain, but it is credited when this test passes a closure
             // literal at exactly such a parameter.
             let mut callback_names: Vec<String> = Vec::new();
-            let mut first_callback_line = 0;
+            let mut callback_assertions = BTreeSet::new();
             if !helper_body_is_plain(scopes, &helper_key, helper, &[]) {
                 let invoked = helper_callbacks
                     .entry((test.file.clone(), helper.start_line, helper.name.clone()))
@@ -263,11 +266,10 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
                 {
                     continue;
                 }
-                first_callback_line = reached
+                callback_assertions = reached
                     .iter()
-                    .map(|param| helper.start_line + param.first_call_line - 1)
-                    .min()
-                    .unwrap_or(usize::MAX);
+                    .flat_map(|param| param.following_assertions.iter().cloned())
+                    .collect();
                 callback_names = names;
             }
             // Parser-backed oracles only, as for ordinary tests: a
@@ -280,14 +282,22 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
             else {
                 continue;
             };
-            // The closure runs at the helper's first invocation, so only an
-            // assertion at or after it can observe what the closure did.
+            // Require a unique parser-backed observation site after an eager
+            // invocation. A line number cannot order two statements on one
+            // line, and scanner-only spellings cannot borrow a nearby site.
             let assertions = if callback_names.is_empty() {
                 assertions
             } else {
                 let observing = assertions
                     .into_iter()
-                    .filter(|assertion| assertion.line >= first_callback_line)
+                    .filter(|assertion| {
+                        assertion
+                            .line
+                            .checked_sub(helper.start_line)
+                            .is_some_and(|offset| {
+                                callback_assertions.contains(&(offset + 1, assertion.text.clone()))
+                            })
+                    })
                     .collect::<Vec<_>>();
                 if observing.is_empty() {
                     continue;

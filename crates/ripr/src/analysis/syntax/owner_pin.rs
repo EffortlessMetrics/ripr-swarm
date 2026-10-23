@@ -4049,6 +4049,52 @@ fn is_standard_qualified_macro(path: &str, call: &ast::MacroCall, trusted: &[&st
         && std_macro_root_is_unrebound(&path, call.syntax())
 }
 
+/// The callback helper producer shares the ordinary eager-path and escape
+/// authority, without following deferred function-like contexts. An opaque
+/// macro or an earlier exit cannot establish that a callback/observation runs.
+pub(super) fn callback_node_is_eager(node: &SyntaxNode, function: &ast::Fn) -> bool {
+    let Some(body) = function.body() else {
+        return false;
+    };
+    if node
+        .ancestors()
+        .take_while(|ancestor| ancestor != body.syntax())
+        .any(|ancestor| {
+            ast::ClosureExpr::can_cast(ancestor.kind())
+                || ast::Fn::can_cast(ancestor.kind())
+                || ast::BlockExpr::cast(ancestor).is_some_and(|block| block.async_token().is_some())
+        })
+        || has_escape(body.syntax(), TRUSTED_MACRO_NAMES, &BTreeMap::new(), &[]).is_some()
+    {
+        return false;
+    }
+    let first_exit = body
+        .syntax()
+        .descendants()
+        .filter(|node| {
+            ast::ReturnExpr::can_cast(node.kind()) || ast::TryExpr::can_cast(node.kind())
+        })
+        .filter(|node| {
+            let is_try = ast::TryExpr::can_cast(node.kind());
+            node.ancestors()
+                .skip(1)
+                .find(|owner| {
+                    ast::Fn::can_cast(owner.kind())
+                        || ast::ClosureExpr::can_cast(owner.kind())
+                        || ast::BlockExpr::cast(owner.clone()).is_some_and(|block| {
+                            block.async_token().is_some()
+                                || block.gen_token().is_some()
+                                || is_try && block.try_block_modifier().is_some()
+                        })
+                })
+                .is_some_and(|owner| owner == *function.syntax())
+        })
+        .map(|node| node.text_range().start())
+        .chain(root_divergence_start(function))
+        .min();
+    eager_path(node.clone(), function, true, first_exit).is_ok()
+}
+
 /// `Ok` when the invocation runs on every execution of the test body;
 /// otherwise the construct that may skip it, phrased for a reader.
 fn eager_path(

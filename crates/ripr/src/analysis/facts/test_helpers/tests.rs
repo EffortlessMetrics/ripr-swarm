@@ -1067,4 +1067,97 @@ fn closure_callback_credit_does_not_reach_helper_callbacks_in_another_module()
     Ok(())
 }
 
+#[test]
+fn callback_credit_refuses_an_invocation_under_a_false_branch() -> Result<(), Box<dyn Error>> {
+    let index = index_for(&callback_source(
+        "    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        if false { let _ = f(); }\n        assert_eq!(want, true);\n    }\n",
+        "        run_test(true, || gate(11));\n",
+    ))?;
+    let test = test_named(&index, "boundary")?;
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
+    Ok(())
+}
+
+#[test]
+fn callback_credit_refuses_a_same_line_assertion_before_the_invocation()
+-> Result<(), Box<dyn Error>> {
+    let index = index_for(&callback_source(
+        "    fn run_test(want: bool, f: impl FnOnce() -> bool) { assert_eq!(want, true); let _ = f(); }\n",
+        "        run_test(true, || gate(11));\n",
+    ))?;
+    let test = test_named(&index, "boundary")?;
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
+    Ok(())
+}
+
+#[test]
+fn callback_credit_keeps_a_same_line_assertion_after_the_invocation() -> Result<(), Box<dyn Error>>
+{
+    let index = index_for(&callback_source(
+        "    fn run_test(want: bool, f: impl FnOnce() -> bool) { let got = f(); assert_eq!(got, want); }\n",
+        "        run_test(true, || gate(11));\n",
+    ))?;
+    let test = test_named(&index, "boundary")?;
+    assert_eq!(assertion_texts(test), vec!["assert_eq!(got, want);"]);
+    Ok(())
+}
+
+#[test]
+fn callback_credit_refuses_reassignment_to_a_function_path() -> Result<(), Box<dyn Error>> {
+    let index = index_for(&callback_source(
+        "    fn always_true() -> bool { true }\n    fn run_test(want: bool, mut f: fn() -> bool) { f = always_true; let got = f(); assert_eq!(got, want); }\n",
+        "        run_test(true, || gate(11));\n",
+    ))?;
+    let test = test_named(&index, "boundary")?;
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
+    Ok(())
+}
+
+#[test]
+fn callback_credit_keeps_unrelated_nested_function_returns_out_of_the_prefix()
+-> Result<(), Box<dyn Error>> {
+    let index = index_for(&callback_source(
+        CALLBACK_HELPER,
+        "        fn other() { return; }\n        run_test(true, || gate(11));\n",
+    ))?;
+    let test = test_named(&index, "boundary")?;
+    assert_eq!(assertion_texts(test), vec!["assert_eq!(got, want);"]);
+    Ok(())
+}
+
+#[test]
+fn callback_credit_refuses_skipped_or_ambiguous_observations() -> Result<(), Box<dyn Error>> {
+    for (helper, body) in [
+        (
+            "    fn run_test(want: bool, f: impl FnOnce() -> bool) { if want { return; } let got = f(); assert_eq!(got, want); }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "    fn run_test(want: bool, f: impl FnOnce() -> bool) { early_exit!(); let got = f(); assert_eq!(got, want); }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            CALLBACK_HELPER,
+            "        if false { run_test(true, || gate(11)); }\n",
+        ),
+        (
+            "    fn run_test<F, T>(want: bool, f: F) where F: FnOnce() -> T { let _ = f(); assert_eq!(want, true); }\n",
+            "        run_test(true, async || gate(11));\n",
+        ),
+        (
+            "    fn run_test(want: bool, f: impl FnOnce() -> bool) { assert_eq!(want, true); let _ = f(); assert_eq!(want, true); }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+    ] {
+        let index = index_for(&callback_source(helper, body))?;
+        let test = test_named(&index, "boundary")?;
+        assert!(
+            test.assertions.is_empty(),
+            "{helper} / {body}: {:?}",
+            assertion_texts(test)
+        );
+    }
+    Ok(())
+}
+
 mod assertion_macros;

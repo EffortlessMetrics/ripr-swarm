@@ -12,10 +12,13 @@
 //! argument positions of a direct call to the helper hold a closure literal
 //! that makes a call. The helper side asks which of its parameters it
 //! invokes as a plain statement-level call. The facts producer credits the
-//! helper's assertion only when the two meet, so a closure that is never run
-//! (the helper does not call the parameter) earns nothing.
+//! helper's assertion only when the two meet on eager paths and the
+//! assertion's unique parser range follows the invocation. The existing
+//! plain-helper path is separate; its unused/forwarded callback limitation
+//! remains tracked by #9997.
 
 use super::*;
+use crate::analysis::syntax::owner_pin::callback_node_is_eager;
 use ra_ap_syntax::ast::HasArgList;
 
 /// A helper parameter the helper body invokes directly (`f()`).
@@ -23,13 +26,14 @@ use ra_ap_syntax::ast::HasArgList;
 pub(crate) struct InvokedCallbackParam {
     pub(crate) position: usize,
     pub(crate) name: String,
-    /// 1-based line of the first invocation, relative to the parsed text.
-    pub(crate) first_call_line: usize,
+    /// Unique parser-backed observation sites after the invocation, keyed as
+    /// the helper oracle producer keys them (relative line and exact text).
+    pub(crate) following_assertions: BTreeSet<(usize, String)>,
 }
 
 /// Argument positions at which a direct call to `helper` in `test_text`
-/// passes a closure literal whose body makes a call. A call under a closure,
-/// `async` block or nested `fn` of the test may never run and is ignored.
+/// passes a synchronous closure literal whose body makes a call. The helper
+/// call must be on the test's eager path, outside deferred function-like code.
 /// `None` when the text does not parse cleanly.
 pub(crate) fn closure_argument_positions(test_text: &str, helper: &str) -> Option<BTreeSet<usize>> {
     let parse = parse_clean_source_file(test_text)?;
@@ -43,6 +47,7 @@ pub(crate) fn closure_argument_positions(test_text: &str, helper: &str) -> Optio
     for call in body.syntax().descendants().filter_map(ast::CallExpr::cast) {
         if enclosed_by_nested_fn_like(call.syntax(), &body)
             || single_segment_callee(&call).as_deref() != Some(helper)
+            || !callback_node_is_eager(call.syntax(), &function)
         {
             continue;
         }
@@ -53,6 +58,11 @@ pub(crate) fn closure_argument_positions(test_text: &str, helper: &str) -> Optio
             let ast::Expr::ClosureExpr(closure) = argument else {
                 continue;
             };
+            // Calling an async closure creates a future; it does not run
+            // the owner call in its body. That needs a separately proved poll.
+            if closure.async_token().is_some() {
+                continue;
+            }
             let makes_call = closure.body().is_some_and(|closure_body| {
                 closure_body.syntax().descendants().any(|node| {
                     ast::CallExpr::can_cast(node.kind())
@@ -69,9 +79,10 @@ pub(crate) fn closure_argument_positions(test_text: &str, helper: &str) -> Optio
 
 /// Parameters of the free function in `helper_text` that its body invokes as
 /// `param(..)` outside any closure, `async` block or nested `fn`. A
-/// parameter counts only as a plain identifier binding that nothing else in
-/// the function rebinds, so a shadowing `let` or pattern cannot redirect the
-/// call. A method (`self`) or an unparsable text yields `None`.
+/// parameter counts only as an immutable plain identifier binding that nothing
+/// else in the function rebinds, so assignment, a shadowing `let` or a pattern
+/// cannot redirect the call. The invocation shares ordinary eager/escape
+/// admission. A method (`self`) or an unparsable text yields `None`.
 pub(crate) fn invoked_callback_params(helper_text: &str) -> Option<Vec<InvokedCallbackParam>> {
     let parse = parse_clean_source_file(helper_text)?;
     let function = parse
@@ -90,7 +101,10 @@ pub(crate) fn invoked_callback_params(helper_text: &str) -> Option<Vec<InvokedCa
         let Some(ast::Pat::IdentPat(pattern)) = parameter.pat() else {
             continue;
         };
-        if pattern.at_token().is_some() || pattern.ref_token().is_some() {
+        if pattern.at_token().is_some()
+            || pattern.ref_token().is_some()
+            || pattern.mut_token().is_some()
+        {
             continue;
         }
         let Some(name) = pattern.name().map(|name| name.text().to_string()) else {
@@ -113,18 +127,73 @@ pub(crate) fn invoked_callback_params(helper_text: &str) -> Option<Vec<InvokedCa
             .filter(|call| {
                 !enclosed_by_nested_fn_like(call.syntax(), &body)
                     && single_segment_callee(call).as_deref() == Some(name.as_str())
+                    && callback_node_is_eager(call.syntax(), &function)
             })
-            .map(|call| line_index.line(call.syntax().text_range().start()))
+            .map(|call| call.syntax().text_range().end())
             .min();
-        if let Some(first_call_line) = first_call {
+        if let Some(first_call_end) = first_call {
             invoked.push(InvokedCallbackParam {
                 position,
                 name,
-                first_call_line,
+                following_assertions: following_assertion_sites(
+                    &function,
+                    helper_text,
+                    &line_index,
+                    first_call_end,
+                ),
             });
         }
     }
     Some(invoked)
+}
+
+/// OracleFact stores line/text, so a matching spelling must identify exactly
+/// one parsed node. Aliases from one range do not create false duplicates;
+/// repeated identical assertions on one line cannot borrow each other's order.
+fn following_assertion_sites(
+    function: &ast::Fn,
+    text: &str,
+    lines: &LineIndex,
+    invocation_end: TextSize,
+) -> BTreeSet<(usize, String)> {
+    let mut sites: BTreeMap<(usize, String), Vec<ra_ap_syntax::SyntaxNode>> = BTreeMap::new();
+    for node in function.syntax().descendants().filter(|node| {
+        ast::MacroCall::can_cast(node.kind())
+            || ast::MethodCallExpr::can_cast(node.kind())
+            || ast::CallExpr::can_cast(node.kind())
+    }) {
+        let range = node.text_range();
+        let raw = slice_text(text, range.start(), range.end())
+            .trim()
+            .trim_end_matches(';')
+            .to_string();
+        // Macro and expect-test observations include the statement's `;`;
+        // primitive method/free-call observations omit it. Match both real
+        // producer spellings, but require their shared unique AST range.
+        for spelling in [raw, slice_macro_call_text(text, range.start(), range.end())] {
+            let matches = sites
+                .entry((lines.line(range.start()), spelling))
+                .or_default();
+            if !matches
+                .iter()
+                .any(|existing| existing.text_range() == range)
+            {
+                matches.push(node.clone());
+            }
+        }
+    }
+    sites
+        .into_iter()
+        .filter_map(|(key, nodes)| match nodes.as_slice() {
+            [node]
+                if node.text_range().start() >= invocation_end
+                    && callback_node_is_eager(node, function) =>
+            {
+                Some(key)
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 fn single_segment_callee(call: &ast::CallExpr) -> Option<String> {

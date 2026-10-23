@@ -1814,6 +1814,31 @@ not hold because the line has a second call; an argument passed by
 reference (`check(&actual, "4")`); a helper over `&str`, a workspace type
 or two different types; and `.to_string()` or `.into()` expected values.
 
+### Closure-callback assertion facts (#9981)
+
+A same-file evidence helper can lend an observation fact when a test passes a
+synchronous call-making closure literal at an immutable plain parameter that
+the helper invokes directly. Both the test's helper call and the helper's
+callback invocation must pass the shared eager-path and escape admission.
+Mutable or rebound callback parameters, deferred calls, calls under a branch
+that may skip them, and unresolved macro exits do not establish this credit.
+
+An assertion must identify a unique parser-backed site after the callback
+invocation's end. Source ranges distinguish `f(); assert_eq!(...)` from
+`assert_eq!(...); f()` even on one line; a repeated identical spelling on one
+line cannot borrow another site's ordering. Macro and method/free-call oracle
+spellings use their producer-compatible line/text keys. An unmatched
+scanner-only oracle remains unsupported by this callback exception.
+
+This adds observation facts, not an owner-return pin or changed-sink
+discrimination. The existing owner-pin admission and classifier still decide
+whether an assertion observes the changed behavior. An unrelated exact-value
+assertion may remain strong in shape while the finding stays weak with
+unconfirmed observation. A callback merely forwarded to another function is
+not newly resolved here. The separate plain-helper path's unused/forwarded
+callback limitation (#9997) and the original tracing `with_default` example
+remain outside this repair's established acceptance.
+
 ## Required Evidence
 
 - Rule 7 (#6482): in the RIPR-SPEC-0219 verdict corpus, `grid-arith-helper`
@@ -2278,6 +2303,12 @@ assertions. This repair shares the existing callback without that larger migrati
 
 ## Test Mapping
 
+- Closure-callback helper facts: the `closure_callback_*` and `callback_credit_*`
+  controls in `crates/ripr/src/analysis/facts/test_helpers/tests.rs` cover direct
+  and same-line post-invocation positives, conditional or earlier assertions,
+  mutable/rebound callbacks, deferred contexts, ambiguous same-line spellings,
+  and an unrelated nested function's exit. These pin observation-fact admission,
+  not a changed-sink or owner-return discrimination claim.
 - Unit (`crates/ripr/src/analysis/classify/owner_pin/tests.rs`): the bytes
   shape; trait scope; competing definitions (override, inherent twin,
   `macro_rules!` body, forward, free twin); receiver typing; slice-method
@@ -2483,6 +2514,11 @@ assertions. This repair shares the existing callback without that larger migrati
 
 ## Implementation Mapping
 
+- `crates/ripr/src/analysis/facts/test_helpers.rs` and
+  `crates/ripr/src/analysis/syntax/ra/closure_callbacks.rs`: same-file callback
+  observation facts, immutable parameter identity and ordered unique AST sites.
+  `syntax/owner_pin.rs::callback_node_is_eager` reuses the shared eager-path and
+  escape authority without granting owner-return discrimination.
 - `crates/ripr/src/analysis/syntax/ra.rs`: `function_item_fact` fills
   `FunctionFact.item`.
 - `crates/ripr/src/analysis/facts/model.rs`: `FunctionContainer`,

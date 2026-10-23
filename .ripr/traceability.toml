@@ -13303,6 +13303,16 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_helper_credits_its_assertion_to_the_calling_test",
+  "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_helper_credits_a_block_closure_and_a_later_position",
+  "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_helpers_that_may_not_observe_the_closure_grant_nothing",
+  "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_credit_does_not_reach_helper_callbacks_in_another_module",
+  "crates/ripr/src/analysis/facts/test_helpers/tests.rs::callback_credit_refuses_an_invocation_under_a_false_branch",
+  "crates/ripr/src/analysis/facts/test_helpers/tests.rs::callback_credit_refuses_a_same_line_assertion_before_the_invocation",
+  "crates/ripr/src/analysis/facts/test_helpers/tests.rs::callback_credit_keeps_a_same_line_assertion_after_the_invocation",
+  "crates/ripr/src/analysis/facts/test_helpers/tests.rs::callback_credit_refuses_reassignment_to_a_function_path",
+  "crates/ripr/src/analysis/facts/test_helpers/tests.rs::callback_credit_keeps_unrelated_nested_function_returns_out_of_the_prefix",
+  "crates/ripr/src/analysis/facts/test_helpers/tests.rs::callback_credit_refuses_skipped_or_ambiguous_observations",
   "crates/ripr/tests/owner_pin_execution/effect_assertions.rs::effect_assertions_require_execution_but_keep_reachable_oracles",
   "crates/ripr/tests/owner_pin_execution/effect_assertions.rs::effect_assertion_contexts_match_executed_mutant_controls",
   "crates/ripr/tests/owner_pin_execution/effect_assertion_sweep.rs::effect_assertion_dead_context_sweep_refuses_every_never_run_assertion",
