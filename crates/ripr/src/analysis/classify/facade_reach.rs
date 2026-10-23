@@ -17,12 +17,15 @@
 //! - The evidence is structural, not lexical: a complete path-dependency graph
 //!   with a forward normal `[dependencies]` edge from the facade package to
 //!   the owner's package; a crate-root, unconditional, non-macro `pub use` of
-//!   the owner's crate in the facade's `src/lib.rs` that covers the owner
-//!   (`inner::*`, `inner`, or a path/list entry naming the owner, its
-//!   enclosing type or its top-level module); and an integration test of the
-//!   facade package that names the facade crate in a path (`facade::...`).
-//! - The owner must be an unrestricted `pub` free or inherent function; a
-//!   private, `pub(crate)` or trait-method owner never fires.
+//!   the owner's crate in the facade's `src/lib.rs` that covers the owner's
+//!   public path (`inner::*`, `inner`, or a path that is a prefix of the
+//!   module chain plus the function or enclosing type); and an integration
+//!   test of the facade package that names the facade crate and ties to the
+//!   owner (a `facade::*` glob, or the owner's or its type's name).
+//! - The owner must be an unrestricted `pub` free function at module depth
+//!   zero, or a `pub` method of a root-level `pub` struct/enum/union, with
+//!   every module on the way `pub mod`. Private, restricted, trait-method,
+//!   nested, `src/main.rs` and `src/bin/*` owners never fire.
 //! - A missing or dev-only edge, an unrelated package, a private, nested,
 //!   cfg-gated or macro `use`, a list that does not name the owner, or a test
 //!   that never names the facade leaves the finding exactly as it was.

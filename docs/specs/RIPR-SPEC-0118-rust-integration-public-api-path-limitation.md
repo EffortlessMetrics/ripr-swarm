@@ -10,10 +10,13 @@ Linked issues:
 
 - First-run-trust / P3 Rust reachability lane: distinguish integration-test
   public-API reach limits from generic transitive helper limits.
+- #9982: a workspace facade crate that re-exports the owner's crate and carries
+  the tests reads as a definite `no_static_path`; name the limit instead, and
+  stop an unrelated doctest from relating through a shared name token.
 
 Linked PRs:
 
-- This PR
+- #9995 (facade re-export trigger, #9982)
 
 Support-tier impact:
 
@@ -82,20 +85,31 @@ names alone:
 3. The facade's `src/lib.rs` has a crate-root, unconditional, non-macro
    `pub use` of the owner's crate (dependency name, `-` folded to `_`) that
    covers the owner: the whole crate (`inner::*`, `inner`, `inner as x`,
-   `inner::{self}`), or a path or list entry whose first segment is the
-   owner's name, its enclosing inherent type, or its top-level module. A list
-   that names none of these does not count. A `pub use` inside a module,
+   `inner::{self}`), or a path that is a prefix of the owner's public path
+   (its module chain, then the free function, or for a method its enclosing
+   type), or a glob or `self` under such a prefix. A path that leaves the
+   owner's (`inner::sub::Other`, `inner::bump` for a method of `Counter`) does
+   not cover it. A `pub use` inside a module,
    function, impl or macro body, behind `#[cfg]`/`#[cfg_attr]` or any
    attribute other than `doc`, `allow`, `expect`, `deprecated`, `must_use`,
    or restricted (`pub(crate)`), does not count.
-4. The owner is an unrestricted `pub` free or inherent function. A private,
-   `pub(crate)` or trait-method owner never fires.
+4. The owner is an unrestricted `pub` free function at module depth zero, or
+   an unrestricted `pub` method of a `pub struct`/`enum`/`union` declared at
+   the root of a library file, and every module on the way is declared
+   `pub mod` at the root of its parent file. A private, `pub(crate)`,
+   trait-method, nested or unlocatable owner, a private module or type, or an
+   owner in `src/main.rs` or `src/bin/*` never fires.
 5. The facade crate's name is read from its manifest (`[lib] name`, else
    `[package] name`, `-` folded to `_`), never from the directory name; an
    unreadable manifest, a non-default `[lib] path`, or a std-crate name does
    not fire.
 6. An integration test file of the facade package names the facade crate as a
-   path root (`facade::...`) outside comments and strings.
+   path root (`facade::...`) outside comments and strings and ties to the
+   owner: it globs the facade (`use facade::*;`, `use facade::{.., *}`) or
+   mentions the owner's name or its enclosing type as a whole word. Naming
+   only an unrelated facade item (`facade::VERSION`) does not tie. (A test
+   that spells the owner's name is also a related test of it, which is a
+   different finding class.)
 
 The finding keeps `no_static_path`, pushes `transitive_reach_unresolved`, and
 names the test as an inspection pointer. The re-export is not resolved and no
@@ -202,8 +216,22 @@ origin witnesses.
 - `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::private_or_restricted_owner_never_fires`
 - `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::limited_graph_keeps_the_definite_result`
 - `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::test_in_the_owners_own_package_naming_the_facade_does_not_count`
-- `crates/ripr/src/analysis/classify/facade_reach.rs::tests::item_lists_must_name_the_owner_or_its_container`
+- `crates/ripr/src/analysis/classify/facade_reach.rs::tests::paths_must_be_a_prefix_of_the_owners_path`
 - `crates/ripr/src/analysis/classify/facade_reach.rs::tests::only_crate_root_unconditional_public_uses_count`
+- `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::baseline_without_a_tying_facade_test_keeps_the_repair_gap`
+- `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::narrowed_index_scopes_still_name_the_limit`
+- `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::facade_tests_tie_to_the_owner_by_glob_or_type`
+- `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::inherent_method_owners_are_named_by_their_type_not_the_method`
+- `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::owner_module_chain_must_be_public`
+- `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::binary_target_owner_never_fires`
+- `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::test_that_never_names_the_facade_crate_is_unchanged`
+- `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::doctest_of_another_module_sharing_a_name_token_is_not_related`
+- `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::doctest_in_the_owners_own_file_stays_related`
+- `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::doctest_of_another_module_that_calls_the_owner_stays_related`
+- `crates/ripr/src/analysis/classify/facade_reach.rs::tests::whole_crate_reexports_cover_any_owner`
+- `crates/ripr/src/analysis/classify/facade_reach.rs::tests::paths_must_be_a_prefix_of_the_owners_path`
+- `crates/ripr/src/analysis/classify/facade_reach.rs::tests::facade_tests_tie_by_owner_name_type_or_glob`
+- `crates/ripr/src/analysis/classify/facade_reach.rs::tests::pub_items_need_pub_attribute_free_declarations`
 - `fixtures/rust_transitive_reach_positive/expected/check.json`
 - `fixtures/rust_transitive_reach_test_helper_chain/expected/check.json`
 - `cargo xtask check-evidence-promotion-honesty`
