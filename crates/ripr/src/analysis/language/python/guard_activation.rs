@@ -406,12 +406,34 @@ fn else_chain_conditions(
                 _ => return None,
             };
         let condition = condition.trim_end().strip_suffix(':')?.trim();
+        // A real arm header opens an indented block. A same-indent line that
+        // merely looks like a header (a bracket continuation, a header whose
+        // body is missing) cannot join the chain, so it is never bridged.
+        if !header_opens_deeper_block(lines, &in_string, index, else_indent, else_index) {
+            return None;
+        }
         chain.push((index, condition.to_string()));
         if is_head {
             return Some(chain);
         }
     }
     None
+}
+
+/// Whether the first code line after the header at `header_index` (skipping
+/// blank lines, comments and string text) is indented deeper than the chain.
+fn header_opens_deeper_block(
+    lines: &[&str],
+    in_string: &[bool],
+    header_index: usize,
+    chain_indent: usize,
+    limit: usize,
+) -> bool {
+    (header_index + 1..=limit)
+        .filter(|index| !in_string[*index])
+        .map(|index| (index, lines[index].trim()))
+        .find(|(_, trimmed)| !trimmed.is_empty() && !trimmed.starts_with('#'))
+        .is_some_and(|(index, _)| leading_whitespace(lines[index]) > chain_indent)
 }
 
 /// Per line, whether it starts inside (or is wholly part of) a triple-quoted
@@ -1079,6 +1101,33 @@ mod tests {
                 (3, "total > 10".to_string())
             ]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn walk_guards_never_bridges_unrelated_headers_into_a_chain() -> Result<(), String> {
+        // The shapes below are not valid Python, so the chain reader is driven
+        // directly with a parsed dummy owner instead of through the AST.
+        let owner = quote_owner("def quote(total):\n    return total\n")?;
+        let chain = |source: &str, else_index: usize| {
+            let lines: Vec<&str> = source.lines().collect();
+            else_chain_conditions(&lines, else_index, &owner)
+        };
+        // Blank lines and comments between arms belong to the chain.
+        let chained = "def quote(total):\n    if total > 1:\n        return 1\n\n    # note\n    elif total > 0:\n        return 2\n    else:\n        return 3\n";
+        assert_eq!(
+            chain(chained, 7).map(|c| c.into_iter().map(|(_, t)| t).collect::<Vec<_>>()),
+            Some(vec!["total > 0".to_string(), "total > 1".to_string()])
+        );
+        // An unrelated same-indent statement between the head and the `else`.
+        let statement = "def quote(total):\n    if total > 1:\n        return 1\n    total = 2\n    else:\n        return 3\n";
+        assert_eq!(chain(statement, 4), None);
+        // Header text that only appears in a comment is not a header.
+        let comment = "def quote(total):\n    # if total > 1:\n    else:\n        return 3\n";
+        assert_eq!(chain(comment, 2), None);
+        // A header with no indented body is not a block opener.
+        let no_body = "def quote(total):\n    if total > 1:\n    elif total > 0:\n        return 2\n    else:\n        return 3\n";
+        assert_eq!(chain(no_body, 4), None);
         Ok(())
     }
 
