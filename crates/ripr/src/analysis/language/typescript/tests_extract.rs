@@ -2977,6 +2977,12 @@ fn test_name_and_assertions_from_registration(
     {
         return Some((name, assertions));
     }
+    if let Argument::ArrowFunctionExpression(arrow) = callback
+        && let Some(assertions) =
+            collect_test_arrow_expression_assertions(arrow, source, receiver.as_deref(), bindings)
+    {
+        return Some((name, assertions));
+    }
     let assertions = callback_statements
         .map(|statements| {
             collect_assertions_in_statements_with_bindings(

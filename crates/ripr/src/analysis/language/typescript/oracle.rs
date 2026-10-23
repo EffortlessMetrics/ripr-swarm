@@ -170,6 +170,35 @@ pub(crate) fn collect_assertions_in_statements_with_bindings(
     collect_callback_assertions(statements, source, receiver, bindings, true)
 }
 
+/// A registered test's expression-bodied arrow returns the whole expression.
+/// Keep that AST fact distinct from an expression statement in a block, whose
+/// promise is discarded. The existing callback reader still admits only its
+/// supported returned/awaited forms; this does not walk arbitrary expressions.
+pub(crate) fn collect_test_arrow_expression_assertions(
+    arrow: &ArrowFunctionExpression<'_>,
+    source: &SourceText<'_>,
+    receiver: Option<&str>,
+    bindings: &TypeScriptAssertionBindings,
+) -> Option<Vec<TypeScriptAssertion>> {
+    if !arrow.expression {
+        return None;
+    }
+    let [Statement::ExpressionStatement(statement)] = arrow.body.statements.as_slice() else {
+        return None;
+    };
+    let context = AssertionContext {
+        receiver,
+        bindings,
+        returns_to_runner: true,
+        literal_consts: &[],
+        match_object_consts: &[],
+        table_consts: &[],
+    };
+    let mut out = Vec::new();
+    collect_assertions_in_expression(&statement.expression, true, source, &context, &mut out);
+    Some(out)
+}
+
 /// Like [`collect_assertions_in_statements_with_bindings`] for a callback
 /// body; `returns_to_runner` is `false` when the callback's return value is
 /// discarded (a `forEach` callback), so a `return p.then(...)` inside it
@@ -413,6 +442,21 @@ fn assertion_from_expression_any(
         })
 }
 
+fn collect_assertions_in_expression(
+    expression: &Expression<'_>,
+    returned: bool,
+    source: &SourceText<'_>,
+    context: &AssertionContext<'_>,
+    out: &mut Vec<TypeScriptAssertion>,
+) {
+    if let Some(mut assertion) = assertion_from_expression_any(expression, source, context) {
+        attach_match_object_const(&mut assertion, expression, context);
+        out.push(assertion);
+    } else {
+        collect_nested_callback_assertions(expression, returned, source, context, out);
+    }
+}
+
 pub(crate) fn collect_expect_assertions_in_statement(
     stmt: &Statement<'_>,
     source: &SourceText<'_>,
@@ -425,37 +469,17 @@ pub(crate) fn collect_expect_assertions_in_statement(
             collect_expect_assertions_from_statement_vec(&block.body, source, &nested, out);
         }
         Statement::ExpressionStatement(expr_stmt) => {
-            if let Some(mut assertion) =
-                assertion_from_expression_any(&expr_stmt.expression, source, context)
-            {
-                attach_match_object_const(&mut assertion, &expr_stmt.expression, context);
-                out.push(assertion);
-            } else {
-                collect_nested_callback_assertions(
-                    &expr_stmt.expression,
-                    false,
+            collect_assertions_in_expression(&expr_stmt.expression, false, source, context, out);
+        }
+        Statement::ReturnStatement(return_stmt) => {
+            if let Some(argument) = &return_stmt.argument {
+                collect_assertions_in_expression(
+                    argument,
+                    context.returns_to_runner,
                     source,
                     context,
                     out,
                 );
-            }
-        }
-        Statement::ReturnStatement(return_stmt) => {
-            if let Some(argument) = &return_stmt.argument {
-                if let Some(mut assertion) =
-                    assertion_from_expression_any(argument, source, context)
-                {
-                    attach_match_object_const(&mut assertion, argument, context);
-                    out.push(assertion);
-                } else {
-                    collect_nested_callback_assertions(
-                        argument,
-                        context.returns_to_runner,
-                        source,
-                        context,
-                        out,
-                    );
-                }
             }
         }
         Statement::IfStatement(if_stmt) => {

@@ -127,6 +127,13 @@ assertions are collected as the test's own:
   settles. With one plain parameter the body reads with `v` replaced by
   `(p)`, the expression whose resolved value the assertion observes. With
   no parameter the body is collected as written.
+  An ordinary test registration's expression-bodied arrow, such as
+  `test("total", () => p.then((v) => body))`, returns that whole expression
+  and reads it under the same returned-promise rules. This uses the arrow's
+  AST body kind, not the presence of `.then` in its text. A block without
+  `return`, a `void` or sequence expression, an uncalled arrow, and a promise
+  returned from a discarded `forEach` callback gain no credit. Literal table
+  expansion and nested callback return analysis retain their existing bounds.
 - `await t.test(name, [options,] (t2) => body)`, where `t` is the test
   callback's own receiver, `name` is present and is a string or template
   literal, and
