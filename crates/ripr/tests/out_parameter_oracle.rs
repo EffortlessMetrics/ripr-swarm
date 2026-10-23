@@ -293,3 +293,120 @@ fn a_same_named_method_on_another_or_unresolved_receiver_is_not_credited() -> Re
     }
     Ok(())
 }
+
+/// A crate whose owner is `owner_fn` (full method text, starting at line 4),
+/// with `new_line` replacing `old_line` in the diff.
+fn finding_custom(
+    owner_fn: &str,
+    old_line: &str,
+    new_line: &str,
+    test_body: &str,
+) -> Result<Value, String> {
+    let src = format!(
+        "pub struct OffsetFormat;\n\nimpl OffsetFormat {{\n{owner_fn}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn formats() {{\n{test_body}\n    }}\n}}\n"
+    );
+    let changed = src
+        .lines()
+        .position(|text| text == new_line)
+        .ok_or("changed line missing")?
+        + 1;
+    let diff = format!(
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{changed},1 +{changed},1 @@\n-{old_line}\n+{new_line}\n"
+    );
+    finding_at(src, diff, changed as u64)
+}
+
+#[test]
+fn a_name_mention_on_an_unrelated_changed_line_is_not_confirmed() -> Result<(), String> {
+    let owner = "    pub fn format(&self, out: &mut String, other: &mut String, minutes: i32) {\n        out.push('x');\n        other.push_str(&out.len().to_string());\n    }";
+    let test = "        let mut a = String::new();\n        let mut b = String::new();\n        OffsetFormat.format(&mut a, &mut b, 570);\n        assert_eq!(a, \"x\");";
+    let finding = finding_custom(
+        owner,
+        "        other.push_str(&out.capacity().to_string());",
+        "        other.push_str(&out.len().to_string());",
+        test,
+    )?;
+    assert_uncredited(&finding, "mention of out on the other's line");
+    Ok(())
+}
+
+#[test]
+fn string_expectations_that_may_equal_the_initial_state_are_not_credited() -> Result<(), String> {
+    for expected in [
+        "String::from(\"\")",
+        "String::default()",
+        "\"\".to_string()",
+        "\"\".to_owned()",
+        "String::with_capacity(8)",
+        "format!(\"\")",
+        "std::string::String::new()",
+    ] {
+        let finding = finding(&format!("{BUILD}        assert_eq!(s, {expected});"))?;
+        assert_uncredited(&finding, expected);
+    }
+    let local = finding(&format!(
+        "{BUILD}        let e = String::new();\n        assert_eq!(s, e);"
+    ))?;
+    assert_uncredited(&local, "empty expected local");
+    Ok(())
+}
+
+#[test]
+fn vec_expectations_that_may_equal_the_initial_state_are_not_credited() -> Result<(), String> {
+    let owner = "    pub fn format(&self, out: &mut Vec<u8>, minutes: i32) {\n        out.push(if minutes < 0 { b'-' } else { b'+' });\n    }";
+    let old = "        out.push(if minutes < 0 { b'-' } else { b'~' });";
+    let new = "        out.push(if minutes < 0 { b'-' } else { b'+' });";
+    let build = "        let mut s = Vec::new();\n        OffsetFormat.format(&mut s, 570);\n";
+    let credited = finding_custom(
+        owner,
+        old,
+        new,
+        &format!("{build}        assert_eq!(s, vec![b'+']);"),
+    )?;
+    assert_eq!(credited["classification"], "exposed", "{credited}");
+    assert_eq!(
+        credited["ripr"]["discriminate"]["state"], "yes",
+        "{credited}"
+    );
+    for expected in [
+        "Vec::<u8>::default()",
+        "Vec::with_capacity(4)",
+        "[]",
+        "Vec::from([])",
+        "b\"\".to_vec()",
+        "<Vec<u8>>::new()",
+        "vec![]",
+    ] {
+        let finding = finding_custom(
+            owner,
+            old,
+            new,
+            &format!("{build}        assert_eq!(s, {expected});"),
+        )?;
+        assert_uncredited(&finding, expected);
+    }
+    Ok(())
+}
+
+#[test]
+fn no_op_writers_are_not_credited() -> Result<(), String> {
+    let test = format!("{BUILD}        assert_eq!(s, \"+570\");");
+    for changed in [
+        "        out.clear();",
+        "        out.truncate(0);",
+        "        out.truncate(100);",
+        "        out.drain(..0);",
+        "        out.retain(|_| true);",
+        "        out.push_str(\"\");",
+    ] {
+        let owner = format!(
+            "    pub fn format(&self, out: &mut String, minutes: i32) {{\n{changed}\n        let _ = minutes;\n    }}"
+        );
+        let old = changed
+            .replace(");", ", 1);")
+            .replace("clear()", "clear(1)");
+        let finding = finding_custom(&owner, &old, changed, &test)?;
+        assert_uncredited(&finding, changed);
+    }
+    Ok(())
+}

@@ -83,7 +83,7 @@ pub(in crate::analysis) use implicit_call::withhold_implicit_call_gap;
 pub(in crate::analysis) use infection::infection_evidence_for_owner;
 pub(in crate::analysis) use mask_pin::unexercised_mask_bits;
 pub(in crate::analysis) use operand_pin::operand_only_pin;
-pub(in crate::analysis) use out_parameter::assertion_out_parameter;
+pub(in crate::analysis) use out_parameter::{assertion_out_parameter, expression_writes_parameter};
 pub(in crate::analysis) use owner_pin::{
     AssertionRefusal, OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings, direct_call_name,
     expected_operand_value, helper_pins_owner_call, owner_builds_declared_error_variant,

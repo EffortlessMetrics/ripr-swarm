@@ -1,0 +1,8 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -4,4 +4,4 @@ impl Formatter {
+     pub fn format(&self, out: &mut String, minutes: i32) {
+-        out.push(if minutes < 0 { '-' } else { '~' });
++        out.push(if minutes < 0 { '-' } else { '+' });
+     }
+ }

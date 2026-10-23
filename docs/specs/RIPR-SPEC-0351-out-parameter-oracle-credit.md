@@ -87,14 +87,25 @@ assertion reads the call's out-parameter; it grants no strength or reach.
 
 ## Known Limits
 
-- An expected value equal to the local's initial state or an empty literal
-  is not credited (it cannot notice a write). Other expected values are not
-  evaluated: like every exact-value oracle, the helper decides that a
-  discriminator exists, not that the test passes.
-
-- A parameter that is only read, or only passed onward to a helper, is not an
-  out-parameter here; the writer list is fixed and conservative.
-
+- Credit needs a clearly non-empty expected operand: a non-empty string or
+  byte-string literal, a non-zero integer literal, such a literal with
+  `.to_string()`/`.to_owned()`/`.into()`/`.to_vec()`, `String::from(lit)`, or
+  a non-empty `vec![..]`. Every empty spelling, every local and every other
+  expression is refused, as is an operand equal to the local's initializer.
+  Other expected values are not evaluated for correctness: like every
+  exact-value oracle, the helper decides that a discriminator exists, not
+  that the test passes.
+- Only additive writers count (`push`, `push_str`, `insert`, `extend`,
+  `append`, `write_*`, `write!`, deref/field/index assignment). `clear`,
+  `truncate`, `drain`, `retain` and similar are not writers, and a writer
+  called with only empty arguments is not a write. A writer given an empty
+  value held in a local (`out.extend(empty_local)`) is not detected.
+- Observation is confirmed only when the changed expression itself writes
+  through the parameter; a mention of its name on an unrelated line is not
+  confirmation.
+- A write after an early `return` in the callee, or behind an unreachable
+  branch, is still seen as a write. Two same-named callees under
+  `#[cfg(test)]` and `#[cfg(not(test))]` are not distinguished.
 - Only `assert_eq!` and only a bare local operand are recognised.
 - Out-parameters reached through fields, helper wrappers or returned
   references are not followed.
@@ -117,6 +128,10 @@ assertion reads the call's out-parameter; it grants no strength or reach.
 ## Test Mapping
 
 - `crates/ripr/tests/out_parameter_oracle.rs`.
+- `fixtures/out_parameter_unrelated_write_no_promote` and
+  `fixtures/out_parameter_empty_expected_no_promote`, pinned as
+  RIPR-SPEC-0108 non-promotion cases in
+  `fixtures/evidence-promotion-honesty-corpus/corpus.json`.
 
 ## Implementation Mapping
 

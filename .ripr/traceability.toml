@@ -18319,7 +18319,15 @@ tests = [
   "crates/ripr/tests/out_parameter_oracle.rs::a_callee_local_shadow_of_the_out_parameter_gets_no_credit",
   "crates/ripr/tests/out_parameter_oracle.rs::an_expected_value_equal_to_the_initial_state_is_not_credited",
   "crates/ripr/tests/out_parameter_oracle.rs::a_read_only_out_parameter_is_not_credited",
+  "crates/ripr/tests/out_parameter_oracle.rs::a_name_mention_on_an_unrelated_changed_line_is_not_confirmed",
+  "crates/ripr/tests/out_parameter_oracle.rs::string_expectations_that_may_equal_the_initial_state_are_not_credited",
+  "crates/ripr/tests/out_parameter_oracle.rs::vec_expectations_that_may_equal_the_initial_state_are_not_credited",
+  "crates/ripr/tests/out_parameter_oracle.rs::no_op_writers_are_not_credited",
   "crates/ripr/tests/out_parameter_oracle.rs::a_same_named_method_on_another_or_unresolved_receiver_is_not_credited",
+]
+fixtures = [
+  "fixtures/out_parameter_unrelated_write_no_promote",
+  "fixtures/out_parameter_empty_expected_no_promote",
 ]
 code = [
   "crates/ripr/src/analysis/classify/out_parameter.rs",

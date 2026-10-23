@@ -162,6 +162,115 @@ fn name_rebound_in(body: &SyntaxNode, name: &str) -> bool {
     }
 }
 
+/// Whether the changed expression itself writes through `parameter` (the
+/// same rule as the owner-side check), so a mention of the name in an
+/// unrelated expression is not confirmation.
+pub(in crate::analysis) fn expression_writes_parameter(expression: &str, parameter: &str) -> bool {
+    let source = format!("fn __probe() {{ {expression}; }}");
+    parse_clean_source_file(&source)
+        .is_some_and(|parse| name_written_in(parse.tree().syntax(), parameter))
+}
+
+/// Whether `expected` is clearly a non-empty value (a non-empty string or
+/// byte-string literal, a non-zero integer literal, `lit.to_string()` and
+/// kin, `String::from(lit)`, or a non-empty `vec![..]`). Anything else,
+/// including every empty spelling and every local, is refused: an expected
+/// value that may equal the local's initial state cannot notice a write.
+fn is_clearly_nonempty(expected: &str) -> bool {
+    let source = format!("fn __expected() {{ let _ = {expected}; }}");
+    let Some(parse) = parse_clean_source_file(&source) else {
+        return false;
+    };
+    let tree = parse.tree();
+    let Some(initializer) = tree
+        .syntax()
+        .descendants()
+        .find_map(ast::LetStmt::cast)
+        .and_then(|statement| statement.initializer())
+    else {
+        return false;
+    };
+    nonempty_expr(&initializer)
+}
+
+fn nonempty_expr(expression: &ast::Expr) -> bool {
+    match expression {
+        ast::Expr::Literal(literal) => match literal.kind() {
+            ast::LiteralKind::String(text) => text.value().is_ok_and(|value| !value.is_empty()),
+            ast::LiteralKind::ByteString(text) => text.value().is_ok_and(|value| !value.is_empty()),
+            ast::LiteralKind::IntNumber(number) => number.value().is_ok_and(|value| value != 0),
+            _ => false,
+        },
+        ast::Expr::MethodCallExpr(call) => {
+            call.arg_list()
+                .is_some_and(|args| args.args().next().is_none())
+                && call.name_ref().is_some_and(|name| {
+                    matches!(
+                        strip_raw(name.text()),
+                        "to_string" | "to_owned" | "into" | "to_vec"
+                    )
+                })
+                && call
+                    .receiver()
+                    .is_some_and(|receiver| nonempty_expr(&receiver))
+        }
+        ast::Expr::CallExpr(call) => {
+            let callee = call
+                .expr()
+                .map(|callee| compact(&callee.syntax().text().to_string()));
+            let arguments: Vec<_> = call
+                .arg_list()
+                .map(|args| args.args().collect())
+                .unwrap_or_default();
+            callee.as_deref() == Some("String::from")
+                && matches!(arguments.as_slice(), [only] if nonempty_expr(only))
+        }
+        ast::Expr::MacroExpr(mac) => mac.macro_call().is_some_and(|mac| {
+            mac.path()
+                .is_some_and(|path| compact(&path.syntax().text().to_string()) == "vec")
+                && mac.token_tree().is_some_and(|tree| {
+                    let text = compact(&tree.syntax().text().to_string());
+                    let inner = text
+                        .strip_prefix(['[', '(', '{'])
+                        .and_then(|rest| rest.strip_suffix([']', ')', '}']))
+                        .unwrap_or_default();
+                    !inner.is_empty() && !inner.contains(';')
+                })
+        }),
+        _ => false,
+    }
+}
+
+/// An argument list whose arguments are all empty spellings writes nothing.
+fn arguments_are_empty(call: &ast::MethodCallExpr) -> bool {
+    const EMPTY: &[&str] = &[
+        "\"\"",
+        "&\"\"",
+        "[]",
+        "&[]",
+        "String::new()",
+        "&String::new()",
+        "Vec::new()",
+        "&Vec::new()",
+        "vec![]",
+        "&vec![]",
+        "std::iter::empty()",
+        "iter::empty()",
+        "None",
+    ];
+    let Some(arguments) = call.arg_list() else {
+        return true;
+    };
+    let compacted: Vec<String> = arguments
+        .args()
+        .map(|argument| compact(&argument.syntax().text().to_string()))
+        .collect();
+    compacted.is_empty()
+        || compacted
+            .iter()
+            .all(|argument| EMPTY.contains(&argument.as_str()))
+}
+
 /// Whether the owner body visibly writes through `name`: a mutating method
 /// called on it, a `write!`/`writeln!` into it, or an assignment through a
 /// dereference, field or index of it. Passing it onward or only reading it is
@@ -181,18 +290,6 @@ fn name_written_in(body: &SyntaxNode, name: &str) -> bool {
         "write_fmt",
         "write_all",
         "write",
-        "clear",
-        "truncate",
-        "remove",
-        "pop",
-        "resize",
-        "set",
-        "replace_range",
-        "retain",
-        "drain",
-        "sort",
-        "swap",
-        "fill",
     ];
     let is_name = |text: String| strip_raw(&compact(&text)) == name;
     body.descendants().any(|node| {
@@ -200,6 +297,7 @@ fn name_written_in(body: &SyntaxNode, name: &str) -> bool {
             return call
                 .name_ref()
                 .is_some_and(|method| WRITERS.contains(&strip_raw(method.text())))
+                && !arguments_are_empty(&call)
                 && call
                     .receiver()
                     .is_some_and(|receiver| is_name(receiver.syntax().text().to_string()));
@@ -291,12 +389,7 @@ fn local_written_by_owner_call(
             _ => None,
         })
         .map(|initializer| compact(&initializer.syntax().text().to_string()))?;
-    if expected == initial
-        || matches!(
-            expected,
-            "\"\"" | "String::new()" | "Vec::new()" | "vec![]" | "Default::default()"
-        )
-    {
+    if expected == initial || !is_clearly_nonempty(expected) {
         return None;
     }
     let call = &items[*call_at];

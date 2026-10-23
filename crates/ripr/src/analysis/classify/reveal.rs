@@ -2208,7 +2208,7 @@ fn analyze_related_assertions(
                 contains_as_whole_word(
                     &crate::analysis::extract::mask_comments_and_strings(&probe.expression),
                     parameter,
-                )
+                ) && super::expression_writes_parameter(&probe.expression, parameter)
             });
             let matched = matched
                 || field_collection_read
