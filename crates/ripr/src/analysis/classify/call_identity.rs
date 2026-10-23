@@ -997,6 +997,32 @@ pub(super) fn definition_module_path(function: &FunctionSummary) -> Option<Vec<S
     Some(path)
 }
 
+/// The module path of a root-package library item that an integration test
+/// may spell as `<lib>::<module>::..::item` (#8999): `definition_module_path`
+/// when the item composes into the root package's library (not a binary that
+/// shares the module, not a `src/` module neither or both roots declare) and
+/// no file of the root package carries a `#[path]` remap, which could move a
+/// module file away from the layout the path is read from. A crate-root item
+/// has the empty path and needs neither check.
+pub(super) fn root_library_item_module_path(
+    index: &RustIndex,
+    function: &FunctionSummary,
+) -> Option<Vec<String>> {
+    let module = definition_module_path(function)?;
+    if module.is_empty() {
+        return Some(module);
+    }
+    if package_remaps_module_paths(index, None)
+        || CrateLayout::new(index, None)
+            .class(&function.file)
+            .as_deref()
+            != Some("lib")
+    {
+        return None;
+    }
+    Some(module)
+}
+
 /// The package a file belongs to. A relative path keeps
 /// [`super::related_tests::package_prefix`] (`crates/<name>/`, the directory
 /// above `src/` or `tests/`, or `None` for the root package). That leaves an

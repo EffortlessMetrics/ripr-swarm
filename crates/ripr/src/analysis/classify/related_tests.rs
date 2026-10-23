@@ -1745,9 +1745,10 @@ fn file_may_bind_name(stripped: &str, name: &str) -> bool {
 ///
 /// Fail-closed admit, only for the one shape whose identity is established:
 /// the test sits under `tests/` of the root package, the entry is a
-/// module-level item of that package's `src/lib.rs` (a recognized library
-/// root, so a binary's modules never match), and the call is spelled exactly
-/// `<crate>::<entry>(` with `<crate>` the root manifest's library identifier
+/// module-level item of that package's library (`src/lib.rs` or a `src/`
+/// module composed under it, so a binary's modules never match), and the call
+/// is spelled exactly `<crate>::<module path of the entry>::<entry>(` (no
+/// module segment for a crate-root item) with `<crate>` the root manifest's library identifier
 /// (`[lib] name`, else the package name). A test that declares, renames or imports that crate name
 /// (or globs anything), binds it locally, or any workspace member / nested
 /// package / absolute path keeps the existing refusal.
@@ -1765,13 +1766,18 @@ fn own_crate_qualified_entry_call(
     {
         return false;
     }
-    let is_library_root_item = super::owner_pin::target_root(&caller.file, index, &BTreeSet::new())
-        .is_some_and(|root| root == Path::new("src/lib.rs"))
-        && super::call_identity::definition_module_path(caller)
-            .is_some_and(|module| module.is_empty());
-    if !is_library_root_item {
+    // The entry is an item of the root package's library: at the crate root,
+    // or (#8999) in a `src/` file module or inline module whose path is read
+    // from the layout with no `#[path]` remap in the package and no binary
+    // sharing the module.
+    let composes_under_library_root =
+        super::owner_pin::target_root(&caller.file, index, &BTreeSet::new())
+            .is_some_and(|root| root == Path::new("src/lib.rs"));
+    let Some(module) = super::call_identity::root_library_item_module_path(index, caller)
+        .filter(|_| composes_under_library_root)
+    else {
         return false;
-    }
+    };
     // Only a test-crate root (`tests/<name>.rs`, `tests/<name>/main.rs`):
     // a module child (`tests/api/child.rs`, `tests/common/mod.rs`) resolves
     // paths from a parent file whose bindings this scan does not read.
@@ -1816,7 +1822,12 @@ fn own_crate_qualified_entry_call(
     // spelling only in code, never in a string or comment beside a foreign
     // call of the same name.
     let code_line = mask_comments_and_strings(call_text);
-    is_qualified_owner_call(&code_line, &format!("{crate_name}::{}", caller.name))
+    let spelled_path: String = std::iter::once(crate_name)
+        .chain(module.iter().map(String::as_str))
+        .chain(std::iter::once(caller.name.as_str()))
+        .collect::<Vec<_>>()
+        .join("::");
+    is_qualified_owner_call(&code_line, &spelled_path)
         && !file_may_bind_name(&stripped_file, crate_name)
         && !body_binds_owner_name(&test.body, crate_name)
         && !super::owner_pin::file_renames_to(&facts.source, crate_name)

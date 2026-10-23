@@ -426,3 +426,175 @@ fn a_test_module_child_does_not_link() -> Result<(), String> {
     assert_eq!(root.relation()?.as_deref(), LINKED);
     Ok(())
 }
+
+/// A library whose entry lives in a `src/` file module (`src/inner.rs`).
+const MODULE_LIB: &str = "pub mod inner;\n";
+/// `src/inner.rs`: the same helper and entry as `LIB`.
+const MODULE_SRC: &str = LIB;
+/// The helper and entry in a public inline module (the changed line is 3).
+const PUB_INLINE_LIB: &str = "pub mod inner {\n    fn is_bulk(qty: u32) -> bool {\n        10 <= qty\n    }\n\n    pub fn order_discount(qty: u32) -> u32 {\n        if is_bulk(qty) { 5 } else { 0 }\n    }\n}\n";
+
+fn spelled(path: &str) -> String {
+    test_file(&format!(
+        "    assert_eq!({path}(10), 5);\n    assert_eq!({path}(9), 0);"
+    ))
+}
+
+/// A package whose entry is `qual_reach::inner::order_discount`, in the
+/// file module `src/inner.rs` (or `src/inner/mod.rs`).
+fn module_package<'a>(
+    module_file: &'a str,
+    lib: &str,
+    tests: String,
+    extra: Vec<(&'a str, String)>,
+) -> Package<'a> {
+    let mut files = vec![
+        ("src/lib.rs", lib.to_string()),
+        (module_file, MODULE_SRC.to_string()),
+        ("tests/api.rs", tests),
+    ];
+    files.extend(extra);
+    Package {
+        manifest: manifest("qual_reach", None),
+        diff_path: module_file,
+        nested: false,
+        files,
+    }
+}
+
+/// #8999: a module-qualified own-crate call of an entry in a file module or
+/// an inline module links, beside the `use`-spelled baseline.
+#[test]
+fn a_module_qualified_own_crate_call_links() -> Result<(), String> {
+    let baseline = format!(
+        "use qual_reach::inner::order_discount;\n{}",
+        test_file(BARE)
+    );
+    assert_eq!(
+        module_package("src/inner.rs", MODULE_LIB, baseline, vec![])
+            .relation()?
+            .as_deref(),
+        LINKED,
+        "the use spelling must link, or the negatives prove nothing"
+    );
+    let qualified_path = spelled("qual_reach::inner::order_discount");
+    for module_file in ["src/inner.rs", "src/inner/mod.rs"] {
+        let package = module_package(module_file, MODULE_LIB, qualified_path.clone(), vec![]);
+        assert_eq!(package.relation()?.as_deref(), LINKED, "{module_file}");
+    }
+    let inline = Package {
+        nested: true,
+        ..Package::root(PUB_INLINE_LIB, true, &qualified_path)
+    };
+    assert_eq!(inline.relation()?.as_deref(), LINKED);
+    Ok(())
+}
+
+/// Each module-qualified spelling that is not exactly the entry's module path
+/// stays unrelated, paired with the linking spelling above.
+#[test]
+fn a_module_path_that_is_not_the_entrys_does_not_link() -> Result<(), String> {
+    for path in [
+        "qual_reach::order_discount",
+        "qual_reach::other::order_discount",
+        "qual_reach::inner::deeper::order_discount",
+        "other_crate::inner::order_discount",
+        "inner::order_discount",
+        "crate::inner::order_discount",
+        "self::inner::order_discount",
+    ] {
+        let package = module_package("src/inner.rs", MODULE_LIB, spelled(path), vec![]);
+        assert_eq!(package.relation()?, None, "{path}");
+    }
+    // A method-shaped or quoted spelling is not a call either.
+    for line in [
+        "    assert_eq!(x.qual_reach::inner::order_discount(10), 5);",
+        "    let n = \"qual_reach::inner::order_discount(10)\";",
+    ] {
+        let package = module_package("src/inner.rs", MODULE_LIB, test_file(line), vec![]);
+        assert_eq!(package.relation()?, None, "{line}");
+    }
+    Ok(())
+}
+
+/// A `#[path]` remap, a binary that shares the module, or a binary-only
+/// package makes the module path unreadable from the layout: no link, while
+/// the same package with a `use` import and bare call still links.
+#[test]
+fn an_unplaceable_module_does_not_link() -> Result<(), String> {
+    let qualified_path = spelled("qual_reach::inner::order_discount");
+    let bare = format!(
+        "use qual_reach::inner::order_discount;\n{}",
+        test_file(BARE)
+    );
+    // A `#[path]` anywhere in the package.
+    let remap = |tests: String| {
+        module_package(
+            "src/inner.rs",
+            MODULE_LIB,
+            tests,
+            vec![(
+                "src/util.rs",
+                "#[path = \"elsewhere.rs\"]\nmod moved;\n".to_string(),
+            )],
+        )
+    };
+    assert_eq!(remap(bare.clone()).relation()?.as_deref(), LINKED);
+    assert_eq!(remap(qualified_path.clone()).relation()?, None);
+    // A binary root that declares the same module: the file composes into
+    // both crates.
+    let shared = |tests: String| {
+        module_package(
+            "src/inner.rs",
+            MODULE_LIB,
+            tests,
+            vec![("src/main.rs", "mod inner;\nfn main() {}\n".to_string())],
+        )
+    };
+    assert_eq!(shared(bare.clone()).relation()?.as_deref(), LINKED);
+    assert_eq!(shared(qualified_path.clone()).relation()?, None);
+    // A binary-only package.
+    let binary = |tests: String| Package {
+        manifest: manifest("qual_reach", None),
+        diff_path: "src/inner.rs",
+        nested: false,
+        files: vec![
+            ("src/main.rs", "mod inner;\nfn main() {}\n".to_string()),
+            ("src/inner.rs", MODULE_SRC.to_string()),
+            ("tests/api.rs", tests),
+        ],
+    };
+    assert_eq!(binary(bare).relation()?.as_deref(), LINKED);
+    assert_eq!(binary(qualified_path).relation()?, None);
+    Ok(())
+}
+
+/// The module-qualified spelling keeps every crate-name refusal: a rebinding
+/// (raw `r#` spellings included), a glob or an `include!` in the test file, and
+/// a raw-identifier module segment (not the spelling the matcher reads).
+#[test]
+fn a_module_qualified_call_fails_closed_on_rebinding_and_include() -> Result<(), String> {
+    let qualified_path = spelled("qual_reach::inner::order_discount");
+    let linked = module_package("src/inner.rs", MODULE_LIB, qualified_path.clone(), vec![]);
+    assert_eq!(
+        linked.relation()?.as_deref(),
+        LINKED,
+        "control: the unshadowed spelling links"
+    );
+    for prefix in [
+        "use other_crate as qual_reach;\n",
+        "use x as r#qual_reach;\n",
+        "mod qual_reach {\n    pub mod inner {\n        pub fn order_discount(_: u32) -> u32 { 5 }\n    }\n}\n",
+        "fn r#qual_reach() {}\n",
+        "use some_dep::*;\n",
+        "include!(\"generated.rs\");\n",
+    ] {
+        let tests = format!("{prefix}{qualified_path}");
+        let package = module_package("src/inner.rs", MODULE_LIB, tests, vec![]);
+        assert_eq!(package.relation()?, None, "{prefix}");
+    }
+    let raw_segment = spelled("qual_reach::r#inner::order_discount");
+    let package = module_package("src/inner.rs", MODULE_LIB, raw_segment, vec![]);
+    assert_eq!(package.relation()?, None);
+    Ok(())
+}

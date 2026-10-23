@@ -245,15 +245,28 @@ can only hint that a caller "may lead here" without changing anything.
   as `<lib>::entry(..)` with no `use`, where `<lib>` is the root manifest's
   `[lib] name`, else its package name with hyphens folded to underscores
   (the package name is not a second spelling when `[lib] name` differs; a
-  moved `[lib] path` admits nothing). It is refused for a longer path,
-  another crate name, a test file that declares any item, `let`, closure
+  moved `[lib] path` admits nothing). The entry may also sit in a
+  `src/` file module or inline module composed under that library, spelled
+  with its exact module path (`<lib>::inner::entry(..)`; a segment that is
+  not the entry's module path, `crate::`/`self::`/bare `inner::` forms and
+  a `use <lib>::inner;` module import are refused), only when no file of
+  the package carries a `#[path]` attribute and no binary root also
+  declares the module. Imports of the entry (`use <lib>::inner::{entry, ..}`)
+  with a bare call were already related. Not reached, by design: an entry
+  whose changed helper is reached only through a method or trait-method call
+  on a generic receiver (for example `multispace0` calling
+  `input.split_at_position_complete(..)` in nom): that needs type
+  inference to pick the impl, and the method/associated-function chain is
+  owned by #8633 and #5352. It is refused for a path longer or shorter than
+  the entry's own, another crate name, a test file that declares any item, `let`, closure
   or typed parameter named like the crate, aliases anything to that name
   (`use x as <lib>`), imports a path ending in it (raw `r#` spellings
   included), or has any glob import or `include!`; a unit test inside
   `src/`; a test module child (only `tests/<name>.rs` and
   `tests/<name>/main.rs` roots qualify); a call spelled only in a string
   or comment on the line; a workspace member's entry; a
-  `src/main.rs` entry, and an entry inside an inline `mod`. The edge
+  `src/main.rs` entry, and an entry whose module path is not placed under
+  the library (a binary-shared module, a `#[path]` package). The edge
   carries relation only: argument rows and entry pairing still read a
   direct call site, so the qualified spelling adds no new value-credit
   path of its own (the argument reader may still read a qualified
