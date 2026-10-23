@@ -84,7 +84,11 @@ runner's entry for it can be named and is committed:
   must be one of them: an untracked or ignored snapshot file is a local file
   CI never sees, so a `--worktree` run no longer credits it. When the
   repository cannot answer (an export, no repository, the tool unavailable)
-  the file is read as before;
+  the file is read as before. The same holds when the repository tracks
+  nothing under the analysis root (a scratch copy, nothing staged yet), or
+  when the nearest `.git` entry is not the work tree git itself discovered
+  (a stub), or an inherited `GIT_DIR` / `GIT_WORK_TREE` selects another
+  repository;
 - no `package.json`, `jest.config.*`, `vitest.config.*`, `vite.config.*`
   or `vitest.workspace.*` in the test file's directory or any ancestor up
   to the root mentions `snapshotResolver`, `resolveSnapshotPath`,

@@ -1201,3 +1201,22 @@ fn memoized_config_verdict_is_per_directory() -> Result<(), String> {
     assert!(!a_again, "a still refuses from the memo");
     Ok(())
 }
+
+/// A repository that tracks nothing under the analysis root (a scratch copy,
+/// a repository with nothing staged yet) cannot say which snapshot files CI
+/// would see, so the file is read as before; once any file under the root is
+/// tracked, an untracked snapshot file refuses.
+#[test]
+fn repository_tracking_nothing_under_root_is_unknown() -> Result<(), String> {
+    let root = ts_unique_tempdir("snap-nothing-tracked")?;
+    fixture_git(&root, &["init", "--initial-branch=main"])?;
+    ts_write_file(&root.join("test/price.test.ts"), PRICE_TEST)?;
+    ts_write_file(&root.join(SNAP_PATH), &jest_snap(&[("price 1", "140")]))?;
+    let nothing_tracked = strengths_at(&root);
+    fixture_git(&root, &["add", "test/price.test.ts"])?;
+    let something_tracked = strengths_at(&root);
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(nothing_tracked, vec![OracleStrength::Strong]);
+    assert_eq!(something_tracked, vec![OracleStrength::Medium]);
+    Ok(())
+}

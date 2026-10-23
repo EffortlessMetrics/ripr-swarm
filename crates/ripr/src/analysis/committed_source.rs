@@ -340,26 +340,44 @@ pub(crate) fn tracked_snapshot_files(root: &Path) -> Option<HashSet<String>> {
     // another repository, and a `.git` entry that git does not accept as this
     // directory's own (a stub, a damaged one) would make it answer for a
     // parent. Either is "unknown", never "untracked".
-    if ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"]
-        .iter()
-        .any(|name| std::env::var_os(name).is_some())
+    if [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
+        "GIT_INDEX_FILE",
+    ]
+    .iter()
+    .any(|name| std::env::var_os(name).is_some())
     {
         return None;
     }
     let canonical = root.canonicalize().ok()?;
-    if canonical.join(".git").exists()
-        && crate::git::discovered_work_tree_toplevel(&canonical, Duration::from_secs(30))
-            .as_deref()
-            != Some(canonical.as_path())
+    // The nearest `.git` entry on the path must be the work tree git itself
+    // found; otherwise git skipped a stub and answered for an outer one.
+    let nearest = canonical
+        .ancestors()
+        .find(|directory| directory.join(".git").exists())?;
+    if crate::git::discovered_work_tree_toplevel(&canonical, Duration::from_secs(30)).as_deref()
+        != Some(nearest)
     {
         return None;
     }
-    let listing = git_bytes(root, &["ls-files", "-z", "--", "*.snap"], None).ok()?;
+    let listing = git_bytes(root, &["ls-files", "-z", "--", "."], None).ok()?;
+    let tracked: Vec<&str> = listing
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .filter_map(|path| std::str::from_utf8(path).ok())
+        .collect();
+    // A repository that tracks nothing under `root` (a scratch copy inside an
+    // ignored directory, a repository with nothing staged yet) cannot say
+    // which files CI would see: unknown, not "untracked".
+    if tracked.is_empty() {
+        return None;
+    }
     Some(
-        listing
-            .split(|byte| *byte == 0)
-            .filter(|path| !path.is_empty())
-            .filter_map(|path| std::str::from_utf8(path).ok())
+        tracked
+            .into_iter()
+            .filter(|path| path.ends_with(".snap"))
             .map(str::to_string)
             .collect(),
     )
