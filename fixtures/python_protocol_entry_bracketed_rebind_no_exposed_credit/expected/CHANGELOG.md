@@ -16,3 +16,7 @@ Updated:
 Re-bless after merging main (#9722): the dunder-protocol abstention now reports
 `static_unknown` with `dynamic_dispatch_unresolved` for this still-uncredited
 rebind; the weak heuristic relation is unchanged.
+
+Re-bless `expected/human.txt` after merging main (#9657): the default human report
+now prints the five-line Evidence stage and state legend after Evidence. Only
+those five lines are added; classification, stages and evidence are unchanged.
