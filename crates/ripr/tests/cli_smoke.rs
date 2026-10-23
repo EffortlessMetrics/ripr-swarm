@@ -1862,9 +1862,11 @@ fn help_leads_with_a_bounded_first_screen_that_routes_onward() {
     assert_success(&output);
     let stdout = String::from_utf8_lossy(&output.stdout);
 
+    // #9865 added the exit-code contract and -v lines to the first screen;
+    // 48 keeps the scannability budget with headroom (observed 47).
     let lines = stdout.lines().count();
     assert!(
-        lines <= 40,
+        lines <= 48,
         "the default help screen should stay scannable, got {lines} lines:\n{stdout}"
     );
     assert!(
