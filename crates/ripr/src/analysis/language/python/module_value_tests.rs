@@ -37,7 +37,18 @@ fn classify_edit(
     sole: bool,
 ) -> Result<Finding, String> {
     let owners = owners_of(source);
-    let tests = tests_of(test_files);
+    let mut tests = tests_of(test_files);
+    // Match the workspace pass: semantic gates may differ from source text.
+    super::bool_oracle::credit_bare_bool_asserts(&mut tests, &owners, |path| {
+        if path == Path::new("hostile/settings.py") {
+            Some(source)
+        } else {
+            test_files
+                .iter()
+                .find(|(file, _)| Path::new(file) == path)
+                .map(|(_, source)| *source)
+        }
+    });
     let context = PythonNoBehaviorContext {
         sole_line_replacement: sole,
         ..PythonNoBehaviorContext::default()
@@ -839,6 +850,8 @@ fn prior_assertions_and_generator_tests_cannot_lend_unreached_credit() -> Check 
     for body in [
         "    assert False\n    assert over_limit(11)",
         "    value = (yield 1)\n    assert over_limit(11)",
+        "    value = f\"{(yield 1)}\"\n    assert over_limit(11) == True",
+        "    assert over_limit(11) == True\n    value = rf\"{(yield 1)}\"",
     ] {
         assert_abstains(&classify_limit(&limit_test(body))?);
     }

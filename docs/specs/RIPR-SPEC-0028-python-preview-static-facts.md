@@ -415,6 +415,9 @@ The workspace pass also withholds conditional-derived owners when another file
 may replace the callable or `sys.version_info`. Physical continuation indentation
 never makes a trailing `return` safe before the asserted value read; ordinary
 multiline setup remains eligible. A generator test lends no executed-body credit.
+Formatted strings remain uncertain in this bounded admission because their
+expressions can carry generator syntax. Statement identity uses the reported
+source assertion, independently of the boolean oracle's normalized gate text.
 Preceding assertions must evaluate true under the same bounded old/new scope
 before a later assertion can supply the value-flip credit.
 
