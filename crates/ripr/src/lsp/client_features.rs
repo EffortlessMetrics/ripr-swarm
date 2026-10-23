@@ -239,6 +239,14 @@ impl ClientFeatureProfile {
         }
     }
 
+    /// Whether the client advertised the RIPR editor extension block. Editor
+    /// palette commands such as `ripr.refreshDiagnostics` exist only for such
+    /// a client; every other client (including a malformed block that failed
+    /// closed) is generic (#9895).
+    pub(super) fn has_editor_integration(&self) -> bool {
+        self.ripr_editor.is_some()
+    }
+
     /// Whether the negotiated client advertised `command` in its
     /// `riprEditor.commands` block (#1776, RIPR-SPEC-0129). Client-executed
     /// `ripr.*` commands (clipboard copies, related-test navigation) exist

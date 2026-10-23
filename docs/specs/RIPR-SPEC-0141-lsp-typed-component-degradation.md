@@ -172,7 +172,9 @@ remain published and usable (`findings_trustworthy: true`).
 Given a refresh whose seam inventory walk fails,
 when the snapshot commits,
 then the seam_inventory outcome is failed with kind seam_inventory_failed
-  and a bounded message and the recovery route retry ripr.refreshDiagnostics,
+  and a bounded message and the recovery route retry ripr.refreshDiagnostics
+  (retry ripr.refresh (workspace/executeCommand) for a client without the
+  riprEditor block, #9895),
 and the run status is limited,
 and ordinary diff-scoped findings remain published with
   findings_trustworthy: true,
@@ -216,7 +218,7 @@ when the conversion fires,
 then the diff outcome is failed with the named kind and
   findings_trustworthy: false, the run status is limited, zero findings
   and zero diagnostics are committed, and the recovery route is
-  retry ripr.refreshDiagnostics.
+  retry ripr.refreshDiagnostics (client-appropriate as above, #9895).
 
 Given a refresh whose diff exceeds the fail-closed scope guard
   (diff_scope_oversized, #2299),

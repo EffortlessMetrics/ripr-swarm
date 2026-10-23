@@ -28215,7 +28215,13 @@ fn framed_lsp_zero_git_timeout_commits_limited_once_and_recovers() -> Result<(),
             !diff["snapshot_identity"].is_null(),
             "the failure must belong to a committed snapshot"
         );
-        assert_eq!(diff["recovery"], "retry ripr.refreshDiagnostics");
+        // #9895: this initialize advertises no `riprEditor` block, so the
+        // VS Code-only palette command must not be named; the server-executed
+        // `ripr.refresh` route is.
+        assert_eq!(
+            diff["recovery"],
+            "retry ripr.refresh (workspace/executeCommand)"
+        );
         let ends = limited
             .iter()
             .filter(|message| {

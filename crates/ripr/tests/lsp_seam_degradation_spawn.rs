@@ -911,9 +911,13 @@ fn spawned_server_with_invalid_seam_limit_degrades_seam_inventory_through_produc
     }
     completed_seam_identity(status)?;
     let recovery = seam["recovery"].as_str().unwrap_or("");
-    if !recovery.contains("ripr.refreshDiagnostics") {
+    // #9895: this session advertises no `riprEditor` block, so the recovery
+    // is the server-executed route and never the VS Code-only palette command.
+    if !recovery.contains("ripr.refresh (workspace/executeCommand)")
+        || recovery.contains("refreshDiagnostics")
+    {
         return Err(format!(
-            "the degraded outcome must name a concrete recovery route: {seam}"
+            "the degraded outcome must name a client-appropriate recovery route: {seam}"
         ));
     }
     // The outcome message must name the forcing variable and value: a
