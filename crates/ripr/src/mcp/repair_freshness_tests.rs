@@ -594,7 +594,7 @@ fn selected_action_parity(
         // the raw path: a literal-backslash Unix root must not fail here
         // only because its display carries quoting.
         let host_root = crate::agent::loop_commands::shell_arg(
-            &crate::agent::loop_commands::display_path(root),
+            &crate::agent::loop_commands::root_path_display(root),
         );
         assert!(
             cli_rendered.contains(host_root.as_str()),
