@@ -17,7 +17,9 @@ pub(crate) type InterruptFlags = (
 /// (`ripr mcp --stdio`, #9895). Unlike the one-shot [`check`] registration,
 /// a stdio server serves until its transport ends, so its registration and
 /// flags live for the rest of the process and every dispatched analysis
-/// observes the same pair.
+/// observes the same pair. Unix-only: non-Unix installs are no-ops and no
+/// consumer exists outside the Unix cancellation path.
+#[cfg(unix)]
 static SERVER_FLAGS: std::sync::OnceLock<InterruptFlags> = std::sync::OnceLock::new();
 
 /// Install process-lifetime SIGINT+SIGTERM cooperative interrupts for a
@@ -61,6 +63,8 @@ pub(crate) fn install_server_interrupts() -> Result<(), String> {
 /// The installed server interrupt flags, when a server entry installed them.
 /// Analysis entries consult these to build their cancellation token; absent
 /// flags preserve the embedder-managed signal policy (plain `cli::run`).
+/// Unix-only alongside [`SERVER_FLAGS`].
+#[cfg(unix)]
 pub(crate) fn server_interrupt_flags() -> Option<InterruptFlags> {
     SERVER_FLAGS.get().cloned()
 }

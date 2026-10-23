@@ -91,7 +91,9 @@ official SDK transport:
   child waits (git probes, the Perl exporter, cat-file batch reads)
   observe the flag at their poll cadence, terminate the owned process
   tree, and unwind, so no git child outlives an interrupted `ripr_refresh`
-  — and the refresh settles with a typed failure on the same session.
+  — and the refresh settles on the same session with the typed failure in
+  its `attempt` block (a completed document, `isError` false per the #5254
+  commit contract).
   A repeated signal restores native termination as the escape; process
   exit itself stays transport-owned (stdin EOF). On non-Unix targets the
   install is a no-op: containment there is the job-object ownership in
@@ -503,8 +505,9 @@ is not evidence that a resource with a particular identity exists.
 - `crates/ripr/tests/mcp_stdio.rs::sigterm_mid_refresh_terminates_the_git_tree_and_settles_typed`
   (Linux) — a `git` shim blocks the refresh's uncommitted-diff read; an
   external SIGTERM terminates the owned git child, the server survives,
-  the refresh settles with a typed `isError` failure carrying a failure
-  code, and the session still answers ping (#9895).
+  the refresh settles as a completed document (`isError` stays false,
+  #5254) whose `attempt` block carries the typed `analysis_failed` failure,
+  and the session still answers ping (#9895).
   `crates/ripr/src/cli/interrupt.rs::tests` — the SIGTERM cooperative-first
   contract, one shared flag pair across SIGINT+SIGTERM, and idempotent
   process-lifetime installation.

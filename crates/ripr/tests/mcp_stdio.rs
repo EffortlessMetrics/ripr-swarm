@@ -475,9 +475,11 @@ fn json_rpc_rejections_are_answered_with_spec_codes_and_the_session_survives() -
 /// not leave the git child behind. The server entry installs cooperative
 /// SIGINT+SIGTERM interrupts; the bounded child waits observe cancellation at
 /// their poll cadence and terminate the owned git tree, the refresh settles
-/// with a typed failure, and the session keeps serving — the first signal
-/// settles, only a repeated signal is the native-death escape. Linux-only:
-/// it needs `nix` for the owned signal and liveness probes.
+/// as a completed document whose `attempt` block carries the typed failure
+/// (`isError` stays false, the #5254 commit contract), and the session keeps
+/// serving — the first signal settles, only a repeated signal is the
+/// native-death escape. Linux-only: it needs `nix` for the owned signal and
+/// liveness probes.
 #[cfg(target_os = "linux")]
 #[test]
 fn sigterm_mid_refresh_terminates_the_git_tree_and_settles_typed() -> Result<(), String> {
@@ -608,20 +610,32 @@ fn sigterm_mid_refresh_terminates_the_git_tree_and_settles_typed() -> Result<(),
         return Err("the server must survive the first SIGTERM (cooperative settle)".to_string());
     }
 
-    // The refresh settles with a typed failure, and the session keeps serving.
+    // The refresh settles per the #5254 commit contract: a failed attempt
+    // still answers as a completed document — `isError` stays false and the
+    // typed failure rides under `attempt` (mirrors the
+    // `refresh_attempt_failure_code` helper in mcp_workspace_config.rs).
     let reply = session.next_reply(Duration::from_secs(30))?;
-    if reply.get("id") != Some(&json!("refresh-1"))
-        || reply.pointer("/result/isError") != Some(&json!(true))
-    {
+    if reply.get("id") != Some(&json!("refresh-1")) {
         return Err(format!(
-            "the interrupted refresh must settle typed: {reply}"
+            "the interrupted refresh answer lost its id: {reply}"
         ));
     }
-    if reply
-        .pointer("/result/structuredContent/failure/code")
-        .is_none()
+    if reply.pointer("/result/isError") != Some(&json!(false)) {
+        return Err(format!(
+            "the interrupted refresh must stay a completed document: {reply}"
+        ));
+    }
+    let settled = reply
+        .pointer("/result/structuredContent")
+        .cloned()
+        .ok_or_else(|| "the interrupted refresh lost its structured content".to_string())?;
+    if settled["schema_version"] != json!("ripr-mcp-refresh-v1")
+        || settled["attempt"]["state"] != json!("failed")
+        || settled["attempt"]["failure"]["code"] != json!("analysis_failed")
     {
-        return Err(format!("the typed failure lost its code: {reply}"));
+        return Err(format!(
+            "the interrupted refresh must settle as a typed failed attempt: {reply}"
+        ));
     }
     let alive = session.call("alive", "ping", json!({}), Duration::from_secs(10))?;
     if alive.get("id") != Some(&json!("alive")) || alive.get("result") != Some(&json!({})) {
