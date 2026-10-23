@@ -550,3 +550,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — opaque_fixture_builder (22)
+
+Reason:
+RIPR-SPEC-0122: infection_unknown next step names a concrete action (#9244 item 5); wording only, no classification change
+
+Command:
+`cargo xtask goldens bless opaque_fixture_builder --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
