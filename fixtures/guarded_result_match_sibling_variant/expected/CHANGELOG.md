@@ -332,3 +332,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — guarded_result_match_sibling_variant (26)
+
+Reason:
+RIPR-SPEC-0122: human output drops the observation_unverified token
+
+Command:
+`cargo xtask goldens bless guarded_result_match_sibling_variant --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

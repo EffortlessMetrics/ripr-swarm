@@ -2798,7 +2798,7 @@ fn far_above_threshold_discounts() {
             )
             .as_deref(),
             Some(
-                "Trace the related test input through the local or computed operand, including default/empty cases, to check whether the change matters. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
+                "Open the related test and trace its input through the local or computed operand (including default and empty cases) to see which side of the changed condition it exercises, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
             )
         );
         assert_eq!(
