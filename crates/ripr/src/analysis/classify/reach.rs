@@ -386,13 +386,12 @@ fn foreign_imported_names(source: &str) -> Option<HashSet<String>> {
     }
     let parse = crate::analysis::syntax::parse_clean_source_file(source)?;
     let mut names = HashSet::new();
-    fn collect(tree: &ast::UseTree, foreign: Option<bool>, names: &mut HashSet<String>) {
-        let foreign = foreign.or_else(|| {
-            tree.path()
-                .and_then(|path| path.segments().next())
-                .and_then(|segment| segment.name_ref())
-                .map(|root| !matches!(root.text().as_str(), "crate" | "self" | "super"))
-        });
+    fn collect(tree: &ast::UseTree, names: &mut HashSet<String>) {
+        let foreign = tree
+            .path()
+            .and_then(|path| path.segments().next())
+            .and_then(|segment| segment.name_ref())
+            .map(|root| !matches!(root.text(), "crate" | "self" | "super"));
         match foreign {
             Some(true) => {
                 names.extend(
@@ -413,7 +412,7 @@ fn foreign_imported_names(source: &str) -> Option<HashSet<String>> {
             None => {
                 if let Some(list) = tree.use_tree_list() {
                     for child in list.use_trees() {
-                        collect(&child, None, names);
+                        collect(&child, names);
                     }
                 }
             }
@@ -427,7 +426,7 @@ fn foreign_imported_names(source: &str) -> Option<HashSet<String>> {
         .filter_map(ast::Use::cast)
     {
         if let Some(tree) = item.use_tree() {
-            collect(&tree, None, &mut names);
+            collect(&tree, &mut names);
         }
     }
     Some(names)
