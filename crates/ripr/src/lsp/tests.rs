@@ -976,6 +976,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
         StageEvidence, StageState, SymbolId,
     };
     let finding = crate::domain::Finding {
+        analysis_scope: crate::domain::AnalysisScope::Diff,
         id: format!("probe:{file}:10:predicate:aabbccdd"),
         canonical_gap: None,
         probe: Probe {
@@ -15674,6 +15675,7 @@ fn finding_projection_emits_one_limited_diagnostic_for_mixed_canonical_group() -
 
 pub(super) fn sample_finding() -> Finding {
     Finding {
+        analysis_scope: crate::domain::AnalysisScope::Diff,
         id: "probe:pricing:88:predicate".to_string(),
         canonical_gap: None,
         probe: Probe {

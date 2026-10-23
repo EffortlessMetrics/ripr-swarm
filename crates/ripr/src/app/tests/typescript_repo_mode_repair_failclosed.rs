@@ -14,6 +14,15 @@ const DISCOUNT_DIFF: &str = "diff --git a/src/discount.ts b/src/discount.ts\nind
 const VALUE_TEST: &str = "import { applyDiscount } from '../src/discount';\n\ntest('applyDiscount applies discount when amount meets threshold', () => {\n    const result = applyDiscount(100, 100);\n    expect(result).toBeGreaterThan(50);\n});\n";
 
 fn run(label: &str, repo: bool) -> Result<Vec<Value>, String> {
+    run_with_scopes(label, repo).map(|(findings, _)| findings)
+}
+
+/// JSON findings plus the typed `analysis_scope` of every finding the
+/// producer returned for the fixture source (#5531).
+fn run_with_scopes(
+    label: &str,
+    repo: bool,
+) -> Result<(Vec<Value>, Vec<crate::domain::AnalysisScope>), String> {
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|error| format!("system time: {error}"))?
@@ -22,7 +31,7 @@ fn run(label: &str, repo: bool) -> Result<Vec<Value>, String> {
         "ripr-ts-repo-failclosed-{label}-{}-{stamp}",
         std::process::id()
     ));
-    let output = (|| -> Result<String, String> {
+    let output = (|| -> Result<(String, Vec<crate::domain::AnalysisScope>), String> {
         for (path, contents) in [
             ("package.json", PACKAGE_JSON),
             ("ripr.toml", CONFIG),
@@ -57,19 +66,36 @@ fn run(label: &str, repo: bool) -> Result<Vec<Value>, String> {
         } else {
             crate::app::check_workspace_with_config(input, &config)?
         };
-        crate::render_check(&output, &crate::OutputFormat::Json)
+        let scopes = output
+            .findings
+            .iter()
+            .filter(|finding| {
+                finding
+                    .probe
+                    .location
+                    .file
+                    .to_string_lossy()
+                    .contains("discount.ts")
+            })
+            .map(|finding| finding.analysis_scope)
+            .collect();
+        Ok((
+            crate::render_check(&output, &crate::OutputFormat::Json)?,
+            scopes,
+        ))
     })();
     let cleanup = fs::remove_dir_all(&root)
         .map_err(|error| format!("remove fixture {}: {error}", root.display()));
-    let rendered = output?;
+    let (rendered, scopes) = output?;
     cleanup?;
     let value: Value =
         serde_json::from_str(&rendered).map_err(|error| format!("parse check output: {error}"))?;
-    Ok(value
+    let findings = value
         .get("findings")
         .and_then(Value::as_array)
         .cloned()
-        .unwrap_or_default())
+        .unwrap_or_default();
+    Ok((findings, scopes))
 }
 
 fn ts_findings(findings: &[Value]) -> Vec<&Value> {
@@ -113,6 +139,29 @@ fn repo_mode_typescript_finding_is_not_repair_ready() -> Result<(), String> {
                 "repo-mode finding reached repair signal: {finding}"
             ));
         }
+    }
+    Ok(())
+}
+
+/// #5531: the producers set the typed scope by construction: every repo-run
+/// finding is `Repo`, and the diff control stays `Diff`.
+#[test]
+fn producer_sets_typed_analysis_scope_typescript() -> Result<(), String> {
+    let (_, repo) = run_with_scopes("scope-repo", true)?;
+    if repo.is_empty()
+        || repo
+            .iter()
+            .any(|s| *s != crate::domain::AnalysisScope::Repo)
+    {
+        return Err(format!("repo run findings must all be Repo: {repo:?}"));
+    }
+    let (_, diff) = run_with_scopes("scope-diff", false)?;
+    if diff.is_empty()
+        || diff
+            .iter()
+            .any(|s| *s != crate::domain::AnalysisScope::Diff)
+    {
+        return Err(format!("diff control findings must all be Diff: {diff:?}"));
     }
     Ok(())
 }

@@ -67,7 +67,7 @@ Updated:
 ## Pending — rust_unused_trait_effect_oracle (6)
 
 Reason:
-RIPR-SPEC-0122: #9373 item 1 bounded Evidence stage and state legend; preserve current analysis, JSON and human-full
+RIPR-SPEC-0122: human output drops the observation_unverified token
 
 Command:
 `cargo xtask goldens bless rust_unused_trait_effect_oracle --reason "..."`
@@ -78,6 +78,19 @@ Updated:
 - `expected/human-full.txt`
 
 ## Pending — rust_unused_trait_effect_oracle (7)
+
+Reason:
+RIPR-SPEC-0122: #9373 item 1 bounded Evidence stage and state legend; preserve current analysis, JSON and human-full
+
+Command:
+`cargo xtask goldens bless rust_unused_trait_effect_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_unused_trait_effect_oracle (8)
 
 Reason:
 RIPR-SPEC-0122: #9373 item 1 observation-gloss repair; report independent related test/assertion evidence without implying that the changed arm executes.

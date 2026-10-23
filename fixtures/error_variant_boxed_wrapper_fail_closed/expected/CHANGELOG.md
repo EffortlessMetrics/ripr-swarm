@@ -424,6 +424,17 @@ Updated:
 ## Pending — error_variant_boxed_wrapper_fail_closed (30)
 
 Reason:
+RIPR-SPEC-0122: human output drops the observation_unverified token
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_fail_closed --reason "..."`
+
+Updated:
+- `expected/human-full.txt`
+
+## Pending — error_variant_boxed_wrapper_fail_closed (31)
+
+Reason:
 RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
 
 Command:
@@ -434,7 +445,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — error_variant_boxed_wrapper_fail_closed (31)
+## Pending — error_variant_boxed_wrapper_fail_closed (32)
 
 Reason:
 RIPR-SPEC-0122: #9373 item 1 review repair; missing discriminators include absent assertions as well as inputs
@@ -447,7 +458,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — error_variant_boxed_wrapper_fail_closed (32)
+## Pending — error_variant_boxed_wrapper_fail_closed (33)
 
 Reason:
 RIPR-SPEC-0122: #9373 item 1 observation-gloss repair; report independent related test/assertion evidence without implying that the changed arm executes.

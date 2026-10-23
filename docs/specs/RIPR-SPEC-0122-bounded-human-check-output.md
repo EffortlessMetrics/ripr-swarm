@@ -578,6 +578,37 @@ because the write run resolves it the same way; when nothing resolves, the
 command carries `--base <ref>` followed by the resolution error, so the
 suggested write cannot fail on the same missing base.
 
+### Plain wording for an unconfirmed observation (#9244)
+
+The producer's `observation` and `discriminator` stage summaries carry the
+machine marker `observation_unverified`. Both human evidence routes, the
+per-finding lines (the single-finding blocks of bounded and `human-full`
+output, and `ripr explain`) and the grouped rows of the shared multi-finding
+catalogue, remove only the producer-appended marker, at the fixed
+position each producer emits it: the trailing ` (observation_unverified)`
+suffix, the Python adapter's fixed `(observation_unverified).` sentence forms,
+and the TypeScript adapter's exact strong-oracle-no-flow summary (whose token
+reads "the observation is unconfirmed"). The words before the marker
+("Discriminator unconfirmed: no assertion text references this probe's changed
+expression") already say it in prose. No substring or token scanning is done,
+so source text a summary embeds (identifiers, quoted literals, backticks of
+any parity) is never modified. The JSON stage summaries and the shared
+discriminator evidence line keep the marker unchanged, because downstream
+consumers key on it. With two or more owner-bearing findings, `human-full`
+renders every evidence row through the shared catalogue; those rows apply the
+same rewrite as the per-finding lines. The TypeScript controls run the built
+binary on the boundary-gap shape with the token as a parameter name and as part
+of a longer identifier; the Python controls
+run it on the error-path shape with the raised message as an unpaired-backtick
+string and as the bare token. All require the producer's `missing proof`
+expression to print unchanged in the human Evidence row.
+
+
+This item does not rewrite the Python Weakness section text (python
+`classify.rs`, rendered through `weakness_lines`), the LSP hover, pilot output
+or the agent packet routes. Those, with the python `classify.rs:686` and
+`classify.rs:691` reason texts, are tracked in #9929.
+
 ## Non-Claims
 
 - Bounded human output is not runtime mutation evidence.
@@ -623,6 +654,16 @@ suggested write cannot fail on the same missing base.
 
 ## Test Mapping
 
+- `crates/ripr/src/output/human.rs::tests::human_evidence_spells_the_unconfirmed_observation_in_words`
+- `crates/ripr/src/output/human.rs::tests::plain_observation_wording_handles_each_producer_form`
+- `crates/ripr/src/output/human.rs::tests::shared_evidence_rows_spell_the_unconfirmed_observation_in_words`
+- `crates/ripr/src/output/human.rs::tests::plain_wording_leaves_backticked_source_literals_alone`
+- `crates/ripr/src/output/human.rs::tests::plain_observation_wording_never_modifies_embedded_source_text`
+- `crates/ripr/tests/observation_wording_python_literals.rs::single_backtick_before_the_token_prints_as_written`
+- `crates/ripr/tests/observation_wording_python_literals.rs::bare_token_message_prints_as_written`
+- `crates/ripr/tests/observation_wording_source_literals.rs::renamed_parameter_equal_to_the_token_prints_as_written`
+- `crates/ripr/tests/observation_wording_source_literals.rs::renamed_parameter_containing_the_token_prints_as_written`
+- `crates/ripr/tests/observation_wording_source_literals.rs::ordinary_parameter_keeps_the_prose_free_of_the_raw_marker`
 - `crates/ripr/src/output/human.rs::tests::no_static_path_weakness_list_drops_restated_evidence` (a `no_static_path` finding's Weakness list and digest pointer omit the three generic entries its Evidence block already states as `no`; distinct entries and other classes are unchanged)
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_refusal_preserves_the_requested_probe_family`
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub`

@@ -41,7 +41,7 @@ Updated:
 ## Pending — typescript_enum_wrong_export (4)
 
 Reason:
-RIPR-SPEC-0122: #9373 item 1 bounded Evidence legend on new current-main fixture; preserve current JSON, human-full and discriminator facts
+RIPR-SPEC-0224: re-bless after #9798 and #9056 combined; the wrong-export related-test row now carries the row-local observation_unconfirmed miss (unconfirmed suffix), no verdict change
 
 Command:
 `cargo xtask goldens bless typescript_enum_wrong_export --reason "..."`
@@ -52,6 +52,19 @@ Updated:
 - `expected/human-full.txt`
 
 ## Pending — typescript_enum_wrong_export (5)
+
+Reason:
+RIPR-SPEC-0122: #9373 item 1 bounded Evidence legend on new current-main fixture; preserve current JSON, human-full and discriminator facts
+
+Command:
+`cargo xtask goldens bless typescript_enum_wrong_export --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_enum_wrong_export (6)
 
 Reason:
 RIPR-SPEC-0122: #9373 item 1 observation-gloss repair; report independent related test/assertion evidence without implying that the changed arm executes.

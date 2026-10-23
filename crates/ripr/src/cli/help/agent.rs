@@ -380,14 +380,17 @@ Options:
                        recovery route.
   --gap-id ID          Start a repair for one canonical TypeScript preview gap
                        (`gap:typescript:typescript_preview:...`) printed by
-                       `ripr check`; `--phase before` only, exclusive with
-                       `--seam-id`, and requires `--base`. It re-runs the
-                       diff-scoped check, refuses unless the finding's repair
-                       packet is ready, and records the check-findings
-                       snapshot; the edit cage is recorded but not enforced yet (C2b).
-                       Verify afterwards with `ripr agent verify`
-                       and its gap binding; the gap-bound `after` phase is
-                       not available. Python gaps are not repairable here.
+                       `ripr check`; exclusive with `--seam-id` and requires
+                       `--base`. The before phase re-runs the diff-scoped
+                       check, refuses unless the finding's repair packet is
+                       ready, and records the check-findings snapshot. Run
+                       `--attempt ID --phase after` after committing the
+                       focused test: it re-runs the check against the recorded
+                       base commit, reports the gap closed only when it reads
+                       exposed (otherwise it refuses and the attempt stays
+                       retryable), then enforces the edit cage. It issues no
+                       receipt; the closure rides the verify result. Python
+                       gaps are not repairable here.
   --base REF           The Git base the diff-scoped check compares against;
                        required with, and valid only for, `--gap-id`.
   --attempt ID         Select one durable repair attempt; valid for `after`

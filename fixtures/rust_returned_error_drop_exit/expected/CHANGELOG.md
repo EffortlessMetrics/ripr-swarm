@@ -105,7 +105,7 @@ Updated:
 ## Pending — rust_returned_error_drop_exit (9)
 
 Reason:
-RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
+RIPR-SPEC-0122: human output drops the observation_unverified token
 
 Command:
 `cargo xtask goldens bless rust_returned_error_drop_exit --reason "..."`
@@ -118,7 +118,7 @@ Updated:
 ## Pending — rust_returned_error_drop_exit (10)
 
 Reason:
-RIPR-SPEC-0122: #9373 item 1 review repair; missing discriminators include absent assertions as well as inputs
+RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
 
 Command:
 `cargo xtask goldens bless rust_returned_error_drop_exit --reason "..."`
@@ -129,6 +129,19 @@ Updated:
 - `expected/human-full.txt`
 
 ## Pending — rust_returned_error_drop_exit (11)
+
+Reason:
+RIPR-SPEC-0122: #9373 item 1 review repair; missing discriminators include absent assertions as well as inputs
+
+Command:
+`cargo xtask goldens bless rust_returned_error_drop_exit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_returned_error_drop_exit (12)
 
 Reason:
 RIPR-SPEC-0122: #9373 item 1 observation-gloss repair; report independent related test/assertion evidence without implying that the changed arm executes.

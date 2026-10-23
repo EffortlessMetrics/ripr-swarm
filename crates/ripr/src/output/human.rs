@@ -2424,9 +2424,25 @@ mod tests {
         let carded = python_preview_finding(11, true);
         assert!(crate::output::python_repair_card::python_repair_card(&carded).is_some());
         let mut repo = carded.clone();
-        repo.evidence
-            .push(crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
+        repo.mark_repo_scoped();
         assert!(crate::output::python_repair_card::python_repair_card(&repo).is_none());
+    }
+
+    /// #5531 negative experiments: typed `Repo` scope without the evidence
+    /// line, and a legacy evidence line on a typed `Diff` finding, both get no
+    /// repair card.
+    #[test]
+    fn typed_scope_is_authority_for_python_repair_card() {
+        let carded = python_preview_finding(11, true);
+        let mut typed_only = carded.clone();
+        typed_only.analysis_scope = crate::domain::AnalysisScope::Repo;
+        assert!(crate::output::python_repair_card::python_repair_card(&typed_only).is_none());
+        let mut legacy = carded.clone();
+        legacy
+            .evidence
+            .push(crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
+        assert!(crate::output::python_repair_card::python_repair_card(&legacy).is_none());
+        assert!(crate::output::python_repair_card::python_repair_card(&carded).is_some());
     }
 
     /// #7587: a deleted or moved Python line is base-side evidence and names
@@ -7023,6 +7039,179 @@ mod tests {
         );
     }
 
+    #[test]
+    fn human_evidence_spells_the_unconfirmed_observation_in_words() {
+        // #9244: the producer's `(observation_unverified)` marker stays the
+        // machine value in the stage summary (JSON keys on it); the human
+        // window says the same thing without the raw token.
+        use crate::output::discriminator_line::discriminator_evidence_line;
+        let marker = "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)";
+        let mut finding = sample_finding();
+        finding.ripr.reveal.discriminate = stage(StageState::Weak, Confidence::Medium, marker);
+        finding.ripr.reveal.observe = stage(
+            StageState::Yes,
+            Confidence::Medium,
+            "Observed; the changed value is never named (observation_unverified)",
+        );
+
+        // Machine side: the shared line and the stage summary keep the token.
+        assert!(
+            discriminator_evidence_line(&finding).contains("(observation_unverified)"),
+            "machine value must stay in the shared line"
+        );
+        assert!(
+            finding
+                .ripr
+                .reveal
+                .discriminate
+                .summary
+                .contains("(observation_unverified)")
+        );
+
+        let rendered = render_finding(&finding);
+        assert!(
+            !rendered.contains("observation_unverified"),
+            "human output leaked the raw token:\n{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression\n"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("observation yes: Observed; the changed value is never named\n"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn shared_evidence_rows_spell_the_unconfirmed_observation_in_words() {
+        // #9244: the grouped catalogue rows apply the same rewrite as the
+        // per-finding lines; the stage summary keeps the machine marker.
+        let marker = "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)";
+        let mut finding = sample_finding();
+        finding.ripr.reveal.discriminate = stage(StageState::Weak, Confidence::Medium, marker);
+        finding.ripr.reveal.observe = stage(
+            StageState::Yes,
+            Confidence::Medium,
+            "Observed; the changed value is never named (observation_unverified)",
+        );
+        assert!(
+            finding
+                .ripr
+                .reveal
+                .discriminate
+                .summary
+                .contains("(observation_unverified)")
+        );
+
+        let rendered = super::evidence_lines::evidence_path_entries(&finding, false)
+            .into_iter()
+            .map(|entry| entry.text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            !rendered.contains("observation_unverified"),
+            "shared evidence rows leaked the raw token:\n{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("observation yes: Observed; the changed value is never named"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn plain_observation_wording_handles_each_producer_form() {
+        use super::evidence_lines::plain_observation_wording;
+        assert_eq!(
+            plain_observation_wording(
+                "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"
+            ),
+            "Discriminator unconfirmed: no assertion text references this probe's changed expression"
+        );
+        assert_eq!(
+            plain_observation_wording(
+                "A strong Python oracle reaches `kind`, but static evidence does not place a related test input inside the guarding arm `case _`; every observed input leaves the changed line unexecuted (observation_unverified). Add a test input that satisfies the guarding condition."
+            ),
+            "A strong Python oracle reaches `kind`, but static evidence does not place a related test input inside the guarding arm `case _`; every observed input leaves the changed line unexecuted. Add a test input that satisfies the guarding condition."
+        );
+        assert_eq!(
+            plain_observation_wording(
+                "A strong Python oracle reaches `f`, but every strong assertion reads its result only through a further method call, so the edited value is not observed (observation_unverified). gap reason."
+            ),
+            "A strong Python oracle reaches `f`, but every strong assertion reads its result only through a further method call, so the edited value is not observed. gap reason."
+        );
+        assert_eq!(
+            plain_observation_wording(
+                "TypeScript preview adapter: strong oracle found but no assertion's observed_expression flows from the changed sub-expression; observation_unverified — discriminate unknown."
+            ),
+            "TypeScript preview adapter: strong oracle found but no assertion's observed_expression flows from the changed sub-expression; the observation is unconfirmed — discriminate unknown."
+        );
+        assert_eq!(
+            plain_observation_wording("Strong oracle found"),
+            "Strong oracle found"
+        );
+    }
+
+    #[test]
+    fn plain_observation_wording_never_modifies_embedded_source_text() {
+        use super::evidence_lines::plain_observation_wording;
+        // Token mid-summary, single backtick before it, paired backticks around
+        // the whole message, and a longer identifier: none is a producer form.
+        for text in [
+            "missing proof: `observation_unverified == threshold`.",
+            "missing proof: `check_observation_unverified_count == threshold`.",
+            "Python preview adapter found no strong discriminator; missing proof: `raise ValueError(\"`observation_unverified\")`.",
+            "see `a (observation_unverified) b` for details",
+            "`missing proof: observation_unverified == threshold`",
+            "no flow; observation_unverified mid-summary prose",
+            "(observation_unverified) first",
+        ] {
+            assert_eq!(plain_observation_wording(text), text, "{text}");
+        }
+        // The producer-appended suffix after embedded source is still removed.
+        assert_eq!(
+            plain_observation_wording("x `observation_unverified` y (observation_unverified)"),
+            "x `observation_unverified` y"
+        );
+    }
+
+    #[test]
+    fn plain_wording_leaves_backticked_source_literals_alone() {
+        use crate::domain::{ExposureClass, MissingDiscriminatorFact};
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.ripr.reveal.discriminate = stage(
+            StageState::Yes,
+            Confidence::Medium,
+            "Strong oracle (observation_unverified)",
+        );
+        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "observation_unverified".to_string(),
+            reason: "r".to_string(),
+            flow_sink: None,
+        }];
+        let rendered = super::evidence_lines::evidence_path_lines(
+            &finding,
+            super::evidence_lines::JsonPointerWording::CheckFlag,
+        )
+        .join("\n");
+        assert!(
+            rendered.contains(
+                "discriminator missing: `observation_unverified`; related oracle: Strong oracle"
+            ),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("(observation_unverified)"), "{rendered}");
+    }
+
     pub(super) fn bounded_output_with_findings(findings: Vec<Finding>) -> CheckOutput {
         let count = findings.len();
         CheckOutput {
@@ -7055,6 +7244,7 @@ mod tests {
 
     pub(super) fn sample_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:sample.rs:7:predicate".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -7130,6 +7320,7 @@ mod tests {
 
     fn unknown_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_lib_rs:1:static_unknown".to_string(),
             canonical_gap: None,
             probe: Probe {

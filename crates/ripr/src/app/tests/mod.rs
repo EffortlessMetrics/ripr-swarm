@@ -29,6 +29,7 @@ mod typescript_repo_mode_repair_failclosed;
 
 fn sample_finding(file: &str, line: usize) -> Finding {
     Finding {
+        analysis_scope: crate::domain::AnalysisScope::Diff,
         id: "probe:src_lib_rs:42:error_path".to_string(),
         canonical_gap: None,
         probe: Probe {
