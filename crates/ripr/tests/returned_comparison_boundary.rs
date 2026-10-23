@@ -689,3 +689,53 @@ fn a_multiline_tuple_or_array_binding_makes_the_boundary_unresolved() -> Result<
     }
     Ok(())
 }
+
+#[test]
+fn guard_operators_ranges_and_struct_patterns_still_bind_the_name() -> Result<(), String> {
+    // #9197: each arm pattern binds `x` from `y`, however the pattern and its
+    // guard are spelled, so the observed 101 must not satisfy `x > 101`.
+    for pattern in [
+        "        Some(x) if x == 3 =>\n",
+        "        Some(x) if x >= 3 =>\n",
+        "        Some(\n            x\n        ) if y != 3 =>\n",
+        "        (a, x) if a == 1 =>\n",
+        "        Some(x)\n            if a == 1 =>\n",
+        "        x @ 1..=5 =>\n",
+        "        Some(x @ 1..=5) =>\n",
+        "        S { f: x } =>\n",
+        "        S { x } =>\n",
+        "        S { x, .. } =>\n",
+        "        Foo::Bar { x: 1, y: x } =>\n",
+        "        Or(x)\n            if x == 3 =>\n",
+    ] {
+        let opening = format!("    match y {{\n{pattern}");
+        let findings = findings_wrapped(
+            &opening,
+            "    }\n",
+            "            if x > 101 { true } else { false }",
+            "            if x > 100 { true } else { false }",
+            AT_NEW_THRESHOLD,
+        )?;
+        let predicate = family(&findings, "predicate")?;
+        assert_eq!(
+            predicate.class,
+            ExposureClass::InfectionUnknown,
+            "{pattern:?} {predicate:?}"
+        );
+    }
+    // Control: `x` only used in an earlier arm's result keeps the credit.
+    let control = findings_wrapped(
+        "    match y {\n        A => x_not_bound(),\n        B =>\n",
+        "    }\n",
+        "            if x > 101 { true } else { false }",
+        "            if x > 100 { true } else { false }",
+        AT_NEW_THRESHOLD,
+    )?;
+    let predicate = family(&control, "predicate")?;
+    assert_ne!(
+        predicate.class,
+        ExposureClass::InfectionUnknown,
+        "{predicate:?}"
+    );
+    Ok(())
+}

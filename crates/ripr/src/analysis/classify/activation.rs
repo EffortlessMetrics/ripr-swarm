@@ -1329,29 +1329,7 @@ fn owner_rebinds_operand(owner: &FunctionSummary, operand: &str, predicate_line:
         // earlier arm's result (`Some(v) => x, None =>`) is not a binding. An
         // arm that re-binds the scrutinee's own name is declined too (no
         // attempt to tie it to its match).
-        let match_arm_pattern = !contains_word(line_before, "if") && last_word != "match" && {
-            // The bounded read runs across whitespace and newlines to the
-            // binding's own arm arrow, so a pattern split over lines
-            // (`x\n => {`) is seen like a one-line one.
-            let mut depth = before.matches(['(', '[']).count() as i64
-                - before.matches([')', ']']).count() as i64;
-            let mut chars = after.chars().peekable();
-            let mut pattern = false;
-            while let Some(ch) = chars.next() {
-                match ch {
-                    '(' | '[' => depth += 1,
-                    ')' | ']' => depth -= 1,
-                    ',' if depth <= 0 => break,
-                    ';' | '{' | '}' => break,
-                    '=' => {
-                        pattern = chars.peek() == Some(&'>');
-                        break;
-                    }
-                    _ => {}
-                }
-            }
-            pattern
-        };
+        let match_arm_pattern = in_match_arm_pattern(before);
         // A destructuring assignment `(x, y) = (y, x);` or `[x, ..] = ..;`:
         // the bracket group holding the name is followed by a bare `=`.
         let destructuring_assignment = {
@@ -1395,6 +1373,89 @@ fn owner_rebinds_operand(owner: &FunctionSummary, operand: &str, predicate_line:
             || single_pipes % 2 == 1
             || line_before.contains("matches!")
     })
+}
+
+/// Whether the name just after `before` sits in a `match` arm pattern (before
+/// that arm's `=>`), judged by a backward token scan from the name to the arm's
+/// start: pattern text (identifiers, paths, `@`, `|`, `..`/`..=`, `:`, `&`,
+/// tuple, array and struct groups) up to either the match block's own `{` or
+/// the previous arm's `=>` followed by a separating comma or block. A guard
+/// (`if`), the scrutinee (`match`), a statement (`;`), an arm's result (after
+/// its `=>` with no separator) or any other operator ends it as not a pattern,
+/// so guard operators (`==`, `>=`), `1..=5` ranges and struct braces after the
+/// name never hide the binding (#9197).
+fn in_match_arm_pattern(before: &str) -> bool {
+    let chars: Vec<char> = before.chars().collect();
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let mut i = chars.len();
+    let mut separated = false;
+    while i > 0 {
+        i -= 1;
+        let ch = chars[i];
+        match ch {
+            c if c.is_whitespace() => {}
+            ')' | ']' | '}' => {
+                let mut depth = 1usize;
+                while i > 0 && depth > 0 {
+                    i -= 1;
+                    match chars[i] {
+                        ')' | ']' | '}' => depth += 1,
+                        '(' | '[' | '{' => depth -= 1,
+                        _ => {}
+                    }
+                }
+                if depth > 0 {
+                    return false;
+                }
+                if ch == '}' {
+                    separated = true;
+                }
+            }
+            '(' | '[' => separated = false,
+            '{' => {
+                let head: String = chars[..i].iter().collect();
+                let boundary = head.rfind([';', '{', '}']).map_or(0, |at| at + 1);
+                if contains_word(&head[boundary..], "match") {
+                    return true;
+                }
+                separated = false;
+            }
+            ',' => separated = true,
+            '|' | '&' | ':' | '@' => {}
+            '.' => {
+                if i == 0 || chars[i - 1] != '.' {
+                    return false;
+                }
+            }
+            '=' => {
+                if !(i > 0 && chars[i - 1] == '.') {
+                    return false;
+                }
+            }
+            '>' => {
+                if i > 0 && chars[i - 1] == '=' {
+                    return separated;
+                }
+                return false;
+            }
+            c if is_word(c) => {
+                let mut start = i;
+                while start > 0 && is_word(chars[start - 1]) {
+                    start -= 1;
+                }
+                let word: String = chars[start..=i].iter().collect();
+                if matches!(
+                    word.as_str(),
+                    "if" | "match" | "while" | "let" | "for" | "in" | "return" | "else"
+                ) {
+                    return false;
+                }
+                i = start;
+            }
+            _ => return false,
+        }
+    }
+    false
 }
 
 fn contains_word(text: &str, word: &str) -> bool {
@@ -9775,6 +9836,20 @@ assert_eq!(input.amount, 100);"#
             "    let _ = foo(&mut x);",
             "    let _ = match Some(1) { Some(x) if x > 0 => x, _ => 0 };",
             "    (x, y) = (y, x);",
+            "    match y {\n        Some(x) if x == 3 =>",
+            "    match y {\n        Some(x) if x >= 3 =>",
+            "    match y {\n        Some(\n            x\n        ) if y != 3 =>",
+            "    match y {\n        (a, x) if a == 1 =>",
+            "    match y {\n        Some(x)\n            if a == 1 =>",
+            "    match y {\n        x @ 1..=5 =>",
+            "    match y {\n        Some(x @ 1..=5) =>",
+            "    match y {\n        S { f: x } =>",
+            "    match y {\n        S { x } =>",
+            "    match y {\n        S { x, .. } =>",
+            "    match y {\n        Foo::Bar { x: 1, y: x } =>",
+            "    match y {\n        Or(x)\n            if x == 3 =>",
+            "    match y {\n        A => 1,\n        Some(x) if foo(x, 1) =>",
+            "    match y {\n        A => { 1 }\n        x =>",
             "    let _ = x;\n    match (y, 0) {\n        (\n            x,\n            _\n        )\n        => {",
             "    let _ = x;\n    match [y, 0] {\n        [\n            x,\n            _\n        ]\n        => {",
             "    let _q = b'\"';\n    let mut x = x;\n    x += 5;",
@@ -9796,6 +9871,11 @@ assert_eq!(input.amount, 100);"#
             "    let _ = x == 3;",
             "    let _ = Foo { x: x };",
             "    let _ = x >= y;",
+            "    match y {\n        Some(v) if v > x =>",
+            "    match y {\n        Some(v) if foo(x, 1) =>",
+            "    match y {\n        A => x,\n        B =>",
+            "    match y {\n        A => foo(x, 1),\n        B =>",
+            "    match y {\n        A => {\n            x\n        }\n        B if y =>",
             "    let _ = match o {\n        Some(v) => x\n            + v,\n        None => 0,\n    };",
             "    let _s = \"let x = 1;\"; // let x = 2",
             "    let _ = match x { 0 => 1, _ => 2 };",
