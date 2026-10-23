@@ -18513,6 +18513,12 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0351-out-parameter-oracle-credit.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0347"
 name = "Changed trybuild fixtures are named on stderr as not analyzed as test oracles"
 spec = "docs/specs/RIPR-SPEC-0347-trybuild-fixtures-not-analyzed-as-oracles.md"

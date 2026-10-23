@@ -239,6 +239,7 @@ fn reveal_evidence_proximity_reach(
             owner_may_exit_before_probe: false,
             constructor_starts_empty: &|_, _, _| false,
             call_cannot_store: &|_, _, _, _| None,
+            out_parameter_read: &|_, _| None,
         },
         None,
     );
