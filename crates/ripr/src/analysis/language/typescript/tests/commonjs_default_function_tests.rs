@@ -573,8 +573,18 @@ fn renamed_and_default_destructured_imports_of_a_function_export_do_not_reach_it
     let cases: [(&str, &str, usize, &str); 4] = [
         ("open-inline", NAMED_FUNCTION, 3, "  return x * 3;"),
         ("open-declared", DECLARED, 3, "  return x * 3;"),
-        ("refused-inline", refused_named, 2, "  return x * 3 + arguments.length;"),
-        ("refused-declared", refused_declared.as_str(), 3, "  return x * 3;"),
+        (
+            "refused-inline",
+            refused_named,
+            2,
+            "  return x * 3 + arguments.length;",
+        ),
+        (
+            "refused-declared",
+            refused_declared.as_str(),
+            3,
+            "  return x * 3;",
+        ),
     ];
     for (label, owner, line, text) in cases {
         for (spelling, call) in [
