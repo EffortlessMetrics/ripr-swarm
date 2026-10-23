@@ -4,7 +4,6 @@ use super::capture::{CommitFacts, FACTS_KIND, GitFacts};
 use super::dto::{EffectBasis, Range, SCHEMA_VERSION, Source};
 use super::rule::{
     DeriveInput, OVERRIDES_KIND, Override, Overrides, PathClass, classify_path, derive,
-    strongest_class,
 };
 use super::validate::{
     Context, PacketClaim, PacketOpenPr, PacketOpenPrs, SelectionPacket, validate,
@@ -25,6 +24,7 @@ fn commit(n: u8, position: Option<u64>, effect: &str, paths: &[&str]) -> CommitF
         pr_refs: position.map_or_else(Vec::new, |_| vec![u64::from(n)]),
         issue_refs: Vec::new(),
         paths: paths.iter().map(|path| (*path).to_string()).collect(),
+        inline_test_paths: Vec::new(),
         final_tree_effect: effect.to_string(),
         effect_basis: EffectBasis {
             alive_paths: u64::from(effect != "history_reachable_no_final_blob_effect"),
@@ -142,7 +142,8 @@ fn path_classes_follow_the_published_table() -> Result<(), String> {
         ),
         ("CHANGELOG.md", PathClass::Docs),
         ("docs/ROADMAP.md", PathClass::Docs),
-        ("xtask/src/main.rs", PathClass::Control),
+        ("xtask/src/main.rs", PathClass::Automation),
+        ("xtask", PathClass::Automation),
         (".github/workflows/x.yml", PathClass::Control),
         ("policy/x.toml", PathClass::Control),
         ("Cargo.lock", PathClass::Control),
@@ -159,8 +160,51 @@ fn path_classes_follow_the_published_table() -> Result<(), String> {
         "xtask/src/main.rs".to_string(),
     ];
     require(
-        strongest_class(&mixed) == Some(PathClass::Control),
+        mixed.iter().map(|path| classify_path(path)).max() == Some(PathClass::Automation),
         "the strongest class wins",
+    )?;
+    let with_packaging = [
+        "xtask/src/main.rs".to_string(),
+        "packaging/x.toml".to_string(),
+    ];
+    require(
+        with_packaging.iter().map(|path| classify_path(path)).max() == Some(PathClass::Control),
+        "packaging outranks automation",
+    )
+}
+
+fn theme_of(commit: CommitFacts) -> Result<String, String> {
+    let input = facts(vec![commit]);
+    let ledger = derive(&DeriveInput {
+        facts: &input,
+        packet: &packet(),
+        overrides: None,
+        stage: "dry_run",
+        audit: None,
+    })?;
+    Ok(ledger.records.first().ok_or("no record")?.theme.clone())
+}
+
+#[test]
+fn xtask_only_commits_share_the_control_disposition_under_their_own_theme() -> Result<(), String> {
+    let effective = "present_effective";
+    require(
+        disposition_of(commit(5, Some(1), effective, &["xtask/src/a.rs"]))?
+            == "included_accepted_release_or_control",
+        "xtask keeps the control disposition",
+    )?;
+    require(
+        theme_of(commit(5, Some(1), effective, &["xtask/src/a.rs"]))? == "automation",
+        "xtask-only theme",
+    )?;
+    require(
+        theme_of(commit(
+            5,
+            Some(1),
+            effective,
+            &["xtask/src/a.rs", "packaging/x.toml"],
+        ))? == "release_or_control",
+        "packaging in the commit keeps the release theme",
     )
 }
 
@@ -274,7 +318,7 @@ fn unjudgeable_commits_block_instead_of_defaulting() -> Result<(), String> {
 
 #[test]
 fn deferred_claim_owner_issue_in_subject_gives_a_nonclaim_row() -> Result<(), String> {
-    let mut mention = commit(5, Some(1), "present_effective", &["crates/ripr/src/a.rs"]);
+    let mut mention = commit(5, Some(1), "present_effective", &["docs/a.md"]);
     mention.issue_refs = vec![4427];
     let ledger = derive(&DeriveInput {
         facts: &facts(vec![mention]),
@@ -288,6 +332,24 @@ fn deferred_claim_owner_issue_in_subject_gives_a_nonclaim_row() -> Result<(), St
         record.release_disposition == "included_with_release_nonclaim"
             && record.claim_ref.as_deref() == Some("deferred"),
         "the claim ref is recorded",
+    )
+}
+
+#[test]
+fn product_commit_naming_a_deferred_claim_owner_issue_is_not_a_nonclaim() -> Result<(), String> {
+    let mut fix = commit(5, Some(1), "present_effective", &["crates/ripr/src/a.rs"]);
+    fix.issue_refs = vec![4427];
+    let ledger = derive(&DeriveInput {
+        facts: &facts(vec![fix]),
+        packet: &packet(),
+        overrides: None,
+        stage: "dry_run",
+        audit: None,
+    })?;
+    let record = ledger.records.first().ok_or("no record")?;
+    require(
+        record.release_disposition == "included_accepted_product" && record.claim_ref.is_none(),
+        "landed product behavior is not reported as a non-claim",
     )
 }
 
@@ -439,5 +501,103 @@ fn short_commit_ids_do_not_panic_the_override_reference() -> Result<(), String> 
     require(
         record.override_ref.as_deref() == Some("override:abc"),
         "short id reference",
+    )
+}
+
+fn derive_args(facts: &str, packet: &str, output: &str) -> Vec<String> {
+    [
+        "derive", "--facts", facts, "--packet", packet, "--output", output,
+    ]
+    .iter()
+    .map(|arg| (*arg).to_string())
+    .collect()
+}
+
+#[test]
+fn repeated_derive_flags_are_rejected_before_any_file_is_read() -> Result<(), String> {
+    let mut args = derive_args("a.json", "b.json", "c.json");
+    args.extend(["--facts".to_string(), "other.json".to_string()]);
+    let error = super::super::release_ledger(&args)
+        .err()
+        .ok_or("accepted a repeated flag")?;
+    require(
+        error.contains("--facts") && error.contains("more than once"),
+        &format!("the repeated flag is named: {error}"),
+    )
+}
+
+#[test]
+fn failed_derivation_leaves_an_existing_output_untouched() -> Result<(), String> {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("ripr-derive-keep-{nonce}"));
+    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    // The fixture range does not start at the pinned 0.11 base, so validation fails.
+    let input = facts(vec![commit(
+        5,
+        Some(1),
+        "present_effective",
+        &["docs/a.md"],
+    )]);
+    let facts_path = dir.join("facts.json");
+    let packet_path = dir.join("packet.json");
+    let output_path = dir.join("ledger.json");
+    std::fs::write(
+        &facts_path,
+        serde_json::to_string(&input).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        &packet_path,
+        r#"{"claims":[],"open_prs":{"captured_at_main":null,"rows":[]}}"#,
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(&output_path, "previous ledger").map_err(|error| error.to_string())?;
+    let path = |p: &std::path::Path| p.to_string_lossy().into_owned();
+    let error = super::super::release_ledger(&derive_args(
+        &path(&facts_path),
+        &path(&packet_path),
+        &path(&output_path),
+    ))
+    .err()
+    .ok_or("derivation of an unpinned range succeeded")?;
+    require(
+        error.contains("derived ledger is invalid"),
+        &format!("validation failure expected: {error}"),
+    )?;
+    let kept = std::fs::read_to_string(&output_path).map_err(|error| error.to_string())?;
+    std::fs::remove_dir_all(&dir).map_err(|error| error.to_string())?;
+    require(
+        kept == "previous ledger",
+        "the existing output was replaced",
+    )
+}
+
+#[test]
+fn inline_test_only_product_paths_count_as_evidence() -> Result<(), String> {
+    let path = "crates/ripr/src/lib.rs";
+    let mut inline = commit(5, Some(1), "present_effective", &[path]);
+    require(
+        disposition_of(inline.clone())? == "included_accepted_product",
+        "no inline-test fact keeps the path product",
+    )?;
+    inline.inline_test_paths = vec![path.to_string()];
+    require(
+        disposition_of(inline.clone())? == "included_test_or_evidence",
+        "an inline-test-only path is evidence",
+    )?;
+    // The fact covers only the path it names.
+    let mut mixed = commit(
+        5,
+        Some(1),
+        "present_effective",
+        &[path, "crates/ripr/src/other.rs"],
+    );
+    mixed.inline_test_paths = vec![path.to_string()];
+    require(
+        disposition_of(mixed)? == "included_accepted_product",
+        "another product path keeps the commit product",
     )
 }

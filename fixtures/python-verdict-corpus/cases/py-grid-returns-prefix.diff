@@ -1,0 +1,9 @@
+diff --git a/grid_returns/core.py b/grid_returns/core.py
+--- a/grid_returns/core.py
++++ b/grid_returns/core.py
+@@ -22,4 +22,4 @@
+ 
+ 
+ def full_name(first, last):
+-    return first + " " + last
++    return " ".join((first, last))

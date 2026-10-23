@@ -1,0 +1,51 @@
+{
+  "case_id": "ts-grid-boundary-none",
+  "subject_id": "authored-ts-grid-boundary",
+  "diff": "cases/ts-grid-boundary-none.diff",
+  "anchor": {
+    "file": "src/boundary.ts",
+    "line": 18
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "nodetest_smoke_call_no_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --experimental-strip-types --test \"test/*.test.ts\"",
+    "toolchain": "node 22.22.0 (--experimental-strip-types); node:test (built in); edit applied by hand and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "return 2000 < grams;",
+        "mutated_line": "return 2000 < grams;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 2000 itself stops passing"
+      },
+      {
+        "replacement": "return 2000 > grams;",
+        "mutated_line": "return 2000 > grams;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the comparison is inverted"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Grid cell: boundary x no assertion. The test only calls overweight.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

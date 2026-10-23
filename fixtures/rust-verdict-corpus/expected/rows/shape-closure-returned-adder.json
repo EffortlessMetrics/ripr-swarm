@@ -1,0 +1,22 @@
+{
+  "case_id": "shape-closure-returned-adder",
+  "subject_id": "authored-shape-kit",
+  "origin": "authored",
+  "anchor": "src/flow.rs:87",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "returned_closure_called_inline",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "static_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

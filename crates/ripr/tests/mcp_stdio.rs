@@ -2161,7 +2161,7 @@ fn check_filtered_gap_page(
         || document["filtered"] != json!(filtered)
         || document["page"]["returned"] != json!(expected_ids.len())
         || document["snapshot_id"] != snapshot_id
-        || document["schema_version"] != "ripr-mcp-gap-list-v2"
+        || document["schema_version"] != "ripr-mcp-gap-list-v3"
     {
         return Err(format!(
             "filtered transport page differs from exact IDs/counts: expected {expected_ids:?}, selected={selected}, filtered={filtered}: {document}"
@@ -2272,7 +2272,7 @@ fn empty_gap_pages_keep_structured_outcomes_at_the_response_bound() -> Result<()
             if refused.get("error").is_some()
                 || refused.pointer("/result/isError") != Some(&json!(true))
                 || refused.pointer("/result/structuredContent/schema_version")
-                    != Some(&json!("ripr-mcp-gap-list-v2"))
+                    != Some(&json!("ripr-mcp-gap-list-v3"))
                 || refused.pointer("/result/structuredContent/failure/code")
                     != Some(&json!("result_too_large"))
                 || refused.pointer("/result/structuredContent/failure/data/current_snapshot_id")
@@ -2415,8 +2415,11 @@ fn refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation() -> Re
     };
     let mut legacy = all.clone();
     let legacy_object = legacy.as_object_mut().ok_or("list must be an object")?;
+    // Strip every post-v1 field so the synthesized document is a true
+    // v1-era envelope: v2 added `filtered`/`filters`, v3 added `outcome`.
     legacy_object.remove("filtered");
     legacy_object.remove("filters");
+    legacy_object.remove("outcome");
     legacy_object.insert("schema_version".into(), json!("ripr-mcp-gap-list-v1"));
     if v1["additionalProperties"] != false || !accepts_v1_shape(&legacy) || accepts_v1_shape(&all) {
         return Err(
@@ -4018,6 +4021,99 @@ fn mcp_ready_item_is_the_item_the_cli_repair_gate_admits() -> Result<(), String>
         if let Some(refusal) = cli_repair_refusal(&root, finding_id)? {
             return Err(format!(
                 "MCP-ready {id} must be admitted by `ripr repair {finding_id}`: {refusal}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// #5516 fixture: the weak-boundary shape (`age > 18` widened to `>= 18`,
+/// pinned only by `is_adult(30)`), but the only test is the crate's own inline
+/// `#[cfg(test)] mod tests` in `src/lib.rs` (the default `cargo new --lib`
+/// layout). `second_module` adds a second candidate inline module, which the
+/// CLI cage refuses as ambiguous.
+fn install_inline_test_fixture(second_module: bool) -> Result<PathBuf, String> {
+    let root = install_weak_boundary_fixture()?;
+    std::fs::remove_file(root.join("tests/adult.rs")).map_err(|error| error.to_string())?;
+    std::fs::remove_dir(root.join("tests")).map_err(|error| error.to_string())?;
+    let mut source = "pub fn is_adult(age: u32) -> bool {\n    age >= 18\n}\n\n#[cfg(test)]\nmod tests {\n    use super::is_adult;\n\n    #[test]\n    fn adult_is_recognized() {\n        assert!(is_adult(30));\n    }\n}\n".to_string();
+    if second_module {
+        source.push_str("\n#[cfg(test)]\nmod more_tests {\n    use super::is_adult;\n\n    #[test]\n    fn child_is_not_recognized() {\n        assert!(!is_adult(3));\n    }\n}\n");
+    }
+    std::fs::write(root.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
+    commit_fixture(&root, "inline tests")?;
+    Ok(root)
+}
+
+/// #5516: `ripr_prepare_repair` accepts the inline-only seam the CLI before
+/// phase accepts, states the module confinement, and refuses the same
+/// ambiguous two-module case. The admission is the shared seam validator, so
+/// MCP-ready never exceeds `ripr repair`.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn mcp_prepare_repair_agrees_with_the_cli_on_inline_test_seams() -> Result<(), String> {
+    const REFRESH_TIMEOUT: Duration = Duration::from_mins(3);
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    for (second_module, expect_ready) in [(false, true), (true, false)] {
+        let root = install_inline_test_fixture(second_module)?;
+        let _guard = FixtureGuard { root: root.clone() };
+        let mut session = SequentialStdio::spawn(&root)?;
+        session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+        let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
+        structured_tool_success(&refresh, "ripr_refresh")?;
+        let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
+        let list = structured_tool_success(&list, "ripr_list_gaps")?;
+        let items = list["items"].as_array().ok_or("list omitted items")?;
+        if items.is_empty() {
+            return Err(format!("inline fixture must yield an item: {list}"));
+        }
+        let mut ready_count = 0;
+        for item in items {
+            let id = item["canonical_id"].as_str().ok_or("item omitted id")?;
+            let prepare = session.call_tool(
+                "prepare",
+                "ripr_prepare_repair",
+                json!({ "canonical_id": id }),
+                REPLY_TIMEOUT,
+            )?;
+            let prepare = structured_tool_success(&prepare, "ripr_prepare_repair")?;
+            let gap = session.call_tool(
+                "gap",
+                "ripr_get_gap",
+                json!({ "canonical_id": id }),
+                REPLY_TIMEOUT,
+            )?;
+            let gap = structured_tool_success(&gap, "ripr_get_gap")?;
+            let finding_id = gap["item"]["finding_id"].as_str().ok_or("no finding id")?;
+            let refusal = cli_repair_refusal(&root, finding_id)?;
+            if second_module && refusal.is_none() {
+                return Err(format!(
+                    "two candidate inline modules: the CLI must refuse {finding_id}"
+                ));
+            }
+            let ready = prepare["repair_packet_ready"] == true;
+            if ready && refusal.is_some() {
+                return Err(format!(
+                    "MCP-ready {id} exceeds the CLI gate: {}",
+                    refusal.unwrap_or_default()
+                ));
+            }
+            if ready {
+                ready_count += 1;
+                if prepare["allowed_edit_surface"] != json!(["src/lib.rs"])
+                    || prepare["inline_test_module"]["module"] != "tests"
+                    || !prepare["must_not_change"][0]
+                        .as_str()
+                        .unwrap_or("")
+                        .contains("only insert new test functions inside the existing `#[cfg(test)] mod tests`")
+                {
+                    return Err(format!("inline boundary not stated: {prepare}"));
+                }
+            }
+        }
+        if (ready_count > 0) != expect_ready {
+            return Err(format!(
+                "second_module={second_module}: expected ready={expect_ready}, saw {ready_count} ready of {list}"
             ));
         }
     }

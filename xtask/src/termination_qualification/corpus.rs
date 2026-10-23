@@ -19,9 +19,6 @@ pub(crate) enum Expect {
     /// Full analysis: the changed file reports a finding and no limitation
     /// token appears.
     Supported,
-    /// The run terminates and keeps the changed file's finding. This route
-    /// projects no limitation for the unchanged file, so none is expected.
-    TerminatesWithEvidence,
     /// The hostile unchanged file is declined with `token` while the changed
     /// file still reports a finding.
     TypedLimitation {
@@ -45,10 +42,6 @@ impl Expect {
     pub(crate) fn describe(&self) -> String {
         match self {
             Self::Supported => "full analysis, no limitation".to_string(),
-            Self::TerminatesWithEvidence => {
-                "terminates; changed-file finding kept; no limitation projected on this route"
-                    .to_string()
-            }
             Self::TypedLimitation { token, .. } => format!("typed limitation `{token}`"),
             Self::GlobNonmatch => "pattern does not match; finding stays visible".to_string(),
             Self::GlobMatch => "pattern matches; finding suppressed".to_string(),
@@ -65,11 +58,13 @@ impl Expect {
 pub(crate) enum Route {
     /// `ripr check --diff` with JSON output.
     Check,
-    /// `ripr pilot` whole-repository analysis (the only route that reads
-    /// every Rust file and discloses `rust_nesting_budget`).
+    /// `ripr pilot` whole-repository analysis (reads every Rust file; the
+    /// decline is `declined_rust_files` in the summary and a limited
+    /// `run_status` in the repo-exposure artifact).
     Pilot,
 }
 
+#[derive(Clone)]
 pub(crate) struct Case {
     pub(crate) id: String,
     pub(crate) route: Route,
@@ -225,7 +220,10 @@ pub(crate) fn rust_cases() -> Vec<Case> {
     let mut push = |id: String, role: Role, shape: &'static str, hostile: String| {
         for route in [Route::Check, Route::Pilot] {
             let expect = match (role, route) {
-                (Role::Discriminator, Route::Check) => Expect::TerminatesWithEvidence,
+                (Role::Discriminator, Route::Check) => Expect::TypedLimitation {
+                    token: "rust_nesting_budget",
+                    language_class: Some("producer_failure"),
+                },
                 (Role::Discriminator, Route::Pilot) => Expect::TypedLimitation {
                     token: "rust_nesting_budget",
                     language_class: None,
@@ -531,6 +529,15 @@ fn generated_case(id: &str, role: Role, pattern: &str, changed: &str, expect: Ex
     }
 }
 
+/// Literal normalization expectations shared by both slash-containing dialects.
+/// Keep slashless generated-file patterns in their own consumer-specific rows.
+const NORMALIZATION_CASES: [(&str, &str, bool); 4] = [
+    ("leading-dot-segment", "./src/lib.rs", true),
+    ("inner-dot-segment", "src/./lib.rs", true),
+    ("empty-segment", "src//lib.rs", true),
+    ("normalized-nonmatch", "src/./other.rs", false),
+];
+
 pub(crate) fn glob_cases() -> Vec<Case> {
     use Expect::{GeneratedExcluded, GeneratedNotExcluded, GlobMatch, GlobNonmatch};
     let lib = "src/lib.rs";
@@ -592,27 +599,6 @@ pub(crate) fn glob_cases() -> Vec<Case> {
             "adjacent-double-star",
             Role::Control,
             "src/**/**/lib.rs",
-            lib,
-            GlobMatch,
-        ),
-        suppression_case(
-            "leading-dot-segment",
-            Role::Control,
-            "./src/lib.rs",
-            lib,
-            GlobMatch,
-        ),
-        suppression_case(
-            "inner-dot-segment",
-            Role::Control,
-            "src/./lib.rs",
-            lib,
-            GlobMatch,
-        ),
-        suppression_case(
-            "empty-segment",
-            Role::Control,
-            "src//lib.rs",
             lib,
             GlobMatch,
         ),
@@ -738,5 +724,25 @@ pub(crate) fn glob_cases() -> Vec<Case> {
             GeneratedNotExcluded,
         ),
     ]);
+    for (id, pattern, matches) in NORMALIZATION_CASES {
+        cases.push(suppression_case(
+            id,
+            Role::Control,
+            pattern,
+            lib,
+            if matches { GlobMatch } else { GlobNonmatch },
+        ));
+        cases.push(generated_case(
+            id,
+            Role::Control,
+            pattern,
+            lib,
+            if matches {
+                GeneratedExcluded
+            } else {
+                GeneratedNotExcluded
+            },
+        ));
+    }
     cases
 }

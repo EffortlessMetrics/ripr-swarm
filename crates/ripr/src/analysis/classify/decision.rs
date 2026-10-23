@@ -1,5 +1,6 @@
 use super::super::rust_index::{FunctionSummary, TestSummary};
 use super::boundary_pairing::SAME_TEST_PAIRING_MISSING;
+use super::mask_pin::MASK_BITS_UNEXERCISED;
 use super::operand_pin::FIELD_PINNED_EQUAL_TO_OPERAND;
 use super::reveal::wrapper_error_seam_expression;
 use crate::domain::*;
@@ -165,6 +166,7 @@ pub(in crate::analysis) fn missing_evidence(
             missing.push("No exact error variant discriminator was detected".to_string());
         } else if discriminate.summary.contains(SAME_TEST_PAIRING_MISSING)
             || discriminate.summary.contains(FIELD_PINNED_EQUAL_TO_OPERAND)
+            || discriminate.summary.contains(MASK_BITS_UNEXERCISED)
         {
             missing.push(discriminate.summary.clone());
         } else {
