@@ -1389,6 +1389,7 @@ pub(crate) fn module_initializer_observer_relation(
             return expect_actual_references_member(&test.body_text, &import.local, &owner.name);
         }
         import.imported.as_deref() == Some(owner.name.as_str())
+            && !owner.commonjs_default_export
             && !local_identifier_declared_in_test_body(&test.body_text, &import.local)
             && expect_actual_references_identifier(&test.body_text, &import.local)
     })
@@ -3006,7 +3007,9 @@ fn owner_name_import_binding_mismatch(
                         if imported == "default" {
                             !owner.exported_as_default
                         } else {
-                            imported != owner.name.as_str()
+                            // A named binding of a CommonJS function export is
+                            // a property of the function, not the owner.
+                            imported != owner.name.as_str() || owner.commonjs_default_export
                         }
                     })
                     .then_some(OwnerBindingMismatch::Unrelated),

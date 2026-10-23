@@ -652,7 +652,7 @@ fn bare_word_use(compact: &str, needle: &str, allowed: impl Fn(&str) -> bool) ->
     compact.match_indices(needle).any(|(at, _)| {
         let before = compact[..at].chars().next_back();
         let rest = &compact[at + needle.len()..];
-        !(word(before) || word(rest.chars().next()) || before == Some('.')) && !allowed(rest)
+        !(word(before) || word(rest.chars().next()) || before == Some('.') || allowed(rest))
     })
 }
 
