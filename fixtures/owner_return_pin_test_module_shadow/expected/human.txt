@@ -21,6 +21,11 @@ Start here:
     existing tests, doctests and examples before changing assertions; they may already constrain the
     changed behavior. Add or strengthen a test only if that inspection finds a gap
   Evidence: reach weak · infection yes · propagation yes · observation yes · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach weak: No test is seen calling clone; tests share only its file or a name token: a_clone_equals_its_original
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 5 more detail line(s) in --format human-full

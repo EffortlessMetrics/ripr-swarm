@@ -6,6 +6,46 @@ struct Fixture {
     index: RustIndex,
     root: PathBuf,
 }
+impl Fixture {
+    fn try_at(
+        root: PathBuf,
+        build: impl FnOnce(&Path) -> Result<RustIndex, String>,
+    ) -> Result<Self, String> {
+        std::fs::create_dir(&root).map_err(|error| error.to_string())?;
+        let mut fixture = Self {
+            index: RustIndex::default(),
+            root,
+        };
+        fixture.index = build(&fixture.root)?;
+        Ok(fixture)
+    }
+}
+
+fn fixture_root(label: &str) -> PathBuf {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    std::env::temp_dir().join(format!(
+        "ripr-{label}-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
+fn fixture_from_files(label: &str, files: &[(&str, &str)]) -> Result<Fixture, String> {
+    Fixture::try_at(fixture_root(label), |root| {
+        let mut paths = Vec::new();
+        for &(name, source) in files {
+            let path = root.join(name);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            }
+            std::fs::write(&path, source).map_err(|error| error.to_string())?;
+            if name.ends_with(".rs") {
+                paths.push(PathBuf::from(name));
+            }
+        }
+        crate::analysis::facts::build_index(root, &paths)
+    })
+}
 impl std::ops::Deref for Fixture {
     type Target = RustIndex;
     fn deref(&self) -> &RustIndex {
@@ -34,12 +74,6 @@ fn fixture_with_shared_prefix(
     qualified: bool,
     prefix: &str,
 ) -> Result<Fixture, String> {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "ripr-shared-context-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
     let target = if nested {
         "src/shared/nested.rs"
     } else {
@@ -72,24 +106,11 @@ fn fixture_with_shared_prefix(
     if nested {
         files.push(("src/shared.rs", "mod nested;\n".to_string()));
     }
-    let mut paths = Vec::new();
-    for (name, source) in files {
-        let path = root.join(name);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
-        std::fs::write(&path, source).map_err(|e| e.to_string())?;
-        if name.ends_with(".rs") {
-            paths.push(PathBuf::from(name));
-        }
-    }
-    match crate::analysis::facts::build_index(&root, &paths) {
-        Ok(index) => Ok(Fixture { index, root }),
-        Err(error) => {
-            let _ = std::fs::remove_dir_all(root);
-            Err(error)
-        }
-    }
+    let files: Vec<_> = files
+        .iter()
+        .map(|(name, source)| (*name, source.as_str()))
+        .collect();
+    fixture_from_files("shared-context", &files)
 }
 
 fn admission(index: &RustIndex) -> Result<bool, String> {
@@ -337,7 +358,7 @@ fn shared_drop_in_imports_require_all_manifests_and_match_retained_sites() -> Re
                 ""
             }
         );
-        let root = crate::analysis::facts::drop_in::temp_workspace(
+        let fixture = fixture_from_files(
             "shared-context-manifests",
             &[
                 (
@@ -354,12 +375,6 @@ fn shared_drop_in_imports_require_all_manifests_and_match_retained_sites() -> Re
                 ),
             ],
         )?;
-        let paths: Vec<_> = ["a/src/lib.rs", "b/src/lib.rs", "a/src/shared.rs"]
-            .into_iter()
-            .map(PathBuf::from)
-            .collect();
-        let index = crate::analysis::facts::build_index(&root, &paths)?;
-        let fixture = Fixture { index, root };
         let index = &fixture.index;
         let shared = Path::new("a/src/shared.rs");
         assert!(
@@ -465,4 +480,83 @@ fn alternative_execution_ancestry_obeys_depth_and_cycle_bounds() -> Result<(), S
         );
     }
     Ok(())
+}
+
+mod fixture_ownership {
+    use super::*;
+
+    fn parent() -> Result<Fixture, String> {
+        let root = fixture_root("shared-context-ownership");
+        std::fs::create_dir(&root).map_err(|error| error.to_string())?;
+        Ok(Fixture {
+            index: RustIndex::default(),
+            root,
+        })
+    }
+
+    #[test]
+    fn fixture_root_collision_preserves_the_existing_owner() -> Result<(), String> {
+        let parent = parent()?;
+        let root = parent.root.join("occupied");
+        std::fs::create_dir(&root).map_err(|error| error.to_string())?;
+        let sentinel = root.join("sentinel");
+        std::fs::write(&sentinel, b"existing owner").map_err(|error| error.to_string())?;
+        let called = std::cell::Cell::new(false);
+        let result = Fixture::try_at(root, |_| {
+            called.set(true);
+            Ok(RustIndex::default())
+        });
+        assert!(result.is_err(), "an occupied root must not be acquired");
+        assert!(!called.get(), "setup must not run for a refused root");
+        assert_eq!(
+            std::fs::read(sentinel).map_err(|error| error.to_string())?,
+            b"existing owner"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn fixture_root_setup_failure_removes_only_the_acquired_child() -> Result<(), String> {
+        let parent = parent()?;
+        let root = parent.root.join("partial");
+        let neighbor = parent.root.join("neighbor");
+        std::fs::write(&neighbor, b"keep").map_err(|error| error.to_string())?;
+        let result = Fixture::try_at(root.clone(), |root| {
+            std::fs::write(root.join("partial"), b"written").map_err(|error| error.to_string())?;
+            Err("injected setup failure".to_string())
+        });
+        assert_eq!(
+            result.err().ok_or("setup unexpectedly succeeded")?,
+            "injected setup failure"
+        );
+        assert!(!root.exists(), "partial setup must release its owned root");
+        assert_eq!(
+            std::fs::read(neighbor).map_err(|error| error.to_string())?,
+            b"keep"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn fixture_root_success_keeps_ownership_until_drop() -> Result<(), String> {
+        let parent = parent()?;
+        let root = parent.root.join("complete");
+        let neighbor = parent.root.join("neighbor");
+        std::fs::write(&neighbor, b"keep").map_err(|error| error.to_string())?;
+        let fixture = Fixture::try_at(root.clone(), |root| {
+            std::fs::write(root.join("ready"), b"complete").map_err(|error| error.to_string())?;
+            Ok(RustIndex::default())
+        })?;
+        assert_eq!(
+            std::fs::read(root.join("ready")).map_err(|error| error.to_string())?,
+            b"complete"
+        );
+        drop(fixture);
+        assert!(!root.exists(), "dropping the fixture must release its root");
+        assert_eq!(
+            std::fs::read(neighbor).map_err(|error| error.to_string())?,
+            b"keep"
+        );
+        Ok(())
+    }
 }

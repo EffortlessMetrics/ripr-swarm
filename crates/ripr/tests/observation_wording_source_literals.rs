@@ -83,7 +83,18 @@ fn render_human_full(param: &str) -> Result<String, String> {
         .args(["--mode", "fast", "--format", "human-full"])
         .output()
         .map_err(|error| format!("run ripr: {error}"));
-    let result = output.map(|out| String::from_utf8_lossy(&out.stdout).into_owned());
+    let result = output.and_then(|out| {
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        if out.status.success() {
+            Ok(stdout)
+        } else {
+            Err(format!(
+                "ripr check failed with {}:\nstdout:\n{stdout}\nstderr:\n{}",
+                out.status,
+                String::from_utf8_lossy(&out.stderr)
+            ))
+        }
+    });
     let _ = std::fs::remove_dir_all(&root);
     result
 }
