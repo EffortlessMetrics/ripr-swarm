@@ -1084,7 +1084,11 @@ impl ServerHandler for McpServer {
         // The same id-aware budget the tool path uses (#7768): a resource
         // read answers one request whose echoed id rides the same wire cap.
         let max_envelope_bytes = super::outer_envelope_budget(&context.id);
-        if request.uri == protocol::STATUS_RESOURCE_URI {
+        // The well-known status resource gets the same one-trailing-slash
+        // tolerance the id routes normalize (#9895); the id parsers trim
+        // their own captures, so `uri` is used only for this exact match.
+        let uri = gaps::trim_one_trailing_slash(&request.uri);
+        if uri == protocol::STATUS_RESOURCE_URI {
             let session = self.session.lock().await;
             let result = protocol::status_resource_result(
                 &self.status,

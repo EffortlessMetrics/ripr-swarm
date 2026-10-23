@@ -3776,6 +3776,56 @@ fn resource_reads_match_tools_after_refresh() -> Result<(), String> {
         ));
     }
 
+    // Trailing-slash tolerance (#9895): clients — especially LLMs
+    // hand-assembling links — not uncommonly append one slash to a resource
+    // URI. Every id route normalizes exactly one; the document must be
+    // identical to the slash-less read.
+    let snapshot_slash = read_resource_document(
+        &mut session,
+        "snapshot-resource-slash",
+        &format!("ripr://snapshot/{snapshot_id}/"),
+        REPLY_TIMEOUT,
+    )?;
+    if snapshot_slash != snapshot {
+        return Err(format!(
+            "one trailing slash must not change the snapshot document:\nslash={snapshot_slash}\nplain={snapshot}"
+        ));
+    }
+    let gap_slash = read_resource_document(
+        &mut session,
+        "gap-resource-slash",
+        &format!("ripr://gap/{canonical_id}/"),
+        REPLY_TIMEOUT,
+    )?;
+    if gap_slash != gap_tool {
+        return Err(format!(
+            "one trailing slash must not change the gap document:\nslash={gap_slash}\ntool={gap_tool}"
+        ));
+    }
+    let card_slash = read_resource_document(
+        &mut session,
+        "card-resource-slash",
+        &format!("ripr://repair-card/{canonical_id}/"),
+        REPLY_TIMEOUT,
+    )?;
+    if card_slash != card_tool {
+        return Err(format!(
+            "one trailing slash must not change the repair-card document:\nslash={card_slash}\ntool={card_tool}"
+        ));
+    }
+    // A second slash is not a normalization artifact: the read must fail
+    // closed instead of resolving to a near-miss id.
+    if read_resource_document(
+        &mut session,
+        "gap-resource-double-slash",
+        &format!("ripr://gap/{canonical_id}//"),
+        REPLY_TIMEOUT,
+    )
+    .is_ok()
+    {
+        return Err("two trailing slashes must not resolve".into());
+    }
+
     // Attempt pair: prepare the B4 item, then read both routes.
     let prepared = session.call_tool(
         "prepare",
