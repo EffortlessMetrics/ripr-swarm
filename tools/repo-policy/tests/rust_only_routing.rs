@@ -831,6 +831,32 @@ fn witness_observer_distinguishes_identity_state_and_incomplete_evidence() -> Te
     Ok(())
 }
 
+/// Runner facts that explain a termination failure (hosted images change
+/// their coreutils and Bash builds).
+fn runner_diagnostics() -> String {
+    let first_line = |program: &str, args: &[&str]| {
+        Command::new(program)
+            .args(args)
+            .output()
+            .ok()
+            .and_then(|out| String::from_utf8(out.stdout).ok())
+            .and_then(|text| text.lines().next().map(str::to_owned))
+            .unwrap_or_else(|| "unavailable".to_owned())
+    };
+    let os = fs::read_to_string("/etc/os-release")
+        .ok()
+        .and_then(|text| {
+            text.lines()
+                .find_map(|line| line.strip_prefix("PRETTY_NAME=").map(str::to_owned))
+        })
+        .unwrap_or_else(|| "unavailable".to_owned());
+    format!(
+        "os={os}, timeout={}, bash={}",
+        first_line("timeout", &["--version"]),
+        first_line("bash", &["--version"])
+    )
+}
+
 #[test]
 fn timeout_terminates_shell_descendants() -> TestResult {
     let mut fixture = Fixture::new()?;
@@ -895,7 +921,8 @@ fn timeout_terminates_shell_descendants() -> TestResult {
         let output = output?;
         assert!(
             !failed_termination,
-            "timeout left a live owned descendant (stubborn={stubborn})"
+            "timeout left a live owned descendant (stubborn={stubborn}); {}",
+            runner_diagnostics()
         );
         assert!(
             elapsed < std::time::Duration::from_secs(3),
