@@ -62,6 +62,11 @@ pub(crate) struct TypeScriptOwner {
     /// of an ES module's default export is a namespace object and is not.
     /// RIPR-SPEC-0243 rule 19.
     pub(crate) commonjs_default_export: bool,
+    /// `module.exports = <function>` as the file's whole export, independent of
+    /// the file-level gate that licenses `commonjs_default_export`: a named
+    /// import or member of such a module (`const { f } = require(...)`,
+    /// `k.f`) is a property of the function, never the owner.
+    pub(crate) commonjs_whole_function: bool,
     /// Exported names of the owner's module whose code reaches this
     /// top-level function through a bounded same-module call graph (an
     /// exported wrapper, or a value a same-module factory built). Empty for

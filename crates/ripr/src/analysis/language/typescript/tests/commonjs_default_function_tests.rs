@@ -13,13 +13,23 @@ const CHANGED: (usize, &str) = (3, "  return x * 3;");
 /// Analyze `src/k.js` (`owner`) with line 3 changed, against one test file;
 /// returns the class of the finding on the changed line.
 fn class_for(label: &str, owner: &str, test_source: &str) -> Result<ExposureClass, String> {
+    class_for_changed(label, owner, CHANGED.0, CHANGED.1, test_source)
+}
+
+fn class_for_changed(
+    label: &str,
+    owner: &str,
+    line: usize,
+    text: &str,
+    test_source: &str,
+) -> Result<ExposureClass, String> {
     let root = ts_unique_tempdir(label)?;
     ts_write_file(&root.join("src/k.js"), owner)?;
     ts_write_file(&root.join("test/k.test.js"), test_source)?;
     let result = TypeScriptAdapter.analyze_diff(
         &ts_analysis_options(root.clone()),
         &OraclePolicy::default(),
-        &[changed_with_lines("src/k.js", &[CHANGED])],
+        &[changed_with_lines("src/k.js", &[(line, text)])],
     );
     let _ = std::fs::remove_dir_all(&root);
     result?
@@ -340,7 +350,9 @@ fn both_forms_share_one_file_level_gate() -> Result<(), String> {
     for (form, head) in [("inline", ANONYMOUS), ("declared", DECLARED)] {
         exposed_with_control(form, head)?;
         for (name, tail) in SHAPES {
-            refused(&format!("cjs-{form}-{name}"), &format!("{head}{tail}"))?;
+            let source = format!("{head}{tail}");
+            assert!(!marks(&source).is_empty(), "owner extracted: {form}-{name}");
+            refused(&format!("cjs-{form}-{name}"), &source)?;
         }
     }
     Ok(())
@@ -388,7 +400,6 @@ fn declared_name_writes_and_rebinds_refuse_the_declared_form() -> Result<(), Str
 fn a_string_or_comment_mentioning_module_keeps_the_gate_open() -> Result<(), String> {
     for tail in [
         "// module.exports = other\n",
-        "const s = 'module.exports = other';\n",
         "/* eval(x) */\n",
         "module.exports.extra = 1;\n",
     ] {
@@ -491,4 +502,39 @@ fn rebound_test_bindings_through_grouped_or_global_targets_are_not_credited() ->
         );
     }
     Ok(())
+}
+
+const ARROW: &str = "module.exports = (x) => {\n  // triple\n  return x * 3;\n};\n";
+
+#[test]
+fn an_inline_arrow_export_is_called_through_the_require_binding() -> Result<(), String> {
+    exposed_with_control("cjs-inline-arrow", ARROW)?;
+    assert!(marks(ARROW).iter().any(|(_, _, marked)| *marked));
+    Ok(())
+}
+
+#[test]
+fn a_gate_refused_owner_still_is_not_reached_by_a_named_import() -> Result<(), String> {
+    let owner = "module.exports = function triple(x) {\n  return x * 3 + arguments.length;\n};\n";
+    for test_source in [
+        "const { triple } = require('../src/k.js');\n\ntest('triples', () => {\n  expect(triple(2)).toBe(6);\n});\n",
+        "const k = require('../src/k.js');\n\ntest('triples', () => {\n  expect(k.triple(2)).toBe(6);\n});\n",
+    ] {
+        let class = class_for_changed("cjs-refused-named", owner, 2, "  return x * 3 + arguments.length;", test_source)?;
+        assert_eq!(class, ExposureClass::NoStaticPath, "{test_source}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_string_that_spells_a_module_write_refuses_the_file() -> Result<(), String> {
+    // Strings stay visible to the gate, so this fails closed.
+    refused("cjs-string-write", &format!("{ANONYMOUS}const s = 'module.exports = other';\n"))
+}
+
+#[test]
+fn a_backtick_inside_a_regex_cannot_hide_a_module_write() -> Result<(), String> {
+    let tail = "if (process.env.C) /`/.test('a');\nObject.assign(module, { exports: 0 });\nconst s = `ok`;\n";
+    refused("cjs-regex-backtick-inline", &format!("{ANONYMOUS}{tail}"))?;
+    refused("cjs-regex-backtick-declared", &format!("{DECLARED}{tail}"))
 }

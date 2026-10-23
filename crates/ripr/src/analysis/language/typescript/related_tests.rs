@@ -1371,6 +1371,7 @@ pub(crate) fn module_entry_owner(
         class_default_export: false,
         default_object_member: false,
         commonjs_default_export: false,
+        commonjs_whole_function: false,
         method_kind: TypeScriptMethodKind::Ordinary,
         module_entries: Vec::new(),
         params: Vec::new(),
@@ -1405,7 +1406,7 @@ pub(crate) fn module_initializer_observer_relation(
             return expect_actual_references_member(&test.body_text, &import.local, &owner.name);
         }
         import.imported.as_deref() == Some(owner.name.as_str())
-            && !owner.commonjs_default_export
+            && !owner.commonjs_whole_function
             && !local_identifier_declared_in_test_body(&test.body_text, &import.local)
             && expect_actual_references_identifier(&test.body_text, &import.local)
     })
@@ -1450,7 +1451,7 @@ fn module_value_use_relation(
                 && !local_identifier_declared_in_test_body(body, &import.local);
         }
         import.imported.as_deref().is_some_and(|imported| {
-            (imported == owner.name && !owner.commonjs_default_export)
+            (imported == owner.name && !owner.commonjs_whole_function)
                 || (imported == "default" && owner.exported_as_default)
         }) && !local_identifier_declared_in_test_body(body, &import.local)
             && contains_identifier_reference(body, &import.local)
@@ -2564,7 +2565,7 @@ fn test_references_owner(
         }
         if import.namespace {
             // `k.triple` is a property of a CommonJS function export, not it.
-            return !owner.commonjs_default_export
+            return !owner.commonjs_whole_function
                 && contains_member_reference(body, &import.local, &owner.name);
         }
         // Same default-export rule as `import_references_owner_call` (#4103):
@@ -3025,7 +3026,7 @@ fn owner_name_import_binding_mismatch(
                         } else {
                             // A named binding of a CommonJS function export is
                             // a property of the function, not the owner.
-                            imported != owner.name.as_str() || owner.commonjs_default_export
+                            imported != owner.name.as_str() || owner.commonjs_whole_function
                         }
                     })
                     .then_some(OwnerBindingMismatch::Unrelated),
@@ -3070,7 +3071,7 @@ fn import_references_owner_call(
             && !test.written_locals_in_file.contains(&import.local);
     }
     if import.namespace {
-        return !owner.commonjs_default_export
+        return !owner.commonjs_whole_function
             && contains_member_call_name(body_text, &import.local, &owner.name);
     }
     // RIPR-SPEC-0243 rule 5: a default import of a module whose `export
@@ -3091,7 +3092,7 @@ fn import_references_owner_call(
     // local when the owner IS that default export. An anonymous default
     // already matches via `owner.name == "default"`.
     import.imported.as_deref().is_some_and(|imported| {
-        (imported == owner.name && !owner.commonjs_default_export)
+        (imported == owner.name && !owner.commonjs_whole_function)
             || (imported == "default" && owner.exported_as_default)
     }) && contains_call_name(body_text, &import.local)
         // Shadow guard (#4102): the same test-body declaration guard the

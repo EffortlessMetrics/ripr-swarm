@@ -164,6 +164,7 @@ fn owners_from_commonjs_export(
             .map(|mut owner| {
                 owner.exported_as_default = true;
                 owner.commonjs_default_export = true;
+                owner.commonjs_whole_function = true;
                 vec![owner]
             })
             .unwrap_or_default()
@@ -179,6 +180,7 @@ fn owners_from_commonjs_export(
         .map(|mut owner| {
             owner.exported_as_default = true;
             owner.commonjs_default_export = true;
+            owner.commonjs_whole_function = true;
             vec![owner]
         })
         .unwrap_or_default(),
@@ -568,24 +570,6 @@ fn mark_commonjs_default_binding(
     program: &oxc_ast::ast::Program<'_>,
     owners: &mut [TypeScriptOwner],
 ) {
-    // One file-level gate for the inline (`module.exports = function ...`)
-    // and the declared (`module.exports = name;`) forms.
-    // The gate must hold on both the regex-aware mask and the division-only
-    // mask, so a `/` misread (`t! / 2`, `a = {} / 2`) cannot hide code.
-    let source = program.source_text;
-    let both = super::tests_extract::byte_preserving_code_mask(source)
-        .filter(|code| commonjs_default_gate(code))
-        .zip(
-            super::tests_extract::byte_preserving_division_mask(source)
-                .filter(|code| commonjs_default_gate(code)),
-        )
-        .filter(|_| !names_the_module_object_in_text(source));
-    let Some((code, division_code)) = both else {
-        for owner in owners.iter_mut() {
-            owner.commonjs_default_export = false;
-        }
-        return;
-    };
     let mut target: Option<&str> = None;
     for stmt in &program.body {
         let Statement::ExpressionStatement(expression) = stmt else {
@@ -607,17 +591,60 @@ fn mark_commonjs_default_binding(
             target = Some(ident.name.as_str());
         }
     }
-    let Some(name) = target else {
+    let declarations = target.map_or(0, |name| {
+        program
+            .body
+            .iter()
+            .filter(|stmt| {
+                matches!(stmt, Statement::FunctionDeclaration(function)
+                    if function.id.as_ref().is_some_and(|id| id.name == name))
+            })
+            .count()
+    });
+    // `module.exports = name;` of one declared function makes the whole export
+    // that function whether or not the gate below holds; a named import or
+    // member of it is then a property of the function, never the owner.
+    let declared = target.filter(|_| declarations == 1);
+    for owner in owners.iter_mut() {
+        if declared.is_some_and(|name| {
+            owner.class_name.is_none()
+                && owner.owner_kind == OwnerKind::Function
+                && owner.name == name
+        }) {
+            owner.commonjs_whole_function = true;
+        }
+    }
+    // One file-level gate for the inline (`module.exports = function ...`)
+    // and the declared (`module.exports = name;`) forms. It must hold on the
+    // regex-aware mask, the division-only mask, and the comment-only text, so
+    // a `/` misread (`t! / 2`) or a backtick inside a regex cannot hide code.
+    let source = program.source_text;
+    let comments: Vec<std::ops::Range<usize>> = program
+        .comments
+        .iter()
+        .map(|comment| comment.span.start as usize..comment.span.end as usize)
+        .collect();
+    let visible = super::tests_extract::blank_ranges(source, &comments);
+    let both = super::tests_extract::byte_preserving_code_mask(source)
+        .filter(|code| commonjs_default_gate(code))
+        .zip(
+            super::tests_extract::byte_preserving_division_mask(source)
+                .filter(|code| commonjs_default_gate(code)),
+        )
+        .filter(|_| commonjs_visible_text_gate(&visible))
+        .filter(|_| !names_the_module_object_in_text(source));
+    let Some((code, division_code)) = both else {
+        // Only the inline owners this pass flagged lose their default
+        // export; every other file (ESM, no `module.exports`) fails the gate.
+        for owner in owners.iter_mut().filter(|o| o.commonjs_default_export) {
+            owner.commonjs_default_export = false;
+            owner.exported_as_default = false;
+        }
         return;
     };
-    let declarations = program
-        .body
-        .iter()
-        .filter(|stmt| {
-            matches!(stmt, Statement::FunctionDeclaration(function)
-                if function.id.as_ref().is_some_and(|id| id.name == name))
-        })
-        .count();
+    let Some(name) = declared else {
+        return;
+    };
     // Annex B: a block-level `function name` re-binds the top-level function.
     let spellings = |text: &str| {
         super::tests_extract::function_declaration_names(text)
@@ -625,8 +652,7 @@ fn mark_commonjs_default_binding(
             .filter(|(declared, _)| declared == name)
             .count()
     };
-    if declarations != 1
-        || spellings(&code) != 1
+    if spellings(&code) != 1
         || spellings(&division_code) != 1
         || super::tests_extract::identifier_written_strictly(&code, name)
         || super::tests_extract::identifier_written_strictly(&division_code, name)
@@ -642,6 +668,19 @@ fn mark_commonjs_default_binding(
             owner.commonjs_default_export = true;
         }
     }
+}
+
+/// The module-object checks of [`commonjs_default_gate`] on text where only
+/// comments are blanked: strings, templates and regex literals stay visible,
+/// so a mis-lexed delimiter cannot hide a write. `eval` and `with` count
+/// anywhere; `\u` escapes are not read here (they are legal in strings).
+fn commonjs_visible_text_gate(visible: &str) -> bool {
+    let opaque = super::tests_extract::identifier_occurrences(visible, "eval")
+        .next()
+        .is_some()
+        || super::tests_extract::identifier_occurrences(visible, "with")
+            .any(|at| visible[at + "with".len()..].trim_start().starts_with('('));
+    !opaque && commonjs_module_reach_gate(visible)
 }
 
 /// `true` when `needle` occurs as a bare word (not a member name, not part of
@@ -673,9 +712,12 @@ fn names_the_module_object_in_text(source: &str) -> bool {
 /// writes, `Object.assign(module, ...)`, `typeof module` guards) makes the
 /// value unknowable. `eval`, `with` and `\u` escapes refuse the file.
 fn commonjs_default_gate(code: &str) -> bool {
-    if super::tests_extract::file_is_opaque(code) {
-        return false;
-    }
+    !super::tests_extract::file_is_opaque(code) && commonjs_module_reach_gate(code)
+}
+
+/// Every use of the module object in `code` is `module.exports = ...` once or
+/// a property access of it.
+fn commonjs_module_reach_gate(code: &str) -> bool {
     let word = |ch: Option<char>| {
         ch.is_some_and(|ch| ch == '_' || ch == '$' || ch.is_alphanumeric() || !ch.is_ascii())
     };
@@ -1022,6 +1064,7 @@ pub(crate) fn owner_from_variable_declarator(
             class_default_export: false,
             default_object_member: false,
             commonjs_default_export: false,
+            commonjs_whole_function: false,
             module_entries: Vec::new(),
             // Non-function initializers carry no resolvable signature facts:
             // no fixed positional signature the boundary witness could
@@ -1077,6 +1120,7 @@ pub(crate) fn owner_from_function(
         class_default_export: false,
         default_object_member: false,
         commonjs_default_export: false,
+        commonjs_whole_function: false,
         module_entries: Vec::new(),
         params,
         arity,
@@ -1108,6 +1152,7 @@ pub(crate) fn owner_from_arrow(
         class_default_export: false,
         default_object_member: false,
         commonjs_default_export: false,
+        commonjs_whole_function: false,
         module_entries: Vec::new(),
         params,
         arity,
@@ -1180,6 +1225,7 @@ pub(crate) fn owner_from_method(
         class_default_export: false,
         default_object_member: false,
         commonjs_default_export: false,
+        commonjs_whole_function: false,
         module_entries: Vec::new(),
         params,
         arity,

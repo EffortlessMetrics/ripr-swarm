@@ -565,6 +565,7 @@ mod tests {
             decorated: false,
             exported_as_default: false,
             commonjs_default_export: false,
+            commonjs_whole_function: false,
             imports: Vec::new(),
             method_kind: TypeScriptMethodKind::Ordinary,
             class_default_export: false,

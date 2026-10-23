@@ -212,6 +212,13 @@ The gate must hold on two masks, the regex-aware one and a division-only one,
 so a `/` the regex heuristic misreads (`t! / 2`, `a = {} / 2`) cannot hide a
 write. A named import or member of a function export (`const { triple } =
 require(...)`, `k.triple`) is a property of the function, not the owner.
+The gate text keeps strings, templates and regex literals visible beside the
+two masks, so a string spelling `module.exports = x` refuses the file (fail
+closed). Known limits: `const { default: f } = require(...)` still reads as a
+default import (an ES `import f from` of the same module is legitimately that
+function, and the adapter does not record which spelling bound it);
+overload-style repeated `function name` declarations and any `require.resolve`
+use refuse the file.
 
 **Rule 13. A called suite factory is its expansion (2026-10-20).** A
 top-level `function factory(a, b) { describe(a, () => { ... b(x) ... }); }`
@@ -1091,12 +1098,6 @@ rejected alternative. Any can be reversed later without touching the rest.
     export or alias, argument expressions (`sumAll.bind(null)`, arrows,
     members), and parameters used as values or in templates; each needs
     data flow the adapter does not have.
-21. **CommonJS function exports (#9181).** Adopted: rule 19, because
-    minimist exports one function and reads `no_static_path` while its
-    own suite fails every mutant of the line, and the ESM twin already relates. The claim is limited to the
-    shapes where the exported value is statically the declared function.
-    Rejected: crediting `require()` of an ES module's default export
-    (runtime namespace object) and an arbitrary `module.exports = expr`.
 18. **Field updates a test reads (2026-10-22, #9515).** Adopted: a changed
     `this.f += e` / `this.f = this.f + e` in a class method is a
     return-value change when the method has one write to `this.f`, the
@@ -1168,6 +1169,12 @@ reads `</div>` in `.tsx` text and a backtick inside a regex literal wrongly, so
 a write hidden by either is not seen; a postfix `++`/`--` before `/` is
 division, not a regex. These are fail-open only for files that already defeat
 the masker.
+21. **CommonJS function exports (#9181).** Adopted: rule 19, because
+    minimist exports one function and reads `no_static_path` while its
+    own suite fails every mutant of the line, and the ESM twin already relates. The claim is limited to the
+    shapes where the exported value is statically the declared function.
+    Rejected: crediting `require()` of an ES module's default export
+    (runtime namespace object) and an arbitrary `module.exports = expr`.
 
 ## Required Evidence
 
