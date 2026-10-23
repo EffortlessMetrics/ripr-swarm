@@ -766,6 +766,79 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('real server rejects an invalid setting through the activated client and clears it on correction (#9917)', async function (this: Mocha.Context) {
+    this.timeout(180000);
+    skipUnlessTrustedTestHost(this);
+    if (!process.env.RIPR_TEST_SERVER_PATH) {
+      this.skip();
+    }
+
+    // Observe the activated controller (real LanguageClient, real server, real
+    // status model) without supplying a runtime, client or status producer.
+    const extension = vscode.extensions.getExtension('EffortlessMetrics.ripr');
+    assert.ok(extension, 'extension should be present');
+    await extension.activate();
+    const clientModule = requireActivatedExtensionModule(extension.extensionPath, 'out/src/client') as typeof import('../../src/client');
+    const prototype = clientModule.RiprClientController.prototype;
+    const originalShowStatus = prototype.showStatus;
+    let observed: { status: { kind: string; summary?: string; detail?: string; nextStep?: string } } | undefined;
+    prototype.showStatus = function (this: unknown) {
+      observed = this as typeof observed;
+      return Reflect.apply(originalShowStatus, this, []);
+    };
+    try {
+      await vscode.commands.executeCommand('ripr.showStatus');
+    } finally {
+      prototype.showStatus = originalShowStatus;
+    }
+    assert.ok(observed && typeof observed.status.kind === 'string', 'failed to observe the activated controller');
+    const controller = observed;
+    const isRejection = () => controller.status.kind === 'analysisFailed'
+      && (controller.status.summary ?? '').includes('rejected your latest settings');
+    const describeStatus = () => JSON.stringify(controller.status);
+    const waitUntil = async (predicate: () => boolean, label: string, timeoutMs = 60000): Promise<void> => {
+      const deadline = Date.now() + timeoutMs;
+      while (!predicate()) {
+        assert.ok(Date.now() < deadline, `timed out: ${label}; status=${describeStatus()}`);
+        await sleep(50);
+      }
+    };
+
+    const uri = workspaceFileUri('src/lib.rs');
+    const config = vscode.workspace.getConfiguration('ripr', uri);
+    const previous = config.inspect<boolean>('includeUnchangedTests')?.workspaceValue;
+    const setInvalid = (value: unknown) =>
+      config.update('includeUnchangedTests', value, vscode.ConfigurationTarget.Workspace);
+    try {
+      // An accepted non-default value first, so correction returns to a
+      // previously effective value rather than the schema default.
+      await config.update('includeUnchangedTests', false, vscode.ConfigurationTarget.Workspace);
+      await waitUntil(() => !isRejection(), 'accepted baseline pull');
+
+      await setInvalid('not-a-boolean');
+      await waitUntil(isRejection, 'rejection is shown for an invalid type');
+      assert.ok(/includeUnchangedTests|include_unchanged_tests/i.test(controller.status.detail ?? ''),
+        `rejection names the offending setting: ${describeStatus()}`);
+      assert.ok(!/default settings/i.test(controller.status.detail ?? ''), 'no default-settings claim');
+      assert.ok((controller.status.nextStep ?? '').includes('Restart Server'), 'names a recovery action');
+
+      // A second rejected pull stays visible; nothing repaints over it.
+      await setInvalid(7);
+      await sleep(1500);
+      assert.ok(isRejection(), `re-rejection stays visible: ${describeStatus()}`);
+
+      // Restoring the previously accepted value clears it with no restart,
+      // save or explicit refresh.
+      await config.update('includeUnchangedTests', false, vscode.ConfigurationTarget.Workspace);
+      await waitUntil(() => !isRejection(), 'correction clears the rejection');
+      assert.ok(!/includeUnchangedTests/i.test(controller.status.detail ?? ''),
+        `cleared status no longer carries the rejection: ${describeStatus()}`);
+    } finally {
+      await config.update('includeUnchangedTests', previous, vscode.ConfigurationTarget.Workspace);
+      await sleep(500);
+    }
+  });
+
   test('real server surfaces preview gap diagnostic, hover, status, and bounded actions', async function (this: Mocha.Context) {
     this.timeout(75000);
     skipUnlessTrustedTestHost(this);
@@ -6770,6 +6843,14 @@ async function waitForHoverText(
     await sleep(150);
   }
   throw new Error(`timed out waiting for ripr seam hover. Last hover:\n${lastHoverText}`);
+}
+
+function requireActivatedExtensionModule(extensionPath: string, relative: string): unknown {
+  // The instance must be the one the running controller was constructed from;
+  // a Windows host can spell the path with another drive-letter case.
+  const resolved = require.resolve(path.join(extensionPath, relative));
+  const cached = Object.keys(require.cache).find((key) => key.toLowerCase() === resolved.toLowerCase());
+  return (cached ? require.cache[cached]?.exports : undefined) ?? require(resolved);
 }
 
 function sleep(ms: number): Promise<void> {
