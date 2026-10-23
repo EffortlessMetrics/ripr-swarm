@@ -662,7 +662,7 @@ fn optional_positive_argument(
 /// fabricated; ignoring it would let an agent believe paging worked, so the
 /// request fails closed with the recovery spelled out.
 fn reject_pagination_cursor(
-    params: &Option<PaginatedRequestParams>,
+    params: Option<PaginatedRequestParams>,
     method: &str,
 ) -> Result<(), ErrorData> {
     if params
@@ -875,15 +875,26 @@ impl ServerHandler for McpServer {
         params: Option<PaginatedRequestParams>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
-        reject_pagination_cursor(&params, "tools/list")?;
+        reject_pagination_cursor(params, "tools/list")?;
         Ok(self.tools.clone())
+    }
+    async fn list_prompts(
+        &self,
+        params: Option<PaginatedRequestParams>,
+        _: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, ErrorData> {
+        // #9895: the SDK default returns an empty catalog and would silently
+        // ignore a client-supplied cursor; the static catalog rule is the
+        // same one tools/list and resources/list enforce.
+        reject_pagination_cursor(params, "prompts/list")?;
+        Ok(ListPromptsResult::default())
     }
     async fn list_resources(
         &self,
         params: Option<PaginatedRequestParams>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
-        reject_pagination_cursor(&params, "resources/list")?;
+        reject_pagination_cursor(params, "resources/list")?;
         Ok(self.resources.clone())
     }
     async fn list_resource_templates(
@@ -891,7 +902,7 @@ impl ServerHandler for McpServer {
         params: Option<PaginatedRequestParams>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListResourceTemplatesResult, ErrorData> {
-        reject_pagination_cursor(&params, "resources/templates/list")?;
+        reject_pagination_cursor(params, "resources/templates/list")?;
         Ok(self.resource_templates.clone())
     }
     async fn call_tool(

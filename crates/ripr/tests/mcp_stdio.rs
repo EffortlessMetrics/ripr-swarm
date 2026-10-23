@@ -474,7 +474,8 @@ fn json_rpc_rejections_are_answered_with_spec_codes_and_the_session_survives() -
 /// A client-supplied pagination cursor on the static catalog lists used to
 /// parse fine and then be silently dropped, so an agent could believe paging
 /// worked while always re-reading page one (#9895). The lists are static and
-/// small: the server never issues a `nextCursor`, so any cursor is stale or
+/// small — tools, prompts, resources, and resource templates alike: the
+/// server never issues a `nextCursor`, so any cursor can only be stale or
 /// fabricated and the request must fail closed with the recovery spelled out,
 /// while the same lists still answer normally without a cursor.
 #[test]
@@ -500,6 +501,7 @@ fn catalog_list_cursors_fail_closed_over_stdio() -> Result<(), String> {
     )?)?;
     for (id, method) in [
         ("cursor-tools", "tools/list"),
+        ("cursor-prompts", "prompts/list"),
         ("cursor-resources", "resources/list"),
         ("cursor-templates", "resources/templates/list"),
     ] {
