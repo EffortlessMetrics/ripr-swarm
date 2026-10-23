@@ -196,12 +196,11 @@ Note: `<base>...HEAD` has no analyzable changed files, so there was nothing to a
 ```
 
 A working-tree read (`--worktree`) names `the working tree has no analyzable
-changed files against `<base>`` instead of the range. The wording is
-deliberately narrower than the default-base note: `no_scope` with zero changed
-files also covers ranges that only delete files, change submodule pointers or
-touch ripr artifacts, so the explicit-base note never claims that no behavior
-changed. The default-base note keeps its existing wording; its wording and the
-GitHub and JSON `why` strings are tracked separately.
+changed files against `<base>`` instead of the range. The explicit-base and
+default-base notes share this wording in the human, GitHub and JSON outputs
+(#9033, #9222): `no_scope` with zero changed files also covers ranges that only
+delete files, change submodule pointers or touch ripr artifacts, so neither
+note claims that no behavior changed.
 
 ### Non-claims
 
@@ -255,8 +254,8 @@ GitHub and JSON `why` strings are tracked separately.
    (`--diff empty.patch --base HEAD`).
 4. **Speed tier without scope, empty range**: `ripr check --mode fast`
    (no `--diff`/`--base`) on an established-but-empty default range →
-   disclosure fires but names the compared base (`<base>...HEAD` contains no
-   changed files); it does NOT claim no scope was provided (#4012). `--mode`
+   disclosure fires but names the compared base (`<base>...HEAD` has no
+   analyzable changed files); it does NOT claim no scope was provided (#4012). `--mode`
    is a speed tier, not a scope provider.
 5. **Full-repo scan via format**: `ripr check --root . --format repo-exposure-md`
    → no guidance. `--format repo-exposure-md` triggers a repo-scope analysis;
@@ -292,6 +291,7 @@ GitHub and JSON `why` strings are tracked separately.
 - `crates/ripr/src/app/check/output_builder.rs` — sets `no_scope_provided: false` (library API always has scope).
 - `crates/ripr/src/cli/commands.rs` — `scope_explicitly_provided` tracking in `check()`; sets `output.no_scope_provided = true` when no scope + empty.
 - `crates/ripr/src/output/human.rs` — emits `Note:` guidance in the empty-findings branch when `no_scope_provided`.
+- `crates/ripr/src/output/github.rs` — emits the `ripr no analysis scope` annotation with the same range wording.
 - `crates/ripr/src/output/json/report.rs` — emits additive `scope_disclosures[]` when `no_scope_provided`.
 
 ## CI Proof

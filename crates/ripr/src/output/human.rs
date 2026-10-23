@@ -195,10 +195,10 @@ fn render_no_scope_note(output: &CheckOutput) -> String {
 /// to a range with no analyzable changed files (for example `--base HEAD`, or
 /// the base branch while on it) used to print only "No diff-derived static
 /// exposure probes found.", leaving a reader to guess whether ripr ran at all
-/// (#9033). The wording stays narrower than the default-base note on purpose:
+/// (#9033). The explicit-base and default-base notes share this wording (#9222):
 /// `NoScope` with zero changed files also covers ranges that only delete
-/// files, change submodule pointers, or touch ripr's own artifacts, so this
-/// note never claims that no behavior changed.
+/// files, change submodule pointers, or touch ripr's own artifacts, so neither
+/// note claims that no behavior changed.
 fn empty_scope_note(output: &CheckOutput) -> Option<String> {
     if output.unanalyzed_working_tree {
         return None;
