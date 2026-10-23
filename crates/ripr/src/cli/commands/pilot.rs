@@ -849,10 +849,8 @@ const DEFAULT_PILOT_OUT_DIR: &str = "target/ripr/pilot";
 /// complete" with no recommendation and write `target/ripr/` into the folder.
 /// Returns the refusal message, or `None` when the root has something to inspect.
 fn pilot_root_without_workspace(root: &Path) -> Option<String> {
-    let has_inspectable_content = root.join("Cargo.toml").is_file()
-        || !analysis::workspace_rust_files(root).is_empty()
-        || !analysis::workspace_preview_language_files(root).is_empty()
-        || !analysis::workspace_unanalyzed_source_languages(root).is_empty();
+    let has_inspectable_content =
+        root.join("Cargo.toml").is_file() || analysis::workspace_has_inspectable_source(root);
     (!has_inspectable_content).then(|| {
         format!(
             "pilot root {} has no Cargo.toml and no source files to inspect; pass --root <dir> for the directory that contains your workspace (nothing was written)",
