@@ -770,6 +770,13 @@ mod tests {
         assert!(INIT_HELP.contains("--ci github"));
         assert!(INIT_HELP.contains("--dry-run"));
         assert!(INIT_HELP.contains("--force"));
+        // --force resets ripr.toml only for plain `ripr init`; with --ci/--mcp
+        // the plan keeps it. The option line must not claim otherwise.
+        assert!(
+            INIT_HELP.contains("With --ci or --mcp, ripr.toml is"),
+            "init --force help must state it never resets ripr.toml alongside --ci/--mcp"
+        );
+        assert!(!INIT_HELP.contains("Overwrite an existing ripr.toml, generated workflow"));
         assert!(CONFIG_HELP.starts_with("Validate the repository's ripr.toml"));
         assert!(CONFIG_HELP.contains("Usage: ripr config validate"));
         assert!(CONFIG_HELP.contains("without running workspace probes"));
