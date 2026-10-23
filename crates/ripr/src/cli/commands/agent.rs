@@ -2620,6 +2620,12 @@ fn authored_test_changed(
 /// so the lines name the incomparability cause the artifacts record — a
 /// baseline born ambiguous when one was — and the fresh-attempt route from a
 /// clean state.
+///
+/// #8991: when the refusal is the inline-region cage reporting that the
+/// selected file does not parse after the attempt's edit, the first line is
+/// the plain "`<file>` does not parse after this attempt's edit — fix the
+/// syntax error and start the attempt again." statement; the refused-path
+/// listing and the bounded-recovery detail below it are unchanged.
 fn repair_after_cage_recovery_lines(
     root: &Path,
     store: Option<&Path>,
@@ -2636,6 +2642,22 @@ fn repair_after_cage_recovery_lines(
     }
     let attempt_id = after.attempt_id.as_str();
     let mut lines = Vec::new();
+    // #8991: when the inline-region observation reports the selected file
+    // unparseable, lead with the plain statement. The observation parses the
+    // whole file, so the failure may sit in the newly written test or in
+    // production code beside it; the line names the file, not the test. The
+    // bounded-recovery detail below is unchanged.
+    if let Some(violation) = after
+        .verdict
+        .violations
+        .iter()
+        .find(|violation| crate::edit_cage::refusal_is_unparseable_selected_file(violation))
+    {
+        lines.push(format!(
+            "`{}` does not parse after this attempt's edit — fix the syntax error and start the attempt again.",
+            violation.path
+        ));
+    }
     if !after.current {
         lines.push(format!(
             "attempt `{attempt_id}` is stale: repository HEAD moved from {} to {} after its before phase.",
@@ -4556,6 +4578,107 @@ mod tests {
                 "cage recovery lost the before-phase restart: {joined}"
             ));
         }
+        Ok(())
+    }
+
+    /// #8991: when the cage refusal is that the selected file does not parse
+    /// after the attempt's edit, the narration leads with the plain
+    /// fix-the-syntax-error statement naming the file, and the existing bounded-recovery
+    /// detail — the refused-path listing, the region observation, and the
+    /// CRLF-aware undo route — still follows verbatim below it.
+    #[test]
+    fn unparseable_selected_file_refusal_leads_with_the_plain_hint() -> Result<(), String> {
+        let after = crate::app::repair_attempt::RepairAttemptAfter {
+            attempt_id: crate::app::repair_attempt::RepairAttemptId::parse(
+                "repair-attempt-0123456789abcdef01234567",
+            )?,
+            repository_head: "b".repeat(40),
+            delta_sha256: format!("sha256:{}", "0".repeat(64)),
+            packet_sha256: format!("sha256:{}", "1".repeat(64)),
+            current: true,
+            verdict: crate::edit_cage::EditCageVerdict {
+                status: crate::edit_cage::EditCageVerdictStatus::Violated,
+                changed_paths: vec!["src/lib.rs".to_string()],
+                violations: vec![crate::edit_cage::EditCageViolation {
+                    kind: crate::edit_cage::EditCageViolationKind::OutsideInlineTestRegion,
+                    path: "src/lib.rs".to_string(),
+                    reason: "the edit is not a pure insertion of test functions into the selected file's inline test module (`mod tests`: unparseable); production code, the module declaration, and existing tests must stay byte-identical".to_string(),
+                }],
+            },
+        };
+        let lines = repair_after_cage_recovery_lines(
+            Path::new("."),
+            None,
+            "seam:sample",
+            &"b".repeat(40),
+            &after,
+            None,
+        );
+        let first = lines
+            .first()
+            .ok_or_else(|| "the refusal must narrate at least one line".to_string())?;
+        assert_eq!(
+            first,
+            "`src/lib.rs` does not parse after this attempt's edit — fix the syntax error and start the attempt again.",
+            "the refusal must lead with the plain statement: {lines:?}"
+        );
+        let joined = lines.join("\n");
+        for needle in [
+            "the edit cage refused 1 path(s)",
+            "`mod tests`: unparseable",
+            "attempt `repair-attempt-0123456789abcdef01234567` is terminal",
+            "undo the refused changes",
+            "`core.autocrlf` can rewrite CRLF",
+        ] {
+            assert!(
+                joined.contains(needle),
+                "the recovery detail must follow the hint, missing `{needle}`: {joined}"
+            );
+        }
+        Ok(())
+    }
+
+    /// Negative experiment: an inline-region refusal for any other reason
+    /// (here a production edit) must not lead with the parse hint; without
+    /// the region binding the hint would read as a general syntax complaint
+    /// on a refusal that names no parse failure.
+    #[test]
+    fn other_inline_region_refusals_do_not_lead_with_the_parse_hint() -> Result<(), String> {
+        let after = crate::app::repair_attempt::RepairAttemptAfter {
+            attempt_id: crate::app::repair_attempt::RepairAttemptId::parse(
+                "repair-attempt-0123456789abcdef01234567",
+            )?,
+            repository_head: "b".repeat(40),
+            delta_sha256: format!("sha256:{}", "0".repeat(64)),
+            packet_sha256: format!("sha256:{}", "1".repeat(64)),
+            current: true,
+            verdict: crate::edit_cage::EditCageVerdict {
+                status: crate::edit_cage::EditCageVerdictStatus::Violated,
+                changed_paths: vec!["src/lib.rs".to_string()],
+                violations: vec![crate::edit_cage::EditCageViolation {
+                    kind: crate::edit_cage::EditCageViolationKind::OutsideInlineTestRegion,
+                    path: "src/lib.rs".to_string(),
+                    reason: "the edit is not a pure insertion of test functions into the selected file's inline test module (`mod tests`: production_edit); production code, the module declaration, and existing tests must stay byte-identical".to_string(),
+                }],
+            },
+        };
+        let lines = repair_after_cage_recovery_lines(
+            Path::new("."),
+            None,
+            "seam:sample",
+            &"b".repeat(40),
+            &after,
+            None,
+        );
+        let joined = lines.join("\n");
+        assert!(
+            !joined.contains("does not parse"),
+            "a non-parse refusal must not carry the parse hint: {joined}"
+        );
+        assert!(
+            joined.contains("the edit cage refused 1 path(s)"),
+            "the refusal keeps its existing narration: {joined}"
+        );
         Ok(())
     }
 }
