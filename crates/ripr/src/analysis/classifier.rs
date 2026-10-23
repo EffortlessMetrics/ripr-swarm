@@ -3621,13 +3621,16 @@ fn far_above_threshold_discounts() {
         classify_probe(&probe, &index, true, None)
     }
 
-    fn first_five_human_related_rows(finding: &Finding) -> Vec<String> {
-        crate::output::human::render_finding(finding)
-            .lines()
-            .filter(|line| line.trim_start().starts_with("- related test "))
-            .take(5)
-            .map(str::to_string)
-            .collect()
+    /// The human renderer lists the first five related tests
+    /// (`MAX_RELATED_TESTS_SHOWN`); analysis cannot render output, so the
+    /// window position is asserted here and the rendering in `output::human`.
+    const HUMAN_RELATED_ROWS_SHOWN: usize = 5;
+
+    fn demoted_row_index(finding: &Finding) -> Option<usize> {
+        finding
+            .related_tests
+            .iter()
+            .position(|test| test.name == "truncate_to_zero_releases_shared_reference")
     }
 
     #[test]
@@ -3653,11 +3656,11 @@ fn far_above_threshold_discounts() {
             Some(RelationConfidence::Low)
         );
         assert_eq!(retained[0].miss, Some(RelatedTestMiss::NoCallPath));
-        let rows = first_five_human_related_rows(&finding);
+        let index = demoted_row_index(&finding);
         assert!(
-            rows.iter()
-                .any(|row| row.contains("truncate_to_zero_releases_shared_reference")),
-            "{rows:#?}"
+            index.is_some_and(|index| (1..HUMAN_RELATED_ROWS_SHOWN).contains(&index)),
+            "{index:?} in {:#?}",
+            finding.related_tests
         );
     }
 
@@ -3695,11 +3698,11 @@ fn far_above_threshold_discounts() {
             finding.related_tests[0].name,
             "truncate_to_zero_releases_shared_reference"
         );
-        let rows = first_five_human_related_rows(&finding);
+        let index = demoted_row_index(&finding);
         assert!(
-            rows.iter()
-                .any(|row| row.contains("truncate_to_zero_releases_shared_reference")),
-            "{rows:#?}"
+            index.is_some_and(|index| (1..HUMAN_RELATED_ROWS_SHOWN).contains(&index)),
+            "{index:?} in {:#?}",
+            finding.related_tests
         );
     }
 

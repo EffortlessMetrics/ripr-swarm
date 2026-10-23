@@ -6495,9 +6495,12 @@ mod tests {
         let (plain, plain_total) = finalize_related_tests(input.clone(), None);
         let plain_index = plain
             .iter()
-            .position(|test| test.name == "truncate_to_zero")
-            .expect("setup: the demoted test is already in the window");
-        assert_eq!(plain_index, 7, "setup: behind seven location-only rows");
+            .position(|test| test.name == "truncate_to_zero");
+        assert_eq!(
+            plain_index,
+            Some(7),
+            "setup: the demoted test is already in the window, behind seven location-only rows"
+        );
         let calls = owner_call_rows(&[40]);
         let (kept, total) = finalize_related_tests_with_owner_calls(input, None, &calls);
         assert_eq!((kept.len(), total), (plain.len(), plain_total));

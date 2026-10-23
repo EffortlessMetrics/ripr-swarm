@@ -5440,6 +5440,45 @@ mod tests {
         Ok(())
     }
 
+    /// #9175: the human window lists the first five related tests, so a
+    /// retained demoted row in the second slot is shown, with its
+    /// disclosure, and the sixth row is not.
+    #[test]
+    fn render_finding_shows_a_retained_demoted_row_in_the_first_five_related_tests() {
+        use crate::domain::{RelatedTestMiss, RelationReason};
+        let mut finding = sample_finding();
+        let template = finding.related_tests[0].clone();
+        let row = |name: &str, reason: RelationReason| RelatedTest {
+            name: name.to_string(),
+            line: 10,
+            relation_reason: Some(reason),
+            relation_confidence: Some(reason.confidence()),
+            miss: Some(RelatedTestMiss::NoCallPath),
+            ..template.clone()
+        };
+        finding.related_tests = vec![
+            row("primary", RelationReason::DirectOwnerCall),
+            row("retained_demoted", RelationReason::WeakTokenSubstring),
+            row("doc_a", RelationReason::SameTestFile),
+            row("doc_b", RelationReason::SameTestFile),
+            row("doc_c", RelationReason::SameTestFile),
+            row("doc_sixth", RelationReason::SameTestFile),
+        ];
+        let rendered = render_finding(&finding);
+        let rows: Vec<&str> = rendered
+            .lines()
+            .filter(|line| line.trim_start().starts_with("- related test "))
+            .collect();
+        assert!(
+            rows.iter().any(|row| row.contains("retained_demoted")),
+            "{rows:#?}"
+        );
+        assert!(
+            rows.iter().all(|row| !row.contains("doc_sixth")),
+            "{rows:#?}"
+        );
+    }
+
     #[test]
     fn render_finding_includes_ripr_evidence_related_tests_gap_and_next_step() {
         let finding = sample_finding();
