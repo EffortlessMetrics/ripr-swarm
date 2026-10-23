@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — radix_literal_boundary_match (3)
+
+Reason:
+RIPR-SPEC-0001: human repair-route line gained missing-evidence reason on main; formatting only
+
+Command:
+`cargo xtask goldens bless radix_literal_boundary_match --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
