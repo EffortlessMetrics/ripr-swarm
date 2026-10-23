@@ -37,3 +37,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — unreached_workspace_trait_impl_borrows_no_oracle (4)
+
+Reason:
+RIPR-SPEC-0108 / RIPR-SPEC-0122: compose #9169 with main #9657; preserve both no_static_path findings and all machine/full-human evidence while adding main's bounded Evidence legend.
+
+Operation:
+Manual integration edit: inserted the existing main five-line bounded Evidence legend after the compact Evidence line. No classifications or machine/full-human outputs changed.
+
+Updated:
+- `expected/human.txt`

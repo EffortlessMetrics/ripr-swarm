@@ -286,7 +286,7 @@ pub(crate) fn render_agent_receipt_value_json(
         guidance_note.as_ref(),
     );
 
-    let value = serde_json::json!({
+    let mut value = serde_json::json!({
         "schema_version": AGENT_RECEIPT_SCHEMA_VERSION,
         "tool": "ripr",
         "status": status,
@@ -331,7 +331,24 @@ pub(crate) fn render_agent_receipt_value_json(
             }
         }
     });
+    // A gap-bound receipt (#9103) names the one gap its verify document closed.
+    // The member is copied only when the verify document's bound gap is this
+    // receipt's seam: a receipt for any other seam never claims a gap.
+    if let Some(bound_gap) = bound_gap_for_seam(verify, seam_id)
+        && let Some(object) = value.as_object_mut()
+    {
+        object.insert("bound_gap".to_string(), bound_gap);
+    }
     super::json::render_pretty_with_newline(&value, "agent receipt")
+}
+
+/// The verify document's `bound_gap` object when it closes `seam_id`: the
+/// named gap equals the seam and the document records `closed: true`.
+pub(crate) fn bound_gap_for_seam(verify: &Value, seam_id: &str) -> Option<Value> {
+    let bound = verify.get("bound_gap")?;
+    let names_seam = bound.get("gap_id").and_then(Value::as_str) == Some(seam_id);
+    let closed = bound.get("closed").and_then(Value::as_bool) == Some(true);
+    (names_seam && closed).then(|| bound.clone())
 }
 
 #[cfg(test)]
@@ -875,6 +892,51 @@ mod tests {
         assert_eq!(action["kind"], kind);
         assert_eq!(action["summary"], expected_summary);
         assert_eq!(action["recommended_action"], expected_action);
+        Ok(())
+    }
+
+    fn render_with_bound_gap(bound_gap: Option<Value>, seam_id: &str) -> Result<Value, String> {
+        let mut verify: Value = serde_json::from_str(agent_verify_json())
+            .map_err(|err| format!("verify JSON should parse: {err}"))?;
+        if let (Some(bound_gap), Some(object)) = (bound_gap, verify.as_object_mut()) {
+            object.insert("bound_gap".to_string(), bound_gap);
+        }
+        let rendered = render_agent_receipt_value_json(
+            &verify,
+            "target/ripr/workflow/agent-verify.json".to_string(),
+            seam_id,
+            None,
+            &[],
+            fixed_provenance(),
+            AgentReceiptAnalysisOutcome::Present(Box::new(test_complete_analysis_outcome()?)),
+        )?;
+        serde_json::from_str(&rendered).map_err(|err| format!("receipt JSON should parse: {err}"))
+    }
+
+    #[test]
+    fn receipt_carries_bound_gap_only_when_the_verify_closure_names_its_seam() -> Result<(), String>
+    {
+        let closed = serde_json::json!({
+            "gap_id": "seam-a", "before_classification": "weakly_exposed",
+            "after_classification": "exposed", "file": "src/a.ts", "line": 5, "closed": true
+        });
+        // Positive: the receipt repeats the closure it was issued over.
+        let receipt = render_with_bound_gap(Some(closed.clone()), "seam-a")?;
+        assert_eq!(receipt["bound_gap"], closed);
+        // Negatives: no closure, another seam's closure, or a closure that
+        // does not read `closed: true` never produce a `bound_gap` member.
+        let mut open = closed.clone();
+        open["closed"] = serde_json::json!(false);
+        for (label, bound, seam) in [
+            ("no bound gap", None, "seam-a"),
+            ("another seam", Some(closed.clone()), "seam-b"),
+            ("not closed", Some(open), "seam-a"),
+        ] {
+            let receipt = render_with_bound_gap(bound, seam)?;
+            if receipt.get("bound_gap").is_some() {
+                return Err(format!("{label}: receipt claimed a gap closure"));
+            }
+        }
         Ok(())
     }
 

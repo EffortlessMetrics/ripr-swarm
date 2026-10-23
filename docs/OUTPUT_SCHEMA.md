@@ -3623,15 +3623,48 @@ before the invocation (removing only files it created). On
 acceptance it writes `before.check-findings.json` (a `check-findings-json`
 artifact) and `gap-repair-packet.json` under the attempt's artifacts and a
 repair-attempt manifest whose `seam_id` is the canonical gap id and which
-carries one additive member, `gap_binding: { "base": "<base>" }`. Seam
-attempts omit `gap_binding`, so their bytes are unchanged. The packet names the
-gap as its `seam_id`; the edit cage is derived from the packet's test file
-and recorded in the attempt baseline, but this slice does not enforce it: only
-the after phase consumes it. This slice has no `--phase after` for gap attempts: that phase refuses naming the manual
-route, `ripr agent verify --before <snapshot> --after <snapshot> --gap-id <gap>`.
+carries one additive member, `gap_binding: { "base": "<base>",
+"base_commit": "<full commit>" }` (the spelling and the commit it resolved to).
+Seam attempts omit `gap_binding`, so their bytes are unchanged. The packet names
+the gap as its `seam_id`; edits are caged to the packet's test file. The
+persisted `next_command` is the ordinary `--attempt <id> --phase after`.
+`agent repair --phase after` for a gap attempt re-runs the same producer against
+`base_commit` into `target/ripr/workflow/after.check-findings.json`, requires the
+gap open before and `exposed` after through `agent verify --gap-id`, and enforces
+the edit cage. Absence from the after snapshot is never closure. An open or absent
+gap is a typed refusal (exit 3) recorded against the attempt's retry budget; it
+stays `awaiting_edit`. A compliant finish issues the gap-bound receipt below; the
+closure is also the `verify.bound_gap` of the `repair_after_result` envelope.
 Let-bound, imported and reach-barrier variants stay unrouted. Python keeps its
 terminal reason. The static result is exposure evidence only; it does not
 claim a runtime mutation outcome.
+
+### Gap-Bound Receipt
+
+A compliant gap-bound finish writes `target/ripr/reports/agent-receipt.json`
+(schema `0.5`, RIPR-SPEC-0311 item 8, #9103) for the gap: `seam.seam_id` and
+`provenance.seam_id` are the canonical gap id, and the receipt carries two
+additive members that seam receipts omit:
+
+- `bound_gap`: `gap_id`, `before_classification`, `after_classification`,
+  `file`, `line`, `closed: true`. It is copied from the verify document only
+  when that document's bound gap is the receipt's seam and reads closed.
+- `repair_attempt.gap_binding`: `base` (the `--base` spelling) and
+  `base_commit` (the full commit the before phase resolved it to).
+
+Issuance is fail-closed on closure evidence. The canonical verify render
+recomputes `bound_gap` from the two `check-findings-json` snapshots (open
+before, `exposed` after), so a verify document that names a gap that did not
+close, or whose closure was edited, is refused (`[gap_binding]` or
+`[not_canonical]`). `ripr agent receipt --seam-id <gap>` over a verify
+document produced without `--gap-id` is refused ("requires an agent verify
+document bound to that gap"). A not-closed, absent or cage-refused finish
+issues no receipt. The receipt reads the after snapshot as its analysis
+outcome, retains the receipt and verify document as the attempt's terminal
+evidence, and `agent status` reads it as showing the gap closed only when it is
+`advisory` with improved static grip. The receipt is static exposure evidence:
+`verification.status` is `verification_not_run` and the provenance limits state
+no runtime mutation execution and no runtime adequacy claim.
 
 ## Repo Seam Inventory
 

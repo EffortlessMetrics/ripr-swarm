@@ -854,6 +854,18 @@ fn ts_mask_typeof_consumed_owner_names(
 /// expected (at the start, or after an operator or opening punctuation);
 /// elsewhere it is division.
 pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
+    ts_mask_with(text, true)
+}
+
+/// [`ts_mask_literals_and_comments`] with every `/` read as division, so a
+/// regex-versus-division misjudgement cannot hide code from a scan that also
+/// runs on this mask. A real regex literal holding a quote can misread the rest
+/// of its line here; callers require agreement of both masks.
+pub(crate) fn ts_mask_literals_and_comments_division_only(text: &str) -> String {
+    ts_mask_with(text, false)
+}
+
+fn ts_mask_with(text: &str, regex_allowed: bool) -> String {
     #[derive(Clone, Copy)]
     enum Mode {
         Code,
@@ -966,7 +978,10 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
                         mode = Mode::BlockComment;
                         out.push_str("  ");
                     }
-                    '/' if !postfix_op && operand_expected(prev, &word, word_after_dot) => {
+                    '/' if regex_allowed
+                        && !postfix_op
+                        && operand_expected(prev, &word, word_after_dot) =>
+                    {
                         mode = Mode::Regex { in_class: false };
                         out.push(c);
                     }
@@ -996,7 +1011,7 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
                     continue;
                 }
                 if (c == '+' || c == '-') && !after_space && prev == Some(c) {
-                    postfix_op = op_after_operand;
+                    postfix_op = op_after_operand && !postfix_op;
                 } else {
                     if c == '+' || c == '-' {
                         op_after_operand = !operand_expected(prev, &word, word_after_dot);
@@ -6528,6 +6543,7 @@ pub(crate) fn classify_change_with_alias_state(
         probe.after.as_deref(),
     );
     Some(Finding {
+        analysis_scope: crate::domain::AnalysisScope::Diff,
         id: probe.id.0.clone(),
         canonical_gap: None,
         probe,

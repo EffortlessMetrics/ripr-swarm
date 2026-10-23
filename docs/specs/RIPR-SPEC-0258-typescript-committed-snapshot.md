@@ -79,7 +79,16 @@ runner's entry for it can be named and is committed:
 
 - the snapshot file is `__snapshots__/<test file name>.snap` beside the
   test file, read under the per-file read cap, and its first line starts
-  with `// Jest Snapshot v1` or `// Vitest Snapshot v1`;
+  with `// Jest Snapshot v1` or `// Vitest Snapshot v1`. When the repository
+  can list its tracked `*.snap` files (one `ls-files` call per run), the file
+  must be one of them: an untracked or ignored snapshot file is a local file
+  CI never sees, so a `--worktree` run no longer credits it. When the
+  repository cannot answer (an export, no repository, the tool unavailable)
+  the file is read as before. The same holds when the repository tracks
+  nothing under the analysis root (a scratch copy, nothing staged yet), or
+  when the nearest `.git` entry is not the work tree git itself discovered
+  (a stub), or an inherited `GIT_DIR` / `GIT_WORK_TREE` selects another
+  repository;
 - no `package.json`, `jest.config.*`, `vitest.config.*`, `vite.config.*`
   or `vitest.workspace.*` in the test file's directory or any ancestor up
   to the root mentions `snapshotResolver`, `resolveSnapshotPath`,
@@ -198,7 +207,13 @@ RIPR-SPEC-0243 ladder, including the observation guard.
 
 - The snapshot file and configs are read from the working tree. A
   committed-history run refuses when one differs from `HEAD`; a
-  `--worktree` run reads the working tree throughout.
+  `--worktree` run reads the working tree throughout, except that the
+  snapshot file must be tracked when the repository can say. A tracked file
+  whose staged or working-tree bytes differ from `HEAD` is read as it is in
+  a `--worktree` run; the tracked check does not compare content.
+- The config walk is memoized per analysis run, so a config edited while
+  the run is in flight (an LSP session between two files of one run) is
+  seen by the next run, not the current one.
 - A test registered from a template title (`%s`, `%#`, a non-literal
   describe title) has no matching entry and stays medium. A `test.each`
   with one row and a literal title runs once and can read strong.
@@ -352,7 +367,11 @@ RIPR-SPEC-0243 ladder, including the observation guard.
   `json_escaped_whitespace_before_the_update_flag_stays_medium`,
   `submodule_git_file_does_not_end_the_walk` and
   `only_a_submodule_pointer_is_not_a_boundary` pin example 8 and the
-  #8768 spellings.
+  #8768 spellings;
+  `untracked_or_ignored_snapshot_file_stays_medium` and
+  `snapshot_file_outside_a_repository_is_read_as_before` pin the tracked-file
+  check, and `config_walk_and_tracked_list_are_memoized_per_run_only` and
+  `memoized_config_verdict_is_per_directory` pin the per-run memo (#7708).
 - `crates/ripr/src/analysis/committed_source/tests.rs`:
   `porcelain_parser_records_unrouted_snapshot_inputs` and
   `snapshot_inputs_differ_only_in_their_own_directory` pin the
