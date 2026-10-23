@@ -421,11 +421,11 @@ fn unanalyzed_state_warnings(output: &CheckOutput) -> Vec<String> {
             && crate::output::analyzed_revisions::is_working_tree_read(output)
         {
             format!(
-                "The working tree has no changed tracked files against `{base}` (diff from the merge base of `{base}` and HEAD to the working tree), so there was nothing to analyze. An empty result means no tracked behavior changed against it — it does NOT mean your changes are covered."
+                "The working tree has no analyzable changed files against `{base}` (diff from the merge base of `{base}` and HEAD to the working tree), so there was nothing to analyze. Deleted files, submodule pointer changes and files ripr does not analyze are not counted, so this empty result does NOT mean no behavior changed and does NOT mean your changes are covered."
             )
         } else if let Some(base) = output.base.as_deref() {
             format!(
-                "`{base}...HEAD` contains no changed files, so there was nothing to analyze; the compared base was `{base}`. An empty result means no behavior changed against it — it does NOT mean your changes are covered."
+                "`{base}...HEAD` has no analyzable changed files, so there was nothing to analyze; the compared base was `{base}`. Deleted files, submodule pointer changes and files ripr does not analyze are not counted, so this empty result does NOT mean no behavior changed and does NOT mean your changes are covered."
             )
         } else {
             format!(
@@ -731,7 +731,7 @@ mod tests {
         );
         assert!(
             rendered.contains(
-                "::warning title=ripr no analysis scope::The working tree has no changed tracked files against `origin/main`"
+                "::warning title=ripr no analysis scope::The working tree has no analyzable changed files against `origin/main`"
             ),
             "{rendered}"
         );
@@ -743,7 +743,7 @@ mod tests {
             "{committed}"
         );
         assert!(
-            committed.contains("`origin/main...HEAD` contains no changed files"),
+            committed.contains("`origin/main...HEAD` has no analyzable changed files"),
             "{committed}"
         );
     }
@@ -1415,7 +1415,7 @@ mod tests {
             "{rendered}"
         );
         assert!(
-            rendered.contains("`main...HEAD` contains no changed files"),
+            rendered.contains("`main...HEAD` has no analyzable changed files"),
             "{rendered}"
         );
         assert!(rendered.contains("compared base was `main`"), "{rendered}");
