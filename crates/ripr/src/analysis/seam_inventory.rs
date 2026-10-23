@@ -2143,6 +2143,8 @@ fn inventory_diff_scoped_classified_seams_inner(
             Duration::ZERO,
         );
         reused.absent_changed_files = absent_changed_files;
+        // The entry is for the hashed corpus; confirm it is still those bytes.
+        state.verify_corpus_unchanged()?;
         cancellation::checkpoint()?;
         return Ok(reused);
     }
@@ -8735,6 +8737,42 @@ marker = "libtest_mimic::Trial"
         assert_eq!(evaluated, 0, "the refusal must not classify anything");
         assert!(!seeded, "a refused hit must not seed the process store");
         Ok(())
+    }
+
+    /// #9899: the process-local hit makes the same corpus check as the
+    /// persisted one: a same-length edit with the mtime restored, landing
+    /// after the lookup hit, is refused rather than returning the old result.
+    #[test]
+    fn bound_seams_reuse_refuses_moved_content_before_return_or_seed() -> Result<(), String> {
+        let root = make_tempdir("bound-seams-memory-moved")?;
+        bound_seams_layout(&root)?;
+        let config = RiprConfig::default();
+        let changed = [PathBuf::from("src/pricing.rs")];
+        let owners = ["discounted_total".to_string()];
+        let pricing = root.join("src/pricing.rs");
+        inventory_diff_scoped_bound_seams_at_with_config(&root, &config, &changed, &owners)?;
+
+        let modified = std::fs::metadata(&pricing)
+            .and_then(|metadata| metadata.modified())
+            .map_err(|error| format!("stat: {error}"))?;
+        let original = std::fs::read_to_string(&pricing).map_err(|error| error.to_string())?;
+        let edited = original.replace(">=", "> ");
+        assert_eq!(edited.len(), original.len(), "the edit keeps the length");
+        let edit_path = pricing.clone();
+        bound_inventory_reuse::on_next_hit(Box::new(move || {
+            let _ = std::fs::write(&edit_path, &edited);
+            let _ = std::fs::File::options()
+                .write(true)
+                .open(&edit_path)
+                .and_then(|file| file.set_modified(modified));
+        }));
+        let refused =
+            inventory_diff_scoped_bound_seams_at_with_config(&root, &config, &changed, &owners);
+        let _ = std::fs::remove_dir_all(&root);
+        match refused {
+            Err(message) if message.contains("changed during analysis") => Ok(()),
+            other => Err(format!("a moved source must be refused, got {other:?}")),
+        }
     }
 
     /// #9899: a same-length source edit with the modification time restored
