@@ -1658,6 +1658,18 @@ mod bound_inventory_reuse {
         ON_HIT.with(|slot| *slot.borrow_mut() = Some(hook));
     }
 
+    /// Drop one entry, so a test can model a new process that has only the
+    /// persisted layer. Targeted, because the store is process-wide and other
+    /// tests run concurrently with their own keys.
+    #[cfg(test)]
+    pub(super) fn forget(key: &RepoSeamCacheKey, identity: &[u8]) {
+        if let Ok(mut entries) = ENTRIES.lock() {
+            entries.retain(|(entry_key, entry_identity, _)| {
+                !(entry_key == key && entry_identity == identity)
+            });
+        }
+    }
+
     pub(super) fn lookup(
         key: &RepoSeamCacheKey,
         identity: &[u8],
@@ -1691,6 +1703,118 @@ mod bound_inventory_reuse {
             entries.pop_front();
         }
         entries.push_back((key.clone(), identity.to_vec(), inventory.clone()));
+    }
+}
+
+/// Cross-process persistence of the staged diff-scoped result (#9899), behind
+/// the same key and predicate identity as [`bound_inventory_reuse`]. A fresh
+/// `ripr mcp --stdio` process on an unchanged workspace otherwise rebuilds the
+/// evidence context and re-evaluates every bindable seam. Every failure is a
+/// miss: the caller computes exactly what it computed without this layer.
+mod persisted_bound_inventory {
+    use super::{
+        FileFactCacheStats, RepoSeamCacheKey, ScopedClassifiedSeamInventory, SeamLimitInfo,
+        trace_latency_phase,
+    };
+    use crate::analysis::seam_cache::{
+        CacheLoad, CachedSeamLimitInfo, PersistedScopedInventory, PersistedSeamLimit,
+        RepoScopedInventoryCache,
+    };
+    use std::path::Path;
+    use std::time::Duration;
+
+    /// A verified persisted result for exactly this key and identity.
+    pub(super) fn lookup(
+        root: &Path,
+        key: &RepoSeamCacheKey,
+        identity: &[u8],
+    ) -> Option<ScopedClassifiedSeamInventory> {
+        match RepoScopedInventoryCache::at(root).load(key, identity) {
+            CacheLoad::Hit(persisted) => Some(from_persisted(persisted, key)),
+            CacheLoad::Miss => None,
+            CacheLoad::CorruptIgnored { .. } => {
+                trace_latency_phase(
+                    "diff_scoped_inventory",
+                    "persisted_result_corrupt_ignored",
+                    Duration::ZERO,
+                );
+                None
+            }
+        }
+    }
+
+    pub(super) fn store(
+        root: &Path,
+        key: &RepoSeamCacheKey,
+        identity: &[u8],
+        inventory: &ScopedClassifiedSeamInventory,
+    ) {
+        // An invalid seam-limit override is an error fact of this run, not a
+        // result to replay: leave it uncached.
+        let repo_seam_limit = match &inventory.repo_seam_limit {
+            None => PersistedSeamLimit::NotComputed,
+            Some(Ok(limit)) => {
+                PersistedSeamLimit::Computed(limit.as_ref().map(|info| CachedSeamLimitInfo {
+                    analyzed: info.analyzed,
+                    total: info.total,
+                    source: info.source.clone(),
+                }))
+            }
+            Some(Err(_)) => return,
+        };
+        let persisted = PersistedScopedInventory {
+            classified: inventory.classified.clone(),
+            classified_seams_considered: inventory.classified_seams_considered,
+            total_rust_files: inventory.total_rust_files,
+            total_production_files: inventory.total_production_files,
+            scoped_production_files: inventory.scoped_production_files.clone(),
+            changed_production_files: inventory.changed_production_files.clone(),
+            parser_declined_files: inventory.parser_declined_files.clone(),
+            immediate_caller_files: inventory.immediate_caller_files.clone(),
+            unevaluated_seams: inventory.unevaluated_seams,
+            repo_seam_limit,
+        };
+        if RepoScopedInventoryCache::at(root)
+            .store(key, identity, persisted)
+            .is_err()
+        {
+            trace_latency_phase(
+                "diff_scoped_inventory",
+                "persisted_result_store_failed",
+                Duration::ZERO,
+            );
+        }
+    }
+
+    fn from_persisted(
+        persisted: PersistedScopedInventory,
+        key: &RepoSeamCacheKey,
+    ) -> ScopedClassifiedSeamInventory {
+        let repo_seam_limit = match persisted.repo_seam_limit {
+            PersistedSeamLimit::NotComputed => None,
+            PersistedSeamLimit::Computed(limit) => Some(Ok(limit.map(|info| SeamLimitInfo {
+                analyzed: info.analyzed,
+                total: info.total,
+                source: info.source,
+            }))),
+        };
+        ScopedClassifiedSeamInventory {
+            classified: persisted.classified,
+            classified_seams_considered: persisted.classified_seams_considered,
+            // No index was built on this path, so there were no file-fact
+            // lookups to count.
+            file_fact_cache: FileFactCacheStats::default(),
+            workspace_cache_key: key.clone(),
+            total_rust_files: persisted.total_rust_files,
+            total_production_files: persisted.total_production_files,
+            scoped_production_files: persisted.scoped_production_files,
+            changed_production_files: persisted.changed_production_files,
+            parser_declined_files: persisted.parser_declined_files,
+            immediate_caller_files: persisted.immediate_caller_files,
+            unevaluated_seams: persisted.unevaluated_seams,
+            absent_changed_files: Vec::new(),
+            repo_seam_limit,
+        }
     }
 }
 
@@ -2025,6 +2149,20 @@ fn inventory_diff_scoped_classified_seams_inner(
         cancellation::checkpoint()?;
         return Ok(reused);
     }
+    if let Some(identity) = reuse_identity
+        && let Some(mut persisted) =
+            persisted_bound_inventory::lookup(root, &workspace_cache_key, identity)
+    {
+        trace_latency_phase(
+            "diff_scoped_inventory",
+            "persisted_result_reused",
+            Duration::ZERO,
+        );
+        persisted.absent_changed_files = absent_changed_files;
+        cancellation::checkpoint()?;
+        bound_inventory_reuse::store(&workspace_cache_key, identity, &persisted);
+        return Ok(persisted);
+    }
     let total_rust_files = state.files.len();
     let production_files = production_files_from_state_with_role(&state, config);
     let total_production_files = production_files.len();
@@ -2133,6 +2271,12 @@ fn inventory_diff_scoped_classified_seams_inner(
     };
     if let Some(identity) = reuse_identity {
         bound_inventory_reuse::store(&inventory.workspace_cache_key, identity, &inventory);
+        persisted_bound_inventory::store(
+            root,
+            &inventory.workspace_cache_key,
+            identity,
+            &inventory,
+        );
     }
     Ok(inventory)
 }
@@ -8424,6 +8568,167 @@ marker = "libtest_mimic::Trial"
             format!("{:?}", cold.repo_seam_limit),
             "a reuse hit must keep the cold run's seam-limit fact"
         );
+        Ok(())
+    }
+
+    /// A comparable projection of everything a consumer reads from a scoped
+    /// inventory, excluding the per-run file-fact statistics.
+    fn scoped_projection(inventory: &ScopedClassifiedSeamInventory) -> Result<String, String> {
+        let classified = serde_json::to_string(&inventory.classified)
+            .map_err(|error| format!("serialize: {error}"))?;
+        Ok(format!(
+            "{classified}|{}|{}|{}|{:?}|{:?}|{:?}|{:?}|{}|{:?}|{:?}",
+            inventory.classified_seams_considered,
+            inventory.total_rust_files,
+            inventory.total_production_files,
+            inventory.scoped_production_files,
+            inventory.changed_production_files,
+            inventory.parser_declined_files,
+            inventory.immediate_caller_files,
+            inventory.unevaluated_seams,
+            inventory.repo_seam_limit,
+            inventory.absent_changed_files,
+        ))
+    }
+
+    fn persisted_entries(root: &Path) -> Vec<PathBuf> {
+        let dir = root
+            .join("target/ripr/cache/repo-scoped-classified-seams")
+            .join(crate::analysis::seam_cache::SCOPED_INVENTORY_CACHE_SCHEMA_VERSION);
+        std::fs::read_dir(dir)
+            .map(|entries| entries.filter_map(|e| e.ok().map(|e| e.path())).collect())
+            .unwrap_or_default()
+    }
+
+    /// #9899: a new process (no in-memory reuse) on an unchanged workspace
+    /// reads the classified result from disk instead of re-evaluating the
+    /// bindable seams, and the result is identical to the computed one.
+    #[test]
+    fn bound_seams_inventory_persisted_reuse_crosses_processes_with_equal_output()
+    -> Result<(), String> {
+        let root = make_tempdir("bound-seams-persisted")?;
+        bound_seams_layout(&root)?;
+        let config = RiprConfig::default();
+        let changed = [PathBuf::from("src/pricing.rs")];
+        let owners = ["discounted_total".to_string()];
+        let identity = {
+            let keys = changed
+                .iter()
+                .map(|path| inventory_scope_key(path))
+                .collect::<BTreeSet<_>>();
+            let names = owners.iter().map(String::as_str).collect::<BTreeSet<_>>();
+            bound_seams_reuse_identity(&keys, &names)
+        };
+
+        evaluation_probe::reset();
+        let cold =
+            inventory_diff_scoped_bound_seams_at_with_config(&root, &config, &changed, &owners)?;
+        let cold_evaluated = evaluation_probe::evaluated();
+        assert!(cold_evaluated > 0, "cold run must evaluate");
+        assert!(!cold.classified.is_empty(), "fixture must classify seams");
+        assert_eq!(persisted_entries(&root).len(), 1, "cold run must persist");
+
+        // New process: the in-memory store is empty, the disk entry remains.
+        bound_inventory_reuse::forget(&cold.workspace_cache_key, &identity);
+        evaluation_probe::reset();
+        let warm =
+            inventory_diff_scoped_bound_seams_at_with_config(&root, &config, &changed, &owners)?;
+        assert_eq!(
+            evaluation_probe::evaluated(),
+            0,
+            "a persisted hit must not re-evaluate any seam"
+        );
+        assert_eq!(scoped_projection(&warm)?, scoped_projection(&cold)?);
+        assert_eq!(warm.workspace_cache_key, cold.workspace_cache_key);
+
+        // The disk hit repopulated the in-process store.
+        std::fs::remove_dir_all(root.join("target/ripr/cache/repo-scoped-classified-seams"))
+            .map_err(|error| format!("remove persisted layer: {error}"))?;
+        evaluation_probe::reset();
+        let again =
+            inventory_diff_scoped_bound_seams_at_with_config(&root, &config, &changed, &owners)?;
+        let reused_in_process = evaluation_probe::evaluated() == 0;
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(reused_in_process, "a disk hit must also seed the process");
+        assert_eq!(scoped_projection(&again)?, scoped_projection(&cold)?);
+        Ok(())
+    }
+
+    /// #9899: a persisted entry is served only for the exact workspace and
+    /// scope. An edit, another scope, a damaged entry or a tampered payload
+    /// each recompute and produce what an uncached run produces.
+    #[test]
+    fn bound_seams_inventory_persisted_entry_never_serves_a_different_state() -> Result<(), String>
+    {
+        let root = make_tempdir("bound-seams-persisted-miss")?;
+        bound_seams_layout(&root)?;
+        let config = RiprConfig::default();
+        let changed = [PathBuf::from("src/pricing.rs")];
+        let owners = ["discounted_total".to_string()];
+        let forget = |inventory: &ScopedClassifiedSeamInventory, changed: &[PathBuf]| {
+            let keys = changed
+                .iter()
+                .map(|path| inventory_scope_key(path))
+                .collect::<BTreeSet<_>>();
+            let names = owners.iter().map(String::as_str).collect::<BTreeSet<_>>();
+            bound_inventory_reuse::forget(
+                &inventory.workspace_cache_key,
+                &bound_seams_reuse_identity(&keys, &names),
+            );
+        };
+        let run = |changed: &[PathBuf]| -> Result<(usize, ScopedClassifiedSeamInventory), String> {
+            evaluation_probe::reset();
+            let inventory =
+                inventory_diff_scoped_bound_seams_at_with_config(&root, &config, changed, &owners)?;
+            Ok((evaluation_probe::evaluated(), inventory))
+        };
+
+        let (_, cold) = run(&changed)?;
+        let baseline = scoped_projection(&cold)?;
+        forget(&cold, &changed);
+        let pricing_entry = persisted_entries(&root)
+            .pop()
+            .ok_or("the cold run must persist an entry")?;
+
+        // Another changed-file scope misses the entry stored for this one.
+        let other = [PathBuf::from("src/unrelated.rs")];
+        let (other_evaluated, other_inventory) = run(&other)?;
+        assert!(other_evaluated > 0, "a different scope must recompute");
+        assert_ne!(scoped_projection(&other_inventory)?, baseline);
+        forget(&other_inventory, &other);
+
+        // A damaged entry is ignored and recomputed to the same result.
+        let entry = pricing_entry;
+        let original = std::fs::read(&entry).map_err(|error| format!("read entry: {error}"))?;
+        std::fs::write(&entry, b"{ not json").map_err(|error| format!("damage: {error}"))?;
+        let (damaged_evaluated, damaged) = run(&changed)?;
+        assert!(damaged_evaluated > 0, "a damaged entry must recompute");
+        assert_eq!(scoped_projection(&damaged)?, baseline);
+        forget(&damaged, &changed);
+
+        // A payload edited without its digest is refused, never served.
+        let text = String::from_utf8(original).map_err(|error| format!("utf8: {error}"))?;
+        let tampered = text.replacen(
+            &format!("\"total_rust_files\":{}", cold.total_rust_files),
+            &format!("\"total_rust_files\":{}", cold.total_rust_files + 7),
+            1,
+        );
+        assert_ne!(tampered, text, "the tamper must change the payload");
+        std::fs::write(&entry, tampered).map_err(|error| format!("tamper: {error}"))?;
+        let (tampered_evaluated, tampered_inventory) = run(&changed)?;
+        assert!(tampered_evaluated > 0, "a tampered entry must recompute");
+        assert_eq!(scoped_projection(&tampered_inventory)?, baseline);
+        forget(&tampered_inventory, &changed);
+
+        // A production edit changes the workspace key: recompute, fresh result.
+        write_file(
+            &root.join("src/pricing.rs"),
+            "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount > threshold { amount - 10 } else { amount }\n}\n",
+        )?;
+        let (edited_evaluated, edited) = run(&changed)?;
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(edited_evaluated > 0, "an edited workspace must recompute");
+        assert_ne!(scoped_projection(&edited)?, baseline);
         Ok(())
     }
 

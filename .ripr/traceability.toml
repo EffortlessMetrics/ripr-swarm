@@ -14581,6 +14581,12 @@ tests = [
   "crates/ripr/src/analysis/seam_inventory.rs::tests::bound_seams_inventory_evaluates_only_seams_that_can_bind",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::bound_seams_inventory_reuse_is_keyed_by_workspace_and_scope",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::bound_seams_inventory_reuse_keeps_the_repo_seam_limit_fact",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::bound_seams_inventory_persisted_reuse_crosses_processes_with_equal_output",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::bound_seams_inventory_persisted_entry_never_serves_a_different_state",
+  "crates/ripr/src/analysis/seam_cache/scoped_inventory.rs::tests::exact_key_and_identity_round_trip",
+  "crates/ripr/src/analysis/seam_cache/scoped_inventory.rs::tests::any_differing_key_field_or_identity_misses_even_at_the_requested_name",
+  "crates/ripr/src/analysis/seam_cache/scoped_inventory.rs::tests::unknown_cargo_configuration_is_never_stored_or_served",
+  "crates/ripr/src/analysis/seam_cache/scoped_inventory.rs::tests::only_the_newest_entries_are_retained",
   "crates/ripr/src/mcp/protocol.rs::tests",
   "crates/ripr/src/mcp/server_tests.rs::repair_card_fails_closed_before_refresh",
   "crates/ripr/src/mcp/server_tests.rs::repair_tools_reject_bad_arguments_at_the_dispatch_edge",
@@ -14596,6 +14602,7 @@ code = [
   "crates/ripr/src/mcp/protocol.rs",
   "crates/ripr/src/mcp/server.rs",
   "crates/ripr/src/analysis/seam_inventory.rs",
+  "crates/ripr/src/analysis/seam_cache/scoped_inventory.rs",
 ]
 outputs = []
 metrics = [
