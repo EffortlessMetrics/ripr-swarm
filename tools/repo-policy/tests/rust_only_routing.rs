@@ -7,6 +7,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const WORKFLOW: &str = include_str!("../../../.github/workflows/ci.yml");
@@ -84,7 +85,7 @@ impl Fixture {
     fn command_with_deadline(&self, executable: &str, deadline: &str) -> TestResult<Command> {
         // GNU timeout owns the whole subprocess group, including Bash's Git
         // children. Killing only the direct shell can leave a fixture in use.
-        let mut command = Command::new("timeout");
+        let mut command = Command::new(gnu_timeout()?);
         command
             .args(["--kill-after=1s", deadline, executable])
             .current_dir(&self.root)
@@ -868,6 +869,26 @@ fn witness_observer_distinguishes_identity_state_and_incomplete_evidence() -> Te
     Ok(())
 }
 
+/// GNU `timeout` is this file's declared prerequisite: only it signals the whole
+/// process group on `--kill-after`. Ubuntu 26 images default `timeout` to uutils
+/// and keep GNU reachable as `gnutimeout`, so select by what the binary reports,
+/// never by name, and fail explicitly when no GNU implementation is present.
+fn gnu_timeout() -> TestResult<&'static str> {
+    static GNU: OnceLock<Option<&'static str>> = OnceLock::new();
+    GNU.get_or_init(|| {
+        ["timeout", "gnutimeout"]
+            .into_iter()
+            .find(|program| command_first_line(program, &["--version"]).contains("GNU coreutils"))
+    })
+    .ok_or_else(|| {
+        format!(
+            "GNU timeout prerequisite not available on PATH (tried timeout, gnutimeout): {}",
+            runner_diagnostics()
+        )
+        .into()
+    })
+}
+
 fn command_first_line(program: &str, args: &[&str]) -> String {
     Command::new(program)
         .args(args)
@@ -905,8 +926,9 @@ fn runner_diagnostics() -> String {
         })
         .unwrap_or_else(|| "not found on PATH".to_owned());
     format!(
-        "os={os}, timeout={resolved} [{}], bash={}",
+        "os={os}, timeout={resolved} [{}], gnutimeout=[{}], bash={}",
         command_first_line("timeout", &["--version"]),
+        command_first_line("gnutimeout", &["--version"]),
         command_first_line("bash", &["--version"])
     )
 }
