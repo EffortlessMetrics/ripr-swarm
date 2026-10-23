@@ -194,12 +194,110 @@ fn has_return_shape(text: &str) -> bool {
 }
 
 fn has_error_shape(text: &str) -> bool {
+    has_explicit_error_marker(text) || contains_question_operator(text)
+}
+
+fn has_explicit_error_marker(text: &str) -> bool {
     text.contains("Err(")
         || text.contains("Error::")
         || text.contains("map_err")
         || text.contains("bail!")
         || text.contains("anyhow!")
-        || contains_question_operator(text)
+}
+
+/// #9866: classify a changed line against the old line it replaced. A line
+/// whose only error evidence is a trailing `?` and whose edit is a selector
+/// swap (`min_by_key` to `max_by_key`, `first` to `last`) changed which
+/// element is chosen, not an error arm: the `?` only propagates the empty
+/// case. The error-path family is withheld, and the line abstains as
+/// `static_unknown` unless another family still applies. Every other edit
+/// keeps `classify_changed_line` unchanged.
+pub fn classify_changed_line_against(text: &str, removed: Option<&str>) -> Vec<ProbeFamily> {
+    let families = classify_changed_line(text);
+    let selector_edit = removed.is_some_and(|removed| is_selector_swap(removed, text));
+    if !selector_edit
+        || !families.contains(&ProbeFamily::ErrorPath)
+        || has_explicit_error_marker(&mask_comments_and_strings(text.trim_start()))
+    {
+        return families;
+    }
+    let mut out: Vec<ProbeFamily> = families
+        .into_iter()
+        .filter(|family| *family != ProbeFamily::ErrorPath && *family != ProbeFamily::StaticUnknown)
+        .collect();
+    if out.is_empty() {
+        out.push(ProbeFamily::StaticUnknown);
+    }
+    out
+}
+
+/// Selector method pairs whose swap changes which element is returned.
+const SELECTOR_NAMES: [&str; 12] = [
+    "min",
+    "max",
+    "min_by",
+    "max_by",
+    "min_by_key",
+    "max_by_key",
+    "first",
+    "last",
+    "next",
+    "next_back",
+    "find",
+    "rfind",
+];
+
+/// Whether `new` differs from `old` only by one selector method name replaced
+/// by another. The differing span is widened to whole identifiers, so
+/// `min_by_key` against `max_by_key` compares as words, not as `in` and `ax`.
+fn is_selector_swap(old: &str, new: &str) -> bool {
+    // Masked first: a string or comment spelled like a selector is not one.
+    let (old, new) = (
+        mask_comments_and_strings(old),
+        mask_comments_and_strings(new),
+    );
+    let (old, new) = (old.trim(), new.trim());
+    if old == new {
+        return false;
+    }
+    let (old_chars, new_chars): (Vec<char>, Vec<char>) =
+        (old.chars().collect(), new.chars().collect());
+    let limit = old_chars.len().min(new_chars.len());
+    let mut prefix = 0;
+    while prefix < limit && old_chars[prefix] == new_chars[prefix] {
+        prefix += 1;
+    }
+    let mut suffix = 0;
+    while suffix < limit - prefix
+        && old_chars[old_chars.len() - 1 - suffix] == new_chars[new_chars.len() - 1 - suffix]
+    {
+        suffix += 1;
+    }
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    let word_span = |chars: &[char]| {
+        let mut start = prefix;
+        while start > 0 && is_word(chars[start - 1]) {
+            start -= 1;
+        }
+        let mut end = chars.len() - suffix;
+        while end < chars.len() && is_word(chars[end]) {
+            end += 1;
+        }
+        // A selector is a method call: `.name(`. A local, field or argument
+        // spelled like one is not.
+        let before = chars[..start].iter().rev().find(|c| !c.is_whitespace());
+        let after = chars[end..].iter().find(|c| !c.is_whitespace());
+        let word = chars[start..end].iter().collect::<String>();
+        (before == Some(&'.') && after == Some(&'(')).then_some(word)
+    };
+    match (word_span(&old_chars), word_span(&new_chars)) {
+        (Some(old_word), Some(new_word)) => {
+            SELECTOR_NAMES.contains(&old_word.as_str())
+                && SELECTOR_NAMES.contains(&new_word.as_str())
+                && old_word != new_word
+        }
+        _ => false,
+    }
 }
 
 fn contains_question_operator(text: &str) -> bool {
@@ -837,6 +935,92 @@ fn is_constant_declaration(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const MAX_LINE: &str =
+        "let idx = self.queue.iter().enumerate().max_by_key(|(_, t)| t.prio).map(|(i, _)| i)?;";
+    const MIN_LINE: &str =
+        "let idx = self.queue.iter().enumerate().min_by_key(|(_, t)| t.prio).map(|(i, _)| i)?;";
+
+    /// #9866: a selector swap beside an unchanged trailing `?` is not an error
+    /// arm; it abstains instead of reading `error_path`.
+    #[test]
+    fn selector_swap_on_a_try_line_abstains_instead_of_reading_error_path() {
+        assert_eq!(
+            classify_changed_line_against(MIN_LINE, Some(MAX_LINE)),
+            vec![ProbeFamily::StaticUnknown]
+        );
+        for (old, new) in [
+            (
+                "let v = xs.first().copied()?;",
+                "let v = xs.last().copied()?;",
+            ),
+            ("let v = it.next()?;", "let v = it.next_back()?;"),
+            ("let v = xs.iter().min()?;", "let v = xs.iter().max()?;"),
+        ] {
+            let found = classify_changed_line_against(new, Some(old));
+            assert!(!found.contains(&ProbeFamily::ErrorPath), "{new}: {found:?}");
+        }
+    }
+
+    /// Alternate and negative controls: every other edit keeps the existing
+    /// lexical families, including a real changed `?` error arm.
+    #[test]
+    fn non_selector_edits_keep_the_error_path_family() {
+        for (old, new) in [
+            // no old line to compare against
+            (None, MIN_LINE),
+            // the `?` itself was added
+            (
+                Some("let idx = xs.iter().min_by_key(|t| t.prio).map(|(i, _)| i);"),
+                MIN_LINE,
+            ),
+            // a non-selector call changed
+            (Some("let v = parse(buf)?;"), "let v = parse_strict(buf)?;"),
+            // selector swapped and an unrelated token changed too
+            (
+                Some("let v = xs.first().copied()?;"),
+                "let v = ys.last().copied()?;",
+            ),
+            // selector swap beside an explicit error variant: unchanged behavior
+            (
+                Some("let v = xs.first().ok_or(Error::Empty)?;"),
+                "let v = xs.last().ok_or(Error::Empty)?;",
+            ),
+            // identical text is not a swap
+            (Some(MIN_LINE), MIN_LINE),
+            // selector-spelled arguments, fields, strings and comments (#9866 review)
+            (Some("let v = check(x, min)?;"), "let v = check(x, max)?;"),
+            (Some("let v = load(first)?;"), "let v = load(last)?;"),
+            (Some("let v = parse(\"max\")?;"), "let v = parse(\"min\")?;"),
+            (Some("let v = cfg.first?;"), "let v = cfg.last?;"),
+            (
+                Some("let v = it.next()?; // min"),
+                "let v = it.next()?; // max",
+            ),
+            (
+                Some("let v = m.get(\"first\")?;"),
+                "let v = m.get(\"last\")?;",
+            ),
+        ] {
+            assert!(
+                classify_changed_line_against(new, old).contains(&ProbeFamily::ErrorPath),
+                "{new}"
+            );
+        }
+    }
+
+    #[test]
+    fn selector_swap_detection_compares_whole_identifiers() {
+        assert!(is_selector_swap(MAX_LINE, MIN_LINE));
+        // `minimum` is not a selector name even though it starts with `min`.
+        assert!(!is_selector_swap("a.max()?;", "a.minimum()?;"));
+        // a substring edit inside a non-selector name is not a swap
+        assert!(!is_selector_swap("a.xmax()?;", "a.xmin()?;"));
+        // selector and non-selector
+        assert!(!is_selector_swap("a.first()?;", "a.get(0)?;"));
+        // spaced method-call position still counts
+        assert!(is_selector_swap("a . first ()?;", "a . last ()?;"));
+    }
 
     #[test]
     fn restricted_visibility_parens_are_not_a_call() {

@@ -92,9 +92,17 @@ runner's entry for it can be named and is committed:
 - no `package.json`, `jest.config.*`, `vitest.config.*`, `vite.config.*`
   or `vitest.workspace.*` in the test file's directory or any ancestor up
   to the root mentions `snapshotResolver`, `resolveSnapshotPath`,
-  `snapshotEnvironment`, `updateSnapshot`, `--update`, ` -u` or `"-u"`, no
-  runner config holds an `update` key (`update:`, `update :`,
-  `"update":`), no `package.json` passes a config, project list or root
+  `snapshotEnvironment`, `updateSnapshot`, `snapshotFormat`, `--update`, `-u`
+  after whitespace, a shell quote or a JSON escape of either (`\t`, `\n`,
+  `\r`, `\f`, `\v`, `\u0020`, `\"`), alone or bundled in a short-flag
+  cluster (`-iu`), or `"-u"`, no runner config holds an
+  `update` key (`update:`, `update :`, `"update":`, a computed `["update"]:`,
+  a member assignment `config.update = ...` or compound `||=` / `??=` /
+  `+=`, with comments allowed between the key and the `:` or `=`), no runner config other than
+  `package.json` names `projects`, `workspace` or `root` as a key (plain,
+  quoted, computed `["projects"]:`, JS shorthand, or a member assignment
+  `config.projects = ...`), since those keys delegate to config files this
+  walk does not read, no `package.json` passes a config, project list or root
   by path (a script flag `--config`, `--config=`, `-c`, `-cx`, `--projects`,
   `--rootDir`, `--root`, `-r`, `--dir` or `--workspace`, or a `"projects"` or
   `"rootDir"` key), and each such file reads; a `<stem>.config.<ext>` whose
@@ -103,7 +111,9 @@ runner's entry for it can be named and is committed:
   rewrites snapshots no longer fails on a changed value. The walk continues
   above the analysis root, starting from the canonicalized root so a
   symlinked root climbs its real parents, up to the first directory holding
-  a repository marker (at most 16 levels), or to the filesystem root when
+  a repository marker (at most 16 levels; a submodule's `.git` file, whose
+  `gitdir:` target has a `modules` path component, is not one, so the walk
+  continues to the superproject's marker), or to the filesystem root when
   that is within 16 levels and no marker is found (nothing above is a
   repository, and any config there is still read). When 16 levels pass with
   neither a marker nor the filesystem root, the repository boundary is
@@ -208,8 +218,29 @@ RIPR-SPEC-0243 ladder, including the observation guard.
   describe title) has no matching entry and stays medium. A `test.each`
   with one row and a literal title runs once and can read strong.
 - A runner config passed by path is not read; a `package.json` script that
-  passes one refuses instead. A config above the repository boundary is not
-  read.
+  passes one refuses instead. A config that names `projects`, `workspace` or
+  `root` is not followed into the files it names; it refuses instead. A
+  computed key built at run time (`["pro" + "jects"]`) is not read and a
+  delegating config written that way keeps the credit. A config above the
+  repository boundary is not read.
+- A config that inherits from another file is not followed: a `preset:`
+  option, or a spread of an imported base config
+  (`...require("./jest.base")`, `...baseConfig`), may carry a snapshot
+  override this walk never read. Such a config keeps the credit unless the
+  file itself names an override. A key built from a variable
+  (`[name]: ...`, `config[name] = ...`) is not read either. Both are tracked
+  as known limits, not refused.
+- A comment between a member dot and its key on an earlier line
+  (`config. // c` then `projects = ...`) is not seen; same-line block
+  comments are.
+- A `.git` directory nested in a larger repository (a vendored clone) cannot
+  be told from the repository top, so it ends the walk and a config above it
+  is not read. A worktree `gitdir:` pointer and a `.git` file with no
+  readable pointer end the walk the same way; only a submodule pointer (a
+  `gitdir:` target with a `modules` path component) is skipped. A submodule
+  may itself be named `worktrees`, and a worktree of a submodule cannot be told
+  from a nested submodule path, so any `modules` target reads as a submodule:
+  the walk then reads more configs, which can only withhold credit.
 - The analysis root itself may be a symlink (it is the user's own checkout
   path and is canonicalized), but every directory below it, and the
   `__snapshots__` directory, must not be; the asymmetry is deliberate.
@@ -277,7 +308,7 @@ RIPR-SPEC-0243 ladder, including the observation guard.
    `resolveSnapshotPath`, `update: true` or `update : true` in
    `vitest.config.ts`, a `snapshotEnvironment` or `"update": true` there,
    the same in `vite.config.ts` or `vitest.workspace.ts`, `jest -u`,
-   `jest --updateSnapshot`, `vitest --update` or `["-u"]` in a
+   `jest --updateSnapshot`, `vitest --update`, `"jest\t-u"` or `["-u"]` in a
    `package.json` at the root or in the test directory, a
    `vitest.config.ts` beside a Jest-headered file, or a Vitest-headered
    file with only a Jest `package.json`: medium. A `jest --ci` script, a
@@ -296,6 +327,13 @@ RIPR-SPEC-0243 ladder, including the observation guard.
    above the root: medium (boundary unknown); a Vitest `vitest.unit.config.ts`
    that overrides nothing: strong; a symlinked test directory or symlinked
    `__snapshots__` directory: medium.
+8. A `jest.config.js` with `projects: [...]` or `["projects"]: [...]`, a
+   `vitest.config.ts` with `workspace`, `root` or `config.test.root = ...`:
+   medium. A `const root = process.cwd()` declaration, a Jest `roots` or
+   `rootDir` option: strong. A package whose `.git` file is a submodule
+   pointer (`gitdir: ../../.git/modules/app`) under a superproject whose
+   `jest.config.js` sets a `snapshotResolver`: medium; the same package with a
+   worktree pointer (`gitdir: ../.git/worktrees/app`): strong.
 
 ## Test Mapping
 
@@ -325,6 +363,11 @@ RIPR-SPEC-0243 ladder, including the observation guard.
   `directories_above_the_root_stop_at_the_repository_boundary`,
   `symlinked_snapshots_directory_stays_medium` and
   `symlinked_test_directory_stays_medium` pin example 7;
+  `computed_and_member_spellings_of_delegating_keys_stay_medium`,
+  `json_escaped_whitespace_before_the_update_flag_stays_medium`,
+  `submodule_git_file_does_not_end_the_walk` and
+  `only_a_submodule_pointer_is_not_a_boundary` pin example 8 and the
+  #8768 spellings;
   `untracked_or_ignored_snapshot_file_stays_medium` and
   `snapshot_file_outside_a_repository_is_read_as_before` pin the tracked-file
   check, and `config_walk_and_tracked_list_are_memoized_per_run_only` and

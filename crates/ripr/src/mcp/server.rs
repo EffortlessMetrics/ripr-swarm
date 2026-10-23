@@ -10,6 +10,7 @@ use serde_json::Value;
 use std::borrow::Cow;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
 
 /// Upper bound for the `ripr_refresh` `base` revision text; no real ref name
@@ -1172,6 +1173,7 @@ fn resource_failure(
 /// keep ping as method-not-found.
 pub(super) struct InitializeSessionService {
     inner: McpServer,
+    handshake_seen: AtomicBool,
 }
 
 impl InitializeSessionService {
@@ -1181,6 +1183,7 @@ impl InitializeSessionService {
     ) -> Result<Self, ErrorData> {
         Ok(Self {
             inner: McpServer::new(status, analysis_root)?,
+            handshake_seen: AtomicBool::new(false),
         })
     }
 }
@@ -1215,6 +1218,17 @@ impl rmcp::Service<RoleServer> for InitializeSessionService {
         if matches!(request, ClientRequest::PingRequest(_)) {
             return answer_initialize_session_ping(&self.inner, context).await;
         }
+        if matches!(request, ClientRequest::InitializeRequest(_))
+            && self.handshake_seen.swap(true, Ordering::SeqCst)
+        {
+            // The first `initialize` is the handshake itself and flows
+            // through this adapter; any later one is a lifecycle violation
+            // on a live session, not a missing method (#9895).
+            return Err(ErrorData::invalid_request(
+                ALREADY_INITIALIZED_MESSAGE,
+                None,
+            ));
+        }
         <McpServer as rmcp::Service<RoleServer>>::handle_request(&self.inner, request, context)
             .await
     }
@@ -1240,6 +1254,8 @@ impl rmcp::Service<RoleServer> for InitializeSessionService {
         <McpServer as rmcp::Service<RoleServer>>::supported_protocol_versions(&self.inner)
     }
 }
+
+const ALREADY_INITIALIZED_MESSAGE: &str = "session already initialized: `initialize` is accepted once per connection; continue with the existing session or restart `ripr mcp --stdio`";
 
 #[cfg(test)]
 #[path = "server_tests.rs"]

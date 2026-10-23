@@ -12,7 +12,7 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 169
+floor = 181
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
@@ -693,14 +693,14 @@ id = "RIPR-SPEC-0096"
 reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
 
 # Error-Seam unwrap_err / expect_err Variant Binding
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0106"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+scope = "in"
 
 # ErrorPath Requires a Variant-Observing Oracle
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0107"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+scope = "in"
 
 # Evidence-Promotion Honesty Meta-Gate
 [[unmeasured]]
@@ -781,9 +781,9 @@ id = "RIPR-SPEC-0172"
 reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
 
 # guarded Result match observations
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0175"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+scope = "in"
 
 # Same-test pairing for boundary-class probes
 [[unmeasured]]

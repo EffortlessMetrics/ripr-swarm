@@ -1999,6 +1999,7 @@ mod evidence_path_separator_tests {
 
     fn finding_with_related(file: &str) -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_lib_rs:9:error_path".to_string(),
             canonical_gap: None,
             probe: Probe {

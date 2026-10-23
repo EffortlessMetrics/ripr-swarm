@@ -97,6 +97,18 @@ id = "RIPR-SPEC-0091"
 scope = "out"
 reason = "CLI, command or receipt contract, not an analyzer verdict"
 
+# Error-Seam unwrap_err / expect_err Variant Binding
+[[spec]]
+id = "RIPR-SPEC-0106"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
+# ErrorPath Requires a Variant-Observing Oracle
+[[spec]]
+id = "RIPR-SPEC-0107"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
 # Disclose Unanalyzed Working Tree When Using `--base`
 [[spec]]
 id = "RIPR-SPEC-0112"
@@ -198,6 +210,12 @@ reason = "output wording or disclosure; the classification is unchanged, so a ve
 id = "RIPR-SPEC-0170"
 scope = "out"
 reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# guarded Result match observations
+[[spec]]
+id = "RIPR-SPEC-0175"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
 
 # Rust repair-trust route-yield ladder
 [[spec]]
