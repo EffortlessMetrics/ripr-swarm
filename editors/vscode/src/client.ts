@@ -19,7 +19,7 @@ import {
   resolutionFailureRecovery
 } from './serverResolver';
 import { setupFilePath, hasUnsafeShellMetacharacter, redirectTargetMatches, redirectStaysInWorkspace, serverShellArg, isWindowsHost, normalizePath, sameWorkspaceRoot, rootMatchesWorkspace, objectField, stringField, boundedStringField, arrayLength, numberFieldValue, TEST_RUNNER_VERIFY_COMMAND_PREFIXES, testRunnerCommandLeavesScope } from './packetJson';
-import { riprDocumentSelectorsForWorkspace, extensionVersion, traceFromConfig, currentWorkspaceRootState, workspaceRootStateNoWorkspace, workspaceRootStateLabel, workspaceRootStateDetail, workspaceRootPickItems } from './workspaceHelpers';
+import { riprDocumentSelectorsForWorkspace, integerSetting, extensionVersion, traceFromConfig, currentWorkspaceRootState, workspaceRootStateNoWorkspace, workspaceRootStateLabel, workspaceRootStateDetail, workspaceRootPickItems } from './workspaceHelpers';
 import type { WorkspaceRootPickItem } from './workspaceHelpers';
 import { statusText, statusSummary, statusBarColors, canProjectFirstUsefulAction, shouldShowMainStatusBar } from './statusRender';
 import type { RiprStatusKind, RiprStatusState, FirstUsefulActionStatus, StatusBarColors } from './statusRender';
@@ -197,8 +197,8 @@ function lspConfigurationForResource(scopeUri: string | undefined): Record<strin
     includeUnchangedTests: config.get<boolean>('includeUnchangedTests'),
     seamDiagnostics: explicitSetting<boolean>(config, 'seamDiagnostics'),
     diagnosticProfile: explicitSetting<string>(config, 'diagnosticProfile'),
-    gitTimeoutMs: config.get<number>('gitTimeoutMs'),
-    refreshDeadlineMs: config.get<number>('refreshDeadlineMs')
+    gitTimeoutMs: integerSetting(config.get<number>('gitTimeoutMs')),
+    refreshDeadlineMs: integerSetting(config.get<number>('refreshDeadlineMs'))
   };
 }
 
@@ -505,6 +505,13 @@ export class RiprClientController {
    * start. Reset whenever the session stops.
    */
   private lastCompletedStatus: RiprStatusState | undefined;
+  /**
+   * True while the main status shows a rejected configuration pull (#9917).
+   * An accepted pull in a state that paints no status of its own (`stopped`)
+   * must clear that paint, so the flag marks it as ours to clear.
+   */
+  private configurationFailurePainted = false;
+  private configurationFailureStatus: RiprStatusState | undefined;
   private workspaceRoot: string | undefined;
   /**
    * Session-scoped workspace folder picked through `ripr: Select Workspace
@@ -820,12 +827,21 @@ export class RiprClientController {
     if (this.pendingWorkspaceRoot && this.workspaceRoot && sameWorkspaceRoot(this.pendingWorkspaceRoot, this.workspaceRoot)) {
       this.pendingWorkspaceRoot = undefined;
     }
-    this.updateStatus({
-      kind: 'analysisQueued',
-      summary: 'ripr saved-workspace analysis is queued.',
-      detail: `Server: ${server.source} (${server.detail})\nWorkspace: ${this.workspaceRoot}\nOpen or save a Rust or enabled preview-language file to refresh diagnostics.`,
-      nextStep: 'Open or save a Rust or enabled preview-language file, then wait for diagnostics.'
-    });
+    // The server is live during the setup reads above, so its first
+    // configuration pull may already have been rejected. The queued paint is
+    // only the startup placeholder and must not hide that rejection; a later
+    // pending/applied pull still clears or re-asserts it through
+    // handleAnalysisStatus.
+    if (this.configurationFailureStatus) {
+      this.updateStatus(this.configurationFailureStatus);
+    } else {
+      this.updateStatus({
+        kind: 'analysisQueued',
+        summary: 'ripr saved-workspace analysis is queued.',
+        detail: `Server: ${server.source} (${server.detail})\nWorkspace: ${this.workspaceRoot}\nOpen or save a Rust or enabled preview-language file to refresh diagnostics.`,
+        nextStep: 'Open or save a Rust or enabled preview-language file, then wait for diagnostics.'
+      });
+    }
     await this.refreshFirstUsefulActionStatus();
   }
 
@@ -1096,6 +1112,8 @@ export class RiprClientController {
     this.firstUsefulAction = undefined;
     this.dirtyRiprDocuments.clear();
     this.lastCompletedStatus = undefined;
+    this.configurationFailurePainted = false;
+    this.configurationFailureStatus = undefined;
     this.clearAttemptStatusBar();
     this.updateStatus(config.enabled
       ? {
@@ -1113,6 +1131,14 @@ export class RiprClientController {
       return;
     }
     this.dirtyRiprDocuments.add(document.uri.toString());
+    // An unresolved configuration rejection outranks the unsaved-buffer
+    // presentation: typing in a file must not hide why the user's settings
+    // were ignored. Dirty tracking above still runs, and a decided pull
+    // clears the rejection through handleAnalysisStatus.
+    if (this.configurationFailureStatus) {
+      this.updateStatus(this.configurationFailureStatus);
+      return;
+    }
     this.updateStatus({
       kind: 'stale',
       summary: 'ripr analysis is stale until the file is saved.',
@@ -1884,6 +1910,31 @@ export class RiprClientController {
       });
       return;
     }
+    const pullFailure = configurationPullFailureStatus(status);
+    if (pullFailure) {
+      this.configurationFailurePainted = true;
+      this.configurationFailureStatus = pullFailure;
+      this.updateStatus(pullFailure);
+      return;
+    }
+    // `pending` is published before the corrective response arrives, so the
+    // rejection stays painted (and owed a clear) until the pull is decided.
+    const pullPending = status.input_authority?.configuration_pull?.state === 'pending';
+    const clearConfigurationFailure = this.configurationFailurePainted && !pullPending;
+    if (!pullPending) {
+      this.configurationFailurePainted = false;
+      this.configurationFailureStatus = undefined;
+    }
+    this.renderAnalysisState(status, clearConfigurationFailure);
+    // A rejection stays painted until its corrective pull is decided: normal
+    // rendering above still records the analysis state (completed snapshot,
+    // typed state) but must not replace the visible rejection (#9917).
+    if (pullPending && this.configurationFailureStatus) {
+      this.updateStatus(this.configurationFailureStatus);
+    }
+  }
+
+  private renderAnalysisState(status: RiprAnalysisStatusPayload, clearConfigurationFailure: boolean): void {
     const failure = status.failure && typeof status.failure === 'object'
       ? status.failure as Record<string, unknown>
       : undefined;
@@ -1958,6 +2009,16 @@ export class RiprClientController {
         return;
       }
       default:
+        // An accepted pull while analysis is `stopped` publishes no analysis
+        // transition, so restore the status the rejection replaced (#9917).
+        if (clearConfigurationFailure) {
+          this.updateStatus(this.lastCompletedStatus ?? {
+            kind: 'ready',
+            summary: 'ripr accepted the workspace configuration.',
+            detail: analysisStatusDetail(status),
+            nextStep: 'Open or save a Rust or enabled preview-language file to refresh diagnostics.'
+          });
+        }
         return;
     }
   }
@@ -4018,6 +4079,15 @@ interface RiprAnalysisStatusPayload {
   retry_command?: string | null;
   retry_recovery?: { kind?: string | null; detail?: string | null } | null;
   failure?: unknown;
+  /** #9917: the session-configuration transport disclosure; only the last
+   * `workspace/configuration` pull outcome is read here. */
+  input_authority?: {
+    configuration_pull?: {
+      state?: string;
+      failure?: { kind?: string; message?: string } | null;
+      recovery_route?: string | null;
+    } | null;
+  } | null;
   pending?: boolean;
   root_state?: string;
   effective_root?: string | null;
@@ -4053,6 +4123,45 @@ function analysisStatusPayload(params: unknown): RiprAnalysisStatusPayload | und
     return undefined;
   }
   return candidate as RiprAnalysisStatusPayload;
+}
+
+/**
+ * A rejected `workspace/configuration` pull is fail-closed on the server: none
+ * of the rejected response's settings apply, and the server keeps the last
+ * accepted configuration (or its initialization/repository fallback when none
+ * was accepted yet) rather than resetting to defaults (#2031). Without this
+ * the editor keeps showing a healthy-looking status while the user's new
+ * settings are ignored (#9917). The server's message names the offending key;
+ * the recovery route is a corrected configuration.
+ */
+export function configurationPullFailureStatus(
+  status: Pick<RiprAnalysisStatusPayload, 'input_authority'>
+): RiprStatusState | undefined {
+  const pull = status.input_authority?.configuration_pull;
+  if (!pull || pull.state !== 'failed') {
+    return undefined;
+  }
+  const message = typeof pull.failure?.message === 'string' && pull.failure.message.trim()
+    ? pull.failure.message
+    : 'The language server could not apply the workspace configuration.';
+  const retained = 'ripr keeps using the last accepted configuration, or its fallback settings if none was accepted yet.';
+  // Only `config_pull_invalid` establishes that a pulled value was rejected.
+  // A transport failure (`config_pull_failed`) names no bad setting, so it
+  // must not tell the user to correct one.
+  if (pull.failure?.kind === 'config_pull_invalid') {
+    return {
+      kind: 'analysisFailed',
+      summary: 'ripr rejected your latest settings: the workspace configuration was invalid.',
+      detail: `${message}\n${retained}`,
+      nextStep: 'Correct the setting named above in your VS Code settings (saving them re-sends the configuration), or run ripr: Restart Server.'
+    };
+  }
+  return {
+    kind: 'analysisFailed',
+    summary: 'ripr could not obtain the latest workspace configuration.',
+    detail: `${message}\n${retained}`,
+    nextStep: 'Retry by saving your ripr settings again (which re-sends the configuration), or run ripr: Restart Server.'
+  };
 }
 
 function analysisStatusDetail(status: RiprAnalysisStatusPayload): string {
