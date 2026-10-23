@@ -5,7 +5,7 @@ use crate::analysis::facts::FileData;
 use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter, parse_clean_source_file};
 use crate::domain::ProbeFamily;
 use ra_ap_syntax::{AstNode, ast};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
 use std::path::Path;
 
@@ -143,6 +143,27 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
             (shape.start_line <= line && line <= shape.end_line).then_some(shape.text.as_str())
         }),
     );
+    // The unchanged test counts token runs of every overlapping shape in the
+    // removed and the changed line. Counting per shape re-masks and re-scans
+    // the whole line each time, which is quadratic on one long generated line
+    // (#9895), so both lines are scanned once per distinct needle length.
+    let unchanged_counts = removed_text.map(|removed| {
+        let needles = facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.start_line <= line && line <= shape.end_line)
+            .map(|shape| {
+                (
+                    shape.text.trim(),
+                    family_for_probe_shape(shape.kind) == ProbeFamily::FieldConstruction,
+                )
+            })
+            .collect::<Vec<_>>();
+        (
+            TokenRunCounts::build(removed, &needles),
+            TokenRunCounts::build(changed_text, &needles),
+        )
+    });
     let selection_key = |family: &ProbeFamily, shape_text: &str| {
         ranker
             .as_ref()
@@ -152,12 +173,12 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
                 // line has: with two literals on one line, an edited field whose
                 // new text matches the *other* literal's old field is new.
                 let needle = shape_text.trim();
-                let unchanged = removed_text.is_some_and(|removed| {
+                let unchanged = unchanged_counts.as_ref().is_some_and(|(removed, changed)| {
                     // Only a record field is bounded by `,`/`}`; other families
                     // (calls, predicates) sit inside larger expressions by design.
                     let whole_unit = *family == ProbeFamily::FieldConstruction;
-                    let before = token_run_count(removed, needle, whole_unit);
-                    before > 0 && before >= token_run_count(changed_text, needle, whole_unit)
+                    let before = removed.get(needle, whole_unit);
+                    before > 0 && before >= changed.get(needle, whole_unit)
                 });
                 (category, unchanged, distance)
             })
@@ -189,7 +210,9 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
             },
             start_byte: shape.start_byte,
             text: shape.text.as_str(),
-            standalone_call: parser_call_shape_is_standalone(facts, shape),
+            // Resolved for the winners only: it scans the line prefix, which
+            // is linear in the line per shape (#9895).
+            standalone_call: true,
             unsafe_boundary,
         };
         if let Some(position) = selected
@@ -211,6 +234,9 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
         } else {
             selected.push((candidate, candidate_key));
         }
+    }
+    for (shape, _) in &mut selected {
+        shape.standalone_call = parser_call_shape_is_standalone(facts, shape);
     }
     if selected.iter().all(|(shape, _)| shape.unsafe_boundary)
         && let Some(declaration) = declarations::declaration_shape(facts, line, changed_text)
@@ -318,8 +344,8 @@ fn boundary_edge_is_empty(text: &str) -> bool {
         .all(|character| character.is_whitespace() || character == ';')
 }
 
-fn parser_call_shape_is_standalone(facts: &FileData, shape: &ProbeShapeFact) -> bool {
-    if family_for_probe_shape(shape.kind) != ProbeFamily::CallDeletion {
+fn parser_call_shape_is_standalone(facts: &FileData, shape: &ParserProbeShape<'_>) -> bool {
+    if shape.family != ProbeFamily::CallDeletion {
         return true;
     }
     let end = shape.start_byte.saturating_add(shape.text.len());
@@ -365,47 +391,142 @@ fn file_facts<'a>(index: &'a RustIndex, file: &Path) -> Option<&'a FileData> {
         .map(|facts| facts.data())
 }
 
-/// How often `needle` occurs in `haystack` as code, without an identifier
-/// or digit character on either side, so `b: 2` is not found inside `b: 20`
-/// and a removed line's trailing `// version: 0x2` comment does not make the
-/// edited `version: 0x2` field read as unchanged.
+/// Whether the raw `needle` match at `start` counts as a token run: it starts
+/// on an unmasked code byte with no identifier or digit character on either
+/// side, so `b: 2` is not found inside `b: 20` and a removed line's trailing
+/// `// version: 0x2` comment does not make the edited `version: 0x2` field
+/// read as unchanged. `masked` keeps the byte length of `haystack`, so a match
+/// position indexes both.
+fn is_token_run(haystack: &str, masked: &[u8], start: usize, needle: &str) -> bool {
+    let starts_in_code = masked
+        .get(start)
+        .is_some_and(|byte| !byte.is_ascii_whitespace());
+    if !starts_in_code {
+        return false;
+    }
+    let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let before = haystack[..start].chars().next_back();
+    let after = haystack[start + needle.len()..].chars().next();
+    let open_start =
+        needle.chars().next().is_none_or(|ch| !is_word(ch)) || before.is_none_or(|ch| !is_word(ch));
+    let open_end = needle.chars().next_back().is_none_or(|ch| !is_word(ch))
+        || after.is_none_or(|ch| !is_word(ch));
+    open_start && open_end
+}
+
+/// A record field must be a whole syntactic unit, not the head or tail of a
+/// longer expression: `flag: foo` inside the old `flag: foo && bar` is not the
+/// unchanged field. Rejecting a match only makes a shape read as changed,
+/// which falls back to the distance tie-break.
+fn is_whole_unit(haystack: &str, start: usize, needle: &str) -> bool {
+    let next = haystack[start + needle.len()..].trim_start().chars().next();
+    let previous = haystack[..start].trim_end().chars().next_back();
+    let closes = next.is_none_or(|ch| matches!(ch, ',' | '}' | ')' | ']' | ';' | '{'));
+    let opens = previous.is_none_or(|ch| !"&|+-*/%<>=!^.".contains(ch));
+    closes && opens
+}
+
+/// How often `needle` occurs in `haystack` as code (see [`is_token_run`]).
+/// One needle at a time; [`TokenRunCounts`] answers many needles at once and
+/// is checked against this in the tests.
+#[cfg(test)]
 fn token_run_count(haystack: &str, needle: &str, whole_unit: bool) -> usize {
     if needle.is_empty() {
         return 0;
     }
-    // The mask keeps byte length, so a match position indexes both strings;
-    // an occurrence counts only when it starts on an unmasked code byte.
     let masked = mask_comments_and_strings(haystack);
     let masked = masked.as_bytes();
-    let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
     haystack
         .match_indices(needle)
         .filter(|(start, _)| {
-            let start = *start;
-            let starts_in_code = masked
-                .get(start)
-                .is_some_and(|byte| !byte.is_ascii_whitespace());
-            if !starts_in_code {
-                return false;
-            }
-            let before = haystack[..start].chars().next_back();
-            let after = haystack[start + needle.len()..].chars().next();
-            let open_start = needle.chars().next().is_none_or(|ch| !is_word(ch))
-                || before.is_none_or(|ch| !is_word(ch));
-            let open_end = needle.chars().next_back().is_none_or(|ch| !is_word(ch))
-                || after.is_none_or(|ch| !is_word(ch));
-            // A record field must be a whole syntactic unit, not the head or
-            // tail of a longer expression: `flag: foo` inside the old
-            // `flag: foo && bar` is not the unchanged field. Rejecting a
-            // match only makes a shape read as changed, which falls back to
-            // the distance tie-break.
-            let next = haystack[start + needle.len()..].trim_start().chars().next();
-            let previous = haystack[..start].trim_end().chars().next_back();
-            let closes = next.is_none_or(|ch| matches!(ch, ',' | '}' | ')' | ']' | ';' | '{'));
-            let opens = previous.is_none_or(|ch| !"&|+-*/%<>=!^.".contains(ch));
-            open_start && open_end && (!whole_unit || (closes && opens))
+            is_token_run(haystack, masked, *start, needle)
+                && (!whole_unit || is_whole_unit(haystack, *start, needle))
         })
         .count()
+}
+
+#[derive(Default)]
+struct TokenRunTally {
+    /// End of the last raw match, which `match_indices` never overlaps.
+    consumed: usize,
+    plain: usize,
+    whole: usize,
+}
+
+/// Token-run counts of many needles in one haystack, equal to calling the
+/// per-needle count for each, in work linear in
+/// `haystack.len() * distinct_needle_lengths` after masking once. The
+/// per-needle count re-masks and re-scans the whole haystack per needle, which
+/// is quadratic on one long generated line (#9895).
+struct TokenRunCounts<'a> {
+    tallies: HashMap<&'a str, TokenRunTally>,
+}
+
+impl<'a> TokenRunCounts<'a> {
+    /// `needles` pairs each needle with whether any caller reads its
+    /// whole-unit count.
+    fn build(haystack: &str, needles: &[(&'a str, bool)]) -> Self {
+        let mut by_len = BTreeMap::<usize, HashMap<&'a str, (bool, TokenRunTally)>>::new();
+        for &(needle, whole_unit) in needles {
+            if needle.is_empty() || needle.len() > haystack.len() {
+                continue;
+            }
+            let entry = by_len
+                .entry(needle.len())
+                .or_default()
+                .entry(needle)
+                .or_default();
+            entry.0 |= whole_unit;
+        }
+        let mut tallies = HashMap::new();
+        if by_len.is_empty() {
+            return Self { tallies };
+        }
+        let masked = mask_comments_and_strings(haystack);
+        let masked = masked.as_bytes();
+        for (needle_len, mut group) in by_len {
+            #[cfg(test)]
+            TOKEN_RUN_WINDOW_BYTES
+                .with(|bytes| bytes.set(bytes.get().saturating_add(haystack.len())));
+            for (start, _) in haystack.char_indices() {
+                let end = start.saturating_add(needle_len);
+                let Some(window) = haystack.get(start..end) else {
+                    if end > haystack.len() {
+                        break;
+                    }
+                    continue;
+                };
+                let Some((whole_unit, tally)) = group.get_mut(window) else {
+                    continue;
+                };
+                if start < tally.consumed {
+                    continue;
+                }
+                tally.consumed = end;
+                if is_token_run(haystack, masked, start, window) {
+                    tally.plain += 1;
+                    if *whole_unit && is_whole_unit(haystack, start, window) {
+                        tally.whole += 1;
+                    }
+                }
+            }
+            tallies.extend(
+                group
+                    .into_iter()
+                    .map(|(needle, (_, tally))| (needle, tally)),
+            );
+        }
+        Self { tallies }
+    }
+
+    fn get(&self, needle: &str, whole_unit: bool) -> usize {
+        self.tallies.get(needle).map_or(
+            0,
+            |tally| {
+                if whole_unit { tally.whole } else { tally.plain }
+            },
+        )
+    }
 }
 
 /// Trim and rank rules of the former per-shape `str::contains` helper.
@@ -487,6 +608,11 @@ fn needles_in_haystack<'a>(
         }
     }
     found
+}
+
+#[cfg(test)]
+thread_local! {
+    static TOKEN_RUN_WINDOW_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
@@ -1385,6 +1511,90 @@ mod tests {
         if fields != ["b: 2"] {
             return Err(format!(
                 "the #6731 unchanged-field tie-break must still pick the edited field: {selected:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn token_run_counts_equal_the_per_needle_count() {
+        let haystacks = [
+            "Id { a: 1, b: 2, c: 20 }",
+            "aaaa aaa a_aa aa",
+            "let x = foo(1); // foo(1)\nlet y = \"foo(1)\"; foo(1)",
+            "S { flag: foo && bar, flag: foo, flag: foo }",
+            "caf\u{e9} = \u{e9}; \u{e9}\u{e9}",
+            "x ",
+            "",
+        ];
+        let needles = [
+            "a: 1",
+            "b: 2",
+            "c: 2",
+            "aa",
+            "a",
+            "foo(1)",
+            "flag: foo",
+            "\u{e9}",
+            "x",
+            "a_aa",
+        ];
+        for haystack in haystacks {
+            let counted = needles
+                .iter()
+                .flat_map(|needle| [(*needle, false), (*needle, true)])
+                .collect::<Vec<_>>();
+            let counts = TokenRunCounts::build(haystack, &counted);
+            for needle in needles {
+                for whole_unit in [false, true] {
+                    assert_eq!(
+                        counts.get(needle, whole_unit),
+                        token_run_count(haystack, needle, whole_unit),
+                        "{needle:?} (whole_unit={whole_unit}) in {haystack:?}"
+                    );
+                }
+            }
+        }
+        assert_eq!(TokenRunCounts::build("a a", &[("", true)]).get("", true), 0);
+    }
+
+    #[test]
+    fn long_line_unchanged_test_scans_by_length_not_shape_count() -> Result<(), String> {
+        const ARMS: usize = 12_000;
+        let (line, shapes) = long_match_line_and_shapes(ARMS)?;
+        TOKEN_RUN_WINDOW_BYTES.with(|bytes| bytes.set(0));
+        let path = PathBuf::from("src/lib.rs");
+        let index = index_with_shapes(path.clone(), line.clone(), shapes.clone());
+        // Both the removed and the changed line are long, as in a minified or
+        // generated file edited in place (#9895).
+        let removed = line.replace("b: 2", "b: 3");
+        let selected = parser_probe_shapes_for_changed_line_against(
+            &index,
+            &path,
+            1,
+            &line,
+            Some(removed.as_str()),
+        );
+        let window_bytes = TOKEN_RUN_WINDOW_BYTES.with(std::cell::Cell::get);
+        let naive_bytes = shapes.len().saturating_mul(line.len());
+        if window_bytes == 0 {
+            return Err("the unchanged test must scan the lines".to_string());
+        }
+        if window_bytes.saturating_mul(100) >= naive_bytes {
+            return Err(format!(
+                "token-run scan {window_bytes} bytes is not bounded vs naive {naive_bytes} for {} shapes on a {}-byte line",
+                shapes.len(),
+                line.len()
+            ));
+        }
+        let fields: Vec<&str> = selected
+            .iter()
+            .filter(|shape| shape.family == ProbeFamily::FieldConstruction)
+            .map(|shape| shape.text)
+            .collect();
+        if fields != ["b: 2"] {
+            return Err(format!(
+                "the edited field must still win the #6731 tie-break: {selected:?}"
             ));
         }
         Ok(())
