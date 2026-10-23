@@ -113,7 +113,9 @@ fn only_partial_leaves_a_reasoned_compat_record() {
         (CompleteZero, None),
     ] {
         let outcome = LanguageAnalysisOutcomeV1::new(
-            LanguageId::Perl,
+            "perl".to_string(),
+            OutcomeMode::Repo,
+            None,
             status,
             BTreeMap::new(),
             LanguageResourceObservations::default(),
@@ -131,7 +133,9 @@ fn only_partial_leaves_a_reasoned_compat_record() {
 fn digest_tracks_semantics_but_not_resource_telemetry_or_limitation_order() {
     let outcome = |status, resources, limitations: &[&str]| {
         LanguageAnalysisOutcomeV1::new(
-            LanguageId::Python,
+            "python".to_string(),
+            OutcomeMode::Repo,
+            None,
             status,
             BTreeMap::new(),
             resources,
