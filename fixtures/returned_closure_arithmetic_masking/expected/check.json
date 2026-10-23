@@ -1,0 +1,1426 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/returned_closure_arithmetic_masking/input",
+  "summary": {"changed_rust_files":1,"probes":6,"findings":6,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":5,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:b10aa6c9dd070d16f05d5638f505171017db13768799de85b3c6ef9e9c8cbfdc","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":12,"candidate_line_count":6,"probe_count":6,"finding_count":6},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:return_value:0b56e659",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:0b56e659",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 4,
+        "expression": "move |x| n + (x - OFFSET)"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach masked: masked_pin"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: move |x| n + (x - OFFSET)"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach masked: masked_pin", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: move |x| n + (x - OFFSET)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: move |x| n + (x - OFFSET) (line 4)", "related test src/lib.rs:25 masked_pin uses strong exact value oracle: assert_eq!(masked(2)(3), 2);", "related test src/lib.rs:29 identifier_pin uses strong exact value oracle: assert_eq!(identifier(_2)(3), 3);", "related test src/lib.rs:33 token_unit_pin uses strong exact value oracle: assert_eq!(token_unit(5)(1), captured);", "related test src/lib.rs:35 token_unused_pin uses strong exact value oracle: assert_eq!(argument, 5);", "related test src/lib.rs:27 unit_pin uses strong exact value oracle: assert_eq!(unit(5)(1), 5);", "source assertion argument value 2 at line 25", "source function argument value n = 2 at line 25", "source assertion argument value 1 at line 27", "source assertion argument value 5 at line 27", "source assertion argument value 3 at line 29", "source assertion argument value 2 at line 31", "source assertion argument value 3 at line 31", "source assertion argument value 1 at line 33"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"move |x| n + (x - OFFSET)","line":4}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: move |x| n + (x - OFFSET)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach masked: masked_pin", "gap_withheld: weakly_exposed is not claimed; whether the exact value the related test pins passes through the changed code (rust_pinned_shape_unresolved)", "limitation_last_established_edge: related tests `masked_pin` (src/lib.rs:25)", "limitation_first_unresolved_edge: whether the exact value the related test pins passes through the changed code", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
+      "missing": ["A related Rust test calls this code and pins its whole result with an exact `assert_eq!`, but the change sits in a closure the call runs, a statement acting on the returned value, or the `else` exit of a `let ... else`, and ripr does not follow the pinned value through that shape. ripr does not claim a gap; this is a named limitation, not a coverage claim."],
+      "assertion_texts": {
+        "25": "assert_eq!(masked(2)(3), 2);",
+        "27": "assert_eq!(unit(5)(1), 5);",
+        "29": "assert_eq!(identifier(_2)(3), 3);",
+        "31": "assert_eq!(uppercase(2)(3), 2);",
+        "33": "assert_eq!(token_unit(5)(1), captured);",
+        "35": "assert_eq!(argument, 5);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 25,
+            "value": "2",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 25,
+            "value": "n = 2",
+            "context": "function_argument",
+            "provenance": "fn masked_pin() { assert_eq!(masked(2)(3), 2); }"
+          },
+          {
+            "line": 27,
+            "value": "1",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 27,
+            "value": "5",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 29,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 31,
+            "value": "2",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 31,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 33,
+            "value": "1",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 33,
+            "value": "5",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 35,
+            "value": "5",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 25,
+          "value": "2",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 25,
+          "value": "n = 2",
+          "context": "function_argument",
+          "provenance": "fn masked_pin() { assert_eq!(masked(2)(3), 2); }"
+        },
+        {
+          "line": 27,
+          "value": "1",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 27,
+          "value": "5",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 29,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 31,
+          "value": "2",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 31,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 33,
+          "value": "1",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 33,
+          "value": "5",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 35,
+          "value": "5",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 6,
+      "related_tests": [
+        {
+          "name": "masked_pin",
+          "file": "src/lib.rs",
+          "line": 25,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(masked(2)(3), 2);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "identifier_pin",
+          "file": "src/lib.rs",
+          "line": 29,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(identifier(_2)(3), 3);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
+        },
+        {
+          "name": "token_unit_pin",
+          "file": "src/lib.rs",
+          "line": 33,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(token_unit(5)(1), captured);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
+        },
+        {
+          "name": "token_unused_pin",
+          "file": "src/lib.rs",
+          "line": 35,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(argument, 5);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
+        },
+        {
+          "name": "unit_pin",
+          "file": "src/lib.rs",
+          "line": 27,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(unit(5)(1), 5);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
+        },
+        {
+          "name": "uppercase_pin",
+          "file": "src/lib.rs",
+          "line": 31,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(uppercase(2)(3), 2);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
+        }
+      ],
+      "stop_reasons": ["gap_evidence_unresolved"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "`masked_pin` (src/lib.rs:25) pins this code's whole result with an exact `assert_eq!`, but the changed code is part of a closure the call runs, and ripr does not map the pinned input to what the closure does, so ripr does not report a gap. Check that the pinned input runs the changed code and that its expected value differs between the old and the new behavior; add a test only if either fails.",
+      "suggested_next_action": "`masked_pin` (src/lib.rs:25) pins this code's whole result with an exact `assert_eq!`, but the changed code is part of a closure the call runs, and ripr does not map the pinned input to what the closure does, so ripr does not report a gap. Check that the pinned input runs the changed code and that its expected value differs between the old and the new behavior; add a test only if either fails.",
+      "language": "rust",
+      "static_limit_kind": "rust_pinned_shape_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/classify/gap-admission",
+        "first_unresolved_edge": "whether the exact value the related test pins passes through the changed code",
+        "kind": "rust_pinned_shape_unresolved",
+        "last_established_edge": "related tests `masked_pin` (src/lib.rs:25)",
+        "non_claim": "no missing test, no weak oracle, and no test adequacy is established"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:a4e803a1",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:a4e803a1",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 7,
+        "expression": "move |x| n * x"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach unit: unit_pin"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: move |x| n * x"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach unit: unit_pin", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: move |x| n * x", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: move |x| n * x (line 7)", "related test src/lib.rs:27 unit_pin uses strong exact value oracle: assert_eq!(unit(5)(1), 5);", "related test src/lib.rs:29 identifier_pin uses strong exact value oracle: assert_eq!(identifier(_2)(3), 3);", "related test src/lib.rs:25 masked_pin uses strong exact value oracle: assert_eq!(masked(2)(3), 2);", "related test src/lib.rs:33 token_unit_pin uses strong exact value oracle: assert_eq!(token_unit(5)(1), captured);", "related test src/lib.rs:35 token_unused_pin uses strong exact value oracle: assert_eq!(argument, 5);", "source assertion argument value 2 at line 25", "source assertion argument value 3 at line 25", "source assertion argument value 5 at line 27", "source function argument value n = 5 at line 27", "source assertion argument value 3 at line 29", "source assertion argument value 2 at line 31", "source assertion argument value 3 at line 31", "source assertion argument value 5 at line 35"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"move |x| n * x","line":7}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: move |x| n * x", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach unit: unit_pin", "gap_withheld: weakly_exposed is not claimed; whether the exact value the related test pins passes through the changed code (rust_pinned_shape_unresolved)", "limitation_last_established_edge: related tests `unit_pin` (src/lib.rs:27)", "limitation_first_unresolved_edge: whether the exact value the related test pins passes through the changed code", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
+      "missing": ["A related Rust test calls this code and pins its whole result with an exact `assert_eq!`, but the change sits in a closure the call runs, a statement acting on the returned value, or the `else` exit of a `let ... else`, and ripr does not follow the pinned value through that shape. ripr does not claim a gap; this is a named limitation, not a coverage claim."],
+      "assertion_texts": {
+        "25": "assert_eq!(masked(2)(3), 2);",
+        "27": "assert_eq!(unit(5)(1), 5);",
+        "29": "assert_eq!(identifier(_2)(3), 3);",
+        "31": "assert_eq!(uppercase(2)(3), 2);",
+        "35": "assert_eq!(argument, 5);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 25,
+            "value": "2",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 25,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 27,
+            "value": "5",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 27,
+            "value": "n = 5",
+            "context": "function_argument",
+            "provenance": "fn unit_pin() { assert_eq!(unit(5)(1), 5); }"
+          },
+          {
+            "line": 29,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 31,
+            "value": "2",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 31,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 35,
+            "value": "5",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 25,
+          "value": "2",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 25,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 27,
+          "value": "5",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 27,
+          "value": "n = 5",
+          "context": "function_argument",
+          "provenance": "fn unit_pin() { assert_eq!(unit(5)(1), 5); }"
+        },
+        {
+          "line": 29,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 31,
+          "value": "2",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 31,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 35,
+          "value": "5",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 6,
+      "related_tests": [
+        {
+          "name": "unit_pin",
+          "file": "src/lib.rs",
+          "line": 27,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(unit(5)(1), 5);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "identifier_pin",
+          "file": "src/lib.rs",
+          "line": 29,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(identifier(_2)(3), 3);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
+        },
+        {
+          "name": "masked_pin",
+          "file": "src/lib.rs",
+          "line": 25,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(masked(2)(3), 2);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
+        },
+        {
+          "name": "token_unit_pin",
+          "file": "src/lib.rs",
+          "line": 33,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(token_unit(5)(1), captured);",
+          "relation_reason": "owner_named_test",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by name only"
+        },
+        {
+          "name": "token_unused_pin",
+          "file": "src/lib.rs",
+          "line": 35,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(argument, 5);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
+        },
+        {
+          "name": "uppercase_pin",
+          "file": "src/lib.rs",
+          "line": 31,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(uppercase(2)(3), 2);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
+        }
+      ],
+      "stop_reasons": ["gap_evidence_unresolved"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "`unit_pin` (src/lib.rs:27) pins this code's whole result with an exact `assert_eq!`, but the changed code is part of a closure the call runs, and ripr does not map the pinned input to what the closure does, so ripr does not report a gap. Check that the pinned input runs the changed code and that its expected value differs between the old and the new behavior; add a test only if either fails.",
+      "suggested_next_action": "`unit_pin` (src/lib.rs:27) pins this code's whole result with an exact `assert_eq!`, but the changed code is part of a closure the call runs, and ripr does not map the pinned input to what the closure does, so ripr does not report a gap. Check that the pinned input runs the changed code and that its expected value differs between the old and the new behavior; add a test only if either fails.",
+      "language": "rust",
+      "static_limit_kind": "rust_pinned_shape_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/classify/gap-admission",
+        "first_unresolved_edge": "whether the exact value the related test pins passes through the changed code",
+        "kind": "rust_pinned_shape_unresolved",
+        "last_established_edge": "related tests `unit_pin` (src/lib.rs:27)",
+        "non_claim": "no missing test, no weak oracle, and no test adequacy is established"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:6343fbde",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:6343fbde",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 10,
+        "expression": "move |x| n + x"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach identifier: identifier_pin"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: move |x| n + x"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach identifier: identifier_pin", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: move |x| n + x", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: move |x| n + x (line 10)", "related test src/lib.rs:29 identifier_pin uses strong exact value oracle: assert_eq!(identifier(_2)(3), 3);", "related test src/lib.rs:25 masked_pin uses strong exact value oracle: assert_eq!(masked(2)(3), 2);", "related test src/lib.rs:33 token_unit_pin uses strong exact value oracle: assert_eq!(token_unit(5)(1), captured);", "related test src/lib.rs:35 token_unused_pin uses strong exact value oracle: assert_eq!(argument, 5);", "related test src/lib.rs:27 unit_pin uses strong exact value oracle: assert_eq!(unit(5)(1), 5);", "source assertion argument value 2 at line 25", "source assertion argument value 3 at line 25", "source assertion argument value 1 at line 27", "source assertion argument value 5 at line 27", "source assertion argument value 3 at line 29", "source function argument value n = 0 at line 29", "source assertion argument value 2 at line 31", "source assertion argument value 3 at line 31"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"move |x| n + x","line":10}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: move |x| n + x", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach identifier: identifier_pin", "gap_withheld: weakly_exposed is not claimed; whether the exact value the related test pins passes through the changed code (rust_pinned_shape_unresolved)", "limitation_last_established_edge: related tests `identifier_pin` (src/lib.rs:29)", "limitation_first_unresolved_edge: whether the exact value the related test pins passes through the changed code", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
+      "missing": ["A related Rust test calls this code and pins its whole result with an exact `assert_eq!`, but the change sits in a closure the call runs, a statement acting on the returned value, or the `else` exit of a `let ... else`, and ripr does not follow the pinned value through that shape. ripr does not claim a gap; this is a named limitation, not a coverage claim."],
+      "assertion_texts": {
+        "25": "assert_eq!(masked(2)(3), 2);",
+        "27": "assert_eq!(unit(5)(1), 5);",
+        "29": "assert_eq!(identifier(_2)(3), 3);",
+        "31": "assert_eq!(uppercase(2)(3), 2);",
+        "33": "assert_eq!(token_unit(5)(1), captured);",
+        "35": "assert_eq!(argument, 5);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 25,
+            "value": "2",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 25,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 27,
+            "value": "1",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 27,
+            "value": "5",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 29,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 29,
+            "value": "n = 0",
+            "context": "function_argument",
+            "provenance": "fn identifier_pin() { let _2 = 0; assert_eq!(identifier(_2)(3), 3); }"
+          },
+          {
+            "line": 31,
+            "value": "2",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 31,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 33,
+            "value": "1",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 33,
+            "value": "5",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 35,
+            "value": "5",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 25,
+          "value": "2",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 25,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 27,
+          "value": "1",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 27,
+          "value": "5",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 29,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 29,
+          "value": "n = 0",
+          "context": "function_argument",
+          "provenance": "fn identifier_pin() { let _2 = 0; assert_eq!(identifier(_2)(3), 3); }"
+        },
+        {
+          "line": 31,
+          "value": "2",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 31,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 33,
+          "value": "1",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 33,
+          "value": "5",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 35,
+          "value": "5",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 6,
+      "related_tests": [
+        {
+          "name": "identifier_pin",
+          "file": "src/lib.rs",
+          "line": 29,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(identifier(_2)(3), 3);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "masked_pin",
+          "file": "src/lib.rs",
+          "line": 25,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(masked(2)(3), 2);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
+        },
+        {
+          "name": "token_unit_pin",
+          "file": "src/lib.rs",
+          "line": 33,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(token_unit(5)(1), captured);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
+        },
+        {
+          "name": "token_unused_pin",
+          "file": "src/lib.rs",
+          "line": 35,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(argument, 5);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
+        },
+        {
+          "name": "unit_pin",
+          "file": "src/lib.rs",
+          "line": 27,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(unit(5)(1), 5);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
+        },
+        {
+          "name": "uppercase_pin",
+          "file": "src/lib.rs",
+          "line": 31,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(uppercase(2)(3), 2);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
+        }
+      ],
+      "stop_reasons": ["gap_evidence_unresolved"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "`identifier_pin` (src/lib.rs:29) pins this code's whole result with an exact `assert_eq!`, but the changed code is part of a closure the call runs, and ripr does not map the pinned input to what the closure does, so ripr does not report a gap. Check that the pinned input runs the changed code and that its expected value differs between the old and the new behavior; add a test only if either fails.",
+      "suggested_next_action": "`identifier_pin` (src/lib.rs:29) pins this code's whole result with an exact `assert_eq!`, but the changed code is part of a closure the call runs, and ripr does not map the pinned input to what the closure does, so ripr does not report a gap. Check that the pinned input runs the changed code and that its expected value differs between the old and the new behavior; add a test only if either fails.",
+      "language": "rust",
+      "static_limit_kind": "rust_pinned_shape_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/classify/gap-admission",
+        "first_unresolved_edge": "whether the exact value the related test pins passes through the changed code",
+        "kind": "rust_pinned_shape_unresolved",
+        "last_established_edge": "related tests `identifier_pin` (src/lib.rs:29)",
+        "non_claim": "no missing test, no weak oracle, and no test adequacy is established"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:a40e392f",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:a40e392f",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 13,
+        "expression": "move |x| n + OFFSET_FN(x)"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach uppercase: uppercase_pin"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: move |x| n + OFFSET_FN(x)"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach uppercase: uppercase_pin", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: move |x| n + OFFSET_FN(x)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: move |x| n + OFFSET_FN(x) (line 13)", "related test src/lib.rs:31 uppercase_pin uses strong exact value oracle: assert_eq!(uppercase(2)(3), 2);", "related test src/lib.rs:29 identifier_pin uses strong exact value oracle: assert_eq!(identifier(_2)(3), 3);", "related test src/lib.rs:25 masked_pin uses strong exact value oracle: assert_eq!(masked(2)(3), 2);", "related test src/lib.rs:33 token_unit_pin uses strong exact value oracle: assert_eq!(token_unit(5)(1), captured);", "related test src/lib.rs:35 token_unused_pin uses strong exact value oracle: assert_eq!(argument, 5);", "source assertion argument value 2 at line 25", "source assertion argument value 3 at line 25", "source assertion argument value 1 at line 27", "source assertion argument value 5 at line 27", "source assertion argument value 3 at line 29", "source assertion argument value 2 at line 31", "source function argument value n = 2 at line 31", "source assertion argument value 1 at line 33"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"move |x| n + OFFSET_FN(x)","line":13}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: move |x| n + OFFSET_FN(x)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach uppercase: uppercase_pin", "gap_withheld: weakly_exposed is not claimed; whether the exact value the related test pins passes through the changed code (rust_pinned_shape_unresolved)", "limitation_last_established_edge: related tests `uppercase_pin` (src/lib.rs:31)", "limitation_first_unresolved_edge: whether the exact value the related test pins passes through the changed code", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
+      "missing": ["A related Rust test calls this code and pins its whole result with an exact `assert_eq!`, but the change sits in a closure the call runs, a statement acting on the returned value, or the `else` exit of a `let ... else`, and ripr does not follow the pinned value through that shape. ripr does not claim a gap; this is a named limitation, not a coverage claim."],
+      "assertion_texts": {
+        "25": "assert_eq!(masked(2)(3), 2);",
+        "27": "assert_eq!(unit(5)(1), 5);",
+        "29": "assert_eq!(identifier(_2)(3), 3);",
+        "31": "assert_eq!(uppercase(2)(3), 2);",
+        "33": "assert_eq!(token_unit(5)(1), captured);",
+        "35": "assert_eq!(argument, 5);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 25,
+            "value": "2",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 25,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 27,
+            "value": "1",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 27,
+            "value": "5",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 29,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 31,
+            "value": "2",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 31,
+            "value": "n = 2",
+            "context": "function_argument",
+            "provenance": "fn uppercase_pin() { assert_eq!(uppercase(2)(3), 2); }"
+          },
+          {
+            "line": 33,
+            "value": "1",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 33,
+            "value": "5",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 35,
+            "value": "5",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 25,
+          "value": "2",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 25,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 27,
+          "value": "1",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 27,
+          "value": "5",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 29,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 31,
+          "value": "2",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 31,
+          "value": "n = 2",
+          "context": "function_argument",
+          "provenance": "fn uppercase_pin() { assert_eq!(uppercase(2)(3), 2); }"
+        },
+        {
+          "line": 33,
+          "value": "1",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 33,
+          "value": "5",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 35,
+          "value": "5",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 6,
+      "related_tests": [
+        {
+          "name": "uppercase_pin",
+          "file": "src/lib.rs",
+          "line": 31,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(uppercase(2)(3), 2);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "identifier_pin",
+          "file": "src/lib.rs",
+          "line": 29,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(identifier(_2)(3), 3);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
+        },
+        {
+          "name": "masked_pin",
+          "file": "src/lib.rs",
+          "line": 25,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(masked(2)(3), 2);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
+        },
+        {
+          "name": "token_unit_pin",
+          "file": "src/lib.rs",
+          "line": 33,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(token_unit(5)(1), captured);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
+        },
+        {
+          "name": "token_unused_pin",
+          "file": "src/lib.rs",
+          "line": 35,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(argument, 5);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
+        },
+        {
+          "name": "unit_pin",
+          "file": "src/lib.rs",
+          "line": 27,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(unit(5)(1), 5);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
+        }
+      ],
+      "stop_reasons": ["gap_evidence_unresolved"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "`uppercase_pin` (src/lib.rs:31) pins this code's whole result with an exact `assert_eq!`, but the changed code is part of a closure the call runs, and ripr does not map the pinned input to what the closure does, so ripr does not report a gap. Check that the pinned input runs the changed code and that its expected value differs between the old and the new behavior; add a test only if either fails.",
+      "suggested_next_action": "`uppercase_pin` (src/lib.rs:31) pins this code's whole result with an exact `assert_eq!`, but the changed code is part of a closure the call runs, and ripr does not map the pinned input to what the closure does, so ripr does not report a gap. Check that the pinned input runs the changed code and that its expected value differs between the old and the new behavior; add a test only if either fails.",
+      "language": "rust",
+      "static_limit_kind": "rust_pinned_shape_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/classify/gap-admission",
+        "first_unresolved_edge": "whether the exact value the related test pins passes through the changed code",
+        "kind": "rust_pinned_shape_unresolved",
+        "last_established_edge": "related tests `uppercase_pin` (src/lib.rs:31)",
+        "non_claim": "no missing test, no weak oracle, and no test adequacy is established"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:5f57435f",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:5f57435f",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 16,
+        "expression": "move |argument| captured * argument"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach token_unit: token_unit_pin"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: move |argument| captured * argument"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach token_unit: token_unit_pin", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: move |argument| captured * argument", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: move |argument| captured * argument (line 16)", "related test src/lib.rs:33 token_unit_pin uses strong exact value oracle: assert_eq!(token_unit(5)(1), captured);", "related test src/lib.rs:29 identifier_pin uses strong exact value oracle: assert_eq!(identifier(_2)(3), 3);", "related test src/lib.rs:25 masked_pin uses strong exact value oracle: assert_eq!(masked(2)(3), 2);", "related test src/lib.rs:35 token_unused_pin uses strong exact value oracle: assert_eq!(argument, 5);", "related test src/lib.rs:27 unit_pin uses strong exact value oracle: assert_eq!(unit(5)(1), 5);", "source assertion argument value 2 at line 25", "source assertion argument value 3 at line 25", "source assertion argument value 1 at line 27", "source assertion argument value 5 at line 27", "source assertion argument value 3 at line 29", "source assertion argument value 2 at line 31", "source assertion argument value 3 at line 31", "source function argument value captured = 5 at line 33"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"move |argument| captured * argument","line":16}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: move |argument| captured * argument", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach token_unit: token_unit_pin", "gap_withheld: weakly_exposed is not claimed; whether the exact value the related test pins passes through the changed code (rust_pinned_shape_unresolved)", "limitation_last_established_edge: related tests `token_unit_pin` (src/lib.rs:33)", "limitation_first_unresolved_edge: whether the exact value the related test pins passes through the changed code", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
+      "missing": ["A related Rust test calls this code and pins its whole result with an exact `assert_eq!`, but the change sits in a closure the call runs, a statement acting on the returned value, or the `else` exit of a `let ... else`, and ripr does not follow the pinned value through that shape. ripr does not claim a gap; this is a named limitation, not a coverage claim."],
+      "assertion_texts": {
+        "25": "assert_eq!(masked(2)(3), 2);",
+        "27": "assert_eq!(unit(5)(1), 5);",
+        "29": "assert_eq!(identifier(_2)(3), 3);",
+        "31": "assert_eq!(uppercase(2)(3), 2);",
+        "33": "fn token_unit_pin() { let captured = 5; assert_eq!(token_unit(5)(1), captured); }",
+        "35": "assert_eq!(argument, 5);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 25,
+            "value": "2",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 25,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 27,
+            "value": "1",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 27,
+            "value": "5",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 29,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 31,
+            "value": "2",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 31,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 33,
+            "value": "captured = 5",
+            "context": "function_argument"
+          },
+          {
+            "line": 35,
+            "value": "5",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 25,
+          "value": "2",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 25,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 27,
+          "value": "1",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 27,
+          "value": "5",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 29,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 31,
+          "value": "2",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 31,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 33,
+          "value": "captured = 5",
+          "context": "function_argument"
+        },
+        {
+          "line": 35,
+          "value": "5",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 6,
+      "related_tests": [
+        {
+          "name": "token_unit_pin",
+          "file": "src/lib.rs",
+          "line": 33,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(token_unit(5)(1), captured);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "identifier_pin",
+          "file": "src/lib.rs",
+          "line": 29,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(identifier(_2)(3), 3);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
+        },
+        {
+          "name": "masked_pin",
+          "file": "src/lib.rs",
+          "line": 25,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(masked(2)(3), 2);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
+        },
+        {
+          "name": "token_unused_pin",
+          "file": "src/lib.rs",
+          "line": 35,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(argument, 5);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
+        },
+        {
+          "name": "unit_pin",
+          "file": "src/lib.rs",
+          "line": 27,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(unit(5)(1), 5);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
+        },
+        {
+          "name": "uppercase_pin",
+          "file": "src/lib.rs",
+          "line": 31,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(uppercase(2)(3), 2);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
+        }
+      ],
+      "stop_reasons": ["gap_evidence_unresolved"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "`token_unit_pin` (src/lib.rs:33) pins this code's whole result with an exact `assert_eq!`, but the changed code is part of a closure the call runs, and ripr does not map the pinned input to what the closure does, so ripr does not report a gap. Check that the pinned input runs the changed code and that its expected value differs between the old and the new behavior; add a test only if either fails.",
+      "suggested_next_action": "`token_unit_pin` (src/lib.rs:33) pins this code's whole result with an exact `assert_eq!`, but the changed code is part of a closure the call runs, and ripr does not map the pinned input to what the closure does, so ripr does not report a gap. Check that the pinned input runs the changed code and that its expected value differs between the old and the new behavior; add a test only if either fails.",
+      "language": "rust",
+      "static_limit_kind": "rust_pinned_shape_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/classify/gap-admission",
+        "first_unresolved_edge": "whether the exact value the related test pins passes through the changed code",
+        "kind": "rust_pinned_shape_unresolved",
+        "last_established_edge": "related tests `token_unit_pin` (src/lib.rs:33)",
+        "non_claim": "no missing test, no weak oracle, and no test adequacy is established"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:46975a53",
+      "canonical_gap_id": "gap:rust:src/lib.rs:token_unused:return_value:return_value:move_argument_captured*argument",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:token_unused:return_value:return_value:move_argument_captured*argument",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "token_unused",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "move_argument_captured*argument"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:46975a53",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 19,
+        "expression": "move |argument| captured * argument"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach token_unused: token_unused_pin"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: move |argument| captured * argument"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach token_unused: token_unused_pin", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: move |argument| captured * argument", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: move |argument| captured * argument (line 19)", "related test src/lib.rs:35 token_unused_pin uses strong exact value oracle: assert_eq!(argument, 5);", "related test src/lib.rs:29 identifier_pin uses strong exact value oracle: assert_eq!(identifier(_2)(3), 3);", "related test src/lib.rs:25 masked_pin uses strong exact value oracle: assert_eq!(masked(2)(3), 2);", "related test src/lib.rs:33 token_unit_pin uses strong exact value oracle: assert_eq!(token_unit(5)(1), captured);", "related test src/lib.rs:27 unit_pin uses strong exact value oracle: assert_eq!(unit(5)(1), 5);", "source assertion argument value 2 at line 25", "source assertion argument value 3 at line 25", "source assertion argument value 1 at line 27", "source assertion argument value 5 at line 27", "source assertion argument value 3 at line 29", "source assertion argument value 2 at line 31", "source assertion argument value 3 at line 31", "source assertion argument value 1 at line 33"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"move |argument| captured * argument","line":19}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: move |argument| captured * argument", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach token_unused: token_unused_pin"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "25": "assert_eq!(masked(2)(3), 2);",
+        "27": "assert_eq!(unit(5)(1), 5);",
+        "29": "assert_eq!(identifier(_2)(3), 3);",
+        "31": "assert_eq!(uppercase(2)(3), 2);",
+        "33": "assert_eq!(token_unit(5)(1), captured);",
+        "35": "assert_eq!(argument, 5);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 25,
+            "value": "2",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 25,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 27,
+            "value": "1",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 27,
+            "value": "5",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 29,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 31,
+            "value": "2",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 31,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 33,
+            "value": "1",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 33,
+            "value": "5",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 35,
+            "value": "5",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 35,
+            "value": "captured = 5",
+            "context": "function_argument",
+            "provenance": "fn token_unused_pin() { let _unused = token_unused(5); let argument = 5; assert_eq!(argument, 5); }"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 25,
+          "value": "2",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 25,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 27,
+          "value": "1",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 27,
+          "value": "5",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 29,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 31,
+          "value": "2",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 31,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 33,
+          "value": "1",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 33,
+          "value": "5",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 35,
+          "value": "5",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 35,
+          "value": "captured = 5",
+          "context": "function_argument",
+          "provenance": "fn token_unused_pin() { let _unused = token_unused(5); let argument = 5; assert_eq!(argument, 5); }"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 6,
+      "related_tests": [
+        {
+          "name": "token_unused_pin",
+          "file": "src/lib.rs",
+          "line": 35,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(argument, 5);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "identifier_pin",
+          "file": "src/lib.rs",
+          "line": 29,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(identifier(_2)(3), 3);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
+        },
+        {
+          "name": "masked_pin",
+          "file": "src/lib.rs",
+          "line": 25,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(masked(2)(3), 2);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
+        },
+        {
+          "name": "token_unit_pin",
+          "file": "src/lib.rs",
+          "line": 33,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(token_unit(5)(1), captured);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
+        },
+        {
+          "name": "unit_pin",
+          "file": "src/lib.rs",
+          "line": 27,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(unit(5)(1), 5);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
+        },
+        {
+          "name": "uppercase_pin",
+          "file": "src/lib.rs",
+          "line": 31,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(uppercase(2)(3), 2);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "The related test `token_unused_pin` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
+      "suggested_next_action": "The related test `token_unused_pin` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

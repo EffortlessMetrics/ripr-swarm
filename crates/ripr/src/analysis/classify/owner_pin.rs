@@ -2432,8 +2432,12 @@ enum ReturnPathGate {
     /// RIPR-SPEC-0265 rule 5: the changed tail is the owner's whole body and
     /// one closure over its own parameters. The pinned operand must apply
     /// the returned closure to `arity` distinct nonzero numeric literals, so
-    /// the closure runs once on inputs that tell its operators apart.
-    ReturnedClosure { arity: usize },
+    /// the closure runs once and the bounded typed body discriminates the
+    /// supported arithmetic replacements, including through literal captures.
+    ReturnedClosure {
+        arity: usize,
+        arithmetic: returned_closure::ArithmeticPin,
+    },
     /// RIPR-SPEC-0197 rule 3: the changed tail is the owner's whole body and
     /// one pure `&&` or `||` chain over its parameters. The pinned call
     /// must evaluate every operand on some run.
@@ -2694,6 +2698,17 @@ fn collect_exit_records(expression: &ast::Expr, records: &mut Vec<ast::RecordExp
     }
 }
 
+/// A changed whole returned closure can confirm observation only through
+/// its admitted application pin, even when the arithmetic model is unknown.
+pub(in crate::analysis) fn returned_closure_pin_required(
+    probe: &Probe,
+    owner: &FunctionSummary,
+) -> bool {
+    matches!(probe.family, ProbeFamily::ReturnValue)
+        && returned_closure::owner_returned_closure_tail(owner)
+            .is_some_and(|tail| tail.tail_is(&probe.expression))
+}
+
 impl OwnerReturnPin {
     /// The owner-side gates: `None` when the probe is not a return value
     /// (or a changed `return Err(..)`, filed as `error_path`),
@@ -2758,7 +2773,14 @@ impl OwnerReturnPin {
                     .or_else(|| {
                         returned_closure::owner_returned_closure_tail(owner)
                             .filter(|tail| tail.tail_is(&probe.expression))
-                            .map(|tail| ReturnPathGate::ReturnedClosure { arity: tail.arity })
+                            .and_then(|tail| {
+                                Some(ReturnPathGate::ReturnedClosure {
+                                    arity: tail.arity,
+                                    arithmetic: returned_closure::ArithmeticPin::establish(
+                                        owner, index,
+                                    )?,
+                                })
+                            })
                     })?
             }
             None => return None,
@@ -3229,7 +3251,7 @@ impl OwnerReturnPin {
         // RIPR-SPEC-0265 rule 5: the pinned value is the returned closure
         // applied to its arguments; the call shape is the owner call inside.
         let operand = match &self.path {
-            ReturnPathGate::ReturnedClosure { arity } => {
+            ReturnPathGate::ReturnedClosure { arity, .. } => {
                 returned_closure::strip_applied(operand, *arity)?
             }
             _ => operand,
@@ -3792,9 +3814,10 @@ impl OwnerReturnPin {
                 }
                 // RIPR-SPEC-0265 rule 5: the application must tell the
                 // closure's operators apart.
-                if let ReturnPathGate::ReturnedClosure { arity } = path
+                if let ReturnPathGate::ReturnedClosure { arity, arithmetic } = path
                     && !call_text.is_some_and(|text| {
                         returned_closure::applied_inputs_are_distinct_literals(text, *arity)
+                            && arithmetic.discriminates(text)
                     })
                 {
                     return false;

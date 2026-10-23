@@ -739,6 +739,9 @@ impl ClassifiedProbeEvidence {
             &import_defeats,
             &cross_package_defeats,
             &ReturnOracleAdmission {
+                returned_closure_pin_required: context.owner_fn.is_some_and(|owner| {
+                    crate::analysis::classify::returned_closure_pin_required(context.probe, owner)
+                }),
                 owner_return_pin: &owner_pin_admits,
                 assertion_admitted: &assertion_admitted,
                 assertion_has_known_implicit_observer: &|test, assertion| {

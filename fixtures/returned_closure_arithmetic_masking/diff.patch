@@ -1,0 +1,21 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -4,1 +4,1 @@
+-    move |x| n - (x - OFFSET)
++    move |x| n + (x - OFFSET)
+@@ -7,1 +7,1 @@
+-    move |x| n / x
++    move |x| n * x
+@@ -10,1 +10,1 @@
+-    move |x| x - n
++    move |x| n + x
+@@ -13,1 +13,1 @@
+-    move |x| n - OFFSET_FN(x)
++    move |x| n + OFFSET_FN(x)
+@@ -16,1 +16,1 @@
+-    move |argument| captured / argument
++    move |argument| captured * argument
+@@ -19,1 +19,1 @@
+-    move |argument| captured / argument
++    move |argument| captured * argument

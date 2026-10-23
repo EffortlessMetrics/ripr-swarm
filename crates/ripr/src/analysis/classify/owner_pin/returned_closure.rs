@@ -5,15 +5,18 @@
 //! applying the returned function in the pinned expression
 //! (`make_adder(2)(3)`). That application runs the closure exactly once, on
 //! the arguments written there. The pin is read only when those arguments are
-//! plain nonzero numeric literals that differ from one another, so no
-//! identity element (`+ 0`, `* 1` against `0`) or coincident pair
-//! (`2 + 2 == 2 * 2`) hides a changed operator. Every other shape keeps the
-//! earlier reading.
+//! plain nonzero numeric literals that differ from one another. The typed
+//! arithmetic pin additionally evaluates the complete body and its bounded
+//! operator replacements: derived identities and captured constants can mask
+//! a change even when the written call arguments differ. Every other shape
+//! keeps the earlier reading.
 
 use super::closure_adaptor::unconditional_body_over;
+mod arithmetic;
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::rust_index::FunctionSummary;
 use crate::analysis::syntax::parse_clean_source_file;
+pub(super) use arithmetic::ArithmeticPin;
 use ra_ap_syntax::{
     AstNode,
     ast::{self, HasName},
@@ -263,7 +266,8 @@ fn nonzero_numeric_literal(argument: &str) -> Option<String> {
         ]
         .contains(&suffix);
     let cleaned: String = number.chars().filter(|ch| *ch != '_').collect();
-    let well_formed = !cleaned.is_empty()
+    let well_formed = number.starts_with(|ch: char| ch.is_ascii_digit())
+        && !cleaned.is_empty()
         && cleaned.chars().next().is_some_and(|ch| ch.is_ascii_digit())
         && cleaned.matches('.').count() <= 1
         && !cleaned.ends_with('.');
@@ -360,6 +364,8 @@ mod tests {
             "make_adder(2)(02)",
             "make_adder(1.0)(1)",
             "make_adder(2.50)(2.5)",
+            "make_adder(_2)(3)",
+            "make_adder(__5)(3)",
             "make_adder(n)(3)",
             "make_adder(2)(x)",
             "make_adder(2)(f(3))",

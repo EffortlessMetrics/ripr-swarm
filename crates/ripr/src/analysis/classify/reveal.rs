@@ -35,6 +35,9 @@ use crate::domain::*;
 /// execution/macro decision also gates predicate boundary pairing; it applies
 /// before token, strength, observation, or owner-pin confirmation.
 pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
+    /// A changed whole returned closure needs its admitted applied owner pin;
+    /// token coincidence cannot establish that the closure ran discriminatingly.
+    pub(in crate::analysis) returned_closure_pin_required: bool,
     pub(in crate::analysis) owner_return_pin: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     pub(in crate::analysis) assertion_admitted: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     /// Assertion-local binding for a known typed trait dispatch. `None` means
@@ -132,6 +135,7 @@ fn reveal_evidence(
         &|_, _| false,
         &|_, _| false,
         &ReturnOracleAdmission {
+            returned_closure_pin_required: false,
             owner_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             assertion_has_known_implicit_observer: &|_, _| None,
@@ -173,6 +177,7 @@ fn reveal_evidence_with_exit(
         &|_, _| false,
         &ReturnOracleAdmission {
             assertion_has_known_implicit_observer: &|_, _| None,
+            returned_closure_pin_required: false,
             owner_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             sibling_exclusion_admitted: &|_, _| true,
@@ -215,6 +220,7 @@ fn reveal_evidence_proximity_reach(
         &|_, _| false,
         &|_, _| false,
         &ReturnOracleAdmission {
+            returned_closure_pin_required: false,
             owner_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             assertion_has_known_implicit_observer: &|_, _| None,
@@ -1771,18 +1777,19 @@ fn analyze_related_assertions(
     // #7063: a payload-carrying construction whose variant the change kept
     // (or whose old text is unknown) may have changed only its payload.
     // A changed variant is seen by a variant pin, as before.
-    let payload_pin_required = matches!(
-        probe.family,
-        ProbeFamily::ErrorPath | ProbeFamily::ReturnValue
-    ) && error_construction_path.as_deref().is_some_and(|path| {
-        (super::text::variant_carries_payload(&probe.expression, path)
-            || super::text::variant_carries_payload(analysis_expression, path))
-            && probe
-                .before
-                .as_deref()
-                .and_then(error_path_variant_path)
-                .is_none_or(|before| variant_key(&before) == variant_key(path))
-    });
+    let owner_pin_required = return_admission.returned_closure_pin_required
+        || matches!(
+            probe.family,
+            ProbeFamily::ErrorPath | ProbeFamily::ReturnValue
+        ) && error_construction_path.as_deref().is_some_and(|path| {
+            (super::text::variant_carries_payload(&probe.expression, path)
+                || super::text::variant_carries_payload(analysis_expression, path))
+                && probe
+                    .before
+                    .as_deref()
+                    .and_then(error_path_variant_path)
+                    .is_none_or(|before| variant_key(&before) == variant_key(path))
+        });
     // The enum segment before the variant (`PayError` in
     // `PayError::Insufficient`): the shared qualifier a sibling-variant pin
     // names. See `names_only_sibling_variants`.
@@ -1868,7 +1875,7 @@ fn analyze_related_assertions(
         owner_scoped_tokens: &owner_scoped_tokens,
         owner_shadowed: false,
         sibling_excluded: false,
-        payload_pin_required,
+        owner_pin_required,
     };
     let confirm_required = needs_token_confirmation(&probe.family);
     // RIPR-SPEC-0040 builder override (#6613): the fields a changed struct
@@ -2785,6 +2792,8 @@ struct RevealMatchContext<'a> {
     /// sibling exclusion on the owner call (`excludes_only_sibling_variant`
     /// under standard macro bindings), decided once per assertion.
     sibling_excluded: bool,
+    /// Returned closures require an admitted application pin before any
+    /// lexical fallback, even when numeric/type establishment refuses.
     /// #7063: the changed error construction carries a payload
     /// (`Err(E::V { line: n })`) and the change may be confined to it: the
     /// paired old text constructs the same variant, or there is none. A
@@ -2792,7 +2801,7 @@ struct RevealMatchContext<'a> {
     /// payload change, so a value or error probe confirms observation only
     /// through the owner-return pin, a whole-value equality tied to the
     /// owner call (RIPR-SPEC-0197 "Early error-variant pins").
-    payload_pin_required: bool,
+    owner_pin_required: bool,
 }
 
 /// The field a `field_construction` expression assigns: the identifier
@@ -3701,7 +3710,7 @@ fn assertion_matches_probe_detail_with_literals(
         owner_scoped_tokens,
         owner_shadowed,
         sibling_excluded,
-        payload_pin_required,
+        owner_pin_required,
     } = *context;
     // #4748: use the same operand boundary as extraction, including token and
     // exact-variant matching. A genuine error oracle cannot borrow its changed
@@ -3810,7 +3819,7 @@ fn assertion_matches_probe_detail_with_literals(
     // tied to the owner call. A variant token, a `matches!` or guarded match
     // on the variant, a written-out equality not tied to the owner, or a
     // shared field name says nothing about the payload's value (fail closed).
-    let payload_observed = !payload_pin_required || owner_return_pinned;
+    let required_pin_observed = !owner_pin_required || owner_return_pinned;
     // For MatchArm probes, restrict the confirmation check to variant-only
     // tokens (post-`::`). The qualifier ("Mode" in "Mode::Frozen") is shared
     // across all arms and therefore cannot confirm this specific arm.
@@ -3864,7 +3873,7 @@ fn assertion_matches_probe_detail_with_literals(
         // touches an error (`assert_eq!(reader.len(), 10)`) cannot observe
         // it, however many identifiers it shares with the changed line.
         false
-    } else if !payload_observed {
+    } else if !required_pin_observed {
         false
     } else if matches!(assertion.kind, OracleKind::GuardedResultMatch)
         && error_construction_variant.is_some()
@@ -3900,7 +3909,7 @@ fn assertion_matches_probe_detail_with_literals(
         if sibling_excluded {
             // #7063 rule 7: excluding a sibling says nothing about the
             // changed variant's payload.
-            return (true, payload_observed);
+            return (true, required_pin_observed);
         }
         if matches!(family, ProbeFamily::ErrorPath) {
             return (false, false);
@@ -3914,7 +3923,7 @@ fn assertion_matches_probe_detail_with_literals(
         && let Some(variant) = error_construction_variant
     {
         let variant_matches = contains_as_whole_word(&assertion.text, variant);
-        let variant_confirms = variant_matches && payload_observed;
+        let variant_confirms = variant_matches && required_pin_observed;
         if matches!(family, ProbeFamily::ErrorPath) {
             return (variant_matches, variant_confirms);
         }
@@ -3984,7 +3993,7 @@ fn assertion_matches_probe_detail(
             owner_scoped_tokens: &[],
             owner_shadowed: false,
             sibling_excluded: false,
-            payload_pin_required: false,
+            owner_pin_required: false,
         },
         assertion,
         assertion_count,
@@ -5680,6 +5689,7 @@ mod tests {
         };
         let admission = ReturnOracleAdmission {
             assertion_has_known_implicit_observer: &|_, _| None,
+            returned_closure_pin_required: false,
             owner_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             sibling_exclusion_admitted: &|_, _| true,
@@ -7098,6 +7108,7 @@ mod tests {
             &|_, _| false,
             &ReturnOracleAdmission {
                 assertion_has_known_implicit_observer: &|_, _| None,
+                returned_closure_pin_required: false,
                 owner_return_pin: &pin,
                 assertion_admitted: &|_, _| true,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -7189,6 +7200,7 @@ mod tests {
                 &|_, _| false,
                 &ReturnOracleAdmission {
                     assertion_has_known_implicit_observer: &|_, _| None,
+                    returned_closure_pin_required: false,
                     owner_return_pin: &pin,
                     assertion_admitted: &|_, _| true,
                     sibling_exclusion_admitted: &|_, _| true,
@@ -7366,6 +7378,7 @@ mod tests {
                 &|_, _| false,
                 &|_, _| false,
                 &ReturnOracleAdmission {
+                    returned_closure_pin_required: false,
                     owner_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
@@ -7471,6 +7484,7 @@ mod tests {
                 import,
                 package,
                 &ReturnOracleAdmission {
+                    returned_closure_pin_required: false,
                     owner_return_pin: &pin,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
@@ -7876,6 +7890,7 @@ mod tests {
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -7957,6 +7972,7 @@ mod tests {
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -8256,7 +8272,7 @@ mod tests {
                 owner_scoped_tokens: &empty,
                 owner_shadowed: false,
                 sibling_excluded: false,
-                payload_pin_required: false,
+                owner_pin_required: false,
             };
             let (_, has_token) = assertion_matches_probe_detail_with_literals(
                 &context,
@@ -9730,6 +9746,7 @@ return Err(\"typed pin\".into());
             &|_test, callee| file_imports_foreign_callee_name(test_source, callee, &crate_names),
             &|_, _| false,
             &ReturnOracleAdmission {
+                returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -9796,6 +9813,7 @@ return Err(\"typed pin\".into());
             &|_, callee| file_imports_foreign_callee_name(without_import, callee, &own_crate_names),
             &|_, _| false,
             &ReturnOracleAdmission {
+                returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -9833,6 +9851,7 @@ return Err(\"typed pin\".into());
             },
             &|_, _| false,
             &ReturnOracleAdmission {
+                returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -9889,6 +9908,7 @@ return Err(\"typed pin\".into());
             &|_, callee| file_imports_foreign_callee_name(aliased_import, callee, &crate_names),
             &|_, _| false,
             &ReturnOracleAdmission {
+                returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -9947,6 +9967,7 @@ return Err(\"typed pin\".into());
             &|_test, callee| file_imports_foreign_callee_name(test_source, callee, &crate_names),
             &|_, _| false,
             &ReturnOracleAdmission {
+                returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -10149,6 +10170,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| true,
             &ReturnOracleAdmission {
+                returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -10189,6 +10211,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -10608,6 +10631,7 @@ return Err(\"typed pin\".into());
                         getter_reads_key: &|_, _, _| None,
                         collection_argument_observed: &|_, _| false,
                         assertion_has_known_implicit_observer: &|_, _| Some(false),
+                        returned_closure_pin_required: false,
                         owner_return_pin: &|_, _| false,
                         assertion_admitted: &|_, _| true,
                         sibling_exclusion_admitted: &|_, _| true,
@@ -10682,6 +10706,7 @@ return Err(\"typed pin\".into());
                     owner_argument_names: &[],
                     getter_reads_key: &|_, _, _| None,
                     collection_argument_observed: &|_, _| false,
+                    returned_closure_pin_required: false,
                     owner_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|test, _| {
@@ -10768,6 +10793,7 @@ return Err(\"typed pin\".into());
                 &|_, _| false,
                 &|_, _| false,
                 &ReturnOracleAdmission {
+                    returned_closure_pin_required: false,
                     owner_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
@@ -11054,6 +11080,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -11155,6 +11182,7 @@ return Err(\"typed pin\".into());
                 &|_, _| false,
                 &|_, _| false,
                 &ReturnOracleAdmission {
+                    returned_closure_pin_required: false,
                     owner_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
@@ -11199,6 +11227,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -11694,6 +11723,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -12235,6 +12265,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,

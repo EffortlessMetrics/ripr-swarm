@@ -1,2 +1,2 @@
 <!-- section: Fixed -->
-- A returned closure applied inline in an exact pin (`make_adder(2)(3)`) now reads `exposed` when the arguments are distinct nonzero numeric literals; zero, repeated, non-literal and unapplied inputs keep the earlier reading (#9490).
+- An inline returned-closure pin now reads `exposed` only when bounded typed arithmetic and literal captures discriminate the supported operator replacements. Input/body collisions, unknown bindings, uppercase calls and unapplied closures keep the earlier reading (#9490).

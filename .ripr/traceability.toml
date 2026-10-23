@@ -16530,6 +16530,11 @@ id = "RIPR-SPEC-0265"
 name = "Rust closures in iterator adaptors"
 spec = "docs/specs/RIPR-SPEC-0265-rust-closures-in-iterator-adaptors.md"
 tests = [
+  "crates/ripr/tests/returned_closure_pin.rs::token_coincidence_cannot_replace_a_returned_closure_pin",
+  "crates/ripr/tests/returned_closure_pin.rs::effective_body_values_must_discriminate_every_arithmetic_node",
+  "crates/ripr/tests/returned_closure_pin.rs::typed_discriminating_arithmetic_and_literal_captures_keep_credit",
+  "crates/ripr/tests/returned_closure_pin.rs::unsupported_numeric_authority_or_arithmetic_stays_withheld",
+  "crates/ripr/tests/returned_closure_pin.rs::qualified_owner_survives_a_rebound_local_callee",
   "crates/ripr/src/analysis/classify/owner_pin/closure_adaptor.rs::tests::admits_each_adaptor_over_a_slice_parameter",
   "crates/ripr/src/analysis/classify/owner_pin/closure_adaptor.rs::tests::refuses_shapes_outside_the_spec",
   "crates/ripr/src/analysis/classify/owner_pin/closure_adaptor.rs::tests::literal_sequences_read_only_literal_elements",
@@ -16553,9 +16558,14 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::walked_parameter_refusal_reads_wrapped_calls_and_only_the_parameter",
 ]
 fixtures = [
+  "fixtures/returned_closure_arithmetic_masking",
   "fixtures/rust-verdict-corpus",
 ]
 code = [
+  "crates/ripr/src/analysis/classifier/evidence.rs",
+  "crates/ripr/src/analysis/classify/reveal.rs",
+  "crates/ripr/src/analysis/classify/owner_pin/returned_closure.rs",
+  "crates/ripr/src/analysis/classify/owner_pin/returned_closure/arithmetic.rs",
   "crates/ripr/src/analysis/classify/owner_pin/closure_adaptor.rs",
   "crates/ripr/src/analysis/classify/owner_pin.rs",
   "crates/ripr/src/analysis/classify/activation.rs",

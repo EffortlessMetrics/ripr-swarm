@@ -1,0 +1,42 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/returned_closure_arithmetic_masking/input
+
+Summary: 6 probes (0 exposed, 1 weak, 0 unrevealed, 0 no path, 5 unknown); 6 of 6 findings unsuppressed
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 12 changed line(s), 6 candidate line(s), 6 probe(s), 6 finding(s)
+
+Start here:
+  State: a test gap to inspect or repair
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
+  File: ./src/lib.rs:19
+  Static exposure: weak (severity: warning, confidence 0.92)
+  Why weak: a related test reaches this change but does not observe the exact changed value
+  Canonical gap: gap:rust:src/lib.rs:token_unused:return_value:return_value:move_argument_captured*argument
+  Changed behavior: move |argument| captured * argument
+  Missing discriminator: No strong discriminator was detected
+  Related test (1 of 6 matched rows): src/lib.rs:35 token_unused_pin (ripr could not confirm that this assertion observes the changed behavior)
+  Next step: The related test `token_unused_pin` already asserts an exact value; the gap is not the
+    assertion shape. Add a test input where the changed branch behaves differently and keep the
+    exact assertion
+  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
+    - reach yes: Related tests appear to reach token_unused: token_unused_pin
+    - infection yes: Reachable tests can plausibly activate this changed behavior
+    - 19 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/returned_closure_arithmetic_masking/input --diff <cwd>/fixtures/returned_closure_arithmetic_masking/diff.patch --mode fast probe:src_lib.rs:return_value:46975a53
+  ripr context --root <cwd>/fixtures/returned_closure_arithmetic_masking/input --diff <cwd>/fixtures/returned_closure_arithmetic_masking/diff.patch --mode fast --at probe:src_lib.rs:return_value:46975a53
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:return_value:46975a53 --root <cwd>/fixtures/returned_closure_arithmetic_masking/input` for the full gate's answer
+No test stub here: the owner returns `impl Trait`, which cannot be compared
+
+Hidden:
+  5 lower-priority finding(s) omitted from default human output.
+    - ./src/lib.rs:4 (unknown)
+    - ./src/lib.rs:7 (unknown)
+    - ./src/lib.rs:10 (unknown)
+    - ./src/lib.rs:13 (unknown)
+    - ./src/lib.rs:16 (unknown)
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
