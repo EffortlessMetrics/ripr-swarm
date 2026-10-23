@@ -7,7 +7,6 @@
 //! that call them. It only widens which tests are *related*; the probe stays
 //! `static_unknown`, so nothing here can promote a verdict.
 
-use super::reveal::contains_as_whole_word;
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionSourceRole, FunctionSummary, RustIndex};
 use crate::analysis::rust_index::find_file_facts;
@@ -45,12 +44,166 @@ pub(in crate::analysis) fn same_file_const_readers<'a>(
         .collect()
 }
 
-/// Whether `body` names `name` in code, or as an inline format argument
-/// (`format!("{NAME}")`, `{NAME:>4}`), which string masking would hide.
+/// Whether `body` reads the constant `name`: a bare identifier, `Self::NAME`
+/// or `self::NAME` in code, or an inline format argument (`{NAME}`,
+/// `{NAME:>4}`) in a format macro's string literal. Fail closed: a name
+/// qualified by another path (`crate::other::NAME`, `Other::NAME`), a field or
+/// method (`x.NAME`), a local `let NAME` shadow, an escaped `{{NAME}}`, a
+/// comment, or a plain string is not a read.
 fn function_reads(body: &str, name: &str) -> bool {
-    contains_as_whole_word(&mask_comments_and_strings(body), name)
-        || body.contains(&format!("{{{name}}}"))
-        || body.contains(&format!("{{{name}:"))
+    let masked = mask_comments_and_strings(body);
+    if masked.contains(&format!("let {name}")) || masked.contains(&format!("let mut {name}")) {
+        return false;
+    }
+    code_reads(&masked, name) || format_macro_reads(body, name)
+}
+
+fn is_ident_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+fn code_reads(masked: &str, name: &str) -> bool {
+    let bytes = masked.as_bytes();
+    let mut start = 0;
+    while let Some(found) = masked[start..].find(name) {
+        let at = start + found;
+        let end = at + name.len();
+        start = end;
+        if (at > 0 && is_ident_byte(bytes[at - 1]))
+            || bytes.get(end).is_some_and(|b| is_ident_byte(*b))
+        {
+            continue;
+        }
+        let before = masked[..at].trim_end();
+        if before.ends_with('.') {
+            continue;
+        }
+        if let Some(path) = before.strip_suffix("::") {
+            let segment_start = path
+                .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .map_or(0, |i| i + 1);
+            if !matches!(&path[segment_start..], "Self" | "self") {
+                continue;
+            }
+            // `a::Self::NAME` is still another path.
+            if path[..segment_start].trim_end().ends_with("::") {
+                continue;
+            }
+        }
+        return true;
+    }
+    false
+}
+
+const FORMAT_MACROS: [&str; 12] = [
+    "format",
+    "print",
+    "println",
+    "eprint",
+    "eprintln",
+    "write",
+    "writeln",
+    "panic",
+    "format_args",
+    "assert",
+    "assert_eq",
+    "assert_ne",
+];
+
+/// Whether a string literal that is an argument of a format macro in `body`
+/// captures `name` inline. Comments are skipped; a literal outside a format
+/// macro, or an escaped `{{name}}`, does not count.
+fn format_macro_reads(body: &str, name: &str) -> bool {
+    let chars: Vec<char> = body.chars().collect();
+    let mut stack: Vec<bool> = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            '/' if chars.get(i + 1) == Some(&'/') => {
+                while i < chars.len() && chars[i] != '\n' {
+                    i += 1;
+                }
+            }
+            '/' if chars.get(i + 1) == Some(&'*') => {
+                i += 2;
+                while i + 1 < chars.len() && !(chars[i] == '*' && chars[i + 1] == '/') {
+                    i += 1;
+                }
+                i += 2;
+            }
+            '\'' => {
+                // A char literal (`'"'`, `'\n'`); a lifetime has no closing quote.
+                if chars.get(i + 2) == Some(&'\'') {
+                    i += 3;
+                } else if chars.get(i + 1) == Some(&'\\') && chars.get(i + 3) == Some(&'\'') {
+                    i += 4;
+                } else {
+                    i += 1;
+                }
+            }
+            '(' => {
+                let mut j = i;
+                while j > 0 && chars[j - 1].is_whitespace() {
+                    j -= 1;
+                }
+                let is_macro = j > 0 && chars[j - 1] == '!' && {
+                    let end = j - 1;
+                    let mut k = end;
+                    while k > 0 && (chars[k - 1].is_alphanumeric() || chars[k - 1] == '_') {
+                        k -= 1;
+                    }
+                    let ident: String = chars[k..end].iter().collect();
+                    FORMAT_MACROS.contains(&ident.as_str())
+                };
+                stack.push(is_macro);
+                i += 1;
+            }
+            ')' => {
+                stack.pop();
+                i += 1;
+            }
+            '"' => {
+                let mut literal = String::new();
+                i += 1;
+                while i < chars.len() && chars[i] != '"' {
+                    if chars[i] == '\\' && i + 1 < chars.len() {
+                        literal.push(chars[i]);
+                        i += 1;
+                    }
+                    literal.push(chars[i]);
+                    i += 1;
+                }
+                i += 1;
+                if stack.last() == Some(&true) && literal_captures(&literal, name) {
+                    return true;
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    false
+}
+
+/// Whether a format string captures `name` inline (`{name}`, `{name:?}`),
+/// treating `{{` as an escaped brace.
+fn literal_captures(literal: &str, name: &str) -> bool {
+    let bytes = literal.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'{' {
+            if bytes.get(i + 1) == Some(&b'{') {
+                i += 2;
+                continue;
+            }
+            let rest = &literal[i + 1..];
+            let end = rest.find(['}', ':']).unwrap_or(rest.len());
+            if &rest[..end] == name {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
 }
 
 /// How many times `source` declares `name` as a `const` or `static` item (or
@@ -94,13 +247,36 @@ mod tests {
     use super::{declaration_count, function_reads};
 
     #[test]
-    fn reads_include_inline_format_arguments_but_not_prefixes_or_comments() {
+    fn reads_accept_bare_self_and_inline_format_captures() {
         assert!(function_reads("{ attempt < LIMIT }", "LIMIT"));
+        assert!(function_reads("{ attempt < Self::LIMIT }", "LIMIT"));
+        assert!(function_reads("{ attempt < self::LIMIT }", "LIMIT"));
         assert!(function_reads("{ format!(\"{LIMIT}\\n\") }", "LIMIT"));
         assert!(function_reads("{ format!(\"{LIMIT:>4}\") }", "LIMIT"));
-        assert!(!function_reads("{ attempt < LIMIT_MAX }", "LIMIT"));
-        assert!(!function_reads("{ attempt } // LIMIT", "LIMIT"));
-        assert!(!function_reads("{ \"LIMIT\" }", "LIMIT"));
+        assert!(function_reads("{ write!(f, \"x={LIMIT:?}\") }", "LIMIT"));
+        // `{{` escapes, so the odd brace still captures.
+        assert!(function_reads("{ format!(\"{{{LIMIT}}}\") }", "LIMIT"));
+    }
+
+    #[test]
+    fn reads_refuse_other_constants_and_non_reads() {
+        for body in [
+            "{ attempt < LIMIT_MAX }",
+            "{ attempt } // LIMIT",
+            "{ \"LIMIT\" }",
+            "{ crate::other::LIMIT }",
+            "{ Other::LIMIT }",
+            "{ a::Self::LIMIT }",
+            "{ x.LIMIT }",
+            "{ let LIMIT = 1; LIMIT }",
+            "{ format!(\"{{LIMIT}}\") }",
+            "{ format!(\"{label}\") } // {LIMIT}",
+            "{ // format!(\"{LIMIT}\")\n 1 }",
+            "{ \"{LIMIT}\".to_string() }",
+            "{ format!(\"{label}\") }",
+        ] {
+            assert!(!function_reads(body, "LIMIT"), "{body}");
+        }
     }
 
     #[test]

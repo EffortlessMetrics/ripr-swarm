@@ -1137,6 +1137,25 @@ impl ClassifiedProbeEvidence {
             discriminate
         };
 
+        // #9871: a test that calls a reader of the changed constant is related
+        // for reach only. Whether its path executes the read is unestablished,
+        // so no assertion is credited as observing or discriminating the
+        // constant: both stages stay unknown rather than yes/weak.
+        let (observe, discriminate) = if context.const_readers.is_empty() {
+            (observe, discriminate)
+        } else {
+            let unknown =
+                |summary: &str| StageEvidence::new(StageState::Unknown, Confidence::Low, summary);
+            (
+                unknown(
+                    "Not established: whether a test observes the changed constant; the tests only call a function that reads it",
+                ),
+                unknown(
+                    "Not established: whether a test discriminates the changed constant; the tests only call a function that reads it",
+                ),
+            )
+        };
+
         let ripr = RiprEvidence {
             reach: reach.clone(),
             infect: infect.clone(),

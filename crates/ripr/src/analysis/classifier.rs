@@ -1601,6 +1601,9 @@ pub(super) mod tests {
         // Fail closed: reach is corrected, the verdict is not.
         assert_eq!(finding.class, ExposureClass::StaticUnknown);
         assert_eq!(finding.ripr.reach.state, StageState::Weak);
+        // A reader-only relation credits no observation or discrimination.
+        assert_eq!(finding.ripr.reveal.observe.state, StageState::Unknown);
+        assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Unknown);
         assert!(
             finding
                 .ripr
@@ -1648,6 +1651,27 @@ pub(super) mod tests {
                 .any(|related| related.name == "score_test"),
             "{:?}",
             finding.related_tests
+        );
+    }
+
+    #[test]
+    fn changed_const_with_the_same_name_in_another_path_is_not_read() {
+        let (index, probe) = const_probe_index(
+            "pub const LIMIT: u32 = 4;\n\npub fn score(input: i32) -> u32 {\n    crate::other::LIMIT\n}\n",
+            "pub fn score(input: i32) -> u32 {\n    crate::other::LIMIT\n}",
+        );
+
+        let finding = classify_probe(&probe, &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        assert!(
+            !finding
+                .ripr
+                .reach
+                .summary
+                .contains("reads the changed constant"),
+            "{}",
+            finding.ripr.reach.summary
         );
     }
 
