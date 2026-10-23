@@ -609,7 +609,15 @@ fn mark_commonjs_default_binding(
                 if function.id.as_ref().is_some_and(|id| id.name == name))
         })
         .count();
-    if declarations != 1 || super::tests_extract::identifier_written_in(&code, name) {
+    // Annex B: a block-level `function name` re-binds the top-level function.
+    let spellings = super::tests_extract::function_declaration_names(&code)
+        .iter()
+        .filter(|(declared, _)| declared == name)
+        .count();
+    if declarations != 1
+        || spellings != 1
+        || super::tests_extract::identifier_written_strictly(&code, name)
+    {
         return;
     }
     for owner in owners.iter_mut() {
@@ -662,6 +670,14 @@ fn commonjs_default_gate(code: &str) -> bool {
         if word(before) && word(chars.get(at).copied()) {
             compact.push(' ');
         }
+    }
+    // `require.main.exports = x`, `require.cache[...]` and
+    // `process.mainModule` reach the module object without naming `module`.
+    if ["require.main", "require.cache", "mainModule"]
+        .iter()
+        .any(|reach| compact.contains(reach))
+    {
+        return false;
     }
     let mut assignments = 0usize;
     for (at, _) in compact.match_indices("module") {

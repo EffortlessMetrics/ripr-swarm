@@ -163,72 +163,6 @@ fn assertion_on_an_unrelated_value_is_not_credited() -> Result<(), String> {
     Ok(())
 }
 
-fn gated_off(label: &str, owner: &str) -> Result<(), String> {
-    let class = class_for(label, owner, &test_with("t", "t(2)"))?;
-    assert_eq!(class, ExposureClass::NoStaticPath, "{label}: {owner:?}");
-    assert!(
-        marks(owner).iter().all(|(_, _, commonjs)| !commonjs),
-        "{label}: {owner:?}"
-    );
-    Ok(())
-}
-
-#[test]
-fn the_inline_form_needs_the_single_assignment_gate() -> Result<(), String> {
-    let head = "module.exports = function (x) {\n  // triple\n  return x * 3;\n};\n";
-    for (label, tail) in [
-        (
-            "cjs-gate-second",
-            "function other(x) { return x; }\nmodule.exports = other;\n",
-        ),
-        ("cjs-gate-object", "module.exports = { a: 1 };\n"),
-        (
-            "cjs-gate-nested",
-            "function other(x) { return x; }\nif (process.env.C) { module.exports = other; }\n",
-        ),
-        ("cjs-gate-eval", "eval('module.exports = other');\n"),
-        ("cjs-gate-with", "with (ctx) { run(); }\n"),
-        (
-            "cjs-gate-newline",
-            "function other(x) { return x; }\nmodule\n  .exports = other;\n",
-        ),
-        (
-            "cjs-gate-optional",
-            "function other(x) { return x; }\nmodule?.exports;\n",
-        ),
-        ("cjs-gate-compound", "module.exports &&= null;\n"),
-        ("cjs-gate-plus", "module.exports += 1;\n"),
-        ("cjs-gate-update", "module.exports++;\n"),
-        ("cjs-gate-alias", "const m = module;\nm.exports = null;\n"),
-        (
-            "cjs-gate-assign",
-            "Object.assign(module, { exports: null });\n",
-        ),
-        (
-            "cjs-gate-define",
-            "Object.defineProperty(module, 'exports', { value: null });\n",
-        ),
-        ("cjs-gate-bracket", "module['exports'] = null;\n"),
-    ] {
-        gated_off(label, &format!("{head}{tail}"))?;
-    }
-    Ok(())
-}
-
-#[test]
-fn the_declared_form_needs_the_same_gate() -> Result<(), String> {
-    let head = "function triple(x) {\n  // triple\n  return x * 3;\n}\nmodule.exports = triple;\n";
-    for (label, tail) in [
-        ("cjs-decl-eval", "eval('module.exports = null');\n"),
-        ("cjs-decl-with", "with (ctx) { run(); }\n"),
-        ("cjs-decl-alias", "const m = module;\nm.exports = null;\n"),
-        ("cjs-decl-newline", "module\n  .exports = null;\n"),
-    ] {
-        gated_off(label, &format!("{head}{tail}"))?;
-    }
-    Ok(())
-}
-
 #[test]
 fn other_export_shapes_are_not_default_function_exports() {
     for source in [
@@ -313,34 +247,153 @@ fn a_reassigned_require_binding_is_not_credited() -> Result<(), String> {
     Ok(())
 }
 
-#[test]
-fn indirect_and_exotic_module_writes_refuse_the_gate() -> Result<(), String> {
-    let head = "module.exports = function (x) {\n  // triple\n  return x * 3;\n};\n";
-    for (label, tail) in [
-        ("cjs-exotic-delete", "delete module.exports;\n"),
-        ("cjs-exotic-reflect", "Reflect.set(module, 'exports', 0);\n"),
-        ("cjs-exotic-bracket-spaced", "module [ 'exports' ] = 0;\n"),
-        ("cjs-exotic-bracket-newline", "module\n['exports'] = 0;\n"),
-        ("cjs-exotic-vtab", "module\u{b}.exports = 0;\n"),
-        ("cjs-exotic-nbsp", "module\u{a0}.exports = 0;\n"),
-        ("cjs-exotic-line-sep", "module\u{2028}.exports = 0;\n"),
-        ("cjs-exotic-bom", "module\u{feff}.exports = 0;\n"),
-        ("cjs-exotic-paren", "(module.exports) = 0;\n"),
-        ("cjs-exotic-array", "[module.exports] = [0];\n"),
-        ("cjs-exotic-object", "({ a: module.exports } = { a: 0 });\n"),
-        ("cjs-exotic-for-of", "for (module.exports of []);\n"),
-    ] {
-        gated_off(label, &format!("{head}{tail}"))?;
+/// Tails that make `module.exports` unknowable; each is valid JavaScript on its
+/// own, so a refusal cannot come from a parse failure.
+const SHAPES: &[(&str, &str)] = &[
+    (
+        "second",
+        "function other(x) { return x; }\nmodule.exports = other;\n",
+    ),
+    ("object", "module.exports = { a: 1 };\n"),
+    ("zero", "module.exports = 0;\n"),
+    (
+        "nested",
+        "function other(x) { return x; }\nif (process.env.C) { module.exports = other; }\n",
+    ),
+    ("eval", "eval('module.exports = other');\n"),
+    ("with", "with (ctx) { run(); }\n"),
+    (
+        "newline",
+        "function other(x) { return x; }\nmodule\n  .exports = other;\n",
+    ),
+    ("spaced", "module . exports = 0;\n"),
+    ("optional-read", "const e = module?.exports;\n"),
+    ("compound", "module.exports &&= null;\n"),
+    ("plus", "module.exports += 1;\n"),
+    ("update", "module.exports++;\n"),
+    ("delete", "delete module.exports;\n"),
+    ("alias", "const m = module;\nm.exports = null;\n"),
+    ("assign", "Object.assign(module, { exports: null });\n"),
+    (
+        "define",
+        "Object.defineProperty(module, 'exports', { value: null });\n",
+    ),
+    ("reflect", "Reflect.set(module, 'exports', 0);\n"),
+    ("bracket", "module['exports'] = null;\n"),
+    ("bracket-spaced", "module [ 'exports' ] = 0;\n"),
+    ("bracket-newline", "module\n['exports'] = 0;\n"),
+    ("vtab", "module\u{b}.exports = 0;\n"),
+    ("nbsp", "module\u{a0}.exports = 0;\n"),
+    ("line-sep", "module\u{2028}.exports = 0;\n"),
+    ("bom", "module\u{feff}.exports = 0;\n"),
+    ("paren", "(module.exports) = 0;\n"),
+    ("array", "[module.exports] = [0];\n"),
+    ("destructure", "({ a: module.exports } = { a: 0 });\n"),
+    ("for-of", "for (module.exports of []);\n"),
+    ("require-main", "require.main.exports = 0;\n"),
+    ("require-cache", "require.cache[__filename].exports = 0;\n"),
+    ("main-module", "process.mainModule.exports = 0;\n"),
+    (
+        "umd-guard",
+        "if (typeof module !== 'undefined') { run(); }\n",
+    ),
+    ("main-check", "if (require.main === module) { run(); }\n"),
+    (
+        "postfix-division",
+        "let i = 0; i++ / 2; module.exports = 0;\n",
+    ),
+    ("postfix-division-eval", "let i = 0; i-- / 2; eval('x');\n"),
+    (
+        "postfix-division-assign",
+        "let i = 0; i++ / 2; Object.assign(module, { exports: 0 });\n",
+    ),
+];
+
+fn exposed_with_control(label: &str, owner: &str) -> Result<(), String> {
+    let call = test_with("t", "t(2)");
+    let control = class_for(&format!("{label}-control"), owner, &call)?;
+    assert_eq!(
+        control,
+        ExposureClass::Exposed,
+        "control {label}: {owner:?}"
+    );
+    Ok(())
+}
+
+fn refused(label: &str, owner: &str) -> Result<(), String> {
+    // A reassigned name drops the owner entirely (no finding at all), which
+    // is also a refusal; anything else must read `no_static_path`.
+    match class_for(label, owner, &test_with("t", "t(2)")) {
+        Ok(class) => assert_eq!(class, ExposureClass::NoStaticPath, "{label}: {owner:?}"),
+        Err(error) if error.contains("expected a finding") => {}
+        Err(error) => return Err(error),
     }
-    let declared =
-        "function triple(x) {\n  // triple\n  return x * 3;\n}\nmodule.exports = triple;\n";
-    gated_off(
-        "cjs-exotic-declared-delete",
-        &format!("{declared}delete module.exports;\n"),
+    assert!(
+        marks(owner).iter().all(|(_, _, commonjs)| !commonjs),
+        "{label}: {owner:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn both_forms_share_one_file_level_gate() -> Result<(), String> {
+    for (form, head) in [("inline", ANONYMOUS), ("declared", DECLARED)] {
+        exposed_with_control(form, head)?;
+        for (name, tail) in SHAPES {
+            refused(&format!("cjs-{form}-{name}"), &format!("{head}{tail}"))?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn every_gate_tail_is_valid_javascript() -> Result<(), String> {
+    // A tail that fails to parse would make the refusal vacuous: the tail
+    // alone, with a harmless owner, must still analyze as an owner file.
+    for (name, tail) in SHAPES {
+        let source = format!("function keep(x) {{ return x; }}\n{tail}");
+        let owners = extract_owners(Path::new("src/k.js"), &source);
+        assert!(
+            owners.iter().any(|owner| owner.name == "keep"),
+            "tail {name} does not parse: {tail:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn declared_name_writes_and_rebinds_refuse_the_declared_form() -> Result<(), String> {
+    let non_ascii = "function café(x) {\n  // triple\n  return x * 3;\n}\nmodule.exports = café;\n";
+    exposed_with_control("cjs-declared-non-ascii", non_ascii)?;
+    refused(
+        "cjs-declared-non-ascii-write",
+        &format!("{non_ascii}café = null;\n"),
     )?;
-    gated_off(
-        "cjs-exotic-declared-compound",
-        &format!("{declared}module.exports &&= 0;\n"),
-    )?;
+    for (name, tail) in [
+        ("for-of-array", "for ([triple] of [[0]]);\n"),
+        ("for-of-object", "for ({ triple } of []);\n"),
+        ("for-in-array", "for ([triple] in {});\n"),
+        ("grouped", "(triple) = null;\n"),
+        ("annex-b", "{ function triple() { return 4; } }\n"),
+    ] {
+        refused(
+            &format!("cjs-declared-{name}"),
+            &format!("{DECLARED}{tail}"),
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_string_or_comment_mentioning_module_keeps_the_gate_open() -> Result<(), String> {
+    for tail in [
+        "// module.exports = other\n",
+        "const s = 'module.exports = other';\n",
+        "/* eval(x) */\n",
+        "module.exports.extra = 1;\n",
+    ] {
+        exposed_with_control("cjs-inert-tail", &format!("{ANONYMOUS}{tail}"))?;
+        exposed_with_control("cjs-inert-tail-declared", &format!("{DECLARED}{tail}"))?;
+    }
     Ok(())
 }

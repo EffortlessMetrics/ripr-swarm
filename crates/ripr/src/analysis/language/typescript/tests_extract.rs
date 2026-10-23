@@ -1942,6 +1942,142 @@ fn rewritten_identifier_names(text: &str) -> Vec<String> {
     names
 }
 
+/// `true` when `before` (text ending in `.`) is a global-object receiver
+/// (`globalThis.`, `this.`, `window.`, `global.`, `self.`): a write through it
+/// can rebind a sloppy-mode `var` of the same name, so the strict scan reads
+/// it like a bare identifier (fail-closed).
+fn global_object_member(before: &str) -> bool {
+    let receiver = before[..before.len() - 1].trim_end();
+    ["globalThis", "this", "window", "global", "self"]
+        .iter()
+        .any(|name| {
+            receiver.strip_suffix(name).is_some_and(|head| {
+                !head.ends_with(|ch: char| {
+                    ch.is_alphanumeric() || ch == '_' || ch == '$' || ch == '.'
+                })
+            })
+        })
+}
+
+/// `true` when the identifier ending just before `rest` is written through
+/// grouping or a TypeScript wrapper: `(name) = x`, `(name)++`, `++(name)`,
+/// `name! = x`, `(name as T) = x`, `(name satisfies T) = x` and
+/// `for ((name) of xs)`. Fail-closed: the identifier counts as written when
+/// closing parentheses, a non-null `!` or an `as`/`satisfies` clause (its own
+/// parentheses balanced) stand between it and an assignment operator, update
+/// or loop keyword.
+fn wrapped_write(before: &str, rest: &str) -> bool {
+    if before.ends_with('(') {
+        let lead = before.trim_end_matches(|ch: char| ch == '(' || ch.is_whitespace());
+        if lead.ends_with("++") || lead.ends_with("--") {
+            return true;
+        }
+    }
+    let mut rest = rest;
+    let mut wrapped = false;
+    loop {
+        let trimmed = rest.trim_start();
+        if let Some(after) = trimmed.strip_prefix(')') {
+            rest = after;
+        } else if trimmed.starts_with('!') && !trimmed.starts_with("!=") {
+            rest = &trimmed[1..];
+        } else if ["as", "satisfies"].iter().any(|keyword| {
+            trimmed
+                .strip_prefix(keyword)
+                .is_some_and(|tail| tail.starts_with(|ch: char| ch.is_whitespace() || ch == '('))
+        }) {
+            let mut depth = 0usize;
+            let mut close = None;
+            for (offset, ch) in trimmed.char_indices() {
+                match ch {
+                    '(' => depth += 1,
+                    ')' if depth == 0 => {
+                        close = Some(offset);
+                        break;
+                    }
+                    ')' => depth -= 1,
+                    _ => {}
+                }
+            }
+            match close {
+                Some(close) => rest = &trimmed[close..],
+                None => return false,
+            }
+        } else {
+            break;
+        }
+        wrapped = true;
+    }
+    if !wrapped {
+        return false;
+    }
+    let rest = rest.trim_start();
+    if rest.starts_with("++") || rest.starts_with("--") {
+        return true;
+    }
+    let operator_end = rest
+        .find(|ch: char| {
+            !matches!(
+                ch,
+                '+' | '-' | '*' | '/' | '%' | '&' | '|' | '^' | '?' | '<' | '>'
+            )
+        })
+        .unwrap_or(rest.len());
+    let after_operator = &rest[operator_end..];
+    if after_operator.starts_with('=')
+        && !after_operator[1..].starts_with(['=', '>'])
+        && !matches!(&rest[..operator_end], "<" | ">" | "!")
+    {
+        return true;
+    }
+    ["of", "in"].iter().any(|keyword| {
+        rest.strip_prefix(keyword).is_some_and(|tail| {
+            !tail.starts_with(|ch: char| ch.is_alphanumeric() || ch == '_' || ch == '$')
+        })
+    })
+}
+
+/// `text` with U+FEFF (JavaScript whitespace that Rust does not trim) blanked
+/// to three spaces, so byte offsets are unchanged.
+fn blank_byte_order_marks(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.contains('\u{feff}') {
+        std::borrow::Cow::Owned(text.replace('\u{feff}', "   "))
+    } else {
+        std::borrow::Cow::Borrowed(text)
+    }
+}
+
+/// Every function declaration or expression name `text` introduces, with its
+/// byte offset (`function name`, `function* name`). A declaration nested in a
+/// block re-binds a sloppy-mode `var` of the same name (Annex B.3.3), so
+/// callers treat it as a write to that name.
+pub(crate) fn function_declaration_names(text: &str) -> Vec<(String, usize)> {
+    let text = blank_byte_order_marks(text);
+    let text = text.as_ref();
+    let mut names = Vec::new();
+    let mut from = 0;
+    while let Some(found) = text[from..].find("function") {
+        let start = from + found;
+        from = start + "function".len();
+        let boundary_before = text[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_' || ch == '$' || ch == '.'));
+        if !boundary_before {
+            continue;
+        }
+        let rest = text[from..].trim_start_matches(|ch: char| ch.is_whitespace() || ch == '*');
+        let name_start = text.len() - rest.len();
+        let length = rest
+            .find(|ch: char| !(ch.is_alphanumeric() || ch == '_' || ch == '$'))
+            .unwrap_or(rest.len());
+        if length > 0 && name_start > from {
+            names.push((rest[..length].to_string(), name_start));
+        }
+    }
+    names
+}
+
 /// `true` when `text` may write `identifier`; see [`identifier_writes`].
 pub(crate) fn identifier_written_in(text: &str, identifier: &str) -> bool {
     identifier_writes(text)
@@ -1949,32 +2085,58 @@ pub(crate) fn identifier_written_in(text: &str, identifier: &str) -> bool {
         .any(|(name, _)| name == identifier)
 }
 
+/// `true` when the strict scan ([`strict_identifier_writes`]) may write
+/// `identifier`.
+pub(crate) fn identifier_written_strictly(text: &str, identifier: &str) -> bool {
+    strict_identifier_writes(text)
+        .iter()
+        .any(|(name, _)| name == identifier)
+}
+
 /// Every identifier `text` may write, with its byte offset: an assignment
 /// target (`name =`, `name +=`, `name ??=`, not `==` or `=>`), `++`/`--`, a
 /// `for (name of ...)` target, and any identifier inside a bracketed group
-/// that is itself assigned (`[name] = ...`, `({ name } = ...)`). Member
-/// targets (`this.name =`) are not writes. Comments and strings are not
-/// skipped: a false entry only withholds a relation.
-fn identifier_writes(text: &str) -> Vec<(String, usize)> {
-    let bytes = text.as_bytes();
+/// that is itself assigned or looped over (`[name] = ...`, `({ name } = ...)`,
+/// `for ([name] of ...)`). Member targets (`this.name =`) are not writes.
+/// Identifiers are Unicode-aware. Comments and strings are not skipped: a
+/// false entry only withholds a relation.
+pub(crate) fn identifier_writes(text: &str) -> Vec<(String, usize)> {
+    scan_writes(text, false)
+}
+
+/// [`identifier_writes`] plus the spellings only a binding that must stay
+/// provably unwritten needs (the `var`/`let` runner and CommonJS export
+/// gates): grouped and TypeScript-wrapped targets (`(name) = x`, `name! = x`,
+/// `(name as T) = x`) and global-object members (`globalThis.name = x`,
+/// `this.name = x`).
+pub(crate) fn strict_identifier_writes(text: &str) -> Vec<(String, usize)> {
+    scan_writes(text, true)
+}
+
+fn scan_writes(text: &str, strict: bool) -> Vec<(String, usize)> {
+    let text = blank_byte_order_marks(text);
+    let text = text.as_ref();
     let destructured = destructuring_ranges(text);
     let mut writes = Vec::new();
     let mut index = 0;
-    while index < bytes.len() {
-        let ch = bytes[index] as char;
-        if !(ch == '_' || ch == '$' || ch.is_ascii_alphabetic()) {
-            index += 1;
+    while index < text.len() {
+        let Some(ch) = text[index..].chars().next() else {
+            break;
+        };
+        if !(ch == '_' || ch == '$' || ch.is_alphabetic()) {
+            index += ch.len_utf8();
             continue;
         }
         let start = index;
-        while index < bytes.len() && {
-            let ch = bytes[index] as char;
-            ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
-        } {
-            index += 1;
+        while let Some(ch) = text[index..].chars().next() {
+            if !(ch == '_' || ch == '$' || ch.is_alphanumeric()) {
+                break;
+            }
+            index += ch.len_utf8();
         }
         let before = text[..start].trim_end();
-        if before.ends_with('.') && !before.ends_with("...") {
+        let global = strict && before.ends_with('.') && global_object_member(before);
+        if before.ends_with('.') && !before.ends_with("...") && !global {
             continue;
         }
         let rest = text[index..].trim_start();
@@ -2005,7 +2167,8 @@ fn identifier_writes(text: &str) -> Vec<(String, usize)> {
                 prefix.ends_with("for") || prefix.ends_with("await")
             });
         let in_target = destructured.iter().any(|range| range.contains(&start));
-        if assigns || steps || loop_target || in_target {
+        let wrapped = strict && wrapped_write(before, rest);
+        if assigns || steps || loop_target || in_target || wrapped {
             writes.push((text[start..index].to_string(), start));
         }
     }
@@ -2013,7 +2176,7 @@ fn identifier_writes(text: &str) -> Vec<(String, usize)> {
 }
 
 /// Byte ranges of `[...]` and `{...}` groups directly followed by an
-/// assignment `=`: destructuring targets.
+/// assignment `=` or a `for` head's `of`/`in`: destructuring targets.
 fn destructuring_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
     let bytes = text.as_bytes();
     let mut ranges = Vec::new();
@@ -2024,7 +2187,14 @@ fn destructuring_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
             _ => continue,
         };
         let rest = text[close + 1..].trim_start();
-        if !rest.starts_with('=') || rest[1..].starts_with(['=', '>']) {
+        let assigned = rest.starts_with('=') && !rest[1..].starts_with(['=', '>']);
+        // `for ([name] of ...)` / `for ({ name } in ...)` write their targets.
+        let loop_bound = ["of", "in"].iter().any(|keyword| {
+            rest.strip_prefix(keyword).is_some_and(|tail| {
+                tail.starts_with(|c: char| c.is_whitespace() || "([{'\"`".contains(c))
+            })
+        });
+        if !assigned && !loop_bound {
             continue;
         }
         let mut depth = 0usize;

@@ -199,7 +199,10 @@ therefore marks nothing. The `name` form also needs exactly one top-level
 function declaration of the name that the file never writes. A test binding
 declared with `let`/`var` that the test file writes again is not a
 `require()` of the owner. `require()` of an ES module's `export default` stays
-a namespace object, not a call.
+a namespace object, not a call. Files that read the module object
+another way are refused on purpose: `require.main === module`, UMD
+`typeof module` guards, `require.main.exports`, `require.cache` and
+`process.mainModule` all make `module.exports` unknowable.
 
 **Rule 13. A called suite factory is its expansion (2026-10-20).** A
 top-level `function factory(a, b) { describe(a, () => { ... b(x) ... }); }`
