@@ -5316,6 +5316,7 @@ mod diagnostic_policy_tests {
 
     fn policy_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:pricing:42:predicate".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -6307,7 +6308,10 @@ mod diagnostic_policy_tests {
         // message names the current profile, so the agent can see it is not
         // "full".
         let outcome = seam_inventory_not_enabled_outcome(&LspAnalysisConfig::default());
-        let payload = outcome.status_payload(Some("snapshot:1"));
+        let payload = outcome.status_payload(
+            Some("snapshot:1"),
+            &crate::lsp::client_features::ClientFeatureProfile::unsupported(),
+        );
         if payload["state"].as_str() != Some("unavailable")
             || payload["kind"].as_str() != Some("seam_diagnostics_not_enabled")
         {
@@ -6342,7 +6346,10 @@ mod diagnostic_policy_tests {
             enable_seam_diagnostics: false,
             ..LspAnalysisConfig::default()
         };
-        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(Some("s:2"));
+        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(
+            Some("s:2"),
+            &crate::lsp::client_features::ClientFeatureProfile::unsupported(),
+        );
         let recovery = payload["recovery"].as_str().unwrap_or_default();
         if !recovery.contains("seam_diagnostics = true") {
             return Err(format!(
@@ -6358,7 +6365,10 @@ mod diagnostic_policy_tests {
             ..LspAnalysisConfig::default()
         };
         config.repo_config.languages.enabled = vec![LanguageId::TypeScript];
-        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(Some("s:3"));
+        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(
+            Some("s:3"),
+            &crate::lsp::client_features::ClientFeatureProfile::unsupported(),
+        );
         let recovery = payload["recovery"].as_str().unwrap_or_default();
         if !recovery.contains("rust") {
             return Err(format!(
@@ -6373,7 +6383,10 @@ mod diagnostic_policy_tests {
             session_options: Some(serde_json::json!({ "diagnosticProfile": "actionable" })),
             ..LspAnalysisConfig::default()
         };
-        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(Some("s:4"));
+        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(
+            Some("s:4"),
+            &crate::lsp::client_features::ClientFeatureProfile::unsupported(),
+        );
         let recovery = payload["recovery"].as_str().unwrap_or_default();
         if !recovery.contains("session setting") || !recovery.contains("ripr.diagnosticProfile") {
             return Err(format!(
@@ -6400,7 +6413,10 @@ mod diagnostic_policy_tests {
             session_options: Some(serde_json::json!({ "seamDiagnostics": false })),
             ..LspAnalysisConfig::default()
         };
-        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(Some("s:5"));
+        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(
+            Some("s:5"),
+            &crate::lsp::client_features::ClientFeatureProfile::unsupported(),
+        );
         let recovery = payload["recovery"].as_str().unwrap_or_default();
         if !recovery.contains("session setting") || !recovery.contains("ripr.seamDiagnostics") {
             return Err(format!(
@@ -6431,6 +6447,7 @@ mod lsp_next_step_parity_tests {
 
     fn complete_ts_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_discount.ts:typescript_preview:2396aec1".to_string(),
             canonical_gap: None,
             probe: Probe {

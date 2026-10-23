@@ -1,3 +1,4 @@
+use super::PythonFramework;
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::source_utils::normalized_path;
 use super::{
@@ -10,6 +11,11 @@ use std::path::{Path, PathBuf};
 
 #[cfg(test)]
 mod verify_command_tests;
+
+mod dunder_entries;
+pub(super) use dunder_entries::{
+    PythonClassFacts, apply_class_facts, operator_entry_in_text, with_entry,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PythonRelationKind {
@@ -314,7 +320,7 @@ pub(super) fn verify_command_for_test(test: &PythonTest) -> Option<String> {
 pub(super) fn verify_command_for_test_on(test: &PythonTest, windows: bool) -> Option<String> {
     let path = normalized_path(&test.file);
     match test.framework {
-        "pytest" => {
+        PythonFramework::Pytest => {
             let node = test.qualified_name.replace('.', "::");
             // #8752: the quoting grammar must match the host's default shell
             // or the suggested command fails for exactly the paths that need
@@ -333,7 +339,7 @@ pub(super) fn verify_command_for_test_on(test: &PythonTest, windows: bool) -> Op
                 crate::domain::PYTEST_VERIFY_PROGRAM
             ))
         }
-        "unittest" => {
+        PythonFramework::Unittest => {
             let module = unittest_module_for_path(&path)?;
             let selector = if windows {
                 shell_quote_file_arg_for_host(&format!("{module}.{}", test.qualified_name), true)?
@@ -346,7 +352,6 @@ pub(super) fn verify_command_for_test_on(test: &PythonTest, windows: bool) -> Op
             };
             Some(format!("python -m unittest {selector}"))
         }
-        _ => None,
     }
 }
 
@@ -432,7 +437,7 @@ pub(super) fn python_repair_placement_on(
         .nth(1)
         .map(|_| candidate.test.line);
     match candidate.test.framework {
-        "pytest" => {
+        PythonFramework::Pytest => {
             let node = candidate.test.qualified_name.replace('.', "::");
             let node_id = format!("{path}::{node}");
             Some(PythonRepairPlacement {
@@ -446,7 +451,7 @@ pub(super) fn python_repair_placement_on(
                 location_reason: "strengthen existing weak pytest relation",
             })
         }
-        "unittest" => Some(PythonRepairPlacement {
+        PythonFramework::Unittest => Some(PythonRepairPlacement {
             repair_action: "strengthen_existing_test",
             suggested_test_file: path,
             suggested_test_name: candidate.test.name.clone(),
@@ -456,7 +461,6 @@ pub(super) fn python_repair_placement_on(
             verify_command_confidence: "high",
             location_reason: "strengthen existing weak unittest relation",
         }),
-        _ => None,
     }
 }
 
@@ -863,6 +867,9 @@ pub(super) fn oracle_operand_protocol_entry(
     test: &PythonTest,
     owner: &PythonOwner,
 ) -> bool {
+    if operator_entry_in_text(text, test, owner) {
+        return true;
+    }
     let Some(depth) = oracle_operand_depth(text) else {
         return false;
     };
@@ -917,7 +924,7 @@ fn dunder_method_relation(
     if local_binding_calls_owner(test, owner) {
         return Some(PythonRelationKind::LocalBinding);
     }
-    if protocol_entry_in_body(test, owner) {
+    if protocol_entry_in_body(test, owner) || with_entry(test, owner).is_some() {
         return Some(PythonRelationKind::ProtocolEntryCall);
     }
     if test_constructs_class(test, owner, class) {
@@ -942,6 +949,14 @@ fn dunder_method_relation(
         return Some(PythonRelationKind::FixtureName);
     }
     None
+}
+
+/// Whether the test imports the owner's module, or anything from it or a
+/// package above it. Importing the module runs its top-level statements.
+pub(super) fn test_imports_owner_module(test: &PythonTest, owner: &PythonOwner) -> bool {
+    test.imports.iter().any(|import| {
+        imports_owner_module(import, owner) || module_contains_owner(&import.source_module, owner)
+    })
 }
 
 /// Whether the test references the owner's `class` through an import that

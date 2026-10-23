@@ -17,13 +17,19 @@ Start here:
   Changed behavior: amount >= FREE_SHIPPING
   Missing discriminator (1 of 2): No detected boundary input for the changed predicate
   Related test (1 of 2 matched rows): tests/pricing.rs:17 shipping_boundary
-  Next step: Trace the related test input through the local or computed operand, including
-    default/empty cases, to check whether the change matters. ripr.toml does not support
+  Next step: Open the related test and trace its input through the local or computed operand
+    (including default and empty cases) to see which side of the changed condition it exercises,
+    then name an input that would exercise the other side. ripr.toml does not support
     fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap.
     Compare the original and changed implementations with a focused run using the project's
     configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain
     unknown
   Evidence: reach yes · infection unknown · propagation yes · observation yes · discriminator not established
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: Related tests appear to reach shipping: shipping_boundary
     - infection unknown: Predicate compares against constant FREE_SHIPPING; ripr cannot see its value statically or match it to a related test input (a same-file integer const, a…
     - 10 more detail line(s) in --format human-full
@@ -31,7 +37,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/boundary_named_constant/input --diff <cwd>/fixtures/boundary_named_constant/diff.patch --mode fast probe:src_lib.rs:predicate:70700926
   ripr context --root <cwd>/fixtures/boundary_named_constant/input --diff <cwd>/fixtures/boundary_named_constant/diff.patch --mode fast --at probe:src_lib.rs:predicate:70700926
-  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:predicate:70700926 --root <cwd>/fixtures/boundary_named_constant/input` for the full gate's answer
+  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: boundary_value; incomplete evidence stage: activation); run `ripr repair probe:src_lib.rs:predicate:70700926 --root <cwd>/fixtures/boundary_named_constant/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/boundary_named_constant/input --at src/lib.rs:30 --kind predicate
 

@@ -1,0 +1,13 @@
+diff --git a/lib/Counter.pm b/lib/Counter.pm
+index c14d1c2..499bd92 100644
+--- a/lib/Counter.pm
++++ b/lib/Counter.pm
+@@ -11,7 +11,7 @@ sub new {
+ 
+ sub inc {
+     my ($self, $by) = @_;
+-    $self->{n} += $by;
++    $self->{n} = $self->{n} + $by;
+     return $self->{n};
+ }
+ 

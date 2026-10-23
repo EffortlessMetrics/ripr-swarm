@@ -7,7 +7,7 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Find static mutation-exposure gaps before expensive mutation testing"
+description = "Static check for Rust changes: does your test suite notice if the behavior in this diff were wrong?"
 readme = "README.md"
 keywords = ["mutation-testing", "testing", "rust", "static-analysis", "lsp"]
 categories = ["development-tools", "development-tools::testing"]
@@ -68,6 +68,9 @@ fs2 = "0.4"
 # Cargo's canonical safe resolver includes OS-home fallback and treats empty
 # CARGO_HOME as fallback; configuration identity must use the same premise (#7573).
 home = "=0.5.12"
+# Block-aware code ranges let comment prose preserve Markdown formatting while
+# neutralizing HTML/mentions outside actual code. No HTML renderer or CLI needed.
+pulldown-cmark = { version = "0.13.5", default-features = false }
 oxc_allocator = { version = "0.130", optional = true }
 oxc_ast = { version = "0.130", optional = true }
 oxc_parser = { version = "0.130", optional = true }

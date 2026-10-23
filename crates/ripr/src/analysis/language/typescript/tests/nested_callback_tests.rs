@@ -191,7 +191,7 @@ fn settings_finding(label: &str, test: &str, removed: &str) -> Result<Finding, S
 }
 
 /// `settings_finding` with another owner source and changed line.
-fn settings_finding_in(
+pub(super) fn settings_finding_in(
     label: &str,
     source: &str,
     line: (usize, &str),
@@ -970,4 +970,45 @@ fn multi_line_then_chain_reads_static_unknown_through_the_classifier() -> Result
     let finding = settings_finding("multi-line-other-chain", &untied, "  return cfg;")?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
     Ok(())
+}
+
+/// A `node:assert` call in a `.then` callback tied to the owner reads like
+/// `expect(...)` there; one that merely ends in `assert` or is a property
+/// access is not an assertion call (#9686).
+#[test]
+fn node_assert_in_an_owner_continuation_is_an_unmodeled_callback_assertion() {
+    let tied =
+        |body: &str| super::super::classifier::body_asserts_in_unmodeled_callback(body, "ready");
+    for (label, body) in [
+        (
+            "assert-dot",
+            "  ready(cfg).then((r) => {\n    assert.equal(r, 1);\n  });\n",
+        ),
+        (
+            "assert-call",
+            "  ready(cfg).then((r) => { assert(r === 1); });\n",
+        ),
+    ] {
+        assert!(tied(body), "{label}");
+    }
+    for (label, body) in [
+        (
+            "not-the-owner",
+            "  other(cfg).then((r) => { assert.equal(r, 1); });\n",
+        ),
+        (
+            "name-ends-in-assert",
+            "  ready(cfg).then((r) => { myassert.equal(r, 1); });\n",
+        ),
+        (
+            "member-of-assert-named-property",
+            "  ready(cfg).then((r) => { r.assert.equal(1); });\n",
+        ),
+        (
+            "no-callback-assertion",
+            "  ready(cfg).then((r) => { log(r); });\n",
+        ),
+    ] {
+        assert!(!tied(body), "{label}");
+    }
 }

@@ -149,7 +149,10 @@ mod tests {
                 std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
             }
             std::fs::create_dir(&root).map_err(|error| error.to_string())?;
-            Ok(Self(root))
+            // Production roots are canonical; Windows spells them `\\?\` (#9660).
+            Ok(Self(
+                root.canonicalize().map_err(|error| error.to_string())?,
+            ))
         }
         fn finish(self) -> Result<(), String> {
             std::fs::remove_dir_all(&self.0)
@@ -237,6 +240,28 @@ mod tests {
             "not a regular file",
         )?;
         fixture.finish()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn snapshot_refuses_a_symlink_that_resolves_outside_its_root() -> Result<(), String> {
+        let root = OwnedFiles::new()?;
+        let outside = OwnedFiles::new()?;
+        std::fs::write(outside.0.join("bytes"), b"1234").map_err(|error| error.to_string())?;
+        std::os::unix::fs::symlink(outside.0.join("bytes"), root.0.join("link"))
+            .map_err(|error| error.to_string())?;
+        match read_snapshot(&root.0, "link", 4) {
+            Err(error) if error.contains("custody input escapes its root: link") => {}
+            result => return Err(format!("expected escape refusal: {result:?}")),
+        }
+        // Control: the same bytes as a regular file inside the root are
+        // admitted. (An in-root symlink is refused earlier as not a regular file.)
+        std::fs::write(root.0.join("bytes"), b"1234").map_err(|error| error.to_string())?;
+        if read_snapshot(&root.0, "bytes", 4)? != b"1234" {
+            return Err("contained snapshot changed bytes".to_string());
+        }
+        root.finish()?;
+        outside.finish()
     }
 
     #[test]

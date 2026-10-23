@@ -99,9 +99,20 @@ fn finding_with_files(
 
 #[test]
 fn parser_only_decoys_cannot_supply_aggregation_discrimination() -> Result<(), String> {
-    let with = effect(SOURCE, DIFF, ".or_default()")?;
-    let without = SOURCE.replace_checked("assert_eq!(parse_note(&oriented), expected);", "let _ = parse_note(&oriented);").replace_checked("assert_eq!(\n            parse_note(&format!(\"{oriented} {MODULE_AMBIGUOUS_PARENT_NEXT_STEP}\")),\n            expected\n        );", "let _ = parse_note(&format!(\"{oriented} {MODULE_AMBIGUOUS_PARENT_NEXT_STEP}\"));");
-    assert_ne!(without, SOURCE);
+    // The retained `json!(format!(..))` at line 101 nests a macro inside
+    // `json!`, which execution admission (#8927, RIPR-SPEC-0197 MacroArgument)
+    // refuses file-wide, so on the verbatim file every assertion is refused and
+    // `with == control` would prove nothing about the decoys. Bind the value
+    // first on the same line (line numbers unchanged) so the real assertions are
+    // admitted and the decoy comparison is discriminating again.
+    let source = SOURCE.replace_checked(
+        "json!(format!(\"{:x}\", Sha256::digest(&bytes)))",
+        "{ let hex = format!(\"{:x}\", Sha256::digest(&bytes)); json!(hex) }",
+    );
+    let source = source.as_str();
+    let with = effect(source, DIFF, ".or_default()")?;
+    let without = source.replace_checked("assert_eq!(parse_note(&oriented), expected);", "let _ = parse_note(&oriented);").replace_checked("assert_eq!(\n            parse_note(&format!(\"{oriented} {MODULE_AMBIGUOUS_PARENT_NEXT_STEP}\")),\n            expected\n        );", "let _ = parse_note(&format!(\"{oriented} {MODULE_AMBIGUOUS_PARENT_NEXT_STEP}\"));");
+    assert_ne!(without, source);
     assert!(!without.contains("assert_eq!(parse_note(&oriented), expected);"));
     assert!(!without.contains("parse_note(&format!(\"{oriented} {MODULE_AMBIGUOUS_PARENT_NEXT_STEP}\")),\n            expected"));
     assert!(without.contains("parse_note(&oriented)"));
@@ -146,10 +157,34 @@ fn parser_only_decoys_cannot_supply_aggregation_discrimination() -> Result<(), S
     }
     assert_eq!(with["classification"], "weakly_exposed", "{with}");
     assert_eq!(with["ripr"]["discriminate"]["state"], "weak", "{with}");
-    assert_eq!(with["classification"], control["classification"]);
+    // The control drops the two parser-only equalities. The retained callers'
+    // own assertions stay refused (the `if`-branch aggregation assertion is not
+    // admitted), so without the decoys nothing is admitted at all
+    // (`reachable_unrevealed`, discriminate `no`). With them the finding may rise
+    // only to the unconfirmed-observation floor above (`weakly_exposed`, `weak`):
+    // a credited decoy would read `exposed`/`yes` and fail the assertions above.
     assert_eq!(
-        with["ripr"]["discriminate"]["state"],
-        control["ripr"]["discriminate"]["state"]
+        control["classification"], "reachable_unrevealed",
+        "{control}"
+    );
+    assert_eq!(control["ripr"]["discriminate"]["state"], "no", "{control}");
+    Ok(())
+}
+
+/// The verbatim retained module nests `format!` inside `json!` (line 101).
+/// Execution admission (#8927) refuses that file-wide, so the finding is
+/// `reachable_unrevealed` with no credit for any assertion, decoy or real.
+#[test]
+fn nested_macro_argument_refuses_every_assertion_in_the_retained_module() -> Result<(), String> {
+    let with = effect(SOURCE, DIFF, ".or_default()")?;
+    assert_eq!(with["classification"], "reachable_unrevealed", "{with}");
+    assert_eq!(with["ripr"]["discriminate"]["state"], "no", "{with}");
+    let rows = with["related_tests"]
+        .as_array()
+        .ok_or("missing related tests")?;
+    assert!(
+        rows.iter().all(|r| r["miss"] == "assertion_not_credited"),
+        "{with}"
     );
     Ok(())
 }
@@ -695,5 +730,182 @@ fn independent_token_observer_survives_implicit_refusal() -> Result<(), String> 
             );
         }
     }
+    Ok(())
+}
+
+#[test]
+fn competing_production_writes_cannot_supply_implicit_discrimination() -> Result<(), String> {
+    let reverse = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}").replace_checked(
+        "record(&self.sink);",
+        "record(&self.sink);\n        self.sink.borrow_mut().clear();\n        self.sink.borrow_mut().push(1);",
+    );
+    let macro_definition = "macro_rules! reset_sink { ($sink:expr) => {{ $sink.borrow_mut().clear(); $sink.borrow_mut().push(1); }}; }\n";
+    let mut hidden_dispatch_write = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}").replace_checked(
+        "record(&self.sink);",
+        "record(&self.sink);\n        reset_sink!(&self.sink);",
+    );
+    hidden_dispatch_write.insert_str(0, macro_definition);
+    let mut hidden_owner_write = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}").replace_checked(
+        "output.borrow_mut().push(1);",
+        "output.borrow_mut().push(1);\n    reset_sink!(output);",
+    );
+    hidden_owner_write.insert_str(0, macro_definition);
+    let destructor_write = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}")
+        + "\nimpl Drop for crate::Counter { fn drop(&mut self) { self.sink.borrow_mut().clear(); self.sink.borrow_mut().push(1); } }\n";
+    let aliased_destructor = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}")
+        + "\nuse std::ops::Drop as Finalizer;\nimpl Finalizer for Counter { fn drop(&mut self) { self.sink.borrow_mut().clear(); self.sink.borrow_mut().push(1); } }\n";
+    let aliased_dispatch_trait = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}").replace_checked(
+        "impl Iterator for Counter",
+        "impl std::iter::Iterator for Counter",
+    ) + "\nuse hostile_crate::Iterator;\nimpl Iterator for Counter { fn drop(&mut self) { self.sink.borrow_mut().clear(); self.sink.borrow_mut().push(1); } }\n";
+    let shadowed_core_trait = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}")
+        + "\nmod core { pub use hostile_crate::iter; }\nimpl core::iter::Iterator for Counter { fn drop(&mut self) { self.sink.borrow_mut().clear(); self.sink.borrow_mut().push(1); } }\n";
+    let imported_core_trait = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}")
+        + "\nuse hostile_crate::core;\nimpl core::iter::Iterator for Counter { fn drop(&mut self) { self.sink.borrow_mut().clear(); self.sink.borrow_mut().push(1); } }\n";
+    let macro_destructor_write = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}")
+        + "\nmacro_rules! install_drop { () => { impl Drop for Counter { fn drop(&mut self) { self.sink.borrow_mut().clear(); self.sink.borrow_mut().push(1); } } }; }\ninstall_drop!();\n";
+    let custom_derive = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}")
+        .replace_checked("struct Counter", "#[derive(CustomDrop)]\nstruct Counter");
+    let imported_builtin_derive = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}")
+        .replace_checked("use std::", "use hostile_macros::{Debug};\nuse std::");
+    let qualified_builtin_spelling =
+        format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}") + "\nother_macros::vec!();\n";
+    let grouped_macro_import = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}")
+        .replace_checked("use std::", "use hostile_macros::{vec};\nuse std::")
+        + "\nvec!();\n";
+    for source in [
+        reverse,
+        format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}").replace_checked(
+            "output.borrow_mut().push(1);",
+            "output.borrow_mut().push(1);\n    output.borrow_mut().clear();\n    output.borrow_mut().push(1);",
+        ),
+        hidden_dispatch_write,
+        hidden_owner_write,
+        destructor_write,
+        aliased_destructor,
+        aliased_dispatch_trait,
+        shadowed_core_trait,
+        imported_core_trait,
+        macro_destructor_write,
+        custom_derive,
+        imported_builtin_derive,
+        qualified_builtin_spelling,
+        grouped_macro_import,
+    ] {
+        for family in ["side_effect", "call_deletion"] {
+            let expression = "output.borrow_mut().push(1)";
+            let row = finding(&source, &changed_effect(&source, expression), expression, family)?;
+            // A hostile `vec` import makes the oracle's own `vec![..]` operand
+            // unresolvable, so execution admission (#8927) refuses the
+            // assertion outright (`no`, not credited) instead of leaving it
+            // an unconfirmed weak observer. Neither state credits the write.
+            let (state, miss) = if source.contains("use hostile_macros::{vec};") {
+                ("no", "assertion_not_credited")
+            } else {
+                ("weak", "observation_unconfirmed")
+            };
+            assert_eq!(row["ripr"]["discriminate"]["state"], state, "source={source}\n{row}");
+            assert!(row["related_tests"].as_array().ok_or("missing rows")?.iter().any(|r| r["name"] == "implicit_observer" && r["miss"] == miss), "{row}");
+        }
+    }
+    let cross_file_drop = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}") + "\nmod drop_impl;\n";
+    let expression = "output.borrow_mut().push(1)";
+    for family in ["side_effect", "call_deletion"] {
+        let row = finding_with_files(
+            &cross_file_drop,
+            &changed_effect(&cross_file_drop, expression),
+            expression,
+            family,
+            &[(
+                "src/sensors/ripr_limits/drop_impl.rs",
+                "impl Drop for super::Counter { fn drop(&mut self) { self.sink.borrow_mut().clear(); self.sink.borrow_mut().push(1); } }",
+            )],
+        )?;
+        assert_eq!(row["ripr"]["discriminate"]["state"], "weak", "{row}");
+    }
+    let source = ITERATOR_OBSERVER.replace_checked(
+        "self.sink.set(1);",
+        "self.sink.set(1);\n        self.sink.set(1);",
+    );
+    let expression = "self.sink.set(1)";
+    let row = finding(
+        &source,
+        &changed_effect(&source, expression),
+        expression,
+        "call_deletion",
+    )?;
+    assert_eq!(row["ripr"]["discriminate"]["state"], "weak", "{row}");
+    Ok(())
+}
+
+/// Runs the changed `self.sink.set(1)` effect through `source` and returns
+/// `(classification, discriminate state, implicit_observer miss)`.
+fn implicit_observer_verdict(source: &str) -> Result<(String, String, Option<String>), String> {
+    let expression = "self.sink.set(1)";
+    let row = finding(
+        source,
+        &changed_effect(source, expression),
+        expression,
+        "call_deletion",
+    )?;
+    let miss = row["related_tests"]
+        .as_array()
+        .ok_or("missing related tests")?
+        .iter()
+        .find(|r| r["name"] == "implicit_observer")
+        .ok_or_else(|| format!("implicit_observer row missing: {row}"))?["miss"]
+        .as_str()
+        .map(str::to_string);
+    Ok((
+        row["classification"].as_str().unwrap_or("").to_string(),
+        row["ripr"]["discriminate"]["state"]
+            .as_str()
+            .unwrap_or("")
+            .to_string(),
+        miss,
+    ))
+}
+
+// The inherent-shadow pair below is discriminating: the control (no inherent
+// method) is `exposed`/`yes` with no miss, and only an inherent method of the
+// same name on the same type withholds observer authority
+// (`OwnerReach::inherent_method_shadows`). Disabling that veto turns these
+// tests red; verified when they were added.
+
+#[test]
+fn inherent_next_shadowing_the_trait_method_does_not_witness_dispatch() -> Result<(), String> {
+    let control = implicit_observer_verdict(ITERATOR_OBSERVER)?;
+    assert_eq!(
+        control,
+        ("exposed".to_string(), "yes".to_string(), None),
+        "control must keep strong credit"
+    );
+    for inherent_body in ["None", "self.sink.set(1); None"] {
+        let source = format!(
+            "{ITERATOR_OBSERVER}\nimpl Counter {{ fn next(&mut self) -> Option<()> {{ {inherent_body} }} }}\n"
+        );
+        assert!(source.contains("impl Counter {"), "fixture construction");
+        let (class, state, miss) = implicit_observer_verdict(&source)?;
+        assert_eq!(class, "weakly_exposed", "{source}");
+        assert_eq!(state, "weak", "{source}");
+        assert_eq!(miss.as_deref(), Some("observation_unconfirmed"), "{source}");
+    }
+    Ok(())
+}
+
+#[test]
+fn inherent_add_shadowing_the_trait_method_does_not_witness_dispatch() -> Result<(), String> {
+    let control = implicit_observer_verdict(ADD_OBSERVER)?;
+    assert_eq!(
+        control,
+        ("exposed".to_string(), "yes".to_string(), None),
+        "control must keep strong credit"
+    );
+    let source = format!("{ADD_OBSERVER}\nimpl Counter {{ fn add(self, _: ()) {{}} }}\n");
+    assert!(source.contains("impl Counter {"), "fixture construction");
+    let (class, state, miss) = implicit_observer_verdict(&source)?;
+    assert_eq!(class, "weakly_exposed", "{source}");
+    assert_eq!(state, "weak", "{source}");
+    assert_eq!(miss.as_deref(), Some("observation_unconfirmed"), "{source}");
     Ok(())
 }

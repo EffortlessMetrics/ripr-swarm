@@ -101,7 +101,7 @@ pub(crate) fn perl_preview_card(finding: &Finding) -> Option<PerlPreviewCard> {
     let related_test = perl_suggested_related_test(finding)?;
     let suggested_test_location = format!(
         "{}::{}",
-        related_test.file.display().to_string().replace('\\', "/"),
+        crate::output::path::display_path(&related_test.file),
         related_test.name
     );
     let suggested_assertion = evidence_value(finding, "perl_suggested_assertion: ")?;
@@ -237,7 +237,7 @@ fn current_test_evidence(test: &RelatedTest) -> String {
         .unwrap_or_default();
     format!(
         "{}:{} {} currently has oracle_strength={}, oracle_kind={}{}",
-        test.file.display(),
+        crate::output::path::display_path(&test.file),
         test.line,
         test.name,
         test.oracle_strength.as_str(),
@@ -595,6 +595,7 @@ pub(crate) mod tests {
 
     pub(crate) fn sample_perl_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:lib_My_App_pm:8:perl_return".to_string(),
             canonical_gap: Some(FindingCanonicalGap {
                 id: "gap:perl:lib/My/App.pm:My::App::discount:return_value:exact_return_assertion:return_value"

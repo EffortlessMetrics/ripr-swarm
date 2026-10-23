@@ -118,7 +118,7 @@ fn timeout_json_retry_replays_as_json_from_a_foreign_directory() -> TestResult {
     let retry = document["next"]["retry_command"]
         .as_str()
         .ok_or("missing retry")?;
-    let words = super::shell_words::posix_words(retry)?;
+    let words = super::shell_words::printed_words(retry)?;
     assert_eq!(words.first().map(String::as_str), Some("ripr"));
     let mut second = probe_command(env!("CARGO_BIN_EXE_ripr"));
     second.current_dir(&foreign).args(words.iter().skip(1));

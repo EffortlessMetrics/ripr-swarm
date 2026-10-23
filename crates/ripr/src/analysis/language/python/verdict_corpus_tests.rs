@@ -2019,3 +2019,137 @@ fn star_import_fails_closed_when_another_binding_may_win_the_name() -> Result<()
     }
     Ok(())
 }
+
+const AREA: &str = "def area(a, b):\n    return b * a\n";
+const AREA_TABLE: &str = "import pytest\nfrom src.shop import area\n\n\n@pytest.mark.parametrize(\"a,b,want\", [(3, 7, 21)])\ndef test_area(a, b, want):\n    assert area(a, b) == want\n";
+
+#[test]
+fn reordered_factors_are_not_an_unvaried_table_operand() -> Result<(), String> {
+    // `a * b` -> `b * a` changes no value, so rows that agree on both sides
+    // say nothing about an operand the table fails to vary.
+    assert_eq!(
+        classify(AREA, 2, "    return a * b", AREA_TABLE)?,
+        ExposureClass::Exposed
+    );
+    // A sum reorders strings, so it keeps the unvaried-operand reading.
+    assert_ne!(
+        classify(
+            "def area(a, b):\n    return b + a\n",
+            2,
+            "    return a + b",
+            AREA_TABLE
+        )?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn a_changed_factor_still_reads_an_unvaried_table_operand() -> Result<(), String> {
+    // Row (3, 7): `a * b` and `b * 3` agree only because a is 3, so the table
+    // does not vary the changed operand and must not credit.
+    assert_ne!(
+        classify(
+            "def area(a, b):\n    return b * 3\n",
+            2,
+            "    return a * b",
+            AREA_TABLE
+        )?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+const SCALE: &str = "def scale(a, b):\n    return b * a\n";
+const SCALE_OLD: &str = "    return a * b";
+const SCALE_IMPORT: &str = "from src.shop import scale";
+
+fn scale_class(body: &str) -> Result<ExposureClass, String> {
+    classify(SCALE, 2, SCALE_OLD, &test_module(SCALE_IMPORT, body))
+}
+
+#[test]
+fn an_owner_called_in_a_lambda_over_unresolved_code_abstains() -> Result<(), String> {
+    assert_eq!(
+        scale_class(
+            "def must_equal(got, want):\n    assert got == want\n\n\ndef test_scale():\n    run(lambda: must_equal(scale(3, 7), 21))\n"
+        )?,
+        ExposureClass::StaticUnknown
+    );
+    // The same helper called directly, and an unassertive bare call, keep
+    // their ordinary readings: only a lambda hides the assertion.
+    assert_ne!(
+        scale_class("def test_scale():\n    scale(3, 7)\n")?,
+        ExposureClass::StaticUnknown
+    );
+    // An unrelated lambda, a sort key, and a lambda inside a string do not
+    // hide an assertion, even beside unresolved code.
+    for body in [
+        "def test_scale(client):\n    f = lambda: 0; scale(3, 7)\n",
+        "def test_scale(client):\n    sorted(xs, key=lambda x: scale(x, 2))\n",
+        "def test_scale(client):\n    note = \"lambda: \"; scale(3, 7)\n",
+    ] {
+        assert_ne!(scale_class(body)?, ExposureClass::StaticUnknown, "{body}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_reorder_beside_a_sibling_edit_is_not_a_pure_reorder() -> Result<(), String> {
+    let owner = "def area(a, b, c):\n    return b * a, d\n";
+    let table = "import pytest\nfrom src.shop import area\n\n\n@pytest.mark.parametrize(\"a,b,c,want\", [(3, 7, 1, (21, 1))])\ndef test_area(a, b, c, want):\n    assert area(a, b, c) == want\n";
+    assert_ne!(
+        classify(owner, 2, "    return a * b, c", table)?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+const ROUTE_OWNER: &str = "from flask import Flask\n\napp = Flask(__name__)\n\n\n@app.route(\"/b\")\ndef f():\n    return 1\n";
+
+#[test]
+fn a_route_decorator_edit_needs_a_client_call_to_the_route() -> Result<(), String> {
+    let direct = "from src.shop import f\n\n\ndef test_f():\n    assert f() == 1\n";
+    assert_eq!(
+        classify(ROUTE_OWNER, 6, "@app.route(\"/a\")", direct)?,
+        ExposureClass::StaticUnknown
+    );
+    // A body edit on the same handler keeps its ordinary reading.
+    assert_eq!(
+        classify(ROUTE_OWNER, 8, "    return 2", direct)?,
+        ExposureClass::Exposed
+    );
+    let client = "def test_f(client):\n    assert client.get(\"/b\").json == 1\n";
+    assert_ne!(
+        classify(ROUTE_OWNER, 6, "@app.route(\"/a\")", client)?,
+        ExposureClass::StaticUnknown
+    );
+    Ok(())
+}
+
+#[test]
+fn a_decorator_argument_edit_abstains_through_the_diff_path() -> Result<(), String> {
+    // Stacked and multi-line decorators route to the decorated function, so
+    // its decorator-indirection limit applies (#9756).
+    let test = "from src.shop import flaky\n\n\ndef test_flaky():\n    assert flaky() == 1\n";
+    for (owner, line, old) in [
+        ("@retry(2)\ndef flaky():\n    return 1\n", 1, "@retry(3)"),
+        (
+            "@cache\n@retry(2)\ndef flaky():\n    return 1\n",
+            2,
+            "@retry(3)",
+        ),
+        (
+            "@retry(\n    2,\n)\ndef flaky():\n    return 1\n",
+            2,
+            "    3,",
+        ),
+    ] {
+        assert_eq!(
+            classify(owner, line, old, test)?,
+            ExposureClass::StaticUnknown,
+            "{owner}"
+        );
+    }
+    Ok(())
+}
