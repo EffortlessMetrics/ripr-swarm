@@ -324,3 +324,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_adversarial_same_method_other_type (26)
+
+Reason:
+RIPR-SPEC-0108: regenerated after merging origin/main over the #9169 name-token demotion; wording from main's #9373/#9244 legend, no class change beyond #9169
+
+Command:
+`cargo xtask goldens bless rust_adversarial_same_method_other_type --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

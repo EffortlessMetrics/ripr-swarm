@@ -37,3 +37,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — unreached_workspace_trait_impl_borrows_no_oracle (4)
+
+Reason:
+RIPR-SPEC-0108: regenerated after merging origin/main over the #9169 name-token demotion; wording from main's #9373/#9244 legend, no class change beyond #9169
+
+Command:
+`cargo xtask goldens bless unreached_workspace_trait_impl_borrows_no_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

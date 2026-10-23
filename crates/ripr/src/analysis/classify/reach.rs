@@ -209,8 +209,8 @@ impl UnseenReachNames {
             .iter()
             .filter_map(|(path, file)| {
                 let imported: HashSet<String> = foreign_imported_names(&file.source)
-                    .filter(|name| workspace_traits.contains(*name))
-                    .map(str::to_string)
+                    .into_iter()
+                    .filter(|name| workspace_traits.contains(name))
                     .collect();
                 (!imported.is_empty()).then(|| (path.clone(), imported))
             })
@@ -338,10 +338,11 @@ fn workspace_trait_names(index: &RustIndex) -> HashSet<String> {
 fn implements_workspace_trait(owner: &FunctionSummary, index: &RustIndex) -> bool {
     matches!(owner.item.container, FunctionContainer::TraitImpl { .. })
         && implements_trait_in(owner, &workspace_trait_names(index), &|name| {
-            index
-                .files()
-                .get(&owner.file)
-                .is_some_and(|file| foreign_imported_names(&file.source).any(|n| n == name))
+            index.files().get(&owner.file).is_some_and(|file| {
+                foreign_imported_names(&file.source)
+                    .iter()
+                    .any(|n| n == name)
+            })
         })
 }
 
@@ -378,32 +379,76 @@ fn implements_trait_in(
 
 /// Each identifier of every `use` item whose path starts outside the
 /// workspace (not `crate`, `self` or `super`), so a name imported from
-/// `std::ops` or a dependency shows up here.
-fn foreign_imported_names(source: &str) -> impl Iterator<Item = &str> {
-    let mut statements = Vec::new();
-    let mut rest = source;
-    while let Some(at) = rest.find("use ") {
-        let boundary = rest[..at]
+/// `std::ops` or a dependency shows up here. Comments are masked first and
+/// any whitespace may follow `use`; a `use` inside another word (`reuse`,
+/// `because use`) advances only past the matched keyword.
+fn foreign_imported_names(source: &str) -> Vec<String> {
+    let masked = mask_comments(source);
+    let is_ident = |c: char| c.is_alphanumeric() || c == '_';
+    let mut names = Vec::new();
+    let mut from = 0;
+    while let Some(found) = masked[from..].find("use") {
+        let at = from + found;
+        from = at + 3;
+        let keyword = masked[..at]
             .chars()
             .next_back()
-            .is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
-        let after = &rest[at + 4..];
-        let end = after.find(';').unwrap_or(after.len());
-        if boundary {
-            let body = after[..end].trim_start();
-            let root = body
-                .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .is_none_or(|c| !is_ident(c))
+            && masked[from..]
+                .chars()
                 .next()
-                .unwrap_or("");
-            if !matches!(root, "crate" | "self" | "super") {
-                statements.push(&after[..end]);
-            }
+                .is_some_and(char::is_whitespace);
+        if !keyword {
+            continue;
         }
-        rest = &after[end..];
+        let end = masked[from..]
+            .find(';')
+            .map_or(masked.len(), |semicolon| from + semicolon);
+        let body = masked[from..end].trim_start();
+        let root = body.split(|c: char| !is_ident(c)).next().unwrap_or("");
+        if !matches!(root, "crate" | "self" | "super") {
+            names.extend(identifiers_outside_fn_definition(body).map(str::to_string));
+        }
+        from = end;
     }
-    statements
-        .into_iter()
-        .flat_map(identifiers_outside_fn_definition)
+    names
+}
+
+/// `source` with every line and block comment replaced by spaces (newlines
+/// kept), so keyword scans never read commented-out code.
+fn mask_comments(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    let mut chars = source.chars().peekable();
+    let mut block_depth = 0usize;
+    while let Some(c) = chars.next() {
+        let next = chars.peek().copied();
+        if block_depth > 0 {
+            if c == '*' && next == Some('/') {
+                chars.next();
+                block_depth -= 1;
+                out.push_str("  ");
+            } else if c == '/' && next == Some('*') {
+                chars.next();
+                block_depth += 1;
+                out.push_str("  ");
+            } else {
+                out.push(if c == '\n' { '\n' } else { ' ' });
+            }
+        } else if c == '/' && next == Some('/') {
+            while chars.peek().is_some_and(|&c| c != '\n') {
+                chars.next();
+                out.push(' ');
+            }
+            out.push(' ');
+        } else if c == '/' && next == Some('*') {
+            chars.next();
+            block_depth = 1;
+            out.push_str("  ");
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// Parser-backed owner ids carry their impl segment
@@ -939,6 +984,25 @@ mod tests {
         assert!(names.may_reach_unseen(&imported_std));
         assert!(owner_may_be_reached_unseen(&lookalike, &index));
         assert!(names.may_reach_unseen(&lookalike));
+    }
+
+    /// #9169 review: the `use` scan reads items, not text. A word ending in
+    /// `use` before a real import, a newline after `use`, and a commented-out
+    /// import all resolve like the plain `use std::ops::Add;`.
+    #[test]
+    fn foreign_imports_are_read_from_use_items_not_from_text() {
+        let imports = |source: &str| foreign_imported_names(source).contains(&"Add".to_string());
+        assert!(imports("use std::ops::Add;\n"));
+        assert!(imports("// because the trait\nuse std::ops::Add;\n"));
+        assert!(imports("fn reuse() {}\nuse std::ops::Add;\n"));
+        assert!(imports("use\nstd::ops::Add;\n"));
+        assert!(imports("pub  use\tstd::ops::Add;\n"));
+        assert!(!imports("// use std::ops::Add;\nfn f() {}\n"));
+        assert!(!imports("/* use std::ops::Add; */ fn f() {}\n"));
+        assert!(!imports("use crate::Add;\n"));
+        assert!(!imports("use crates_x::Sub;\n"));
+        // A foreign import after a commented one still counts.
+        assert!(imports("/* use crate::Add; */ use std::ops::Add;\n"));
     }
 
     /// #9169 review: dropping the trait allowance keeps the ordinary ones. A

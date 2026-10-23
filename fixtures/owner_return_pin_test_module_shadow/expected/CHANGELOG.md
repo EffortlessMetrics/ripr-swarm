@@ -192,3 +192,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — owner_return_pin_test_module_shadow (16)
+
+Reason:
+RIPR-SPEC-0108: regenerated after merging origin/main over the #9169 name-token demotion; wording from main's #9373/#9244 legend, no class change beyond #9169
+
+Command:
+`cargo xtask goldens bless owner_return_pin_test_module_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -20,3 +20,16 @@ rebind; the weak heuristic relation is unchanged.
 Re-bless `expected/human.txt` after merging main (#9657): the default human report
 now prints the five-line Evidence stage and state legend after Evidence. Only
 those five lines are added; classification, stages and evidence are unchanged.
+
+## Pending — python_protocol_entry_bracketed_rebind_no_exposed_credit (2)
+
+Reason:
+RIPR-SPEC-0122: regenerate human.txt for main's bounded evidence legend wording (#9244); landed stale on main when #9207 and #9244 merged; formatting only, no class change
+
+Command:
+`cargo xtask goldens bless python_protocol_entry_bracketed_rebind_no_exposed_credit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
