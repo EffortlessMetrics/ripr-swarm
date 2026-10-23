@@ -1718,7 +1718,19 @@ mod tests {
             "a".repeat(n),
             "b".repeat(n)
         );
-        let removed = changed.replacen('a', "c", 1);
+        // Edit the first byte of the first long argument, not the `a` in `apply`.
+        let payload_at = changed
+            .find("f(\"a")
+            .map(|at| at + "f(\"".len())
+            .ok_or("fixture lost the first long argument")?;
+        let mut removed = changed.clone();
+        removed.replace_range(payload_at..=payload_at, "c");
+        if removed == changed
+            || removed.replace("(\"c", "(\"a") != changed
+            || !removed.contains("pub fn apply")
+        {
+            return Err("removed line must differ from changed only in the payload".to_string());
+        }
         let path = PathBuf::from("src/lib.rs");
         std::fs::write(root.join(&path), &changed).map_err(|err| err.to_string())?;
         let index = crate::analysis::facts::build_index(&root, std::slice::from_ref(&path))?;
