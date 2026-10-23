@@ -1433,7 +1433,8 @@ fn module_value_use_relation(
                 && !local_identifier_declared_in_test_body(body, &import.local);
         }
         import.imported.as_deref().is_some_and(|imported| {
-            imported == owner.name || (imported == "default" && owner.exported_as_default)
+            (imported == owner.name && !owner.commonjs_default_export)
+                || (imported == "default" && owner.exported_as_default)
         }) && !local_identifier_declared_in_test_body(body, &import.local)
             && contains_identifier_reference(body, &import.local)
     })
@@ -2545,7 +2546,9 @@ fn test_references_owner(
             return false;
         }
         if import.namespace {
-            return contains_member_reference(body, &import.local, &owner.name);
+            // `k.triple` is a property of a CommonJS function export, not it.
+            return !owner.commonjs_default_export
+                && contains_member_reference(body, &import.local, &owner.name);
         }
         // Same default-export rule as `import_references_owner_call` (#4103):
         // a default import binds the owner only when the owner is the
@@ -3048,7 +3051,8 @@ fn import_references_owner_call(
             && !test.written_locals_in_file.contains(&import.local);
     }
     if import.namespace {
-        return contains_member_call_name(body_text, &import.local, &owner.name);
+        return !owner.commonjs_default_export
+            && contains_member_call_name(body_text, &import.local, &owner.name);
     }
     // RIPR-SPEC-0243 rule 5: a default import of a module whose `export
     // default { name }` object holds the owner reaches it as
@@ -3068,7 +3072,8 @@ fn import_references_owner_call(
     // local when the owner IS that default export. An anonymous default
     // already matches via `owner.name == "default"`.
     import.imported.as_deref().is_some_and(|imported| {
-        imported == owner.name || (imported == "default" && owner.exported_as_default)
+        (imported == owner.name && !owner.commonjs_default_export)
+            || (imported == "default" && owner.exported_as_default)
     }) && contains_call_name(body_text, &import.local)
         // Shadow guard (#4102): the same test-body declaration guard the
         // alias arm applies — a locally re-declared `local` reaches the

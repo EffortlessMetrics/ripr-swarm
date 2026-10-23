@@ -569,9 +569,17 @@ fn mark_commonjs_default_binding(
 ) {
     // One file-level gate for the inline (`module.exports = function ...`)
     // and the declared (`module.exports = name;`) forms.
-    let code = super::tests_extract::byte_preserving_code_mask(program.source_text)
-        .filter(|code| commonjs_default_gate(code));
-    let Some(code) = code else {
+    // The gate must hold on both the regex-aware mask and the division-only
+    // mask, so a `/` misread (`t! / 2`, `a = {} / 2`) cannot hide code.
+    let source = program.source_text;
+    let both = super::tests_extract::byte_preserving_code_mask(source)
+        .filter(|code| commonjs_default_gate(code))
+        .zip(
+            super::tests_extract::byte_preserving_division_mask(source)
+                .filter(|code| commonjs_default_gate(code)),
+        )
+        .filter(|_| !names_the_module_object_in_text(source));
+    let Some((code, division_code)) = both else {
         for owner in owners.iter_mut() {
             owner.commonjs_default_export = false;
         }
@@ -610,13 +618,17 @@ fn mark_commonjs_default_binding(
         })
         .count();
     // Annex B: a block-level `function name` re-binds the top-level function.
-    let spellings = super::tests_extract::function_declaration_names(&code)
-        .iter()
-        .filter(|(declared, _)| declared == name)
-        .count();
+    let spellings = |text: &str| {
+        super::tests_extract::function_declaration_names(text)
+            .iter()
+            .filter(|(declared, _)| declared == name)
+            .count()
+    };
     if declarations != 1
-        || spellings != 1
+        || spellings(&code) != 1
+        || spellings(&division_code) != 1
         || super::tests_extract::identifier_written_strictly(&code, name)
+        || super::tests_extract::identifier_written_strictly(&division_code, name)
     {
         return;
     }
@@ -629,6 +641,27 @@ fn mark_commonjs_default_binding(
             owner.commonjs_default_export = true;
         }
     }
+}
+
+/// `true` when `needle` occurs as a bare word (not a member name, not part of
+/// a longer word) whose following text `allowed` rejects.
+fn bare_word_use(compact: &str, needle: &str, allowed: impl Fn(&str) -> bool) -> bool {
+    let word = |ch: Option<char>| {
+        ch.is_some_and(|ch| ch == '_' || ch == '$' || ch.is_alphanumeric() || !ch.is_ascii())
+    };
+    compact.match_indices(needle).any(|(at, _)| {
+        let before = compact[..at].chars().next_back();
+        let rest = &compact[at + needle.len()..];
+        !(word(before) || word(rest.chars().next()) || before == Some('.')) && !allowed(rest)
+    })
+}
+
+/// The module object named in a string, which the masks blank:
+/// `require('module')._cache`, `'node:module'`.
+fn names_the_module_object_in_text(source: &str) -> bool {
+    ["'module'", "\"module\"", "`module`", "node:module"]
+        .iter()
+        .any(|spelling| source.contains(spelling))
 }
 
 /// The file-level proof that `module.exports` holds one statically known
@@ -676,6 +709,15 @@ fn commonjs_default_gate(code: &str) -> bool {
     if ["require.main", "require.cache", "mainModule"]
         .iter()
         .any(|reach| compact.contains(reach))
+    {
+        return false;
+    }
+    // Other routes to the module object that never name `module`:
+    // `arguments[2]`, `require['main']`, an alias of `require`, and bracket
+    // access on `process`.
+    if bare_word_use(&compact, "arguments", |_| false)
+        || bare_word_use(&compact, "require", |rest| rest.starts_with('('))
+        || compact.contains("process[")
     {
         return false;
     }

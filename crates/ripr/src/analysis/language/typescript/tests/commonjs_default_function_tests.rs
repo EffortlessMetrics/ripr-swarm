@@ -397,3 +397,84 @@ fn a_string_or_comment_mentioning_module_keeps_the_gate_open() -> Result<(), Str
     }
     Ok(())
 }
+
+#[test]
+fn the_masker_reads_postfix_division_and_regex_literals() {
+    use crate::analysis::language::typescript::classifier::{
+        ts_mask_literals_and_comments, ts_mask_literals_and_comments_division_only,
+    };
+    for same in [
+        "x = y++ / 2 / 3; z = 1;",
+        "i++ / 2; module.exports = 0;",
+        "i-- / 2; module.exports = 0;",
+    ] {
+        assert_eq!(ts_mask_literals_and_comments(same), same);
+    }
+    assert_eq!(
+        ts_mask_literals_and_comments("return /re/.test(s)"),
+        "return /  /.test(s)"
+    );
+    assert_eq!(ts_mask_literals_and_comments("i+++/x/"), "i+++/ /");
+    // Where the regex heuristic is wrong, the division-only mask still shows
+    // the code.
+    for hidden in [
+        "let n = t! / 2; module.exports = 0;",
+        "let a = {} / 2; module.exports = 0;",
+        "var of = 4; var q = of / 2; module.exports = 0;",
+    ] {
+        assert!(
+            ts_mask_literals_and_comments_division_only(hidden).contains("module.exports = 0"),
+            "{hidden}"
+        );
+    }
+}
+
+#[test]
+fn masker_misreads_cannot_hide_a_module_write() -> Result<(), String> {
+    for (label, tail) in [
+        ("brace-division", "let a = {} / 2; module.exports = 0;\n"),
+        ("of-division", "var of = 4; var q = of / 2; module.exports = 0;\n"),
+        ("arguments", "arguments[2].exports = 0;\n"),
+        ("require-bracket", "require['main'].exports = 0;\n"),
+        ("process-bracket", "process['mainModule'].exports = 0;\n"),
+        ("require-alias", "const r = require;\nr.main.exports = 0;\n"),
+        ("module-cache", "require('module')._cache[__filename].exports = 0;\n"),
+    ] {
+        for (form, head) in [("inline", ANONYMOUS), ("declared", DECLARED)] {
+            refused(&format!("cjs-{form}-{label}"), &format!("{head}{tail}"))?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn member_and_named_imports_of_a_function_export_do_not_reach_it() -> Result<(), String> {
+    let owner = "module.exports = function triple(x) {\n  // triple\n  return x * 3;\n};\n";
+    for test_source in [
+        "const { triple } = require('../src/k.js');\n\ntest('triples', () => {\n  expect(triple(2)).toBe(6);\n});\n",
+        "const k = require('../src/k.js');\n\ntest('triples', () => {\n  expect(k.triple(2)).toBe(6);\n});\n",
+    ] {
+        let class = class_for("cjs-member-import", owner, test_source)?;
+        assert_eq!(class, ExposureClass::NoStaticPath, "{test_source}");
+    }
+    Ok(())
+}
+
+#[test]
+fn rebound_test_bindings_through_grouped_or_global_targets_are_not_credited() -> Result<(), String> {
+    for tail in ["(f) = (x) => x * 3;", "globalThis.f = (x) => x * 3;"] {
+        let test_source = format!(
+            "let f = require('../src/k.js');\n{tail}\n\ntest('triples', () => {{\n  expect(f(2)).toBe(6);\n}});\n"
+        );
+        let class = class_for("cjs-rebound-grouped", ANONYMOUS, &test_source)?;
+        assert_eq!(class, ExposureClass::NoStaticPath, "{tail}");
+    }
+    use crate::analysis::language::typescript::tests_extract::strict_identifier_writes;
+    for write in ["f! = g;", "(f as any) = g;", "(f) = g;", "globalThis.f = g;"] {
+        assert!(
+            strict_identifier_writes(write).iter().any(|(name, _)| name == "f"),
+            "{write}"
+        );
+    }
+    Ok(())
+}

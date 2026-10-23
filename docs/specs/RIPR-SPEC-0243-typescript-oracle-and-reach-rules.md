@@ -204,7 +204,13 @@ declared with `let`/`var` that the test file writes again is not a
 a namespace object, not a call. Files that read the module object
 another way are refused on purpose: `require.main === module`, UMD
 `typeof module` guards, `require.main.exports`, `require.cache` and
-`process.mainModule` all make `module.exports` unknowable.
+`process.mainModule` all make `module.exports` unknowable, as do
+`arguments`, a `require` that is not called directly (`const r = require`,
+`require['main']`), bracket access on `process` and the string `'module'`.
+The gate must hold on two masks, the regex-aware one and a division-only one,
+so a `/` the regex heuristic misreads (`t! / 2`, `a = {} / 2`) cannot hide a
+write. A named import or member of a function export (`const { triple } =
+require(...)`, `k.triple`) is a property of the function, not the owner.
 
 **Rule 13. A called suite factory is its expansion (2026-10-20).** A
 top-level `function factory(a, b) { describe(a, () => { ... b(x) ... }); }`

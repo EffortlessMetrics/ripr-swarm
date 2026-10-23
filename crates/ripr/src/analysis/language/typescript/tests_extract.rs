@@ -2117,7 +2117,7 @@ fn assigned_identifier_names(text: &str) -> Vec<String> {
 /// Names `text` writes at least twice: a declaration initializer counts as
 /// one write, so a second one is a reassignment, update or loop target.
 fn rewritten_identifier_names(text: &str) -> Vec<String> {
-    let writes = identifier_writes(text);
+    let writes = strict_identifier_writes(text);
     let mut names: Vec<String> = Vec::new();
     for (name, _) in &writes {
         if !names.contains(name) && writes.iter().filter(|(other, _)| other == name).count() > 1 {
@@ -2989,7 +2989,21 @@ pub(crate) fn test_from_statement<'s, 'a>(
 /// Unicode literals. Expand only its spaces back to the original byte widths
 /// before comparing identifier offsets with parser spans.
 pub(super) fn byte_preserving_code_mask(source: &str) -> Option<String> {
-    let masked = super::classifier::ts_mask_literals_and_comments(source);
+    byte_preserving_mask_of(
+        source,
+        super::classifier::ts_mask_literals_and_comments(source),
+    )
+}
+
+/// [`byte_preserving_code_mask`] over the division-only mask.
+pub(super) fn byte_preserving_division_mask(source: &str) -> Option<String> {
+    byte_preserving_mask_of(
+        source,
+        super::classifier::ts_mask_literals_and_comments_division_only(source),
+    )
+}
+
+fn byte_preserving_mask_of(source: &str, masked: String) -> Option<String> {
     if source.chars().count() != masked.chars().count() {
         return None;
     }
