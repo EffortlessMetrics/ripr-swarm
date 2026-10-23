@@ -130,3 +130,16 @@ Source-only reviewed edit; no native fixture or goldens-bless command executed b
 
 Updated:
 - `expected/human.txt`
+
+## Pending — match_arm_shadowed_assert (11)
+
+Reason:
+RIPR-SPEC-0122: a head-only match-arm after row tells the reader to open the arm at its head line to read the new body (#9244)
+
+Command:
+`cargo xtask goldens bless match_arm_shadowed_assert --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
