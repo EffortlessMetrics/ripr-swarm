@@ -28,7 +28,7 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Complete propagation witness reaches error variant: Result::Err(QueueError::Closed)
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
   - local flow reaches error variant: Result::Err(QueueError::Closed) (line 11)
   - related test src/lib.rs:18 single uses strong exact value oracle: assert_eq!(s.next().unwrap().name, "a"); misses: no assertion pins `QueueError::Closed`
   - source assertion argument value "a" at line 18

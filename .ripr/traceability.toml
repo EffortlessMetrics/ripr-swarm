@@ -9911,6 +9911,7 @@ id = "RIPR-SPEC-0122"
 name = "bounded human check output"
 spec = "docs/specs/RIPR-SPEC-0122-bounded-human-check-output.md"
 tests = [
+  "crates/ripr/src/analysis/classify/decision.rs::tests::infection_unknown_next_step_names_a_concrete_action",
   "crates/ripr/src/output/human.rs::tests::human_evidence_spells_the_unconfirmed_observation_in_words",
   "crates/ripr/src/output/human.rs::tests::shared_evidence_rows_spell_the_unconfirmed_observation_in_words",
   "crates/ripr/src/output/human.rs::tests::plain_observation_wording_handles_each_producer_form",
