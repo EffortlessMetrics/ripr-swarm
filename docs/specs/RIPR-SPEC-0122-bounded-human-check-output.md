@@ -184,7 +184,8 @@ not execution or test adequacy. `weak` means partial evidence across the stages,
 and `no` means evidence was not found, never that a behavior is impossible.
 The final two lines define the words the `Summary:` count line prints (probe,
 exposed, weak, unrevealed, no path) in the same static vocabulary (#9244 item 4);
-they claim no runtime mutation outcome.
+the `unknown` count is already defined by the `States` line (`unknown/opaque =
+analysis limited`). They claim no runtime mutation outcome.
 No legend renders when there is no selected digest (empty, all-suppressed,
 base-side-only, or unresolved-currentness-only findings). The legend adds a fixed
 seven lines; it does not expand the per-stage detail window. Full human and
