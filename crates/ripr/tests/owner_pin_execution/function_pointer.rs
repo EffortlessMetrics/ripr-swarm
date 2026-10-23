@@ -681,6 +681,7 @@ fn function_pointer_constant_readers_relate_without_promoting() -> Result<(), St
     for (body, reads_constant) in [("x + LIMIT", true), ("x + 4", false)] {
         let scratch = Scratch::create()?;
         std::fs::create_dir(scratch.0.join("src")).map_err(|error| error.to_string())?;
+        std::fs::create_dir(scratch.0.join("tests")).map_err(|error| error.to_string())?;
         std::fs::write(
             scratch.0.join("Cargo.toml"),
             "[package]\nname = \"pointer-const-reader\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n",
@@ -688,9 +689,14 @@ fn function_pointer_constant_readers_relate_without_promoting() -> Result<(), St
         .map_err(|error| error.to_string())?;
         std::fs::write(
             scratch.0.join("src/lib.rs"),
-            format!(
-                "pub const LIMIT: u32 = 4;\npub fn score(x: u32) -> u32 {{ {body} }}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn pointer_const_case() {{\n        let f: fn(u32) -> u32 = score;\n        assert_eq!(f(2), 6);\n    }}\n}}\n"
-            ),
+            format!("pub const LIMIT: u32 = 4;\npub fn score(x: u32) -> u32 {{ {body} }}\n"),
+        )
+        .map_err(|error| error.to_string())?;
+        // Neither file proximity nor a changed-line token in the test name
+        // may supply the relation these controls exercise.
+        std::fs::write(
+            scratch.0.join("tests/reader.rs"),
+            "use pointer_const_reader::score;\n#[test]\nfn checks_score() {\n    let f: fn(u32) -> u32 = score;\n    assert_eq!(f(2), 6);\n}\n",
         )
         .map_err(|error| error.to_string())?;
         std::fs::write(
@@ -732,11 +738,15 @@ fn function_pointer_constant_readers_relate_without_promoting() -> Result<(), St
             finding
                 .related_tests
                 .iter()
-                .any(|test| test.name == "pointer_const_case"),
+                .any(|test| test.name == "checks_score"),
             reads_constant,
             "{body}: {finding:?}"
         );
         if reads_constant {
+            assert_eq!(
+                finding.related_tests[0].relation_reason,
+                Some(ripr::domain::RelationReason::DirectOwnerCall)
+            );
             assert_eq!(finding.ripr.reach.state, ripr::domain::StageState::Weak);
             assert_eq!(
                 finding.ripr.reveal.observe.state,

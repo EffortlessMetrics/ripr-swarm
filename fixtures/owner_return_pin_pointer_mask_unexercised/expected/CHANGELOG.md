@@ -27,3 +27,19 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_pointer_mask_unexercised (3)
+
+Reason:
+RIPR-SPEC-0122 and RIPR-SPEC-0197: Preserve the accepted Summary count-term legend
+(#10004, #9244 item 4) in the seven pointer-owned bounded human snapshots. Exact
+mainad1e3bb7 and pointer9342d1d5 native producers each emit these two lines on all seven
+inputs. Only that accepted legend is added; check JSON, source inputs, diffs,
+nonpromotion assertions and classifications are unchanged (#9478).
+
+Command:
+`cargo xtask goldens bless owner_return_pin_pointer_mask_unexercised --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
