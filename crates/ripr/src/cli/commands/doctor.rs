@@ -730,14 +730,14 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
     } else {
         cache.cache_dir.clone()
     };
-    if !cache.relocated_by_env && !root.is_dir() {
-        // The default cache lives under the missing root; a ✓ would claim
-        // a usable cache for a root that does not exist.
-        let reason = if root.exists() {
-            "the root is not a directory"
-        } else {
-            "the root directory does not exist"
-        };
+    let cache_skip_reason = if cache.relocated_by_env {
+        None
+    } else {
+        output::doctor::root_unusable_skip_reason(root)
+    };
+    if let Some(reason) = cache_skip_reason {
+        // The default cache lives under the unusable root; a ✓ would claim
+        // a usable cache for a root that cannot hold one.
         lines.push(format!("- Cache check skipped: {reason}"));
     } else {
         lines.push(format!(
