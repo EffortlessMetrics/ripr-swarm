@@ -110,7 +110,10 @@ pub(crate) struct SeamCardBinding {
 pub(crate) fn repair_card_resource_id(uri: &str) -> Option<&str> {
     uri.strip_prefix("ripr://repair-card/")
         .map(super::gaps::trim_one_trailing_slash)
-        .filter(|id| !id.is_empty())
+        // A residual trailing slash means the URI carried more than one —
+        // that id does not exist. Canonical ids embed workspace-relative
+        // paths, so only the trailing position is rejected.
+        .filter(|id| !id.is_empty() && !id.ends_with('/'))
 }
 
 /// Changed-file scope for the card inventory, in the inventory's own

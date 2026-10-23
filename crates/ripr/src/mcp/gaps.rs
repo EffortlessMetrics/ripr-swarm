@@ -565,7 +565,11 @@ pub(crate) fn trim_one_trailing_slash(id: &str) -> &str {
 pub(crate) fn gap_resource_id(uri: &str) -> Option<&str> {
     uri.strip_prefix("ripr://gap/")
         .map(trim_one_trailing_slash)
-        .filter(|id| !id.is_empty())
+        // A residual trailing slash means the URI carried more than one —
+        // that id does not exist, so the route misses rather than
+        // normalizing a second slash away. Gap ids embed workspace-relative
+        // paths, so only the trailing position is rejected.
+        .filter(|id| !id.is_empty() && !id.ends_with('/'))
 }
 
 /// Extract the snapshot id from a `ripr://snapshot/{id}` resource URI.
