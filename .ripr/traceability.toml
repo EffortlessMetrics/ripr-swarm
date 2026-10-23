@@ -3119,6 +3119,16 @@ id = "RIPR-SPEC-0025"
 name = "PR inline comment publisher"
 spec = "docs/specs/RIPR-SPEC-0025-pr-inline-comment-publisher.md"
 tests = [
+  "crates/ripr/src/output/pr_inline_comment_publish_plan.rs::context_transition_regression::given_html_then_indented_code_when_neutralized_then_code_does_not_become_live_prose",
+  "crates/ripr/src/output/pr_inline_comment_publish_plan.rs::context_transition_regression::given_blank_before_indented_code_when_neutralized_then_literal_code_is_preserved",
+  "crates/ripr/src/output/pr_inline_comment_publish_plan.rs::given_block_boundaries_when_comment_prose_is_rendered_then_html_stays_literal",
+  "crates/ripr/src/output/pr_inline_comment_publish_plan.rs::given_intentional_markdown_when_comment_prose_is_rendered_then_formatting_is_preserved",
+  "crates/ripr/src/output/pr_inline_comment_publish_plan.rs::given_link_destinations_when_comment_prose_is_rendered_then_link_values_are_preserved",
+  "crates/ripr/src/output/markdown.rs::given_link_destinations_when_prose_is_neutralized_then_values_are_preserved",
+  "crates/ripr/src/output/markdown.rs::given_link_labels_when_prose_is_neutralized_then_only_visible_text_is_escaped",
+  "crates/ripr/src/output/markdown.rs::given_reference_code_labels_when_neutralized_then_links_still_resolve",
+  "crates/ripr/src/output/markdown.rs::given_reference_label_prose_when_neutralized_then_matching_and_safety_hold",
+  "crates/ripr/src/output/markdown.rs::given_reference_images_when_code_labels_are_preserved_then_existing_images_still_resolve",
   "crates/ripr/src/output/pr_inline_comment_publish_plan.rs::inline_comment_publish_plan_matches_fixture_corpus",
   "crates/ripr/src/output/pr_inline_comment_publish_plan.rs::inline_comment_body_prefers_gap_repair_card",
   "crates/ripr/src/output/pr_inline_comment_publish_plan.rs::inline_comment_publish_plan_blocks_missing_dedupe_and_placement",
@@ -3161,6 +3171,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/output/pr_inline_comment_publish_plan.rs",
+  "crates/ripr/src/output/markdown.rs",
   "crates/ripr/src/output/mod.rs",
   "crates/ripr/src/cli/command.rs",
   "crates/ripr/src/cli/commands.rs",
@@ -5326,6 +5337,10 @@ id = "RIPR-SPEC-0051"
 name = "First successful PR UX"
 spec = "docs/specs/RIPR-SPEC-0051-first-successful-pr-ux.md"
 tests = [
+  "crates/ripr/src/output/ci_summary/tests.rs::given_ci_summary_why_markup_when_rendered_then_one_literal_span",
+  "crates/ripr/src/output/ci_summary/tests.rs::given_changed_behavior_delimiters_when_rendered_then_one_literal_code_span",
+  "crates/ripr/src/output/ci_summary/tests.rs::given_changed_behavior_fallback_when_rendered_then_delimiters_stay_literal",
+  "crates/ripr/src/output/json/mod.rs::tests::given_source_controls_when_rendered_then_json_round_trips_and_text_spells_controls",
   "crates/ripr/src/output/first_pr.rs::tests::preflight_recovery_commands_pair_shell_forms_for_apostrophe_root_and_refs",
   "crates/ripr/src/output/first_pr.rs::tests::preflight_diff_failure_carries_the_same_shell_recovery_steps",
   "crates/ripr/src/output/first_pr/preflight.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults",
@@ -5385,6 +5400,7 @@ fixtures = [
 code = [
   "crates/ripr/src/output/markdown.rs",
   "crates/ripr/src/output/first_pr.rs",
+  "crates/ripr/src/output/ci_summary.rs",
   "crates/ripr/src/output/first_pr/freshness.rs",
   "crates/ripr/src/output/first_pr/options.rs",
   "crates/ripr/src/output/first_pr/validation.rs",
@@ -9282,6 +9298,7 @@ id = "RIPR-SPEC-0134"
 name = "repair artifact provenance"
 spec = "docs/specs/RIPR-SPEC-0134-repair-artifact-provenance.md"
 tests = [
+  "crates/ripr/src/agent/artifact.rs::tests::untracked_rust_sources_make_the_worktree_dirty",
   "crates/ripr/tests/cli_smoke/workflow_directory.rs::relative_custom_workflow_directory_keeps_native_producer_and_receipt_identity",
   "crates/ripr/tests/cli_smoke/workflow_directory.rs::absolute_custom_workflow_directory_keeps_native_producer_and_receipt_identity",
   "crates/ripr/tests/cli_smoke/receipt_recovery_root.rs::missing_relative_workflow_verify_hint_runs_in_native_root_from_foreign_cwd",
@@ -9912,6 +9929,10 @@ name = "bounded human check output"
 spec = "docs/specs/RIPR-SPEC-0122-bounded-human-check-output.md"
 tests = [
   "crates/ripr/src/analysis/classify/decision.rs::tests::infection_unknown_next_step_names_a_concrete_action",
+  "crates/ripr/src/output/human.rs::tests::render_finding_marks_a_match_arm_head_only_after_row",
+  "crates/ripr/src/output/human.rs::tests::render_finding_adds_no_arm_note_when_the_after_row_is_complete",
+  "crates/ripr/src/output/human.rs::tests::render_finding_arm_note_ignores_arrows_in_literals_and_comments",
+  "crates/ripr/tests/cli_smoke.rs::check_human_full_marks_head_only_match_arm_after_row",
   "crates/ripr/src/output/human.rs::tests::human_evidence_spells_the_unconfirmed_observation_in_words",
   "crates/ripr/src/output/human.rs::tests::shared_evidence_rows_spell_the_unconfirmed_observation_in_words",
   "crates/ripr/src/output/human.rs::tests::plain_observation_wording_handles_each_producer_form",
@@ -9952,6 +9973,11 @@ tests = [
   "crates/ripr/src/output/human.rs::tests::digest_next_step_keeps_the_remedy_clause",
   "crates/ripr/src/output/human.rs::tests::digest_next_step_line_counts_its_label_against_the_budget",
   "crates/ripr/src/output/human.rs::tests::digest_names_all_five_stage_states_and_keeps_the_remainder_disclosure",
+  "crates/ripr/src/output/human.rs::tests::bounded_evidence_legend_explains_stages_and_states_once",
+  "crates/ripr/src/output/human.rs::tests::bounded_evidence_legend_observation_does_not_claim_changed_arm_execution",
+  "crates/ripr/src/output/human.rs::tests::bounded_evidence_legend_observation_allows_relation_only_preview",
+  "crates/ripr/src/output/human.rs::tests::bounded_evidence_legend_keeps_empty_full_and_json_surfaces",
+  "crates/ripr/tests/cli_smoke/discarded_matches.rs::bounded_legend_capture_projection_is_exact_and_preserves_evidence",
   "crates/ripr/src/output/human.rs::tests::digest_compact_discriminator_token_mirrors_the_full_evidence_line",
   "crates/ripr/src/output/human.rs::tests::human_output_glosses_stop_reasons",
   "crates/ripr/src/domain/probe.rs::tests::stop_reason_glosses_are_clean_prose",
@@ -14289,6 +14315,7 @@ name = "Installed TypeScript journey fixture"
 spec = "docs/specs/RIPR-SPEC-0210-installed-typescript-journey-fixture.md"
 tests = [
   "crates/ripr/tests/cli_smoke.rs::agent_receipt_attempt_flag_selects_one_attempt_and_refusals_name_ids",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::typescript_literal_threshold_packet_is_complete_and_controls_fail_closed",
   "xtask/src/fixture_contracts/general_validators.rs::installed_typescript_fixture_tests::committed_installed_typescript_manifest_binds_the_snapshot_bytes",
   "xtask/src/fixture_contracts/general_validators.rs::installed_typescript_fixture_tests::committed_installed_typescript_scenarios_exist_in_the_executor_corpus",
   "xtask/src/fixture_contracts/general_validators.rs::installed_typescript_fixture_tests::unknown_installed_typescript_scenario_is_reported_missing",
@@ -14313,6 +14340,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/tests/cli_smoke.rs",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs",
   "xtask/src/fixture_contracts/general_validators.rs",
   "xtask/src/fixture_contracts/installed_journey.rs",
   "xtask/src/blind_journey_execute.rs",
@@ -14396,6 +14424,7 @@ tests = [
   "crates/ripr/src/mcp/workspace.rs::tests::fitting_listing_ships_whole_with_a_closed_page_window",
   "crates/ripr/src/mcp/server_tests.rs::list_gaps_accepts_offset_and_limit_at_the_dispatch_edge",
   "crates/ripr/tests/mcp_stdio.rs::optional_tool_arguments_reject_null_and_recover_over_stdio",
+  "crates/ripr/tests/mcp_stdio.rs::catalog_list_cursors_fail_closed_over_stdio",
   "crates/ripr/tests/mcp_sdk.rs",
   "crates/ripr/tests/mcp_stdio.rs::gap_tools_fail_closed_before_the_first_refresh",
   "crates/ripr/tests/mcp_stdio.rs::unavailable_workspace_evidence_names_restart_before_any_refresh",
@@ -17993,6 +18022,7 @@ tests = [
   "crates/ripr/src/lsp/tests.rs::execute_command_collect_context_returns_packet_for_known_finding",
   "crates/ripr/tests/cli_smoke.rs::check_explain_and_context_replay_from_a_checkout_path_with_space_and_apostrophe",
   "crates/ripr/tests/cli_smoke.rs::context_json_missing_artifact_emits_refusal_envelope",
+  "crates/ripr/src/cli/commands/context.rs::tests::terminal_stdout_note_frames_json_only_for_an_interactive_stdout",
   "crates/ripr/src/mcp/gaps.rs::tests::one_finding_renders_one_location_string_on_every_surface_under_default_config",
 ]
 fixtures = []

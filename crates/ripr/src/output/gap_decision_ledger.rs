@@ -72,7 +72,7 @@ pub(crate) struct GapDecisionLedgerReport {
     /// Why the writer could not derive a stamp (for example the input carried
     /// none). Editor consumers then report `unverifiable_subject`.
     source_subject_unavailable: Option<&'static str>,
-    records: Vec<GapRecord>,
+    pub(crate) records: Vec<GapRecord>,
     warnings: Vec<String>,
     limits: Vec<String>,
 }
@@ -2267,7 +2267,18 @@ fn gap_record_from_python_no_repair_card_finding(
         return None;
     }
     let static_limit_kind = PYTHON_REPAIR_CARD_UNAVAILABLE_STATIC_LIMIT_KIND;
-    let reason = if first_missing_discriminator_value(finding).is_none() {
+    // #5531: the finding JSON serializes the typed scope only for repo
+    // (`"analysis_scope": "repo"`); that, not placement, is why no card exists.
+    let repo_reason = (string_at(finding, &["analysis_scope"]) == Some("repo"))
+        .then(|| {
+            crate::domain::language_capability::repo_mode_no_repair_routing_reason(
+                crate::domain::LanguageId::Python,
+            )
+        })
+        .flatten();
+    let reason = if let Some(repo_reason) = repo_reason.as_deref() {
+        repo_reason
+    } else if first_missing_discriminator_value(finding).is_none() {
         "static evidence names no concrete missing discriminator"
     } else {
         "its test placement or related-test evidence is incomplete"
@@ -5447,6 +5458,44 @@ mod tests {
             )
         );
         assert!(records[0].repair_route.is_none());
+        Ok(())
+    }
+
+    // #5531: a repo-scoped finding (typed `analysis_scope: "repo"` in the check
+    // JSON) is held by the missing repo-mode repair_routing cell, so the record
+    // names the scope instead of placement. The same finding without the typed
+    // scope (diff mode) keeps the placement reason.
+    #[test]
+    fn check_output_python_no_repair_card_repo_scope_names_scope_not_placement()
+    -> Result<(), String> {
+        for with_discriminator in [false, true] {
+            let mut payload: Value = serde_json::from_str(&python_no_repair_card_check_output())
+                .map_err(|error| format!("parse fixture check output: {error}"))?;
+            let findings = payload["findings"]
+                .as_array_mut()
+                .ok_or_else(|| "findings missing".to_string())?;
+            for finding in findings
+                .iter_mut()
+                .filter(|finding| finding["classification"] == "weakly_exposed")
+            {
+                assert!(finding.get("analysis_scope").is_none(), "diff control");
+                if with_discriminator {
+                    finding["missing_discriminators"] =
+                        serde_json::json!([{"value": "amount == discount_threshold"}]);
+                }
+                finding["analysis_scope"] = Value::from("repo");
+            }
+            let report = check_output_ledger(payload.to_string());
+            let records = python_no_repair_card_records(&report);
+            assert_eq!(records.len(), 1, "{:?}", report.records);
+            assert_eq!(
+                records[0].static_limit_detail.as_deref(),
+                Some(
+                    "this Python preview finding has no repair card (repo-mode findings have no repair routing (python/any/repo/repair_routing is not_proven)), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`"
+                )
+            );
+            assert!(records[0].repair_route.is_none());
+        }
         Ok(())
     }
 

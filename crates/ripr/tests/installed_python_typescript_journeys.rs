@@ -411,6 +411,17 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
         "Status selects no next command",
         "status terminates after pilot",
     )?;
+    // #9103: the pilot/status route does not cycle. Status names the route back
+    // to `ripr check` (which printed the gap-bound start above) and offers no
+    // `ripr pilot` command, so pilot -> status -> pilot cannot recur.
+    need(
+        &status,
+        "pilot_routed_to_check_no_repair_target",
+        "status names why it selects no command",
+    )?;
+    if status.contains("ripr pilot --root") && !status.contains("ripr check --root") {
+        return Err(format!("status cycled back to pilot:\n{status}"));
+    }
     decoy_untouched(&decoy)?;
 
     // An unknown gap id is refused and leaves no attempt or gap artifact.
@@ -749,6 +760,51 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
                 return Err(format!("{variant} left an attempt behind:\n{start}"));
             }
             decoy_untouched(&vdecoy)?;
+            // The committed scripted row retains the product's verbatim
+            // diagnostics: the `Safe next action:` line of `check` and the
+            // `agent repair --gap-id` refusal line, for this exact gap.
+            let row_id = format!(
+                "installed_typescript_{}_variant_unresolved",
+                variant.trim_start_matches("variant-").replace('-', "_")
+            );
+            let corpus: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(
+                    Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("../../fixtures/blind_journey_execute/corpus.json"),
+                )
+                .map_err(|error| format!("corpus: {error}"))?,
+            )
+            .map_err(|error| format!("corpus json: {error}"))?;
+            let row = corpus["scenarios"]
+                .as_array()
+                .and_then(|rows| rows.iter().find(|row| row["id"] == row_id.as_str()))
+                .ok_or_else(|| format!("no scripted row {row_id}"))?;
+            let recorded = |subject: &str, field: &str| -> Result<String, String> {
+                row["journey"]["actions"]
+                    .as_array()
+                    .and_then(|actions| actions.iter().find(|a| a["subject"] == subject))
+                    .and_then(|a| a[field].as_str())
+                    .map(str::to_string)
+                    .ok_or_else(|| format!("{row_id}: no {subject} {field}"))
+            };
+            let recorded_check = recorded("ripr check", "output_bytes")?;
+            if !out.lines().any(|line| line.trim() == recorded_check) {
+                return Err(format!(
+                    "{row_id}: scripted check line differs from product output:\n{recorded_check}\n--- actual:\n{out}"
+                ));
+            }
+            let recorded_before = recorded("ripr agent repair before", "output_bytes")?;
+            if !start.lines().any(|line| line == recorded_before) {
+                return Err(format!(
+                    "{row_id}: scripted refusal differs from product output:\n{recorded_before}\n--- actual:\n{start}"
+                ));
+            }
+            let recorded_input = recorded("ripr agent repair before", "input_bytes")?;
+            if !recorded_input.contains(&format!("--gap-id {variant_gap} ")) {
+                return Err(format!(
+                    "{row_id}: scripted start names another gap than {variant_gap}: {recorded_input}"
+                ));
+            }
         } else if !projected {
             return Err(format!(
                 "{variant} now fails closed; flip its row to true (#9107):\n{out}"

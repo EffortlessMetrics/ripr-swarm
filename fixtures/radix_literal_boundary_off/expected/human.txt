@@ -19,6 +19,11 @@ Start here:
   Related test: tests/big.rs:4 small_is_not_big (no test input reaches `n == 0xFF`)
   Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
   Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator missing
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: Related tests appear to reach is_big: small_is_not_big
     - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
     - 7 more detail line(s) in --format human-full

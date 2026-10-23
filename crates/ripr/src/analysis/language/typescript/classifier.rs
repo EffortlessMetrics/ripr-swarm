@@ -854,7 +854,26 @@ fn ts_mask_typeof_consumed_owner_names(
 /// expected (at the start, or after an operator or opening punctuation);
 /// elsewhere it is division.
 pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
-    ts_mask_with(text, true)
+    let prepared = super::literal_mask::prepare(text, None);
+    ts_mask_lexically(
+        &prepared.code,
+        !prepared.regex_known,
+        &prepared.operand_ends,
+    )
+}
+
+/// Preserve the parser's syntax kind: identical bytes can mean JSX code in
+/// `.tsx` and a type assertion followed by a regex literal in `.ts`.
+pub(crate) fn ts_mask_literals_and_comments_for_source_type(
+    text: &str,
+    source_type: SourceType,
+) -> String {
+    let prepared = super::literal_mask::prepare(text, Some(source_type));
+    ts_mask_lexically(
+        &prepared.code,
+        !prepared.regex_known,
+        &prepared.operand_ends,
+    )
 }
 
 /// [`ts_mask_literals_and_comments`] with every `/` read as division, so a
@@ -862,10 +881,22 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
 /// runs on this mask. A real regex literal holding a quote can misread the rest
 /// of its line here; callers require agreement of both masks.
 pub(crate) fn ts_mask_literals_and_comments_division_only(text: &str) -> String {
-    ts_mask_with(text, false)
+    ts_mask_lexically(text, false, &std::collections::BTreeSet::new())
 }
 
-fn ts_mask_with(text: &str, regex_allowed: bool) -> String {
+fn ts_mask_lexically(
+    text: &str,
+    regex_allowed: bool,
+    operand_ends: &std::collections::BTreeSet<usize>,
+) -> String {
+    fn next_char(
+        chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+        offset: &mut usize,
+    ) -> Option<char> {
+        let c = chars.next()?;
+        *offset += c.len_utf8();
+        Some(c)
+    }
     #[derive(Clone, Copy)]
     enum Mode {
         Code,
@@ -945,16 +976,10 @@ fn ts_mask_with(text: &str, regex_allowed: bool) -> String {
     let mut op_after_operand = false;
     // One entry per open `${`: the brace depth inside that interpolation.
     let mut interpolations: Vec<usize> = Vec::new();
-    // One entry per open `(`: whether it heads an `if`/`while`/`for`/`with`.
-    // A `/` right after that header's `)` starts a statement, so it is a
-    // regex (`if (n) /`/.test(s)`), never a division.
-    let mut paren_headers: Vec<bool> = Vec::new();
-    let mut header_close = false;
-    // Open JSX elements seen (`<tag` or `<>` where an operand is expected),
-    // so a glued `</` can be told from a comparison against a regex.
-    let mut jsx_depth = 0usize;
     let mut chars = text.chars().peekable();
-    while let Some(c) = chars.next() {
+    let mut source_offset = 0usize;
+    while let Some(c) = next_char(&mut chars, &mut source_offset) {
+        let at = source_offset - c.len_utf8();
         if let Mode::RegexFlags = mode {
             if c.is_ascii_alphabetic() {
                 out.push(' ');
@@ -977,37 +1002,18 @@ fn ts_mask_with(text: &str, regex_allowed: bool) -> String {
                         out.push(c);
                     }
                     '/' if chars.peek() == Some(&'/') => {
-                        chars.next();
+                        next_char(&mut chars, &mut source_offset);
                         mode = Mode::LineComment;
                         out.push_str("  ");
                     }
                     '/' if chars.peek() == Some(&'*') => {
-                        chars.next();
+                        next_char(&mut chars, &mut source_offset);
                         mode = Mode::BlockComment;
                         out.push_str("  ");
                     }
-                    // `</div>`: inside an open JSX element a `/` glued to a `<`
-                    // closes it, so it is not a regex start (#9936). Outside
-                    // one, `n</x/.test(s)` still reads as a comparison.
-                    '/' if jsx_depth > 0
-                        && prev == Some('<')
-                        && !after_space
-                        && chars.peek().is_some_and(|n| n.is_alphabetic() || *n == '>') =>
-                    {
-                        jsx_depth -= 1;
-                        out.push(c);
-                    }
-                    // A self-closing `<br/>` ends the element it opened.
-                    '/' if jsx_depth > 0
-                        && prev.is_some_and(is_word_char)
-                        && chars.peek() == Some(&'>') =>
-                    {
-                        jsx_depth -= 1;
-                        out.push(c);
-                    }
                     '/' if regex_allowed
                         && !postfix_op
-                        && (header_close || operand_expected(prev, &word, word_after_dot)) =>
+                        && operand_expected(prev, &word, word_after_dot) =>
                     {
                         mode = Mode::Regex { in_class: false };
                         out.push(c);
@@ -1047,23 +1053,6 @@ fn ts_mask_with(text: &str, regex_allowed: bool) -> String {
                         postfix_op = false;
                     }
                 }
-                if c == '(' {
-                    paren_headers.push(
-                        !word_after_dot && matches!(word.as_str(), "if" | "while" | "for" | "with"),
-                    );
-                }
-                header_close = if c == ')' {
-                    paren_headers.pop() == Some(true)
-                } else {
-                    header_close && c.is_whitespace()
-                };
-                if c == '<'
-                    && !prev.is_some_and(is_word_char)
-                    && (prev.is_none() || operand_expected(prev, &word, word_after_dot))
-                    && chars.peek().is_some_and(|n| n.is_alphabetic() || *n == '>')
-                {
-                    jsx_depth += 1;
-                }
                 if is_word_char(c) {
                     // Whitespace ends a word: `x as` is two words.
                     if !prev.is_some_and(is_word_char) || after_space {
@@ -1090,7 +1079,7 @@ fn ts_mask_with(text: &str, regex_allowed: bool) -> String {
             }
             Mode::Quote(quote) => {
                 if c == '\\' {
-                    chars.next();
+                    next_char(&mut chars, &mut source_offset);
                     out.push_str("  ");
                 } else if c == quote || c == '\n' {
                     mode = Mode::Code;
@@ -1102,14 +1091,14 @@ fn ts_mask_with(text: &str, regex_allowed: bool) -> String {
             }
             Mode::Template => {
                 if c == '\\' {
-                    chars.next();
+                    next_char(&mut chars, &mut source_offset);
                     out.push_str("  ");
                 } else if c == '`' {
                     mode = Mode::Code;
                     prev = Some(c);
                     out.push(c);
                 } else if c == '$' && chars.peek() == Some(&'{') {
-                    chars.next();
+                    next_char(&mut chars, &mut source_offset);
                     interpolations.push(0);
                     mode = Mode::Code;
                     prev = Some('{');
@@ -1120,7 +1109,7 @@ fn ts_mask_with(text: &str, regex_allowed: bool) -> String {
             }
             Mode::Regex { in_class } => {
                 if c == '\\' {
-                    chars.next();
+                    next_char(&mut chars, &mut source_offset);
                     out.push_str("  ");
                 } else if c == '\n' {
                     mode = Mode::Code;
@@ -1151,13 +1140,23 @@ fn ts_mask_with(text: &str, regex_allowed: bool) -> String {
             }
             Mode::BlockComment => {
                 if c == '*' && chars.peek() == Some(&'/') {
-                    chars.next();
+                    next_char(&mut chars, &mut source_offset);
                     mode = Mode::Code;
                     out.push_str("  ");
                 } else {
                     out.push(' ');
                 }
             }
+        }
+        if operand_ends.contains(&at) {
+            mode = Mode::Code;
+            prev = Some(')');
+            word.clear();
+            word_after_dot = false;
+            after_space = false;
+            dots = 0;
+            postfix_op = false;
+            op_after_operand = false;
         }
     }
     out
@@ -5830,7 +5829,9 @@ pub(crate) fn classify_change_with_alias_state(
             &owner.name,
             &owner.params,
             owner.start_line,
-            module_source.as_deref(),
+            module_source
+                .as_deref()
+                .map(|source| (source, source_type_for(&owner.file))),
         );
         mock_facts.admit_spy_files(
             related_candidates
