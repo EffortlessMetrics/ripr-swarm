@@ -1,4 +1,5 @@
 mod module_extraction;
+mod warm_entrypoint;
 
 use super::related_tests::context::*;
 use super::related_tests::*;

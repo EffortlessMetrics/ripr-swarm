@@ -161,6 +161,7 @@ time so a rise shows.
 | Task | Use ripr to | Start here |
 | --- | --- | --- |
 | Review a change | Inspect possible assertion gaps and the evidence behind them. | [CLI quickstart](docs/QUICKSTART.md#cli-first-hour) |
+| Analyze a Python change (preview) | Auto-enable the preview from project markers, inspect the advisory boundary gap, and follow the printed pytest/unittest route. | [Python first hour](docs/QUICKSTART.md#python-first-hour-preview) |
 | Write a focused test | Prepare a supported repair, edit the test yourself or with an agent, and compare the static evidence afterward. | [Repair a gap](docs/QUICKSTART.md#agent-or-reviewer-first-hour) |
 | Work in VS Code | Inspect saved-workspace diagnostics, open a related test, and copy a test brief. | [Editor quickstart](docs/QUICKSTART.md#vs-code-first-hour) |
 | Review in GitHub | Run `ripr init --ci github` to generate an advisory PR workflow with a summary and downloadable evidence. | [CI quickstart](docs/QUICKSTART.md#ci-first-hour) |
@@ -240,7 +241,7 @@ a promise that every surface is available from the published package.
 | Language | Current scope |
 | --- | --- |
 | Rust | Static analysis and bounded test-only repair are `usable alpha`. Repairs require a valid route; ordinary real-repository route yield and success remain unestablished. |
-| Python | Analysis is `preview`. Selected pytest/unittest repair routes are `usable alpha`; a finding without a complete route has no repair card. |
+| Python | Analysis is `preview`. Selected pytest/unittest repair routes are `usable alpha`; a finding without a complete route has no repair card. The [Python first hour](docs/QUICKSTART.md#python-first-hour-preview) quickstart covers the marker-based auto-enable, the `check`/`pilot` flow, and the preview caveat. |
 | TypeScript / JavaScript | `preview` analysis, auto-enabled for detected TypeScript projects when no `ripr.toml` exists (opt out with `enabled = ["rust"]`). When a finding has a complete repair packet, `check` names the test file, the missing case, and the test command to run. |
 | Perl | `preview` / advisory development only. It needs a `lang-perl` build and the unpublished `perl-ripr-facts` exporter (build it from `crates/perl-ripr-facts` in `EffortlessMetrics/perl-lsp` with `cargo build --release -p perl-ripr-facts`, put it on `PATH`, and set `[languages] enabled = ["perl"]` plus `[perl] producer = "perl-ripr-facts"`); no released build/exporter combination is usable yet. |
 
