@@ -3,7 +3,10 @@
 
 use super::PythonOwner;
 use super::source_utils::SourceText;
+use rustpython_parser::ast::{self, ExprContext, Fold, Ranged};
+use rustpython_parser::text_size::TextRange;
 use rustpython_parser::{Mode, Tok, lexer::lex};
+use std::path::Path;
 
 /// Last significant byte on each physical prefix line. Interior string lines
 /// and comment-only lines have no entry. Unknown execution/binding syntax
@@ -157,7 +160,6 @@ fn binding_operator(token: &Tok) -> bool {
 /// unknown receiver withholds new guard credit. Dynamic helper effects remain
 /// outside this bounded reader, as for the existing direct-write path.
 pub(super) fn field_retained_after(source: &str, start: usize, end: usize, attr: &str) -> bool {
-    let mut tokens = Vec::new();
     for result in lex(source, Mode::Module) {
         let Ok((token, range)) = result else {
             return false;
@@ -170,7 +172,6 @@ pub(super) fn field_retained_after(source: &str, start: usize, end: usize, attr:
             continue;
         }
         match &token {
-            Tok::Del => return false,
             Tok::Name { name }
                 if !name.is_ascii() || matches!(name.as_str(), "setattr" | "delattr") =>
             {
@@ -179,14 +180,81 @@ pub(super) fn field_retained_after(source: &str, start: usize, end: usize, attr:
             Tok::String { kind, .. } if kind.is_any_fstring() => return false,
             _ => {}
         }
-        tokens.push(token);
     }
-    !tokens.iter().enumerate().any(|(index, token)| {
-        matches!(token, Tok::Name { name } if name == attr)
-            && index > 0
-            && matches!(tokens[index - 1], Tok::Dot)
-            && target_is_written(&tokens[index + 1..])
-    })
+    let Ok(module) = super::source_facts::parse_module_result(Path::new("<guard-channel>"), source)
+    else {
+        return false;
+    };
+    FieldStores { start, end, attr }.fold_mod(module).is_ok()
+}
+
+/// Native target contexts distinguish writes from reads in a dictionary, slice,
+/// truthiness condition or keyword call. They also include loop/comprehension
+/// targets, which can replace the field without an assignment operator.
+struct FieldStores<'a> {
+    start: usize,
+    end: usize,
+    attr: &'a str,
+}
+
+impl Fold<TextRange> for FieldStores<'_> {
+    type TargetU = TextRange;
+    type Error = ();
+    type UserContext = ();
+
+    fn will_map_user(&mut self, _: &TextRange) {}
+
+    fn map_user(&mut self, range: TextRange, _: ()) -> Result<TextRange, ()> {
+        Ok(range)
+    }
+
+    fn fold_stmt(&mut self, node: ast::Stmt) -> Result<ast::Stmt, ()> {
+        let value = match &node {
+            ast::Stmt::Assign(statement) => Some(statement.value.as_ref()),
+            ast::Stmt::AugAssign(statement) => Some(statement.value.as_ref()),
+            ast::Stmt::AnnAssign(statement) => statement.value.as_deref(),
+            _ => None,
+        };
+        let previous_start = self.start;
+        if value.is_some_and(|value| {
+            usize::from(value.range().start()) <= self.start
+                && self.start < usize::from(value.range().end())
+        }) {
+            // Assignment stores after its RHS call. Include its target even
+            // when spelled before that call, without including an earlier
+            // semicolon-separated setup statement on the same physical line.
+            self.start = usize::from(node.range().start());
+        }
+        let result = ast::fold::fold_stmt(self, node);
+        self.start = previous_start;
+        result
+    }
+
+    fn fold_expr_attribute(&mut self, node: ast::ExprAttribute) -> Result<ast::ExprAttribute, ()> {
+        let offset = usize::from(node.range.start());
+        if offset >= self.start
+            && offset < self.end
+            && node.attr.as_str() == self.attr
+            && matches!(node.ctx, ExprContext::Store | ExprContext::Del)
+        {
+            return Err(());
+        }
+        ast::fold::fold_expr_attribute(self, node)
+    }
+
+    fn fold_stmt_ann_assign(
+        &mut self,
+        mut node: ast::StmtAnnAssign,
+    ) -> Result<ast::StmtAnnAssign, ()> {
+        if node.value.is_none() {
+            // An annotation alone does not store to the attribute. Preserve
+            // traversal of its expressions without treating the target as a write.
+            if let ast::Expr::Attribute(target) = node.target.as_mut() {
+                target.ctx = ExprContext::Load;
+            }
+        }
+        ast::fold::fold_stmt_ann_assign(self, node)
+    }
 }
 
 fn target_is_written(tail: &[Tok]) -> bool {

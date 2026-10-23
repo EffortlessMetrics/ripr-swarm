@@ -718,7 +718,11 @@ fn guarded_self_field_credit_requires_the_value_to_survive_to_the_assertion() ->
         "        self.last = \"settled\"\n",
         "        alias = self\n        alias.last = \"settled\"\n",
         "        (self.last) = \"settled\"\n",
+        "        self.last: str = \"settled\"\n",
         "        other = {}\n        (self.last), other[\"x\"] = \"settled\", None\n",
+        "        for self.last in [\"settled\"]:\n            pass\n",
+        "        for (marker, self.last) in [(0, \"settled\")]:\n            pass\n",
+        "        marker = [0 for self.last in [\"settled\"]]\n",
     ] {
         assert_ne!(
             classify_guarded(&format!("{source}{tail}"), settled)?.class,
@@ -730,6 +734,9 @@ fn guarded_self_field_credit_requires_the_value_to_survive_to_the_assertion() ->
         "    rec = Recorder()\n    rec.note(\"error\")\n    rec.last = \"settled\"\n    assert rec.last == \"settled\"",
         "    rec = Recorder()\n    alias = rec\n    rec.note(\"error\")\n    alias.last = \"settled\"\n    assert rec.last == \"settled\"",
         "    rec = Recorder()\n    rec.note(\"error\")\n    (rec.last) = \"settled\"\n    assert rec.last == \"settled\"",
+        "    rec = Recorder()\n    rec.last = rec.note(\"error\")\n    assert rec.last == None",
+        "    rec = Recorder()\n    rec.last: str = rec.note(\"error\")\n    assert rec.last == None",
+        "    rec = Recorder()\n    (marker, rec.last) = (0, rec.note(\"error\"))\n    assert rec.last == None",
         "    rec = Recorder()\n    rec.note(\"error\")\n    rec.last *= 0\n    assert rec.last == \"\"",
         "    rec = Recorder()\n    rec.note(\"error\")\n    setattr(rec, \"last\", \"settled\")\n    assert rec.last == \"settled\"",
         "    rec = Recorder()\n    rec.note(\"error\")\n    del rec.last\n    try:\n        assert rec.last == None\n    except AttributeError:\n        pass",
@@ -756,6 +763,13 @@ fn guarded_self_field_credit_keeps_unrelated_writes_and_read_only_uses() -> Chec
     for tail in [
         "        self.other = \"settled\"\n",
         "        marker = self.last\n",
+        "        if self.last:\n            marker = 1\n",
+        "        marker = {self.last: 1}\n",
+        "        marker = \"abcd\"[len(self.last):]\n",
+        "        print(self.last, end=\"\")\n",
+        "        self.last: str\n",
+        "        marker = 1\n        del marker\n",
+        "        self.other = 1\n        del self.other\n",
         "        pass\n",
     ] {
         assert_eq!(
@@ -766,6 +780,7 @@ fn guarded_self_field_credit_keeps_unrelated_writes_and_read_only_uses() -> Chec
     }
     for body in [
         "    rec = Recorder()\n    rec.last = None\n    rec.note(\"error\")\n    assert rec.last == \"error\"",
+        "    rec = Recorder()\n    rec.last = None; rec.note(\"error\")\n    assert rec.last == \"error\"",
         "    rec = Recorder()\n    rec.note(\"error\")\n    rec.other = \"settled\"\n    assert rec.last == \"error\"",
         "    rec = Recorder()\n    rec.note(\"error\")\n    assert rec.last == \"error\"\n    rec.last = None",
     ] {

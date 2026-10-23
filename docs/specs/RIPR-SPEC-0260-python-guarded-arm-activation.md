@@ -132,10 +132,16 @@ operators remain unsupported in the actual enclosing guard.
 
 The changed field must also survive explicit owner writes after the changed
 line and explicit test writes between the owner call and selected assertion.
-Same-named field assignments, augmented assignments or deletions, including
-writes through possible aliases, withhold credit. Different-field writes and
-read-only uses preserve it. A later write on an unresolved receiver can
-conservatively withhold credit even when that receiver is a fresh object.
+Same-named field assignments, augmented assignments, loop/comprehension
+targets or deletions, including writes through possible aliases, withhold
+credit. Native AST store contexts distinguish these writes from read-only
+truthiness conditions, dictionary keys, slices and call arguments. An
+annotation without a value does not store to the field. An assignment
+containing the owner call stores after that call, including when its target
+is spelled first; an earlier semicolon-separated setup remains outside the
+observation interval. Different-field writes and read-only uses preserve
+credit. A later write on an unresolved receiver can conservatively withhold
+credit even when that receiver is a fresh object.
 Arbitrary helper effects and general object-flow inference remain outside
 this bounded reader. Direct-write behavior and exclusion-side decisions are
 unchanged.
