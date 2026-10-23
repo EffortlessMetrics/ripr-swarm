@@ -81,7 +81,7 @@ Updated:
 ## Pending — owner_return_pin_err_guard_not_equality (7)
 
 Reason:
-RIPR-SPEC-0122: human output drops the observation_unverified token
+RIPR-SPEC-0224: multi-line related-test oracle collapses to one human evidence row (#9165); formatting only, no verdict change
 
 Command:
 `cargo xtask goldens bless owner_return_pin_err_guard_not_equality --reason "..."`
@@ -89,4 +89,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — owner_return_pin_err_guard_not_equality (8)
+
+Reason:
+RIPR-SPEC-0122: human output drops the observation_unverified token
+
+Command:
+`cargo xtask goldens bless owner_return_pin_err_guard_not_equality --reason "..."`
+
+Updated:
 - `expected/human-full.txt`

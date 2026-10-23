@@ -119,7 +119,10 @@ impl McpServer {
         {
             return Err(ErrorData::invalid_params(
                 format!("base must be at most {MAX_BASE_REVISION_BYTES} bytes"),
-                None,
+                Some(serde_json::json!({
+                    "argument": "base",
+                    "expected": format!("a revision of at most {MAX_BASE_REVISION_BYTES} bytes"),
+                })),
             ));
         }
         let root = match workspace::available_root(self.analysis_root.as_deref()) {
@@ -225,7 +228,7 @@ impl McpServer {
             };
             return Err(ErrorData::invalid_params(
                 format!("unknown class \"{echoed}{marker}\"; allowed: {allowed:?}"),
-                None,
+                Some(serde_json::json!({ "argument": "class", "allowed": allowed })),
             ));
         }
         let language = optional_nonempty_string_argument(&arguments, "language")?;
@@ -567,7 +570,7 @@ fn optional_string_argument(
         Some(Value::String(value)) => Ok(Some(value.clone())),
         Some(_other) => Err(ErrorData::invalid_params(
             format!("{name} must be a string"),
-            None,
+            Some(serde_json::json!({ "argument": name, "expected": "string" })),
         )),
     }
 }
@@ -581,7 +584,7 @@ fn optional_nonempty_string_argument(
     match optional_string_argument(arguments, name)? {
         Some(value) if value.is_empty() => Err(ErrorData::invalid_params(
             format!("{name} must be a non-empty string"),
-            None,
+            Some(serde_json::json!({ "argument": name, "expected": "non-empty string" })),
         )),
         other => Ok(other),
     }
@@ -601,7 +604,7 @@ fn optional_bool_argument(
         Some(Value::Bool(value)) => Ok(Some(*value)),
         Some(_other) => Err(ErrorData::invalid_params(
             format!("{name} must be a boolean"),
-            None,
+            Some(serde_json::json!({ "argument": name, "expected": "boolean" })),
         )),
     }
 }
@@ -619,10 +622,20 @@ fn optional_nonnegative_argument(
         None => Ok(None),
         Some(value) => {
             let raw = value.as_u64().ok_or_else(|| {
-                ErrorData::invalid_params(format!("{name} must be a non-negative integer"), None)
+                ErrorData::invalid_params(
+                    format!("{name} must be a non-negative integer"),
+                    Some(
+                        serde_json::json!({ "argument": name, "expected": "non-negative integer" }),
+                    ),
+                )
             })?;
             usize::try_from(raw).map(Some).map_err(|error| {
-                ErrorData::invalid_params(format!("{name} is out of range: {error}"), None)
+                ErrorData::invalid_params(
+                    format!("{name} is out of range: {error}"),
+                    Some(
+                        serde_json::json!({ "argument": name, "expected": "non-negative integer" }),
+                    ),
+                )
             })
         }
     }
@@ -636,7 +649,7 @@ fn optional_positive_argument(
     match optional_nonnegative_argument(arguments, name)? {
         Some(0) => Err(ErrorData::invalid_params(
             format!("{name} must be at least 1"),
-            None,
+            Some(serde_json::json!({ "argument": name, "expected": "integer at least 1" })),
         )),
         other => Ok(other),
     }
@@ -654,7 +667,9 @@ fn optional_capped_page_limit(
     match optional_positive_argument(arguments, name)? {
         Some(value) if value > max => Err(ErrorData::invalid_params(
             format!("{name} must be at most {max}"),
-            None,
+            Some(
+                serde_json::json!({ "argument": name, "expected": format!("integer at most {max}") }),
+            ),
         )),
         other => Ok(other),
     }
@@ -718,7 +733,7 @@ fn reject_unknown_arguments(
         if !allowed.contains(&name.as_str()) {
             return Err(ErrorData::invalid_params(
                 format!("unknown argument {name:?}; allowed: {allowed:?}"),
-                None,
+                Some(serde_json::json!({ "argument": name, "allowed": allowed })),
             ));
         }
     }
@@ -733,7 +748,7 @@ fn required_string_argument(
     value.filter(|value| !value.is_empty()).ok_or_else(|| {
         ErrorData::invalid_params(
             format!("{name} is required and must be a non-empty string"),
-            None,
+            Some(serde_json::json!({ "argument": name, "expected": "non-empty string" })),
         )
     })
 }
@@ -817,7 +832,10 @@ impl ServerHandler for McpServer {
             } else {
                 format!("invalid params for `{}`", request.method)
             };
-            return Err(ErrorData::invalid_params(message, None));
+            return Err(ErrorData::invalid_params(
+                message,
+                Some(serde_json::json!({ "method": request.method })),
+            ));
         }
         Err(ErrorData::new(
             ErrorCode::METHOD_NOT_FOUND,
@@ -864,7 +882,7 @@ impl ServerHandler for McpServer {
                 {
                     return Err(ErrorData::invalid_params(
                         "ripr_workspace_status does not accept arguments",
-                        None,
+                        Some(serde_json::json!({ "allowed": [] })),
                     ));
                 }
                 self.status_tool(max_envelope_bytes).await

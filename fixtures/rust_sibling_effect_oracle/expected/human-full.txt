@@ -34,13 +34,7 @@ Evidence
   - related test src/sensors/ripr_limits.rs:337 module_evidence_retains_single_pass_duplicates_benign_and_unavailable uses strong exact value oracle: assert_eq!(missing["sources"][0]["state"], "unavailable"); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - related test src/sensors/ripr_limits.rs:194 module_note_line_byte_boundary_excludes_line_terminators uses weak relational check oracle: assert!(contexts.iter().all(|context| context.len() <= 1024)); misses: assertion too weak to tell the old behavior from the new
   - related test src/sensors/ripr_limits.rs:268 module_note_context_limit_counts_utf8_bytes uses smoke only oracle: assert!(parse_note(note(&exact_ascii).trim()).is_some()); misses: assertion too weak to tell the old behavior from the new
-  - related test src/sensors/ripr_limits.rs:283 module_note_contract_rejects_malformed_counts_reasons_and_paths uses strong exact value oracle: assert_eq!(
-            parse_note(note("tests/日本語.rs").trim()),
-            Some(vec![(
-                "tests/日本語.rs".into(),
-                "rust_module_ambiguous_parent".into()
-            )])
-        ); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test src/sensors/ripr_limits.rs:283 module_note_contract_rejects_malformed_counts_reasons_and_paths uses strong exact value oracle: assert_eq!( parse_note(note("tests/日本語.rs").trim()), Some(vec![( "tests/日本語.rs".into(), "rust_module_ambiguous_parent".into() )]) ); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - related test src/sensors/ripr_limits.rs:238 module_note_orientation_sentence_accepts_optional_next_step uses strong exact value oracle: assert_eq!(parse_note(&oriented), expected); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - related tests (showing 5 of 53; more in --format json)
   - source assertion argument value 1024 at line 209
@@ -86,10 +80,7 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
   - local flow reaches call effect: .or_default() (line 137)
   - related test src/sensors/ripr_limits.rs:238 module_note_orientation_sentence_accepts_optional_next_step uses strong exact value oracle: assert_eq!(parse_note(&oriented), expected); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - related test src/sensors/ripr_limits.rs:238 module_note_orientation_sentence_accepts_optional_next_step uses strong whole object equality oracle: assert_eq!(
-            parse_note(&format!("{oriented} {MODULE_AMBIGUOUS_PARENT_NEXT_STEP}")),
-            expected
-        ); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test src/sensors/ripr_limits.rs:238 module_note_orientation_sentence_accepts_optional_next_step uses strong whole object equality oracle: assert_eq!( parse_note(&format!("{oriented} {MODULE_AMBIGUOUS_PARENT_NEXT_STEP}")), expected ); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - related test src/sensors/ripr_limits.rs:337 module_evidence_retains_single_pass_duplicates_benign_and_unavailable misses: asserts, but not on the changed value; checked `assert_eq!(missing["sources"][0]["state"], "unavailable")`
   - related test src/sensors/ripr_limits.rs:194 module_note_line_byte_boundary_excludes_line_terminators misses: asserts, but not on the changed value; checked `assert!(contexts.iter().all(|context| context.len() <= 1024))`
   - related test src/sensors/ripr_limits.rs:268 module_note_context_limit_counts_utf8_bytes misses: asserts, but not on the changed value; checked `assert!(parse_note(note(&exact_ascii).trim()).is_some())`

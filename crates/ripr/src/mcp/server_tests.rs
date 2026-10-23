@@ -1385,6 +1385,60 @@ fn unknown_arguments_are_refused_by_name_and_allowed_ones_pass() -> Result<(), S
         .ok_or("unknown argument must be refused")?;
     assert_eq!(error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
     assert!(error.message.contains("\"verbose\""), "{}", error.message);
+    // #9853: the refusal carries the offending name and the allowed list as
+    // structured data, not only as message text.
+    let data = error
+        .data
+        .clone()
+        .ok_or_else(|| format!("unknown-argument refusal lost structured data: {error:?}"))?;
+    assert_eq!(data["argument"], serde_json::json!("verbose"));
+    assert_eq!(data["allowed"], serde_json::json!(allowed));
+    Ok(())
+}
+
+#[tokio::test]
+async fn argument_validation_errors_carry_structured_recovery_data() -> Result<(), String> {
+    // #9853: the dispatch-edge -32602 sites carry machine-readable recovery
+    // data (`argument`/`expected`, `argument`/`allowed`) so a client can
+    // branch on the payload instead of parsing message prose.
+    let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
+        .map_err(|error| error.to_string())?;
+
+    // A required argument is missing: `argument` names it, `expected` names
+    // the shape that would pass.
+    let missing = server
+        .get_gap_tool(
+            argument_map(serde_json::json!({})),
+            super::super::MAX_RESPONSE_BYTES,
+        )
+        .await
+        .err()
+        .ok_or("missing canonical_id must be refused")?;
+    assert_eq!(missing.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    let data = missing
+        .data
+        .as_ref()
+        .ok_or_else(|| format!("missing-argument refusal lost structured data: {missing:?}"))?;
+    assert_eq!(data["argument"], serde_json::json!("canonical_id"));
+    assert_eq!(data["expected"], serde_json::json!("non-empty string"));
+
+    // An argument has the wrong JSON type: the typed validator echoes the
+    // same `argument`/`expected` shape.
+    let wrong_type = server
+        .list_repair_attempts_tool(
+            argument_map(serde_json::json!({"offset": "1"})),
+            super::super::MAX_RESPONSE_BYTES,
+        )
+        .await
+        .err()
+        .ok_or("a string offset must be refused")?;
+    assert_eq!(wrong_type.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    let data = wrong_type
+        .data
+        .as_ref()
+        .ok_or_else(|| format!("wrong-type refusal lost structured data: {wrong_type:?}"))?;
+    assert_eq!(data["argument"], serde_json::json!("offset"));
+    assert_eq!(data["expected"], serde_json::json!("non-negative integer"));
     Ok(())
 }
 

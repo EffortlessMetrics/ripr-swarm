@@ -219,7 +219,10 @@ fn evidence_path<T>(
             )
         );
         if let Some(oracle) = &test.oracle {
-            line.push_str(&format!(": {oracle}"));
+            line.push_str(&format!(
+                ": {}",
+                crate::output::related_test_miss::single_line_evidence_text(oracle)
+            ));
         }
         // A matched row keeps its oracle projection and adds the reason it
         // still misses, so the oracle kind and strength stay readable.
@@ -283,7 +286,7 @@ fn evidence_path<T>(
             if name_files {
                 crate::output::observed_values::source_value_evidence_line_with_file(value)
             } else {
-                crate::output::observed_values::source_value_evidence_line(value)
+                crate::output::observed_values::human_source_value_evidence_line(value)
             },
             EvidenceSource::Value(value),
         ));
