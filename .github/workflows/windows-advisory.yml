@@ -874,10 +874,10 @@ jobs:
       # controls (#3803, #3802, #3807): the only place these Windows-gated tests
       # run without the 90-minute full suite. Outcomes stay advisory; a missing
       # log/status or a filter that executes no test fails the job below.
-      - name: Run process-ownership subset (advisory, #3803)
+      - name: Run process-ownership and verify-execute containment subset (advisory, #3803, #9306)
         shell: bash
         run: |
-          mkdir -p target; set +e; cargo test -p ripr --lib process_owner::tests 2>&1 | tee target/subset-process-owner.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-process-owner.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-process-owner.log" >&2; exit 1; fi; exit 0
+          mkdir -p target; set +e; cargo test -p ripr --lib -- process_owner::tests windows_cancellation_ends_a_pipe_inheriting_descendant 2>&1 | tee target/subset-process-owner.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-process-owner.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-process-owner.log" >&2; exit 1; fi; exit 0
 
       - name: Run xtask timed-capture subset (advisory, #3803)
         shell: bash

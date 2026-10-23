@@ -473,9 +473,10 @@ and single-platform CI was the root cause enabling both.
 - **Merge-ready subset (#4938).** The `labeled` event for `merge-ready` on a
   PR also runs `windows-advisory-subset`, a fast advisory Windows job
   (`lsp::gap_artifacts` and Cargo-home identity lib tests, the #4918 cache-warning smoke,
-  the Windows process-ownership (`process_owner::tests`), xtask timed-capture
-  (`capture_output_with`) and LSP poisoned-initialize (#3802) controls, the VS Code managed-server install lock suite under
-  plain mocha on Node (#9498), and
+  the Windows process-ownership (`process_owner::tests`, including argument round-trip and spawn-error
+  controls), verify-execute cancellation containment, the VS Code managed-server install lock suite
+  under plain mocha on Node (#9498), xtask timed-capture
+  (`capture_output_with`) and LSP poisoned-initialize (#3802) controls, and
   `cargo clippy -p ripr --all-targets`) under the same advisory contract as
   the lane. It does not gate merges; #4337, #4918, and #4921 were each caught
   only by a native-Windows audit, so native-Windows verification of new
