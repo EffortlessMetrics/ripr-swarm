@@ -471,6 +471,83 @@ fn json_rpc_rejections_are_answered_with_spec_codes_and_the_session_survives() -
     Ok(())
 }
 
+/// A client-supplied pagination cursor on the static catalog lists used to
+/// parse fine and then be silently dropped, so an agent could believe paging
+/// worked while always re-reading page one (#9895). The lists are static and
+/// small: the server never issues a `nextCursor`, so any cursor is stale or
+/// fabricated and the request must fail closed with the recovery spelled out,
+/// while the same lists still answer normally without a cursor.
+#[test]
+fn catalog_list_cursors_fail_closed_over_stdio() -> Result<(), String> {
+    let root = workspace_root()?;
+    let timeout = Duration::from_secs(30);
+    let mut session = SequentialStdio::spawn(&root)?;
+    let first = session.raw_exchange(
+        &line(json!({
+            "jsonrpc": "2.0", "id": "init", "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25", "capabilities": {},
+                "clientInfo": { "name": "ripr-cursor-test", "version": "1" }
+            }
+        }))?,
+        timeout,
+    )?;
+    if first.get("id") != Some(&json!("init")) || first.get("error").is_some() {
+        return Err(format!("initialize failed: {first}"));
+    }
+    session.send_raw(&line(
+        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+    )?)?;
+    for (id, method) in [
+        ("cursor-tools", "tools/list"),
+        ("cursor-resources", "resources/list"),
+        ("cursor-templates", "resources/templates/list"),
+    ] {
+        let response = session.raw_exchange(
+            &line(json!({
+                "jsonrpc": "2.0", "id": id, "method": method,
+                "params": {"cursor": "stale-page"}
+            }))?,
+            timeout,
+        )?;
+        if response.get("id") != Some(&json!(id))
+            || response.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
+        {
+            return Err(format!(
+                "{method} cursor must fail closed as -32602: {response}"
+            ));
+        }
+        let message = response
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if !message.contains("does not paginate") || !message.contains("nextCursor") {
+            return Err(format!(
+                "{method} cursor error must explain why: {response}"
+            ));
+        }
+        let data = response
+            .pointer("/error/data")
+            .cloned()
+            .ok_or_else(|| format!("{method} cursor error lost structured data: {response}"))?;
+        if data["argument"] != json!("cursor") {
+            return Err(format!(
+                "{method} cursor error must name the argument: {response}"
+            ));
+        }
+        // The session stays up: the same list answers normally without a cursor.
+        let alive = session.raw_exchange(
+            &line(json!({"jsonrpc": "2.0", "id": format!("{id}-plain"), "method": method}))?,
+            timeout,
+        )?;
+        if alive.get("id") != Some(&json!(format!("{id}-plain"))) || alive.get("result").is_none() {
+            return Err(format!(
+                "{method} must still answer without a cursor: {alive}"
+            ));
+        }
+    }
+    Ok(())
+}
 /// Optional tool fields may be omitted, but their advertised string/integer
 /// types do not accept explicit null. Pin the schemas and dispatch separately
 /// against literal expectations, through the actual stdio process (#7314).
