@@ -885,6 +885,9 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
         }
     }
     scope.levels.push(level);
+    scope.hook_levels.push(collect_mocha_setup_hooks(
+        statements, source, imports, scope,
+    ));
     scope.registration_levels.push(
         declared_names
             .into_iter()
@@ -1013,12 +1016,136 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
                 .map(|name| (name, ScopeValue::Other, Phase::Declaration))
                 .collect();
             test.scope_bindings = scope.resolve_with(parameters);
+            test.setup_hook_bodies = scope.hook_levels.iter().flatten().cloned().collect();
             tests.push(test);
         }
     }
     scope.iterables.pop();
     scope.registration_levels.pop();
+    scope.hook_levels.pop();
     scope.levels.pop();
+}
+
+/// RIPR-SPEC-0246 rule 7: the body source of each synchronous mocha setup
+/// hook (`before`, `beforeEach`, `beforeAll`) registered directly in this
+/// statement list, in source order. Mocha has no import for its globals, so
+/// provenance is explicit: the file imports `mocha` or a mocha-style
+/// assertion library (`chai`) and carries no jest/vitest/ava signal, and the
+/// hook identifier is not declared in scope or imported from elsewhere.
+/// A hook that is `async`, a generator, takes a parameter (`done`), has an
+/// expression body or contains `return` is not recorded: its work may finish
+/// after the test starts.
+fn collect_mocha_setup_hooks(
+    statements: &[Statement<'_>],
+    source: &str,
+    imports: &[TypeScriptImport],
+    scope: &TestScope,
+) -> Vec<String> {
+    if !file_has_mocha_provenance(imports, source) {
+        return Vec::new();
+    }
+    let mut bodies = Vec::new();
+    for stmt in statements {
+        let Statement::ExpressionStatement(statement) = stmt else {
+            continue;
+        };
+        let Expression::CallExpression(call) = &statement.expression else {
+            continue;
+        };
+        let Expression::Identifier(callee) = &call.callee else {
+            continue;
+        };
+        let hook = callee.name.as_str();
+        if !matches!(hook, "before" | "beforeEach" | "beforeAll") {
+            continue;
+        }
+        let declared = scope
+            .levels
+            .iter()
+            .flatten()
+            .any(|(name, _, phase)| name == hook && *phase == Phase::Declaration);
+        let imported_elsewhere = imports.iter().any(|import| {
+            import.local == hook
+                && !(import.source == "mocha" && import.imported.as_deref() == Some(hook))
+        });
+        if declared || imported_elsewhere {
+            continue;
+        }
+        let Some(argument) = call.arguments.last() else {
+            continue;
+        };
+        let body = match argument {
+            oxc_ast::ast::Argument::ArrowFunctionExpression(arrow)
+                if !arrow.r#async
+                    && !arrow.expression
+                    && arrow.params.items.is_empty()
+                    && arrow.params.rest.is_none() =>
+            {
+                &arrow.body.statements
+            }
+            oxc_ast::ast::Argument::FunctionExpression(function)
+                if !function.r#async
+                    && !function.generator
+                    && function.params.items.is_empty()
+                    && function.params.rest.is_none() =>
+            {
+                let Some(body) = function.body.as_ref() else {
+                    continue;
+                };
+                &body.statements
+            }
+            _ => continue,
+        };
+        let (Some(first), Some(last)) = (body.first(), body.last()) else {
+            continue;
+        };
+        let text = source
+            .get(first.span().start as usize..last.span().end as usize)
+            .unwrap_or_default();
+        if text.is_empty() || identifier_in_text(text, "return") {
+            continue;
+        }
+        bodies.push(text.to_string());
+    }
+    bodies
+}
+
+/// Whether the file reads as a mocha file: it imports `mocha` or `chai`
+/// (mocha's usual assertion library) and shows no jest, vitest, bun, ava or
+/// `node:test` signal, whether by import or by a `jest.` / `vi.` global use.
+fn file_has_mocha_provenance(imports: &[TypeScriptImport], source: &str) -> bool {
+    let mocha_hint = imports.iter().any(|import| {
+        import.source == "mocha" || import.source == "chai" || import.source.starts_with("chai-")
+    });
+    let other_runner = imports.iter().any(|import| {
+        TEST_RUNNER_MODULES.contains(&import.source.as_str())
+            || matches!(import.source.as_str(), "jest" | "ava")
+            || import.source.starts_with("@jest/")
+            || import.source.starts_with("@vitest/")
+    }) || ["jest", "vi"]
+        .iter()
+        .any(|global| member_use_in_text(source, global));
+    mocha_hint && !other_runner
+}
+
+/// Whether `word` appears in `text` as a whole identifier.
+fn identifier_in_text(text: &str, word: &str) -> bool {
+    text.match_indices(word).any(|(idx, _)| {
+        let before = text[..idx].chars().next_back();
+        let after = text[idx + word.len()..].chars().next();
+        !before.is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || ch == '$')
+            && !after.is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || ch == '$')
+    })
+}
+
+/// Whether `name.` appears in `text` as a whole identifier followed by a
+/// member access (`jest.fn`, `vi.mock`), comments and strings included.
+fn member_use_in_text(text: &str, name: &str) -> bool {
+    text.match_indices(name).any(|(idx, _)| {
+        let before = text[..idx].chars().next_back();
+        text[idx + name.len()..].starts_with('.')
+            && !before.is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || ch == '$' || ch == '.')
+    })
 }
 
 /// Modules whose `beforeEach`/`beforeAll` run before every test in scope.
@@ -1031,6 +1158,10 @@ pub(crate) struct TestScope {
     describe_names: Vec<String>,
     /// Name bindings of the file and each enclosing describe, outermost first.
     levels: Vec<Vec<ScopeEntry>>,
+    /// Per statement list being walked (the file and each enclosing
+    /// describe), outermost first: the bodies of its mocha setup hooks
+    /// (RIPR-SPEC-0246 rule 7).
+    hook_levels: Vec<Vec<String>>,
     /// Lexical registration declarations, including hoisted block `var`
     /// names, retained while descending into suites. The flag identifies
     /// file declarations eligible for the immutable import exemption.
@@ -2822,6 +2953,7 @@ pub(crate) fn test_from_statement<'s, 'a>(
         // admission context; fail-closed until then.
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
         factory_call_line: None,
+        setup_hook_bodies: Vec::new(),
     })
 }
 
