@@ -52,10 +52,53 @@ pub(in crate::analysis) fn same_file_const_readers<'a>(
 /// comment, or a plain string is not a read.
 fn function_reads(body: &str, name: &str) -> bool {
     let masked = mask_comments_and_strings(body);
-    if masked.contains(&format!("let {name}")) || masked.contains(&format!("let mut {name}")) {
+    if shadows(&masked, name) {
         return false;
     }
     code_reads(&masked, name) || format_macro_reads(body, name)
+}
+
+/// A local, loop variable or parameter spelled like the constant.
+fn shadows(masked: &str, name: &str) -> bool {
+    if masked.contains(&format!("let {name}"))
+        || masked.contains(&format!("let mut {name}"))
+        || masked.contains(&format!("for {name} in"))
+        || masked.contains(&format!("|{name}|"))
+    {
+        return true;
+    }
+    let bytes = masked.as_bytes();
+    let mut start = 0;
+    while let Some(found) = masked[start..].find(name) {
+        let at = start + found;
+        let end = at + name.len();
+        start = end;
+        let whole = (at == 0 || !is_ident_byte(bytes[at - 1]))
+            && !bytes.get(end).is_some_and(|b| is_ident_byte(*b));
+        if whole
+            && masked[end..].trim_start().starts_with(':')
+            && !masked[end..].trim_start().starts_with("::")
+            && matches!(
+                masked[..at].trim_end().chars().next_back(),
+                Some('(' | ',' | '|')
+            )
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Whether the occurrence ending at `end` is only assigned to (`NAME = x`,
+/// `NAME += x`), which writes the item instead of reading its value.
+fn is_assigned(masked: &str, end: usize) -> bool {
+    let rest = masked[end..].trim_start();
+    let mut chars = rest.chars();
+    match (chars.next(), chars.next()) {
+        (Some('='), next) => next != Some('=') && next != Some('>'),
+        (Some('+' | '-' | '*' | '/' | '%' | '^' | '|' | '&'), Some('=')) => true,
+        _ => false,
+    }
 }
 
 fn is_ident_byte(byte: u8) -> bool {
@@ -75,7 +118,7 @@ fn code_reads(masked: &str, name: &str) -> bool {
             continue;
         }
         let before = masked[..at].trim_end();
-        if before.ends_with('.') {
+        if before.ends_with('.') || is_assigned(masked, end) {
             continue;
         }
         if let Some(path) = before.strip_suffix("::") {
@@ -251,6 +294,12 @@ mod tests {
         assert!(function_reads("{ attempt < LIMIT }", "LIMIT"));
         assert!(function_reads("{ attempt < Self::LIMIT }", "LIMIT"));
         assert!(function_reads("{ attempt < self::LIMIT }", "LIMIT"));
+        assert!(function_reads("{ attempt == LIMIT }", "LIMIT"));
+        assert!(function_reads("{ f(a, LIMIT) }", "LIMIT"));
+        assert!(function_reads(
+            "{ if LIMIT >= 2 { 1 } else { 0 } }",
+            "LIMIT"
+        ));
         assert!(function_reads("{ format!(\"{LIMIT}\\n\") }", "LIMIT"));
         assert!(function_reads("{ format!(\"{LIMIT:>4}\") }", "LIMIT"));
         assert!(function_reads("{ write!(f, \"x={LIMIT:?}\") }", "LIMIT"));
@@ -269,6 +318,11 @@ mod tests {
             "{ a::Self::LIMIT }",
             "{ x.LIMIT }",
             "{ let LIMIT = 1; LIMIT }",
+            "{ LIMIT = 5; }",
+            "{ LIMIT += 1; }",
+            "fn f(LIMIT: u32) -> u32 { LIMIT }",
+            "fn f(a: u32, LIMIT: u32) -> u32 { LIMIT }",
+            "{ for LIMIT in 0..3 { use_it(LIMIT) } }",
             "{ format!(\"{{LIMIT}}\") }",
             "{ format!(\"{label}\") } // {LIMIT}",
             "{ // format!(\"{LIMIT}\")\n 1 }",
@@ -299,5 +353,22 @@ mod tests {
         assert_eq!(declaration_count("fn f() -> u32 { LIMIT }", "LIMIT"), 0);
         assert_eq!(declaration_count("const fn LIMIT() {}", "LIMIT"), 0);
         assert_eq!(declaration_count("reconst LIMIT", "LIMIT"), 0);
+        // Visibility, attributes, line breaks and a local const all count.
+        assert_eq!(
+            declaration_count("pub(crate) const LIMIT: u32 = 3;", "LIMIT"),
+            1
+        );
+        assert_eq!(
+            declaration_count("#[allow(x)]\npub static\n    LIMIT: u32 = 3;", "LIMIT"),
+            1
+        );
+        assert_eq!(
+            declaration_count(
+                "const LIMIT: u32 = 3;\nfn f() { const LIMIT: u32 = 9; }",
+                "LIMIT"
+            ),
+            2
+        );
+        assert_eq!(declaration_count("const _: u32 = 3;", "LIMIT"), 0);
     }
 }
