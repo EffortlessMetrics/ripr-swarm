@@ -70,7 +70,7 @@ receipt — recorded from a foreign launch directory against the selected root
 ## Then
 
 - The positive row, the pilot/status route that resolves to the gap-bound
-  start, the interrupted-receipt recovery and the second-root repeat derive `passed_blind_journey` and share one portable identity
+  start, the completed-attempt rerun re-observation and the second-root repeat derive `passed_blind_journey` and share one portable identity
   (concrete root spelling is retained evidence, never identity).
 - Each negative variant stops before any edit: packet readiness stays false
   with the precise printed reason for its shape, and the row derives
@@ -83,8 +83,11 @@ receipt — recorded from a foreign launch directory against the selected root
   `product_discoverability_failure` with the exact blocked input; the deleted
   before-artifact row stops with `honest_limitation` naming the printed
   recovery; the planted workspace binary derives
-  `candidate_identity_failure`; the interrupted receipt write recovers
-  through a clean rerun and never yields a half-authoritative receipt.
+  `candidate_identity_failure`; the rerun row (id retains `interrupted_receipt_write_recovers`) records
+  a rerun of the printed `ripr continue` on a completed attempt (observed: already
+  complete, no new attempt) followed by a read of the issued receipt; it exercises
+  no process interruption and claims no recovery from a lost receipt write, which
+  stays with the #4510 process-admission surface.
 - Every negative control keeps its own non-positive terminal result; no
   aggregate converts them into success.
 

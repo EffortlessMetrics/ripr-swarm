@@ -88,7 +88,9 @@ observation binding and derived terminals are exactly the consumer's, so a
 hand-edited expectation cannot make a wrong journey emit. The derived
 terminals are the honest machine results — `passed_blind_journey` for the
 positive row, the pilot/status route that resolves to the gap-bound start, the
-second-root repeat and the interrupted-receipt recovery;
+second-root repeat and the completed-attempt rerun re-observation (the
+row id keeps `interrupted_receipt_write_recovers`, but no interruption or
+lost-receipt recovery is exercised or claimed);
 `verification_not_run_visible` for the eight negative variants (packet
 readiness false with the precise printed reason, never a delegatable packet
 or fabricated receipt) and the skipped-verification row;
@@ -128,8 +130,13 @@ evidence and issues the gap-bound receipt itself. The manifest therefore carries
 no separate `agent_receipt` template, each TypeScript positive row records the
 issued receipt once and scripts no seam-bound `ripr agent receipt` command, and
 the CLI receipt control asserts exactly that for TypeScript. The eight negative
-variants print the precise not-ready reason on the check screen and are offered
-no gap-bound start. The receipt is static exposure evidence only
+variants retain the verbatim not-ready diagnostics of `ripr check` and of the
+refused `agent repair --gap-id ... --phase before` (compared against the real
+binary by the installed journey test) and are offered no gap-bound start. All
+other scripted output bytes are semantic summaries, not literal transcripts. The
+inherited status warning that `ripr check` "offers no `ripr agent repair` start"
+(`pilot_routed_to_check_no_repair_target`) stays visible as a limitation even
+when the subsequent check prints the gap-bound start. The receipt is static exposure evidence only
 (`verification_not_run`); the printed Vitest command remains a separate axis.
 The retained cyclic row stays as a negative control proving the executor still
 derives `product_discoverability_failure` for a route that cycles without a
