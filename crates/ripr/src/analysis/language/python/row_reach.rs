@@ -255,7 +255,7 @@ fn after_dot_api_is_trusted(code: &str, name_start: usize, ident: &str, test: &P
         return false;
     }
     if receiver == "self" {
-        return test.framework == "unittest"
+        return test.framework == super::PythonFramework::Unittest
             && UNITTEST_API.contains(&ident)
             && !test.constant_rebinding.rebinds(ident)
             && !test.constant_rebinding.module_rebinds(ident);

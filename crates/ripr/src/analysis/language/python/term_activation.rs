@@ -55,9 +55,12 @@ pub(super) struct PythonGuardedReturn {
     else_value: String,
 }
 
-/// What a function owner's body lets rule 20 read.
+/// Body facts used by bounded term activation and helper alignment.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct PythonTermFacts {
+    /// Conservative raw yield presence, including unresolved string/nested
+    /// text. Only helper-derived credit reads this refusal fact.
+    may_yield: bool,
     /// As a callee: its one guarded return, when the function is undecorated
     /// and synchronous (a decorator or `async def` changes what a call returns).
     guarded_return: Option<PythonGuardedReturn>,
@@ -95,6 +98,10 @@ impl PythonTermFacts {
     /// walk cannot read), so a call-site value is the value the body sees.
     pub(super) fn is_stable_parameter(&self, name: &str) -> bool {
         self.stable_parameters.iter().any(|stable| stable == name)
+    }
+
+    pub(super) fn may_yield(&self) -> bool {
+        self.may_yield
     }
 
     pub(super) fn returned_parameter(&self) -> Option<&str> {
@@ -141,6 +148,7 @@ pub(super) fn term_facts(
         _ => None,
     };
     PythonTermFacts {
+        may_yield: super::mentions_python_name(owner_text, "yield"),
         guarded_return: (!wrapped)
             .then(|| guarded_return(source, body, parameters))
             .flatten(),

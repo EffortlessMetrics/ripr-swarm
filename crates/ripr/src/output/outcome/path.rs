@@ -1,7 +1,7 @@
 use std::path::Path;
 
 pub(crate) fn display_path(path: &Path) -> String {
-    normalize_report_path(&path.display().to_string())
+    crate::output::path::fold_verbatim_on_host(normalize_report_path(&path.display().to_string()))
 }
 
 pub(super) fn normalize_report_path(path: &str) -> String {

@@ -1,4 +1,6 @@
 //! Structural package workspace markers shared by CLI and TypeScript discovery.
+#[cfg(feature = "lang-rust")]
+use super::printed_path;
 use super::{run_command_with_env, run_git, unique_external_workspace};
 use serde_json::Value;
 use std::fs;
@@ -199,9 +201,9 @@ fn scalar_marker_preserves_cargo_uv_git_and_unmarked_root_boundaries() -> TestRe
         assert_eq!(report["summary"]["probes"], 1, "{label}: {report}");
         assert_eq!(report["summary"]["findings"], 1, "{label}: {report}");
         let expected_root = if git {
-            repo.to_str().ok_or("root must be UTF-8")?
+            printed_path(&repo)
         } else {
-            "."
+            ".".to_string()
         };
         assert_eq!(report["root"], expected_root, "{label}");
     }
@@ -297,8 +299,8 @@ fn check_package_workspace_selection(workspaces: &str, member_is_workspace: bool
     assert_eq!(explicit_member["summary"]["probes"], 1);
     assert_eq!(explicit_member["summary"]["findings"], 1);
     assert_eq!(
-        implicit["root"].as_str().map(Path::new),
-        Some(expected_root.as_path()),
+        implicit["root"].as_str(),
+        Some(printed_path(expected_root).as_str()),
         "workspaces={workspaces}"
     );
     assert_eq!(implicit["findings"], explicit["findings"]);

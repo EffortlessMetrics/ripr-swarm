@@ -123,17 +123,36 @@ unsupported state as unknown and fabricates no reason conforms.
 
 | miss | Rust | Python | TypeScript | Perl v1 |
 | --- | --- | --- | --- | --- |
-| `no_call_path` | yes | pending (blocked on #6657-class blind spots) | pending #5495 | no |
-| `no_assertion` | yes | no (#6657) | pending #5495 | no |
-| `assertion_not_observing` | yes | no (credit-only alignment; `is_unmatched` coupling) | pending #5495 | no (#3223) |
+| `no_call_path` | yes | pending (blocked on #6657-class blind spots) | no (absence unprovable from one file) | no |
+| `no_assertion` | yes | no (#6657) | no (admission blind spots) | no |
+| `assertion_not_observing` | yes | no (credit-only alignment; `is_unmatched` coupling) | no (decision input via `is_unmatched`) | no (#3223) |
 | `assertion_not_credited` | yes, unsplit until #5446 | no (#5446) | no (#5446) | no |
-| `weak_assertion` | yes | yes (weak and smoke only) | pending #5495 | no |
-| `missing_input` | yes | yes (predicate boundary, row-owned) | pending #5495 | no (#4061, perl-lsp-swarm#17237, #5562) |
-| `missing_exact_assertion` | yes | no (no row-owned fact) | pending #5495 | no |
-| `observation_unconfirmed` | yes | yes (strong assertion not credited by its own row) | pending #5495 | yes |
+| `weak_assertion` | yes | yes (weak and smoke only) | yes (weak and smoke only) | no |
+| `missing_input` | yes | yes (predicate boundary, row-owned) | no (shared prose over-claims) | no (#4061, perl-lsp-swarm#17237, #5562) |
+| `missing_exact_assertion` | yes | no (no row-owned fact) | no (no row-owned fact) | no |
+| `observation_unconfirmed` | yes | yes (strong assertion not credited by its own row) | yes | yes |
 
 Rust "yes" means the reason is emitted; it does not claim conformance with every
 law above (see Current Rust conformance gaps).
+
+TypeScript (#5495) maps only row-local merged evidence: the owner-path
+disposition (#5523), assertion admission, the family-relevant assertion (#5525)
+and per-row predicate activation (#5527). `weak_assertion` is a row whose own selected oracle is weak or smoke (a medium
+snapshot or mock oracle keeps no miss). `observation_unconfirmed` covers a
+mocked or spied owner call with an admitted assertion (an
+unanchored or unresolved-alias call keeps no miss: its identity is unproved), a
+strong assertion of another behavior family, and a strong row whose own
+boundary input misses the pinned boundary or whose changed-sink observation is
+unproven. Four reasons are withheld on purpose: `no_call_path` (a single-file
+reading cannot prove a call path absent: a heuristic-only row may reach the
+owner through an alias, callback or table, and a shadow or unrelated-import
+rejection refutes only the apparent call, not hooks, helpers or re-exports),
+`assertion_not_observing` (`RelatedTest::is_unmatched` reads it as a decision
+input), `no_assertion` (the single-file admission scan cannot see project setup
+files or runner plugins) and `missing_input` (its shared prose says no test
+input reaches the boundary, stronger than a single-file reading supports). Rows
+with unresolved admission, static-limited findings, `exposed`, `static_unknown`
+and Bun bridge findings keep `miss: null`.
 
 "Pending" means the producer has not mapped that reason yet; the row-evidence
 prerequisites for it are specified in this document. Perl's narrower coverage is
@@ -297,6 +316,11 @@ written and must not copy these gaps.
   no recorded oracle shows only the reason, where human-full still prints its
   `uses no oracle` projection first), and diagnostics add up to three
   related-information rows that open the examined test.
+- Human evidence rows stay one line (#9165): a related-test oracle or an
+  observed source value whose text spans lines (a closure body, a snapshot, a
+  multi-line string literal) collapses its whitespace through
+  `output::related_test_miss::single_line_evidence_text`; single-line text is
+  byte-identical and JSON keeps the raw text.
 - `output::related_test_miss::related_test_miss_label` owns the word before
   the reason: `unconfirmed` for `observation_unconfirmed`, `misses` otherwise.
   Human-full, `ripr explain`, LSP hover and LSP related information use it;
@@ -413,7 +437,7 @@ differs from the strength-only pick the finding adds
 
 ### Owner-path disposition (TypeScript)
 
-Before a TypeScript miss producer (#5495) can say why a related test does not
+So that the TypeScript miss producer (#5495) can say why a related test does not
 catch a change, each candidate must say what it establishes about the
 changed owner. `TypeScriptRelationKind` stays the relation's provenance; each
 `TypeScriptRelatedCandidate` also carries one internal
