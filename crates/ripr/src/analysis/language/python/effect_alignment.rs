@@ -57,8 +57,10 @@ impl ChangedEffect {
             .any(|statement| statement == line);
         if let Some(attr) = self_attribute_write(line)
             && matches!(owner.owner_kind, Some(OwnerKind::Method))
-            // A context manager's write under a guard may never run (#9421).
-            && (!context_dunder || direct)
+            // Only a statement written directly in the method body always
+            // runs; a write under an `if`, `try` or loop may never run in
+            // the test (#9421, #9782), so it reads no effect.
+            && direct
         {
             return Some(Self::SelfField {
                 attr: attr.to_string(),

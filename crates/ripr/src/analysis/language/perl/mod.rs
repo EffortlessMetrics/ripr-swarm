@@ -335,6 +335,7 @@ impl LanguageAdapter for PerlAdapter {
             // for every non-Rust adapter (#3532).
             harness_projections: Vec::new(),
             partial_reason,
+            file_accounting: Default::default(),
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
         })

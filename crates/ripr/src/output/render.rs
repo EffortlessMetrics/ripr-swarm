@@ -641,7 +641,7 @@ fn ripr_plus_summary_from_disk(
     let report_path = output.root.join(TEST_EFFICIENCY_REPORT_RELATIVE);
     if !report_path.exists() {
         let warning = format!(
-            "missing {}; ripr+ needs test-efficiency JSON and no public ripr command generates it yet (the only shipped producer is this repository's private cargo xtask); hand-author the documented minimum shape from real test measurements in docs/BADGE_ADOPTION.md or wait for the portable producer tracked in issue #7221",
+            "missing {}; ripr+ needs test-efficiency JSON and no public ripr command generates it yet (the only shipped producer is this repository's private cargo xtask); hand-author the documented minimum shape from real test measurements in docs/BADGE_ADOPTION.md or wait for the portable producer (not shipped yet)",
             report_path.display()
         );
         eprintln!(

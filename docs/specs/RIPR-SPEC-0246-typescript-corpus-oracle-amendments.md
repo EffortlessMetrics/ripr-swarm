@@ -195,7 +195,8 @@ rule 1, on the same value seams.
 **Rule 4. A refused nested callback holding an `expect(` is unknown, not a gap.**
 (Added 2026-10-21.) When every oracle-eligible related test collects no
 assertion, has assertion admission `assertion_like_present_but_unresolved`,
-and its body holds an `expect(` inside the argument span of a `.then(` or
+and its body holds an `expect(` (or a `node:assert` call, `assert.` or
+`assert(`, #9686) inside the argument span of a `.then(` or
 an `forEach(async` call that is tied to the owner (the owner is called in
 that span or in the statement's receiver before it) (the forms rule 2
 refuses; comments and string contents are ignored), the finding reads
