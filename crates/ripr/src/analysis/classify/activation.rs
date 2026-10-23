@@ -3799,6 +3799,7 @@ fn call_values_for_owner(
         |test, call| {
             super::call_identity::qualified_owner_calls_resolve(index, owner, test, &call.text)
         },
+        &ReceiverParameters::none(),
     );
     if !direct.is_empty() {
         return direct;
@@ -4052,7 +4053,12 @@ fn helper_transferred_rows(
                 // #9329 Devin review: a test-local `let Size = |n| ..` makes
                 // `Size(1024)` something other than the tuple constructor.
                 super::helper_transfer::test_body_shadows_name(index, test, name, call.line)
-            })
+            }) && super::call_identity::qualified_owner_calls_resolve(
+                index,
+                &entry.caller,
+                test,
+                &call.text,
+            )
         },
         &receivers,
     );
