@@ -931,4 +931,140 @@ fn the_parser_stores_the_scopes_crediting_would_parse_and_the_cache_keeps_them()
     Ok(())
 }
 
+const CALLBACK_HELPER: &str = "    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        let got = f();\n        assert_eq!(got, want);\n    }\n";
+
+fn callback_source(helper: &str, body: &str) -> String {
+    format!(
+        "{GATE}#[cfg(test)]\nmod tests {{\n    use super::*;\n\n{helper}\n    #[test]\n    fn boundary() {{\n{body}    }}\n}}\n"
+    )
+}
+
+#[test]
+fn closure_callback_helper_credits_its_assertion_to_the_calling_test() -> Result<(), Box<dyn Error>>
+{
+    let index = index_for(&callback_source(
+        CALLBACK_HELPER,
+        "        run_test(true, || gate(11));\n",
+    ))?;
+
+    let test = test_named(&index, "boundary")?;
+
+    assert_eq!(assertion_texts(test), vec!["assert_eq!(got, want);"]);
+    assert!(calls(test).contains(&"gate"), "{:?}", calls(test));
+    assert!(
+        !calls(test).contains(&"f"),
+        "the callback parameter names no function: {:?}",
+        calls(test)
+    );
+    Ok(())
+}
+
+#[test]
+fn closure_callback_helper_credits_a_block_closure_and_a_later_position()
+-> Result<(), Box<dyn Error>> {
+    let index = index_for(&callback_source(
+        "    fn run_test(f: impl FnOnce() -> bool, want: bool) {\n        let got = f();\n        assert_eq!(got, want);\n    }\n",
+        "        run_test(|| {\n            gate(11)\n        }, true);\n",
+    ))?;
+
+    let test = test_named(&index, "boundary")?;
+
+    assert_eq!(assertion_texts(test), vec!["assert_eq!(got, want);"]);
+    Ok(())
+}
+
+#[test]
+fn closure_callback_helpers_that_may_not_observe_the_closure_grant_nothing()
+-> Result<(), Box<dyn Error>> {
+    for (shape, helper, body) in [
+        (
+            "helper invokes the callback but asserts nothing",
+            "    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        let got = f();\n        let _ = (got, want);\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "assertion runs before the callback",
+            "    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        assert_eq!(want, want);\n        let _ = f();\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "callback invoked only inside a helper closure",
+            "    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        let run = move || f();\n        let got = run();\n        assert_eq!(got, want);\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "closure passed at a parameter the helper does not invoke",
+            "    fn run_test(want: bool, f: impl FnOnce() -> bool, g: impl FnOnce() -> bool) {\n        let got = g();\n        let _ = f;\n        assert_eq!(got, want);\n    }\n",
+            "        run_test(true, || gate(11), || true);\n",
+        ),
+        (
+            "callback parameter shadowed by a let",
+            "    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        let f = || true;\n        let got = f();\n        assert_eq!(got, want);\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "callback parameter shadowed by a match binding",
+            "    fn run_test(want: bool, f: Option<fn() -> bool>) {\n        let got = match Some(|| true) {\n            Some(f) => f(),\n            None => false,\n        };\n        assert_eq!(got, want);\n        let _ = f;\n    }\n",
+            "        run_test(true, Some(|| gate(11)));\n",
+        ),
+        (
+            "argument is a plain value, not a closure literal",
+            CALLBACK_HELPER,
+            "        let g = || gate(11);\n        run_test(true, g);\n",
+        ),
+        (
+            "closure that makes no call",
+            CALLBACK_HELPER,
+            "        run_test(true, || true);\n",
+        ),
+        (
+            "helper call sits inside a test closure that may never run",
+            CALLBACK_HELPER,
+            "        let later = || run_test(true, || gate(11));\n        let _ = later;\n",
+        ),
+        (
+            "test shadows the helper name",
+            CALLBACK_HELPER,
+            "        let run_test = |_: bool, f: fn() -> bool| { let _ = f; };\n        run_test(true, || gate(11));\n",
+        ),
+        (
+            "async helper",
+            "    async fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        let got = f();\n        assert_eq!(got, want);\n    }\n",
+            "        let _ = run_test(true, || gate(11));\n",
+        ),
+        (
+            "cfg-gated helper",
+            "    #[cfg(any())]\n    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        let got = f();\n        assert_eq!(got, want);\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "callback method call, not a free call",
+            "    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        let got = Some(1).map(|_| f()).unwrap_or(false);\n        assert_eq!(got, want);\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+    ] {
+        let index = index_for(&callback_source(helper, body))?;
+        let test = test_named(&index, "boundary")?;
+        assert!(
+            test.assertions.is_empty(),
+            "{shape}: {:?}",
+            assertion_texts(test)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn closure_callback_credit_does_not_reach_helper_callbacks_in_another_module()
+-> Result<(), Box<dyn Error>> {
+    let index = index_for(&format!(
+        "{GATE}#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    mod support {{\n        pub fn run_test(want: bool, f: impl FnOnce() -> bool) {{\n            let got = f();\n            assert_eq!(got, want);\n        }}\n    }}\n\n    #[test]\n    fn boundary() {{\n        support::run_test(true, || gate(11));\n    }}\n}}\n"
+    ))?;
+
+    let test = test_named(&index, "boundary")?;
+
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
+    Ok(())
+}
+
 mod assertion_macros;
