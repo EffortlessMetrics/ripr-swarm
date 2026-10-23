@@ -876,6 +876,14 @@ pub(crate) fn ts_mask_literals_and_comments_for_source_type(
     )
 }
 
+/// [`ts_mask_literals_and_comments`] with every `/` read as division, so a
+/// regex-versus-division misjudgement cannot hide code from a scan that also
+/// runs on this mask. A real regex literal holding a quote can misread the rest
+/// of its line here; callers require agreement of both masks.
+pub(crate) fn ts_mask_literals_and_comments_division_only(text: &str) -> String {
+    ts_mask_lexically(text, false, &std::collections::BTreeSet::new())
+}
+
 fn ts_mask_lexically(
     text: &str,
     regex_allowed: bool,

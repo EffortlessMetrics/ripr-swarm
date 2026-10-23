@@ -230,6 +230,12 @@ fn extract_tests_expanding_suite_factories(file: &Path, source: &str, expand: bo
                 test.default_member_only_locals_in_file = member_only.clone();
             }
         }
+        let rewritten = rewritten_identifier_names(&code);
+        if !rewritten.is_empty() {
+            for test in &mut tests {
+                test.written_locals_in_file = rewritten.clone();
+            }
+        }
         let factories = mock_factories(&ret.program.body, &code);
         if !factories.is_empty() {
             for test in &mut tests {
@@ -2108,6 +2114,19 @@ fn assigned_identifier_names(text: &str) -> Vec<String> {
     names
 }
 
+/// Names `text` writes at least twice: a declaration initializer counts as
+/// one write, so a second one is a reassignment, update or loop target.
+fn rewritten_identifier_names(text: &str) -> Vec<String> {
+    let writes = strict_identifier_writes(text);
+    let mut names: Vec<String> = Vec::new();
+    for (name, _) in &writes {
+        if !names.contains(name) && writes.iter().filter(|(other, _)| other == name).count() > 1 {
+            names.push(name.clone());
+        }
+    }
+    names
+}
+
 /// `true` when `before` (text ending in `.`) is a global-object receiver
 /// (`globalThis.`, `this.`, `window.`, `global.`, `self.`): a write through it
 /// can rebind a sloppy-mode `var` of the same name, so the strict scan reads
@@ -2247,6 +2266,14 @@ pub(crate) fn function_declaration_names(text: &str) -> Vec<(String, usize)> {
 /// `true` when `text` may write `identifier`; see [`identifier_writes`].
 pub(crate) fn identifier_written_in(text: &str, identifier: &str) -> bool {
     identifier_writes(text)
+        .iter()
+        .any(|(name, _)| name == identifier)
+}
+
+/// `true` when the strict scan ([`strict_identifier_writes`]) may write
+/// `identifier`.
+pub(crate) fn identifier_written_strictly(text: &str, identifier: &str) -> bool {
+    strict_identifier_writes(text)
         .iter()
         .any(|(name, _)| name == identifier)
 }
@@ -2952,6 +2979,7 @@ pub(crate) fn test_from_statement<'s, 'a>(
         scope_bindings: Vec::new(),
         identity_helpers_in_file: Vec::new(),
         default_member_only_locals_in_file: Vec::new(),
+        written_locals_in_file: Vec::new(),
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         // Replaced by `collect_tests_from_statements`, which has the file's
@@ -2976,6 +3004,12 @@ pub(super) fn byte_preserving_code_mask_for_source_type(
 ) -> Option<String> {
     let masked =
         super::classifier::ts_mask_literals_and_comments_for_source_type(source, source_type);
+    preserve_mask_byte_width(source, &masked)
+}
+
+/// [`byte_preserving_code_mask`] over the division-only mask.
+pub(super) fn byte_preserving_division_mask(source: &str) -> Option<String> {
+    let masked = super::classifier::ts_mask_literals_and_comments_division_only(source);
     preserve_mask_byte_width(source, &masked)
 }
 
