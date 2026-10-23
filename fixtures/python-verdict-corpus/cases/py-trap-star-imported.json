@@ -1,0 +1,52 @@
+{
+  "case_id": "py-trap-star-imported",
+  "subject_id": "authored-py-trap-kit",
+  "diff": "cases/py-trap-star-imported.diff",
+  "anchor": {
+    "file": "trapkit/core.py",
+    "line": 117
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "test_reaches_owner_by_star_import",
+  "hard_case": "The test imports the owner with a star import, so the relation cannot name it from the import list.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return b + a",
+        "mutated_line": "return b + a",
+        "outcome": "tests_failed",
+        "failing_test": "test_star_imported",
+        "equivalence_review": "not equivalent: 7 + 3 is 10, not 21"
+      },
+      {
+        "replacement": "return b / a",
+        "mutated_line": "return b / a",
+        "outcome": "tests_failed",
+        "failing_test": "test_star_imported",
+        "equivalence_review": "not equivalent: 7 / 3 is not 21"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Hard case, not a false-credit trap: the exact pin reaches the owner through `from module import *`, which names no owner; a verdict of gap or limited is acceptable.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

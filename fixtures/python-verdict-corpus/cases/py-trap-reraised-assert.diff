@@ -1,0 +1,12 @@
+diff --git a/trapkit/core.py b/trapkit/core.py
+--- a/trapkit/core.py
++++ b/trapkit/core.py
+@@ -70,7 +70,7 @@
+ 
+ 
+ def reraised_assert(a, b):
+-    return a * b
++    return b * a
+ 
+ 
+ def tautology(a, b):

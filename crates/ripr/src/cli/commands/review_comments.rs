@@ -583,8 +583,8 @@ fn review_comments_with_admission(
             output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
         write_text_file(&options.out, &rendered_json)?;
         receipt.write_atomic(&receipt_path)?;
-        println!("Wrote {}", options.out.display());
-        println!("Wrote {}", markdown_path.display());
+        println!("Wrote {}", output::path::human_path(&options.out));
+        println!("Wrote {}", output::path::human_path(&markdown_path));
         return Ok(());
     }
 
@@ -882,8 +882,8 @@ fn review_comments_with_admission(
     let rendered_json = output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
     write_text_file(&options.out, &rendered_json)?;
     receipt.write_atomic(&receipt_path)?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", markdown_path.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&markdown_path));
     Ok(())
 }
 

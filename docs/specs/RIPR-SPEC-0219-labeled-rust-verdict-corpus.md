@@ -416,6 +416,14 @@ each labeled row carries an `oracle` object (expected, `observed_kind`,
 `observed_strength`, `observed_all`, `outcome`). These never enter
 `false_verdict_rate` or any verdict rate.
 
+The `known-false/<case>.toml` files of a corpus directory (`case`, `issue`,
+`reason`; the file name is the case id, and an inline `[[known_false]]` table
+in `spec-coverage.toml` is rejected so parallel fixes never share lines) list every false verdict the corpus still scores with its owning
+issue. A whole-corpus `check` fails on a false row that is not listed and on a
+listed row that is no longer false, so a bless cannot absorb a new false
+verdict and a fixed row cannot return unnoticed. A `--case` subset is never
+gated on it.
+
 The `[oracle]` table of `spec-coverage.toml` holds `match_floor` and
 `overclaim_ceiling`. `validate` requires the table once any case is
 labeled and refuses a floor or ceiling above the labeled count. `check`
@@ -470,6 +478,19 @@ Decisions:
   because rule 3 and 3b exempt them from "weak" without stating a strength.
   Other specs' examples do not state a related-test kind and strength, so
   their cases stay unlabeled.
+
+### Operator grid and false-credit traps
+
+The `[grid]` table of `spec-coverage.toml` scores seven operator classes
+(boundary, equality, logical, arithmetic, constant, return value, deletion)
+against three truth states (credited, gap, partial). An operator comes from
+a case's `behavior_family`; `[grid.operators]` names the cases whose family
+describes a different edit than the one made. A case is a trap when its
+subject or case id carries `trap` and runtime truth is not `discriminated`;
+the same name with `discriminated` truth is its control. `check` fails when
+covered cells fall below `cell_floor`, trap cases below `trap_floor`, or
+ripr credits more traps than `false_credit_ceiling`. A `--cases` subset is
+reported but never gated. `validate` does not run the grid.
 
 ## Required Evidence
 
@@ -706,7 +727,9 @@ Oracle-accuracy tests live in
   label law, the observed-oracle read, outcome classification, the
   `oracle_accuracy` section and the oracle gate.
 - `fixtures/rust-verdict-corpus/spec-coverage.toml` is the ledger,
-  including the `[oracle]` gate table.
+  including the `[oracle]` gate table and the `[grid]` gate table.
+- `xtask/src/reports/verdict_corpus_grid.rs` owns the operator grid, the
+  trap table and the grid gate.
 - `fixtures/rust-verdict-corpus/` holds the corpus, retained upstream and
   authored subjects, case diffs, and the expected report.
 
