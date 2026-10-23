@@ -28,7 +28,7 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Complete propagation witness reaches returned value: (0, Some(self.remaining))
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
   - local flow reaches returned value: (0, Some(self.remaining)) (line 22)
   - related test tests/size_hints.rs:4 combinations_inexact_size_hints uses strong exact value oracle: assert_eq!(it.size_hint().1, Some(3)); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - related test tests/size_hints.rs:4 combinations_inexact_size_hints uses strong exact value oracle: assert_eq!(it.size_hint().0, 3); unconfirmed: ripr could not confirm that this assertion observes the changed behavior

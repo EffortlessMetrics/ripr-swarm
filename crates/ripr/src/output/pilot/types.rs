@@ -152,6 +152,7 @@ mod tests {
         static_limit_kind: Option<StaticLimitKind>,
     ) -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:pkg_mod_py:7:predicate".to_string(),
             canonical_gap: None,
             probe: Probe {

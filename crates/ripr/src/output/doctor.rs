@@ -718,8 +718,10 @@ pub(crate) enum DoctorArtifactIgnore {
     NoArtifacts,
     /// Git ignore rules cover the artifact root.
     Ignored,
-    /// The artifact root exists and git positively reports it as not
-    /// ignored. `warning` is the exact line the human screen prints.
+    /// Git positively reports the artifact root as not ignored. On a first
+    /// run in a non-Cargo project the root may not exist yet; the warning
+    /// wording then says ripr *will write* there (#9858). `warning` is the
+    /// exact line the human screen prints.
     Unignored {
         /// The actionable warning, including the exact `.gitignore` entry.
         warning: String,
@@ -1469,6 +1471,12 @@ pub(crate) fn safe_next_action_recovery_line(
             "- Safe next action: fix the `!` checks above; no check command can run until they pass"
         }
     })
+}
+
+/// Why a root-dependent check is skipped, or `None` for a usable directory.
+/// Shares the typed classification so human lines agree with `root_directory`.
+pub(crate) fn root_unusable_skip_reason(root: &Path) -> Option<&'static str> {
+    DoctorRootPath::classify(root).unusable_skip_reason()
 }
 
 /// Evaluate the doctor core checks (root, Cargo.toml, config, tool
@@ -3523,6 +3531,55 @@ mod tests {
             }
         }
 
+        let _ = std::fs::remove_dir_all(&dir);
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("; "))
+        }
+    }
+
+    #[test]
+    fn cache_skip_reason_follows_the_typed_root_classification() -> Result<(), String> {
+        let dir = unique_test_dir("skip-reason");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create dir: {err}"))?;
+        let file = dir.join("a-file");
+        std::fs::write(&file, "x").map_err(|err| format!("write file: {err}"))?;
+        let mut cases: Vec<(&str, PathBuf, Option<&str>)> = vec![
+            ("directory", dir.clone(), None),
+            (
+                "missing",
+                dir.join("no-such-root"),
+                Some("the root directory does not exist"),
+            ),
+            ("file", file, Some("the root is not a directory")),
+        ];
+        #[cfg(unix)]
+        {
+            let dangling = dir.join("dangling");
+            std::os::unix::fs::symlink(dir.join("no-such-target"), &dangling)
+                .map_err(|err| format!("dangling symlink: {err}"))?;
+            cases.push((
+                "dangling symlink",
+                dangling,
+                Some("the root is not a directory"),
+            ));
+            let looped = dir.join("looped");
+            std::os::unix::fs::symlink(&looped, &looped)
+                .map_err(|err| format!("self symlink: {err}"))?;
+            cases.push((
+                "self-referencing symlink",
+                looped,
+                Some("the root directory cannot be read"),
+            ));
+        }
+        let failures: Vec<String> = cases
+            .iter()
+            .filter_map(|(name, root, expected)| {
+                let actual = root_unusable_skip_reason(root);
+                (actual != *expected).then(|| format!("{name}: {actual:?}, expected {expected:?}"))
+            })
+            .collect();
         let _ = std::fs::remove_dir_all(&dir);
         if failures.is_empty() {
             Ok(())

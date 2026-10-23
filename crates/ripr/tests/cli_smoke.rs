@@ -1862,9 +1862,11 @@ fn help_leads_with_a_bounded_first_screen_that_routes_onward() {
     assert_success(&output);
     let stdout = String::from_utf8_lossy(&output.stdout);
 
+    // #9865 added the exit-code contract and -v lines to the first screen;
+    // 48 keeps the scannability budget with headroom (observed 47).
     let lines = stdout.lines().count();
     assert!(
-        lines <= 40,
+        lines <= 48,
         "the default help screen should stay scannable, got {lines} lines:\n{stdout}"
     );
     assert!(
@@ -14807,6 +14809,9 @@ fn doctor_missing_root_recommends_recovery_and_outside_git_recommends_runnable_c
         || !stdout.contains("- Safe next action: fix the selected root first (see below); no check command can run until it exists")
         || stdout.contains("Recommended first command: ripr check --root")
         || stderr.contains("working-tree change probe failed")
+        || stdout.contains("✓ Cache:")
+        || stdout.contains("✓ Workspace:")
+        || !stdout.contains("- Cache check skipped: the root directory does not exist")
     {
         return Err(format!(
             "a missing root must not blame the tools\nstdout:\n{stdout}\nstderr:\n{stderr}"
@@ -18368,8 +18373,8 @@ fn pilot_projects_python_repair_card_for_git_diff() -> Result<(), String> {
     run_git(&root, &["add", "src/pricing.py"])?;
     run_git(&root, &["commit", "-m", "change threshold boundary"])?;
     // An uncommitted edit to another tracked Python file makes the working
-    // tree the current change. The scope line names Rust seam ranking only,
-    // and the Python card is still chosen from the committed diff.
+    // tree the current change. With no Rust seam ranked, the scope line names
+    // the Python ranking the card below it comes from (#9857).
     std::fs::write(
         root.join("tests/test_pricing.py"),
         "from src.pricing import calculate_discount\n\n\ndef test_calculate_discount_smoke():\n    result = calculate_discount(125, 100)\n    assert result  # note\n",
@@ -18396,7 +18401,7 @@ fn pilot_projects_python_repair_card_for_git_diff() -> Result<(), String> {
         "recommended repair: strengthen test_calculate_discount_smoke in tests/test_pricing.py",
         "verify: python -m pytest tests/test_pricing.py::test_calculate_discount_smoke",
         "receipt status: unavailable_until_python_gap_ledger",
-        "  scope: change-first (Rust seams on lines changed since origin/main rank first)\n",
+        "  scope: change-first (python (preview) seams on lines changed since origin/main rank first)\n",
     ] {
         assert!(stdout.contains(needle), "missing stdout needle: {needle}");
     }
@@ -18436,6 +18441,209 @@ fn pilot_projects_python_repair_card_for_git_diff() -> Result<(), String> {
 
     ignore_remove_dir_all(&root);
     ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
+/// #9858 review follow-up: the first-run `target/ripr` ignore note must
+/// probe the selected root's ignore rules in the same coordinate system as
+/// the packet directory the run actually wrote. The default packet dir is
+/// `root/target/ripr/pilot` for every spelled root; an explicit bare
+/// `--out target/ripr/pilot` with a non-dot root resolves against the
+/// process cwd, and an out_dir that lexically starts with `target/ripr`
+/// but climbs out via `..` lands elsewhere — both must stay silent rather
+/// than claim the root's `target/ripr` is uncovered when the artifacts
+/// landed outside the artifact root. Each child command gets an explicit
+/// cwd; the test process cwd never changes.
+#[test]
+#[cfg(feature = "lang-python")]
+fn pilot_artifact_note_uses_the_selected_root_at_the_cli() -> Result<(), String> {
+    const FILES: &[(&str, &str)] = &[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"pilot-note-root\"\nversion = \"0.0.0\"\n",
+        ),
+        (
+            "src/pricing.py",
+            "def calculate_discount(amount, threshold):\n    if amount > threshold:\n        return amount - 10\n    return amount\n",
+        ),
+        (
+            "tests/test_pricing.py",
+            "from src.pricing import calculate_discount\n\n\ndef test_calculate_discount_smoke():\n    result = calculate_discount(125, 100)\n    assert result\n",
+        ),
+    ];
+
+    let make_sandbox = |label: &str| -> Result<(PathBuf, PathBuf), String> {
+        let sandbox = unique_temp_workspace(label);
+        let repo = sandbox.join("repo");
+        for (path, text) in FILES {
+            let path = repo.join(path);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|err| format!("create {}: {err}", parent.display()))?;
+            }
+            std::fs::write(&path, text)
+                .map_err(|err| format!("write {}: {err}", path.display()))?;
+        }
+        run_git(&repo, &["init"])?;
+        run_git(&repo, &["config", "user.email", "ripr@example.invalid"])?;
+        run_git(&repo, &["config", "user.name", "RIPR Test"])?;
+        // Establish no effective ignore rule: fixture-local empty excludes,
+        // empty info/exclude, and no .gitignore, so the uncovered positive
+        // stimulus is real.
+        let empty_excludes = sandbox.join("empty-excludes");
+        std::fs::write(&empty_excludes, "").map_err(|err| format!("write excludes: {err}"))?;
+        run_git(
+            &repo,
+            &[
+                "config",
+                "core.excludesFile",
+                &empty_excludes.to_string_lossy(),
+            ],
+        )?;
+        std::fs::write(repo.join(".git/info/exclude"), "")
+            .map_err(|err| format!("write info/exclude: {err}"))?;
+        run_git(&repo, &["add", "."])?;
+        run_git(&repo, &["commit", "-m", "base"])?;
+        run_git(&repo, &["update-ref", "refs/remotes/origin/main", "HEAD"])?;
+        std::fs::write(
+            repo.join("src/pricing.py"),
+            "def calculate_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n",
+        )
+        .map_err(|err| format!("write change: {err}"))?;
+        run_git(&repo, &["add", "src/pricing.py"])?;
+        run_git(&repo, &["commit", "-m", "change threshold boundary"])?;
+        // An uncommitted edit makes the working tree the current change.
+        std::fs::write(
+            repo.join("tests/test_pricing.py"),
+            "from src.pricing import calculate_discount\n\n\ndef test_calculate_discount_smoke():\n    result = calculate_discount(125, 100)\n    assert result  # note\n",
+        )
+        .map_err(|err| format!("write uncommitted edit: {err}"))?;
+        Ok((sandbox, repo))
+    };
+
+    // (label, child cwd relative to sandbox, args after `pilot`, expected
+    // packet dir relative to sandbox, whether the ignore note must fire)
+    let rows: [(&str, &str, Vec<String>, &str, bool); 5] = [
+        (
+            "dot-root",
+            "repo",
+            vec!["--root".to_string(), ".".to_string()],
+            "repo/target/ripr/pilot",
+            true,
+        ),
+        ("abs-root", "", vec![], "repo/target/ripr/pilot", true),
+        (
+            "rel-root",
+            "",
+            vec!["--root".to_string(), "repo".to_string()],
+            "repo/target/ripr/pilot",
+            true,
+        ),
+        (
+            "bare-out",
+            "",
+            vec![
+                "--root".to_string(),
+                "repo".to_string(),
+                "--out".to_string(),
+                "target/ripr/pilot".to_string(),
+            ],
+            "target/ripr/pilot",
+            false,
+        ),
+        (
+            "dotdot-out",
+            "",
+            vec![
+                "--root".to_string(),
+                "repo".to_string(),
+                "--out".to_string(),
+                "repo/target/ripr/../reports".to_string(),
+            ],
+            "repo/target/reports",
+            false,
+        ),
+    ];
+
+    for (label, cwd_rel, args, packet_rel, expect_note) in rows {
+        let (sandbox, repo) = make_sandbox(&format!("pilot-note-{label}"))?;
+        let repo_string = repo.to_string_lossy().into_owned();
+        let mut argv: Vec<&str> = vec!["pilot"];
+        argv.extend(args.iter().map(String::as_str));
+        if label == "abs-root" {
+            argv.extend(["--root", repo_string.as_str()]);
+        }
+        let cwd = if cwd_rel.is_empty() {
+            sandbox.clone()
+        } else {
+            sandbox.join(cwd_rel)
+        };
+        let cache_dir = sandbox.join("cache");
+        let output = run_command_with_env(
+            env!("CARGO_BIN_EXE_ripr"),
+            &cwd,
+            &argv,
+            &[("RIPR_CACHE_DIR", &cache_dir.to_string_lossy())],
+        )
+        .map_err(|err| format!("spawn pilot ({label}): {err}"))?;
+        assert!(
+            output.status.success(),
+            "pilot must succeed for row {label}:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let packet_dir = sandbox.join(packet_rel);
+        for file in [
+            "pilot-summary.json",
+            "pilot-summary.md",
+            "repo-exposure.json",
+            "repo-exposure.md",
+            "agent-seam-packets.json",
+        ] {
+            assert!(
+                packet_dir.join(file).is_file(),
+                "row {label}: expected packet file {}",
+                packet_dir.join(file).display()
+            );
+        }
+        let summary_json = std::fs::read_to_string(packet_dir.join("pilot-summary.json"))
+            .map_err(|err| format!("read summary ({label}): {err}"))?;
+        let summary: serde_json::Value = serde_json::from_str(&summary_json)
+            .map_err(|err| format!("parse summary ({label}): {err}"))?;
+        assert_eq!(summary["status"], "complete", "row {label}: {summary_json}");
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("language: python (preview)"),
+            "row {label}: stdout lost the Python preview scope:\n{stdout}"
+        );
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let note_lines: Vec<&str> = stderr
+            .lines()
+            .filter(|line| line.starts_with("ripr note:"))
+            .collect();
+        assert_eq!(
+            !note_lines.is_empty(),
+            expect_note,
+            "row {label}: note presence mismatch, stderr:\n{stderr}"
+        );
+        for note in &note_lines {
+            assert!(
+                note.contains("/target/ripr/"),
+                "row {label}: note must name the /target/ripr/ entry:\n{note}"
+            );
+        }
+        if !expect_note {
+            assert!(
+                !repo.join("target/ripr/pilot").exists(),
+                "row {label}: explicit bare --out must write outside the repo, \
+                 so an implementation silently rebasing it cannot satisfy the test"
+            );
+        }
+        ignore_remove_dir_all(&sandbox);
+    }
     Ok(())
 }
 
@@ -23087,7 +23295,8 @@ fn check_mode_fast_alone_on_empty_range_names_compared_base_smoke() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     // The empty range must be disclosed as nothing-changed, not as no-scope.
     assert!(
-        stdout.contains("nothing to analyze") || stdout.contains("no changed files"),
+        stdout.contains("State: nothing in scope")
+            && stdout.contains("does NOT mean no behavior changed"),
         "empty range must disclose nothing-changed; got stdout:\n{stdout}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -23096,7 +23305,7 @@ fn check_mode_fast_alone_on_empty_range_names_compared_base_smoke() {
         "empty range must NOT claim no scope was provided; got:\n{stdout}"
     );
     assert!(
-        stdout.contains("The compared base was `"),
+        stdout.contains("base: main") || stdout.contains("base: master"),
         "empty range must name the compared base; got:\n{stdout}"
     );
     let _ = std::fs::remove_dir_all(&root);
@@ -23414,6 +23623,94 @@ fn check_explicit_base_deletion_only_range_does_not_claim_no_behavior_changed() 
         return Err(format!(
             "a deletion-only range must not claim no behavior changed:\n{stdout}"
         ));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #9222: a default-base run (no `--base`) on a branch that only deletes a file
+/// lands in `no_scope` with zero changed files. Human, GitHub and JSON output
+/// must not assure the reader that nothing changed, and must still say that
+/// nothing was analyzed.
+#[test]
+fn check_default_base_deletion_only_range_does_not_claim_no_behavior_changed_in_any_renderer()
+-> Result<(), String> {
+    let root = unique_temp_workspace("default-base-deletion-only");
+    std::fs::create_dir_all(root.join("src")).map_err(|e| format!("mkdir: {e}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(root.join("src/lib.rs"), "pub fn one() -> i32 { 1 }\n")
+        .map_err(|e| format!("write lib: {e}"))?;
+    std::fs::write(root.join("src/old.rs"), "pub fn two() -> i32 { 2 }\n")
+        .map_err(|e| format!("write old: {e}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"default-deletion-only\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|e| format!("write Cargo.toml: {e}"))?;
+    std::fs::write(root.join(".gitignore"), "target/\n").map_err(|e| format!("gitignore: {e}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    run_git(&root, &["checkout", "-b", "feat"])?;
+    run_git(&root, &["rm", "src/old.rs"])?;
+    run_git(&root, &["commit", "-m", "delete"])?;
+    let root_str = root.to_string_lossy().into_owned();
+    for (label, args) in [
+        ("human", vec!["check", "--root", root_str.as_str()]),
+        (
+            "github",
+            vec!["check", "--root", root_str.as_str(), "--format", "github"],
+        ),
+        (
+            "json",
+            vec!["check", "--root", root_str.as_str(), "--format", "json"],
+        ),
+    ] {
+        let output = run_ripr(&args);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        // The bounded human render names the base in the triage line instead
+        // of restating the range (#9922).
+        let names_base = stdout.contains("main...HEAD")
+            || (label == "human" && stdout.contains("compared against `main`"));
+        if !names_base {
+            return Err(format!(
+                "{label}: fixture must resolve the default base `main`:\n{stdout}"
+            ));
+        }
+        if !(stdout.contains("nothing was analyzed")
+            || stdout.contains("nothing to analyze")
+            || label == "human" && stdout.contains("State: nothing in scope"))
+        {
+            return Err(format!(
+                "{label}: an empty range must still say nothing was analyzed:\n{stdout}"
+            ));
+        }
+        if !(stdout.contains("no analyzable changed files")
+            || label == "human" && stdout.contains("no changed files were compared against"))
+        {
+            return Err(format!(
+                "{label}: expected the analyzable-files wording:\n{stdout}"
+            ));
+        }
+        for forbidden in [
+            "means no behavior changed against it",
+            "because nothing changed",
+            "contains no changed files",
+        ] {
+            if stdout.contains(forbidden) {
+                return Err(format!(
+                    "{label}: a deletion-only range must not claim `{forbidden}`:\n{stdout}"
+                ));
+            }
+        }
+        if !stdout.contains("not mean no behavior changed")
+            && !stdout.contains("NOT mean no behavior changed")
+        {
+            return Err(format!(
+                "{label}: expected the not-no-behavior-changed disclaimer:\n{stdout}"
+            ));
+        }
     }
     ignore_remove_dir_all(&root);
     Ok(())
@@ -23907,7 +24204,7 @@ fn check_untracked_files_keep_committed_default_and_working_tree_reads_name_them
     }
     let empty_worktree = human(&["check", "--root", &root_str]);
     for expected in [
-        "Note: the working tree has no changed tracked files against `main` (diff from the merge base of `main` and HEAD to the working tree), so there was nothing to analyze.",
+        "Note: deleted files, submodule pointer changes and files ripr does not analyze are not counted, so this empty result does NOT mean no behavior changed.",
         "Safe next action: the working tree has no changed tracked files against `main`",
         "Untracked files (src/new.rs) are not in the working-tree diff",
     ] {
@@ -24236,7 +24533,7 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
             "clean tracked worktree must not disclose uncommitted edits; got:\n{stdout}"
         ));
     }
-    if !stdout.contains("contains no changed files") {
+    if !stdout.contains("does NOT mean no behavior changed") {
         return Err(format!(
             "empty default-base run must keep the no-scope disclosure (base-naming form per #4012); got:\n{stdout}"
         ));
@@ -24261,7 +24558,9 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
             "clean-tree header must name base main and HEAD {short}; got:\n{stdout}"
         ));
     }
-    if !stdout.contains("compared base was `main`") || stdout.contains("--base origin/main") {
+    if !stdout.contains("on `main`, which is the comparison base")
+        || stdout.contains("--base origin/main")
+    {
         return Err(format!(
             "no-origin repo must name its resolved local main rather than suggest a nonexistent remote ref; got:\n{stdout}"
         ));
