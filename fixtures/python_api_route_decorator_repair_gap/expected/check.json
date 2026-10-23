@@ -79,7 +79,9 @@
           "line": 4,
           "oracle_strength": "smoke",
           "oracle_kind": "smoke_only",
-          "oracle": "assert response"
+          "oracle": "assert response",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
         }
       ],
       "repair_placement": {

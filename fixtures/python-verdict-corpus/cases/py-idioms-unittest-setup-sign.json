@@ -1,0 +1,45 @@
+{
+  "case_id": "py-idioms-unittest-setup-sign",
+  "subject_id": "authored-py-pytest-idioms",
+  "diff": "cases/py-idioms-unittest-setup-sign.diff",
+  "anchor": {
+    "file": "idioms/stock.py",
+    "line": 8
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "state_update",
+  "test_shape": "pytest_runs_unittest_setup_method",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, Hypothesis 6.168.3, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "self.count += n",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_stock.py::StockTests::test_take_reduces_the_count",
+        "equivalence_review": "not equivalent: taking stock adds to it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "pytest collects the TestCase; setUp builds Stock(5) and take(2) must return 3.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

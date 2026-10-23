@@ -19,7 +19,7 @@ import {
   resolutionFailureRecovery
 } from './serverResolver';
 import { setupFilePath, hasUnsafeShellMetacharacter, redirectTargetMatches, redirectStaysInWorkspace, serverShellArg, isWindowsHost, normalizePath, sameWorkspaceRoot, rootMatchesWorkspace, objectField, stringField, boundedStringField, arrayLength, numberFieldValue, TEST_RUNNER_VERIFY_COMMAND_PREFIXES, testRunnerCommandLeavesScope } from './packetJson';
-import { riprDocumentSelectorsForWorkspace, extensionVersion, traceFromConfig, currentWorkspaceRootState, workspaceRootStateNoWorkspace, workspaceRootStateLabel, workspaceRootStateDetail, workspaceRootPickItems } from './workspaceHelpers';
+import { riprDocumentSelectorsForWorkspace, integerSetting, extensionVersion, traceFromConfig, currentWorkspaceRootState, workspaceRootStateNoWorkspace, workspaceRootStateLabel, workspaceRootStateDetail, workspaceRootPickItems } from './workspaceHelpers';
 import type { WorkspaceRootPickItem } from './workspaceHelpers';
 import { statusText, statusSummary, statusBarColors, canProjectFirstUsefulAction, shouldShowMainStatusBar } from './statusRender';
 import type { RiprStatusKind, RiprStatusState, FirstUsefulActionStatus, StatusBarColors } from './statusRender';
@@ -197,8 +197,8 @@ function lspConfigurationForResource(scopeUri: string | undefined): Record<strin
     includeUnchangedTests: config.get<boolean>('includeUnchangedTests'),
     seamDiagnostics: explicitSetting<boolean>(config, 'seamDiagnostics'),
     diagnosticProfile: explicitSetting<string>(config, 'diagnosticProfile'),
-    gitTimeoutMs: config.get<number>('gitTimeoutMs'),
-    refreshDeadlineMs: config.get<number>('refreshDeadlineMs')
+    gitTimeoutMs: integerSetting(config.get<number>('gitTimeoutMs')),
+    refreshDeadlineMs: integerSetting(config.get<number>('refreshDeadlineMs'))
   };
 }
 
@@ -553,6 +553,13 @@ export class RiprClientController {
     this.updateStatus(this.status);
   }
 
+  private pendingServerMessage: Promise<void> = Promise.resolve();
+
+  /** Resolves once the last missing-server popup has been answered and handled. */
+  settleServerMessage(): Promise<void> {
+    return this.pendingServerMessage;
+  }
+
   async start(): Promise<void> {
     // Fast path: server is already up.
     if (this.client) {
@@ -652,7 +659,14 @@ export class RiprClientController {
         detail: server.detail,
         nextStep: `${resolutionFailureGuidance(server, config.autoDownload)} Then run ripr: Restart Server.`
       });
-      await this.showMissingServerMessage(server);
+      // The popup waits on a user who may never answer (headless hosts never
+      // do), so start() must not wait on it: an unanswered popup would keep
+      // startingPromise pending, hang activation and swallow every later
+      // start() or Retry into the same stuck promise (#9526).
+      this.pendingServerMessage = this.showMissingServerMessage(server).catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.output.appendLine(`ripr missing-server message failed: ${message}`);
+      });
       return;
     }
     this.server = server;
@@ -5112,14 +5126,17 @@ function firstRawFindingString(packet: Record<string, unknown>, field: string): 
 }
 
 function actionableGapQueueCommandIsSafe(command: string, redirectRoots: readonly string[]): boolean {
-  if (hasUnsafeShellMetacharacter(command)) {
+  const windowsQuoting = isWindowsHost();
+  if (hasUnsafeShellMetacharacter(command, windowsQuoting)) {
     return false;
   }
   const normalized = command.trim().replace(/\s+/g, ' ');
-  // Decode the single-quoted words permitted by the existing passive safety
-  // grammar, including quoted fragments of flags. This is display admission,
-  // not a shell evaluator or command-execution authority.
-  const words = (command.match(/(?:'[^']*'|[^\s'])+/g) ?? []).map(word => word.replace(/'/g, ''));
+  // Decode the quoted words permitted by the existing passive safety grammar
+  // (single quotes, and the server's console double quotes on Windows),
+  // including quoted fragments of flags. This is display admission, not a
+  // shell evaluator or command-execution authority.
+  const words = (command.match(/(?:'[^']*'|"(?:[^"]|"")*"|[^\s'"])+/g) ?? [])
+    .map(word => word.replace(/'/g, '').replace(/""/g, '\0').replace(/"/g, '').replace(/\0/g, '"'));
   const decoded = words.join(' ').replace(/\\/g, '/');
   const broadSnapshot = decoded.includes('ripr agent verify')
     && decoded.includes('--before') && decoded.includes('--after')
@@ -5127,7 +5144,7 @@ function actionableGapQueueCommandIsSafe(command: string, redirectRoots: readonl
   return normalized !== ''
     && !broadSnapshot
     && !testRunnerCommandLeavesScope(normalized)
-    && redirectStaysInWorkspace(normalized, redirectRoots)
+    && redirectStaysInWorkspace(normalized, redirectRoots, windowsQuoting)
     && ACTIONABLE_QUEUE_SAFE_COMMAND_PREFIXES.some((prefix) =>
       normalized === prefix || normalized.startsWith(`${prefix} `)
     );
@@ -5141,7 +5158,7 @@ function actionableGapQueueRelatedVerifyIsBounded(packet: Record<string, unknown
   const file = related ? stringField(related, 'file') : undefined;
   const name = related ? stringField(related, 'name') : undefined;
   const command = packet.verify_command;
-  if (!file || !name || typeof command !== 'string' || hasUnsafeShellMetacharacter(command)) {
+  if (!file || !name || typeof command !== 'string' || hasUnsafeShellMetacharacter(command, isWindowsHost())) {
     return false;
   }
   // RIPR-SPEC-0057's existing typed-target fallback: the projector derives
@@ -5492,7 +5509,8 @@ export function validatedAgentLoopCommand(
       !redirectTargetMatches(
         command.slice(redirectAt + ' > '.length),
         contract.targetArtifact,
-        redirectRoots
+        redirectRoots,
+        isWindowsHost()
       )
     ) {
       return undefined;
@@ -5512,7 +5530,7 @@ export function validatedAgentLoopCommand(
     return undefined;
   }
   const portableBody = body.replace(`--root ${rootArg}`, '--root .');
-  if (hasUnsafeShellMetacharacter(portableBody)) {
+  if (hasUnsafeShellMetacharacter(portableBody, isWindowsHost())) {
     return undefined;
   }
   // One redirect only: a `>` here would truncate some other file.

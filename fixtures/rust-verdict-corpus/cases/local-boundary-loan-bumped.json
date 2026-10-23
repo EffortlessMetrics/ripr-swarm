@@ -1,0 +1,51 @@
+{
+  "case_id": "local-boundary-loan-bumped",
+  "subject_id": "authored-local-boundary-loan",
+  "diff": "cases/local-boundary-loan-bumped.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 18
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "helper_reached_with_computed_args",
+  "hard_case": "The boundary operand is a local selected by a flag parameter and the test reaches the owner through a helper that forwards its parameters (#9509).",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "unit < bytes",
+        "mutated_line": "unit < bytes",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: tier_loan_bumped(2_000 + 1, true) is unchanged at 2_001; the boundary is never reached"
+      },
+      {
+        "replacement": "unit > bytes",
+        "mutated_line": "unit > bytes",
+        "outcome": "tests_failed",
+        "failing_test": "tests::the_helper_adds_one_before_the_call",
+        "equivalence_review": "not equivalent: tier_loan_bumped(2_000 + 1, true) becomes \"byte\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "expect_next_tier adds one to its bytes parameter before the call, so the inputs 2_000 and 100 reach the owner as 2_001 and 101 and none sits on 1_024. The literal the test passes is not the compared value, so pairing it with the boundary would be false credit. 1 of 2 listed mutants fails cargo test, and the one that survives is the boundary one. Spec cells: RIPR-SPEC-0001, RIPR-SPEC-0158, RIPR-SPEC-0186.",
+  "labeling_observation": {
+    "ripr_commit": "59b29bd",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

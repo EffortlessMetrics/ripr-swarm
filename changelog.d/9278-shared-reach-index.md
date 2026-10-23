@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- Dependent-scope narrowing no longer rebuilds a widened reach index per owner on diffs with many distinct caller closures: once the widened builds pass the cache capacity, the run builds one full-selection reach index, shares it and the lookups derived from it across the remaining owners, and keeps finding classes unchanged; a deep transitive-witness limitation for a late owner can now name a test beyond its closure, as full mode always did (#9278).

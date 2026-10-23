@@ -287,3 +287,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — helper_chain_one_hop (22)
+
+Reason:
+RIPR-SPEC-0122: route-not-ready refusal names its missing evidence (#9604 batch C)
+
+Command:
+`cargo xtask goldens bless helper_chain_one_hop --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

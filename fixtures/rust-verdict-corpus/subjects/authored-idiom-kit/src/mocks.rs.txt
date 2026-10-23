@@ -1,0 +1,40 @@
+pub trait Sink {
+    fn send(&mut self, line: String);
+}
+
+pub struct Recorder {
+    pub lines: Vec<String>,
+}
+
+impl Sink for Recorder {
+    fn send(&mut self, line: String) {
+        self.lines.push(line);
+    }
+}
+
+pub fn report_total(sink: &mut dyn Sink, items: &[u32]) {
+    let total: u32 = items.iter().sum();
+    sink.send(format!("total={}", total));
+    if total > 100 {
+        sink.send("over budget".to_string());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn total_is_reported() {
+        let mut recorder = Recorder { lines: vec![] };
+        report_total(&mut recorder, &[10, 20]);
+        assert_eq!(recorder.lines, vec!["total=30".to_string()]);
+    }
+
+    #[test]
+    fn over_budget_is_flagged() {
+        let mut recorder = Recorder { lines: vec![] };
+        report_total(&mut recorder, &[60, 70]);
+        assert_eq!(recorder.lines.len(), 2);
+    }
+}
