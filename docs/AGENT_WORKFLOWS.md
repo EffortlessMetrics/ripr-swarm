@@ -295,9 +295,13 @@ with their seam IDs. With `--at` and `--kind` the stub
 is read from that one file's seams without using classification to pick the
 seam, and placed inline. After selection the command looks up the inventory
 grip so JSON and human output can disclose it: a strongly_gripped seam stays
-`state: ready` (exit 0) and reuses the packet/repair omission reason
-("configured off for strongly_gripped seams and is not included in agent
-results"). A bare `--at` (no `--kind`) classifies that one file and tries only
+`state: ready` (exit 0) and the disclosure names the real reason — the seam is
+exposed because its tests already discriminate it, so a stub would add
+nothing; only a class a user severity actually disables is described as
+"configured off" (#8891). Running `--write` again for the same seam reports
+the stub already written at the file (with the run command) instead of
+suffixing a `_2` duplicate; a different test that happens to share the name
+still suffixes. A bare `--at` (no `--kind`) classifies that one file and tries only
 its reported gaps, so it never stubs a seam the tests already pin. It prints a compiling `#[test]` placed in the
 owner file's inline `#[cfg(test)]` module, a new inline module, or the
 proposed `tests/` file, calling the changed function with its real receiver
@@ -323,8 +327,12 @@ the full path or the seam ID.
 When the file has seams but the selected function has none of the requested
 family, the not-found message names the requested `FAMILY`. Its `nearest:`
 list contains only seams of that family, filtered before the five-entry limit.
-A file with only other families offers no nearest entries. These not-found
-decisions keep exit 3 and empty stdout, including with `--json`.
+A file with only other families offers no nearest entries. An empty list is
+rendered as `nearest: none`; a suffix selector searches reported gaps, so an
+empty list does not establish that the file has no seam of that family. These
+not-found decisions keep exit 3. With `--json`, stdout carries the schema-0.2
+`rust_test_stub` refused envelope and stderr carries the prose; without it,
+stdout stays empty.
 
 No `.ripr/goals/active.toml`, current-writer file, stage file or agent-liveness
 record selects ordinary work. Keep status changes evidence-bound and update an

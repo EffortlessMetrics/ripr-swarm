@@ -1,0 +1,13 @@
+diff --git a/lib/Toolkit.pm b/lib/Toolkit.pm
+index 7f429bd..534d279 100644
+--- a/lib/Toolkit.pm
++++ b/lib/Toolkit.pm
+@@ -21,7 +21,7 @@ sub ctx_count {
+ 
+ sub join_local {
+     my (@items) = @_;
+-    local $" = '-';
++    local $" = "-";
+     return "@items";
+ }
+ 

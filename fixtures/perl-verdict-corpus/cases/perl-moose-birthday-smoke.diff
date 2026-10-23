@@ -1,0 +1,13 @@
+diff --git a/lib/Profile.pm b/lib/Profile.pm
+index 949eff0..23e856d 100644
+--- a/lib/Profile.pm
++++ b/lib/Profile.pm
+@@ -21,7 +21,7 @@ sub is_adult {
+ 
+ sub birthday {
+     my ($self) = @_;
+-    $self->age($self->age + 1);
++    $self->age(1 + $self->age);
+     return $self->age;
+ }
+ 
