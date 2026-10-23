@@ -4119,13 +4119,27 @@ pub(in crate::analysis) fn chain_row_transfer_stop(
     }
     chain.hops.iter().rev().find_map(|hop| {
         let caller_parameters = function_parameters(&hop.caller);
+        // Ask the binder itself, with a row that holds a value for every
+        // caller parameter, so bindability is never re-derived here. Only
+        // `self.<tuple index>` reads a receiver cell the synthetic row
+        // cannot carry; the binder admits exactly that shape.
+        let row = caller_parameters
+            .iter()
+            .map(|parameter| ParameterValue {
+                parameter: parameter.clone(),
+                value: "0".to_string(),
+                line: 0,
+                text: String::new(),
+                file: None,
+            })
+            .collect::<Vec<_>>();
         hop.arguments.iter().find_map(|argument| {
             let trimmed = argument.trim();
-            let bindable = super::helper_transfer::strict_literal(argument).is_some()
-                || trimmed.starts_with("self.")
-                || caller_parameters
-                    .iter()
-                    .any(|parameter| parameter == trimmed);
+            let receiver_index = trimmed.strip_prefix("self.").is_some_and(|field| {
+                !field.is_empty() && field.chars().all(|ch| ch.is_ascii_digit())
+            });
+            let bindable = receiver_index
+                || bind_helper_argument(argument, &caller_parameters, &row).is_some();
             (!bindable).then(|| trimmed.to_string())
         })
     })

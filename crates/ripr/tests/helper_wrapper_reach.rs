@@ -1236,11 +1236,8 @@ fn return_value_behind_a_computed_chain_argument_abstains() -> Result<(), String
             Some("helper_owner_call"),
             "{argument}: {finding}"
         );
-        assert!(
-            matches!(
-                finding["classification"].as_str(),
-                Some("static_unknown" | "propagation_unknown" | "infection_unknown")
-            ),
+        assert_eq!(
+            finding["classification"], "infection_unknown",
             "{argument}: {finding}"
         );
     }
@@ -1307,6 +1304,45 @@ fn return_value_behind_a_literal_chain_argument_keeps_its_reading() -> Result<()
         "{finding}"
     );
     assert_eq!(finding["ripr"]["infect"]["state"], "yes", "{finding}");
+    assert_ne!(finding["classification"], "infection_unknown", "{finding}");
+    Ok(())
+}
+
+// #9889 review: `bind_helper_argument` binds `self.<tuple index>` only, so
+// any other receiver projection stops the row and abstains; the tuple index
+// keeps its reading.
+fn receiver_wide_source(argument: &str, field_decl: &str, construct: &str) -> String {
+    format!(
+        "fn wide_x(input: &str) -> bool {{\n    3 < input.len()\n}}\n\npub struct W{field_decl}\n\nimpl W {{\n    pub fn run(&self, input: &str) -> &'static str {{\n        if wide_x({argument}) {{\n            \"wide\"\n        }} else {{\n            \"narrow\"\n        }}\n    }}\n}}\n\npub fn run_w(input: &str) -> &'static str {{\n    {construct}.run(input)\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn rows_straddle_four() {{\n        assert_eq!(run_w(\" abcd \"), \"wide\");\n        assert_eq!(run_w(\" abc \"), \"narrow\");\n    }}\n}}\n"
+    )
+}
+
+#[test]
+fn return_value_behind_a_receiver_field_chain_argument_abstains() -> Result<(), String> {
+    for argument in ["self.pad.as_str()", "&self.pad", "self.pad.as_str().trim()"] {
+        let source = receiver_wide_source(
+            argument,
+            " {\n    pad: String,\n}",
+            "W { pad: String::new() }",
+        );
+        let finding = family_finding(&source, WIDE_DIFF, "return_value")?;
+        assert_eq!(
+            relation_of(&finding, "rows_straddle_four"),
+            Some("helper_owner_call"),
+            "{argument}: {finding}"
+        );
+        assert_eq!(
+            finding["classification"], "infection_unknown",
+            "{argument}: {finding}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn return_value_behind_a_receiver_tuple_index_keeps_its_reading() -> Result<(), String> {
+    let source = receiver_wide_source("self.0", "(&'static str);", "W(\"\")");
+    let finding = family_finding(&source, WIDE_DIFF, "return_value")?;
     assert_ne!(finding["classification"], "infection_unknown", "{finding}");
     Ok(())
 }
