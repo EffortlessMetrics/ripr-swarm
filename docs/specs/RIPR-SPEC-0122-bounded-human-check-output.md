@@ -174,18 +174,24 @@ decisive stages behind a remainder count (#4324):
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
 ```
 
-The five-line legend immediately follows the compact line, once for the selected
+The seven-line legend immediately follows the compact line, once for the selected
 digest, including an exposed finding when selected. It explains static evidence,
 not execution or test adequacy. `weak` means partial evidence across the stages,
 and `no` means evidence was not found, never that a behavior is impossible.
+The final two lines define the words the `Summary:` count line prints (probe,
+exposed, weak, unrevealed, no path) in the same static vocabulary (#9244 item 4);
+the `unknown` count is already defined by the `States` line (`unknown/opaque =
+analysis limited`). They claim no runtime mutation outcome.
 No legend renders when there is no selected digest (empty, all-suppressed,
 base-side-only, or unresolved-currentness-only findings). The legend adds a fixed
-five lines; it does not expand the per-stage detail window. Full human and
-machine formats retain their existing contracts. This addresses item 1 only;
-the shared class vocabulary and per-class discoverability in items 2 and 3 are
-unchanged.
+seven lines; it does not expand the per-stage detail window. Full human and
+machine formats retain their existing contracts. This addresses item 1 and #9244
+item 4 only; the shared class vocabulary and per-class discoverability in items 2
+and 3 are unchanged.
 
 Stages summarize independent static signals. Observation can reflect a
 matching assertion, an extracted test check, or a preview adapter's related-test
