@@ -1216,7 +1216,7 @@ mod tests {
             parametrized: false,
             parametrize: None,
             generated_inputs: Vec::new(),
-            framework: "pytest",
+            framework: super::super::PythonFramework::Pytest,
             assertions: Vec::new(),
             assertion_admission: super::super::admission::PythonAssertionAdmission::NoAssertionLike,
         };
