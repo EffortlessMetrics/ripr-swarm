@@ -45,6 +45,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::PublicProof(args) => super::public_proof::run(&args),
         XtaskCommand::ModuleHealth(args) => super::reports::module_health(&args),
         XtaskCommand::WindowsAdvisorySummary(args) => super::windows_advisory::run(&args),
+        XtaskCommand::WindowsAdvisoryRun(args) => super::windows_advisory_run::run(&args),
         XtaskCommand::WindowsAdvisoryIsolatedSummary(args) => {
             super::windows_advisory::run_isolated(&args)
         }
