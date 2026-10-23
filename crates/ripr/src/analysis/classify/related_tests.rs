@@ -1962,6 +1962,79 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
     if !uses_prefix {
         return true;
     }
+    // Resolve the imported suffix, not just the prefix: every import of the
+    // entry's name through the library must spell exactly the entry's module
+    // path (`<lib>::<module path>::<entry>`). A path that reaches the name
+    // through another module (a re-export such as `pub mod foreign { pub use
+    // std::cmp::max; }`, which can leave the crate) or an entry whose module
+    // path is unknown refuses.
+    let entry_module = super::call_identity::definition_module_path(caller);
+    // A crate-root `pub use [crate::|self::]<module path>::<entry>;` re-exports
+    // the entry from its own definition (every root binding of the name must
+    // be such a re-export, plain and unaliased).
+    let root_reexports_entry = |module: &[String]| {
+        let Some(root) = index.files().get(Path::new("src/lib.rs")) else {
+            return false;
+        };
+        let bindings: Vec<_> = super::reveal::flattened_use_paths(&root.source)
+            .into_iter()
+            .filter(|import| {
+                import
+                    .alias
+                    .as_deref()
+                    .or_else(|| import.path.rsplit("::").next())
+                    .map(unraw)
+                    .as_deref()
+                    == Some(caller.name.as_str())
+            })
+            .collect();
+        !bindings.is_empty()
+            && bindings.iter().all(|import| {
+                let segments: Vec<String> = import
+                    .path
+                    .split("::")
+                    .map(unraw)
+                    .skip_while(|segment| segment == "crate" || segment == "self")
+                    .collect();
+                import.alias.is_none()
+                    && segments.last().map(String::as_str) == Some(caller.name.as_str())
+                    && segments[..segments.len() - 1] == *module
+            })
+    };
+    let suffix_resolves = |source: &str| {
+        super::reveal::flattened_use_paths(source)
+            .iter()
+            .all(|import| {
+                let segments: Vec<&str> =
+                    import.path.trim_start_matches("::").split("::").collect();
+                if segments.first().map(|first| unraw(first)).as_deref() != Some(crate_name) {
+                    return true;
+                }
+                let imported_last = segments.last().map(|last| unraw(last));
+                let bound = import
+                    .alias
+                    .as_deref()
+                    .map(unraw)
+                    .or_else(|| imported_last.clone());
+                if bound.as_deref() != Some(caller.name.as_str()) {
+                    return true;
+                }
+                let Some(module) = entry_module.as_ref() else {
+                    return false;
+                };
+                if imported_last.as_deref() != Some(caller.name.as_str()) || segments.len() < 2 {
+                    return false;
+                }
+                let spelled: Vec<String> = segments[1..segments.len() - 1]
+                    .iter()
+                    .map(|segment| unraw(segment))
+                    .collect();
+                spelled == *module || (spelled.is_empty() && root_reexports_entry(module))
+            })
+    };
+    if !suffix_resolves(&facts.source) || !suffix_resolves(&test.body) {
+        return false;
+    }
     let rebinds = |source: &str| {
         super::reveal::flattened_use_paths(source)
             .iter()

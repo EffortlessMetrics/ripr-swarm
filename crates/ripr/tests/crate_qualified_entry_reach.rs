@@ -990,3 +990,49 @@ fn an_item_position_macro_in_the_test_crate_fails_closed() -> Result<(), String>
     assert_ne!(package.classification()?, "exposed", "bare route");
     Ok(())
 }
+
+/// The imported suffix must resolve to the entry's own definition: a path
+/// through another module (a library re-export that leaves the crate) refuses,
+/// the entry's exact module path links, and a unit test inside `src/` that
+/// shadows a module still refuses.
+#[test]
+fn an_imported_suffix_must_spell_the_entrys_module_path() -> Result<(), String> {
+    let control = module_package(
+        "src/inner.rs",
+        MODULE_LIB,
+        format!(
+            "use qual_reach::inner::order_discount;\n{}",
+            test_file(BARE)
+        ),
+        vec![],
+    );
+    assert_eq!(control.relation()?.as_deref(), LINKED, "control links");
+    assert_eq!(control.classification()?, "exposed", "control renders");
+    // A library re-export that leaves the crate: `foreign::order_discount` is
+    // not the entry's module path.
+    let foreign_lib =
+        "pub mod inner;\npub mod foreign {\n    pub use std::cmp::max as order_discount;\n}\n";
+    for import in [
+        "use qual_reach::foreign::order_discount;\n",
+        "use qual_reach::order_discount;\n",
+        "use qual_reach::foreign::max as order_discount;\n",
+        "use qual_reach::inner::deeper::order_discount;\n",
+    ] {
+        let package = module_package(
+            "src/inner.rs",
+            foreign_lib,
+            format!("{import}{}", test_file(BARE)),
+            vec![],
+        );
+        assert_eq!(package.relation()?, None, "{import}");
+        assert_ne!(package.classification()?, "exposed", "{import}");
+    }
+    // A unit test inside `src/` whose module shadows the std path.
+    let unit_lib = format!(
+        "{LIB}\n#[cfg(test)]\nmod tests {{\n    mod foreign {{\n        pub use std::cmp;\n    }}\n    use self::foreign::cmp::order_discount;\n\n    #[test]\n    fn discount_boundary() {{\n        assert_eq!(order_discount(10), 5);\n        assert_eq!(order_discount(9), 0);\n    }}\n}}\n"
+    );
+    let package = Package::root(&unit_lib, false, "");
+    assert_ne!(package.relation()?.as_deref(), LINKED, "unit shadow");
+    assert_ne!(package.classification()?, "exposed", "unit shadow");
+    Ok(())
+}

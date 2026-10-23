@@ -296,6 +296,14 @@ can only hint that a caller "may lead here" without changing anything.
   (only `crate::` from a unit test under `src/` is credited), or when any
   `const`/`static` of that name appears anywhere in the test file.
 
+  The imported suffix is resolved, not only the prefix: an import of the
+  entry's name through the library must spell the entry's definition module
+  path exactly (`<lib>::<module path>::<entry>`), or be the crate-root
+  `<lib>::<entry>` of a plain unaliased crate-root `pub use` of that same
+  path. A path reaching the name through another module (a re-export such as
+  `pub mod foreign { pub use std::cmp::max; }`), an aliased tail, or an entry
+  whose definition path is unknown refuses.
+
   Known limits (a proper path resolver is a follow-up to #8999): the bare-call
   route credits only a direct `use <lib>::..` import (list imports included)
   where nothing in the test file can shadow the library name. Valid but

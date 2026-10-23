@@ -11581,6 +11581,7 @@ tests = [
   "crates/ripr/tests/crate_qualified_entry_reach.rs::bare_spelling_in_non_code_text_does_not_admit_an_import",
   "crates/ripr/tests/crate_qualified_entry_reach.rs::relative_and_reexport_import_routes_are_refused",
   "crates/ripr/tests/crate_qualified_entry_reach.rs::an_item_position_macro_in_the_test_crate_fails_closed",
+  "crates/ripr/tests/crate_qualified_entry_reach.rs::an_imported_suffix_must_spell_the_entrys_module_path",
   "crates/ripr/tests/crate_qualified_entry_reach.rs::a_nearer_binding_or_same_line_non_code_does_not_admit_a_bare_call",
   "crates/ripr/tests/crate_qualified_entry_reach.rs::an_absolute_import_prefix_goes_through_the_same_proof",
   "crates/ripr/src/analysis/facts/build.rs::tests::root_library_name_reads_lib_name_then_package_and_refuses_moved_roots",
