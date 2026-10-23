@@ -1370,6 +1370,30 @@ fn paging_argument_parsers_pin_type_range_and_absence() -> Result<(), String> {
         assert_eq!(error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
         assert_eq!(error.message, "offset must be a non-negative integer");
     }
+    // An integral magnitude past u64::MAX (2^64) is an out-of-range error,
+    // not a type error: the value IS a non-negative integer, just not one
+    // this server can page (#9895).
+    let too_large = argument_map(serde_json::json!({"limit": 2f64.powi(64)}));
+    let refused = optional_positive_argument(&too_large, "limit")
+        .err()
+        .ok_or("2^64 must be refused")?;
+    assert_eq!(refused.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    assert_eq!(
+        refused.message,
+        format!(
+            "limit is out of range: the supported maximum is {}",
+            u64::MAX
+        )
+    );
+    let data = refused
+        .data
+        .clone()
+        .ok_or_else(|| format!("out-of-range refusal lost structured data: {refused:?}"))?;
+    assert_eq!(data["argument"], serde_json::json!("limit"));
+    assert_eq!(
+        data["expected"],
+        serde_json::json!(format!("non-negative integer at most {}", u64::MAX))
+    );
     Ok(())
 }
 

@@ -622,24 +622,48 @@ fn optional_nonnegative_argument(
     match arguments.get(name) {
         None => Ok(None),
         Some(value) => {
-            let raw = value.as_u64().ok_or_else(|| {
-                ErrorData::invalid_params(
-                    format!("{name} must be a non-negative integer"),
-                    Some(
-                        serde_json::json!({ "argument": name, "expected": "non-negative integer" }),
-                    ),
-                )
-            })?;
-            usize::try_from(raw).map(Some).map_err(|error| {
-                ErrorData::invalid_params(
-                    format!("{name} is out of range: {error}"),
-                    Some(
-                        serde_json::json!({ "argument": name, "expected": "non-negative integer" }),
-                    ),
-                )
-            })
+            // serde_json keeps only the f64 form for magnitudes past
+            // u64::MAX (for example 2^64), so an integral float is an
+            // out-of-range error, not a type error; a fractional or
+            // negative value stays a type error (#9895).
+            let Value::Number(number) = value else {
+                return Err(non_negative_integer_error(name));
+            };
+            let Some(raw) = number.as_u64() else {
+                let integral_too_large = number.is_f64()
+                    && number
+                        .as_f64()
+                        .is_some_and(|float| float > 0.0 && float.fract() == 0.0);
+                return Err(if integral_too_large {
+                    out_of_range_error(name)
+                } else {
+                    non_negative_integer_error(name)
+                });
+            };
+            usize::try_from(raw)
+                .map(Some)
+                .map_err(|_error| out_of_range_error(name))
         }
     }
+}
+
+fn non_negative_integer_error(name: &str) -> ErrorData {
+    ErrorData::invalid_params(
+        format!("{name} must be a non-negative integer"),
+        Some(serde_json::json!({ "argument": name, "expected": "non-negative integer" })),
+    )
+}
+
+fn out_of_range_error(name: &str) -> ErrorData {
+    ErrorData::invalid_params(
+        format!(
+            "{name} is out of range: the supported maximum is {}",
+            u64::MAX
+        ),
+        Some(
+            serde_json::json!({ "argument": name, "expected": format!("non-negative integer at most {}", u64::MAX) }),
+        ),
+    )
 }
 
 /// A paging limit (#6021): a JSON integer `>= 1`.

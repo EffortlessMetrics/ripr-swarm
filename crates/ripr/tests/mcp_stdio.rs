@@ -2379,15 +2379,17 @@ fn empty_gap_pages_keep_structured_outcomes_at_the_response_bound() -> Result<()
                 .pointer("/result/structuredContent/failure/recovery")
                 .and_then(Value::as_str)
                 .ok_or("empty-page refusal omitted recovery")?;
-            if !recovery.contains("ripr://snapshot/{snapshot_id}")
-                || !recovery.contains("ripr_get_gap")
+            // #9895: the overflow is the echoed filter, not the page, so the
+            // recovery names the shrinkable filter instead of the identity
+            // route (which cannot fix a filter-driven overflow).
+            if !recovery.contains("narrow the file/class/language filter")
                 || serde_json::to_vec(&refused)
                     .map_err(|error| error.to_string())?
                     .len()
                     > RESPONSE_BOUND
             {
                 return Err(format!(
-                    "empty {field} refusal lost its bounded identity recovery"
+                    "empty {field} refusal lost its bounded filter recovery"
                 ));
             }
         }
@@ -2395,6 +2397,77 @@ fn empty_gap_pages_keep_structured_outcomes_at_the_response_bound() -> Result<()
     let recovered = session.call_tool("empty-recovered", "ripr_list_gaps", json!({}), timeout)?;
     if structured_tool_success(&recovered, "same-session recovery")? != all {
         return Err("empty-page refusals changed the completed snapshot or selection".into());
+    }
+    Ok(())
+}
+
+/// #9895: an integral magnitude past u64::MAX (`limit`: 2^64) is an
+/// out-of-range Invalid Params error naming the supported maximum — the
+/// value IS a non-negative integer, just not one the server can page —
+/// while a fractional or negative value keeps the type error and a valid
+/// limit still reaches session lookup.
+#[test]
+fn huge_page_limit_names_the_range_not_the_type() -> Result<(), String> {
+    let root = workspace_root()?;
+    let tool_call = |id: &str, arguments: Value| {
+        line(json!({
+            "jsonrpc": "2.0", "id": id, "method": "tools/call",
+            "params": { "_meta": current_meta(), "name": "ripr_list_gaps", "arguments": arguments }
+        }))
+    };
+    let input = [
+        line(json!({
+            "jsonrpc": "2.0", "id": "discover", "method": "server/discover",
+            "params": { "_meta": current_meta() }
+        }))?,
+        tool_call("too-large", json!({ "limit": 2f64.powi(64) }))?,
+        tool_call("fractional", json!({ "limit": 1.5 }))?,
+        tool_call("negative", json!({ "limit": -1 }))?,
+        tool_call("valid", json!({ "limit": 1 }))?,
+    ]
+    .concat();
+    let output = run_mcp(&root, &[&input])?;
+    let responses = response_lines(&output)?;
+    if responses.len() != 5 {
+        return Err(format!("expected 5 replies, got {}", responses.len()));
+    }
+    let reply = |id: &str| {
+        responses
+            .iter()
+            .find(|response| response.get("id").and_then(Value::as_str) == Some(id))
+            .ok_or_else(|| format!("missing correlated response for {id}"))
+            .cloned()
+    };
+    let too_large = reply("too-large")?;
+    if too_large.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
+        || too_large.pointer("/error/message").and_then(Value::as_str)
+            != Some("limit is out of range: the supported maximum is 18446744073709551615")
+    {
+        return Err(format!(
+            "2^64 must name the range, not the type: {too_large}"
+        ));
+    }
+    for (id, expected) in [
+        ("fractional", "limit must be a non-negative integer"),
+        ("negative", "limit must be a non-negative integer"),
+    ] {
+        let refused = reply(id)?;
+        if refused.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
+            || refused.pointer("/error/message").and_then(Value::as_str) != Some(expected)
+        {
+            return Err(format!("{id} must keep the type error: {refused}"));
+        }
+    }
+    // Validation runs before session lookup: a valid limit reaches the
+    // pre-refresh no_snapshot state, proving the refusals above are
+    // argument validation, not session state.
+    let valid = reply("valid")?;
+    if valid
+        .pointer("/result/structuredContent/failure/code")
+        .and_then(Value::as_str)
+        != Some("no_snapshot")
+    {
+        return Err(format!("a valid limit must reach session lookup: {valid}"));
     }
     Ok(())
 }
