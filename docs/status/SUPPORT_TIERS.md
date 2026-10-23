@@ -78,8 +78,10 @@ The table below is generated from the machine capability registry
 `ripr capabilities --json`). It states, per language, framework, mode and
 family, what the registry says ripr can establish statically; an absent cell is
 `not_proven`. A registry change without regenerating this block fails the
-`cargo test -p ripr language_capability_drift` check; the failure prints the
-exact replacement. It is a static-evidence statement, not a runtime mutation
+`language_capability_drift` test in Rust-touching PRs (ripr lib tests via
+nextest `--workspace`) and locally via `cargo test -p ripr language_capability_drift`;
+the failure prints the exact replacement. It is not enforced for docs-only PRs,
+which do not run that test. It is a static-evidence statement, not a runtime mutation
 outcome or a sufficiency claim, and it promotes no tier.
 
 <!-- capability-registry:begin (generated from domain::language_capability::CAPABILITY_CELLS; do not edit) -->

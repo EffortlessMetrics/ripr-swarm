@@ -237,12 +237,24 @@ mod tests {
         );
     }
 
+    fn synthetic_doc() -> String {
+        format!(
+            "# Doc\n\nprose\n\n{}\n\nmore prose\n",
+            render_registry_block(CAPABILITY_CELLS)
+        )
+    }
+
     #[test]
     fn a_changed_cell_state_makes_the_registry_block_stale() {
+        let doc = synthetic_doc();
+        assert_eq!(
+            registry_block_violations(&doc, CAPABILITY_CELLS),
+            Vec::<String>::new()
+        );
         let mut cells = CAPABILITY_CELLS.to_vec();
         cells[0].state = super::super::language_capability::SupportState::Stale;
         assert_ne!(cells[0].state, CAPABILITY_CELLS[0].state);
-        let violations = registry_block_violations(&current_support_tiers(), &cells);
+        let violations = registry_block_violations(&doc, &cells);
         assert!(
             violations.iter().any(|v| v.contains("stale")),
             "{violations:?}"
@@ -251,7 +263,7 @@ mod tests {
 
     #[test]
     fn a_hand_edited_or_missing_registry_block_is_drift() {
-        let doc = current_support_tiers();
+        let doc = synthetic_doc();
         let edited = doc.replacen("| `supported", "| `edited", 1);
         assert_ne!(edited, doc);
         assert!(
@@ -260,6 +272,7 @@ mod tests {
                 .any(|v| v.contains("stale"))
         );
         let removed = doc.replace(REGISTRY_END, "");
+        assert_ne!(removed, doc);
         assert!(
             registry_block_violations(&removed, CAPABILITY_CELLS)
                 .iter()
