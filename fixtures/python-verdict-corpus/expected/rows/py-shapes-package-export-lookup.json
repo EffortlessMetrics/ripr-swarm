@@ -1,0 +1,22 @@
+{
+  "case_id": "py-shapes-package-export-lookup",
+  "subject_id": "authored-py-pytest-shapes",
+  "origin": "authored",
+  "anchor": "shapes/rates/table.py:1",
+  "behavior_family": "constructor_field",
+  "test_shape": "pytest_package_reexport_lookup_pinned",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "no_static_path"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

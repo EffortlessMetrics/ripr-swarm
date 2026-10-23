@@ -392,10 +392,20 @@ impl McpSession {
                             String::from_utf8_lossy(&stderr)
                         ));
                     }
-                    if !stderr.is_empty() {
+                    // The one documented operator-visible startup line for an
+                    // unusable `--root` (docs/interop/mcp.md) is not
+                    // contamination; anything else on stderr still is.
+                    let stderr_text = String::from_utf8_lossy(&stderr);
+                    let stray: Vec<&str> = stderr_text
+                        .lines()
+                        .filter(|line| {
+                            !line.starts_with("ripr mcp: warning: workspace root unavailable")
+                        })
+                        .collect();
+                    if !stray.is_empty() {
                         return Err(format!(
                             "successful MCP session contaminated stderr: {}",
-                            String::from_utf8_lossy(&stderr)
+                            stray.join("\n")
                         ));
                     }
                     let mut max_frame_bytes = 0_usize;
@@ -1550,7 +1560,7 @@ fn b3a_mcp_negative_authority_pre_refresh() -> Result<(), String> {
     // Dispatch edge: unknown tools and unknown arguments are protocol
     // errors, never silent nulls.
     let reply = session.call("b3a-unknown-tool", "ripr_everything", json!({}))?;
-    if protocol_error_code(&reply, "b3a unknown tool")? != -32601 {
+    if protocol_error_code(&reply, "b3a unknown tool")? != -32602 {
         return Err(format!("b3a unknown tool: wrong protocol code: {reply}"));
     }
     let reply = session.call(

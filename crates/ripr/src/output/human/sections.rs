@@ -23,8 +23,12 @@ use std::path::Path;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use super::evidence_lines::{JsonPointerWording, evidence_path_lines, weakness_lines};
+use super::evidence_lines::{
+    JsonPointerWording, evidence_path_lines, restates_no_static_path_evidence, weakness_lines,
+};
 use super::{is_wrappable_advisory_prose, wrap_human_prose};
+
+const TYPED_STATIC_LIMITATION_PREFIX: &str = "Typed static limitation (";
 
 /// #7756: trailing-period rule for the human render — a labelled field line
 /// (`  Label: value`) or a list-item value carries no trailing period;
@@ -103,7 +107,13 @@ pub(crate) fn render_finding_digest_with_config(
     ));
     // #2614: add a brief classification hint so the digest reader understands
     // WHY the finding is at this class without reading the full form.
-    if let Some(hint) = classification_hint(&finding.class, &finding.ripr, &finding.probe.family) {
+    let refused_macro = refused_assertion_macro(finding);
+    if let Some(hint) = classification_hint(
+        &finding.class,
+        &finding.ripr,
+        &finding.probe.family,
+        refused_macro,
+    ) {
         out.push_str(&format!("  Why {}: {hint}\n", finding.class.plain_label()));
     }
     // The refusal names a file and a blocker; a cut would drop the blocker,
@@ -128,7 +138,14 @@ pub(crate) fn render_finding_digest_with_config(
         .or(finding.probe.before.as_deref())
         .unwrap_or(&finding.probe.expression);
     out.push_str(&format!("  Changed behavior: {}\n", one_line(changed)));
-    if let Some(missing) = finding.missing.first() {
+    // #9033: the digest names the first entry the full form's Weakness list
+    // would also show, so a one-line pointer never names an entry that
+    // `--format human-full` dropped as a restatement of its Evidence block.
+    let first_missing = finding
+        .missing
+        .iter()
+        .find(|missing| !restates_no_static_path_evidence(finding, missing));
+    if let Some(missing) = first_missing {
         // #2273: preview-language classifiers record an observation rationale
         // (not a missing discriminator) in this field for `exposed` findings;
         // label it as observed advisory evidence so the header does not
@@ -141,13 +158,16 @@ pub(crate) fn render_finding_digest_with_config(
         // discriminator label whenever one exists.
         // #7071: a weak finding whose reach witness ripr could not trace
         // carries the limit's prose here, not a discriminator.
+        // A typed static limitation is the analyzer naming what it could not
+        // bind, never an assertion a test could add.
         let label = if finding.class == ExposureClass::Exposed {
             "Discriminator (observed, advisory)"
-        } else if (matches!(
-            finding.class,
-            ExposureClass::PropagationUnknown | ExposureClass::StaticUnknown
-        ) || untraced_reach_weak_finding(finding))
-            && finding.activation.missing_discriminators.is_empty()
+        } else if missing.starts_with(TYPED_STATIC_LIMITATION_PREFIX)
+            || ((matches!(
+                finding.class,
+                ExposureClass::PropagationUnknown | ExposureClass::StaticUnknown
+            ) || untraced_reach_weak_finding(finding))
+                && finding.activation.missing_discriminators.is_empty())
         {
             "Analyzer limit"
         } else {
@@ -1221,10 +1241,20 @@ fn is_callee_only_reach(reach: &crate::domain::StageEvidence) -> bool {
     reach.summary.starts_with(CALLEE_ONLY_REACH_PREFIX)
 }
 
+/// The macro the finding's "assertion not credited" note names, read back from
+/// that note's leading `` `name!` `` so the hint and the refusal line below it
+/// can never name different assertions (#8927).
+fn refused_assertion_macro(finding: &Finding) -> Option<&str> {
+    let note = evidence_value(finding, crate::domain::ASSERTION_NOT_CREDITED_PREFIX)?;
+    let name = note.strip_prefix('`')?.split_once("!`")?.0;
+    (!name.is_empty()).then_some(name)
+}
+
 fn classification_hint(
     class: &ExposureClass,
     ripr: &RiprEvidence,
     family: &ProbeFamily,
+    refused_macro: Option<&str>,
 ) -> Option<String> {
     let reveal = &ripr.reveal;
     // #7003: "reaches this change" is a reach claim — a callee-only finding
@@ -1243,12 +1273,17 @@ fn classification_hint(
             }
         }
         ExposureClass::ReachableUnrevealed => {
-            if reveal.observe.summary == crate::domain::ASSERTION_CONTEXT_UNESTABLISHED {
-                let macro_name = if *family == ProbeFamily::MatchArm {
+            if reveal.observe.summary == crate::domain::ASSERTION_CONTEXT_UNESTABLISHED
+                && !callee_only
+            {
+                // The refusal note names the assertion that was actually
+                // refused; the family default only stands in when none is
+                // recorded.
+                let macro_name = refused_macro.unwrap_or(if *family == ProbeFamily::MatchArm {
                     "assert"
                 } else {
                     "assert_eq"
-                };
+                });
                 Some(format!(
                     "a related test asserts here, but ripr could not establish that the assertion runs and is the standard `{macro_name}!`"
                 ))
@@ -1321,11 +1356,11 @@ fn should_render_language_metadata(finding: &Finding) -> bool {
 #[cfg(test)]
 mod classification_hint_tests {
     fn classification_hint(class: &ExposureClass, ripr: &RiprEvidence) -> Option<String> {
-        super::classification_hint(class, ripr, &crate::domain::ProbeFamily::ReturnValue)
+        super::classification_hint(class, ripr, &crate::domain::ProbeFamily::ReturnValue, None)
     }
     use crate::domain::{
-        CALLEE_ONLY_REACH_PREFIX, Confidence, ExposureClass, RevealEvidence, RiprEvidence,
-        StageEvidence, StageState,
+        ASSERTION_CONTEXT_UNESTABLISHED, CALLEE_ONLY_REACH_PREFIX, Confidence, ExposureClass,
+        RevealEvidence, RiprEvidence, StageEvidence, StageState,
     };
 
     fn ripr(reach: StageState, observe: StageState) -> RiprEvidence {
@@ -1488,6 +1523,74 @@ mod classification_hint_tests {
         unrevealed.reveal.observe = StageEvidence::new(StageState::Weak, Confidence::Low, "x");
         let hint = classification_hint(&ExposureClass::ReachableUnrevealed, &unrevealed);
         assert_eq!(hint.as_deref(), Some("no test is seen calling this change"));
+    }
+
+    // #7055 A2: the unestablished-assertion arm is a reach claim ("a related
+    // test asserts here") and must fall back for callee-only evidence the
+    // same way the sibling `observe == No` arm does.
+    #[test]
+    fn callee_only_unestablished_assertion_falls_back_to_no_calling_test_hint() {
+        let mut unrevealed = ripr(StageState::Weak, StageState::No);
+        unrevealed.reach = callee_only_reach();
+        unrevealed.reveal.observe = StageEvidence::new(
+            StageState::No,
+            Confidence::Low,
+            ASSERTION_CONTEXT_UNESTABLISHED,
+        );
+        let hint = classification_hint(&ExposureClass::ReachableUnrevealed, &unrevealed);
+        assert_eq!(hint.as_deref(), Some("no test is seen calling this change"));
+        assert!(
+            hint.as_deref()
+                .is_some_and(|hint| !hint.contains("a related test asserts here")),
+            "callee-only must not imply a reaching test: {hint:?}"
+        );
+
+        // Negative: owner-reaching unestablished assertion keeps the
+        // established sentence (ReturnValue uses `assert_eq!`).
+        let mut reaching = ripr(StageState::Yes, StageState::No);
+        reaching.reveal.observe = StageEvidence::new(
+            StageState::No,
+            Confidence::Low,
+            ASSERTION_CONTEXT_UNESTABLISHED,
+        );
+        let hint = classification_hint(&ExposureClass::ReachableUnrevealed, &reaching);
+        assert_eq!(
+            hint.as_deref(),
+            Some(
+                "a related test asserts here, but ripr could not establish that the assertion runs and is the standard `assert_eq!`"
+            )
+        );
+    }
+
+    // #8927: a refused `assert!` on an effect probe must not be described as
+    // the standard `assert_eq!`; the hint names the macro the refusal names.
+    #[test]
+    fn unestablished_assertion_hint_names_the_refused_macro() {
+        let mut reaching = ripr(StageState::Yes, StageState::No);
+        reaching.reveal.observe = StageEvidence::new(
+            StageState::No,
+            Confidence::Low,
+            ASSERTION_CONTEXT_UNESTABLISHED,
+        );
+        let hint = super::classification_hint(
+            &ExposureClass::ReachableUnrevealed,
+            &reaching,
+            &crate::domain::ProbeFamily::SideEffect,
+            Some("assert"),
+        );
+        assert_eq!(
+            hint.as_deref(),
+            Some(
+                "a related test asserts here, but ripr could not establish that the assertion runs and is the standard `assert!`"
+            )
+        );
+        let hint = super::classification_hint(
+            &ExposureClass::ReachableUnrevealed,
+            &reaching,
+            &crate::domain::ProbeFamily::SideEffect,
+            Some("assert_eq"),
+        );
+        assert!(hint.is_some_and(|hint| hint.ends_with("the standard `assert_eq!`")));
     }
 
     // #7003 negative: the no-calling-test fallback is scoped to callee-only

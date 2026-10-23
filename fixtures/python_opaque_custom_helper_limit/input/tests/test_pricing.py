@@ -2,6 +2,7 @@ from src.pricing import apply_discount
 
 
 def assert_discounted(result):
+    print(result)
     assert result < 100
 
 

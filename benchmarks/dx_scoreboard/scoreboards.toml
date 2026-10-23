@@ -57,6 +57,27 @@ sha = "7c64b9c8d0778cc7a6aeaab0deb0452d9e521663"
 note = "large workspace (~900 files); pinned, not the checkout under test"
 heavy = true
 
+# Larger workspaces, where the inner loop is judged. Warm checks on small
+# libraries meet the 2 s bar easily; these rows are the ones that can miss it.
+# One run each so far: a commit with no product Rust ran in well under a
+# second, cargo's Rust-editing pin in about 3 s, and a Rust-editing commit in
+# this repository in 49 to 87 s. The two rows below are a fast and a slow
+# Rust-editing case; no row tracks the no-Rust diff.
+[[corpus]]
+id = "cargo"
+url = "https://github.com/rust-lang/cargo"
+sha = "f3865b2a4d1acc5276f6b3c67d0e057f4dab3928"
+base_sha = "0c38e943f4640efe8ade36f1034fdd8d87c26dcb"
+note = "large long-lived binary workspace (~1400 .rs files); shared corpus pin"
+heavy = true
+
+[[corpus]]
+id = "ripr-swarm-2026-10"
+url = "https://github.com/EffortlessMetrics/ripr-swarm"
+sha = "8fbe8bd1598e0b11752c6c989aa54198a0510a2f"
+note = "this repository at its 2026-10 size (~2100 .rs files), a fixed pin that will stop being current; the commit edits product Rust under crates/ripr, so the warm check pays for the macro-binding scan"
+heavy = true
+
 # ---------------------------------------------------------------- speed ----
 
 [[metric]]
@@ -107,6 +128,32 @@ direction = "lower_is_better"
 target = 512
 regression_pct = 15
 regression_floor = 64
+runner_dependent = true
+source = "measured"
+per_repo = true
+
+[[metric]]
+id = "speed.editor_refresh_ms"
+board = "speed"
+title = "Editor refresh after an edited save, from `ripr lsp --stdio`"
+unit = "ms"
+direction = "lower_is_better"
+target = 10000
+regression_pct = 25
+regression_floor = 1000
+runner_dependent = true
+source = "measured"
+per_repo = true
+
+[[metric]]
+id = "speed.editor_refresh_unanswered_progress_ms"
+board = "speed"
+title = "Editor refresh when the client never answers progress creation"
+unit = "ms"
+direction = "lower_is_better"
+target = 10000
+regression_pct = 25
+regression_floor = 1000
 runner_dependent = true
 source = "measured"
 per_repo = true
@@ -599,6 +646,21 @@ source = "ingest:first-run"
 # The verdict list is the sample detail: a changed verdict is listed for
 # review, because correctness needs the labeled corpus, not this walk.
 review_on_change = true
+
+[[metric]]
+id = "first_run.decisive_verdicts"
+board = "first_run"
+title = "Simple boundary edits on unfamiliar crates where ripr gives a decisive verdict that agrees with what the tests catch (of the 3 first-run crates)"
+unit = "cases"
+direction = "higher_is_better"
+# #9276 acceptance: at least 2 of the 3 first-run crates. "Agrees" is the
+# walk's `verdict_reading`, so an `*_unknown` verdict never counts and neither
+# does false credit or a false gap. Any drop from the baseline regresses.
+target = 2
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "ingest:first-run"
 
 [[metric]]
 id = "first_run.friction_events"

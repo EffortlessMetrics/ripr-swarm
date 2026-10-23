@@ -63,3 +63,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — effect_assertion_in_false_block (6)
+
+Reason:
+RIPR-SPEC-0197: follow main's route-not-ready missing-evidence wording; the human hint names the refused assertion macro (#8927)
+
+Command:
+`cargo xtask goldens bless effect_assertion_in_false_block --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

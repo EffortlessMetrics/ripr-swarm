@@ -3,6 +3,17 @@
 ## Pending
 
 Reason:
+wording: route-not-ready refusal now names the missing evidence (#9604 batch C), so the advisory line carries the parenthetical evidence detail
+
+Command:
+`cargo xtask goldens bless all_no_path_disclosure --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending
+
+Reason:
 additive: add related_tests_total cap field (mirrors repo-exposure pattern)
 
 Command:
@@ -465,6 +476,18 @@ Updated:
 
 Reason:
 RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless all_no_path_disclosure --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — all_no_path_disclosure (24)
+
+Reason:
+RIPR-SPEC-0122: no_static_path Weakness list no longer restates the Evidence block (#9033)
 
 Command:
 `cargo xtask goldens bless all_no_path_disclosure --reason "..."`
