@@ -1172,6 +1172,7 @@ fn gap_bound_after_phase_closes_the_gap_on_positive_evidence() -> Result<(), Str
     )
     .map_err(|error| format!("receipt json: {error}"))?;
     if receipt["status"] != "advisory"
+        || receipt["analysis_outcome_status"] != "complete"
         || receipt["seam"]["seam_id"] != attempt.gap.as_str()
         || receipt["provenance"]["seam_id"] != attempt.gap.as_str()
         || receipt["bound_gap"]["gap_id"] != attempt.gap.as_str()

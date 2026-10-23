@@ -1082,7 +1082,7 @@ fn unconfirmed_receipt_reason(attempt: &AgentStatusRepairAttempt) -> String {
         // in the after-phase verify document, which status does not retain per
         // attempt, so it stays unconfirmed here.
         AgentStatusAttemptReceipt::NotIssued if attempt.gap_base.is_some() => format!(
-            "this gap-bound attempt finished without a retained receipt (an earlier build issued none); its closure is the `bound_gap` of that run's verify document (`{WORKFLOW_AGENT_VERIFY_ARTIFACT}`), which status does not retain per attempt"
+            "this gap-bound attempt finished without a retained receipt (retention did not complete, or an earlier build issued none); its closure is the `bound_gap` of that run's verify document (`{WORKFLOW_AGENT_VERIFY_ARTIFACT}`), which status does not retain per attempt"
         ),
         _ => format!(
             "no receipt at `{WORKFLOW_AGENT_RECEIPT_ARTIFACT}` was issued for its after verdict"
