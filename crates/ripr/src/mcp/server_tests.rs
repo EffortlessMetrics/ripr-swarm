@@ -1368,8 +1368,37 @@ fn paging_argument_parsers_pin_type_range_and_absence() -> Result<(), String> {
             .err()
             .ok_or_else(|| format!("offset {bad} must be refused"))?;
         assert_eq!(error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
-        assert_eq!(error.message, "offset must be a non-negative integer");
+        assert!(
+            error
+                .message
+                .starts_with("offset must be a whole JSON integer from 0 to 18446744073709551615")
+                || error.message == "offset must be at least 0; -1 is negative",
+            "{}",
+            error.message
+        );
     }
+    // The cap and the u64 bound are named for what they are (#9895).
+    let huge = argument_map(serde_json::json!({"limit": 1e30}));
+    let error = optional_positive_argument(&huge, "limit")
+        .err()
+        .ok_or("limit 1e30 must be refused")?;
+    assert!(
+        error
+            .message
+            .contains("larger than the largest accepted integer 18446744073709551615"),
+        "{}",
+        error.message
+    );
+    let capped = optional_capped_page_limit(&huge, "limit", 256)
+        .err()
+        .ok_or("capped limit 1e30 must be refused")?;
+    assert!(
+        capped
+            .message
+            .contains("larger than the largest accepted integer 256"),
+        "{}",
+        capped.message
+    );
     Ok(())
 }
 

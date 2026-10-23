@@ -637,14 +637,22 @@ fn optional_tool_arguments_reject_null_and_recover_over_stdio() -> Result<(), St
         let expected_message = format!(
             "{field} must be a {}",
             if *kind == "integer" {
-                "non-negative integer"
+                "whole JSON integer"
             } else {
                 "string"
             }
         );
+        let message = rejected
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let message_matches = if *kind == "integer" {
+            message.starts_with(expected_message.as_str()) && message.ends_with(", not null")
+        } else {
+            message == expected_message
+        };
         if rejected.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
-            || rejected.pointer("/error/message").and_then(Value::as_str)
-                != Some(expected_message.as_str())
+            || !message_matches
             || rejected.get("result").is_some()
         {
             return Err(format!(
@@ -3078,6 +3086,127 @@ fn list_gaps_bounds_the_echoed_unknown_class_token() -> Result<(), String> {
                 reply.get("id")
             ));
         }
+    }
+    Ok(())
+}
+
+/// Send one `tools/call` whose `arguments` object is raw JSON text, so number
+/// literals such as `18446744073709551616` and `1e30` reach the server exactly
+/// as a client could write them (a `serde_json::Value` cannot hold them).
+fn call_tool_with_raw_arguments(
+    session: &mut SequentialStdio,
+    id: &str,
+    tool: &str,
+    arguments: &str,
+) -> Result<Value, String> {
+    let meta = serde_json::to_string(&current_meta()).map_err(|error| error.to_string())?;
+    let request = format!(
+        "{{\"jsonrpc\":\"2.0\",\"id\":\"{id}\",\"method\":\"tools/call\",\"params\":{{\"name\":\"{tool}\",\"arguments\":{arguments},\"_meta\":{meta}}}}}\n"
+    );
+    session.send_raw(request.as_bytes())?;
+    let deadline = Instant::now() + Duration::from_mins(1);
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let reply = session.next_reply(remaining)?;
+        if reply.get("id").and_then(Value::as_str) == Some(id) {
+            return Ok(reply);
+        }
+    }
+}
+
+/// #9895: every malformed `limit` states the real constraint (a whole JSON
+/// integer in the accepted range) and a recovery, instead of the old single
+/// "must be a non-negative integer" sentence that also answered `limit:
+/// 18446744073709551616` (which is non-negative and an integer) and `-1`
+/// (which the sentence did not name as the problem). `ripr_list_gaps` accepts
+/// up to `u64::MAX`; `ripr_list_repair_attempts` caps at 256.
+#[test]
+fn limit_errors_state_the_real_constraint_and_recovery_over_stdio() -> Result<(), String> {
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    let root = install_b4_repair_ready_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+    let too_large = "is larger than the largest accepted integer";
+    let whole = "must be a whole JSON integer";
+    // (tool, literal, message fragment, expected data.maximum)
+    let cases: [(&str, &str, &str, u64); 12] = [
+        ("ripr_list_gaps", "0", "limit must be at least 1", u64::MAX),
+        ("ripr_list_gaps", "-1", "-1 is negative", u64::MAX),
+        (
+            "ripr_list_gaps",
+            "1.5",
+            "without a fraction or exponent, not 1.5",
+            u64::MAX,
+        ),
+        ("ripr_list_gaps", "\"10\"", "not a string", u64::MAX),
+        (
+            "ripr_list_gaps",
+            "18446744073709551616",
+            too_large,
+            u64::MAX,
+        ),
+        ("ripr_list_gaps", "1e30", too_large, u64::MAX),
+        ("ripr_list_gaps", "null", "not null", u64::MAX),
+        ("ripr_list_repair_attempts", "-1", "-1 is negative", 256),
+        ("ripr_list_repair_attempts", "\"10\"", whole, 256),
+        (
+            "ripr_list_repair_attempts",
+            "18446744073709551615",
+            "limit must be at most 256",
+            256,
+        ),
+        (
+            "ripr_list_repair_attempts",
+            "18446744073709551616",
+            too_large,
+            256,
+        ),
+        ("ripr_list_repair_attempts", "1e30", too_large, 256),
+    ];
+    for (tool, literal, fragment, maximum) in cases {
+        let reply = call_tool_with_raw_arguments(
+            &mut session,
+            "bad-limit",
+            tool,
+            &format!("{{\"limit\":{literal}}}"),
+        )?;
+        let message = reply
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let data = reply.pointer("/error/data").cloned().unwrap_or(Value::Null);
+        let recovery = data
+            .pointer("/recovery")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
+            || !message.contains(fragment)
+            || message.contains("non-negative integer")
+            || data.pointer("/argument") != Some(&json!("limit"))
+            || data.pointer("/minimum") != Some(&json!(1))
+            || data.pointer("/maximum") != Some(&json!(maximum))
+            || !recovery.contains(&format!("from 1 to {maximum}"))
+        {
+            return Err(format!(
+                "{tool} limit {literal} must name its constraint: {reply}"
+            ));
+        }
+    }
+    // The largest accepted value is a valid request, not an error.
+    let reply = call_tool_with_raw_arguments(
+        &mut session,
+        "max-limit",
+        "ripr_list_gaps",
+        "{\"limit\":18446744073709551615}",
+    )?;
+    if reply.get("error").is_some() {
+        return Err(format!("u64::MAX is an accepted limit: {reply}"));
+    }
+    // The session survives the whole sweep.
+    let reply = session.call_tool("after", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
+    if reply.get("error").is_some() {
+        return Err(format!("the session must survive bad limits: {reply}"));
     }
     Ok(())
 }
