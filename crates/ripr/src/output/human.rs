@@ -6859,9 +6859,15 @@ mod tests {
             "missing = named discriminator absent from tests",
             "not established = discriminator unconfirmed",
             "not applicable = stage unused",
+            // #9244 item 4: the words the Summary count line prints.
+            "probe = one changed behavior checked",
+            "exposed/weak = tests appear to notice it fully/partly",
+            "unrevealed = tests reach it but nothing appears to notice",
+            "no path = no test path found",
         ] {
             assert!(rendered.contains(meaning), "missing {meaning}:\n{rendered}");
         }
+        assert_eq!(rendered.matches("    Summary terms:").count(), 1);
         assert!(rendered.contains("2 lower-priority finding(s) omitted"));
         assert!(rendered.contains("more detail line(s) in --format human-full"));
         assert!(rendered.lines().all(|line| line.chars().count() <= 180));
