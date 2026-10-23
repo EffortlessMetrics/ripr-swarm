@@ -13,6 +13,25 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
+## Pending — rust_wrapper_boolean_return_discarded (3)
+
+Reason:
+Compose main ad1e3bb's renderer with this candidate and include the two fixed
+Summary terms lines added by #10004 after the stage/state legend. This aligns
+the branch-only fixture with the same renderer as main's existing fixtures;
+no classification, JSON, input or canonical ID change is intended. The prior
+e68fbeb/1ac7968 replay covers the earlier renderer only; this composition needs
+its own producer-bound replay before qualification.
+
+Validation command:
+Targeted producer-bound replay of `ripr check --root
+fixtures/rust_wrapper_boolean_return_discarded/input --diff
+fixtures/rust_wrapper_boolean_return_discarded/diff.patch --mode fast`, checking
+JSON, human and human-full against the integrated renderer and unchanged JSON.
+
+Updated:
+- `expected/human.txt`
+
 ## Pending — rust_wrapper_boolean_return_discarded (2)
 
 Reason:
