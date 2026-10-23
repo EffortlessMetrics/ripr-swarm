@@ -90,6 +90,7 @@ cache_layers! {
     CompactClassifiedSeamsSharded => "repo-compact-classified-seams-sharded",
     CorpusFingerprint => "repo-corpus-fingerprint",
     FileFacts => "repo-file-facts",
+    ScopedClassifiedSeams => "repo-scoped-classified-seams",
     // Test-only producer: `RepoSeamCountCache` is constructed only under
     // `#[cfg(test)]`. It stays registered so `cache clear` still removes
     // count caches left by earlier builds and test runs.
@@ -147,6 +148,7 @@ pub(crate) fn production_entry_dirs(base: &Path) -> Vec<(PathBuf, bool)> {
     );
     dirs.push(RepoCorpusFingerprintCache::at_base(base).entry_dir());
     dirs.push(RepoFileFactCache::at_base(base).entry_dir());
+    dirs.push(RepoScopedInventoryCache::at_base(base).entry_dir());
     dirs
 }
 
@@ -994,8 +996,16 @@ const SHARDED_ENVELOPE_DIGEST_DOMAIN: &str = "ripr-cache:ShardedCacheEnvelope:v1
 const SHARDED_MANIFEST_DIGEST_DOMAIN: &str = "ripr-cache:ShardedCacheManifest:v1";
 
 mod export;
+mod scoped_inventory;
+#[cfg(test)]
+mod semantic_identity_tests;
 mod store;
 pub(crate) use export::export_current;
+#[cfg(test)]
+pub(crate) use scoped_inventory::SCOPED_INVENTORY_CACHE_SCHEMA_VERSION;
+pub(crate) use scoped_inventory::{
+    PersistedScopedInventory, PersistedSeamLimit, RepoScopedInventoryCache,
+};
 
 /// Environment variable that relocates the cache base directory. When set
 /// to a non-empty path, all cache reads and writes use that path as the
@@ -1246,7 +1256,7 @@ fn classified_seam_cache_encoded_shard_ceiling_from_env(
 
 /// Aggregate cache key — every field that, when changed, must invalidate
 /// the workspace-level classified seam cache.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub(crate) struct RepoSeamCacheKey {
     pub(crate) schema_version: String,
     pub(crate) analyzer_version: String,
@@ -4459,6 +4469,7 @@ mod tests {
         let corpus = RepoCorpusFingerprintCache::at(root);
         let files = RepoFileFactCache::at(root);
         let counts = RepoSeamCountCache::at(root);
+        let scoped = RepoScopedInventoryCache::at(root);
         let produced = [
             &full.dir,
             &full.sharded_dir,
@@ -4467,6 +4478,7 @@ mod tests {
             &corpus.dir,
             &files.dir,
             &counts.dir,
+            &scoped.dir,
         ];
         let actual: BTreeSet<_> = produced
             .into_iter()
@@ -6285,6 +6297,76 @@ mod tests {
         match outcome {
             CacheLoad::CorruptIgnored { reason } if reason.contains("tracked by Git") => Ok(()),
             other => Err(format!("tracked entry must be refused, got {other:?}")),
+        }
+    }
+
+    fn scoped_sample_inventory() -> PersistedScopedInventory {
+        PersistedScopedInventory {
+            classified: Vec::new(),
+            classified_seams_considered: 0,
+            total_rust_files: 1,
+            total_production_files: 1,
+            scoped_production_files: Vec::new(),
+            changed_production_files: Vec::new(),
+            parser_declined_files: Vec::new(),
+            immediate_caller_files: Vec::new(),
+            unevaluated_seams: 0,
+            repo_seam_limit: PersistedSeamLimit::NotComputed,
+        }
+    }
+
+    #[test]
+    fn given_scoped_inventory_entries_tracked_by_git_when_load_or_store_runs_then_both_refuse()
+    -> Result<(), String> {
+        let (root, cache_dir) = work_tree_with_cache_dir("tracked-scoped")?;
+        let key = empty_state().cache_key();
+        let untracked = RepoScopedInventoryCache::at_dir(cache_dir.clone());
+        untracked.store(&key, b"id", scoped_sample_inventory())?;
+        // Control: untracked, the same entry is served.
+        if !matches!(untracked.load(&key, b"id"), CacheLoad::Hit(_)) {
+            return Err("untracked control entry must be a hit".to_owned());
+        }
+        track_cache_dir(&root, &cache_dir)?;
+        let tracked = RepoScopedInventoryCache::at_dir(cache_dir.clone());
+        let loaded = tracked.load(&key, b"id");
+        let stored = tracked.store(&key, b"id", scoped_sample_inventory());
+        ignore_remove_dir_all(&root);
+        match loaded {
+            CacheLoad::CorruptIgnored { reason } if reason.contains("tracked by Git") => {}
+            other => return Err(format!("tracked entry must be refused, got {other:?}")),
+        }
+        match stored {
+            Err(reason) if reason.contains("tracked by Git") => Ok(()),
+            other => Err(format!(
+                "store into a tracked root must fail, got {other:?}"
+            )),
+        }
+    }
+
+    #[test]
+    fn given_cache_base_is_a_regular_file_when_scoped_inventory_runs_then_both_refuse()
+    -> Result<(), String> {
+        let dir = isolated_dir("scoped-base-is-file");
+        ignore_remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|err| format!("fixture setup failed: {err}"))?;
+        let base = dir.join("cache-is-a-file");
+        std::fs::write(&base, "not a directory\n")
+            .map_err(|err| format!("fixture setup failed: {err}"))?;
+        let cache = RepoScopedInventoryCache::at_dir(base.clone());
+        let key = empty_state().cache_key();
+        let expected = format!("cache dir is not a directory: {}", base.display());
+        let loaded = cache.load(&key, b"id");
+        let stored = cache.store(&key, b"id", scoped_sample_inventory());
+        ignore_remove_dir_all(&dir);
+        match loaded {
+            CacheLoad::CorruptIgnored { reason } if reason == expected => {}
+            other => return Err(format!("expected the base-is-file reason, got {other:?}")),
+        }
+        match stored {
+            Err(reason) if reason == expected => Ok(()),
+            other => Err(format!(
+                "store must fail with the same reason, got {other:?}"
+            )),
         }
     }
 
@@ -9725,6 +9807,7 @@ mod generation_transition_tests {
             (compact.sharded_dir.clone(), true),
             (RepoCorpusFingerprintCache::at(root).dir, false),
             (RepoFileFactCache::at(root).dir, false),
+            (RepoScopedInventoryCache::at(root).dir, false),
         ];
         assert_eq!(production_entry_dirs(&cache_base_dir(root)), expected);
         // The constructors doctor's list is derived from must carry the
@@ -9735,6 +9818,7 @@ mod generation_transition_tests {
         constructed.extend(compact.entry_dirs());
         constructed.push(RepoCorpusFingerprintCache::at(root).entry_dir());
         constructed.push(RepoFileFactCache::at(root).entry_dir());
+        constructed.push(RepoScopedInventoryCache::at(root).entry_dir());
         assert_eq!(constructed, expected);
     }
 

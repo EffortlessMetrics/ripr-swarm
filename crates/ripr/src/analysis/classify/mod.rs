@@ -5,6 +5,7 @@ mod builder_override;
 mod call_identity;
 mod caller_loop_selector;
 mod changed_span;
+mod const_readers;
 mod context;
 mod decision;
 mod diff_touched;
@@ -40,8 +41,8 @@ mod variant_field_pattern;
 
 pub(in crate::analysis) use activation::{
     LocalBoundary, TestValueFacts, activation_and_boundary_input, call_parameter_names,
-    comparison_operands, computed_input_parameters, literal_operand_value, local_boundary,
-    signature_parameters,
+    chain_row_transfer_stop, comparison_operands, computed_input_parameters, literal_operand_value,
+    local_boundary, signature_parameters,
 };
 pub(in crate::analysis) use arm_selection::{ArmSelector, unresolved_parameter_field_selector};
 pub(in crate::analysis) use boundary_pairing::{
@@ -56,6 +57,7 @@ pub(in crate::analysis) use call_identity::{
     CallIdentityMemos, CallTarget, OwnerCallIdentity, shared_owner_call_identity,
 };
 pub(in crate::analysis) use caller_loop_selector::withhold_caller_loop_selector_gap;
+pub(in crate::analysis) use const_readers::same_file_const_readers;
 pub(in crate::analysis) use context::ProbeContext;
 pub(in crate::analysis) use decision::{
     classify, confidence_score, ensure_unknown_stop_reason, exact_oracle_gap_next_step,
@@ -94,7 +96,9 @@ pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_rec
 #[cfg(test)]
 pub(in crate::analysis) use owner_pin::{SCAN_LOG, nested_parallelism_allowed};
 pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
-pub(in crate::analysis) use pinned_shape::withhold_pinned_shape_gap;
+pub(in crate::analysis) use pinned_shape::{
+    withhold_pinned_shape_gap, withhold_result_collect_err_pin,
+};
 pub(in crate::analysis) use propagation_witness::{
     PropagationWitnessV1, assertion_observes_collection_argument,
     assertion_observes_direct_collection_for_probe, current_path_witness_with,

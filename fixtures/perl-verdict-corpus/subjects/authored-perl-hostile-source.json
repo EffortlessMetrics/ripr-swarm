@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-perl-hostile-source",
+  "origin": "authored",
+  "version_label": "authored@3608bb9a",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "lib/Hostile.pm",
+      "sha256": "452bc3d31d21b2b777aa645617bca39340948c2ed089cd449d3e505c843d99d4"
+    },
+    {
+      "path": "t/hostile.t",
+      "sha256": "951fe42f7bf2d77269bd09eab5353aad037139b3c2d1b6ce9bd054f80f9edcce"
+    }
+  ]
+}

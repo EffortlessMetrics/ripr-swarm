@@ -364,7 +364,9 @@ Reach on that rewritten finding is `unknown` and the stop reason is
   the oracle still has to observe the sink through the ordinary
   evidence stages.
 - A chain that stops keeps the pre-#3296 output exactly (the 0114
-  limitation remains), except a uniqueness-only stop that a test
+  limitation remains), except a non-predicate probe whose chain-edge
+  argument cannot bind, which abstains as `infection_unknown` (example 9,
+  #9889), and except a uniqueness-only stop that a test
   actually enters, which abstains as `static_unknown` naming the
   ambiguous function (#7080) rather than claiming no test reaches the
   owner. That finding's reach stage is `unknown` and its stop reason
@@ -378,16 +380,29 @@ Reach on that rewritten finding is `unknown` and the stop reason is
 
 ## Acceptance Examples
 
-- Accept: `test -> classify(" x") -> is_word_start(input, 0)` — the
-  helper-owned probe relates to the test, its oracles connect, and its
-  operands evaluate with `input = " x"`.
-- Accept: a comparison operand that is a unique helper call evaluates
-  through a simple binding-tail return.
-- Reject: relating through a non-unique callee, a method or
-  path-qualified call site, a partial index, recursion, or multiple
-  callers. A computed argument stops the value/row transfer (named
-  edge) while the reach relation may still hold — the call chain is
-  genuinely reachable; only the exact values stop.
+1. Accept: `test -> classify(" x") -> is_word_start(input, 0)` — the
+   helper-owned probe relates to the test, its oracles connect, and its
+   operands evaluate with `input = " x"`.
+2. Accept: a comparison operand that is a unique helper call evaluates
+   through a simple binding-tail return.
+3. Reject: relating through a non-unique callee.
+4. Reject: relating through a method call site (`gauge.span_of(input)`).
+5. Reject: relating through a path-qualified call site
+   (`meter::reach_of(input)`).
+6. Reject: relating through a partial index.
+7. Reject: relating through recursion.
+8. Reject: relating through multiple callers.
+9. A computed argument stops the value/row transfer (named edge) while
+   the reach relation may still hold — the call chain is genuinely
+   reachable; only the exact values stop.
+   A non-predicate probe (return value, match arm, field) reached only
+   through the chain then reads `infection_unknown`, not a gap, when a
+   chain-edge argument cannot bind: anything but a strict literal, the
+   caller's own parameter text, or `self.<tuple index>`. That covers
+   method calls (`input.trim()`), locals, named constants, negative
+   literals and prefix forms (`&input`, `*input`), and abstains wholesale
+   (#9889). The trade-off is precision: `&input`, `.clone()` and
+   constants abstain although the value is knowable.
 
 ## Test Mapping
 
@@ -430,7 +445,8 @@ entry call, `[lib] name` and hyphen spellings, and each refusal above).
 - `analysis/classify/activation.rs` — transferred rows, call operands.
 - `analysis/classify/context.rs` — the chain on `ProbeContext`.
 - `analysis/classifier/evidence.rs` — the hop-propagation stop
-  (`helper_result_not_forwarded`).
+  (`helper_result_not_forwarded`) and the chain-edge infection abstention,
+  with `analysis/classify/activation.rs` (`chain_row_transfer_stop`).
 - `analysis/classifier.rs` (`withhold_helper_uniqueness_as_unknown`) —
   uniqueness-only class rewrite, reach identity stage, and
   `helper_identity_unresolved` (#7080 / #7272).

@@ -40,7 +40,7 @@ use std::path::{Component, Path, PathBuf};
 /// Chain-walk bound, mirroring the include pass's depth limit. Module and
 /// include chains past this bound are exotic input that fails closed instead
 /// of risking unbounded recursion.
-const MAX_CONTEXT_CHAIN_DEPTH: usize = 32;
+pub(super) const MAX_CONTEXT_CHAIN_DEPTH: usize = 32;
 
 /// Limitation reason: two distinct parent declarations resolve to the same
 /// child file (or a default-resolution declaration matches both candidate
@@ -98,7 +98,9 @@ impl Context {
 /// fully parsed, normalized index. Deterministic: all intermediate maps are
 /// ordered, so grants and provenance are byte-identical across runs.
 pub(super) fn compose_index_source_roles(index: &mut RustIndex, workspace_root: &Path) {
-    let module_edges = resolved_module_edges(index, workspace_root);
+    let mut execution_parents = BTreeMap::new();
+    let module_edges = resolved_module_edges(index, workspace_root, &mut execution_parents);
+    index.execution_module_parents = Some(execution_parents);
     // Phase 1 (immutable): resolve every file's context and provenance.
     // The resolver borrows `include_parents`, so all mutations wait for it
     // to go out of scope.
@@ -290,6 +292,7 @@ enum DeclarationTargets {
 fn resolved_module_edges(
     index: &RustIndex,
     workspace_root: &Path,
+    execution_parents: &mut BTreeMap<PathBuf, Vec<SourceRoleProvenanceEdge>>,
 ) -> BTreeMap<PathBuf, Result<ModuleEdge, &'static str>> {
     let mut candidates: BTreeMap<PathBuf, BTreeSet<(PathBuf, usize, String, bool)>> =
         BTreeMap::new();
@@ -374,6 +377,7 @@ fn resolved_module_edges(
                     index,
                     owners,
                     &candidates,
+                    &ambiguous,
                     &mut crate_roots,
                     workspace_root,
                 )
@@ -394,6 +398,24 @@ fn resolved_module_edges(
         if edges.contains_key(&child) {
             continue;
         }
+        // Role agreement admits the edges, not a unique execution scope.
+        // Retain every approved parent before selecting the role explanation.
+        execution_parents.insert(
+            child.clone(),
+            owners
+                .iter()
+                .map(
+                    |(parent, line, declaration, requires_test)| SourceRoleProvenanceEdge {
+                        kind: SourceRoleProvenanceEdgeKind::Module,
+                        parent: parent.clone(),
+                        child: child.clone(),
+                        declaration: declaration.clone(),
+                        line: *line,
+                        requires_test: *requires_test,
+                    },
+                )
+                .collect(),
+        );
         if let Some((parent, line, declaration, requires_test)) = owners.into_iter().next() {
             edges.insert(
                 child,
@@ -483,9 +505,16 @@ fn are_distinct_target_crate_roots(
     index: &RustIndex,
     owners: &BTreeSet<(PathBuf, usize, String, bool)>,
     candidates: &BTreeMap<PathBuf, BTreeSet<(PathBuf, usize, String, bool)>>,
+    ambiguous: &BTreeSet<PathBuf>,
     crate_roots: &mut CrateRoots,
     workspace_root: &Path,
 ) -> bool {
+    // An unresolved include anywhere may reach an owner through context the
+    // index cannot see, so no owner's context is established (the same
+    // fail-closed guard as `files_outside_module_tree`).
+    if !index.include_limitations.is_empty() {
+        return false;
+    }
     let mut declarations = owners
         .iter()
         .map(|(_, _, declaration, requires_test)| (declaration, requires_test));
@@ -501,6 +530,7 @@ fn are_distinct_target_crate_roots(
         && distinct_files == owners.len()
         && owners.iter().all(|(parent, _, _, _)| {
             !candidates.contains_key(parent)
+                && !ambiguous.contains(parent)
                 && !index.include_parents.contains_key(parent)
                 && !index.include_targets.contains(parent)
                 && crate_roots.is_crate_root(workspace_root, parent)
@@ -2322,6 +2352,106 @@ mod tests {
         let index = crate::analysis::facts::build_index(&root, &files)
             .map_err(|error| error.to_string())?;
         assert_eq!(ambiguity_reason(&index, "benches/shared.rs"), None);
+        Ok(())
+    }
+
+    /// Each conjunct of the target-root exemption is isolated by a layout the
+    /// other conjuncts accept: orphan owners that are neither roots, module
+    /// children nor include targets; one root declaring the child twice; a
+    /// root that is itself an ambiguous module child; and an unresolved
+    /// include elsewhere in the workspace.
+    #[test]
+    fn target_root_exemption_conjuncts_each_fail_closed() -> Result<(), String> {
+        let ambiguous = Some(REASON_MODULE_AMBIGUOUS_PARENT.to_string());
+
+        // Not crate roots: undeclared `src/` files are no compilation units.
+        let root = temp_dir("orphan-non-root-owners")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(&root, "src/lib.rs", "pub fn lib_fn() -> i32 { 1 }\n")?,
+            write(
+                &root,
+                "src/orphan_a.rs",
+                "#[path = \"shared.rs\"]\nmod shared;\n",
+            )?,
+            write(
+                &root,
+                "src/orphan_b.rs",
+                "#[path = \"shared.rs\"]\nmod shared;\n",
+            )?,
+            write(&root, "src/shared.rs", "pub fn helper() -> i32 { 1 }\n")?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(ambiguity_reason(&index, "src/shared.rs"), ambiguous);
+
+        // One root declaring the child twice is one compilation unit.
+        let root = temp_dir("same-root-duplicate-declaration")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(&root, "src/lib.rs", "pub fn lib_fn() -> i32 { 1 }\n")?,
+            write(
+                &root,
+                "benches/a.rs",
+                "mod shared;\n#[path = \"shared.rs\"]\nmod shared;\n",
+            )?,
+            write(&root, "benches/shared.rs", "pub fn helper() -> i32 { 1 }\n")?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(ambiguity_reason(&index, "benches/shared.rs"), ambiguous);
+
+        // A root that is itself an ambiguous module child has no context.
+        // Defense in depth: today the dual directory anchors of such an owner
+        // already mark the child ambiguous before the helper is reached, so
+        // the `ambiguous` owner guard is not reached by this layout.
+        let root = temp_dir("ambiguous-root-owner")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(&root, "src/lib.rs", "pub fn lib_fn() -> i32 { 1 }\n")?,
+            write(&root, "benches/a.rs", "mod shared;\n")?,
+            write(&root, "benches/b.rs", "mod shared;\n")?,
+            write(&root, "benches/c.rs", "mod a;\n")?,
+            write(&root, "benches/a/mod.rs", "pub fn other() -> i32 { 1 }\n")?,
+            write(&root, "benches/shared.rs", "pub fn helper() -> i32 { 1 }\n")?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(ambiguity_reason(&index, "benches/a.rs"), ambiguous);
+        assert_eq!(ambiguity_reason(&index, "benches/shared.rs"), ambiguous);
+        // Ancestry would name the same reason through a suppressed edge from
+        // the ambiguous owner, so also require that no edge was minted.
+        assert!(
+            index
+                .files()
+                .at(Path::new("benches/shared.rs"))
+                .data()
+                .role_provenance
+                .edges
+                .is_empty(),
+            "an ambiguous root owner must not mint a module edge"
+        );
+
+        // An unresolved include anywhere withholds the exemption.
+        let root = temp_dir("include-limitation-present")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(
+                &root,
+                "src/lib.rs",
+                "include!(concat!(env!(\"OUT_DIR\"), \"/generated.rs\"));\n",
+            )?,
+            write(&root, "benches/a.rs", "mod shared;\n")?,
+            write(&root, "benches/b.rs", "mod shared;\n")?,
+            write(&root, "benches/shared.rs", "pub fn helper() -> i32 { 1 }\n")?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+        assert!(
+            !index.include_limitations.is_empty(),
+            "fixture must carry an unresolved include limitation"
+        );
+        assert_eq!(ambiguity_reason(&index, "benches/shared.rs"), ambiguous);
         Ok(())
     }
 

@@ -27,6 +27,11 @@ Start here:
   Test node: tests/test_stats.py::test_writes
   Verify command: python -m pytest tests/test_stats.py::test_writes (high)
   Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     - reach yes: 1 related Python test(s) found for owner `record_write`
     - infection yes: Changed Python expression can alter preview-classified predicate behavior: `self.writes += 1`
     - 5 more detail line(s) in --format human-full

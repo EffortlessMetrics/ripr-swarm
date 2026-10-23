@@ -2660,6 +2660,13 @@ Expired entries are not applied; expired and unmatched selectors surface as
 warnings. A missing or malformed policy fails the run (fail-closed): the run
 never silently emits unfiltered counts as if a policy had been applied.
 
+`findings[].analysis_scope` (#5531) is distinct from the top-level
+`analysis_scope` object (partial/limited scope disclosure). It is the typed
+per-finding scope, emitted as the single value `"repo"` for findings produced
+by a repo-mode run and omitted for diff-scoped findings (diff bytes are
+unchanged). Consumers such as the gap ledger read it instead of the legacy
+`analysis_scope: repo` evidence line; any other value is rejected by the schema.
+
 Three surfaces change when the flag is present:
 
 - `summary.suppressed_by_policy` — count of suppressed findings. The
@@ -3623,15 +3630,48 @@ before the invocation (removing only files it created). On
 acceptance it writes `before.check-findings.json` (a `check-findings-json`
 artifact) and `gap-repair-packet.json` under the attempt's artifacts and a
 repair-attempt manifest whose `seam_id` is the canonical gap id and which
-carries one additive member, `gap_binding: { "base": "<base>" }`. Seam
-attempts omit `gap_binding`, so their bytes are unchanged. The packet names the
-gap as its `seam_id`; the edit cage is derived from the packet's test file
-and recorded in the attempt baseline, but this slice does not enforce it: only
-the after phase consumes it. This slice has no `--phase after` for gap attempts: that phase refuses naming the manual
-route, `ripr agent verify --before <snapshot> --after <snapshot> --gap-id <gap>`.
+carries one additive member, `gap_binding: { "base": "<base>",
+"base_commit": "<full commit>" }` (the spelling and the commit it resolved to).
+Seam attempts omit `gap_binding`, so their bytes are unchanged. The packet names
+the gap as its `seam_id`; edits are caged to the packet's test file. The
+persisted `next_command` is the ordinary `--attempt <id> --phase after`.
+`agent repair --phase after` for a gap attempt re-runs the same producer against
+`base_commit` into `target/ripr/workflow/after.check-findings.json`, requires the
+gap open before and `exposed` after through `agent verify --gap-id`, and enforces
+the edit cage. Absence from the after snapshot is never closure. An open or absent
+gap is a typed refusal (exit 3) recorded against the attempt's retry budget; it
+stays `awaiting_edit`. A compliant finish issues the gap-bound receipt below; the
+closure is also the `verify.bound_gap` of the `repair_after_result` envelope.
 Let-bound, imported and reach-barrier variants stay unrouted. Python keeps its
 terminal reason. The static result is exposure evidence only; it does not
 claim a runtime mutation outcome.
+
+### Gap-Bound Receipt
+
+A compliant gap-bound finish writes `target/ripr/reports/agent-receipt.json`
+(schema `0.5`, RIPR-SPEC-0311 item 8, #9103) for the gap: `seam.seam_id` and
+`provenance.seam_id` are the canonical gap id, and the receipt carries two
+additive members that seam receipts omit:
+
+- `bound_gap`: `gap_id`, `before_classification`, `after_classification`,
+  `file`, `line`, `closed: true`. It is copied from the verify document only
+  when that document's bound gap is the receipt's seam and reads closed.
+- `repair_attempt.gap_binding`: `base` (the `--base` spelling) and
+  `base_commit` (the full commit the before phase resolved it to).
+
+Issuance is fail-closed on closure evidence. The canonical verify render
+recomputes `bound_gap` from the two `check-findings-json` snapshots (open
+before, `exposed` after), so a verify document that names a gap that did not
+close, or whose closure was edited, is refused (`[gap_binding]` or
+`[not_canonical]`). `ripr agent receipt --seam-id <gap>` over a verify
+document produced without `--gap-id` is refused ("requires an agent verify
+document bound to that gap"). A not-closed, absent or cage-refused finish
+issues no receipt. The receipt reads the after snapshot as its analysis
+outcome, retains the receipt and verify document as the attempt's terminal
+evidence, and `agent status` reads it as showing the gap closed only when it is
+`advisory` with improved static grip. The receipt is static exposure evidence:
+`verification.status` is `verification_not_run` and the provenance limits state
+no runtime mutation execution and no runtime adequacy claim.
 
 ## Repo Seam Inventory
 
@@ -16750,9 +16790,13 @@ failed`, `git diff failed`) and `null` otherwise. The terminal and Markdown "Ins
 carries a matching scope line: `change-first (Rust seams on lines changed since
 <base> rank first)` for `changed`, `whole repository` for `no_change`, and
 `whole repository (current change unavailable: <reason>)` for `unavailable`.
-The change-first scope and the change counts cover Rust seam ranking only. A
-Python preview repair card shown as the top recommendation is still selected
-from the committed diff against the base, not from uncommitted edits.
+The change-first scope and the change counts cover Rust seam ranking only. When
+the Rust ranking is empty and a Python preview repair card leads the
+recommendation, the scope line instead reads `change-first (python (preview)
+seams on lines changed since <base> rank first)` so it names what was actually
+ranked (#9857); a Python preview repair card shown as the top recommendation is
+still selected from the committed diff against the base, not from uncommitted
+edits.
 `actionable_seams_in_change`, `withheld_seams_in_change` and
 `top_recommendation_in_change` are `null` unless `state` is `changed`;
 `top_recommendation_in_change` is also `null` when no seam is ranked.
@@ -19206,7 +19250,7 @@ targeted-rerun receipt shape:
     "invalidation_status": "not_available",
     "input_fingerprint": {
       "schema_version": "1.97",
-      "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
+      "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
       "cfg_features_hash": "…",
@@ -19288,16 +19332,26 @@ targeted-rerun receipt shape:
 }
 ```
 
-`input_fingerprint.analyzer_version` names the build, not only the package
-version: `<version>+<commit>` for a clean build, with `-dirty+src:<digest>`
-appended for a build with uncommitted source changes, or `<version>+unknown+src:<digest>`
-when no commit is recorded. Two builds of one version therefore report
-`input_changed:analyzer_version` against each other's receipts.
+`input_fingerprint.analyzer_version` names the source build and its compiled
+language features, not only the package version. Its source prefix is
+`<version>+<commit>` for a clean build,
+`<version>+<commit>-dirty+src:<digest>` for uncommitted source changes, or
+`<version>+unknown+src:<digest>` when no commit is recorded. If a dirty or
+commit-less build has no source digest, `process:<pid>:<nanos>` replaces
+`src:<digest>` so persisted entries are not reused across processes.
+Every form ends with
+`+languages:rust=<bit>,typescript=<bit>,python=<bit>,perl=<bit>`, in that order,
+where each bit is exactly `0` or `1`. These are the analyzer's compiled Cargo
+features; `cfg_features_hash` separately identifies the analyzed workspace's
+feature configuration. Different source or language-feature identities report
+`input_changed:analyzer_version` against each other's receipts, even when the
+package version and cache generations match. Treat the complete identity as
+opaque when comparing receipts.
 
 `cache.schema_version` and `cache.input_fingerprint.schema_version` version
-the file-fact cache and its input identity, not this report. They move
-whenever cache identity changes, so a consumer dispatches on the top-level
-`schema_version` and treats the nested values as opaque. Nested
+the file-fact cache and its input identity, not this report. They change with
+those cache contracts, independently of analyzer identity. A consumer dispatches
+on the top-level `schema_version` and treats the nested values as opaque. Nested
 `analyzer_version` is the producing build identity described above and also
 moves.
 

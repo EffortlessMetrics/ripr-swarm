@@ -86,6 +86,35 @@ pub(in crate::analysis) struct AssertionRefusalNote {
     pub(in crate::analysis) is_analyzer_limit: bool,
 }
 
+/// #9871: reach for a changed constant whose same-file readers are called by
+/// tests. A call to a reader is not a call that executes the read, so the
+/// stage is `weak`, never `yes`, and the class stays `static_unknown`.
+fn const_reader_reach(context: &ProbeContext<'_>) -> StageEvidence {
+    let constant = context.probe.changed_const_name().unwrap_or("the constant");
+    let readers = context
+        .const_readers
+        .iter()
+        .take(3)
+        .map(|reader| format!("`{}`", reader.name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let tests = context
+        .related_tests
+        .iter()
+        .filter(|(_, reason)| crate::analysis::classify::relation_establishes_reach(*reason, true))
+        .take(3)
+        .map(|(test, _)| test.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    StageEvidence::new(
+        StageState::Weak,
+        Confidence::Low,
+        format!(
+            "Tests call {readers}, which reads the changed constant `{constant}`; whether the tested path executes that read is not established: {tests}"
+        ),
+    )
+}
+
 fn return_ledger_limit(
     owner: &str,
     ledger: &crate::analysis::classify::ReturnedLedger,
@@ -135,6 +164,11 @@ impl ClassifiedProbeEvidence {
                 .owner_fn
                 .is_none_or(|owner| context.owner_may_be_reached_unseen(owner))
         });
+        let reach = if context.const_readers.is_empty() {
+            reach
+        } else {
+            const_reader_reach(context)
+        };
         let flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
         let returned_ledger = match (context.owner_fn, context.helper_chain.as_ref()) {
             (Some(owner), Some(chain)) if helper_only_reach(&context.related_tests) => {
@@ -329,40 +363,65 @@ impl ClassifiedProbeEvidence {
         // grades the finding as a gap ("tests miss the boundary") that the
         // computed argument makes unreadable — a claim this seam must not
         // make. Infection abstains with the same reason.
+        let chain_tests = context
+            .related_tests
+            .iter()
+            .map(|(test, _)| *test)
+            .collect::<Vec<_>>();
         let chain_computed_inputs = match (context.owner_fn, context.helper_chain.as_ref()) {
-            (Some(owner), Some(chain)) => {
-                let chain_tests = context
-                    .related_tests
-                    .iter()
-                    .map(|(test, _)| *test)
-                    .collect::<Vec<_>>();
-                !crate::analysis::classify::computed_input_parameters(
-                    owner,
-                    &owner_parameter_names(owner),
-                    &chain_tests,
-                    Some(chain),
-                )
-                .is_empty()
-            }
+            (Some(owner), Some(chain)) => !crate::analysis::classify::computed_input_parameters(
+                owner,
+                &owner_parameter_names(owner),
+                &chain_tests,
+                Some(chain),
+            )
+            .is_empty(),
             _ => false,
+        };
+        // #9889: a chain-edge argument that is no literal or caller
+        // parameter (`wide_x(input.trim())`) stops row transfer even when it
+        // is no arithmetic. What the owner receives is unreadable, so
+        // observation through the chain can be neither confirmed nor
+        // refuted, the same as for a computed argument above.
+        let chain_row_stop = match (context.owner_fn, context.helper_chain.as_ref()) {
+            (Some(owner), Some(chain))
+                if !chain_computed_inputs
+                    && !matches!(context.probe.family, ProbeFamily::Predicate)
+                    && matches!(infect.state, StageState::Yes | StageState::Weak)
+                    && helper_only_reach(&context.related_tests) =>
+            {
+                crate::analysis::classify::chain_row_transfer_stop(
+                    owner,
+                    &chain_tests,
+                    chain,
+                    context.index,
+                )
+            }
+            _ => None,
         };
         let infect = match (context.owner_fn, context.helper_chain.as_ref()) {
             (Some(owner), Some(_))
                 if !matches!(context.probe.family, ProbeFamily::Predicate)
-                    && chain_computed_inputs
+                    && (chain_computed_inputs || chain_row_stop.is_some())
                     && helper_only_reach(&context.related_tests)
                     && matches!(infect.state, StageState::Yes | StageState::Weak) =>
             {
                 StageEvidence::new(
                     StageState::Unknown,
                     Confidence::Low,
-                    format!(
-                        "Infection unknown: a related test passes a computed argument for `{}`, so ripr cannot tell whether the changed boundary is activated",
-                        owner_parameter_names(owner)
-                            .first()
-                            .cloned()
-                            .unwrap_or_else(|| "the changed input".to_string())
-                    ),
+                    match &chain_row_stop {
+                        Some(argument) => format!(
+                            "Infection unknown: the call chain hands `{}` the argument `{argument}`, which is not an exact input value, so ripr cannot tell whether the changed behavior is activated",
+                            owner.name
+                        ),
+                        None => format!(
+                            "Infection unknown: a related test passes a computed argument for `{}`, so ripr cannot tell whether the changed boundary is activated",
+                            owner_parameter_names(owner)
+                                .first()
+                                .cloned()
+                                .unwrap_or_else(|| "the changed input".to_string())
+                        ),
+                    },
                 )
             }
             _ => infect,
@@ -1083,6 +1142,25 @@ impl ClassifiedProbeEvidence {
             discriminate
         };
 
+        // #9871: a test that calls a reader of the changed constant is related
+        // for reach only. Whether its path executes the read is unestablished,
+        // so no assertion is credited as observing or discriminating the
+        // constant: both stages stay unknown rather than yes/weak.
+        let (observe, discriminate) = if context.const_readers.is_empty() {
+            (observe, discriminate)
+        } else {
+            let unknown =
+                |summary: &str| StageEvidence::new(StageState::Unknown, Confidence::Low, summary);
+            (
+                unknown(
+                    "Not established: whether a test observes the changed constant; the tests only call a function that reads it",
+                ),
+                unknown(
+                    "Not established: whether a test discriminates the changed constant; the tests only call a function that reads it",
+                ),
+            )
+        };
+
         let ripr = RiprEvidence {
             reach: reach.clone(),
             infect: infect.clone(),
@@ -1105,8 +1183,11 @@ impl ClassifiedProbeEvidence {
                     .value_guard_subject()
                     .is_none_or(|subject| direct_call_name(subject) == Some(owner_name))
         };
-        let assertion_refusal = (observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
-            || discriminate.state != StageState::Yes)
+        // #9871: a reader-only relation has no owner pin to refuse against, so
+        // an owner-name scan would only add a misleading refusal note.
+        let assertion_refusal = (context.const_readers.is_empty()
+            && (observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
+                || discriminate.state != StageState::Yes))
             .then(|| {
                 let mut notes = Vec::new();
                 for (test, _) in &context.related_tests {
@@ -1890,12 +1971,16 @@ mod tests {
             );
             let path = PathBuf::from("src/lib.rs");
             let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, &source)?;
-            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
                 functions: facts.functions.clone(),
                 tests: facts.tests.clone(),
                 files: [(path, facts)].into_iter().collect(),
                 ..Default::default()
             });
+            crate::analysis::facts::compose_fixture_source_roles(
+                &mut index,
+                std::path::Path::new(""),
+            );
             let owner = index
                 .functions()
                 .iter()
@@ -1953,12 +2038,13 @@ mod tests {
         let source = "#[derive(Debug, PartialEq)]\npub struct Cfg {\n    pub n: u32,\n}\n\nimpl Drop for Cfg {\n    fn drop(&mut self) {\n    }\n}\n\npub struct Guard {\n    pub n: u32,\n}\n\nimpl Drop for Guard {\n    fn drop(&mut self) {\n        self.n = self.n.wrapping_add(1);\n    }\n}\n\npub fn make(x: u32) -> Cfg { let _guard = Guard { n: 0 };\n    Cfg { n: x * 3 }\n}\n\n#[test]\nfn makes() {\n    assert_eq!(make(4), Cfg { n: 12 });\n}\n";
         let path = PathBuf::from("src/lib.rs");
         let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, source)?;
-        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: facts.functions.clone(),
             tests: facts.tests.clone(),
             files: [(path, facts)].into_iter().collect(),
             ..Default::default()
         });
+        crate::analysis::facts::compose_fixture_source_roles(&mut index, std::path::Path::new(""));
         let owner = index
             .functions()
             .iter()
