@@ -1885,12 +1885,16 @@ mod tests {
             );
             let path = PathBuf::from("src/lib.rs");
             let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, &source)?;
-            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
                 functions: facts.functions.clone(),
                 tests: facts.tests.clone(),
                 files: [(path, facts)].into_iter().collect(),
                 ..Default::default()
             });
+            crate::analysis::facts::compose_fixture_source_roles(
+                &mut index,
+                std::path::Path::new(""),
+            );
             let owner = index
                 .functions()
                 .iter()
@@ -1948,12 +1952,13 @@ mod tests {
         let source = "#[derive(Debug, PartialEq)]\npub struct Cfg {\n    pub n: u32,\n}\n\nimpl Drop for Cfg {\n    fn drop(&mut self) {\n    }\n}\n\npub struct Guard {\n    pub n: u32,\n}\n\nimpl Drop for Guard {\n    fn drop(&mut self) {\n        self.n = self.n.wrapping_add(1);\n    }\n}\n\npub fn make(x: u32) -> Cfg { let _guard = Guard { n: 0 };\n    Cfg { n: x * 3 }\n}\n\n#[test]\nfn makes() {\n    assert_eq!(make(4), Cfg { n: 12 });\n}\n";
         let path = PathBuf::from("src/lib.rs");
         let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, source)?;
-        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: facts.functions.clone(),
             tests: facts.tests.clone(),
             files: [(path, facts)].into_iter().collect(),
             ..Default::default()
         });
+        crate::analysis::facts::compose_fixture_source_roles(&mut index, std::path::Path::new(""));
         let owner = index
             .functions()
             .iter()
