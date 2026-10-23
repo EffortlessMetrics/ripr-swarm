@@ -16972,6 +16972,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/commonjs_default_function_tests.rs::a_gate_refused_owner_still_is_not_reached_by_a_named_import",
   "crates/ripr/src/analysis/language/typescript/tests/commonjs_default_function_tests.rs::a_string_that_spells_a_module_write_refuses_the_file",
   "crates/ripr/src/analysis/language/typescript/tests/commonjs_default_function_tests.rs::a_backtick_inside_a_regex_cannot_hide_a_module_write",
+  "crates/ripr/src/analysis/language/typescript/tests/commonjs_default_function_tests.rs::renamed_and_default_destructured_imports_of_a_function_export_do_not_reach_it",
   "crates/ripr/src/analysis/language/typescript/tests/commonjs_default_function_tests.rs::a_later_whole_slot_overwrite_leaves_the_inline_function_unmarked",
   "crates/ripr/src/analysis/language/typescript/tests/commonjs_default_function_tests.rs::a_spaced_overwrite_leaves_the_declared_function_unmarked",
   "crates/ripr/src/analysis/language/typescript/tests/commonjs_default_function_tests.rs::a_reassigned_require_binding_is_not_credited",

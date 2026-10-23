@@ -308,10 +308,22 @@ const SHAPES: &[(&str, &str)] = &[
         "if (typeof module !== 'undefined') { run(); }\n",
     ),
     ("main-check", "if (require.main === module) { run(); }\n"),
-    ("container", "const holder = [module];\nsetTimeout(() => { holder[0].exports = 0; });\n"),
-    ("deferred-write", "Promise.resolve().then(() => { module.exports = 0; });\n"),
-    ("deferred-timer", "setTimeout(() => { module.exports = 0; }, 0);\n"),
-    ("object-holder", "const o = { m: module };\no.m.exports = 0;\n"),
+    (
+        "container",
+        "const holder = [module];\nsetTimeout(() => { holder[0].exports = 0; });\n",
+    ),
+    (
+        "deferred-write",
+        "Promise.resolve().then(() => { module.exports = 0; });\n",
+    ),
+    (
+        "deferred-timer",
+        "setTimeout(() => { module.exports = 0; }, 0);\n",
+    ),
+    (
+        "object-holder",
+        "const o = { m: module };\no.m.exports = 0;\n",
+    ),
     (
         "postfix-division",
         "let i = 0; i++ / 2; module.exports = 0;\n",
@@ -524,7 +536,13 @@ fn a_gate_refused_owner_still_is_not_reached_by_a_named_import() -> Result<(), S
         "const { triple } = require('../src/k.js');\n\ntest('triples', () => {\n  expect(triple(2)).toBe(6);\n});\n",
         "const k = require('../src/k.js');\n\ntest('triples', () => {\n  expect(k.triple(2)).toBe(6);\n});\n",
     ] {
-        let class = class_for_changed("cjs-refused-named", owner, 2, "  return x * 3 + arguments.length;", test_source)?;
+        let class = class_for_changed(
+            "cjs-refused-named",
+            owner,
+            2,
+            "  return x * 3 + arguments.length;",
+            test_source,
+        )?;
         assert_eq!(class, ExposureClass::NoStaticPath, "{test_source}");
     }
     Ok(())
@@ -533,7 +551,10 @@ fn a_gate_refused_owner_still_is_not_reached_by_a_named_import() -> Result<(), S
 #[test]
 fn a_string_that_spells_a_module_write_refuses_the_file() -> Result<(), String> {
     // Strings stay visible to the gate, so this fails closed.
-    refused("cjs-string-write", &format!("{ANONYMOUS}const s = 'module.exports = other';\n"))
+    refused(
+        "cjs-string-write",
+        &format!("{ANONYMOUS}const s = 'module.exports = other';\n"),
+    )
 }
 
 #[test]
@@ -541,4 +562,33 @@ fn a_backtick_inside_a_regex_cannot_hide_a_module_write() -> Result<(), String> 
     let tail = "if (process.env.C) /`/.test('a');\nObject.assign(module, { exports: 0 });\nconst s = `ok`;\n";
     refused("cjs-regex-backtick-inline", &format!("{ANONYMOUS}{tail}"))?;
     refused("cjs-regex-backtick-declared", &format!("{DECLARED}{tail}"))
+}
+
+#[test]
+fn renamed_and_default_destructured_imports_of_a_function_export_do_not_reach_it()
+-> Result<(), String> {
+    let refused_named =
+        "module.exports = function triple(x) {\n  return x * 3 + arguments.length;\n};\n";
+    let refused_declared = format!("{DECLARED}eval('x');\n");
+    let cases: [(&str, &str, usize, &str); 4] = [
+        ("open-inline", NAMED_FUNCTION, 3, "  return x * 3;"),
+        ("open-declared", DECLARED, 3, "  return x * 3;"),
+        ("refused-inline", refused_named, 2, "  return x * 3 + arguments.length;"),
+        ("refused-declared", refused_declared.as_str(), 3, "  return x * 3;"),
+    ];
+    for (label, owner, line, text) in cases {
+        for (spelling, call) in [
+            ("{ triple: t }", "t(2)"),
+            ("{ triple }", "triple(2)"),
+            ("{ default: f }", "f(2)"),
+        ] {
+            let test_source = format!(
+                "const {spelling} = require('../src/k.js');\n\ntest('triples', () => {{\n  expect({call}).toBe(6);\n}});\n"
+            );
+            let class = class_for_changed(label, owner, line, text, &test_source)?;
+            assert_eq!(class, ExposureClass::NoStaticPath, "{label} {spelling}");
+        }
+    }
+    exposed_with_control("cjs-alias-control-inline", NAMED_FUNCTION)?;
+    exposed_with_control("cjs-alias-control-declared", DECLARED)
 }

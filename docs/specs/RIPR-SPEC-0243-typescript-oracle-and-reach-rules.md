@@ -181,45 +181,6 @@ commit `5d7657fbc7240b2c0a62c9934ca2e7fda3a1b209` (Claude). Their original
 Jest runtime-mutant labels and source hashes are retained with attribution;
 copying those labels does not claim an independent runtime rerun.
 
-**Rule 19. A `require()` of a CommonJS function export is that function
-(#9181).** `module.exports = function (...) {}`, `module.exports = function
-name(...) {}`, `module.exports = (...) => ...` and `module.exports = name;`
-(a plain reference to one top-level function declaration) make the module's
-whole export the owner, as `export default` does. A literal
-`const f = require("<owner module>")` in a test file then binds `f` to the
-owner, so a bare `f(...)` is an `ImportedOwnerCall` (or a `DirectOwnerCall`
-when `f` is the owner's own name), and the observation guard reads `f` as the
-owner (rule 7). The relation uses the same identity gates as the default-import
-arm of rule 5: the specifier must resolve to the owner module, a body-local
-declaration or enclosing binding of `f` shadows it, and a mock of the owner
-module blocks it. One file-level gate covers both the inline and the
-`module.exports = name;` forms: the masked file must assign `module.exports`
-exactly once and use the identifier `module` in no other way (no alias,
-`module?.exports`, `module[...]`, compound or update write, spaced or
-line-broken `module . exports =`, `Object.assign(module, ...)`), and must not
-be an `eval`/`with` file; a second, conditional or non-function assignment
-therefore marks nothing. The `name` form also needs exactly one top-level
-function declaration of the name that the file never writes. A test binding
-declared with `let`/`var` that the test file writes again is not a
-`require()` of the owner. `require()` of an ES module's `export default` stays
-a namespace object, not a call. Files that read the module object
-another way are refused on purpose: `require.main === module`, UMD
-`typeof module` guards, `require.main.exports`, `require.cache` and
-`process.mainModule` all make `module.exports` unknowable, as do
-`arguments`, a `require` that is not called directly (`const r = require`,
-`require['main']`), bracket access on `process` and the string `'module'`.
-The gate must hold on two masks, the regex-aware one and a division-only one,
-so a `/` the regex heuristic misreads (`t! / 2`, `a = {} / 2`) cannot hide a
-write. A named import or member of a function export (`const { triple } =
-require(...)`, `k.triple`) is a property of the function, not the owner.
-The gate text keeps strings, templates and regex literals visible beside the
-two masks, so a string spelling `module.exports = x` refuses the file (fail
-closed). Known limits: `const { default: f } = require(...)` still reads as a
-default import (an ES `import f from` of the same module is legitimately that
-function, and the adapter does not record which spelling bound it);
-overload-style repeated `function name` declarations and any `require.resolve`
-use refuse the file.
-
 **Rule 13. A called suite factory is its expansion (2026-10-20).** A
 top-level `function factory(a, b) { describe(a, () => { ... b(x) ... }); }`
 registers nothing until it is called, and its assertions name the owner only
@@ -953,6 +914,41 @@ is appended to `missing` after the class is chosen. Actionability reads
 `gap_state: static_limitation` before the `already_observed` branch
 (RIPR-SPEC-0087 F10); RIPR-SPEC-0087 orders actionability only and says
 nothing about the class.
+
+**Rule 19. A `require()` of a CommonJS function export is that function
+(#9181).** `module.exports = function (...) {}`, `module.exports = function
+name(...) {}`, `module.exports = (...) => ...` and `module.exports = name;`
+(a plain reference to one top-level function declaration) make the module's
+whole export the owner, as `export default` does. A literal
+`const f = require("<owner module>")` in a test file then binds `f` to the
+owner, so a bare `f(...)` is an `ImportedOwnerCall` (or a `DirectOwnerCall`
+when `f` is the owner's own name), and the observation guard reads `f` as the
+owner (rule 7). The relation uses the same identity gates as the default-import
+arm of rule 5: the specifier must resolve to the owner module, a body-local
+declaration or enclosing binding of `f` shadows it, and a mock of the owner
+module blocks it. One file-level gate covers both the inline and the
+`module.exports = name;` forms: the masked file must assign `module.exports`
+exactly once and use the identifier `module` in no other way (no alias,
+`module?.exports`, `module[...]`, compound or update write, spaced or
+line-broken `module . exports =`, `Object.assign(module, ...)`), and must not
+be an `eval`/`with` file; a second, conditional or non-function assignment
+therefore marks nothing. The `name` form also needs exactly one top-level
+function declaration of the name that the file never writes. A test binding
+declared with `let`/`var` that the test file writes again is not a
+`require()` of the owner. `require()` of an ES module's `export default` stays
+a namespace object, not a call. Files that read the module object
+another way are refused on purpose: `require.main === module`, UMD
+`typeof module` guards, `require.main.exports`, `require.cache` and
+`process.mainModule` all make `module.exports` unknowable, as do
+`arguments`, a `require` that is not called directly (`const r = require`,
+`require['main']`), bracket access on `process` and the string `'module'`.
+The gate must hold on two masks, the regex-aware one and a division-only one,
+so a `/` the regex heuristic misreads (`t! / 2`, `a = {} / 2`) cannot hide a
+write. A named import or member of a function export (`const { triple } =
+require(...)`, `k.triple`) is a property of the function, not the owner.
+The gate text keeps strings, templates and regex literals visible beside the
+two masks, so a string spelling `module.exports = x` refuses the file (fail
+closed). Known limits: a default binding of a function export (`const { default: f } = require(...)`, and an ES `import f from` of the same module, which the adapter cannot tell apart) is refused rather than credited; overload-style repeated `function name` declarations and any `require.resolve` use refuse the file.
 
 **Rule 8. A mocked dependency on the changed line is `static_unknown`.**
 When the changed line calls a symbol imported (`imported_symbol_call`)

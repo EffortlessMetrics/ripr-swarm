@@ -1447,12 +1447,15 @@ fn module_value_use_relation(
             return false;
         }
         if import.namespace {
-            return contains_member_reference(body, &import.local, &owner.name)
+            return !owner.commonjs_whole_function
+                && contains_member_reference(body, &import.local, &owner.name)
                 && !local_identifier_declared_in_test_body(body, &import.local);
         }
         import.imported.as_deref().is_some_and(|imported| {
             (imported == owner.name && !owner.commonjs_whole_function)
-                || (imported == "default" && owner.exported_as_default)
+                || (imported == "default"
+                    && owner.exported_as_default
+                    && !owner.commonjs_whole_function)
         }) && !local_identifier_declared_in_test_body(body, &import.local)
             && contains_identifier_reference(body, &import.local)
     })
@@ -2286,6 +2289,7 @@ pub(crate) fn import_alias_owner_locals<'t>(
             !import.namespace
                 && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
                 && import.imported.as_deref() == Some(owner.name.as_str())
+                && !owner.commonjs_whole_function
                 && import.local != owner.name
                 && contains_call_name(&test.body_text, &import.local)
                 && !local_identifier_declared_in_test_body(&test.body_text, &import.local)
@@ -2572,7 +2576,10 @@ fn test_references_owner(
         // a default import binds the owner only when the owner is the
         // module's default export.
         import.imported.as_deref().is_some_and(|imported| {
-            imported == owner.name || (imported == "default" && owner.exported_as_default)
+            (imported == owner.name && !owner.commonjs_whole_function)
+                || (imported == "default"
+                    && owner.exported_as_default
+                    && !owner.commonjs_whole_function)
         }) && !local_identifier_declared_in_test_body(body, &import.local)
             && contains_identifier_reference(body, &import.local)
     })
@@ -3093,7 +3100,9 @@ fn import_references_owner_call(
     // already matches via `owner.name == "default"`.
     import.imported.as_deref().is_some_and(|imported| {
         (imported == owner.name && !owner.commonjs_whole_function)
-            || (imported == "default" && owner.exported_as_default)
+            || (imported == "default"
+                && owner.exported_as_default
+                && !owner.commonjs_whole_function)
     }) && contains_call_name(body_text, &import.local)
         // Shadow guard (#4102): the same test-body declaration guard the
         // alias arm applies — a locally re-declared `local` reaches the
