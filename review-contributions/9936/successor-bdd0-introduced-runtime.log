@@ -1,0 +1,7 @@
+private-write: expected=true actual=true
+private-no-write: expected=false actual=false
+jsx-write: expected=true actual=true
+jsx-no-write: expected=false actual=false
+assertion-write: expected=true actual=true
+assertion-no-write: expected=false actual=false
+TypeScript 5.9.3: 6 introduced-witness native runtime controls passed
