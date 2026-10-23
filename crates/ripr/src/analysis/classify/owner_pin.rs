@@ -5162,7 +5162,7 @@ fn test_crate_may_bind(
     roots: &TargetRoots,
 ) -> bool {
     index.files().iter().any(|(path, facts)| {
-        // A proven out-of-line integration helper's private imports cannot
+        // An established out-of-line integration helper's private imports cannot
         // bind its crate root. A root glob is already checked at that root.
         // Missing ancestry/placement keeps possible shadows, rather than
         // borrowing this namespace exclusion from a representative chain.
