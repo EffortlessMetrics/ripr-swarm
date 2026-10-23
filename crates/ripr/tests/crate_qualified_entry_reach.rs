@@ -821,11 +821,14 @@ fn bare_spelling_in_non_code_text_does_not_admit_an_import() -> Result<(), Strin
 }
 
 /// Importing the entry through `self::`/`crate::` binds it to a module of the
-/// test crate: unrelated, with rendered classification. A real list import of
-/// the library entry still links.
+/// test crate unless it resolves to the library: unrelated, with rendered
+/// classification. The local module declares no second entry function (a
+/// second function would hide the bug behind a uniqueness refusal). Supported
+/// anchors still link, and an unrelated local import never suppresses an exact
+/// qualified call.
 #[test]
 fn a_local_module_import_of_the_entry_name_does_not_link() -> Result<(), String> {
-    let local = "mod qual_reach {\n    pub mod inner {\n        pub fn order_discount(_: u32) -> u32 { 5 }\n    }\n}\n";
+    let local = "mod qual_reach {\n    pub mod inner {\n        pub use std::cmp::max as order_discount;\n    }\n}\n";
     for import in [
         "use self::qual_reach::inner::order_discount;\n",
         "use crate::qual_reach::inner::order_discount;\n",
@@ -836,33 +839,60 @@ fn a_local_module_import_of_the_entry_name_does_not_link() -> Result<(), String>
         assert_eq!(package.relation()?, None, "{import}");
         assert_ne!(package.classification()?, "exposed", "{import}");
     }
-    let list = format!(
-        "use qual_reach::inner::{{order_discount, other}};\n{}",
-        test_file(BARE)
+    // Supported anchors: an explicit extern crate, a local re-export of the
+    // library, and the plain list import.
+    for (positive, import) in [
+        (
+            "extern crate qual_reach;\n",
+            "use self::qual_reach::inner::order_discount;\n",
+        ),
+        (
+            "mod api {\n    pub use qual_reach::inner;\n}\n",
+            "use self::api::inner::order_discount;\n",
+        ),
+        ("", "use qual_reach::inner::{order_discount, other};\n"),
+    ] {
+        let tests = format!("{positive}{import}{}", test_file(BARE));
+        let package = module_package("src/inner.rs", MODULE_LIB, tests, vec![]);
+        assert_eq!(package.relation()?.as_deref(), LINKED, "{positive}{import}");
+        assert_eq!(package.classification()?, "exposed", "{positive}{import}");
+    }
+    // An unrelated local import does not suppress an exact qualified call.
+    let tests = format!(
+        "mod arbitrary {{\n    pub mod cmp {{}}\n}}\nuse self::arbitrary::cmp::order_discount;\n{}",
+        spelled("qual_reach::inner::order_discount")
     );
-    let package = module_package("src/inner.rs", MODULE_LIB, list, vec![]);
-    assert_eq!(
-        package.relation()?.as_deref(),
-        LINKED,
-        "list import control"
-    );
-    assert_eq!(package.classification()?, "exposed");
+    let package = module_package("src/inner.rs", MODULE_LIB, tests, vec![]);
+    assert_eq!(package.relation()?.as_deref(), LINKED, "unrelated import");
     Ok(())
 }
 
-/// A macro exported from a test-crate module and invoked in item position may
-/// expand to `mod qual_reach { .. }`; the test file refuses.
+/// A nearer callable binding of the entry's name (a `const` or `static`)
+/// refuses the imported bare call; the call-fact line text is the whole line,
+/// so a quote or comment ending on a line with a real foreign call of the same
+/// name does not admit it either.
 #[test]
-fn an_item_position_macro_in_the_test_crate_fails_closed() -> Result<(), String> {
-    let qualified_path = spelled("qual_reach::inner::order_discount");
-    let common = (
-        "tests/common/mod.rs",
-        "#[macro_export]\nmacro_rules! mk {\n    () => {\n        mod qual_reach {\n            pub mod inner {\n                pub fn order_discount(_: u32) -> u32 { 5 }\n            }\n        }\n    };\n}\n".to_string(),
-    );
-    let tests = format!("#[macro_use]\nmod common;\nmk!();\n{qualified_path}");
-    let package = module_package("src/inner.rs", MODULE_LIB, tests, vec![common]);
-    assert_eq!(package.relation()?, None);
-    assert_ne!(package.classification()?, "exposed");
+fn a_nearer_binding_or_same_line_non_code_does_not_admit_a_bare_call() -> Result<(), String> {
+    let import = "use qual_reach::inner::order_discount;\n";
+    for binding in [
+        "const order_discount: fn(u32) -> u32 = other::order_discount;\n",
+        "static order_discount: fn(u32) -> u32 = other::order_discount;\n",
+    ] {
+        let tests = format!("{import}{binding}{}", test_file(BARE));
+        let package = module_package("src/inner.rs", MODULE_LIB, tests, vec![]);
+        assert_eq!(package.relation()?, None, "{binding}");
+        assert_ne!(package.classification()?, "exposed", "{binding}");
+    }
+    for body in [
+        "    let _t = \"order_discount(10)\"; assert_eq!(foreign::order_discount(10), 5);",
+        "    /* order_discount(10) */ assert_eq!(foreign::order_discount(10), 5);",
+        "    let _t = r#\"\n    order_discount(10)\"#; assert_eq!(foreign::order_discount(10), 5);",
+    ] {
+        let tests = format!("{import}{}", test_file(body));
+        let package = module_package("src/inner.rs", MODULE_LIB, tests, vec![]);
+        assert_eq!(package.relation()?, None, "{body}");
+        assert_ne!(package.classification()?, "exposed", "{body}");
+    }
     Ok(())
 }
 

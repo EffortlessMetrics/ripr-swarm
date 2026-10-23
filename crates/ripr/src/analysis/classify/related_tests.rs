@@ -1059,20 +1059,19 @@ fn find_related_tests_with_candidates<'a>(
             test.calls.iter().any(|call| {
                 chain.hops.iter().any(|hop| {
                     hop.caller.name == call.name
-                        && (super::helper_transfer::is_direct_call_site(
+                        && ((super::helper_transfer::is_direct_call_site(
                             &masked_call_line(index, test, call.line, &call.text),
                             &hop.caller.name,
-                        ) || own_crate_qualified_entry_call(
+                        ) && imported_own_crate_prefix_is_bound_to_the_library(
+                            index,
+                            test,
+                            &hop.caller,
+                        )) || own_crate_qualified_entry_call(
                             index,
                             test,
                             &hop.caller,
                             call.line,
                         ))
-                        && imported_own_crate_prefix_is_bound_to_the_library(
-                            index,
-                            test,
-                            &hop.caller,
-                        )
                         // #6780 Devin review: a test-local closure or nested
                         // fn named like the hop caller shadows it, so the
                         // call never reaches the helper.
@@ -1890,22 +1889,50 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
         return true;
     }
     let unraw = |name: &str| name.strip_prefix("r#").unwrap_or(name).to_string();
-    // An import of the entry's name through `self::`/`crate::`/`super::` binds
-    // it to a module of the test crate, never to the library.
+    // A nearer callable binding of the entry's name (a `const`/`static` of the
+    // test file, which a `fn`/`let` shadow scan does not see) refuses.
+    let stripped_for_values = strip_comments_and_strings(&facts.source);
+    if declares_value_named(&stripped_for_values, &caller.name) {
+        return false;
+    }
+    // An import of the entry's name through `self::`/`crate::`/`super::` must
+    // resolve far enough to an unambiguous library anchor: a `crate::` import
+    // from a unit test inside `src/`, `self::<lib>::..` with `extern crate
+    // <lib>;` and no other binding of the name, or `self::<module>::..` of an
+    // inline module that re-exports `<lib>::..`. Anything else binds a module
+    // of the test crate (or cannot be resolved) and refuses.
+    let in_src_unit_test = !super::call_identity::under_tests_dir(&test.file);
+    let anchored = |source: &str, second: &str| -> bool {
+        let stripped = strip_comments_and_strings(source);
+        if second == crate_name {
+            return stripped.contains(&format!("extern crate {crate_name}"))
+                && !file_may_bind_name(&stripped, crate_name)
+                && !super::owner_pin::file_renames_to(source, crate_name);
+        }
+        reexporting_inline_module(source, second, crate_name)
+    };
     let binds_entry_locally = |source: &str| {
         super::reveal::flattened_use_paths(source)
             .iter()
             .any(|import| {
-                matches!(
-                    import.path.split("::").next(),
-                    Some("self" | "crate" | "super")
-                ) && import
+                let segments: Vec<&str> = import.path.split("::").collect();
+                let local_root = matches!(segments.first(), Some(&("self" | "crate" | "super")));
+                let names_entry = import
                     .alias
                     .as_deref()
-                    .or_else(|| import.path.rsplit("::").next())
+                    .or_else(|| segments.last().copied())
                     .map(unraw)
                     .as_deref()
-                    == Some(caller.name.as_str())
+                    == Some(caller.name.as_str());
+                if !(local_root && names_entry) {
+                    return false;
+                }
+                if segments.first() == Some(&"crate") && in_src_unit_test {
+                    return false;
+                }
+                !segments
+                    .get(1)
+                    .is_some_and(|second| anchored(&facts.source, &unraw(second)))
             })
     };
     if binds_entry_locally(&facts.source) || binds_entry_locally(&test.body) {
@@ -1945,6 +1972,77 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
         && !super::owner_pin::file_renames_to(&facts.source, &format!("r#{crate_name}"))
         && !rebinds(&facts.source)
         && !rebinds(&test.body)
+}
+
+/// Whether the masked `source` declares a `const` or `static` (any scope)
+/// named `name`.
+fn declares_value_named(stripped: &str, name: &str) -> bool {
+    let name = name.strip_prefix("r#").unwrap_or(name);
+    ["const", "static"].iter().any(|keyword| {
+        stripped.match_indices(keyword).any(|(at, _)| {
+            let before_ok = !stripped[..at]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_');
+            let rest = stripped[at + keyword.len()..].trim_start();
+            let rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
+            let rest = rest.strip_prefix("r#").unwrap_or(rest);
+            before_ok
+                && rest.starts_with(name)
+                && !rest[name.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_alphanumeric() || c == '_')
+        })
+    })
+}
+
+/// Whether `source` declares an inline `mod <module>` whose body re-exports a
+/// path of the library (`pub use <lib>::..`), so `self::<module>::..` is
+/// anchored to the library.
+fn reexporting_inline_module(source: &str, module: &str, crate_name: &str) -> bool {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return false;
+    };
+    let mut found = false;
+    for item in parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Module::cast)
+        .filter(|m| {
+            m.name()
+                .is_some_and(|n| n.text().trim_start_matches("r#") == module)
+        })
+    {
+        let Some(items) = item.item_list() else {
+            return false;
+        };
+        if super::owner_pin::has_cfg_attr(&item) {
+            return false;
+        }
+        if found {
+            return false;
+        }
+        found = items
+            .syntax()
+            .descendants()
+            .filter_map(ast::Use::cast)
+            .any(|u| {
+                let text = u.syntax().text().to_string();
+                let body = text
+                    .trim_start_matches("pub")
+                    .trim_start()
+                    .trim_start_matches("use")
+                    .trim_start();
+                body.trim_start_matches("::")
+                    .starts_with(&format!("{crate_name}::"))
+                    && !body.contains('*')
+                    && !body.contains(" as ")
+            });
+    }
+    found
 }
 
 /// Whether `text` invokes the owner through the dependency's declared name,

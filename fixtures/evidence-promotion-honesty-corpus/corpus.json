@@ -11256,10 +11256,6 @@
           "type": "must_promote"
         },
         {
-          "type": "expected_class",
-          "class": "exposed"
-        },
-        {
           "type": "maximum_class",
           "class": "exposed"
         }
@@ -11278,10 +11274,6 @@
         },
         {
           "type": "must_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "exposed"
         },
         {
           "type": "maximum_class",
@@ -11415,6 +11407,26 @@
       "tier": "pure",
       "source_fixture": "fixtures/module_reach_macro_expanded_shadow",
       "vector": "item_position_macro_may_declare_a_module_named_like_the_library",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_module_reach_absolute_import_rebound",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/module_reach_absolute_import_rebound",
+      "vector": "absolute_import_with_rebound_library_name_is_not_the_library",
       "probe_family": "predicate",
       "assertions": [
         {
