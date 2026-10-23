@@ -2157,6 +2157,10 @@ pub(super) fn gap_check_findings_snapshot(
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
+#[path = "check_argv_refusal_tests.rs"]
+mod argv_refusal_tests;
+
+#[cfg(test)]
 mod candidate_tree_tests {
     use super::super::super::commands::check;
 
