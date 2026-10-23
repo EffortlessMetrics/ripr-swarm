@@ -362,46 +362,135 @@ fn arguments_are_closed(args: &str, test: &PythonTest, plain_locals: &[String]) 
     true
 }
 
-/// Locals the test assigns exactly once from an expression made only of
-/// literals, unshadowed builtins and earlier plain locals, and never rebinds
-/// through a loop, `with ... as`, `def` or walrus.
+/// Locals that are provably plain data (#5491): assigned exactly once, on one
+/// physical line with balanced brackets and no continuation, from an
+/// expression of literals, unshadowed builtins and earlier plain locals; and
+/// every other occurrence is a bare operand or argument, never indexed,
+/// attributed, called, augmented, unpacked, stored through or rebound.
 fn plain_locals(code: &str, test: &PythonTest) -> Vec<String> {
     let mut plain: Vec<String> = Vec::new();
-    for line in code.lines() {
-        let line = line.trim();
-        let Some((target, rhs)) = line.split_once('=') else {
-            continue;
-        };
-        if rhs.starts_with('=') || target.ends_with(['!', '<', '>', '=', '+', '-', '*', '/']) {
-            continue;
-        }
-        let name = target.trim();
+    let mut line_start = 0usize;
+    for raw in code.split_inclusive('\n') {
+        let offset = line_start + (raw.len() - raw.trim_start().len());
+        line_start += raw.len();
+        let line = raw.trim();
+        let name_len = line
+            .find(|ch: char| !(ch == '_' || ch.is_ascii_alphanumeric()))
+            .unwrap_or(line.len());
+        let name = &line[..name_len];
         if name.is_empty()
-            || !name
-                .chars()
-                .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
             || name.starts_with(|ch: char| ch.is_ascii_digit())
+            || KEYWORDS.contains(&name)
+            || plain.iter().any(|existing| existing == name)
         {
             continue;
         }
-        let assignments = code
-            .lines()
-            .filter(|other| {
-                other.trim().strip_prefix(name).is_some_and(|rest| {
-                    rest.trim_start().starts_with('=') && !rest.trim_start().starts_with("==")
-                })
-            })
-            .count();
-        let rebound = ["for ", "as ", "def ", "global ", "nonlocal "]
-            .iter()
-            .any(|marker| code.contains(&format!("{marker}{name}")))
-            || code.contains(&format!("{name} :="))
-            || code.contains(&format!("({name}:="));
-        if assignments == 1 && !rebound && arguments_are_closed(rhs, test, &plain) {
-            plain.push(name.to_string());
+        let Some(rhs) = line[name_len..]
+            .trim_start()
+            .strip_prefix('=')
+            .filter(|rhs| !rhs.starts_with('='))
+        else {
+            continue;
+        };
+        if rhs.trim().is_empty()
+            || rhs.trim_end().ends_with('\\')
+            || !brackets_balanced(rhs)
+            || !arguments_are_closed(rhs, test, &plain)
+            || !other_occurrences_are_plain(code, name, offset)
+        {
+            continue;
         }
+        plain.push(name.to_string());
     }
     plain
+}
+
+fn brackets_balanced(text: &str) -> bool {
+    let mut depth = 0i32;
+    for ch in text.chars() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    depth == 0
+}
+
+/// Every occurrence of `name` other than its one assignment (at `assign_at`)
+/// is a bare operand or argument.
+fn other_occurrences_are_plain(code: &str, name: &str, assign_at: usize) -> bool {
+    let word = |ch: char| ch == '_' || ch.is_ascii_alphanumeric();
+    for (at, _) in code.match_indices(name) {
+        let end = at + name.len();
+        if code[..at].chars().next_back().is_some_and(word)
+            || code[end..].chars().next().is_some_and(word)
+        {
+            continue;
+        }
+        if at == assign_at {
+            continue;
+        }
+        let before = code[..at].trim_end();
+        let after = code[end..].trim_start();
+        if before.ends_with(['*', '.']) {
+            return false;
+        }
+        let last_word = before
+            .rsplit(|ch: char| !word(ch))
+            .next()
+            .unwrap_or_default();
+        if matches!(
+            last_word,
+            "for" | "as" | "del" | "global" | "nonlocal" | "import" | "def" | "class" | "from"
+        ) {
+            return false;
+        }
+        if after.starts_with(['[', '.', '(', ':', ',']) && !after.starts_with(',') {
+            return false;
+        }
+        let augmented = [
+            "**", "//", ">>", "<<", "+", "-", "*", "/", "%", "&", "|", "^", "@",
+        ]
+        .iter()
+        .any(|op| {
+            after
+                .strip_prefix(op)
+                .is_some_and(|rest| rest.starts_with('='))
+        });
+        if augmented || (after.starts_with('=') && !after.starts_with("==")) {
+            return false;
+        }
+        // A target on the left of a store in its own line (`a, name = ...`).
+        let line_begin = code[..at].rfind('\n').map_or(0, |idx| idx + 1);
+        let line_end = code[at..].find('\n').map_or(code.len(), |idx| at + idx);
+        let line = &code[line_begin..line_end];
+        let bytes = line.as_bytes();
+        let mut depth = 0i32;
+        let store = (0..bytes.len()).find(|&idx| {
+            match bytes[idx] {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => depth -= 1,
+                _ => {}
+            }
+            depth == 0
+                && bytes[idx] == b'='
+                && bytes.get(idx + 1) != Some(&b'=')
+                && idx
+                    .checked_sub(1)
+                    .and_then(|prev| bytes.get(prev))
+                    .is_none_or(|prev| !b"=!<>+-*/%&|^@:".contains(prev))
+        });
+        if store.is_some_and(|idx| at - line_begin < idx) {
+            return false;
+        }
+    }
+    true
 }
 
 /// A framework API call on a receiver whose identity is established:

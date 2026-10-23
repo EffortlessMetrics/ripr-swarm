@@ -388,6 +388,71 @@ fn callable_passed_by_reference_to_a_trusted_call_never_gets_missing_input() -> 
             format!("{body}sorted([1], key=receiver.boundary_probe)\n"),
         ),
         (
+            "multi-line list holding a callable",
+            probe.to_string(),
+            format!("{body}fns = [\n        boundary_probe,\n    ]\n    sorted([1], key=fns[0])\n"),
+        ),
+        (
+            "paren-wrapped callable",
+            probe.to_string(),
+            format!("{body}fn = (\n        boundary_probe\n    )\n    sorted([1], key=fn)\n"),
+        ),
+        (
+            "backslash continuation",
+            probe.to_string(),
+            format!("{body}fn = \\\n        boundary_probe\n    sorted([1], key=fn)\n"),
+        ),
+        (
+            "copy of a non-plain name",
+            probe.to_string(),
+            format!("{body}a = boundary_probe\n    b = a\n    sorted([1], key=b)\n"),
+        ),
+        (
+            "augmented list store",
+            probe.to_string(),
+            format!("{body}fns = []\n    fns += [boundary_probe]\n    sorted([1], key=fns[0])\n"),
+        ),
+        (
+            "subscript store into a list",
+            probe.to_string(),
+            format!("{body}fns = [None]\n    fns[0] = boundary_probe\n    sorted([1], key=fns[0])\n"),
+        ),
+        (
+            "subscript store into a dict",
+            probe.to_string(),
+            format!("{body}fns = {{}}\n    fns['k'] = boundary_probe\n    sorted([1], key=fns['k'])\n"),
+        ),
+        (
+            "star-unpacked multi-line list",
+            probe.to_string(),
+            format!("{body}fns = [\n        boundary_probe,\n    ]\n    sorted([1], *fns)\n"),
+        ),
+        (
+            "list append",
+            probe.to_string(),
+            format!("{body}fns = []\n    fns.append(boundary_probe)\n    sorted([1], key=fns[0])\n"),
+        ),
+        (
+            "list extend",
+            probe.to_string(),
+            format!("{body}fns = []\n    fns.extend([boundary_probe])\n    sorted([1], key=fns[0])\n"),
+        ),
+        (
+            "dict update",
+            probe.to_string(),
+            format!("{body}d = {{}}\n    d.update({{'k': boundary_probe}})\n    sorted([1], key=d['k'])\n"),
+        ),
+        (
+            "dict in-place union",
+            probe.to_string(),
+            format!("{body}d = {{}}\n    d |= {{'k': boundary_probe}}\n    sorted([1], key=d['k'])\n"),
+        ),
+        (
+            "multi-target unpack",
+            probe.to_string(),
+            format!("{body}fn, other = boundary_probe, 1\n    sorted([1], key=fn)\n"),
+        ),
+        (
             "key= a local bound from an import",
             probe.to_string(),
             format!("{body}fn = boundary_probe\n    sorted([1], key=fn)\n"),
