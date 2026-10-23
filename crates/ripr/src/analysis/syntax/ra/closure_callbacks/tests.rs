@@ -40,6 +40,32 @@ fn closure_literal_positions_require_a_call_that_runs_with_the_closure()
             "run(true, || { fn inner() { gate(1) } 1 });",
             vec![],
         ),
+        ("async closure", "run(true, async || gate(1));", vec![]),
+        (
+            "under if false",
+            "if false { run(true, || gate(1)); }",
+            vec![],
+        ),
+        (
+            "after a possible early return",
+            "if x { return; } run(true, || gate(1));",
+            vec![],
+        ),
+        (
+            "after an opaque macro",
+            "m!(); run(true, || gate(1));",
+            vec![],
+        ),
+        (
+            "after an assertion macro",
+            "assert!(x); run(true, || gate(1));",
+            vec![1],
+        ),
+        (
+            "after an unrelated nested fn exit",
+            "fn o() { return; } run(true, || gate(1));",
+            vec![1],
+        ),
         ("path call", "other::run(true, || gate(1));", vec![]),
         ("method call of helper", "x.run(true, || gate(1));", vec![]),
         (
@@ -64,11 +90,6 @@ fn invoked_parameters_are_plain_singly_bound_statement_level_calls() -> Result<(
             "generic bound",
             "fn h<F: Fn() -> bool>(w: bool, f: F) { let g = f(); assert_eq!(g, w); }",
             vec![(1, "f")],
-        ),
-        (
-            "mut parameter",
-            "fn h(mut f: impl FnMut() -> bool) { let g = f(); assert!(g); }",
-            vec![(0, "f")],
         ),
         (
             "two parameters",
@@ -171,6 +192,16 @@ fn invoked_parameters_are_plain_singly_bound_statement_level_calls() -> Result<(
             vec![],
         ),
         (
+            "after an opaque macro",
+            "fn h(f: impl Fn() -> bool) { early_exit!(); let _ = f(); }",
+            vec![],
+        ),
+        (
+            "after an assertion macro",
+            "fn h(f: impl Fn() -> bool) { assert!(true); let _ = f(); }",
+            vec![(0, "f")],
+        ),
+        (
             "after a loop",
             "fn h(f: impl Fn() -> bool) { loop { break; } let _ = f(); }",
             vec![],
@@ -186,18 +217,28 @@ fn invoked_parameters_are_plain_singly_bound_statement_level_calls() -> Result<(
             vec![],
         ),
         (
+            "mut parameter, never reassigned",
+            "fn h(mut f: impl FnMut() -> bool) { let _ = f(); }",
+            vec![],
+        ),
+        (
             "reassigned before the call",
             "fn h(mut f: fn() -> bool) { f = other; let _ = f(); }",
             vec![],
         ),
         (
-            "compound or later reassignment",
-            "fn h(mut f: fn() -> bool) { let _ = f(); f = other; }",
+            "parenthesized assignment target",
+            "fn h(mut f: fn() -> String) { (f) = always_hi; let _ = f(); }",
             vec![],
         ),
         (
-            "mutably borrowed",
-            "fn h(mut f: fn() -> bool) { swap(&mut f); let _ = f(); }",
+            "destructuring assignment",
+            "fn h(mut f: fn() -> String) { (f,) = (always_hi as fn() -> String,); let _ = f(); }",
+            vec![],
+        ),
+        (
+            "mem replace through a parenthesized mutable borrow",
+            "fn h(mut f: fn() -> String) { std::mem::replace(&mut (f), always_hi); let _ = f(); }",
             vec![],
         ),
         (
@@ -206,9 +247,9 @@ fn invoked_parameters_are_plain_singly_bound_statement_level_calls() -> Result<(
             vec![],
         ),
         (
-            "mutable but never reassigned",
-            "fn h(mut f: impl FnMut() -> bool) { let _ = f(); }",
-            vec![(0, "f")],
+            "mutable borrow of an immutable name",
+            "fn h(f: fn() -> bool) { swap(&mut f); let _ = f(); }",
+            vec![],
         ),
         (
             "pattern parameter",
@@ -261,5 +302,28 @@ fn invocation_end_orders_statements_sharing_a_line() -> Result<(), Box<dyn Error
     assert_eq!(params[0].end_line, 1);
     // The invoking statement ends right after its `;`, before the assertion.
     assert_eq!(params[0].end_column, 41);
+    Ok(())
+}
+
+#[test]
+fn macro_sites_come_from_the_parser_not_from_text() -> Result<(), Box<dyn Error>> {
+    let text = "fn h() {\n    /* assert_eq!(a, b); */ let g = f(); assert_eq!(a, b);\n    let s = \"assert_eq!(a, b);\"; m!(x);\n}";
+
+    let commented = macro_call_columns(text, 2).ok_or("premise: parses")?;
+    assert_eq!(commented.len(), 1, "{commented:?}");
+    assert_eq!(commented[0].0, "assert_eq!(a, b)");
+    assert_eq!(
+        commented[0].1,
+        text.lines()
+            .nth(1)
+            .and_then(|l| l.rfind("assert_eq!"))
+            .ok_or("premise")?
+    );
+
+    let in_string = macro_call_columns(text, 3).ok_or("premise: parses")?;
+    assert_eq!(in_string.len(), 1, "{in_string:?}");
+    assert_eq!(in_string[0].0, "m!(x)");
+    assert_eq!(macro_call_columns(text, 1), Some(Vec::new()));
+    assert_eq!(macro_call_columns("fn h( {", 1), None);
     Ok(())
 }

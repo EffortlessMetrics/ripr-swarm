@@ -1814,6 +1814,53 @@ not hold because the line has a second call; an argument passed by
 reference (`check(&actual, "4")`); a helper over `&str`, a workspace type
 or two different types; and `.to_string()` or `.into()` expected values.
 
+### Closure-callback assertion facts (#9981)
+
+A same-file evidence helper lends the assertions that follow its invocation of
+a closure parameter to a test that passes a synchronous, call-making closure
+literal at that parameter (`run_test("hi bob", || greet("bob"))`, helper body
+`let got = f(); assert_eq!(got, want);`). This adds observation facts only. It
+is not an owner-return pin or changed-sink discrimination: the existing
+classifier still decides whether an assertion observes the changed behavior,
+and an unrelated exact-value assertion can stay strong in shape while the
+finding is weakly exposed with unconfirmed observation.
+
+Admission is a small, explicit, fail-closed grammar, not general execution
+analysis:
+
+- Test side: the helper is called as a single-segment free function by a
+  statement the test body reaches unconditionally and in order (`call;`, a
+  tail call, or `let PAT = call;` without `else`), after only statements free
+  of `return`, `?`, `break`, `continue`, loops and macros other than the
+  assertion and formatting macros. The callback argument is a closure literal
+  (not `async`, not boxed, not a reference) whose body makes a call that is
+  not under a nested closure, `async` block or `fn`.
+- Helper side: the callback parameter is an immutable plain identifier bound
+  once (a `mut` binding is refused outright, which also closes parenthesized,
+  destructuring and `mem::replace` reassignment, and any `&mut` borrow that
+  mentions the name is refused), and invoked by a direct statement of the helper body (`f();`, tail `f()`, `let PAT = f();`)
+  under the same reached-in-order rule. The helper invokes exactly one
+  callback parameter, and the test reaches it with a call-making closure
+  literal; a helper that invokes two or more closure parameters is not
+  credited.
+- Ordering: only parser-backed assertions that start after the invoking
+  statement ends are copied, compared by source position (line, then byte
+  column), so `let got = f(); assert_eq!(..)` on one line is credited and
+  `assert_eq!(..); f()` on one line is not. On a shared line the assertion is
+  identified by its parser macro site, never by text search, so a comment or
+  string repeating the spelling cannot hide or move it; an assertion that does
+  not map to exactly one macro site, including a repeated identical spelling,
+  is refused. The callback parameter's own call is not added to the test.
+
+The credit rides the existing same-file helper eligibility (helper role,
+single definition, same module, no cfg, no `use`/nested `fn`, non-async).
+Not credited by this rule: a callback merely forwarded to another function
+(tracing's `with_default(subscriber, fun)`, #9981's original example),
+`assert_eq!(f(), x)` or other invocations inside macro arguments, boxed or
+by-reference closures, and invocations under branches, loops, or after an
+earlier exit. The plain-helper path's unused/forwarded callback behavior
+(#9997) is unchanged and remains an open residual.
+
 ## Required Evidence
 
 - Rule 7 (#6482): in the RIPR-SPEC-0219 verdict corpus, `grid-arith-helper`
@@ -2278,6 +2325,14 @@ assertions. This repair shares the existing callback without that larger migrati
 
 ## Test Mapping
 
+- Closure-callback helper facts (#9981): the `closure_callback_*` controls in
+  `crates/ripr/src/analysis/facts/test_helpers/tests.rs` (direct, generic
+  bound, same-line post-invocation positives; two invoked callbacks, branch,
+  loop, early exit, opaque macro, reassignment, async closure, boxed and
+  by-reference closures, same-line pre-invocation and repeated spelling,
+  cross-module helper negatives) and the unit controls in
+  `crates/ripr/src/analysis/syntax/ra/closure_callbacks/tests.rs` pin
+  observation-fact admission, not a changed-sink or owner-return claim.
 - Unit (`crates/ripr/src/analysis/classify/owner_pin/tests.rs`): the bytes
   shape; trait scope; competing definitions (override, inherent twin,
   `macro_rules!` body, forward, free twin); receiver typing; slice-method
@@ -2483,6 +2538,10 @@ assertions. This repair shares the existing callback without that larger migrati
 
 ## Implementation Mapping
 
+- `crates/ripr/src/analysis/facts/test_helpers.rs` and
+  `crates/ripr/src/analysis/syntax/ra/closure_callbacks.rs`: same-file
+  closure-callback observation facts (`closure_argument_positions`,
+  `invoked_callback_params`, source-position ordering in `starts_after`).
 - `crates/ripr/src/analysis/syntax/ra.rs`: `function_item_fact` fills
   `FunctionFact.item`.
 - `crates/ripr/src/analysis/facts/model.rs`: `FunctionContainer`,

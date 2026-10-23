@@ -80,14 +80,20 @@
 //!   parameter (`let got = f(); assert_eq!(got, want);`) is credited when the
 //!   test passes, at that exact parameter position, a closure literal whose
 //!   body makes a call that runs when the closure is invoked. The parameter
-//!   must be a plain identifier bound nowhere else in the helper, and the
+//!   must be an immutable plain identifier (no `mut` binding, no `&mut`
+//!   borrow) bound nowhere else in the helper, and the
 //!   invocation a direct statement of the helper's body block (`f();`, a
-//!   tail `f()`, or `let PAT = f();`), reached unconditionally: not under
+//!   tail `f()`, or `let PAT = f();`), reached unconditionally and in order
+//!   (the test's helper call under the same rule): not under
 //!   `if`/`match`/a loop, not after a `return`, `?`, `break`, `continue` or
-//!   loop, not in a nested closure, macro argument or method chain. Only
+//!   loop or unrecognized macro, not in a nested closure, macro argument or
+//!   method chain. Only
 //!   assertions that start after the invoking statement ends, compared by
-//!   source position so two statements on one line are ordered, are copied.
-//!   The parameter's own call is not added to the test. Boxed or
+//!   source position (a same-line assertion is identified by its parser macro
+//!   site, never by text search) so two statements on one line are ordered,
+//!   are copied.
+//!   The parameter's own call is not added to the test. A helper that
+//!   invokes two or more closure parameters earns no credit. Boxed or
 //!   by-reference closures and callbacks forwarded to another function
 //!   (tracing's `with_default(subscriber, fun)`) are not credited by this
 //!   rule. A helper that never invokes the parameter keeps the plain-helper
@@ -105,7 +111,7 @@
 use super::{FunctionFact, FunctionSourceRole, OracleFact, RustIndex, TestFact};
 use crate::analysis::syntax::{
     InvokedCallbackParam, ModuleItemScopes, closure_argument_positions, invoked_callback_params,
-    module_item_scopes, parser_oracles_for_function,
+    macro_call_columns, module_item_scopes, parser_oracles_for_function,
 };
 use crate::analysis::workspace::{CargoHarnessVerdict, ManifestInventory};
 use rayon::prelude::*;
@@ -250,7 +256,10 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
                     .or_insert_with(|| invoked_callback_params(&helper.body))
                     .as_deref()
                     .unwrap_or_default();
-                let positions = if invoked.is_empty() {
+                // Exactly one invoked callback parameter: with two, an
+                // assertion between or after the invocations cannot be tied
+                // to the closure that holds the owner call.
+                let positions = if invoked.len() != 1 {
                     None
                 } else {
                     closure_argument_positions(&test.body, &call.name)
@@ -606,15 +615,19 @@ fn starts_after(helper: &FunctionFact, assertion: &OracleFact, end: (usize, usiz
     if assertion.line != end.0 {
         return assertion.line > end.0;
     }
-    let Some(first_line) = assertion.text.lines().next() else {
+    // Same line: identify the assertion by its parser site, never by text
+    // search (a comment or string can repeat the spelling). Exactly one macro
+    // invocation on the line must carry the oracle's text.
+    let spelling = assertion.text.trim().trim_end_matches(';').trim();
+    let Some(sites) = macro_call_columns(&helper.body, assertion.line - helper.start_line + 1)
+    else {
         return false;
     };
-    helper
-        .body
-        .lines()
-        .nth(assertion.line.saturating_sub(helper.start_line))
-        .and_then(|line| line.find(first_line))
-        .is_some_and(|column| column >= end.1)
+    let mut matching = sites.iter().filter(|(text, _)| text.trim() == spelling);
+    match (matching.next(), matching.next()) {
+        (Some((_, column)), None) => *column >= end.1,
+        _ => false,
+    }
 }
 
 /// Credited calls must sit outside the test's line span, which is what

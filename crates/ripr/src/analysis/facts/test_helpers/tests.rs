@@ -1003,8 +1003,53 @@ fn closure_callback_helpers_that_may_not_observe_the_closure_grant_nothing()
             "        run_test(true, || gate(11));\n",
         ),
         (
+            "mutable callback parameter, even if never reassigned",
+            "    fn run_test(want: bool, mut f: impl FnMut() -> bool) {\n        let got = f();\n        assert_eq!(got, want);\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "parenthesized assignment to the callback parameter",
+            "    fn run_test(want: bool, mut f: fn() -> bool) {\n        (f) = always_true;\n        let _ = f();\n        assert_eq!(want, true);\n    }\n    fn always_true() -> bool {\n        true\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "destructuring assignment to the callback parameter",
+            "    fn run_test(want: bool, mut f: fn() -> bool) {\n        (f,) = (always_true as fn() -> bool,);\n        let _ = f();\n        assert_eq!(want, true);\n    }\n    fn always_true() -> bool {\n        true\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "mem replace of the callback parameter",
+            "    fn run_test(want: bool, mut f: fn() -> bool) {\n        std::mem::replace(&mut (f), always_true);\n        let _ = f();\n        assert_eq!(want, true);\n    }\n    fn always_true() -> bool {\n        true\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
             "callback parameter reassigned before the invocation",
             "    fn run_test(want: bool, mut f: fn() -> bool) {\n        f = always_true;\n        let _ = f();\n        assert_eq!(want, true);\n    }\n    fn always_true() -> bool {\n        true\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "opaque macro before the invocation may exit",
+            "    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        early_exit!();\n        let got = f();\n        assert_eq!(got, want);\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "helper call under if false in the test",
+            CALLBACK_HELPER,
+            "        if false {\n            run_test(true, || gate(11));\n        }\n",
+        ),
+        (
+            "helper call after an opaque macro in the test",
+            CALLBACK_HELPER,
+            "        early_exit!();\n        run_test(true, || gate(11));\n",
+        ),
+        (
+            "async closure literal",
+            "    fn run_test<F, T>(want: bool, f: F) where F: FnOnce() -> T {\n        let _ = f();\n        assert_eq!(want, true);\n    }\n",
+            "        run_test(true, async || gate(11));\n",
+        ),
+        (
+            "repeated identical assertion spelling around the invocation on one line",
+            "    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        assert_eq!(want, true); let _ = f(); assert_eq!(want, true);\n    }\n",
             "        run_test(true, || gate(11));\n",
         ),
         (
@@ -1109,7 +1154,7 @@ fn closure_callback_helpers_that_may_not_observe_the_closure_grant_nothing()
 // is not a discriminating case for the new guards and is not tabled above.
 
 #[test]
-fn closure_callback_credit_covers_generic_bounds_and_every_invoked_position()
+fn closure_callback_credit_covers_generic_bounds_and_refuses_two_invoked_callbacks()
 -> Result<(), Box<dyn Error>> {
     let generic = index_for(&callback_source(
         "    fn run_test<F: Fn() -> bool>(want: bool, f: F) {\n        let got = f();\n        assert_eq!(got, want);\n    }\n",
@@ -1120,29 +1165,33 @@ fn closure_callback_credit_covers_generic_bounds_and_every_invoked_position()
         vec!["assert_eq!(got, want);"]
     );
 
-    let two = index_for(&callback_source(
-        "    fn run_both(a: impl FnOnce() -> bool, b: impl FnOnce() -> bool) {\n        let x = a();\n        let y = b();\n        assert_eq!(x, y);\n    }\n",
-        "        run_both(|| gate(11), || gate(12));\n",
-    ))?;
-    let test = test_named(&two, "boundary")?;
-    assert_eq!(assertion_texts(test), vec!["assert_eq!(x, y);"]);
-    assert!(calls(test).contains(&"gate"), "{:?}", calls(test));
-    assert!(
-        !calls(test).contains(&"a") && !calls(test).contains(&"b"),
-        "{:?}",
-        calls(test)
-    );
-
-    // Only the first parameter gets a closure literal; the helper invokes
-    // both. The reached position is enough, and the plain argument adds nothing.
-    let partial = index_for(&callback_source(
-        "    fn run_both(a: impl FnOnce() -> bool, b: impl FnOnce() -> bool) {\n        let x = a();\n        let y = b();\n        assert_eq!(x, y);\n    }\n",
-        "        let b = || true;\n        run_both(|| gate(11), b);\n",
-    ))?;
-    assert_eq!(
-        assertion_texts(test_named(&partial, "boundary")?),
-        vec!["assert_eq!(x, y);"]
-    );
+    // A helper that invokes two callback parameters earns no credit, even
+    // when only one reaches a call-making closure literal.
+    for (shape, helper, body) in [
+        (
+            "both closures reached",
+            "    fn run_both(a: impl FnOnce() -> bool, b: impl FnOnce() -> bool) {\n        let x = a();\n        let y = b();\n        assert_eq!(x, y);\n    }\n",
+            "        run_both(|| gate(11), || gate(12));\n",
+        ),
+        (
+            "one closure reached, plain value at the other",
+            "    fn run_both(a: impl FnOnce() -> bool, b: impl FnOnce() -> bool) {\n        let x = a();\n        let y = b();\n        assert_eq!(x, y);\n    }\n",
+            "        let b = || true;\n        run_both(|| gate(11), b);\n",
+        ),
+        (
+            "assertion between the invocations observes only the first",
+            "    fn run_both(a: impl FnOnce() -> bool, b: impl FnOnce() -> bool) {\n        let x = a();\n        assert_eq!(x, true);\n        let y = b();\n        let _ = y;\n    }\n",
+            "        run_both(|| setup(), || gate(11));\n",
+        ),
+    ] {
+        let index = index_for(&callback_source(helper, body))?;
+        let test = test_named(&index, "boundary")?;
+        assert!(
+            test.assertions.is_empty(),
+            "{shape}: {:?}",
+            assertion_texts(test)
+        );
+    }
     Ok(())
 }
 
@@ -1167,11 +1216,36 @@ fn closure_callback_credit_orders_same_line_statements_by_source_position()
         vec!["assert_eq!(got, want);"]
     );
 
+    let commented = index_for(&callback_source(
+        "    fn run_test(want: bool, f: impl FnOnce() -> bool) { /* assert_eq!(got, want); */ let got = f(); assert_eq!(got, want); }\n",
+        "        run_test(true, || gate(11));\n",
+    ))?;
+    assert_eq!(
+        assertion_texts(test_named(&commented, "boundary")?),
+        vec!["assert_eq!(got, want);"],
+        "a comment that repeats the spelling must not hide the real assertion"
+    );
+
     let before = index_for(&callback_source(
         "    fn run_test(want: bool, f: impl FnOnce() -> bool) { assert_eq!(want, true); let _ = f(); }\n",
         "        run_test(true, || gate(11));\n",
     ))?;
     assert!(test_named(&before, "boundary")?.assertions.is_empty());
+    Ok(())
+}
+
+#[test]
+fn closure_callback_credit_ignores_an_unrelated_nested_fn_exit_in_the_test()
+-> Result<(), Box<dyn Error>> {
+    let index = index_for(&callback_source(
+        CALLBACK_HELPER,
+        "        fn other() {\n            return;\n        }\n        run_test(true, || gate(11));\n",
+    ))?;
+
+    assert_eq!(
+        assertion_texts(test_named(&index, "boundary")?),
+        vec!["assert_eq!(got, want);"]
+    );
     Ok(())
 }
 

@@ -11,7 +11,7 @@ mod module_scope_walk_tests;
 mod probe_shapes;
 mod property_macros;
 pub(crate) use closure_callbacks::{
-    InvokedCallbackParam, closure_argument_positions, invoked_callback_params,
+    InvokedCallbackParam, closure_argument_positions, invoked_callback_params, macro_call_columns,
 };
 use probe_shapes::extract_parser_probe_shapes;
 #[cfg(test)]

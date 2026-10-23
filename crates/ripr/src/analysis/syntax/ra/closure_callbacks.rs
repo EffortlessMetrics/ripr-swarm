@@ -12,9 +12,14 @@
 //! argument positions of a direct call to the helper hold a closure literal
 //! whose body makes a call that runs when the closure is invoked (a call under
 //! a nested closure, `async` block or `fn` inside it does not). The helper
-//! side asks which of its parameters it invokes as a plain statement-level call. The facts producer credits the
-//! helper's assertion only when the two meet, so a closure that is never run
-//! (the helper does not call the parameter) earns nothing.
+//! side asks which of its parameters it invokes as a plain statement-level
+//! call. The facts producer credits the
+//! helper's assertion through this path only when the two meet, so a closure
+//! that this path cannot show to run earns nothing from it. That statement is
+//! limited to this closure-callback path: the pre-existing plain-helper path
+//! is unchanged and still credits a helper that never invokes its closure
+//! parameter (#9997), and callbacks forwarded to another function (the
+//! tracing `with_default` shape of #9981) are not repaired here.
 
 use super::*;
 use ra_ap_syntax::ast::HasArgList;
@@ -47,10 +52,11 @@ pub(crate) fn closure_argument_positions(test_text: &str, helper: &str) -> Optio
         .find_map(ast::Fn::cast)?;
     let body = function.body()?;
     let mut positions = BTreeSet::new();
-    for call in body.syntax().descendants().filter_map(ast::CallExpr::cast) {
-        if enclosed_by_nested_fn_like(call.syntax(), &body)
-            || single_segment_callee(&call).as_deref() != Some(helper)
-        {
+    for (expression, _) in eager_statement_exprs(&body) {
+        let ast::Expr::CallExpr(call) = expression else {
+            continue;
+        };
+        if single_segment_callee(&call).as_deref() != Some(helper) {
             continue;
         }
         let Some(arguments) = call.arg_list() else {
@@ -60,6 +66,10 @@ pub(crate) fn closure_argument_positions(test_text: &str, helper: &str) -> Optio
             let ast::Expr::ClosureExpr(closure) = argument else {
                 continue;
             };
+            // An `async` closure only builds a future when invoked.
+            if closure.async_token().is_some() {
+                continue;
+            }
             // The call must run when the closure is invoked, so a call under
             // a nested closure, `async` block or `fn` inside it does not count.
             let makes_call = closure.body().is_some_and(|closure_body| {
@@ -93,72 +103,120 @@ pub(crate) fn closure_argument_positions(test_text: &str, helper: &str) -> Optio
 /// a loop, a closure, an `async` block, a nested `fn` or a macro argument is
 /// not admitted, so it stays uncredited rather than guessed at.
 fn eager_invocation_end(body: &ast::BlockExpr, name: &str) -> Option<TextSize> {
-    let list = body.stmt_list()?;
-    let invokes = |expr: Option<ast::Expr>| {
-        matches!(&expr, Some(ast::Expr::CallExpr(call))
+    eager_statement_exprs(body)
+        .into_iter()
+        .find_map(|(expression, end)| {
+            matches!(&expression, ast::Expr::CallExpr(call)
             if single_segment_callee(call).as_deref() == Some(name))
-    };
-    for statement in list.statements() {
-        let invoking = match &statement {
-            ast::Stmt::ExprStmt(expression) => invokes(expression.expr()),
-            ast::Stmt::LetStmt(binding) => {
-                binding.let_else().is_none() && invokes(binding.initializer())
-            }
-            ast::Stmt::Item(_) => false,
-        };
-        if invoking {
-            return Some(statement.syntax().text_range().end());
-        }
-        if may_exit_early(statement.syntax()) {
-            return None;
-        }
-    }
-    let tail = list.tail_expr()?;
-    invokes(Some(tail.clone())).then(|| tail.syntax().text_range().end())
+            .then_some(end)
+        })
 }
 
-/// Whether the callback parameter's identity can change before it is called:
-/// an assignment to it, or a `&mut` borrow of it. For a `mut` parameter an
-/// identifier followed by `=` inside a macro argument also counts, since
-/// macro arguments are not parsed as expressions.
-fn reassigned_or_mutably_borrowed(function: &ast::Fn, name: &str, is_mut: bool) -> bool {
-    let is_name = |expr: Option<ast::Expr>| match expr {
-        Some(ast::Expr::PathExpr(path)) => path.path().is_some_and(|path| {
-            path.qualifier().is_none()
-                && path
-                    .segment()
-                    .and_then(|segment| segment.name_ref())
-                    .is_some_and(|reference| reference.text() == name)
-        }),
-        _ => false,
+/// The expression of each statement a block reaches unconditionally and in
+/// order, with the byte offset where the statement ends: `expr;`, a tail
+/// expression, and the initializer of a `let` without `else`. The walk stops
+/// after a statement that may leave the function or never finish, or that
+/// holds a macro this producer cannot see through, so nothing past it is
+/// admitted as eager.
+fn eager_statement_exprs(body: &ast::BlockExpr) -> Vec<(ast::Expr, TextSize)> {
+    let Some(list) = body.stmt_list() else {
+        return Vec::new();
     };
-    for node in function.syntax().descendants() {
-        if let Some(binary) = ast::BinExpr::cast(node.clone())
-            && matches!(binary.op_kind(), Some(ast::BinaryOp::Assignment { .. }))
-            && is_name(binary.lhs())
-        {
-            return true;
+    let mut reached = Vec::new();
+    for statement in list.statements() {
+        let expression = match &statement {
+            ast::Stmt::ExprStmt(expression) => expression.expr(),
+            ast::Stmt::LetStmt(binding) if binding.let_else().is_none() => binding.initializer(),
+            _ => None,
+        };
+        if let Some(expression) = expression {
+            reached.push((expression, statement.syntax().text_range().end()));
         }
-        if let Some(borrow) = ast::RefExpr::cast(node.clone())
-            && borrow.mut_token().is_some()
-            && is_name(borrow.expr())
-        {
-            return true;
-        }
-        if is_mut && ast::TokenTree::can_cast(node.kind()) {
-            let tokens = node
-                .children_with_tokens()
-                .filter_map(|element| element.into_token())
-                .filter(|token| !token.kind().is_trivia())
-                .collect::<Vec<_>>();
-            if tokens.windows(2).any(|pair| {
-                pair[0].text() == name && pair[1].kind() == ra_ap_syntax::SyntaxKind::EQ
-            }) {
-                return true;
-            }
+        if may_exit_early(statement.syntax()) || has_opaque_macro(statement.syntax()) {
+            return reached;
         }
     }
-    false
+    if let Some(tail) = list.tail_expr() {
+        let end = tail.syntax().text_range().end();
+        reached.push((tail, end));
+    }
+    reached
+}
+
+/// Whether `node` holds a macro invocation other than the assertion and
+/// formatting macros whose expansion cannot exit or redirect the function.
+fn has_opaque_macro(node: &ra_ap_syntax::SyntaxNode) -> bool {
+    const TRANSPARENT: [&str; 14] = [
+        "assert",
+        "assert_eq",
+        "assert_ne",
+        "debug_assert",
+        "debug_assert_eq",
+        "debug_assert_ne",
+        "println",
+        "eprintln",
+        "print",
+        "eprint",
+        "format",
+        "vec",
+        "write",
+        "writeln",
+    ];
+    node.descendants()
+        .filter_map(ast::MacroCall::cast)
+        .any(|call| {
+            !call.path().is_some_and(|path| {
+                path.qualifier().is_none()
+                    && path
+                        .segment()
+                        .and_then(|segment| segment.name_ref())
+                        .is_some_and(|name| TRANSPARENT.iter().any(|known| *known == name.text()))
+            })
+        })
+}
+
+/// Whether the callback parameter's identity could change before it is
+/// called. Only immutable bare-identifier parameters are admitted, so a `mut`
+/// binding is refused outright (assignment forms such as `(f) = g`,
+/// `(f,) = (g,)` or `mem::replace(&mut (f), g)` all need `mut`), and so is any
+/// `&mut` borrow that mentions the name.
+fn identity_may_change(function: &ast::Fn, name: &str, is_mut: bool) -> bool {
+    is_mut
+        || function.syntax().descendants().any(|node| {
+            ast::RefExpr::cast(node).is_some_and(|borrow| {
+                borrow.mut_token().is_some()
+                    && borrow.syntax().descendants().any(|inner| {
+                        ast::NameRef::cast(inner).is_some_and(|reference| reference.text() == name)
+                    })
+            })
+        })
+}
+
+/// Start column (byte offset within its line) of each macro invocation that
+/// begins on the 1-based `line` of `text`, with the invocation's own text.
+/// Comments and strings are not macro invocations, so only real parser sites
+/// appear. `None` when the text does not parse cleanly.
+pub(crate) fn macro_call_columns(text: &str, line: usize) -> Option<Vec<(String, usize)>> {
+    let parse = parse_clean_source_file(text)?;
+    let line_index = LineIndex::new(text);
+    let line_start = line_index.starts.get(line.checked_sub(1)?).copied()?;
+    Some(
+        parse
+            .tree()
+            .syntax()
+            .descendants()
+            .filter_map(ast::MacroCall::cast)
+            .filter_map(|call| {
+                let start = call.path()?.syntax().text_range().start();
+                (line_index.line(start) == line).then(|| {
+                    (
+                        call.syntax().text().to_string(),
+                        text_size_to_usize(start).saturating_sub(line_start),
+                    )
+                })
+            })
+            .collect(),
+    )
 }
 
 /// Whether running `node` may leave the function or never finish.
@@ -173,7 +231,25 @@ fn may_exit_early(node: &ra_ap_syntax::SyntaxNode) -> bool {
                 | ra_ap_syntax::SyntaxKind::LOOP_EXPR
                 | ra_ap_syntax::SyntaxKind::WHILE_EXPR
                 | ra_ap_syntax::SyntaxKind::FOR_EXPR
-        )
+        ) && {
+            // A nested fn, closure or `async` block (the statement itself
+            // included) owns its own exits.
+            let mut deferred = false;
+            for ancestor in descendant.ancestors().skip(1) {
+                if ast::ClosureExpr::can_cast(ancestor.kind())
+                    || ast::Fn::can_cast(ancestor.kind())
+                    || ast::BlockExpr::cast(ancestor.clone())
+                        .is_some_and(|block| block.async_token().is_some())
+                {
+                    deferred = true;
+                    break;
+                }
+                if ancestor == *node {
+                    break;
+                }
+            }
+            !deferred
+        }
     })
 }
 
@@ -216,7 +292,7 @@ pub(crate) fn invoked_callback_params(helper_text: &str) -> Option<Vec<InvokedCa
         if bindings != 1 {
             continue;
         }
-        if reassigned_or_mutably_borrowed(&function, &name, pattern.mut_token().is_some()) {
+        if identity_may_change(&function, &name, pattern.mut_token().is_some()) {
             continue;
         }
         if let Some(end) = eager_invocation_end(&body, &name) {

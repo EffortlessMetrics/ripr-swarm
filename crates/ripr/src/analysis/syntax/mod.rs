@@ -46,5 +46,5 @@ pub(crate) use ra::rust_include_directives;
 pub(crate) use ra::{
     GovernedCfgTestModule, InvokedCallbackParam, ModuleItemScopes, closure_argument_positions,
     fn_name_binding_count, governed_cfg_test_modules, inline_unit_module_layout,
-    invoked_callback_params, module_item_scopes,
+    invoked_callback_params, macro_call_columns, module_item_scopes,
 };
