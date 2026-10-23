@@ -321,6 +321,9 @@ pub(crate) fn detect_typescript_test_framework(root: &Path) -> Option<&'static s
 #[cfg(feature = "lang-python")]
 pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
     language::detect_python_test_frameworks(root)
+        .into_iter()
+        .map(|framework| framework.as_str())
+        .collect()
 }
 
 #[cfg(feature = "lang-typescript")]

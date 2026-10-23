@@ -354,13 +354,11 @@ be established, so `ripr repair` refuses every item; widen the budget with
 `RIPR_REPO_EXPOSURE_SEAM_LIMIT`).
 
 The truncation refusal covers repair readiness (`ripr_list_gaps`,
-`ripr_get_gap`, `ripr_prepare_repair`). `ripr_get_repair_card` is a read-only
-card projection of the shared card producer over the refresh's diff-scoped
-inventory and is out of scope for #9108 (tracked in #9231): it does not start an attempt, and it
-does not yet mirror `ripr agent card`'s own incomplete-inventory refusal. Read
-readiness from `repair_packet_ready` and `repair_ineligibility`, not from the
-card's `readiness.repair_ready`, when the seam limit may have truncated the
-inventory.
+`ripr_get_gap`, `ripr_prepare_repair`). `ripr_get_repair_card` reads the same
+completeness fact and, like `ripr agent card`, fails with the typed
+`incomplete_inventory` code (and no card) while the inventory is truncated or
+its completeness could not be established, so it never reports
+`readiness.repair_ready` true over a truncated inventory (#9231).
 
 `ripr_get_repair_attempt` (and `ripr://repair-attempt/{attempt_id}`) reads
 one transaction by identity: session transactions answer first; otherwise
@@ -511,10 +509,15 @@ human-readable message. The same routes remain available separately in
 valid resource identities; listing a template does not promise its resource
 currently exists. Recognized snapshot, gap and repair resource routes retain
 their typed missing/stale-identity errors without the generic route list.
-A client that negotiated an older protocol version gets resource-not-found
-(`-32002`) for a resource miss; current clients get Invalid Params (`-32602`).
-The SDK maps the code, while the adapter preserves the same bounded message
-and structured recovery routes in both lifecycles.
+Identity misses on those routes (`item_not_found`, `attempt_not_found`) keep
+resource-not-found: a client that negotiated an older protocol version gets
+`-32002`; current clients get Invalid Params (`-32602`). Every other typed
+resource failure is a server state or a bound, not an identity claim —
+`no_snapshot`, `stale_snapshot`, `analysis_in_flight`,
+`workspace_unavailable` and `result_too_large` answer Internal Error
+(`-32603`) on every protocol version, with the same human sentence, the
+same structured recovery routes, and the stable typed state in
+`error.data.code` in both lifecycles.
 The instructions (returned by both `initialize` and `server/discover`) and the
 tool descriptions state positively what each tool returns, its bounds, and
 what it does not do. Protocol errors keep standard JSON-RPC codes. The pinned
