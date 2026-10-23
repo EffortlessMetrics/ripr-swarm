@@ -267,6 +267,15 @@ pub(crate) fn render_finding_digest_with_config(
             finding.ripr.reveal.observe.state.as_str(),
             compact_discriminator_token(finding),
         ));
+        // #9373 item 1: explain the pipeline and its conservative tokens at
+        // the bounded surface; full human and machine evidence stay unchanged.
+        out.push_str(concat!(
+            "    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;\n",
+            "      propagation = changed effect reaches output; observation = related test/assertion evidence;\n",
+            "      discriminator = assertion distinguishes intended from wrong behavior\n",
+            "    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;\n",
+            "      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused\n",
+        ));
         for line in evidence.iter().take(2) {
             // #7756: list-item values carry no trailing period.
             out.push_str(&format!("    - {}\n", trim_field_period(&one_line(line))));
@@ -285,7 +294,8 @@ pub(crate) fn render_finding_digest_with_config(
 /// `discriminate` stage grades the strongest related oracle, not whether that
 /// oracle distinguishes the changed behavior, so for a non-`exposed` finding
 /// a `yes` grade must not read as "a discriminator exists" — the digest may
-/// simultaneously name the missing discriminating input. Mirror the semantic
+/// simultaneously name the missing discriminator (an input or assertion).
+/// Mirror the semantic
 /// `discriminator_evidence_line` keeps for the full evidence line: only an
 /// `exposed` finding (or a non-`yes` grade) prints the bare state.
 fn compact_discriminator_token(finding: &Finding) -> &'static str {
@@ -1056,9 +1066,12 @@ pub(crate) fn push_typescript_repair_packet_field_note(out: &mut String, finding
             // Blocked — name the limitation, never emit a partial packet.
             // Only render this subsection if we have at least some preview
             // actionability data to surface (otherwise stay silent).
-            let why = evidence_value(finding, "why_not_actionable: ")
+            let raw_why = evidence_value(finding, "why_not_actionable: ")
                 .or_else(|| evidence_value(finding, "gap_state: "))
                 .unwrap_or("TypeScript preview; repair packet not yet complete");
+            let why =
+                crate::output::preview_actionability::scope_qualified_why(finding, Some(raw_why))
+                    .unwrap_or_else(|| raw_why.to_string());
             let next_capability = evidence_value(finding, "evidence_needed_to_promote: ")
                 .unwrap_or("no further capability information");
             out.push_str("\nTypeScript repair packet (advisory)\n");

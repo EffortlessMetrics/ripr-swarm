@@ -30,6 +30,9 @@ Linked issues:
   Start-here selection ranks changed-file role first, so an unknown probe
   seeded by a test-file edit cannot lead over a decisive production
   verdict.
+- [#9373](https://github.com/EffortlessMetrics/ripr-swarm/issues/9373) -
+  item 1 explains the bounded Evidence stages and conservative state words
+  beside the selected finding.
 
 Linked PRs:
 
@@ -166,13 +169,39 @@ decisive stages behind a remainder count (#4324):
 
 ```text
   Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator missing
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
 ```
 
+The five-line legend immediately follows the compact line, once for the selected
+digest, including an exposed finding when selected. It explains static evidence,
+not execution or test adequacy. `weak` means partial evidence across the stages,
+and `no` means evidence was not found, never that a behavior is impossible.
+No legend renders when there is no selected digest (empty, all-suppressed,
+base-side-only, or unresolved-currentness-only findings). The legend adds a fixed
+five lines; it does not expand the per-stage detail window. Full human and
+machine formats retain their existing contracts. This addresses item 1 only;
+the shared class vocabulary and per-class discoverability in items 2 and 3 are
+unchanged.
+
+Stages summarize independent static signals. Observation can reflect a
+matching assertion, an extracted test check, or a preview adapter's related-test
+evidence. An observation `yes` alone establishes neither changed-arm execution
+nor observation of its changed effect; consult the infection and discriminator
+evidence.
+
 Every stage always carries an evidence line, so the compact line names all
-five stages for every finding and never silently drops one. The discriminator
-token keeps the full evidence line's semantic: the `discriminate` stage grades
-the strongest related oracle, so on a non-`exposed` finding a `yes` grade
-renders as `missing` (a named missing discriminating input exists) or
+five stages for every finding and never silently drops one. The `missing` state
+covers absent inputs and absent assertions, such as an exact error
+variant assertion when the test already supplies the relevant input.
+
+The discriminator token keeps the full evidence line's semantic: the
+`discriminate` stage grades the strongest related oracle, so on a non-`exposed`
+finding a `yes` grade
+renders as `missing` (a named missing discriminator exists) or
 `not established` rather than claiming a discriminator the digest
 simultaneously reports missing. The per-stage prose detail stays in the
 bounded window beneath it: the first two detail lines render verbatim, and
@@ -692,6 +721,7 @@ The assertion-shaped owner reframing (RIPR-SPEC-0133) is unchanged.
 - `crates/ripr/src/output/human.rs::tests::evidence_window_observed_values_pointer_names_json_cap_beyond_it`
 - `crates/ripr/src/output/human.rs::tests::digest_related_test_line_carries_the_total`
 - `crates/ripr/src/output/human.rs::tests::digest_missing_discriminator_discloses_one_of_n_window`
+- `crates/ripr/tests/cli_smoke/discarded_matches.rs::bounded_legend_capture_projection_is_exact_and_preserves_evidence`
 - `crates/ripr/src/output/human.rs::tests::hidden_block_lists_omitted_findings_by_file_line_and_class`
 - `crates/ripr/src/output/human.rs::tests::hidden_block_all_base_side_run_names_base_side_evidence`
 - `crates/ripr/src/output/human.rs::tests::hidden_block_unresolved_subject_run_names_the_unknown_not_base_side`
