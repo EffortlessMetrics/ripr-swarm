@@ -17561,6 +17561,7 @@ mod instance_class_tests;
 mod issue7507_shadow_tests;
 mod literal_matcher_tests;
 mod lookup_table_tests;
+mod loop_count_tests;
 mod loop_declared_tests;
 mod match_object_tests;
 mod mocha_hook_owner_tests;
