@@ -294,62 +294,188 @@ fn non_ascii_names_are_whole_identifiers_in_the_write_scan() {
     ));
 }
 
-/// #9936 shape 1: in `.tsx` a closing tag `</div>` is not a regex start, so a
-/// write on the same line (or after it) is still seen.
+/// Writes that must stay visible after each shape. Every entry is
+/// `(label, file, tail, expected)`; a no-write control pairs each shape.
+fn assert_tails(file: &str, tails: &[&str], expected: ExposureClass) -> Result<(), String> {
+    let mut wrong = Vec::new();
+    for tail in tails {
+        let source = tape_test(
+            "var test = require('tape');\nconst n = 8, s = 'sample';",
+            tail,
+        );
+        if class_for_file("masker-9936", file, &source)? != expected {
+            wrong.push(*tail);
+        }
+    }
+    assert!(wrong.is_empty(), "{expected:?} expected for {wrong:?}");
+    Ok(())
+}
+
+/// #9936 shape 1: inside an open JSX element a closing tag `</div>` is not a
+/// regex start, so a write after it is still seen.
 #[test]
 fn a_write_after_a_jsx_closing_tag_is_still_seen() -> Result<(), String> {
-    for tail in [
-        "const v = <p>x</p>; test = null;",
-        "const v = <div>a</div>;\ntest = function () {};",
-        "const v = <div><b>a</b></div>; test = null;",
-    ] {
-        let source = tape_test("var test = require('tape');", tail);
-        assert_eq!(
-            class_for_file("var-runner-jsx-close", "test/k.test.tsx", &source)?,
-            ExposureClass::NoStaticPath,
-            "{tail}"
-        );
-    }
+    assert_tails(
+        "test/k.test.tsx",
+        &[
+            "const v = <p>x</p>; test = null;",
+            "const v = <></>; test = null;",
+            "render(<i>x</i>); test = null;",
+            "const v = <br/>; const w = <p>x</p>; test = null;",
+        ],
+        ExposureClass::NoStaticPath,
+    )?;
     // Negative control: the same shapes with no write keep the binding.
-    let control = tape_test(
-        "var test = require('tape');",
-        "const v = <div>a</div>; const w = <p>x</p>;",
-    );
+    assert_tails(
+        "test/k.test.tsx",
+        &["const v = <div>a</div>; const w = <p>x</p>; const u = <></>;"],
+        ExposureClass::Exposed,
+    )
+}
+
+/// A `<` comparison against a regex is not a closing tag: outside an open JSX
+/// element the parent's operand-position regex reading is kept.
+#[test]
+fn a_comparison_against_a_regex_is_not_a_jsx_closing_tag() -> Result<(), String> {
+    assert_tails(
+        "test/k.test.ts",
+        &[
+            "const q = n</`/.source.length; test = null;",
+            "const b = f(n)</`/.test(s);\ntest = null;",
+        ],
+        ExposureClass::NoStaticPath,
+    )?;
+    assert_tails(
+        "test/k.test.ts",
+        &["const q = n</x test = null/.source.length;"],
+        ExposureClass::Exposed,
+    )
+}
+
+/// #9936 shape 2, statement-regex context only: a regex literal right after
+/// the `)` of an `if`/`while`/`for` header is a regex, never a division, so a
+/// backtick inside it does not open a template. Other backtick-in-regex
+/// positions (after `}` or a bare statement start) stay a documented residual.
+#[test]
+fn a_write_after_a_regex_following_a_control_header_is_still_seen() -> Result<(), String> {
+    assert_tails(
+        "test/k.test.ts",
+        &[
+            "if (n) /`/.test(s);\ntest = null;",
+            "if (n) /a`/.test(s);\ntest = null;",
+            "if (n) /[`'\"]/.test(s);\ntest = null;",
+            "if (n) /[\\`]/.test(s);\ntest = null;",
+            "while (n) /`é/.test(s);\ntest = null;",
+            "if (n) /`/g.test(s); test = null;",
+        ],
+        ExposureClass::NoStaticPath,
+    )?;
+    assert_tails(
+        "test/k.test.ts",
+        &["if (n) /`/.test(s);\nconst s2 = 1;"],
+        ExposureClass::Exposed,
+    )
+}
+
+/// A division by a template or array keeps the parent's reading, so a write
+/// in or after it stays visible and a template's text stays masked.
+#[test]
+fn a_write_in_or_after_a_division_by_a_template_is_still_seen() -> Result<(), String> {
+    assert_tails(
+        "test/k.test.ts",
+        &[
+            "const q = n /`2`.length; test = null; const r = 8 / 2;",
+            "const q = n /`2`.length; test = null; // done",
+            "const q = n /[+`2`][0]; test = null; const r = 8 / 2;",
+            "const q = n /`${(test = null, 2)}`.length; const r = 8 / 2;",
+            "const q = n /[+`${(test = null, 2)}`][0] / 2;",
+            "let i = 0; const q = i++ /[+`${(test = null, 2)}`][0] / 2;",
+            "const q = n /`a/b`; test = null;",
+            "const q = n /`x`; // c/d `\ntest = null;",
+            "const q = n /`${n}` / 2; test = null;",
+        ],
+        ExposureClass::NoStaticPath,
+    )?;
+    assert_tails(
+        "test/k.test.ts",
+        &[
+            "const q = n /`test = null`.length;",
+            "const q = n /`x/ test = null`.length;",
+            "const q = n /`a/b`;",
+        ],
+        ExposureClass::Exposed,
+    )
+}
+
+/// A native TypeScript number-array operand can contain executable template
+/// interpolation. A following division slash does not turn it into a regex.
+#[test]
+fn review_9936_division_template_interpolation_write_is_seen() -> Result<(), String> {
+    let tail = "const n: number = 4; const q = n /[+`${(test = null, 2)}`][0] / 2;";
+    let source = tape_test("var test = require('tape');", tail);
     assert_eq!(
-        class_for_file("var-runner-jsx-close-control", "test/k.test.tsx", &control)?,
-        ExposureClass::Exposed
+        class_for_file("masker-division-interpolation", "test/k.test.ts", &source)?,
+        ExposureClass::NoStaticPath,
+        "{tail}"
     );
     Ok(())
 }
 
-/// #9936 shape 2: a backtick inside a regex literal that follows `)` or `}`
-/// (where `/` reads as division) does not open a template string.
 #[test]
-fn a_write_after_a_backtick_in_a_regex_literal_is_still_seen() -> Result<(), String> {
+fn review_9936_later_regex_backtick_write_is_seen() -> Result<(), String> {
+    let tail = "const n = true; const s = ''; if (n) /a`/.test(s);\ntest = null;";
+    let source = tape_test("var test = require('tape');", tail);
+    assert_eq!(
+        class_for_file("masker-later-regex-backtick", "test/k.test.ts", &source)?,
+        ExposureClass::NoStaticPath,
+        "{tail}"
+    );
+    Ok(())
+}
+
+#[test]
+fn review_9936_comparison_regex_write_is_seen() -> Result<(), String> {
+    let tail = "const n: any = 4; const s = ''; const b = n</`/.test(s);\ntest = null;";
+    let source = tape_test("var test = require('tape');", tail);
+    assert_eq!(
+        class_for_file("masker-comparison-regex", "test/k.test.ts", &source)?,
+        ExposureClass::NoStaticPath,
+        "{tail}"
+    );
+    Ok(())
+}
+
+#[test]
+fn review_9936_no_write_controls_retain_runner_credit() -> Result<(), String> {
     for tail in [
-        "if (n) /`/.test(s);\ntest = null;",
-        "if (n) /[`'\"]/.test(s);\ntest = null;",
-        "{}\n/`/.test(s);\ntest = function () {};",
+        "const n = 4; const q = n /[+`${2}`][0] / 2;",
+        "const n = true; const s = ''; if (n) /a`/.test(s);",
+        "const n: any = 4; const s = ''; const b = n</`/.test(s);",
     ] {
         let source = tape_test("var test = require('tape');", tail);
         assert_eq!(
-            class_for("var-runner-regex-backtick", &source)?,
-            ExposureClass::NoStaticPath,
-            "{tail}"
-        );
-    }
-    // Negative controls: no write keeps the binding, and a real division by
-    // a template literal still masks the template text.
-    for tail in [
-        "if (n) /`/.test(s);\nconst s2 = 1;",
-        "const q = n /`test = null`;",
-    ] {
-        let source = tape_test("var test = require('tape');", tail);
-        assert_eq!(
-            class_for("var-runner-regex-backtick-control", &source)?,
+            class_for_file("masker-no-write-review-control", "test/k.test.ts", &source)?,
             ExposureClass::Exposed,
             "{tail}"
         );
+    }
+    Ok(())
+}
+
+/// The classifier mask preserves characters; parser consumers must use its
+/// byte-preserving adapter when comparing the mask with source spans.
+#[test]
+fn review_9936_mask_adapter_preserves_unicode_source_offsets() -> Result<(), String> {
+    for source in [
+        "if (n) /`é/.test(s);\ntest = null;",
+        "const s = 'é'; test = null;",
+        "const s = `é${2}`; test = null;",
+        "/* é */ test = null;",
+    ] {
+        let code = super::super::tests_extract::byte_preserving_code_mask(source)
+            .ok_or_else(|| format!("could not mask {source}"))?;
+        assert_eq!(code.len(), source.len(), "{source}");
+        assert_eq!(code.find("test = null"), source.find("test = null"));
     }
     Ok(())
 }

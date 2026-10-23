@@ -17,8 +17,9 @@ Start here:
   Changed behavior: if final_label == "other" {
   Missing discriminator (1 of 2): Changed boundary input is unresolved: boundary operand `final_label` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the…
   Related test: tests/classify.rs:4 cycle_label_is_blank
-  Next step: Trace the related test input through the local or computed operand, including
-    default/empty cases, to check whether the change matters. ripr.toml does not support
+  Next step: Open the related test and trace its input through the local or computed operand
+    (including default and empty cases) to see which side of the changed condition it exercises,
+    then name an input that would exercise the other side. ripr.toml does not support
     fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap.
     Compare the original and changed implementations with a focused run using the project's
     configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain

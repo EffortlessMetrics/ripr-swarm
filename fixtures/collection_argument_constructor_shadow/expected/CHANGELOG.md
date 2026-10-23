@@ -103,3 +103,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — collection_argument_constructor_shadow (9)
+
+Reason:
+RIPR-SPEC-0122: human output drops the observation_unverified token
+
+Command:
+`cargo xtask goldens bless collection_argument_constructor_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

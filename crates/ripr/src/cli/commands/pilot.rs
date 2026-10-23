@@ -103,6 +103,12 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         ));
     }
 
+    // #9922: refuse a root with nothing to inspect before any output dir or
+    // cache is created under it.
+    if let Some(message) = pilot_root_without_workspace(&options.root) {
+        return Err(message);
+    }
+
     crate::atomic_file::ensure_default_output_contained(&options.root)?;
     let config = load_for_root(&options.root)?;
     // Refuse an invalid RIPR_PILOT_SEAM_BUDGET (#4529) before the analysis
@@ -838,6 +844,21 @@ fn pilot_stdout<'a>(format: PilotStdoutFormat, json: &'a str, terminal: &'a str)
 /// working directory.
 const DEFAULT_PILOT_OUT_DIR: &str = "target/ripr/pilot";
 
+/// #9922: a root with no `Cargo.toml` and no source file in any language ripr
+/// reads is not a workspace; `ripr pilot` there used to print "RIPR pilot
+/// complete" with no recommendation and write `target/ripr/` into the folder.
+/// Returns the refusal message, or `None` when the root has something to inspect.
+fn pilot_root_without_workspace(root: &Path) -> Option<String> {
+    let has_inspectable_content =
+        root.join("Cargo.toml").is_file() || analysis::workspace_has_inspectable_source(root);
+    (!has_inspectable_content).then(|| {
+        format!(
+            "pilot root {} has no Cargo.toml and no source files to inspect; pass --root <dir> for the directory that contains your workspace (nothing was written)",
+            root.display()
+        )
+    })
+}
+
 /// The default packet directory sits under `--root`, where the cache already
 /// goes and where `ripr agent status --root` reads `pilot-summary.json`
 /// (#5324). Anchoring it at the working directory wrote the packet beside
@@ -1007,6 +1028,52 @@ mod tests {
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn pilot_refuses_root_without_workspace_and_accepts_cargo_root() -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!("ripr-pilot-root-{}", std::process::id()));
+        let empty = base.join("readme-only");
+        let cargo = base.join("cargo");
+        let python = base.join("python-only");
+        let io = |error: std::io::Error| error.to_string();
+        std::fs::create_dir_all(&empty).map_err(io)?;
+        std::fs::create_dir_all(&cargo).map_err(io)?;
+        std::fs::create_dir_all(&python).map_err(io)?;
+        std::fs::write(python.join("app.py"), "def f():\n    return 1\n").map_err(io)?;
+        std::fs::write(empty.join("README.md"), "hi\n").map_err(io)?;
+        std::fs::write(cargo.join("Cargo.toml"), "[package]\nname = \"x\"\n").map_err(io)?;
+
+        let message = pilot_root_without_workspace(&empty)
+            .ok_or_else(|| "README-only root must be refused".to_string())?;
+        assert!(
+            message.contains("no Cargo.toml and no source files"),
+            "{message}"
+        );
+        assert!(message.contains("nothing was written"), "{message}");
+        assert_eq!(pilot_root_without_workspace(&cargo), None);
+        assert_eq!(pilot_root_without_workspace(&python), None);
+
+        let result = pilot(&args(&["--root", &empty.to_string_lossy()]));
+        assert!(result.is_err());
+        assert!(!empty.join("target").exists(), "refusal must write nothing");
+
+        // A dangling link named like a source file is not a source: the root
+        // is refused and nothing is written.
+        #[cfg(unix)]
+        {
+            let linked = base.join("dangling-link");
+            std::fs::create_dir_all(&linked).map_err(io)?;
+            std::os::unix::fs::symlink("missing-target", linked.join("app.py")).map_err(io)?;
+            let result = pilot(&args(&["--root", &linked.to_string_lossy()]));
+            assert!(result.is_err(), "dangling link root must be refused");
+            assert!(
+                !linked.join("target").exists(),
+                "refusal must write nothing"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&base);
+        Ok(())
     }
 
     #[test]
@@ -1471,6 +1538,8 @@ mod tests {
         use crate::testing::unwritable_output::OutputDirFixture;
 
         let env = OutputDirFixture::unwritable("pilot-ro", "pilot")?;
+        std::fs::write(env.root.join("Cargo.toml"), "[package]\nname = \"x\"\n")
+            .map_err(|error| error.to_string())?;
         if crate::testing::access_denial::skip_unless_denied(
             "unwritable_out_dir_names_out_not_out_dir",
             env.denies_creation()?,
@@ -1735,6 +1804,8 @@ mod tests {
         use crate::testing::unwritable_output::OutputDirFixture;
 
         let env = OutputDirFixture::occupying_file("pilot-file", "pilot")?;
+        std::fs::write(env.root.join("Cargo.toml"), "[package]\nname = \"x\"\n")
+            .map_err(|error| error.to_string())?;
         let root = OutputDirFixture::path_arg(&env.root)?;
         let out = OutputDirFixture::path_arg(&env.target)?;
         let error = match pilot(&args(&["--root", root, "--out", out])) {

@@ -854,6 +854,18 @@ fn ts_mask_typeof_consumed_owner_names(
 /// expected (at the start, or after an operator or opening punctuation);
 /// elsewhere it is division.
 pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
+    ts_mask_with(text, true)
+}
+
+/// [`ts_mask_literals_and_comments`] with every `/` read as division, so a
+/// regex-versus-division misjudgement cannot hide code from a scan that also
+/// runs on this mask. A real regex literal holding a quote can misread the rest
+/// of its line here; callers require agreement of both masks.
+pub(crate) fn ts_mask_literals_and_comments_division_only(text: &str) -> String {
+    ts_mask_with(text, false)
+}
+
+fn ts_mask_with(text: &str, regex_allowed: bool) -> String {
     #[derive(Clone, Copy)]
     enum Mode {
         Code,
@@ -915,30 +927,6 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
                 && !word_after_dot
                 && STRING_OPERAND_KEYWORDS.contains(&word))
     }
-    // Whether the text after a division-position `/` reads as a regex literal
-    // whose body holds a backtick: it starts with a backtick or a `[` class
-    // and reaches an unescaped closing `/` on the same line.
-    fn regex_with_backtick_follows(rest: &std::iter::Peekable<std::str::Chars<'_>>) -> bool {
-        let mut chars = rest.clone();
-        if !matches!(chars.peek(), Some('`' | '[')) {
-            return false;
-        }
-        let (mut in_class, mut tick) = (false, false);
-        while let Some(c) = chars.next() {
-            match c {
-                '\\' => {
-                    chars.next();
-                }
-                '\n' | '\r' => return false,
-                '`' => tick = true,
-                '[' => in_class = true,
-                ']' => in_class = false,
-                '/' if !in_class => return tick,
-                _ => {}
-            }
-        }
-        false
-    }
     let mut out = String::with_capacity(text.len());
     let mut mode = Mode::Code;
     // The last non-whitespace code character, to tell a regex from division.
@@ -957,6 +945,14 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
     let mut op_after_operand = false;
     // One entry per open `${`: the brace depth inside that interpolation.
     let mut interpolations: Vec<usize> = Vec::new();
+    // One entry per open `(`: whether it heads an `if`/`while`/`for`/`with`.
+    // A `/` right after that header's `)` starts a statement, so it is a
+    // regex (`if (n) /`/.test(s)`), never a division.
+    let mut paren_headers: Vec<bool> = Vec::new();
+    let mut header_close = false;
+    // Open JSX elements seen (`<tag` or `<>` where an operand is expected),
+    // so a glued `</` can be told from a comparison against a regex.
+    let mut jsx_depth = 0usize;
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
         if let Mode::RegexFlags = mode {
@@ -990,18 +986,29 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
                         mode = Mode::BlockComment;
                         out.push_str("  ");
                     }
-                    // `</div>`: a `/` glued to a `<` closes a JSX element, so
-                    // it is never a regex start (#9936).
-                    '/' if prev == Some('<') && !after_space => out.push(c),
-                    '/' if !postfix_op && operand_expected(prev, &word, word_after_dot) => {
-                        mode = Mode::Regex { in_class: false };
+                    // `</div>`: inside an open JSX element a `/` glued to a `<`
+                    // closes it, so it is not a regex start (#9936). Outside
+                    // one, `n</x/.test(s)` still reads as a comparison.
+                    '/' if jsx_depth > 0
+                        && prev == Some('<')
+                        && !after_space
+                        && chars.peek().is_some_and(|n| n.is_alphabetic() || *n == '>') =>
+                    {
+                        jsx_depth -= 1;
                         out.push(c);
                     }
-                    // A `/` read as division that is glued to a backtick or a
-                    // class and closes later on the line around a backtick is a
-                    // regex literal (`if (x) /`/.test(s)`), not a division by a
-                    // template string (#9936).
-                    '/' if regex_with_backtick_follows(&chars) => {
+                    // A self-closing `<br/>` ends the element it opened.
+                    '/' if jsx_depth > 0
+                        && prev.is_some_and(is_word_char)
+                        && chars.peek() == Some(&'>') =>
+                    {
+                        jsx_depth -= 1;
+                        out.push(c);
+                    }
+                    '/' if regex_allowed
+                        && !postfix_op
+                        && (header_close || operand_expected(prev, &word, word_after_dot)) =>
+                    {
                         mode = Mode::Regex { in_class: false };
                         out.push(c);
                     }
@@ -1031,7 +1038,7 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
                     continue;
                 }
                 if (c == '+' || c == '-') && !after_space && prev == Some(c) {
-                    postfix_op = op_after_operand;
+                    postfix_op = op_after_operand && !postfix_op;
                 } else {
                     if c == '+' || c == '-' {
                         op_after_operand = !operand_expected(prev, &word, word_after_dot);
@@ -1039,6 +1046,23 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
                     if !c.is_whitespace() {
                         postfix_op = false;
                     }
+                }
+                if c == '(' {
+                    paren_headers.push(
+                        !word_after_dot && matches!(word.as_str(), "if" | "while" | "for" | "with"),
+                    );
+                }
+                header_close = if c == ')' {
+                    paren_headers.pop() == Some(true)
+                } else {
+                    header_close && c.is_whitespace()
+                };
+                if c == '<'
+                    && !prev.is_some_and(is_word_char)
+                    && (prev.is_none() || operand_expected(prev, &word, word_after_dot))
+                    && chars.peek().is_some_and(|n| n.is_alphabetic() || *n == '>')
+                {
+                    jsx_depth += 1;
                 }
                 if is_word_char(c) {
                     // Whitespace ends a word: `x as` is two words.
