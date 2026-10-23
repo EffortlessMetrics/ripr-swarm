@@ -1,11 +1,13 @@
 //! Admission gate for Perl test frameworks: each is classified for strict
 //! actionability, and the Perl cells are pinned against that classification.
 //!
-//! The Perl cells are all framework-agnostic (`any`) and `not_proven`, while
-//! the repair gate accepts six of the seven frameworks as strictly
-//! actionable. This gate pins that relationship so it cannot change by
-//! accident: a new framework must be classified here, and promoting the
-//! repair-routing cell past `not_proven` is a deliberate edit of this file.
+//! The repair gate accepts six of the seven frameworks as strictly
+//! actionable while `perl/any/diff/repair_routing` is `not_proven`. This
+//! gate couples the two: a new framework must be classified here, and
+//! promoting that cell is a deliberate edit of this file. The exact state
+//! and tier of every Perl cell is already pinned independently by
+//! `table_matches_the_documented_support_statement` and the drift gate; this
+//! file adds only the coupling to framework actionability.
 //!
 //! Limit: Rust cannot enumerate enum variants, so `ALL_FRAMEWORKS` is a
 //! hand-kept list. The exhaustive matches force classification and the
@@ -128,7 +130,7 @@ fn production_actionability_matches_the_exhaustive_classification() {
 }
 
 #[test]
-fn the_perl_cells_are_pinned_not_proven_at_preview_while_frameworks_are_actionable() {
+fn the_perl_repair_routing_cell_is_not_proven_at_preview_while_frameworks_are_actionable() {
     assert!(cells_for(LanguageId::Perl).next().is_some());
     assert_eq!(
         disposition_violations(any_actionable(), CAPABILITY_CELLS),
