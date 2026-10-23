@@ -1187,6 +1187,39 @@ fn gap_bound_after_phase_closes_the_gap_on_positive_evidence() -> Result<(), Str
     decoy_untouched(&attempt.decoy)
 }
 
+/// Human (non `--json`) gap-bound after output names the closure, prints no
+/// receipt line, and never summarizes a stale seam receipt planted at the
+/// receipt path.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_bound_after_phase_human_output_names_closure_and_no_stale_receipt() -> Result<(), String> {
+    let attempt = GapAttempt::start("ts-after-human")?;
+    let reports = attempt.root.join("target/ripr/reports");
+    std::fs::create_dir_all(&reports).map_err(|error| format!("mkdir: {error}"))?;
+    std::fs::write(
+        reports.join("agent-receipt.json"),
+        "{\"stale_seam_receipt_marker\": true}",
+    )
+    .map_err(|error| format!("plant receipt: {error}"))?;
+    attempt.commit_closing_test()?;
+    let output = attempt.after(false)?;
+    let (stdout, stderr) = text_of(&output);
+    expect_exit(
+        output.status.success(),
+        true,
+        &format!("gap-bound human after phase:\n{stdout}\n{stderr}"),
+    )?;
+    need(&stdout, "closed", "stdout names the gap closure")?;
+    need(&stdout, attempt.gap.as_str(), "stdout names the gap")?;
+    for text in [&stdout, &stderr] {
+        let lower = text.to_lowercase();
+        if lower.contains("receipt") || lower.contains("stale_seam_receipt_marker") {
+            return Err(format!("gap-bound output mentions a receipt:\n{text}"));
+        }
+    }
+    decoy_untouched(&attempt.decoy)
+}
+
 /// A committed test that does not pin the boundary leaves the gap open: a
 /// typed refusal (exit 3) recorded on the attempt, which stays retryable, and
 /// the corrected edit then closes it.

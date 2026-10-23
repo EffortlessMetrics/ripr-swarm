@@ -4237,8 +4237,8 @@ mod tests {
     }
 
     /// #9103: a gap-bound attempt at its current head and still awaiting the
-    /// edit names the manual by-gap verification route, never a
-    /// `--phase after` command that would refuse.
+    /// edit names the executable gap-bound `--phase after` continuation
+    /// (C2b), never a seam-bound command.
     #[test]
     fn current_gap_bound_attempt_status_offers_the_executable_continuation() -> Result<(), String> {
         use crate::app::repair_attempt::{

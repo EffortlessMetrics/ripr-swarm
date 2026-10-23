@@ -2354,6 +2354,35 @@ fn run_agent_repair_phase(
             let combined = serde_json::to_string_pretty(&envelope).map_err(|error| {
                 format!("serialize after-phase result document failed: {error}")
             })?;
+            // A gap-bound attempt issues no receipt in C2b, so it must never
+            // summarize or name `agent-receipt.json`: a stale seam receipt at
+            // that path would read as this attempt's result. Its closure line
+            // comes from the verify document's `bound_gap`.
+            //
+            // Deliberate for C2b: the seam receipt's trusted-head, ancestry
+            // and analysis-outcome re-checks are skipped on this path.
+            // Closure is established by the `agent verify --gap-id` run on
+            // hash-bound snapshots above; the bound receipt that would
+            // re-check them is C2c.
+            if gap_bound {
+                let summary_lines = gap_closure_summary_lines(&document);
+                if json {
+                    println!("{combined}");
+                    for line in &summary_lines {
+                        eprintln!("ripr: {line}");
+                    }
+                } else {
+                    print!(
+                        "{}",
+                        gap_after_phase_human_stdout(&summary_lines, &verify_json)
+                    );
+                }
+                eprintln!(
+                    "ripr: after phase complete. Verify result: {}",
+                    verify_json.display()
+                );
+                return Ok(());
+            }
             let receipt_path = root.join("target/ripr/reports/agent-receipt.json");
             let summary_lines = repair_after_summary_lines(&receipt_path);
             // The movement summary goes to stdout when stdout is the human
@@ -3199,6 +3228,51 @@ fn before_phase_ambiguous_stdout_lines(next_command: &str) -> String {
     format!(
         "warning: this attempt's captured edit-cage baseline records `ambiguous: true`; its after phase can refuse the attempt as Incomparable with an empty violations list even when the edit stays inside the allowed test surface.\nto invest the edit in a scorable attempt instead, resolve the workspace condition that made the baseline ambiguous and run the same --phase before command again from the clean state. if you continue with this attempt anyway, after the test edit run: {next_command}\n"
     )
+}
+
+/// Closure narration for a gap-bound after phase, from the verify document's
+/// `bound_gap`. Empty when the document carries none (the verifier would have
+/// refused before this point).
+fn gap_closure_summary_lines(verify: &serde_json::Value) -> Vec<String> {
+    let Some(gap) = verify.get("bound_gap") else {
+        return Vec::new();
+    };
+    let text = |key: &str| {
+        gap.get(key)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+    };
+    let line = gap
+        .get("line")
+        .and_then(serde_json::Value::as_u64)
+        .map(|line| format!(":{line}"))
+        .unwrap_or_default();
+    vec![format!(
+        "gap {} closed: {} -> {} at {}{line}.",
+        text("gap_id"),
+        text("before_classification"),
+        text("after_classification"),
+        text("file"),
+    )]
+}
+
+/// Human stdout of a gap-bound after phase: the closure line and the verify
+/// document, with no receipt line (this attempt issues none).
+fn gap_after_phase_human_stdout(summary_lines: &[String], verify_path: &Path) -> String {
+    let mut out = String::new();
+    for line in summary_lines {
+        let mut chars = line.chars();
+        if let Some(first) = chars.next() {
+            out.extend(first.to_uppercase());
+            out.push_str(chars.as_str());
+            out.push('\n');
+        }
+    }
+    out.push_str(&format!(
+        "  verify result (JSON): {}; add --json to print the result document here\n",
+        verify_path.display()
+    ));
+    out
 }
 
 /// Stdout of an after phase without `--json`: the movement line the receipt
@@ -4483,7 +4557,10 @@ mod tests {
 
 #[cfg(test)]
 mod repair_summary_tests {
-    use super::{repair_after_summary_lines, repair_receipt_summary_lines};
+    use super::{
+        gap_after_phase_human_stdout, gap_closure_summary_lines, repair_after_summary_lines,
+        repair_receipt_summary_lines,
+    };
 
     #[test]
     fn repair_after_summary_names_a_receipt_it_could_not_read() {
@@ -4563,6 +4640,22 @@ mod repair_summary_tests {
     fn repair_summary_is_empty_when_the_receipt_lacks_movement() {
         assert!(repair_receipt_summary_lines(r#"{"seam": {"seam_id": "s"}}"#).is_empty());
         assert!(repair_receipt_summary_lines("not json").is_empty());
+    }
+
+    #[test]
+    fn gap_after_human_output_names_closure_and_no_receipt() -> Result<(), String> {
+        let verify = serde_json::json!({"bound_gap": {
+            "gap_id": "g1", "before_classification": "weakly_exposed",
+            "after_classification": "exposed", "file": "src/a.ts", "line": 7, "closed": true}});
+        let lines = gap_closure_summary_lines(&verify);
+        let out =
+            gap_after_phase_human_stdout(&lines, std::path::Path::new("/r/agent-verify.json"));
+        if !out.starts_with("Gap g1 closed: weakly_exposed -> exposed at src/a.ts:7.")
+            || out.to_lowercase().contains("receipt")
+        {
+            return Err(format!("unexpected gap output: {out}"));
+        }
+        Ok(())
     }
 }
 

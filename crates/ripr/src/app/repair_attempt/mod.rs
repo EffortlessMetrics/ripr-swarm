@@ -2965,17 +2965,12 @@ pub(crate) fn diverged_head_recovery_for_subject(
             short_head(current_head),
             short_head(prepared_head),
         ),
-        reset: if gap_base.is_some() {
-            // #9103: the gap-bound after phase is not available yet, so no
-            // rerun of it is offered; the reset still restores the head.
-            format!(
-                "to recover when only your own test commit was rewritten: `git reset --soft {prepared_head}` restores the prepared head and keeps your edit staged; the gap-bound after phase is not available yet, so verify the repair by gap id (`ripr agent verify --gap-id`)."
-            )
-        } else {
-            format!(
-                "to recover when only your own test commit was rewritten: `git reset --soft {prepared_head}` restores the prepared head and keeps your edit staged; then rerun `ripr agent repair --root {root_arg}{store_flag} --attempt {attempt_arg} --phase after`."
-            )
-        },
+        // The gap-bound after phase takes the same `--attempt ... --phase
+        // after` rerun as the seam branch (#9103 C2b); `start` above is the
+        // gap-aware restart.
+        reset: format!(
+            "to recover when only your own test commit was rewritten: `git reset --soft {prepared_head}` restores the prepared head and keeps your edit staged; then rerun `ripr agent repair --root {root_arg}{store_flag} --attempt {attempt_arg} --phase after`."
+        ),
         restart: format!(
             "otherwise, prepare a new attempt at the current HEAD: set your test edit aside, run `{start}` while the gap still exists, restore the edit, then run the new --attempt command it prints."
         ),
@@ -4184,6 +4179,15 @@ mod tests {
             ))
         {
             return Err(format!("recovery is not gap-bound: {text}"));
+        }
+        // The gap-bound reset reruns the real after phase; the stale "not
+        // available yet" manual-verify wording is gone.
+        if text.contains("not available yet")
+            || text.contains("ripr agent verify --gap-id")
+            || !text.contains("--attempt attempt-1 --phase after")
+            || text.contains("--store")
+        {
+            return Err(format!("gap-bound reset is not the real rerun: {text}"));
         }
         // Seam-bound recovery is unchanged.
         let seam = diverged_head_recovery(".", "attempt-1", "seam-1", "aaaa", "bbbb", "");
