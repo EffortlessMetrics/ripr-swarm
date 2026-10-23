@@ -619,7 +619,7 @@ pub(crate) fn is_item_header(text: &str) -> bool {
             rest.starts_with(char::is_whitespace)
                 && rest
                     .trim_start()
-                    .starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+                    .starts_with(|c: char| c.is_alphabetic() || c == '_')
                 && text.ends_with('{')
                 && !generics_hold_expression(rest)
         })
@@ -642,24 +642,36 @@ fn generics_hold_expression(rest: &str) -> bool {
     masked.contains('{') || bang_macro || array_len_call
 }
 
-/// The text after each `;` inside `[..]` brackets: an array length.
+/// The array-length text of each `[elem; len]` in `text`: the text after the
+/// `;` that belongs to that bracket's own frame, so a `;` inside a nested
+/// element (`[([u8; 4], fn()); 3]`) is not the outer length's separator.
 fn array_length_texts(text: &str) -> impl Iterator<Item = &str> {
-    let mut starts = Vec::new();
-    let mut open = Vec::new();
+    // Each open bracket: (kind, byte index, its own `;` if it is a `[`).
+    let mut frames: Vec<(char, usize, Option<usize>)> = Vec::new();
+    let mut lengths = Vec::new();
     for (i, c) in text.char_indices() {
         match c {
-            '[' => open.push(i),
-            ']' => {
-                if let Some(start) = open.pop()
-                    && let Some(semi) = text[start..i].find(';')
+            '[' | '(' | '{' => frames.push((c, i, None)),
+            ';' => {
+                if let Some(frame) = frames.last_mut()
+                    && frame.0 == '['
+                    && frame.2.is_none()
                 {
-                    starts.push(&text[start + semi + 1..i]);
+                    frame.2 = Some(i);
+                }
+            }
+            ']' | ')' | '}' => {
+                if let Some((kind, _, semi)) = frames.pop()
+                    && kind == '['
+                    && let Some(semi) = semi
+                {
+                    lengths.push(&text[semi + 1..i]);
                 }
             }
             _ => {}
         }
     }
-    starts.into_iter()
+    lengths.into_iter()
 }
 
 /// A line that only opens or closes a block (`}`, `});`, `} else {`,
@@ -708,6 +720,10 @@ mod tests {
             "unsafe trait Marker<T: Sized>: Send {",
             "union Bits<T: Copy> {",
             "pub struct Arr<T> where [u8; 4]: Copy {",
+            "enum Op<T> where [([u8; 4], fn()); 3]: Copy {",
+            "enum É<T: Copy> {",
+            "struct Δ<T: Copy> {",
+            "struct r#async<T: Copy> {",
             "struct Callback<T: Fn(fn (u8))> {",
             "struct Wrapper<T> where [u8; 4]: Copy, T: Fn() {",
         ] {
@@ -751,11 +767,25 @@ mod tests {
             "struct Buffer<const N: usize = { capacity() }> {",
             "struct Buffer<T = [u8; cap()]> {",
             "struct Tagged<const N: usize = { len!() }> {",
+            "struct S<T = m!()> {",
+            "struct S<T = [[u8; cap()]; 2]> {",
             "struct = Foo {",
             "enum : Foo {",
         ] {
             assert!(!is_item_header(behavior), "`{behavior}`");
         }
+    }
+
+    #[test]
+    fn array_length_texts_follow_bracket_nesting() {
+        fn lengths(text: &str) -> Vec<&str> {
+            array_length_texts(text).collect()
+        }
+        assert_eq!(lengths("[u8; 4]"), [" 4"]);
+        assert_eq!(lengths("[([u8; 4], fn()); 3]"), [" 4", " 3"]);
+        assert_eq!(lengths("[[u8; cap()]; 2]"), [" cap()", " 2"]);
+        assert!(lengths("[u8]").is_empty());
+        assert!(lengths("f(a; b)").is_empty());
     }
 
     /// #9033: a visibility-qualified `mod name;` declaration has no behavior;

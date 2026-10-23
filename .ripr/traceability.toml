@@ -10,6 +10,8 @@ name = "static exposure loop"
 spec = "docs/specs/RIPR-SPEC-0001-static-exposure-loop.md"
 tests = [
   "crates/ripr/src/analysis/probes/classify.rs::tests::impl_headers_are_item_headers_but_behavior_is_not",
+  "crates/ripr/src/analysis/probes/classify.rs::tests::array_length_texts_follow_bracket_nesting",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::replaced_type_header_is_static_unknown_but_const_default_call_is_probed",
   "crates/ripr/src/analysis/classify/reach.rs::given_mixed_reaching_and_proximity_relations_when_building_reach_evidence_then_only_reaching_tests_are_named",
   "crates/ripr/tests/finding_identity_contract.rs",
   "crates/ripr/src/analysis/input_boundary.rs::fanout_boundary_rejects_excluded_aliases_to_captured_files",

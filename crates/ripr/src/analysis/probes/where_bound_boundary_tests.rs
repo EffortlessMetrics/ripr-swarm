@@ -1008,6 +1008,11 @@ fn replaced_type_header_is_static_unknown_but_const_default_call_is_probed() -> 
         ),
         ("enum Op<Q: Ord + Copy> {", "enum Op<Q: Ord> {"),
         ("union Bits<T: Copy> {", "union Bits<T> {"),
+        ("enum É<T: Copy> {", "enum É<T> {"),
+        (
+            "enum Op<T> where [([u8; 4], fn()); 3]: Copy {",
+            "enum Op<T> {",
+        ),
     ] {
         let result = probes_for(header, before)?;
         assert!(
@@ -1026,6 +1031,13 @@ fn replaced_type_header_is_static_unknown_but_const_default_call_is_probed() -> 
         call.iter()
             .any(|probe| probe.family == ProbeFamily::CallDeletion),
         "a call in a const-generic default lost its call probe: {call:?}"
+    );
+    // A brace-free macro in a generic default is evidence too.
+    let mac = probes_for("struct S<T = m!()> {", "struct S<T = u8> {")?;
+    assert!(
+        mac.iter()
+            .any(|probe| probe.family != ProbeFamily::StaticUnknown),
+        "a macro in a generic default was read as declaration-only: {mac:?}"
     );
     Ok(())
 }
