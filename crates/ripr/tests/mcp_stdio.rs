@@ -475,7 +475,7 @@ fn json_rpc_rejections_are_answered_with_spec_codes_and_the_session_survives() -
 /// parse fine and then be silently dropped, so an agent could believe paging
 /// worked while always re-reading page one (#9895). The lists are static and
 /// small — tools, prompts, resources, and resource templates alike: the
-/// server never issues a `nextCursor`, so any cursor can only be stale or
+/// server never issues a `nextCursor`, so any non-null cursor can only be stale or
 /// fabricated and the request must fail closed with the recovery spelled out,
 /// while the same lists still answer normally without a cursor.
 #[test]
@@ -506,13 +506,24 @@ fn catalog_list_cursors_fail_closed_over_stdio() -> Result<(), String> {
                 json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
             )?)?;
         }
+        let call = |session: &mut SequentialStdio, id: &str, method: &str, mut params: Value| {
+            if !legacy && let Some(object) = params.as_object_mut() {
+                object.insert("_meta".to_string(), current_meta());
+            }
+            session.raw_exchange(
+                &line(json!({
+                    "jsonrpc": "2.0", "id": id, "method": method, "params": params
+                }))?,
+                timeout,
+            )
+        };
         for (method, field, count) in [
             ("tools/list", "tools", 9),
             ("prompts/list", "prompts", 0),
             ("resources/list", "resources", 1),
             ("resources/templates/list", "resourceTemplates", 5),
         ] {
-            let baseline = session.call("plain", method, json!({}), timeout)?;
+            let baseline = call(&mut session, "plain", method, json!({}))?;
             let catalog = baseline
                 .pointer(&format!("/result/{field}"))
                 .filter(|value| value.as_array().is_some_and(|rows| rows.len() == count))
@@ -533,7 +544,7 @@ fn catalog_list_cursors_fail_closed_over_stdio() -> Result<(), String> {
             .enumerate()
             {
                 let id = format!("cursor-{index}");
-                let response = session.call(&id, method, json!({"cursor": cursor}), timeout)?;
+                let response = call(&mut session, &id, method, json!({"cursor": cursor}))?;
                 let message = response
                     .pointer("/error/message")
                     .and_then(Value::as_str)
@@ -553,7 +564,7 @@ fn catalog_list_cursors_fail_closed_over_stdio() -> Result<(), String> {
                         "{method} cursor {cursor} must fail with recovery (legacy={legacy}): {response}"
                     ));
                 }
-                let alive = session.call("recovered", method, json!({}), timeout)?;
+                let alive = call(&mut session, "recovered", method, json!({}))?;
                 if alive.get("id") != Some(&json!("recovered"))
                     || alive.get("error").is_some()
                     || alive.pointer(&format!("/result/{field}")) != Some(&catalog)
@@ -571,7 +582,7 @@ fn catalog_list_cursors_fail_closed_over_stdio() -> Result<(), String> {
                 defaults.push(Value::Null);
             }
             for params in defaults {
-                let reply = session.call("default", method, params, timeout)?;
+                let reply = call(&mut session, "default", method, params)?;
                 if reply.pointer(&format!("/result/{field}")) != Some(&catalog)
                     || reply.pointer("/result/nextCursor").is_some()
                 {
