@@ -718,8 +718,10 @@ pub(crate) enum DoctorArtifactIgnore {
     NoArtifacts,
     /// Git ignore rules cover the artifact root.
     Ignored,
-    /// The artifact root exists and git positively reports it as not
-    /// ignored. `warning` is the exact line the human screen prints.
+    /// Git positively reports the artifact root as not ignored. On a first
+    /// run in a non-Cargo project the root may not exist yet; the warning
+    /// wording then says ripr *will write* there (#9858). `warning` is the
+    /// exact line the human screen prints.
     Unignored {
         /// The actionable warning, including the exact `.gitignore` entry.
         warning: String,
