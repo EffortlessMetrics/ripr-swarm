@@ -271,7 +271,12 @@ fn balanced_as_clauses_and_byte_order_marks_are_still_writes() -> Result<(), Str
 #[test]
 fn non_ascii_names_are_whole_identifiers_in_the_write_scan() {
     use crate::analysis::language::typescript::tests_extract::{
-        identifier_written_in, identifier_written_strictly,
+        identifier_written_in, strict_identifier_writes,
+    };
+    let identifier_written_strictly = |text: &str, name: &str| {
+        strict_identifier_writes(text)
+            .iter()
+            .any(|(written, _)| written == name)
     };
     for (write, name) in [
         ("café = null;", "café"),
@@ -283,5 +288,8 @@ fn non_ascii_names_are_whole_identifiers_in_the_write_scan() {
     }
     // A longer name sharing an ASCII prefix is a different identifier.
     assert!(!identifier_written_in("café = null;", "caf"));
-    assert!(!identifier_written_strictly("const café = 1; read(caf);", "caf"));
+    assert!(!identifier_written_strictly(
+        "const café = 1; read(caf);",
+        "caf"
+    ));
 }

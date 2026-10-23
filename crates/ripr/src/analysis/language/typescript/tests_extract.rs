@@ -2120,14 +2120,6 @@ pub(crate) fn identifier_written_in(text: &str, identifier: &str) -> bool {
         .any(|(name, _)| name == identifier)
 }
 
-/// `true` when the strict scan ([`strict_identifier_writes`]) may write
-/// `identifier`.
-pub(crate) fn identifier_written_strictly(text: &str, identifier: &str) -> bool {
-    strict_identifier_writes(text)
-        .iter()
-        .any(|(name, _)| name == identifier)
-}
-
 /// Every identifier `text` may write, with its byte offset: an assignment
 /// target (`name =`, `name +=`, `name ??=`, not `==` or `=>`), `++`/`--`, a
 /// `for (name of ...)` target, and any identifier inside a bracketed group
