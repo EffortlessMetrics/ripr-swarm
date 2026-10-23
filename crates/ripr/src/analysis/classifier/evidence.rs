@@ -3,7 +3,7 @@ use crate::analysis::classify::{
     HELPER_RESULT_NOT_FORWARDED, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
     PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex, WrapperEntryPairing,
     activation_and_boundary_input, assertion_observes_collection_argument,
-    body_contains_owner_call, call_parameter_names, callee_is_unique,
+    body_contains_owner_call, call_parameter_names, callee_is_unique, chain_entry_pin_admits,
     chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
     confidence_score, constructor_starts_empty, contains_as_whole_word, current_path_witness_with,
     direct_call_name, direct_collection_mutation_receiver, expected_operand_value,
@@ -77,6 +77,7 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
 
 #[derive(Clone, Debug)]
 pub(in crate::analysis) struct AssertionRefusalNote {
+    pub(in crate::analysis) macro_name: String,
     pub(in crate::analysis) location: String,
     pub(in crate::analysis) reason: String,
     pub(in crate::analysis) calls_owner: bool,
@@ -674,15 +675,33 @@ impl ClassifiedProbeEvidence {
             context.probe.after.as_deref(),
         );
         let owner_pin_admits = |test: &TestSummary, assertion: &OracleFact| {
-            (fmt_write_tail
+            // #5352: an exact assertion on the helper chain's entry pins
+            // the owner's returned value when every observed hop
+            // forwards it (the entry form of the owner-return pin).
+            let entry_pinned = matches!(context.probe.family, ProbeFamily::ReturnValue)
                 && context.owner_fn.is_some_and(|owner| {
-                    crate::analysis::classify::assertion_pins_display_string(
-                        test,
-                        assertion,
-                        owner,
-                        context.index,
-                    )
-                }))
+                    context.helper_chain.as_ref().is_some_and(|chain| {
+                        chain_entry_pin_admits(
+                            &owner.name,
+                            &context.probe.expression,
+                            chain,
+                            &context.related_tests,
+                            context.index,
+                            test,
+                            assertion,
+                        )
+                    })
+                });
+            entry_pinned
+                || (fmt_write_tail
+                    && context.owner_fn.is_some_and(|owner| {
+                        crate::analysis::classify::assertion_pins_display_string(
+                            test,
+                            assertion,
+                            owner,
+                            context.index,
+                        )
+                    }))
                 || field_projection.as_ref().is_some_and(|receipt| {
                     receipt.valid_for(context.probe) && receipt.admits(test, assertion)
                 })
@@ -1121,18 +1140,26 @@ impl ClassifiedProbeEvidence {
                             continue;
                         };
                         let calls_owner = body_contains_owner_call(&assertion.text, owner_name);
+                        let macro_name = OwnerPinSyntax::assertion_macro_name(&assertion.text)
+                            .filter(|name| matches!(name.as_str(), "assert_eq" | "assert"))
+                            .unwrap_or_default();
+                        // Compound oracles are admitted by their whole context;
+                        // their outer macro need not be the assertion being
+                        // refused. Keep that identity unknown in disclosure too.
+                        let assertion_name = if macro_name.is_empty() {
+                            "assertion".to_string()
+                        } else {
+                            format!("`{macro_name}!`")
+                        };
                         let note = AssertionRefusalNote {
                             location: format!(
-                                "`{}!` in {} at {}:{}",
-                                if context.probe.family == ProbeFamily::MatchArm {
-                                    "assert"
-                                } else {
-                                    "assert_eq"
-                                },
+                                "{} in {} at {}:{}",
+                                assertion_name,
                                 test.name,
                                 test.file.display(),
                                 assertion.line
                             ),
+                            macro_name,
                             reason: refusal.describe(),
                             calls_owner,
                             is_analyzer_limit: is_limit(&refusal),
@@ -2239,6 +2266,7 @@ mod tests {
     fn preferred_refusal_note_puts_a_non_limit_owner_call_first() {
         use super::{AssertionRefusalNote, preferred_refusal_note};
         let note = |name: &str, calls_owner, is_analyzer_limit| AssertionRefusalNote {
+            macro_name: "assert_eq".to_string(),
             location: name.to_string(),
             reason: String::new(),
             calls_owner,

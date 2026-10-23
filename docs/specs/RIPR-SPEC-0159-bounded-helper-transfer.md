@@ -60,6 +60,35 @@ can only hint that a caller "may lead here" without changing anything.
   direct call would produce. The owner's exact input rows bind down
   the chain, so #3295's boundary machinery evaluates the helper's
   operands with the tests' literals.
+- Method hops (#5352): a hop may also bind at a method call site when
+  identity is established by the impl, never by the bare name. A
+  `self.<callee>(..)` site binds only when the caller and the callee
+  are methods of the same impl self type; a call on a value
+  constructed from the callee's type (`Parser { .. }.parse()`,
+  `Parser::new(..).parse()`) binds only when the constructed type is
+  the callee's impl type. A variable receiver (`parser.parse()`),
+  another type's same-named method, and any other receiver fail
+  closed. The callee name must still be unique in the workspace, and a
+  constructed receiver whose type name the caller's file imports does
+  not bind (the import may name another module's or crate's type).
+  Forwarding accepts a caller tail that is exactly the identity-bound
+  hop call, optionally wrapped in one constructor
+  (`Some(Parser { .. }.parse())`), with nothing before the receiver
+  (`0 * self.parse()` forwards nothing); the tail's receiver must itself
+  bind to the same impl type as the recorded hop site, so a tail call
+  on a different owner (`Other { .. }.parse()`) forwards nothing; a
+  caller body containing `?` or an
+  early `return` still refuses forwarding. An exact assertion on the
+  entry's result pins a `return_value` owner through the chain under
+  the same conditions as forwarding to the observed hops, with
+  exactly one entry call in the assertion, that call being a whole
+  operand of the equality (a projection such as `entry(1) % 2`, a
+  path-qualified `other::entry(1)`, or an expectation computed through
+  the entry, directly or through a test binding, is not credited). A
+  `match_arm` owner whose
+  scrutinee selection through the entry is not established (for
+  example a `self.<field>` set through a `from_str` match behind `?`)
+  keeps its fail-closed class; only its reach is established.
 - The chain relation outranks any file-path, test-name or token
   proximity reason (#6694, #6672): a test that calls a resolved hop's
   caller relates as `HelperOwnerCall`, not `same_test_file`,
@@ -378,6 +407,12 @@ branch); `analysis/classify/activation.rs` (transferred rows and the
 call operand); fixtures `helper_chain_{one_hop,multi_hop,controls}`;
 `crates/ripr/tests/helper_wrapper_reach.rs` (relation precedence, hop
 propagation stop, rebinding stop);
+`crates/ripr/tests/method_helper_reach.rs` (#5352 method hops: public
+entry credit, smoke/wrong-owner/variable-receiver controls, the
+wrong-receiver tail-forwarding control, the #8633 review controls
+(transformed tail, self-computed expectation, projected entry value,
+foreign-qualified entry, nested comparison, imported constructor), and the
+unselected `match_arm` control);
 `crates/ripr/tests/crate_qualified_entry_reach.rs` (own-crate qualified
 entry call, `[lib] name` and hyphen spellings, and each refusal above).
 

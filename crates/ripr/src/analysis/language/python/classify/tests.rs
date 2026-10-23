@@ -447,12 +447,12 @@ fn activation_controlled_python_tests_do_not_credit_their_assertions() -> Result
     for decorator in [
         "unittest.skip('disabled')",
         "unittest.skipIf(True, 'disabled')",
-        "unittest.skipIf(False, 'runtime condition not evaluated')",
+        "unittest.skipIf(DISABLED, 'runtime condition not evaluated')",
         "unittest.skipUnless(False, 'disabled')",
         "unittest.expectedFailure",
         "pytest.mark.skip(reason='disabled')",
         "pytest.mark.skipif(True, reason='disabled')",
-        "pytest.mark.skipif(False, reason='runtime condition not evaluated')",
+        "pytest.mark.skipif(DISABLED, reason='runtime condition not evaluated')",
         "pytest.mark.xfail(strict=False)",
     ] {
         let test = if decorator == "unittest.expectedFailure" {
@@ -484,6 +484,31 @@ fn activation_controlled_python_tests_do_not_credit_their_assertions() -> Result
                 .any(|line| line.contains("test activation")),
             "{decorator}"
         );
+    }
+    Ok(())
+}
+
+// A boolean-literal condition that never triggers the skip leaves the test
+// running, so its exact oracle credits the edit (#9271 trap controls).
+#[test]
+fn an_inert_literal_skip_condition_keeps_oracle_credit() -> Result<(), String> {
+    for decorator in [
+        "pytest.mark.skipif(False, reason='never')",
+        "pytest.mark.xfail(False, reason='never')",
+        "unittest.skipIf(False, 'never')",
+        "unittest.skipUnless(True, 'never')",
+    ] {
+        let tests = format!(
+            "import unittest\nimport pytest\nfrom src.subject import score\n@{decorator}\ndef test_score():\n    assert score(0) == 8\n"
+        );
+        let finding = classify_case(
+            "def score(value):\n    return 8\n",
+            &tests,
+            2,
+            "    return 7",
+            "    return 8",
+        )?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{decorator}");
     }
     Ok(())
 }
@@ -1607,6 +1632,145 @@ fn fallthrough_return_ignores_early_exit_text_inside_a_docstring() -> Result<(),
         "    return round(total * 1.05, 2)",
     )?;
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+// #9184: an `else` arm runs only for inputs that fail every condition of its
+// `if`/`elif` chain. When every strong related call satisfies one of them,
+// the changed `else` line never runs and the exact-value oracle cannot
+// discriminate its change.
+const SIGN_SOURCE: &str =
+    "def sign(x):\n    if x > 0:\n        return 1\n    else:\n        return -2\n";
+
+#[test]
+fn else_arm_return_no_strong_call_enters_is_weakly_exposed() -> Result<(), String> {
+    let finding = classify_added_case(
+        SIGN_SOURCE,
+        "from src.subject import sign\n\ndef test_sign():\n    assert sign(5) == 1\n",
+        5,
+        "        return -2",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    let reason = missing_boundary(&finding, "not (x > 0)")
+        .ok_or_else(|| format!("missing discriminator absent: {finding:?}"))?;
+    assert!(
+        reason.contains("`else` arm of an `if`/`elif` chain (`x > 0`) that is entered only when none of them hold"),
+        "{reason}"
+    );
+    assert!(observed(&finding, "x = 5"), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn else_arm_return_with_an_entering_call_stays_exposed() -> Result<(), String> {
+    let finding = classify_added_case(
+        SIGN_SOURCE,
+        "from src.subject import sign\n\ndef test_sign():\n    assert sign(5) == 1\n    assert sign(-3) == -2\n",
+        5,
+        "        return -2",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn else_arm_after_an_elif_chain_names_every_chain_condition() -> Result<(), String> {
+    // grade(95) takes the `if` arm and grade(85) the `elif` arm: neither
+    // condition holds for every call, so the reason words "at least one".
+    let finding = classify_added_case(
+        "def grade(s):\n    if s >= 90:\n        return \"A\"\n    elif s >= 80:\n        return \"B\"\n    else:\n        return \"D\"\n",
+        "from src.subject import grade\n\ndef test_grade():\n    assert grade(95) == \"A\"\n    assert grade(85) == \"B\"\n",
+        7,
+        "        return \"D\"",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    let reason = missing_boundary(&finding, "not (s >= 90) and not (s >= 80)")
+        .ok_or_else(|| format!("missing discriminator absent: {finding:?}"))?;
+    assert!(
+        reason.contains("`else` arm of an `if`/`elif` chain (`s >= 90`, `s >= 80`)"),
+        "{reason}"
+    );
+    // A call that fails both conditions enters the `else` arm.
+    let entered = classify_added_case(
+        "def grade(s):\n    if s >= 90:\n        return \"A\"\n    elif s >= 80:\n        return \"B\"\n    else:\n        return \"D\"\n",
+        "from src.subject import grade\n\ndef test_grade():\n    assert grade(95) == \"A\"\n    assert grade(10) == \"D\"\n",
+        7,
+        "        return \"D\"",
+    )?;
+    assert_eq!(entered.class, ExposureClass::Exposed, "{entered:?}");
+    Ok(())
+}
+
+#[test]
+fn else_text_inside_a_docstring_is_not_an_else_arm() -> Result<(), String> {
+    // The `else:` line lives in a docstring inside the real `if` arm, so the
+    // changed return belongs to that arm and `f(5)` runs it: it stays exposed.
+    let finding = classify_added_case(
+        "def f(x):\n    if x > 0:\n        \"\"\"\n    else:\n        \"\"\"\n        return 2\n    return 0\n",
+        "from src.subject import f\n\ndef test_f():\n    assert f(5) == 2\n",
+        6,
+        "        return 2",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn nested_else_reason_does_not_claim_the_inner_chain_excluded_an_outer_guard_row()
+-> Result<(), String> {
+    // f(-1, -1) fails the outer guard `x > 0` and never reaches the inner
+    // chain; the reason must not say the input satisfies an inner condition.
+    let finding = classify_added_case(
+        "def f(x, y):\n    if x > 0:\n        if y > 0:\n            return 1\n        else:\n            return 2\n    return 0\n",
+        "from src.subject import f\n\ndef test_f():\n    assert f(-1, -1) == 0\n",
+        6,
+        "            return 2",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    let reason = missing_boundary(&finding, "not (y > 0) and x > 0")
+        .ok_or_else(|| format!("missing discriminator absent: {finding:?}"))?;
+    assert!(
+        !reason.contains("satisfies at least one condition"),
+        "{reason}"
+    );
+    assert!(
+        reason.contains("by this chain or an enclosing guard"),
+        "{reason}"
+    );
+    Ok(())
+}
+
+#[test]
+fn else_arm_that_does_not_close_an_if_chain_stays_exposed() -> Result<(), String> {
+    // `for`/`else`, an unreadable `or` condition and an unreadable row all
+    // fail open.
+    for (source, tests, line, after) in [
+        (
+            "def f(xs):\n    for x in xs:\n        if x > 0:\n            return 1\n    else:\n        return 0\n",
+            "from src.subject import f\n\ndef test_f():\n    assert f([5]) == 1\n",
+            6,
+            "        return 0",
+        ),
+        (
+            "def f(x, force):\n    if x > 0 or force:\n        return 1\n    else:\n        return 0\n",
+            "from src.subject import f\n\ndef test_f():\n    assert f(5, False) == 1\n",
+            5,
+            "        return 0",
+        ),
+        (
+            "def f(x):\n    if x > limit():\n        return 1\n    else:\n        return 0\n",
+            "from src.subject import f\n\ndef test_f():\n    assert f(5) == 1\n",
+            5,
+            "        return 0",
+        ),
+    ] {
+        let finding = classify_added_case(source, tests, line, after)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{source}: {finding:?}"
+        );
+    }
     Ok(())
 }
 

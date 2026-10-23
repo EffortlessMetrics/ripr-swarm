@@ -273,3 +273,16 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — observation_verified_side_effect (14)
+
+Reason:
+RIPR-SPEC-0197: add human-full projection for the effect-assertion honesty corpus (#8927)
+
+Command:
+`cargo xtask goldens bless observation_verified_side_effect --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

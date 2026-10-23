@@ -697,6 +697,20 @@ fn unique_temp_workspace(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!("ripr-{label}-{stamp}-{pid}-{counter}"))
 }
 
+/// How ripr prints an absolute path: on Windows a canonical `\\?\<drive>:`
+/// root folds to its drive spelling with `/` separators, the form a shell or
+/// editor accepts (#9660). Elsewhere the path text is printed as is.
+fn printed_path(path: &Path) -> String {
+    let text = path.to_string_lossy();
+    if cfg!(windows) {
+        text.strip_prefix(r"\\?\")
+            .unwrap_or(&text)
+            .replace('\\', "/")
+    } else {
+        text.into_owned()
+    }
+}
+
 fn unique_external_workspace(label: &str) -> Result<PathBuf, String> {
     let workspace = workspace_root()
         .canonicalize()
@@ -1112,10 +1126,7 @@ fn normalize_unchanged_repo_exposure_producer_fixture(
     mut value: serde_json::Value,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     let fixture_root = workspace_root().join("fixtures/boundary_gap/input");
-    let canonical_root = fixture_root
-        .canonicalize()?
-        .to_string_lossy()
-        .replace('\\', "/");
+    let canonical_root = printed_path(&fixture_root.canonicalize()?);
     let produced_root = json_pointer_str(&value, "/artifact/repository/root")?;
     assert_ne!(
         produced_root, ".",
@@ -2376,10 +2387,10 @@ fn config_validate_discovers_parent_config_from_nested_directory() -> Result<(),
             String::from_utf8_lossy(&output.stdout)
         ));
     }
-    if !stderr.contains(&expected_config_path.display().to_string()) {
+    if !stderr.contains(&printed_path(&expected_config_path)) {
         return Err(format!(
             "nested config validate did not report parent config path {}\nstderr:\n{stderr}",
-            expected_config_path.display()
+            printed_path(&expected_config_path)
         ));
     }
     Ok(())
@@ -14796,6 +14807,9 @@ fn doctor_missing_root_recommends_recovery_and_outside_git_recommends_runnable_c
         || !stdout.contains("- Safe next action: fix the selected root first (see below); no check command can run until it exists")
         || stdout.contains("Recommended first command: ripr check --root")
         || stderr.contains("working-tree change probe failed")
+        || stdout.contains("✓ Cache:")
+        || stdout.contains("✓ Workspace:")
+        || !stdout.contains("- Cache check skipped: the root directory does not exist")
     {
         return Err(format!(
             "a missing root must not blame the tools\nstdout:\n{stdout}\nstderr:\n{stderr}"
@@ -22885,8 +22899,8 @@ fn receipt_help_exits_zero_smoke() {
         "help should mention check"
     );
     assert!(
-        stdout.contains("RIPR-SPEC-0079"),
-        "help should reference spec"
+        stdout.contains("canonical repair receipts"),
+        "help should describe the receipt command"
     );
 }
 
@@ -23408,6 +23422,85 @@ fn check_explicit_base_deletion_only_range_does_not_claim_no_behavior_changed() 
     Ok(())
 }
 
+/// #9222: a default-base run (no `--base`) on a branch that only deletes a file
+/// lands in `no_scope` with zero changed files. Human, GitHub and JSON output
+/// must not assure the reader that nothing changed, and must still say that
+/// nothing was analyzed.
+#[test]
+fn check_default_base_deletion_only_range_does_not_claim_no_behavior_changed_in_any_renderer()
+-> Result<(), String> {
+    let root = unique_temp_workspace("default-base-deletion-only");
+    std::fs::create_dir_all(root.join("src")).map_err(|e| format!("mkdir: {e}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(root.join("src/lib.rs"), "pub fn one() -> i32 { 1 }\n")
+        .map_err(|e| format!("write lib: {e}"))?;
+    std::fs::write(root.join("src/old.rs"), "pub fn two() -> i32 { 2 }\n")
+        .map_err(|e| format!("write old: {e}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"default-deletion-only\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|e| format!("write Cargo.toml: {e}"))?;
+    std::fs::write(root.join(".gitignore"), "target/\n").map_err(|e| format!("gitignore: {e}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    run_git(&root, &["checkout", "-b", "feat"])?;
+    run_git(&root, &["rm", "src/old.rs"])?;
+    run_git(&root, &["commit", "-m", "delete"])?;
+    let root_str = root.to_string_lossy().into_owned();
+    for (label, args) in [
+        ("human", vec!["check", "--root", root_str.as_str()]),
+        (
+            "github",
+            vec!["check", "--root", root_str.as_str(), "--format", "github"],
+        ),
+        (
+            "json",
+            vec!["check", "--root", root_str.as_str(), "--format", "json"],
+        ),
+    ] {
+        let output = run_ripr(&args);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if !stdout.contains("main...HEAD") {
+            return Err(format!(
+                "{label}: fixture must resolve the default base `main`:\n{stdout}"
+            ));
+        }
+        if !stdout.contains("nothing was analyzed") && !stdout.contains("nothing to analyze") {
+            return Err(format!(
+                "{label}: an empty range must still say nothing was analyzed:\n{stdout}"
+            ));
+        }
+        if !stdout.contains("no analyzable changed files") {
+            return Err(format!(
+                "{label}: expected the analyzable-files wording:\n{stdout}"
+            ));
+        }
+        for forbidden in [
+            "means no behavior changed against it",
+            "because nothing changed",
+            "contains no changed files",
+        ] {
+            if stdout.contains(forbidden) {
+                return Err(format!(
+                    "{label}: a deletion-only range must not claim `{forbidden}`:\n{stdout}"
+                ));
+            }
+        }
+        if !stdout.contains("not mean no behavior changed")
+            && !stdout.contains("NOT mean no behavior changed")
+        {
+            return Err(format!(
+                "{label}: expected the not-no-behavior-changed disclaimer:\n{stdout}"
+            ));
+        }
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
 /// #9033: `--diff <file>` wins over `--base`; the retained base must not be
 /// reported as an analyzed Git range in either human format.
 #[test]
@@ -23896,7 +23989,7 @@ fn check_untracked_files_keep_committed_default_and_working_tree_reads_name_them
     }
     let empty_worktree = human(&["check", "--root", &root_str]);
     for expected in [
-        "Note: the working tree has no changed tracked files against `main` (diff from the merge base of `main` and HEAD to the working tree), so there was nothing to analyze.",
+        "Note: the working tree has no analyzable changed files against `main` (diff from the merge base of `main` and HEAD to the working tree), so there was nothing to analyze.",
         "Safe next action: the working tree has no changed tracked files against `main`",
         "Untracked files (src/new.rs) are not in the working-tree diff",
     ] {
@@ -24225,7 +24318,7 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
             "clean tracked worktree must not disclose uncommitted edits; got:\n{stdout}"
         ));
     }
-    if !stdout.contains("contains no changed files") {
+    if !stdout.contains("has no analyzable changed files") {
         return Err(format!(
             "empty default-base run must keep the no-scope disclosure (base-naming form per #4012); got:\n{stdout}"
         ));
@@ -30546,7 +30639,7 @@ fn check_rejects_invalid_check_timeout_flag_and_env() -> Result<(), String> {
         &[("RIPR_CHECK_TIMEOUT", "abc")],
     );
     let stderr = String::from_utf8_lossy(&explicit.stderr);
-    if stderr.contains("RIPR_CHECK_TIMEOUT") {
+    if stderr.contains("RIPR_CHECK_TIMEOUT requires a non-negative integer") {
         return Err(format!(
             "--timeout should take precedence over the env var: {stderr}"
         ));
