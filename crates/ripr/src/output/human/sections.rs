@@ -1,7 +1,7 @@
 use crate::config::RiprConfig;
 use crate::domain::{
     CALLEE_ONLY_REACH_PREFIX, ExposureClass, Finding, LanguageId, LanguageStatus,
-    MISSING_DISCRIMINATOR_VALUE_PREFIX, RiprEvidence, StageState,
+    MISSING_DISCRIMINATOR_VALUE_PREFIX, ProbeFamily, RiprEvidence, StageState,
 };
 use crate::output::agent_seam_packets::{
     allowed_edit_surface_for_gap_route, gap_record_packet_do_not_do,
@@ -267,6 +267,15 @@ pub(crate) fn render_finding_digest_with_config(
             finding.ripr.reveal.observe.state.as_str(),
             compact_discriminator_token(finding),
         ));
+        // #9373 item 1: explain the pipeline and its conservative tokens at
+        // the bounded surface; full human and machine evidence stay unchanged.
+        out.push_str(concat!(
+            "    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;\n",
+            "      propagation = changed effect reaches output; observation = related test/assertion evidence;\n",
+            "      discriminator = assertion distinguishes intended from wrong behavior\n",
+            "    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;\n",
+            "      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused\n",
+        ));
         for line in evidence.iter().take(2) {
             // #7756: list-item values carry no trailing period.
             out.push_str(&format!("    - {}\n", trim_field_period(&one_line(line))));
@@ -285,7 +294,8 @@ pub(crate) fn render_finding_digest_with_config(
 /// `discriminate` stage grades the strongest related oracle, not whether that
 /// oracle distinguishes the changed behavior, so for a non-`exposed` finding
 /// a `yes` grade must not read as "a discriminator exists" — the digest may
-/// simultaneously name the missing discriminating input. Mirror the semantic
+/// simultaneously name the missing discriminator (an input or assertion).
+/// Mirror the semantic
 /// `discriminator_evidence_line` keeps for the full evidence line: only an
 /// `exposed` finding (or a non-`yes` grade) prints the bare state.
 fn compact_discriminator_token(finding: &Finding) -> &'static str {
@@ -417,6 +427,52 @@ fn wrapped_fragment(label: &str, value: &str) -> String {
     out
 }
 
+/// Marks a match-arm `after:` row that carries only the arm head.
+///
+/// The probe keeps the parser's head shape (`Tier::Pro =>`) as `after` while the
+/// paired `before` can be the whole old arm (`Tier::Pro => seats * 20 + 5,`).
+/// Printed side by side, the head alone reads as an arm that lost its body. The
+/// probe fields are consumed by arm-selection classification, so the human row
+/// says what it shows and where to read the arm instead of changing them.
+///
+/// The note prints only when the head text is unchanged between `before` and
+/// `after` (the edit is then to the body, which the probe does not carry). A
+/// changed head may or may not have a changed body, and the producer joins the
+/// old body into `before` for a multiline head, so those print no note. Arrows
+/// are located on the comment/string-masked text, so `"a=>b" =>` and
+/// `0 /* => */ =>` are one head. The location is the probe's head line, not a
+/// body coordinate: the row says to open the arm there.
+fn match_arm_head_only_note(
+    finding: &Finding,
+    before: Option<&str>,
+    after: &str,
+    root: &Path,
+) -> Option<String> {
+    if finding.probe.family != ProbeFamily::MatchArm {
+        return None;
+    }
+    let after = after.trim();
+    let masked_after = crate::analysis::mask_comments_and_strings(after);
+    let arrow = masked_after.find("=>")?;
+    if arrow + 2 != masked_after.trim_end().len() {
+        return None;
+    }
+    let before = before?.trim();
+    let masked_before = crate::analysis::mask_comments_and_strings(before);
+    let before_arrow = masked_before.find("=>")?;
+    if masked_before[before_arrow + 2..].trim().is_empty() {
+        return None;
+    }
+    if before.get(..before_arrow)?.trim() != after.get(..arrow)?.trim() {
+        return None;
+    }
+    Some(format!(
+        "          (arm head only; open the arm at {}:{} to read its new body)\n",
+        crate::analysis::finding_location_text(root, &finding.probe.location.file),
+        finding.probe.location.line
+    ))
+}
+
 pub(crate) fn render_finding_with_config(
     finding: &Finding,
     config: &RiprConfig,
@@ -456,11 +512,15 @@ pub(super) fn render_finding_with_shared_sections(
     // the only surface that carries `before`/`after` at all — see
     // `wrapped_fragment`.
     out.push_str("\nChanged\n");
+    let before_text = finding.probe.before.as_deref();
     if let Some(before) = &finding.probe.before {
         out.push_str(&wrapped_fragment("  before: ", before));
     }
     if let Some(after) = &finding.probe.after {
         out.push_str(&wrapped_fragment("  after:  ", after));
+        if let Some(note) = match_arm_head_only_note(finding, before_text, after, root) {
+            out.push_str(&note);
+        }
     } else {
         out.push_str(&wrapped_fragment("  expr:   ", &finding.probe.expression));
     }
@@ -1056,9 +1116,12 @@ pub(crate) fn push_typescript_repair_packet_field_note(out: &mut String, finding
             // Blocked — name the limitation, never emit a partial packet.
             // Only render this subsection if we have at least some preview
             // actionability data to surface (otherwise stay silent).
-            let why = evidence_value(finding, "why_not_actionable: ")
+            let raw_why = evidence_value(finding, "why_not_actionable: ")
                 .or_else(|| evidence_value(finding, "gap_state: "))
                 .unwrap_or("TypeScript preview; repair packet not yet complete");
+            let why =
+                crate::output::preview_actionability::scope_qualified_why(finding, Some(raw_why))
+                    .unwrap_or_else(|| raw_why.to_string());
             let next_capability = evidence_value(finding, "evidence_needed_to_promote: ")
                 .unwrap_or("no further capability information");
             out.push_str("\nTypeScript repair packet (advisory)\n");
