@@ -600,7 +600,7 @@ fn function_pointer_shared_targets_require_binary_assertion_trust() -> Result<()
             .collect();
         assert_eq!(selected.len(), 1, "one intended shared return subject");
         let finding = selected[0];
-        assert_eq!(finding.ripr.reach.state, ripr::StageState::Yes);
+        assert_eq!(finding.ripr.reach.state, ripr::domain::StageState::Yes);
         assert_eq!(finding.related_tests.len(), 1);
         assert_eq!(
             finding.class,
@@ -614,17 +614,17 @@ fn function_pointer_shared_targets_require_binary_assertion_trust() -> Result<()
         assert_eq!(
             finding.ripr.reveal.observe.state,
             if shadowed {
-                ripr::StageState::No
+                ripr::domain::StageState::No
             } else {
-                ripr::StageState::Yes
+                ripr::domain::StageState::Yes
             }
         );
         assert_eq!(
             finding.related_tests[0].oracle_strength,
             if shadowed {
-                ripr::OracleStrength::None
+                ripr::domain::OracleStrength::None
             } else {
-                ripr::OracleStrength::Strong
+                ripr::domain::OracleStrength::Strong
             }
         );
         if shadowed {
