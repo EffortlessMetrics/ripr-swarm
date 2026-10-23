@@ -1970,7 +1970,7 @@ fn name_bound_outside_typing_import(source: &str, name: &str) -> bool {
                 in_typing_block = true;
             }
             true
-        } else if is_plain_builtins_import_line(code) {
+        } else if is_plain_builtins_import_line(code, name) {
             true
         } else if let Some(rest) = trimmed.strip_prefix('@') {
             let head = rest.split('(').next().unwrap_or_default();
@@ -1988,17 +1988,39 @@ fn name_bound_outside_typing_import(source: &str, name: &str) -> bool {
 }
 
 /// A single plain stdlib `builtins` import statement (`import builtins [as x]`
-/// or `from builtins import property [as x]`): the one binding the built-in
-/// `property` spellings rely on (#6585). Comma lists, parentheses and
-/// semicolon-joined statements are not plain and still count as a rebind.
-fn is_plain_builtins_import_line(code: &str) -> bool {
+/// or `from builtins import property [as x]`) that leaves `name` bound to what
+/// the built-in spellings expect (#6585): `from builtins import <name> [as
+/// <name>]` or `import builtins` for the name `builtins`. Any other import that
+/// binds `name` (`from builtins import classmethod as property`, `import
+/// builtins as property`) is a rebind at any indentation, including a
+/// class-local one the owner's module-level import records never see. Comma
+/// lists, parentheses and semicolon-joined statements are not plain either.
+fn is_plain_builtins_import_line(code: &str, name: &str) -> bool {
     let code = code.trim();
     if code.contains([',', '(', ';', '\\']) {
         return false;
     }
-    code.strip_prefix("import builtins")
-        .is_some_and(|rest| rest.is_empty() || rest.starts_with(" as "))
-        || code.starts_with("from builtins import ")
+    if let Some(rest) = code.strip_prefix("import builtins") {
+        let bound = if rest.is_empty() {
+            "builtins"
+        } else if let Some(alias) = rest.strip_prefix(" as ") {
+            alias.trim()
+        } else {
+            return false;
+        };
+        return bound != name || name == "builtins";
+    }
+    let Some(spec) = code.strip_prefix("from builtins import ") else {
+        return false;
+    };
+    let mut parts = spec.split_whitespace();
+    let imported = parts.next().unwrap_or_default();
+    let bound = match (parts.next(), parts.next(), parts.next()) {
+        (None, ..) => imported,
+        (Some("as"), Some(alias), None) => alias,
+        _ => return false,
+    };
+    bound != name || imported == name
 }
 
 fn contains_word(line: &str, word: &str) -> bool {

@@ -3121,6 +3121,60 @@ fn parsed_from_builtins_property_is_not_decorator_indirection() -> Result<(), St
 }
 
 #[test]
+fn parsed_rebound_property_name_keeps_decorator_indirection() -> Result<(), String> {
+    // (source prelude inside/outside the class, expect the limit kept)
+    let cases: [(&str, bool); 8] = [
+        (
+            "class Holder:\n    from builtins import classmethod as property\n",
+            true,
+        ),
+        ("class Holder:\n    import builtins as property\n", true),
+        (
+            "from builtins import classmethod as property\n\nclass Holder:\n",
+            true,
+        ),
+        ("import builtins as property\n\nclass Holder:\n", true),
+        ("class Holder:\n    property = classmethod\n", true),
+        (
+            "class Holder:\n    from builtins import property as property\n",
+            false,
+        ),
+        ("class Holder:\n    from builtins import property\n", false),
+        ("import builtins\n\nclass Holder:\n", false),
+    ];
+    for (prelude, limited) in cases {
+        let source = format!("{prelude}    @property\n    def v(self):\n        return 2\n");
+        let line = source.lines().count();
+        let owners = extract_owners(Path::new("src/holder.py"), &source);
+        let tests = extract_tests(
+            Path::new("tests/test_holder.py"),
+            "from src.holder import Holder\n\n\ndef test_v():\n    assert Holder().v == 2\n",
+        );
+        let Some(finding) = classify_change_with_old(
+            Path::new("src/holder.py"),
+            line,
+            "        return 2",
+            Some("        return 1"),
+            &owners,
+            &tests,
+        ) else {
+            return Err(format!("should classify: {source}"));
+        };
+        if limited {
+            assert_eq!(finding.class, ExposureClass::StaticUnknown, "{source}");
+            assert_eq!(
+                finding.static_limit_kind,
+                Some(StaticLimitKind::DecoratorIndirection),
+                "{source}"
+            );
+        } else {
+            assert_eq!(finding.static_limit_kind, None, "{source}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn parsed_property_setter_keeps_decorator_indirection() -> Result<(), String> {
     let source = "class Holder:\n    def __init__(self):\n        self._v = 0\n\n    @property\n    def v(self):\n        return self._v\n\n    @v.setter\n    def v(self, value):\n        self._v = value + 1\n";
     let owners = extract_owners(Path::new("src/holder.py"), source);
