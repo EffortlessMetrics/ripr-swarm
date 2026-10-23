@@ -111,6 +111,18 @@ pub struct OwnedProcess {
     child: Box<dyn ChildWrapper>,
     #[cfg(not(windows))]
     child: std::process::Child,
+    /// Unix PID custody: the group signal has been issued and the primary
+    /// reaped. Once the leader is reaped its pgid becomes recyclable by an
+    /// unrelated process group, so every later release path — `Drop`, a
+    /// repeated `terminate_tree` — must stay disarmed rather than risk
+    /// signaling a group that reused the number (#9895 review).
+    #[cfg(all(unix, not(windows)))]
+    group_settled: bool,
+    /// Unix test oracle: the custody contract allows exactly one group
+    /// signal per owner lifetime; each `request_kill` on unix increments
+    /// this counter so a witness can pin it.
+    #[cfg(all(test, unix, not(windows)))]
+    test_group_kills: usize,
 }
 
 impl OwnedProcess {
@@ -143,7 +155,17 @@ impl OwnedProcess {
             // leaves those grandchildren behind as orphans (#9895).
             command.process_group(0);
             let child = command.spawn()?;
-            Ok(Self { child })
+            let owned = Self {
+                child,
+                group_settled: false,
+            };
+            #[cfg(all(test, unix, not(windows)))]
+            let owned = {
+                let mut owned = owned;
+                owned.test_group_kills = 0;
+                owned
+            };
+            Ok(owned)
         }
         #[cfg(not(any(windows, unix)))]
         {
@@ -237,6 +259,10 @@ impl OwnedProcess {
         {
             use nix::sys::signal::{Signal, killpg};
             use nix::unistd::Pid;
+            #[cfg(all(test, unix, not(windows)))]
+            {
+                self.test_group_kills += 1;
+            }
             let pgid = Pid::from_raw(self.child.id() as i32);
             match killpg(pgid, Signal::SIGKILL) {
                 Ok(()) => Ok(()),
@@ -255,7 +281,11 @@ impl OwnedProcess {
     /// Terminate the whole owned tree and reap the direct child before
     /// returning. Windows: one termination request kills every process in
     /// the job. Unix: one `SIGKILL` to the child's process group reaches
-    /// every descendant, including pipe-inheriting grandchildren. Other
+    /// every descendant, including pipe-inheriting grandchildren, and — per
+    /// the PID-custody contract — that group signal is always issued BEFORE
+    /// the primary is reaped: an unreaped leader pins its pgid, so the
+    /// signal can only reach this owner's tree; after the reap the number
+    /// becomes recyclable and later release paths stay disarmed. Other
     /// platforms: the direct child kill and reap.
     ///
     /// An already-exited child is reaped and — on Windows and Unix — its
@@ -270,6 +300,30 @@ impl OwnedProcess {
     /// stopped. The reap error is reported only when termination
     /// succeeded (a successful kill makes a failed reap a real zombie).
     pub fn terminate_tree(&mut self) -> Result<(), String> {
+        #[cfg(all(unix, not(windows)))]
+        {
+            if self.group_settled {
+                // The group was already signaled and the primary reaped by
+                // an earlier `terminate_tree` (or the `Drop` disarm ran);
+                // repeating the signal after the reap could hit an unrelated
+                // group that recycled the pgid.
+                return Ok(());
+            }
+            // Custody: signal the group BEFORE any reap. `wait` below is the
+            // first reap, so the leader stays pinned to its pgid until the
+            // signal has landed. A fully exited group answers ESRCH inside
+            // `request_kill` with the same ok-for-exited contract as before.
+            let termination = self.request_kill().map_err(|err| err.to_string());
+            if let Err(termination_err) = termination {
+                self.group_settled = true;
+                return Err(self.failed_termination_fallback(termination_err));
+            }
+            let reap = self
+                .wait()
+                .map_err(|err| format!("failed to reap owned process: {err}"));
+            self.group_settled = true;
+            return reap.map(|_| ());
+        }
         if let Some(status) = self
             .child
             .try_wait()
@@ -287,22 +341,6 @@ impl OwnedProcess {
                     format!(
                         "incomplete tree cleanup: failed to terminate the owned job after the \
                          primary exited: {err}"
-                    )
-                })?;
-                self.wait()
-                    .map_err(|err| format!("failed to reap owned process: {err}"))?;
-            }
-            #[cfg(all(unix, not(windows)))]
-            {
-                // The primary exited on its own, but its process group does
-                // not die with it: descendants still in the group would
-                // survive ownership unless the group is signaled here. The
-                // request is a no-op for a fully exited group (ESRCH); the
-                // wait returns immediately on the already-reaped primary.
-                self.request_kill().map_err(|err| {
-                    format!(
-                        "incomplete tree cleanup: failed to terminate the owned process group \
-                         after the primary exited: {err}"
                     )
                 })?;
                 self.wait()
@@ -392,6 +430,24 @@ pub(crate) fn forbid_rustup_auto_install(command: &mut Command) {
 
 impl Drop for OwnedProcess {
     fn drop(&mut self) {
+        #[cfg(all(unix, not(windows)))]
+        {
+            if self.group_settled {
+                // An explicit termination path already signaled the group
+                // and reaped the primary; the reaped leader's pgid is now
+                // recyclable, so any further signal could hit an unrelated
+                // group that reused the number. Stay disarmed (#9895 review).
+                return;
+            }
+            // Custody: signal the group BEFORE the reap. While the leader is
+            // unreaped its pgid stays pinned to this owner's tree, so the
+            // signal can only reach owned descendants.
+            if self.request_kill().is_ok() {
+                let _ = self.wait();
+            }
+            self.group_settled = true;
+            return;
+        }
         // Kill-on-close semantics live at this boundary: whichever path
         // releases the owner — normal completion, timeout, cancellation,
         // wait failure, or panic unwinding — terminates the owned tree and
@@ -403,21 +459,14 @@ impl Drop for OwnedProcess {
         if self.child.try_wait().is_ok_and(|status| status.is_some()) {
             // Even though the primary exited, the containment boundary does
             // not kill on close: descendants it spawned may still hold the
-            // job or process group, so ownership release still issues the
-            // termination request and reaps the (already exited) primary
-            // before dropping the owner.
+            // job, so ownership release still issues the termination
+            // request and reaps the (already exited) primary before
+            // dropping the owner.
             #[cfg(windows)]
             {
                 if self.request_kill().is_ok() {
                     let _ = self.wait();
                 }
-            }
-            #[cfg(all(unix, not(windows)))]
-            {
-                // Best-effort group signal; the primary is already reaped so
-                // no wait is needed and leftover descendants reparent to init
-                // after the SIGKILL.
-                let _ = self.request_kill();
             }
             return;
         }
@@ -931,6 +980,93 @@ mod tests {
         let _ = sentinel.kill();
         let _ = sentinel.wait();
         Ok(())
+    }
+
+    /// #9895 review (PID custody): `terminate_tree` owns the group signal —
+    /// exactly one request — and settles the owner; the `Drop` that follows
+    /// must stay disarmed because the reaped leader's pgid is recyclable.
+    #[cfg(all(unix, not(windows)))]
+    #[test]
+    fn unix_terminate_tree_signals_the_group_exactly_once() -> Result<(), String> {
+        let mut command = Command::new("sleep");
+        command.arg("60");
+        let mut owned = OwnedProcess::spawn(command).map_err(|err| format!("spawn: {err}"))?;
+        owned
+            .terminate_tree()
+            .map_err(|err| format!("terminate_tree: {err}"))?;
+        assert_eq!(
+            owned.test_group_kills, 1,
+            "terminate_tree must issue exactly one group signal"
+        );
+        assert!(
+            owned.group_settled,
+            "the owner must settle once the group is signaled and the primary reaped"
+        );
+        // Scope end runs `Drop` on the settled owner: the disarmed arm must
+        // not issue a second signal after the reap (the recycled-pgid risk).
+        Ok(())
+    }
+
+    /// #9895 review (PID custody): a repeated `terminate_tree` on a settled
+    /// owner is a quiet no-op, not a second group signal.
+    #[cfg(all(unix, not(windows)))]
+    #[test]
+    fn unix_repeated_terminate_tree_stays_disarmed() -> Result<(), String> {
+        let mut command = Command::new("sleep");
+        command.arg("60");
+        let mut owned = OwnedProcess::spawn(command).map_err(|err| format!("spawn: {err}"))?;
+        owned
+            .terminate_tree()
+            .map_err(|err| format!("terminate_tree: {err}"))?;
+        owned
+            .terminate_tree()
+            .map_err(|err| format!("repeated terminate_tree: {err}"))?;
+        assert_eq!(
+            owned.test_group_kills, 1,
+            "a settled owner must never signal the group again"
+        );
+        Ok(())
+    }
+
+    /// #9895 review (PID custody): the caller's own `wait` reaps the primary
+    /// first; `terminate_tree` must still signal the surviving group exactly
+    /// once (the descendant-cleanup path), then disarm for `Drop`.
+    #[cfg(all(unix, not(windows)))]
+    #[test]
+    fn unix_wait_then_terminate_tree_signals_once_and_settles() -> Result<(), String> {
+        let marker = std::env::temp_dir().join(format!(
+            "ripr-unix-wait-term-{}-{}.pid",
+            std::process::id(),
+            unix_stamp()?
+        ));
+        let _ = std::fs::remove_file(&marker);
+        let marker_text = marker
+            .to_str()
+            .filter(|text| !text.contains('\''))
+            .ok_or("marker path is not script-safe")?
+            .to_string();
+        let mut command = Command::new("sh");
+        command.arg("-c");
+        // No trailing exec: the primary exits immediately, leaving the
+        // background sleep behind in its group.
+        command.arg(format!("sleep 60 & echo $! > '{marker_text}'"));
+        command.stdout(Stdio::piped());
+        let mut owned = OwnedProcess::spawn(command).map_err(|err| format!("spawn: {err}"))?;
+        let descendant = wait_for_marker_pid(&marker, Duration::from_secs(10))?;
+        let _ = std::fs::remove_file(&marker);
+        let _ = owned.wait().map_err(|err| format!("reap primary: {err}"))?;
+        owned
+            .terminate_tree()
+            .map_err(|err| format!("terminate_tree: {err}"))?;
+        assert_eq!(
+            owned.test_group_kills, 1,
+            "the post-wait descendant cleanup must use exactly one group signal"
+        );
+        assert!(
+            owned.group_settled,
+            "the owner must settle after the post-wait group signal"
+        );
+        wait_for_death(descendant, "descendant outlived the post-wait group kill")
     }
 
     /// #9895: a primary that already exited still leaves descendants in its

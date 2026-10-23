@@ -219,23 +219,63 @@ mod tests {
         std::env::var_os("RIPR_INTERRUPT_ISOLATED_CHILD").is_some()
     }
 
-    fn run_isolated(test_name: &str) -> Result<std::process::ExitStatus, String> {
+    /// libtest reports test paths without the crate-name prefix that
+    /// `module_path!()` carries, so an exact filter built from
+    /// `module_path!()` verbatim would silently select zero tests and the
+    /// child would exit 0 without running anything. Drop the first segment.
+    fn exact_test_filter(test_name: &str) -> String {
+        let module = module_path!();
+        let module = module.split_once("::").map_or(module, |(_, rest)| rest);
+        format!("{module}::{test_name}")
+    }
+
+    /// Every isolated child prints this marker — carrying its own test name
+    /// — before touching anything signal-related, so the wrapper can prove
+    /// the exact filter actually selected a subject. A zero-test selection
+    /// can never print the marker, so it can never pass vacuously.
+    fn child_ack() {
+        let name = std::env::var("RIPR_INTERRUPT_ISOLATED_CHILD").unwrap_or_default();
+        eprintln!("[interrupt-isolated-child] ack {name}");
+    }
+
+    fn combined_output(output: &std::process::Output) -> String {
+        let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+        text.push_str(&String::from_utf8_lossy(&output.stderr));
+        text
+    }
+
+    fn run_isolated(test_name: &str) -> Result<std::process::Output, String> {
         let executable = std::env::current_exe().map_err(|error| error.to_string())?;
         std::process::Command::new(executable)
-            .args([test_name, "--exact", "--nocapture"])
-            .env("RIPR_INTERRUPT_ISOLATED_CHILD", "1")
-            .status()
+            .arg(exact_test_filter(test_name))
+            .args(["--exact", "--nocapture"])
+            .env("RIPR_INTERRUPT_ISOLATED_CHILD", test_name)
+            .output()
             .map_err(|error| error.to_string())
     }
 
-    /// Assert the isolated child completed successfully.
+    /// Assert the isolated child acknowledged its selection, ran exactly
+    /// one test to completion, and exited successfully.
     fn assert_child_success(test_name: &str) -> Result<(), String> {
-        let status = run_isolated(test_name)?;
-        if status.success() {
+        let output = run_isolated(test_name)?;
+        let text = combined_output(&output);
+        let ack = format!("[interrupt-isolated-child] ack {test_name}");
+        if !text.contains(&ack) {
+            return Err(format!(
+                "isolated signal child {test_name} never acknowledged; the exact filter selected no test: {text}"
+            ));
+        }
+        if !text.contains("1 passed") {
+            return Err(format!(
+                "isolated signal child {test_name} must run exactly one test to completion: {text}"
+            ));
+        }
+        if output.status.success() {
             return Ok(());
         }
         Err(format!(
-            "isolated signal child {test_name} failed: {status}"
+            "isolated signal child {test_name} failed: {}",
+            output.status
         ))
     }
 
@@ -263,6 +303,18 @@ mod tests {
 
     #[test]
     fn registration_leaves_flags_clear_until_drop_arms_native_termination() -> Result<(), String> {
+        // Drop arms the conditional-default handler process-wide, so — like
+        // every handler-mutating scenario — the assertion runs in an isolated
+        // re-invoked child and the retained handler dies with it.
+        if in_isolated_child() {
+            return child_registration_leaves_flags_clear_until_drop_arms_native_termination();
+        }
+        assert_child_success("registration_leaves_flags_clear_until_drop_arms_native_termination")
+    }
+
+    fn child_registration_leaves_flags_clear_until_drop_arms_native_termination()
+    -> Result<(), String> {
+        child_ack();
         let _serial = serialized();
         let (pair, interrupted, native) = flags();
         let registration = SignalRegistration::create(pair)?;
@@ -285,14 +337,12 @@ mod tests {
         if in_isolated_child() {
             return child_first_sigint_requests_cancellation_then_arms_native_termination();
         }
-        assert_child_success(concat!(
-            module_path!(),
-            "::first_sigint_requests_cancellation_then_arms_native_termination"
-        ))
+        assert_child_success("first_sigint_requests_cancellation_then_arms_native_termination")
     }
 
     fn child_first_sigint_requests_cancellation_then_arms_native_termination() -> Result<(), String>
     {
+        child_ack();
         let _serial = serialized();
         let (pair, interrupted, native) = flags();
         let registration = SignalRegistration::create(pair)?;
@@ -322,14 +372,12 @@ mod tests {
         if in_isolated_child() {
             return child_first_sigterm_requests_cancellation_then_arms_native_termination();
         }
-        assert_child_success(concat!(
-            module_path!(),
-            "::first_sigterm_requests_cancellation_then_arms_native_termination"
-        ))
+        assert_child_success("first_sigterm_requests_cancellation_then_arms_native_termination")
     }
 
     fn child_first_sigterm_requests_cancellation_then_arms_native_termination() -> Result<(), String>
     {
+        child_ack();
         let _serial = serialized();
         let (pair, interrupted, native) = flags();
         let registration = SignalRegistration::create_for(&[signal_hook::consts::SIGTERM], pair)?;
@@ -358,14 +406,12 @@ mod tests {
         if in_isolated_child() {
             return child_sigint_and_sigterm_share_one_flag_pair_in_server_registrations();
         }
-        assert_child_success(concat!(
-            module_path!(),
-            "::sigint_and_sigterm_share_one_flag_pair_in_server_registrations"
-        ))
+        assert_child_success("sigint_and_sigterm_share_one_flag_pair_in_server_registrations")
     }
 
     fn child_sigint_and_sigterm_share_one_flag_pair_in_server_registrations() -> Result<(), String>
     {
+        child_ack();
         let _serial = serialized();
         let (pair, interrupted, native) = flags();
         let registration = SignalRegistration::create_for(
@@ -396,20 +442,27 @@ mod tests {
         if in_isolated_child() {
             return child_repeated_sigint_after_arm_takes_native_death();
         }
-        let status = run_isolated(concat!(
-            module_path!(),
-            "::repeated_sigint_after_arm_takes_native_death"
-        ))?;
+        let output = run_isolated("repeated_sigint_after_arm_takes_native_death")?;
+        let text = combined_output(&output);
+        if !text
+            .contains("[interrupt-isolated-child] ack repeated_sigint_after_arm_takes_native_death")
+        {
+            return Err(format!(
+                "isolated signal child never acknowledged; the exact filter selected no test: {text}"
+            ));
+        }
         use std::os::unix::process::ExitStatusExt as _;
-        match status.signal() {
+        match output.status.signal() {
             Some(signal) if signal == signal_hook::consts::SIGINT => Ok(()),
             other => Err(format!(
-                "the repeated SIGINT must take native death by SIGINT, got signal {other:?} ({status})"
+                "the repeated SIGINT must take native death by SIGINT, got signal {other:?} ({})",
+                output.status
             )),
         }
     }
 
     fn child_repeated_sigint_after_arm_takes_native_death() -> Result<(), String> {
+        child_ack();
         let _serial = serialized();
         let (pair, interrupted, _native) = flags();
         let registration = SignalRegistration::create(pair)?;
@@ -438,13 +491,11 @@ mod tests {
         if in_isolated_child() {
             return child_server_interrupt_install_is_idempotent_and_exposes_flags();
         }
-        assert_child_success(concat!(
-            module_path!(),
-            "::server_interrupt_install_is_idempotent_and_exposes_flags"
-        ))
+        assert_child_success("server_interrupt_install_is_idempotent_and_exposes_flags")
     }
 
     fn child_server_interrupt_install_is_idempotent_and_exposes_flags() -> Result<(), String> {
+        child_ack();
         let _serial = serialized();
         install_server_interrupts().map_err(|error| error.to_string())?;
         install_server_interrupts().map_err(|error| error.to_string())?;
