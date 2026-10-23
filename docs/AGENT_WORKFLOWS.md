@@ -323,8 +323,12 @@ the full path or the seam ID.
 When the file has seams but the selected function has none of the requested
 family, the not-found message names the requested `FAMILY`. Its `nearest:`
 list contains only seams of that family, filtered before the five-entry limit.
-A file with only other families offers no nearest entries. These not-found
-decisions keep exit 3 and empty stdout, including with `--json`.
+A file with only other families offers no nearest entries. An empty list is
+rendered as `nearest: none`; a suffix selector searches reported gaps, so an
+empty list does not establish that the file has no seam of that family. These
+not-found decisions keep exit 3. With `--json`, stdout carries the schema-0.2
+`rust_test_stub` refused envelope and stderr carries the prose; without it,
+stdout stays empty.
 
 No `.ripr/goals/active.toml`, current-writer file, stage file or agent-liveness
 record selects ordinary work. Keep status changes evidence-bound and update an

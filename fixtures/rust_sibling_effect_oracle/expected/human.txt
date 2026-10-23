@@ -32,6 +32,8 @@ Start here:
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: Related tests appear to reach module_limit_evidence: module_evidence_retains_single_pass_duplicates_benign_and_unavailable, module_note_line_byte_boundary_excludes_line_…
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 19 more detail line(s) in --format human-full
