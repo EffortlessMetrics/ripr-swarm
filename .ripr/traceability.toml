@@ -14350,6 +14350,7 @@ tests = [
   "crates/ripr/src/mcp/server_tests.rs::window_sized_gap_item_refuses_typed_instead_of_dropping_structured_content",
   "crates/ripr/src/mcp/server_tests.rs::outer_envelope_budget_reserves_the_escaped_request_id",
   "crates/ripr/src/mcp/workspace.rs::tests::list_gaps_honors_the_id_aware_envelope_budget",
+  "crates/ripr/src/mcp/workspace.rs::tests::list_gaps_overflow_recovery_names_the_shrinkable_cause",
   "crates/ripr/src/mcp/writer.rs::tests::pinned_sdk_wraps_the_measured_envelope_within_the_outer_reserve",
   "crates/ripr/src/mcp/writer.rs::tests::request_id_escaping_is_charged_exactly_by_the_outer_budget",
   "crates/ripr/src/mcp/workspace.rs::tests::gap_list_summaries_project_readiness_matching_get_gap",
