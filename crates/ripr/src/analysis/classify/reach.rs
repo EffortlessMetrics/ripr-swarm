@@ -972,7 +972,10 @@ mod tests {
         // A call that names the method (a test, or any source) keeps it undecided.
         assert!(verdicts("fn t() { Inc.process(1); }\n", both()));
         // External docs may call it.
-        assert!(verdicts("#![doc = include_str!(\"../README.md\")]\n", both()));
+        assert!(verdicts(
+            "#![doc = include_str!(\"../README.md\")]\n",
+            both()
+        ));
         // The trait is declared only in a comment or string: no declaration, so
         // the owner is a foreign-trait impl and keeps the allowance.
         assert!(verdicts(
