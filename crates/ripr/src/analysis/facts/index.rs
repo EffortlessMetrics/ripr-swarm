@@ -130,6 +130,9 @@ pub struct RustIndex {
     /// `package_names`, because a sibling crate's function can still take a
     /// bare call meant for the owner.
     pub(crate) macro_owned_crates: BTreeSet<String>,
+    /// `package_names` plus the crate names of every workspace member, indexed
+    /// or not (#10061). Not serialized, like `macro_owned_crates`.
+    pub(crate) workspace_crates: BTreeSet<String>,
     /// Whether a drop-in assertion crate (`pretty_assertions`) imported by a
     /// file is the registry package. Unset for an index assembled without a
     /// manifest walk, which verifies nothing.
@@ -465,6 +468,18 @@ impl RustIndex {
             &self.package_names
         } else {
             &self.macro_owned_crates
+        }
+    }
+}
+
+impl RustIndex {
+    /// Crate names of the workspace's own members: `workspace_crates` when
+    /// the build computed it, else `package_names`.
+    pub(crate) fn workspace_member_crates(&self) -> &BTreeSet<String> {
+        if self.workspace_crates.is_empty() {
+            &self.package_names
+        } else {
+            &self.workspace_crates
         }
     }
 }

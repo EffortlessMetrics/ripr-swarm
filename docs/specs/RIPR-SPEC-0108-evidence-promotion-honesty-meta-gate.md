@@ -602,6 +602,7 @@ Rust family coverage for same-method-other-impl identity (#4760):
 | same trait method name on a different impl type | `rust_same_method_other_type` | `reachable_unrevealed` (name-only; a name-token relation never credits an oracle, #9169) |
 | true owner constructed and observed | `rust_same_method_owner_type_positive_control` | `exposed` (`direct_owner_call`) |
 | workspace-trait impl no source names, beside a same-file test of another function | `rust_unreached_workspace_trait_impl_borrows_no_oracle` | `no_static_path` (only a foreign trait's impl is dispatched without spelling its method; #9169) |
+| impl of a trait declared in a sibling workspace crate, beside a same-leaf-name file's doctest | `rust_cross_crate_trait_impl_borrows_no_doctest` | `no_static_path` (a trait imported from a workspace member is the workspace's; the same-crate control reads the same; #10061) |
 
 Rust family coverage for free-function receiver identity (#7006):
 
