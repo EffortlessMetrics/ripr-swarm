@@ -179,3 +179,34 @@ pub(crate) fn rust_workspace_path_gap(raw: &str) -> Option<&'static str> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn production_membership_is_sorted_deduplicated_and_fails_closed() {
+        let paths = |items: &[&str]| items.iter().map(PathBuf::from).collect::<Vec<_>>();
+        let subject =
+            production_files_subject(&paths(&["src/z.rs", "crates/a/src/lib.rs", "src/z.rs"]));
+        assert_eq!(
+            subject,
+            Some(serde_json::json!(["crates/a/src/lib.rs", "src/z.rs"]))
+        );
+        // One unrepresentable path withholds the whole list, never a partial one.
+        for bad in [
+            "/abs/x.rs",
+            "../x.rs",
+            "src/x.py",
+            "target/gen.rs",
+            "fixtures/c/src/lib.rs",
+        ] {
+            assert!(
+                production_files_subject(&paths(&["src/ok.rs", bad])).is_none(),
+                "{bad}"
+            );
+        }
+        let corpus = serde_json::json!({"analyzed_production_files": []});
+        assert_eq!(analyzed_production_files(&corpus), Some(BTreeSet::new()));
+    }
+}

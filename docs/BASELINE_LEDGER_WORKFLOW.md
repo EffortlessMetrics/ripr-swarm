@@ -230,9 +230,14 @@ the tree `gate evaluate` runs on (so generate the ledger and evaluate the gate o
 the same checkout). With it, an absent baseline entry on a normalized relative
 Rust path in `corpus.analyzed_production_files` resolves; a
 filtered, edited or stale ledger, a limited run, and other paths stay
-`not_evaluated` (#9599). The digest is tamper-evident, not authentication. Accepted limits: a ledger rewritten by someone who recomputes the digest on a
-matching current tree still earns the scope (no producer authentication);
-`baseline diff`/`update` trust a hand-edited gate-decision.
+`not_evaluated` (#9599). The digest is tamper-evident, not authentication.
+Accepted limits: a ledger rewritten by someone who recomputes the digest on a
+matching current tree and membership still earns the scope (no producer
+authentication), and `baseline diff`/`update` trust a hand-edited gate-decision.
+The membership list is one sorted path per production file (about 50 bytes
+each; roughly 47 KB for 900 files) and is carried in the repo-exposure
+artifact, the ledger and the gate decision; very large workspaces carry a
+proportionally larger list.
 The inventory discloses `corpus.analyzed_production_files` from its actual
 production-role inputs, including cache hits. Gate admission requires both
 that membership and the corpus hash to match current discovery and source-role
