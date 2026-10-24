@@ -41,6 +41,9 @@ enum Layout {
     PrivateMod,
     /// `pub fn` in the binary target `src/main.rs`.
     Main,
+    /// A `pub struct Counter` at the root, and a different private
+    /// `struct Counter` with the `pub fn` in `src/hidden.rs`.
+    HiddenSameNameType,
 }
 
 /// The owner's file, the lines before the owner, and the owner's four lines
@@ -72,6 +75,10 @@ fn owner_text(layout: Layout, vis: &str) -> OwnerText {
         Layout::Free => free("inner/src/lib.rs", ""),
         Layout::Method => method("pub struct Counter {\n    buf: Vec<u8>,\n}\n\nimpl Counter {\n"),
         Layout::PrivateType => method("struct Counter {\n    buf: Vec<u8>,\n}\n\nimpl Counter {\n"),
+        Layout::HiddenSameNameType => OwnerText {
+            path: "inner/src/hidden.rs",
+            ..method("struct Counter {\n    buf: Vec<u8>,\n}\n\nimpl Counter {\n")
+        },
         Layout::PubMod | Layout::PrivateMod => free("inner/src/sub.rs", "pub struct Other;\n\n"),
         Layout::Main => free("inner/src/main.rs", ""),
     }
@@ -138,7 +145,10 @@ fn finding_for(setup: &Setup) -> Result<Finding, String> {
         ),
     )?;
     let owner = owner_text(setup.layout, setup.owner_visibility);
-    let indent = if matches!(setup.layout, Layout::Method | Layout::PrivateType) {
+    let indent = if matches!(
+        setup.layout,
+        Layout::Method | Layout::PrivateType | Layout::HiddenSameNameType
+    ) {
         "    "
     } else {
         ""
@@ -156,6 +166,7 @@ fn finding_for(setup: &Setup) -> Result<Finding, String> {
     let extra_lib = match setup.layout {
         Layout::PubMod => "pub mod sub;\n",
         Layout::PrivateMod => "mod sub;\n",
+        Layout::HiddenSameNameType => "pub struct Counter;\nmod hidden;\n",
         _ => "",
     };
     let trait_text = "\npub trait Ext {\n    fn go(&mut self, byte: u8) -> usize;\n}\n\nimpl Ext for Vec<u8> {\n    fn go(&mut self, byte: u8) -> usize {\n        self.push(byte);\n        self.len()\n    }\n}\n";
@@ -354,6 +365,29 @@ fn inherent_method_owners_are_named_by_their_type_not_the_method() -> Result<(),
     by_method_name.facade_test = method_test;
     assert_unlimited_no_path(&finding_for(&by_method_name)?);
 
+    // A method owner is tied by its type or a glob, never by a bare name.
+    let mut by_glob = Setup::new("method-by-glob");
+    by_glob.layout = Layout::Method;
+    by_glob.facade_lib = "pub use inner::Counter;\n";
+    assert_limited(&finding_for(&by_glob)?);
+
+    let mut bare_name = Setup::new("method-bare-name");
+    bare_name.layout = Layout::Method;
+    bare_name.facade_lib = "pub use inner::Counter;\npub const VERSION: u8 = 1;\n";
+    bare_name.facade_test = "fn bump_counter() {}\n#[test]\nfn version() {\n    let mut v = Vec::new();\n    v.push(facade::VERSION);\n    bump_counter();\n}\n";
+    let finding = finding_for(&bare_name)?;
+    assert_ne!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::RustIntegrationPublicApiPathUnresolved),
+        "{finding:?}"
+    );
+
+    // A same-named private type in another file is a different type.
+    let mut hidden = Setup::new("hidden-same-name-type");
+    hidden.layout = Layout::HiddenSameNameType;
+    hidden.facade_lib = "pub use inner::*;\n";
+    assert_unlimited_no_path(&finding_for(&hidden)?);
+
     let mut private_type = Setup::new("private-type");
     private_type.layout = Layout::PrivateType;
     private_type.facade_lib = "pub use inner::*;\n";
@@ -419,6 +453,14 @@ fn package_name_comes_from_the_manifest_not_the_directory() -> Result<(), String
     std_named.facade_package = "other-name";
     std_named.facade_test = "#[test]\nfn swaps() {\n    let (mut a, mut b) = (1, 2);\n    core::mem::swap(&mut a, &mut b);\n    assert_eq!(a, 2);\n}\n";
     assert_unlimited_no_path(&finding_for(&std_named)?);
+
+    // A package really named `core` that globs itself: only the std-crate
+    // exclusion keeps this unlimited (the glob would otherwise tie it).
+    let mut real_core = Setup::new("real-core");
+    real_core.facade_dir = "core";
+    real_core.facade_package = "core";
+    real_core.facade_test = "use core::*;\n\n#[test]\nfn go_pushes() {\n    let mut v = Vec::new();\n    assert_eq!(v.go(3), 1);\n}\n";
+    assert_unlimited_no_path(&finding_for(&real_core)?);
     Ok(())
 }
 
@@ -461,7 +503,11 @@ fn reexports_that_do_not_provably_cover_the_owner_are_unchanged() -> Result<(), 
 
 #[test]
 fn private_or_restricted_owner_never_fires() -> Result<(), String> {
-    for (label, vis) in [("private-owner", ""), ("crate-owner", "pub(crate) ")] {
+    for (label, vis) in [
+        ("private-owner", ""),
+        ("crate-owner", "pub(crate) "),
+        ("spaced-crate-owner", "pub (crate) "),
+    ] {
         let mut setup = Setup::new(label);
         setup.owner_visibility = vis;
         assert_unlimited_no_path(&finding_for(&setup)?);

@@ -116,6 +116,15 @@ names the test as an inspection pointer. The re-export is not resolved and no
 item is matched beyond the names in (3): the pointer says only that the test
 names the facade crate and the facade's root `pub use` names the owner's crate.
 
+#### Doctest relation guard (#9982)
+
+A doctest is named for the item it documents and runs only that item's
+example. Outside the changed owner's own file, a doctest is related to a change
+only through a call to the owner, a helper-chain or seam-callee route, an
+equality dispatch, or an assertion reference. Sharing only a name token with the
+changed expression (`ready` from `Poll::Ready`) no longer relates it. Every
+other relation is unchanged.
+
 ### When found
 
 The existing RIPR-SPEC-0114/0115 evidence remains unchanged:
@@ -178,7 +187,8 @@ origin witnesses.
    `rust_integration_public_api_path_unresolved`, discloses the exact witness
    and limitation detail, and stays non-actionable.
 4. **Facade re-export**: `facade` depends on `inner`, has `pub use inner::*;`
-   at its crate root, and `facade/tests/t.rs` uses `facade::Ext`. A changed
+   at its crate root, and `facade/tests/t.rs` has `use facade::*;` (a test that
+   only has `use facade::Ext;` does not tie to the owner and does not fire). A changed
    `pub fn` of `inner` reads `no_static_path` plus
    `rust_integration_public_api_path_unresolved`, with no related test and no
    repair gap. A dev-dependency-only edge, a cfg-gated or nested `pub use`, a
@@ -229,7 +239,6 @@ origin witnesses.
 - `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::doctest_in_the_owners_own_file_stays_related`
 - `crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::doctest_of_another_module_that_calls_the_owner_stays_related`
 - `crates/ripr/src/analysis/classify/facade_reach.rs::tests::whole_crate_reexports_cover_any_owner`
-- `crates/ripr/src/analysis/classify/facade_reach.rs::tests::paths_must_be_a_prefix_of_the_owners_path`
 - `crates/ripr/src/analysis/classify/facade_reach.rs::tests::facade_tests_tie_by_owner_name_type_or_glob`
 - `crates/ripr/src/analysis/classify/facade_reach.rs::tests::pub_items_need_pub_attribute_free_declarations`
 - `fixtures/rust_transitive_reach_positive/expected/check.json`

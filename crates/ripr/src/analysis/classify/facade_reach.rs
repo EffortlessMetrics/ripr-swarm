@@ -74,8 +74,10 @@ pub(in crate::analysis) fn facade_reach_witness(
         return None;
     }
     let owner_manifest = nearest_manifest_identity(context.manifest_dir_prefixes, &owner.file)?;
-    let reach = owner_reach(index, &owner_manifest, owner)?;
     let dependents = context.adjacency.reverse_neighbors(&owner_manifest)?;
+    // Resolved on the first dependent with a normal edge, so an owner nothing
+    // depends on never pays for the type and module lookups.
+    let mut reach_cache: Option<Option<OwnerReach>> = None;
     let mut best: Option<FacadeReachWitness> = None;
     let mut count = 0usize;
     for dependent in dependents {
@@ -98,6 +100,12 @@ pub(in crate::analysis) fn facade_reach_witness(
             .filter(|(section, _)| *section == PathDependencySection::Dependencies)
             .map(|(_, name)| name.replace('-', "_"))
             .collect();
+        if owner_crates.is_empty() {
+            continue;
+        }
+        let reach = reach_cache
+            .get_or_insert_with(|| owner_reach(index, &owner_manifest, owner))
+            .as_ref()?;
         let Some(owner_crate) = owner_crates
             .into_iter()
             .find(|name| lib_reexports_owner(index, directory, name, &reach.path))
@@ -206,7 +214,7 @@ fn owner_reach(
         .map(str::trim)
         .find(|line| !line.is_empty() && !line.starts_with("#["))?;
     let rest = declaration.strip_prefix("pub")?;
-    if !rest.starts_with(char::is_whitespace) {
+    if !rest.starts_with(char::is_whitespace) || rest.trim_start().starts_with('(') {
         return None;
     }
     match &owner.item.container {
@@ -223,11 +231,16 @@ fn owner_reach(
         }
         FunctionContainer::Inherent { self_ty } => {
             let type_file = find_root_pub_type(index, manifest_dir, self_ty)?;
+            // The impl must sit in the type's own file: a same-named type in
+            // another module is a different type.
+            if type_file != in_src {
+                return None;
+            }
             let mut path = module_chain(index, manifest_dir, &type_file)?;
             path.push(self_ty.clone());
             Some(OwnerReach {
                 path,
-                tie_names: vec![owner.name.clone(), self_ty.clone()],
+                tie_names: vec![self_ty.clone()],
             })
         }
         _ => None,
@@ -528,6 +541,9 @@ fn use_tree_covers(tree: &str, crate_name: &str, owner_path: &[String]) -> bool 
 }
 
 fn path_covers(path: &str, owner: &[String]) -> bool {
+    if owner.is_empty() {
+        return false;
+    }
     let path = path.trim();
     if path == "*" || path == "self" || path.starts_with("self ") {
         return true;
@@ -551,6 +567,9 @@ fn path_covers(path: &str, owner: &[String]) -> bool {
     }
     match rest {
         None => true,
+        // The owner's last segment is the function or the type: a path
+        // below it (`Type::*`, `Type::Variant`) re-exports something else.
+        Some(_) if owner.len() == 1 => false,
         Some(rest) => path_covers(rest, &owner[1..]),
     }
 }
@@ -767,6 +786,10 @@ mod tests {
         assert!(!covers("pub use inner::sub::*;", &["f"]));
         assert!(!covers("pub use inner::other::*;", &["sub", "f"]));
         assert!(!covers("pub use inner::{Other, nested::{g}};", &["f"]));
+        // Below the type is not the method: `Ty::*`, `Ty::Variant`.
+        assert!(covers("pub use inner::Ty;", &["Ty"]));
+        assert!(!covers("pub use inner::Ty::*;", &["Ty"]));
+        assert!(!covers("pub use inner::Ty::Variant;", &["Ty"]));
     }
 
     #[test]
@@ -824,6 +847,7 @@ mod tests {
             "T"
         ));
         assert!(!declares_pub_item("pub(crate) struct T {}", "struct", "T"));
+        assert!(!declares_pub_item("pub (crate) struct T {}", "struct", "T"));
         assert!(!declares_pub_item("pub struct Tx {}", "struct", "T"));
         assert!(declares_pub_item("pub mod a;", "mod", "a"));
         assert!(!declares_pub_item("mod a;", "mod", "a"));
