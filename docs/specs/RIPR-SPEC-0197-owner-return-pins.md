@@ -1929,16 +1929,22 @@ earlier exit.
 
 A plain helper (one that invokes no parameter directly, so it never runs a
 closure parameter or only forwards it, as tracing's `with_default(subscriber,
-fun)` does) lends nothing to a test that passes a call-making closure literal
-to it (#9997). The check reuses the test-side closure grammar above, without
-the eager-reach and async exemptions because it only withholds: any direct call
-to the helper, at any argument position and under any branch, that hands it a
-closure literal whose body holds a call or method call refuses the credit, and
-a test body that does not parse refuses it too. A closure bound to a name first
-(`let f = || ..; run(f)`), a function item, and a closure without a call are not
-recognized as call-making literals, so those shapes keep the plain-helper
-credit (a known residual). The tracing forwarding shape is therefore a
-limitation, not a credit, until the receiving call is itself resolved.
+fun)` does) lends nothing to a test that passes it an argument containing a
+call-making closure literal (#9997). The check reuses the test-side closure
+grammar above, without the eager-reach and async exemptions because it only
+withholds: any direct call to the helper, at any argument position and under
+any branch, whose argument subtree holds a closure literal with a call or
+method call in its body refuses the credit, so a bare literal, `&|| ..`,
+`(|| ..)` and `Box::new(|| ..)` are all withheld; a literal only inside a nested
+`fn` item in the argument is not, and a test body that does not parse refuses
+credit. The withholding is per helper, not per parameter or per call: a helper
+whose own assertion observes the owner directly also loses credit for a test
+that hands it any call-making closure, and one such call withholds the helper
+from the whole test (a missed advisory, fail-closed). Not recognized, so they
+keep the plain-helper credit (known residual): a closure bound to a name first
+(`let f = || ..; run(f)`), a function item, and a closure with no call. The
+tracing forwarding shape is a limitation, not a credit, until the receiving call
+is itself resolved.
 
 ## Required Evidence
 

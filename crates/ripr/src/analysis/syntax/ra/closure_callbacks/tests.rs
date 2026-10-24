@@ -450,6 +450,26 @@ fn any_call_making_closure_literal_handed_to_the_helper_is_withheld() {
             true,
         ),
         ("unparsable text fails closed", "fn t( {", true),
+        (
+            "boxed closure",
+            "fn t() { run(1, Box::new(|| greet())); }",
+            true,
+        ),
+        (
+            "referenced closure",
+            "fn t() { run(1, &|| greet()); }",
+            true,
+        ),
+        (
+            "parenthesized closure",
+            "fn t() { run(1, (|| greet())); }",
+            true,
+        ),
+        (
+            "closure only inside a nested fn item",
+            "fn t() { run(1, { fn n() { let _ = || greet(); } 1 }); }",
+            false,
+        ),
         ("closure without a call", "fn t() { run(1, || 5); }", false),
         ("no closure argument", "fn t() { run(1, 2); }", false),
         (

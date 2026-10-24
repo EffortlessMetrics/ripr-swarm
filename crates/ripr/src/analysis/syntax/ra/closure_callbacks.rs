@@ -95,8 +95,8 @@ pub(crate) fn closure_argument_positions(test_text: &str, helper: &str) -> Optio
     Some(positions)
 }
 
-/// Whether any call to `helper` in `test_text`, reached or not, passes a
-/// closure literal whose body holds a call. The plain-helper path asks this of
+/// Whether any call to `helper` in `test_text`, reached or not, passes an
+/// argument that contains a closure literal whose body holds a call. The plain-helper path asks this of
 /// a helper that never invokes a parameter directly (#9997): such a helper
 /// either never runs the closure or only forwards it, so its assertions cannot
 /// be shown to observe what the closure called. Deliberately broader than
@@ -116,15 +116,27 @@ pub(crate) fn passes_call_making_closure(test_text: &str, helper: &str) -> bool 
         .filter_map(|call| call.arg_list())
         .flat_map(|arguments| arguments.args())
         .any(|argument| {
-            let ast::Expr::ClosureExpr(closure) = argument else {
-                return false;
-            };
-            closure.body().is_some_and(|body| {
-                body.syntax().descendants().any(|node| {
-                    ast::CallExpr::can_cast(node.kind())
-                        || ast::MethodCallExpr::can_cast(node.kind())
+            // Any closure literal inside the argument, so `&|| ..`, `(|| ..)`
+            // and `Box::new(|| ..)` count; one inside a nested `fn` item does not.
+            argument
+                .syntax()
+                .descendants()
+                .filter_map(ast::ClosureExpr::cast)
+                .filter(|closure| {
+                    !closure
+                        .syntax()
+                        .ancestors()
+                        .take_while(|ancestor| ancestor != argument.syntax())
+                        .any(|ancestor| ast::Fn::can_cast(ancestor.kind()))
                 })
-            })
+                .any(|closure| {
+                    closure.body().is_some_and(|body| {
+                        body.syntax().descendants().any(|node| {
+                            ast::CallExpr::can_cast(node.kind())
+                                || ast::MethodCallExpr::can_cast(node.kind())
+                        })
+                    })
+                })
         })
 }
 

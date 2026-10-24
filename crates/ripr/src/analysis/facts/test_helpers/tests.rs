@@ -1461,4 +1461,46 @@ fn invoked_closure_parameter_is_still_credited_after_the_plain_path_tightening()
     Ok(())
 }
 
+#[test]
+fn plain_helper_withheld_for_a_boxed_or_referenced_closure() -> Result<(), Box<dyn Error>> {
+    for body in [
+        "        run_test(true, Box::new(|| gate(11)));\n",
+        "        run_test(true, &|| gate(11));\n",
+    ] {
+        let index = index_for(&callback_source(UNUSED_CLOSURE_HELPER, body))?;
+        let test = test_named(&index, "boundary")?;
+        assert!(
+            test.assertions.is_empty(),
+            "{body}: {:?}",
+            assertion_texts(test)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn unused_closure_helper_keeps_credit_for_a_call_less_closure() -> Result<(), Box<dyn Error>> {
+    // Same fixture as the negatives: only the call-making closure changes.
+    let index = index_for(&callback_source(
+        UNUSED_CLOSURE_HELPER,
+        "        run_test(true, || true);\n",
+    ))?;
+    let test = test_named(&index, "boundary")?;
+    assert_eq!(assertion_texts(test), vec!["assert_eq!(want, true);"]);
+    Ok(())
+}
+
+#[test]
+fn plain_helper_withholding_is_per_helper_not_per_call() -> Result<(), Box<dyn Error>> {
+    // One test calls the helper both ways; a single call-making closure
+    // withholds the helper's assertions from the whole test (fail-closed).
+    let index = index_for(&callback_source(
+        UNUSED_CLOSURE_HELPER,
+        "        run_test(true, || true);\n        run_test(true, || gate(11));\n",
+    ))?;
+    let test = test_named(&index, "boundary")?;
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
+    Ok(())
+}
+
 mod assertion_macros;
