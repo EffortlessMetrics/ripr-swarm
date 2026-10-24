@@ -82,7 +82,7 @@ fn frozen_fallible_literal_helper_exposes_exact_owner_return() -> Result<(), Str
     let finding = answer(&report)?;
     assert_eq!(
         finding["classification"], "exposed",
-        "if this is a fresh Cargo home, this is an environment gap, not a source regression: run `cargo xtask goldens prepare` (the locked fetch documented in docs/TESTING.md) and retry"
+        "if this is a fresh Cargo home, this may be an environment gap rather than a source regression: run `cargo xtask goldens prepare` (the locked fetch documented in docs/TESTING.md) and retry"
     );
     assert_eq!(finding["ripr"]["propagate"]["state"], "yes");
     assert_eq!(finding["ripr"]["observe"]["state"], "yes");
