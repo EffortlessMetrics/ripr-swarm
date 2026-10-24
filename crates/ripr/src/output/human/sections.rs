@@ -207,12 +207,10 @@ pub(crate) fn render_finding_digest_with_config(
         };
         // #5344: say why the named test misses, so the reader can open it
         // and disagree without re-deriving the analysis.
-        let why = crate::output::related_test_miss::related_test_miss_reason(
-            test,
-            &finding.activation.missing_discriminators,
-        )
-        .map(|why| format!(" ({why})"))
-        .unwrap_or_default();
+        let why =
+            crate::output::related_test_miss::related_test_miss_reason(test, &finding.probe.family)
+                .map(|why| format!(" ({why})"))
+                .unwrap_or_default();
         out.push_str(&format!(
             "  {label}: {}:{} {}{why}\n",
             display_path(&test.file),
@@ -275,6 +273,8 @@ pub(crate) fn render_finding_digest_with_config(
             "      discriminator = assertion distinguishes intended from wrong behavior\n",
             "    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;\n",
             "      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused\n",
+            "    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;\n",
+            "      unrevealed = tests reach it but nothing appears to notice; no path = no test path found\n",
         ));
         for line in evidence.iter().take(2) {
             // #7756: list-item values carry no trailing period.
@@ -454,13 +454,24 @@ fn match_arm_head_only_note(
     let after = after.trim();
     let masked_after = crate::analysis::mask_comments_and_strings(after);
     let arrow = masked_after.find("=>")?;
-    if arrow + 2 != masked_after.trim_end().len() {
+    // The mask locates code, but erases even a complete literal body. Keep
+    // literal existence from the same lexer; comments/unread markers are empty.
+    let has_body = |text: &str, masked: &str| {
+        !masked.trim().is_empty()
+            || !crate::analysis::rust_identity_spans(text)
+                .literal_ranges
+                .is_empty()
+    };
+    if has_body(&after[arrow + 2..], &masked_after[arrow + 2..]) {
         return None;
     }
     let before = before?.trim();
     let masked_before = crate::analysis::mask_comments_and_strings(before);
     let before_arrow = masked_before.find("=>")?;
-    if masked_before[before_arrow + 2..].trim().is_empty() {
+    if !has_body(
+        &before[before_arrow + 2..],
+        &masked_before[before_arrow + 2..],
+    ) {
         return None;
     }
     if before.get(..before_arrow)?.trim() != after.get(..arrow)?.trim() {
@@ -1342,7 +1353,10 @@ fn classification_hint(
                 Some(format!(
                     "a related test asserts here, but ripr could not establish that the assertion runs and is {standard_macro}"
                 ))
-            } else if reveal.observe.state == StageState::No && !callee_only {
+            } else if reveal.observe.state == StageState::No
+                && !callee_only
+                && ripr.reach.state != StageState::Weak
+            {
                 Some(
                     "a related test reaches this change, but no assertion observes the changed behavior"
                         .to_string(),

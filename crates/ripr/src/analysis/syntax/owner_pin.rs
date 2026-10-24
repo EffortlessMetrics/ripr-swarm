@@ -1004,6 +1004,15 @@ fn macro_binding_sites_in_tree(
             if binding_free_local_wrapper(binding_free, &call, &tokens, trusted) {
                 continue;
             }
+            // An accepted identity invocation over literal `fn` items binds
+            // nothing; its tests are scanned from their own expansion
+            // (#8999).
+            if binding_free
+                .passthrough
+                .contains(&call.syntax().text_range().start())
+            {
+                continue;
+            }
             for token in &tokens {
                 let name = token.text().trim_start_matches("r#");
                 if trusted.contains(&name) {
@@ -1382,6 +1391,8 @@ struct BindingFreeFileIndex {
     rules: Vec<ast::MacroRules>,
     modules: Vec<SyntaxNode>,
     calls: Vec<ast::MacroCall>,
+    /// Calls accepted as the identity over literal `fn` items (#8999).
+    passthrough: BTreeSet<ra_ap_syntax::TextSize>,
 }
 
 #[cfg(test)]
@@ -1424,6 +1435,7 @@ impl BindingFreeFileIndex {
             rules,
             modules,
             calls,
+            passthrough: super::passthrough_item_macros::passthrough_invocation_starts(root),
         }
     }
 }
@@ -3934,6 +3946,19 @@ fn has_escape(
             || ast::YieldExpr::can_cast(node.kind()))
         .then_some(AssertionContextRefusal::ClosureExit)
     })
+}
+
+/// Whether `node` holds anything the shared owner-pin escape authority
+/// ([`has_escape`]) refuses with the full [`TRUSTED_MACRO_NAMES`] set and no
+/// recorded bindings: a macro outside that set, a trusted macro whose operand
+/// tokens hide an exit (`return`, `break`, `continue`, `yield`, `?`) or a
+/// nested expansion, and any `return`/`?`/`yield` owned by a closure inside
+/// `node`. The closure part is stricter than a plain early-exit scan: a
+/// closure's own exit also refuses. The same-file callback-helper producer
+/// (#9981) gates its credit on this before copying any facts, so diff output
+/// and the repo-exposure consumer agree on what may have exited.
+pub(crate) fn node_has_macro_escape(node: &SyntaxNode) -> bool {
+    has_escape(node, TRUSTED_MACRO_NAMES, &BTreeMap::new(), &[]).is_some()
 }
 
 fn opaque_macro_operand(tree: &ast::TokenTree) -> bool {

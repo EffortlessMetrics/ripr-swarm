@@ -33,6 +33,8 @@ const BOUNDED_EVIDENCE_LEGEND: &str = concat!(
     "      discriminator = assertion distinguishes intended from wrong behavior\n",
     "    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;\n",
     "      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused\n",
+    "    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;\n",
+    "      unrevealed = tests reach it but nothing appears to notice; no path = no test path found\n",
 );
 
 /// Project only the new, exact selected-digest legend out of current human

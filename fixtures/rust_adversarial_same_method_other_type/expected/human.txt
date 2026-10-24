@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_adversarial_same_method_other_type/input
 
-Summary: 1 probe (0 exposed, 1 weak, 0 unrevealed, 0 no path); 1 of 1 finding unsuppressed
+Summary: 1 probe (0 exposed, 0 weak, 1 unrevealed, 0 no path); 1 of 1 finding unsuppressed
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
@@ -11,21 +11,23 @@ Start here:
   State: a test gap to inspect or repair
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
   File: ./src/lib.rs:22
-  Static exposure: weak (severity: warning, confidence 0.66)
-  Why weak: a related test reaches this change but does not observe the exact changed value
+  Static exposure: unrevealed (severity: warning, confidence 0.66)
+  Why unrevealed: no test is seen calling this change
   Canonical gap: gap:rust:src/lib.rs:impl Iterator for WhileSome::size_hint:return_value:return_value:0_some_self.remaining
   Changed behavior: (0, Some(self.remaining))
-  Missing discriminator: No strong discriminator was detected
-  Related test (1 of 5 matched rows): tests/size_hints.rs:4 combinations_inexact_size_hints (ripr could not confirm that this assertion observes the changed behavior)
+  Missing discriminator (1 of 3): No detected assertion observes the changed value, error, field, or effect
+  Related test (1 of 5 matched rows): tests/size_hints.rs:4 combinations_inexact_size_hints (no established call path to the changed code; linked by name only)
   Next step: The indexed related tests do not establish a call to the changed owner. Inspect
     existing tests, doctests and examples before changing assertions; they may already constrain the
     changed behavior. Add or strengthen a test only if that inspection finds a gap
-  Evidence: reach weak · infection yes · propagation yes · observation yes · discriminator weak
+  Evidence: reach weak · infection yes · propagation yes · observation no · discriminator no
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach weak: No test is seen calling size_hint; tests share only its file or a name token: combinations_inexact_size_hints
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 12 more detail line(s) in --format human-full

@@ -687,11 +687,21 @@ id = "RIPR-SPEC-0318"
 scope = "out"
 reason = "pilot next-step text for an uncommitted inline-module target; not an exposure-verdict example a corpus case labels"
 
+[[spec]]
+id = "RIPR-SPEC-0347"
+scope = "out"
+reason = "stderr disclosure of changed trybuild fixtures; not an exposure-verdict example a corpus case labels"
+
 # Release ledger direct-main contract
 [[spec]]
 id = "RIPR-SPEC-0301"
 scope = "out"
 reason = "release-process tooling (xtask release-ledger); its examples validate a commit ledger, not an exposure verdict a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0351"
+scope = "out"
+reason = "Rust-only out-parameter oracle credit; not a typescript verdict example"
 
 # Every false verdict the corpus still scores, with its owning issue.
 # `verdict-corpus check` fails when a false row is not listed here and when a

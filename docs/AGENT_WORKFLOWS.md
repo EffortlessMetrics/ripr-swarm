@@ -295,9 +295,13 @@ with their seam IDs. With `--at` and `--kind` the stub
 is read from that one file's seams without using classification to pick the
 seam, and placed inline. After selection the command looks up the inventory
 grip so JSON and human output can disclose it: a strongly_gripped seam stays
-`state: ready` (exit 0) and reuses the packet/repair omission reason
-("configured off for strongly_gripped seams and is not included in agent
-results"). A bare `--at` (no `--kind`) classifies that one file and tries only
+`state: ready` (exit 0) and the disclosure names the real reason — the seam is
+exposed because its tests already discriminate it, so a stub would add
+nothing; only a class a user severity actually disables is described as
+"configured off" (#8891). Running `--write` again for the same seam reports
+the stub already written at the file (with the run command) instead of
+suffixing a `_2` duplicate; a different test that happens to share the name
+still suffixes. A bare `--at` (no `--kind`) classifies that one file and tries only
 its reported gaps, so it never stubs a seam the tests already pin. It prints a compiling `#[test]` placed in the
 owner file's inline `#[cfg(test)]` module, a new inline module, or the
 proposed `tests/` file, calling the changed function with its real receiver
@@ -316,7 +320,15 @@ Its `run_command` runs only that test through the owning package's
 `--manifest-path` and, for an integration file, the effective cargo target
 name (an explicit `[[test]]` name wins over the file stem). It is `null` when
 no Cargo package owns the file or that target name cannot be established
-(for example `autotests = false` without an explicit entry, an edition-2015 package whose explicit `[[test]]` entries disable auto-discovery, `harness = false`, or `required-features`, which is omitted conservatively because default-feature resolution is not attempted). A
+(for example `autotests = false` without an explicit entry, an edition-2015 package whose explicit `[[test]]` entries disable auto-discovery, `harness = false`, or `required-features`, which is omitted conservatively because default-feature resolution is not attempted). When
+the seam's repair route is established, the stub also names the journey it
+feeds: human output prints `Next repair: ripr agent repair --root <root>
+--seam-id <id> --phase before` after the Write/Run lines, and the
+`rust_test_stub` document carries the same start command, the repair packet's
+admitted `allowed_edit_surface`, and — when the stub's placement differs from
+that surface — a `placement_divergence` naming both files (schema `0.3`,
+#8727). No route is invented when the packet cannot be established, notably
+for `--at --kind` file-parse selections. A
 `--at` path that matches files with gaps in several crates is refused; pass
 the full path or the seam ID.
 
