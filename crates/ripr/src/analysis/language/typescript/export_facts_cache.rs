@@ -27,7 +27,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::hash::Hasher;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 
 use oxc_parser::Parser;
@@ -57,7 +57,7 @@ fn facts_fingerprint(
 ) -> (u64, u64) {
     let mut first = std::collections::hash_map::DefaultHasher::new();
     first.write_u8(0xA7);
-    first.write(workspace_root.to_string_lossy().as_bytes());
+    workspace_root.hash(&mut first);
     first.write_u64(alias_digest.0);
     first.write_u64(alias_digest.1);
     first.write_u8(0x00);
@@ -72,7 +72,7 @@ fn facts_fingerprint(
     second.write_u8(0x00);
     second.write_u64(alias_digest.1);
     second.write_u64(alias_digest.0);
-    second.write(workspace_root.to_string_lossy().as_bytes());
+    workspace_root.hash(&mut second);
     (first.finish(), second.finish())
 }
 
@@ -94,22 +94,36 @@ impl ExportFactsCache {
         }
     }
 
-    fn insert(&mut self, key: CacheKey, facts: &ModuleExportFacts) {
-        let entry_bytes = key
-            .source_len
+    fn entry_bytes(key: &CacheKey, facts: &ModuleExportFacts) -> usize {
+        key.source_len
             .saturating_add(key.path.len())
-            .saturating_add(facts.approx_bytes());
+            .saturating_add(facts.approx_bytes())
+    }
+
+    fn insert(&mut self, key: CacheKey, facts: &ModuleExportFacts) {
+        let entry_bytes = Self::entry_bytes(&key, facts);
+        // Replacing a key swaps its retained bytes exactly; capture the old
+        // entry's bytes before the bounds check because an overflow clear
+        // drops them together with the map.
+        let replaced_bytes = self
+            .entries
+            .get(&key)
+            .map(|old| Self::entry_bytes(&key, old));
         if self.entries.len() >= self.max_entries
             || self.approx_bytes.saturating_add(entry_bytes) > self.max_approx_bytes
         {
             // Correctness-neutral: drop everything and start over.
             self.entries.clear();
             self.approx_bytes = 0;
+            self.approx_bytes = self.approx_bytes.saturating_add(entry_bytes);
+            self.entries.insert(key, facts.clone());
+            return;
         }
-        // Replacing an existing key double-counts its bytes; the bound is
-        // approximate by contract, so the drift is acceptable.
-        self.approx_bytes = self.approx_bytes.saturating_add(entry_bytes);
         self.entries.insert(key, facts.clone());
+        self.approx_bytes = self
+            .approx_bytes
+            .saturating_add(entry_bytes)
+            .saturating_sub(replaced_bytes.unwrap_or(0));
     }
 }
 
