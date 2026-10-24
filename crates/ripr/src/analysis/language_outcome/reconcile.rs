@@ -43,20 +43,28 @@ pub(crate) fn reconcile(
     // When both TypeScript ids are selected the one adapter runs per id and
     // the aggregate keeps one child per label (#6468). Repo mode retains the
     // adapter's findings once, while each label's child carries the adapter's
-    // whole count, so the family counts once there (#10013): the larger child
-    // replaces the sum of the two. Diff mode attributes findings to a label by
-    // the finding's own language, so its children already sum to the retained
-    // findings.
-    let both_typescript_ids =
-        selected.contains(&LanguageId::TypeScript) && selected.contains(&LanguageId::JavaScript);
-    if both_typescript_ids && aggregate.mode == OutcomeMode::Repo {
-        let family = ["typescript", "javascript"].map(|label| {
+    // whole count, so the family counts once there (#10013). Both passes see
+    // the same result, so the two children agree; the only legitimate
+    // difference is a pass that errored (a zero-finding failed child). Two
+    // different non-zero counts are a contradiction. Diff mode attributes
+    // findings to a label by the finding's own language, so its children
+    // already sum to the retained findings.
+    if selected.contains(&LanguageId::TypeScript)
+        && selected.contains(&LanguageId::JavaScript)
+        && aggregate.mode == OutcomeMode::Repo
+    {
+        let [typescript, javascript] = ["typescript", "javascript"].map(|label| {
             aggregate
                 .outcomes
                 .get(label)
                 .map_or(0, |child| child.finding_count())
         });
-        child_findings = child_findings - family[0] - family[1] + family[0].max(family[1]);
+        if typescript != 0 && javascript != 0 && typescript != javascript {
+            return Err(format!(
+                "language reconcile: the shared TypeScript adapter family carries {typescript} and {javascript} finding(s) in its two children"
+            ));
+        }
+        child_findings -= typescript.min(javascript);
     }
     let counts_agree = findings.len() == child_findings;
     if !counts_agree {
