@@ -7,7 +7,10 @@
 //! `dirty`. The fake `gh` serves JSON fixtures through the real `jq`, so the
 //! workflow's own `--jq` expressions are executed, not mirrored.
 
+#![cfg(unix)]
+
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -81,12 +84,12 @@ fn run(reads: &[String], existing: &str, case: &str) -> Result<Outcome, String> 
     fs::write(dir.join("bin/sleep"), "#!/bin/bash\nexit 0\n").map_err(|e| e.to_string())?;
     fs::write(dir.join("block.sh"), run_block()?).map_err(|e| e.to_string())?;
     for tool in ["gh", "sleep"] {
-        let status = Command::new("chmod")
-            .arg("+x")
-            .arg(dir.join("bin").join(tool))
-            .status()
-            .map_err(|e| e.to_string())?;
-        assert!(status.success());
+        let file = dir.join("bin").join(tool);
+        let mut mode = fs::metadata(&file)
+            .map_err(|e| e.to_string())?
+            .permissions();
+        mode.set_mode(0o755);
+        fs::set_permissions(&file, mode).map_err(|e| e.to_string())?;
     }
     let path = format!(
         "{}:{}",
