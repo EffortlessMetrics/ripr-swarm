@@ -35,3 +35,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — returned_closure_arithmetic_masking (4)
+
+Reason:
+RIPR-SPEC-0265: re-render after main's output legend and call-path wording changes; findings unchanged
+
+Command:
+`cargo xtask goldens bless returned_closure_arithmetic_masking --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
