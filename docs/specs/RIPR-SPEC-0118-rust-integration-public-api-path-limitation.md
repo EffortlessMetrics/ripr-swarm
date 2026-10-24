@@ -95,7 +95,9 @@ names alone:
    or restricted (`pub(crate)`), does not count.
 4. The owner is an unrestricted `pub` free function at module depth zero, or
    an unrestricted `pub` method of a `pub struct`/`enum`/`union` declared at
-   the root of a library file, and every module on the way is declared
+   the root of a library file with the `impl` at that file's root (the
+   impl must sit in the type's own file, not nested in a module), and every
+   module on the way is declared
    `pub mod` at the root of its parent file. A private, `pub(crate)`,
    trait-method, nested or unlocatable owner, a private module or type, or an
    owner in `src/main.rs` or `src/bin/*` never fires.
@@ -253,6 +255,7 @@ origin witnesses.
 | Static limit enum and text | `crates/ripr/src/domain/language.rs` |
 | Integration-vs-generic selection | `crates/ripr/src/analysis/language/rust/mod.rs` |
 | Facade re-export witness (#9982) | `crates/ripr/src/analysis/classify/facade_reach.rs` |
+| Doctest name-token guard (#9982) | `crates/ripr/src/analysis/classify/related_tests.rs` |
 | Path predicate reused by selection | `crates/ripr/src/analysis/rust_index.rs` |
 | LSP gap-artifact known-kind validation | `crates/ripr/src/lsp/gap_artifacts.rs` |
 | Output contract docs | `docs/OUTPUT_SCHEMA.md` |

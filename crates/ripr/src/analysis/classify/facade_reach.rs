@@ -84,9 +84,6 @@ pub(in crate::analysis) fn facade_reach_witness(
         let Some(directory) = dependent.strip_suffix("Cargo.toml") else {
             continue;
         };
-        let Some(facade_crate) = manifest_lib_crate_name(context.root, directory) else {
-            continue;
-        };
         let Some(declarations) = context
             .adjacency
             .forward_dependency_declarations(dependent, &owner_manifest)
@@ -103,6 +100,9 @@ pub(in crate::analysis) fn facade_reach_witness(
         if owner_crates.is_empty() {
             continue;
         }
+        let Some(facade_crate) = manifest_lib_crate_name(context.root, directory) else {
+            continue;
+        };
         let reach = reach_cache
             .get_or_insert_with(|| owner_reach(index, &owner_manifest, owner))
             .as_ref()?;
@@ -234,6 +234,12 @@ fn owner_reach(
             // The impl must sit in the type's own file: a same-named type in
             // another module is a different type.
             if type_file != in_src {
+                return None;
+            }
+            // The `impl` itself sits at the file root (the method is one
+            // level in): an impl nested in a module could be for another,
+            // private type of the same name.
+            if brace_depth_before_line(&stripped, owner.start_line) != 1 {
                 return None;
             }
             let mut path = module_chain(index, manifest_dir, &type_file)?;

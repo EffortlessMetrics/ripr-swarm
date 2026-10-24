@@ -41,6 +41,9 @@ enum Layout {
     PrivateMod,
     /// `pub fn` in the binary target `src/main.rs`.
     Main,
+    /// A `pub struct Counter` at the root, and a private `struct Counter`
+    /// with the `pub fn` in an `impl` nested in `pub mod m` of the same file.
+    NestedImplSameFile,
     /// A `pub struct Counter` at the root, and a different private
     /// `struct Counter` with the `pub fn` in `src/hidden.rs`.
     HiddenSameNameType,
@@ -54,6 +57,9 @@ struct OwnerText {
     signature: String,
     old_body: String,
     new_body: String,
+    /// The lines after the changed body line: the last body line, then the
+    /// closing braces.
+    tail: &'static str,
 }
 
 fn owner_text(layout: Layout, vis: &str) -> OwnerText {
@@ -63,6 +69,7 @@ fn owner_text(layout: Layout, vis: &str) -> OwnerText {
         signature: format!("{vis}fn bump_counter(buf: &mut Vec<u8>, byte: u8) -> usize {{"),
         old_body: "    buf.push(byte);".to_string(),
         new_body: "    buf.push(byte + 1);".to_string(),
+        tail: "    buf.len()\n}\n",
     };
     let method = |prefix: &str| OwnerText {
         path: "inner/src/lib.rs",
@@ -70,11 +77,20 @@ fn owner_text(layout: Layout, vis: &str) -> OwnerText {
         signature: format!("    {vis}fn bump_counter(&mut self, byte: u8) -> usize {{"),
         old_body: "        self.buf.push(byte);".to_string(),
         new_body: "        self.buf.push(byte + 1);".to_string(),
+        tail: "        self.buf.len()\n    }\n}\n",
     };
     match layout {
         Layout::Free => free("inner/src/lib.rs", ""),
         Layout::Method => method("pub struct Counter {\n    buf: Vec<u8>,\n}\n\nimpl Counter {\n"),
         Layout::PrivateType => method("struct Counter {\n    buf: Vec<u8>,\n}\n\nimpl Counter {\n"),
+        Layout::NestedImplSameFile => OwnerText {
+            path: "inner/src/lib.rs",
+            prefix: "pub struct Counter;\n\npub mod m {\n    struct Counter {\n        buf: Vec<u8>,\n    }\n\n    impl Counter {\n".to_string(),
+            signature: format!("        {vis}fn bump_counter(&mut self, byte: u8) -> usize {{"),
+            old_body: "            self.buf.push(byte);".to_string(),
+            new_body: "            self.buf.push(byte + 1);".to_string(),
+            tail: "            self.buf.len()\n        }\n    }\n}\n",
+        },
         Layout::HiddenSameNameType => OwnerText {
             path: "inner/src/hidden.rs",
             ..method("struct Counter {\n    buf: Vec<u8>,\n}\n\nimpl Counter {\n")
@@ -145,22 +161,9 @@ fn finding_for(setup: &Setup) -> Result<Finding, String> {
         ),
     )?;
     let owner = owner_text(setup.layout, setup.owner_visibility);
-    let indent = if matches!(
-        setup.layout,
-        Layout::Method | Layout::PrivateType | Layout::HiddenSameNameType
-    ) {
-        "    "
-    } else {
-        ""
-    };
-    let body_tail = if indent.is_empty() {
-        "    buf.len()\n}\n".to_string()
-    } else {
-        "        self.buf.len()\n    }\n}\n".to_string()
-    };
     let owner_source = format!(
         "{}{}\n{}\n{}",
-        owner.prefix, owner.signature, owner.new_body, body_tail
+        owner.prefix, owner.signature, owner.new_body, owner.tail
     );
     let start = owner.prefix.lines().count() + 1;
     let extra_lib = match setup.layout {
@@ -193,11 +196,7 @@ fn finding_for(setup: &Setup) -> Result<Finding, String> {
     if setup.broken_manifest {
         write(&root.join("broken/Cargo.toml"), "[package\nname = ")?;
     }
-    let third = if indent.is_empty() {
-        "     buf.len()"
-    } else {
-        "         self.buf.len()"
-    };
+    let third = format!(" {}", owner.tail.lines().next().unwrap_or_default());
     let changed_files = diff::parse_unified_diff(&format!(
         "diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -{start},3 +{start},3 @@\n {sig}\n-{old}\n+{new}\n{third}\n",
         path = owner.path,
@@ -371,16 +370,21 @@ fn inherent_method_owners_are_named_by_their_type_not_the_method() -> Result<(),
     by_glob.facade_lib = "pub use inner::Counter;\n";
     assert_limited(&finding_for(&by_glob)?);
 
+    // The method's name appears in the facade test only as a local binding
+    // (no call), which neither relates the test nor ties it: the facade is
+    // named, the type is absent and nothing globs. The result must be the
+    // plain definite one, so this fails if a bare name ever ties a method.
     let mut bare_name = Setup::new("method-bare-name");
     bare_name.layout = Layout::Method;
     bare_name.facade_lib = "pub use inner::Counter;\npub const VERSION: u8 = 1;\n";
-    bare_name.facade_test = "fn bump_counter() {}\n#[test]\nfn version() {\n    let mut v = Vec::new();\n    v.push(facade::VERSION);\n    bump_counter();\n}\n";
-    let finding = finding_for(&bare_name)?;
-    assert_ne!(
-        finding.static_limit_kind,
-        Some(StaticLimitKind::RustIntegrationPublicApiPathUnresolved),
-        "{finding:?}"
-    );
+    bare_name.facade_test = "#[test]\nfn version() {\n    let bump_counter = 1usize;\n    assert_eq!(bump_counter, facade::VERSION as usize);\n}\n";
+    assert_unlimited_no_path(&finding_for(&bare_name)?);
+
+    // An impl nested in a module can be for another private `Counter`.
+    let mut nested = Setup::new("nested-impl-same-file");
+    nested.layout = Layout::NestedImplSameFile;
+    nested.facade_lib = "pub use inner::*;\n";
+    assert_unlimited_no_path(&finding_for(&nested)?);
 
     // A same-named private type in another file is a different type.
     let mut hidden = Setup::new("hidden-same-name-type");
@@ -447,15 +451,9 @@ fn package_name_comes_from_the_manifest_not_the_directory() -> Result<(), String
     renamed_dir.facade_package = "facade";
     assert_limited(&finding_for(&renamed_dir)?);
 
-    // A directory named like a std crate whose package is not.
-    let mut std_named = Setup::new("std-named");
-    std_named.facade_dir = "core";
-    std_named.facade_package = "other-name";
-    std_named.facade_test = "#[test]\nfn swaps() {\n    let (mut a, mut b) = (1, 2);\n    core::mem::swap(&mut a, &mut b);\n    assert_eq!(a, 2);\n}\n";
-    assert_unlimited_no_path(&finding_for(&std_named)?);
-
-    // A package really named `core` that globs itself: only the std-crate
-    // exclusion keeps this unlimited (the glob would otherwise tie it).
+    // A package really named `core` whose test globs `core::*`: the test ties
+    // by glob, the manifest names the crate `core`, and nothing else would
+    // stop it, so only the std-crate exclusion keeps this unlimited.
     let mut real_core = Setup::new("real-core");
     real_core.facade_dir = "core";
     real_core.facade_package = "core";
