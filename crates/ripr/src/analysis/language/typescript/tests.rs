@@ -15288,6 +15288,69 @@ fn expected_side_is_live_unique_line_still_folds_liveness() {
     );
 }
 
+/// A test that still pins the pre-change value at the boundary input fails
+/// against the changed code, so its expectation tells the two behaviors
+/// apart: live. An expectation equal under both behaviors, or neither, is
+/// not.
+#[test]
+fn expected_side_is_live_credits_an_expectation_pinning_the_unchanged_value() {
+    let owner = boundary_witness_owner();
+    // At 100 the changed `>=` takes the discount (90); the unchanged
+    // behavior returned 100.
+    for expected in ["90", "100"] {
+        assert_eq!(
+            expected_side_is_live(
+                &owner,
+                "  if (total >= 100) {",
+                "total",
+                "100",
+                &["100".to_string()],
+                expected,
+            ),
+            Some(true),
+            "{expected}"
+        );
+    }
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "  if (total >= 100) {",
+            "total",
+            "100",
+            &["100".to_string()],
+            "95",
+        ),
+        Some(false),
+        "an expectation matching neither behavior stays dead"
+    );
+    let same_branches = TypeScriptOwner {
+        source_text: Some(
+            concat!(
+                "export function applyDiscount(total: number): number {\n",
+                "    if (total >= 100) {\n",
+                "        return 7;\n",
+                "    }\n",
+                "    return 7;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        ..boundary_witness_owner()
+    };
+    assert_eq!(
+        expected_side_is_live(
+            &same_branches,
+            "  if (total >= 100) {",
+            "total",
+            "100",
+            &["100".to_string()],
+            "7",
+        ),
+        Some(false),
+        "an expectation equal under both behaviors discriminates nothing"
+    );
+}
+
 /// Signed matcher text (`-1`, `+1`) is a numeric expected value. On the
 /// discount boundary it matches neither 90 nor 100, so it is dead rather
 /// than an unparsed `None` that would leave the witness standing (#7647).
@@ -15362,7 +15425,7 @@ fn expected_side_is_live_credits_a_signed_live_expected_value() {
             "n",
             "0",
             &["0".to_string()],
-            "1",
+            "2",
         ),
         Some(false)
     );

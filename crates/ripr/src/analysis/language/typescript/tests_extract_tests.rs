@@ -916,6 +916,71 @@ fn identity_helpers_read_only_unrebound_top_level_identity_functions() {
     assert_eq!(script("const o = {};\nwith (o) {\n}"), Vec::<String>::new());
 }
 
+/// A skipped suite registers nothing and its callback never runs, so a
+/// registration inside it is not a dropped one. The active-but-unwalked
+/// registration beside it is still disclosed.
+#[test]
+fn skipped_describe_registrations_are_not_a_partial_extraction() {
+    let file = Path::new("test/rank.test.ts");
+    for header in [
+        "describe.skip(\"medal\", () => {",
+        "describe.only.skip(\"medal\", () => {",
+        "describe(\"medal\", { skip: true }, () => {",
+    ] {
+        let source = format!(
+            "import {{ medal }} from \"../src/rank\";\n{header}\n  it(\"awards bronze\", () => {{ expect(medal(50)).toBe(\"bronze\"); }});\n}});\n"
+        );
+        let tests = extract_tests(file, &source);
+        assert!(tests.is_empty(), "{header}: {tests:?}");
+        assert!(
+            detect_partial_test_extraction(file, &source, &tests).is_none(),
+            "{header}"
+        );
+    }
+    // A skipped suite bound to a variable is not walked either.
+    let source = "import { medal } from \"../src/rank\";\nconst suite = describe.skip(\"medal\", () => {\n  it(\"awards bronze\", () => { expect(medal(50)).toBe(\"bronze\"); });\n});\n";
+    let tests = extract_tests(file, source);
+    assert!(
+        detect_partial_test_extraction(file, source, &tests).is_none(),
+        "variable-initializer skipped suite"
+    );
+    // Controls: a dynamic skip, a spread, `fails` and `expectFailure` leave
+    // the suite active, so its unindexed registration stays disclosed.
+    for options in [
+        "{ skip: process.platform === \"win32\" }",
+        "{ skip: cond }",
+        "{ ...opts }",
+        "{ fails: true }",
+        "{ expectFailure: true }",
+        "{ skip: false }",
+        "{ skip: true, ...opts }",
+        "{ skip: true, [key]: false }",
+        "{ todo: true }",
+    ] {
+        let source = format!(
+            "import {{ medal }} from \"../src/rank\";\ndescribe(\"medal\", {options}, () => {{\n  const rows = load();\n  for (const row of rows) {{\n    it(\"awards\", () => {{ expect(medal(row)).toBe(\"bronze\"); }});\n  }}\n}});\n"
+        );
+        let tests = extract_tests(file, &source);
+        assert!(
+            detect_partial_test_extraction(file, &source, &tests).is_some(),
+            "{options}"
+        );
+    }
+    // Control: the same registration under an active describe-shaped
+    // helper callback stays disclosed, and so does one under an active
+    // `describe` that is unwalked because it sits in a helper function.
+    for source in [
+        "import { medal } from \"../src/rank\";\nfunction register() {\n  it(\"awards bronze\", () => { expect(medal(50)).toBe(\"bronze\"); });\n}\n",
+        "import { medal } from \"../src/rank\";\ndescribe.skip(\"medal\", () => {});\nfunction register() {\n  it(\"awards bronze\", () => { expect(medal(50)).toBe(\"bronze\"); });\n}\n",
+    ] {
+        let tests = extract_tests(file, source);
+        assert!(
+            detect_partial_test_extraction(file, source, &tests).is_some(),
+            "{source}"
+        );
+    }
+}
+
 /// RIPR-SPEC-0243 rule 17 (#9497): a `node:test` callback that calls
 /// `t.skip()` / `t.todo()` ends skipped or todo however its assertions would
 /// have gone, so it registers no discriminator. Negative: the same body
