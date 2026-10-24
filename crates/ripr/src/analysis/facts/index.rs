@@ -138,6 +138,9 @@ pub struct RustIndex {
     /// member's library, read from member manifests. Unset for an index
     /// assembled without a manifest walk, which names nothing.
     pub(crate) member_crates: super::member_crates::MemberCrates,
+    /// All module parents approved by composition, independently of its
+    /// canonical role explanation. Transient: rebuilt after file-cache reads.
+    pub(crate) execution_module_parents: Option<BTreeMap<PathBuf, Vec<SourceRoleProvenanceEdge>>>,
     pub include_parents: BTreeMap<PathBuf, ResolvedIncludeParent>,
     pub include_limitations: Vec<RustIncludeLimitation>,
     pub non_utf8_sources: BTreeSet<PathBuf>,
@@ -513,6 +516,7 @@ impl RustIndex {
     /// Insert each supplied occurrence once. Shared membership is explicit;
     /// equal names, coordinates and bodies never collapse two occurrences.
     pub fn insert_file(&mut self, path: PathBuf, facts: FileFacts, flat: bool) {
+        self.execution_module_parents = None;
         self.call_identity_memos.clear();
         self.bump_membership_revision();
         let FileFacts {
@@ -603,6 +607,7 @@ impl RustIndex {
             return false;
         };
         self.call_identity_memos.clear();
+        self.execution_module_parents = None;
         // Purge the flat memberships too: `finalize` keeps every record a
         // flat order names, so a removed file's tests and functions would
         // otherwise survive as evidence (and a changed file would appear

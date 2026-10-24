@@ -4558,6 +4558,131 @@ mod tests {
         assert!(!rendered.contains("complete the missing repair-packet fields"));
     }
 
+    /// #5531: a repo-scoped Python finding with no repair card is held by the
+    /// missing repo-mode repair_routing cell, so the safe action says that
+    /// (registry-derived) instead of blaming test placement; the diff-mode
+    /// control keeps the placement reason byte-for-byte.
+    #[test]
+    fn repo_scoped_python_no_card_names_scope_not_placement() {
+        let mut diff = python_preview_finding(5, false);
+        diff.activation.missing_discriminators.clear();
+        let mut with_disc = diff.clone();
+        with_disc.activation.missing_discriminators =
+            vec![crate::domain::MissingDiscriminatorFact {
+                value: "amount == 100".to_string(),
+                reason: "boundary".to_string(),
+                flow_sink: None,
+            }];
+        assert!(crate::output::python_repair_card::python_repair_card(&diff).is_none());
+        let scope_reason = "repo-mode findings have no repair routing (python/any/repo/repair_routing is not_proven)";
+        for diff_finding in [diff, with_disc] {
+            let placement = render(&single_finding_output(diff_finding.clone()));
+            assert!(!placement.contains(scope_reason), "{placement}");
+            let mut repo = diff_finding;
+            repo.mark_repo_scoped();
+            let rendered = render(&single_finding_output(repo));
+            assert!(
+                rendered.contains(&format!("has no repair card ({scope_reason})")),
+                "{rendered}"
+            );
+            assert!(!rendered.contains("test placement or related-test evidence is incomplete"));
+            assert!(!rendered.contains("names no concrete missing discriminator"));
+        }
+        // Diff-mode placement text is unchanged.
+        let mut placed = python_preview_finding(5, false);
+        placed.activation.missing_discriminators = vec![crate::domain::MissingDiscriminatorFact {
+            value: "amount == 100".to_string(),
+            reason: "boundary".to_string(),
+            flow_sink: None,
+        }];
+        assert!(render(&single_finding_output(placed)).contains(
+            "has no repair card (its test placement or related-test evidence is incomplete)"
+        ));
+    }
+
+    /// #5531: a contradictory Python finding (typed `Diff` plus the legacy
+    /// `analysis_scope: repo` evidence line) fails closed in the capability
+    /// gate and must not borrow the scope reason: the typed scope selects it.
+    #[test]
+    fn contradictory_python_finding_does_not_get_scope_reason() {
+        let mut finding = python_preview_finding(5, false);
+        finding
+            .evidence
+            .push(crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
+        assert_eq!(finding.analysis_mode(), None);
+        let rendered = render(&single_finding_output(finding));
+        assert!(!rendered.contains("repo-mode findings"), "{rendered}");
+        assert!(rendered.contains("has no repair card ("), "{rendered}");
+    }
+
+    /// #5531: a repo-scoped no-path Python finding keeps its test-gap reason;
+    /// scope text only replaces the placement/discriminator reasons.
+    #[test]
+    fn repo_scoped_python_no_static_path_keeps_test_gap_reason() {
+        let mut finding = unknown_finding();
+        finding.class = ExposureClass::NoStaticPath;
+        finding.language = Some(LanguageId::Python);
+        finding.language_status = Some(LanguageStatus::Preview);
+        finding.probe.location = SourceLocation::new("pricing/__init__.py", 11, 1);
+        finding.mark_repo_scoped();
+        let rendered = render(&single_finding_output(finding));
+        assert!(
+            rendered.contains("no Python test reaches this code"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("repo-mode findings have no repair routing"));
+    }
+
+    /// #5531: repo-scoped TypeScript/JavaScript findings name the scope; the
+    /// diff control, and a contradictory legacy-line-only finding (no typed
+    /// repo scope, which fails closed), do not.
+    #[test]
+    fn repo_scoped_typescript_closed_packet_names_scope() {
+        for (language, cell) in [
+            (LanguageId::TypeScript, "typescript"),
+            (LanguageId::JavaScript, "javascript"),
+        ] {
+            let scope_reason = format!(
+                "repo-mode findings have no repair routing ({cell}/any/repo/repair_routing is not_proven)"
+            );
+            let mut diff = typescript_preview_finding(true);
+            diff.language = Some(language);
+            let diff_text = render(&single_finding_output(diff.clone()));
+            assert!(!diff_text.contains("repo-mode findings"), "{diff_text}");
+
+            let mut repo = diff.clone();
+            repo.mark_repo_scoped();
+            // The specific per-finding reason is kept after the scope reason.
+            let specific = "TypeScript preview lacks a complete repair packet contract";
+            let why = crate::output::preview_actionability::preview_actionability_for(&repo)
+                .map(|a| a.why_not_actionable);
+            assert_eq!(why, Some(format!("{scope_reason}; {specific}")));
+            let rendered = render(&single_finding_output(repo.clone()));
+            assert!(
+                rendered.contains(&format!("repair packet is not ready ({scope_reason}; ")),
+                "{rendered}"
+            );
+            // The `limitation:` row uses the same scope-qualified reason.
+            let card = render_finding(&repo);
+            assert!(
+                card.contains(&format!("limitation: {scope_reason}; {specific}")),
+                "{card}"
+            );
+            assert!(!render_finding(&diff).contains("repo-mode findings"));
+
+            let mut legacy = diff;
+            legacy
+                .evidence
+                .push(crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
+            let why = crate::output::preview_actionability::preview_actionability_for(&legacy)
+                .map(|a| a.why_not_actionable);
+            assert!(
+                !why.is_some_and(|w| w.contains("repo-mode findings")),
+                "typed scope, not the evidence line, selects the reason"
+            );
+        }
+    }
+
     fn single_finding_output(finding: Finding) -> CheckOutput {
         CheckOutput {
             harness_projections: Vec::new(),
@@ -6171,6 +6296,124 @@ mod tests {
         assert!(rendered.contains("  after:  assert_eq!(msg, \"a b\")"));
     }
 
+    /// A match-arm probe keeps the parser's head as `after` while `before` can
+    /// be the whole old arm. The head alone reads as an arm that lost its body,
+    /// so the row says it is the head and where the new body is (#9244).
+    #[test]
+    fn render_finding_marks_a_match_arm_head_only_after_row() {
+        let mut finding = sample_finding();
+        finding.probe.family = crate::domain::ProbeFamily::MatchArm;
+        finding.probe.before = Some("Tier::Pro => seats * 20 + 5,".to_string());
+        finding.probe.after = Some("Tier::Pro =>".to_string());
+
+        let rendered = render_finding(&finding);
+
+        assert!(rendered.contains("  before: Tier::Pro => seats * 20 + 5,\n"));
+        assert!(rendered.contains("  after:  Tier::Pro =>\n"));
+        assert!(
+            rendered.contains("(arm head only; open the arm at "),
+            "a head-only after row must say so; got:\n{rendered}"
+        );
+        assert!(rendered.contains(":7 to read its new body)"));
+    }
+
+    /// An arrow inside a literal or comment is not the head's arrow.
+    #[test]
+    fn render_finding_arm_note_ignores_arrows_in_literals_and_comments() {
+        for (before, after) in [
+            ("\"a=>b\" => 10,", "\"a=>b\" =>"),
+            ("0 /* => */ => 10,", "0 /* => */ =>"),
+        ] {
+            let mut finding = sample_finding();
+            finding.probe.family = crate::domain::ProbeFamily::MatchArm;
+            finding.probe.before = Some(before.to_string());
+            finding.probe.after = Some(after.to_string());
+            assert!(
+                render_finding(&finding).contains("(arm head only; open the arm at "),
+                "{after}"
+            );
+        }
+        let mut nested = sample_finding();
+        nested.probe.family = crate::domain::ProbeFamily::MatchArm;
+        nested.probe.before = Some("a => b => 1,".to_string());
+        nested.probe.after = Some("a => b => 2,".to_string());
+        assert!(!render_finding(&nested).contains("arm head only"));
+    }
+
+    /// Masking may hide a whole literal body, including its delimiters. A
+    /// final arm need not have a trailing comma to establish that body.
+    #[test]
+    fn render_finding_arm_note_preserves_literal_body_presence() {
+        for body in [
+            "\"old\"",
+            "\"\"",
+            "'a'",
+            "'é'",
+            r"'\n'",
+            "r#\"old\"#",
+            "b'a'",
+            "/* \"not code\" */ \"body\"",
+        ] {
+            let mut finding = sample_finding();
+            finding.probe.family = crate::domain::ProbeFamily::MatchArm;
+            finding.probe.before = Some(format!("false => {body}"));
+            finding.probe.after = Some("false =>".to_string());
+            assert!(render_finding(&finding).contains("arm head only"), "{body}");
+
+            finding.probe.before = Some("false => 10,".to_string());
+            finding.probe.after = Some(format!("false => {body}"));
+            assert!(
+                !render_finding(&finding).contains("arm head only"),
+                "{body}"
+            );
+        }
+        for suffix in [
+            "",
+            "/* old body unread */",
+            "// \"not a body\"",
+            "/* 'x' */",
+        ] {
+            let mut finding = sample_finding();
+            finding.probe.family = crate::domain::ProbeFamily::MatchArm;
+            finding.probe.before = Some(format!("false => {suffix}"));
+            finding.probe.after = Some("false =>".to_string());
+            assert!(
+                !render_finding(&finding).contains("arm head only"),
+                "{suffix}"
+            );
+        }
+    }
+
+    /// Discriminating negatives: a pattern-only edit (old arm is also just a
+    /// head), a complete after arm, and a non-arm family add no note.
+    #[test]
+    fn render_finding_adds_no_arm_note_when_the_after_row_is_complete() {
+        let mut head_edit = sample_finding();
+        head_edit.probe.family = crate::domain::ProbeFamily::MatchArm;
+        head_edit.probe.before = Some("1..=8 =>".to_string());
+        head_edit.probe.after = Some("1..=9 =>".to_string());
+        assert!(!render_finding(&head_edit).contains("arm head only"));
+
+        // The producer joins the old body into `before` for a multiline head, so
+        // a pattern-only edit arrives as a changed head over a bodied before.
+        let mut multiline_head_edit = sample_finding();
+        multiline_head_edit.probe.family = crate::domain::ProbeFamily::MatchArm;
+        multiline_head_edit.probe.before = Some("0..=3 => 10,".to_string());
+        multiline_head_edit.probe.after = Some("0..=4 =>".to_string());
+        assert!(!render_finding(&multiline_head_edit).contains("arm head only"));
+
+        let mut whole = sample_finding();
+        whole.probe.family = crate::domain::ProbeFamily::MatchArm;
+        whole.probe.before = Some("Tier::Pro => seats * 20,".to_string());
+        whole.probe.after = Some("Tier::Pro => seats * 25,".to_string());
+        assert!(!render_finding(&whole).contains("arm head only"));
+
+        let mut other_family = sample_finding();
+        other_family.probe.before = Some("x => y,".to_string());
+        other_family.probe.after = Some("x =>".to_string());
+        assert!(!render_finding(&other_family).contains("arm head only"));
+    }
+
     /// The `expr:` fallback is the same rendered fragment reached through a
     /// different branch, so it gets the same treatment: wrapped, complete, and
     /// not whitespace-normalized.
@@ -6734,9 +6977,15 @@ mod tests {
             "missing = named discriminator absent from tests",
             "not established = discriminator unconfirmed",
             "not applicable = stage unused",
+            // #9244 item 4: the words the Summary count line prints.
+            "probe = one changed behavior checked",
+            "exposed/weak = tests appear to notice it fully/partly",
+            "unrevealed = tests reach it but nothing appears to notice",
+            "no path = no test path found",
         ] {
             assert!(rendered.contains(meaning), "missing {meaning}:\n{rendered}");
         }
+        assert_eq!(rendered.matches("    Summary terms:").count(), 1);
         assert!(rendered.contains("2 lower-priority finding(s) omitted"));
         assert!(rendered.contains("more detail line(s) in --format human-full"));
         assert!(rendered.lines().all(|line| line.chars().count() <= 180));
