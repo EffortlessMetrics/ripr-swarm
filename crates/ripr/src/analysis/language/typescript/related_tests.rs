@@ -2793,6 +2793,7 @@ pub(crate) fn related_tests_for_candidates(
                 relation_reason,
                 relation_confidence,
                 miss: None,
+                miss_support: None,
             }
         })
         .collect()

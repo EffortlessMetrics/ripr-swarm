@@ -1190,6 +1190,7 @@ mod tests {
             relation_reason: Some(RelationReason::DirectOwnerCall),
             relation_confidence: Some(RelationConfidence::High),
             miss: None,
+            miss_support: None,
         }
     }
 

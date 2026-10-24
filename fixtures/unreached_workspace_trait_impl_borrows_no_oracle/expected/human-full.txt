@@ -1,0 +1,88 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/unreached_workspace_trait_impl_borrows_no_oracle/input
+
+Summary: 2 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 2 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+
+WARNING ./src/lib.rs:11
+  id: probe:src_lib.rs:error_path:84ce0ae1
+
+Changed
+  before: Err("ovf".to_string())
+  after:  Err("overflow".to_string())
+
+Probe
+  family: error_path
+  delta:  value
+  owner:  src/lib.rs::impl Step for Inc::process
+  canonical gap: gap:rust:src/lib.rs:impl Step for Inc::process:error_variant:error_path:err_lit6f766572666c6f77.to_string
+
+Static exposure
+  no_static_path (warning, confidence 0.35)
+
+Evidence
+  - reach no: No test is seen calling process; tests share only its file or a name token: other_test
+  - infection no: No test reaches the changed owner, so no test can activate this change
+  - propagation weak: No complete owner-bound propagation witness found for error variant: Result::Err("overflow".to_string())
+  - observation no: No test reaches the changed owner, so no test can observe this change
+  - discriminator no: No test reaches the changed owner, so no test can discriminate this change
+  - local flow reaches error variant: Result::Err("overflow".to_string()) (line 11)
+  - related test src/lib.rs:29 other_test uses strong exact error variant oracle: assert_eq!(other(250), Err("big".to_string())); misses: no call to the changed code found; linked by file location only
+  - source assertion argument value 1 at line 30
+  - source assertion argument value "big" at line 31
+  - source assertion argument value 250 at line 31
+
+Weakness
+  - No exact error variant discriminator was detected
+
+Next step
+  ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists
+Drill in:
+  ripr explain --root <cwd>/fixtures/unreached_workspace_trait_impl_borrows_no_oracle/input --diff <cwd>/fixtures/unreached_workspace_trait_impl_borrows_no_oracle/diff.patch --mode fast probe:src_lib.rs:error_path:84ce0ae1
+  ripr context --root <cwd>/fixtures/unreached_workspace_trait_impl_borrows_no_oracle/input --diff <cwd>/fixtures/unreached_workspace_trait_impl_borrows_no_oracle/diff.patch --mode fast --at probe:src_lib.rs:error_path:84ce0ae1
+
+WARNING ./src/lib.rs:11
+  id: probe:src_lib.rs:match_arm:c973c4dc
+
+Changed
+  before: None => Err("ovf".to_string()),
+  after:  None =>
+          (arm head only; open the arm at ./src/lib.rs:11 to read its new body)
+
+Probe
+  family: match_arm
+  delta:  control
+  owner:  src/lib.rs::impl Step for Inc::process
+  canonical gap: gap:rust:src/lib.rs:impl Step for Inc::process:match_arm:match_arm:none
+
+Static exposure
+  no_static_path (warning, confidence 0.43)
+
+Evidence
+  - reach no: No test is seen calling process; tests share only its file or a name token: other_test
+  - infection no: No test reaches the changed owner, so no test can activate this change
+  - propagation yes: Changed behavior appears to influence match arm result: None =>
+  - observation no: No test reaches the changed owner, so no test can observe this change
+  - discriminator no: No test reaches the changed owner, so no test can discriminate this change
+  - local flow reaches match arm result: None => (line 11)
+  - related test src/lib.rs:29 other_test uses strong exact value oracle: assert_eq!(other(1), Ok(1)); misses: no call to the changed code found; linked by file location only
+  - related test src/lib.rs:29 other_test uses strong exact error variant oracle: assert_eq!(other(250), Err("big".to_string())); misses: no call to the changed code found; linked by file location only
+  - source assertion argument value 1 at line 30
+  - source assertion argument value "big" at line 31
+  - source assertion argument value 250 at line 31
+
+Next step
+  ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists
+Drill in:
+  ripr explain --root <cwd>/fixtures/unreached_workspace_trait_impl_borrows_no_oracle/input --diff <cwd>/fixtures/unreached_workspace_trait_impl_borrows_no_oracle/diff.patch --mode fast probe:src_lib.rs:match_arm:c973c4dc
+  ripr context --root <cwd>/fixtures/unreached_workspace_trait_impl_borrows_no_oracle/input --diff <cwd>/fixtures/unreached_workspace_trait_impl_borrows_no_oracle/diff.patch --mode fast --at probe:src_lib.rs:match_arm:c973c4dc
+
+
+Note: ripr found no static test path for any of the 2 changed expression(s) in this diff. Scope
+  analyzed: 1 changed Rust file(s), 2 changed expression(s), and 1 statically linked related
+  test(s). This is not a coverage assessment. A test may already exercise these changes through
+  macros, helper-call chains, or integration tests that ripr's static model does not yet trace; if
+  none does, add co-located tests that observe the changed behavior.

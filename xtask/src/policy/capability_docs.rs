@@ -15,7 +15,7 @@
 //! missing, duplicated or reversed markers, and an empty or malformed
 //! rendering, are errors and nothing is written.
 //!
-//! Limits: not wired into `precommit` or any required lane, because producing
+//! Limits: not wired into `precommit` (hosted in rust-gates.yml and the docs-gate), because producing
 //! the rendering needs a `ripr` build (see docs/CI.md). `--markdown-file`
 //! reads a saved rendering instead (offline, can be stale).
 use std::path::{Path, PathBuf};
@@ -81,14 +81,14 @@ pub(crate) fn capability_docs(args: &[String]) -> Result<(), String> {
                 intro: format!("{source_note}."),
                 items: vec![
                     "Enforced: the marker block in docs/status/SUPPORT_TIERS.md equals the registry's own rendering.".to_string(),
-                    "Not enforced here: tier prose and row bindings (the in-crate drift test and check-support-tiers). Not part of precommit or any required lane.".to_string(),
+                    "Not enforced here: tier prose and row bindings (the in-crate drift test and check-support-tiers). Not part of precommit; hosted in rust-gates.yml and the docs-gate.".to_string(),
                 ],
             }];
             crate::finish_policy_report_with_disclosures(
                 PolicyReportSpec {
                     report_file: "capability-docs.md",
                     check: "capability-docs",
-                    why_it_matters: "The capability-registry block in SUPPORT_TIERS.md is a generated projection of the registry. A hand edit or a missed regeneration makes the doc state a support state the binary does not. When run, this reports a stale block as a failure; it is not wired into any required lane.",
+                    why_it_matters: "The capability-registry block in SUPPORT_TIERS.md is a generated projection of the registry. A hand edit or a missed regeneration makes the doc state a support state the binary does not. When run, this reports a stale block as a failure; it runs in rust-gates.yml and, for SUPPORT_TIERS.md or docs/specs changes, the docs-gate.",
                     fix_kind: FixKind::AuthorDecisionRequired,
                     recommended_fixes: &[
                         "Run `cargo xtask capability-docs --write` to regenerate only the marker block.",

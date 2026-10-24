@@ -628,7 +628,7 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
             // listing a `none` oracle grade.
             let why = crate::output::related_test_miss::related_test_miss_reason(
                 test,
-                &finding.activation.missing_discriminators,
+                &finding.probe.family,
             );
             // #5927: only an unmatched row uses the `misses/checked` form, as
             // in human output; a matched row keeps its oracle kind and

@@ -306,6 +306,18 @@ Updated:
 ## Pending — error_variant_wrapper_wrong_receiver_pin (24)
 
 Reason:
+RIPR-SPEC-0108: a name-token relation no longer credits an oracle (#9169)
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_wrong_receiver_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — error_variant_wrapper_wrong_receiver_pin (25)
+
+Reason:
 RIPR-SPEC-0122: route-not-ready refusal names its missing evidence (#9604 batch C)
 
 Command:

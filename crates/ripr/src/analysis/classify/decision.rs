@@ -1005,6 +1005,7 @@ mod tests {
             relation_reason: Some(relation_reason),
             relation_confidence: Some(RelationConfidence::High),
             miss,
+            miss_support: None,
         }
     }
 
