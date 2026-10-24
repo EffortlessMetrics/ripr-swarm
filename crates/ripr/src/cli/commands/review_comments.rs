@@ -317,7 +317,7 @@ fn load_review_comments_analysis_outcome(
             path.display()
         ));
     }
-    // #9010: a findings-bounded check document is a prefix, never a complete
+    // #9010: a findings-bounded check document is a bounded subset, never a complete
     // outcome; present non-`true` (including malformed) fails closed.
     if crate::output::gate::discloses_limited_findings_bound(&value)
         || crate::output::gate::discloses_bounded_analysis_document(&value)

@@ -695,8 +695,31 @@ fn holds_wrapped_test(side: &str) -> bool {
             .unwrap_or(element);
         let value = if record { field_value(value) } else { value };
         let value = block_tail(value);
-        is_bool_test(value) || holds_wrapped_test(value)
+        // A closure holds its body unevaluated: the test inside it is not
+        // the value compared (`Foo::new(|v| v == 1)`; #8654).
+        !is_closure(value) && (is_bool_test(value) || holds_wrapped_test(value))
     })
+}
+
+/// Whether `side` is a constructor or `new` call whose arguments are all
+/// closures: the closures' tests are never evaluated into the value
+/// (`Foo::new(|v| v == 1)`; #8654).
+fn holds_only_closures(side: &str) -> bool {
+    wrapper_contents(peel_references_and_groups(side)).is_some_and(|contents| {
+        let elements = split_top_level_commas(contents);
+        let mut present = elements.iter().filter(|element| !element.trim().is_empty());
+        present.clone().next().is_some() && present.all(|element| is_closure(element))
+    })
+}
+
+/// Whether `text` is a closure expression (`|v| ..`, `|| ..`, `move |v| ..`).
+fn is_closure(text: &str) -> bool {
+    let text = text.trim_start();
+    let text = text
+        .strip_prefix("move")
+        .filter(|rest| rest.starts_with(char::is_whitespace) || rest.starts_with('|'))
+        .unwrap_or(text);
+    text.trim_start().starts_with('|')
 }
 
 /// Whether `side` reads a field or calls a method (other than a
@@ -730,10 +753,11 @@ fn holds_other_elements(text: &str) -> bool {
     let contents = wrapper_contents(text)
         .or_else(|| record_contents(text))
         .or_else(|| tuple_contents(text));
+    // A comment after a trailing comma is no element (`(x == 1, /* note */)`).
     contents.is_some_and(|contents| {
         split_top_level_commas(contents)
             .iter()
-            .filter(|element| !element.trim().is_empty())
+            .filter(|element| !mask_comments_and_strings(element).trim().is_empty())
             .nth(1)
             .is_some()
     })
@@ -955,15 +979,23 @@ fn shaped_wrapper_argument(text: &str) -> Option<(&str, String)> {
     // A turbofish names the wrapper's type, not another wrapper
     // (`Ok::<bool, ()>(_)` or `Box::<bool>::new(_)` against the plain
     // spelling), and `Option::Some` is `Some`.
-    let head = replace_path(
-        &replace_path(
-            &strip_path_generics(&squeeze(&before)),
-            "Option::Some",
-            "Some",
-        ),
-        "Result::Ok",
-        "Ok",
-    );
+    let head = strip_path_generics(&squeeze(&before));
+    let head = head.trim_start_matches("::");
+    let mut head = head.to_string();
+    // The standard wrappers spelled out in full are the same wrapper
+    // (`std::option::Option::Some`, `core::result::Result::Ok`; #8654).
+    for (from, to) in [
+        ("std::option::Option::Some", "Some"),
+        ("core::option::Option::Some", "Some"),
+        ("option::Option::Some", "Some"),
+        ("Option::Some", "Some"),
+        ("std::result::Result::Ok", "Ok"),
+        ("core::result::Result::Ok", "Ok"),
+        ("result::Result::Ok", "Ok"),
+        ("Result::Ok", "Ok"),
+    ] {
+        head = replace_path(&head, from, to);
+    }
     let callee = head.trim_end_matches('(');
     let associated = callee.ends_with("::new") || callee.ends_with("::from");
     let standard = ["Box::new", "Rc::new", "Arc::new"]
@@ -972,7 +1004,14 @@ fn shaped_wrapper_argument(text: &str) -> Option<(&str, String)> {
     if associated && !standard {
         return None;
     }
-    Some((inner, format!("{head}_{}", squeeze(&after))))
+    // A trailing comma before the closing delimiter adds no element
+    // (`Some(_,)` is `Some(_)`; #8654).
+    let after = squeeze(&after);
+    let after = match after.strip_prefix(',') {
+        Some(rest) if rest.len() == 1 => rest,
+        _ => &after,
+    };
+    Some((inner, format!("{head}_{after}")))
 }
 
 /// `text` with the path `from` (not the tail of a longer name) spelled `to`.
@@ -1218,8 +1257,8 @@ fn sides_compare_test_with_non_literal<'a>(mut left: &'a str, mut right: &'a str
         }
         let other = match (literal(left), literal(right)) {
             (false, false) => {
-                return is_bool_test(left)
-                    || is_bool_test(right)
+                return (is_bool_test(left) && !holds_only_closures(left))
+                    || (is_bool_test(right) && !holds_only_closures(right))
                     || arithmetic_over_test(left)
                     || arithmetic_over_test(right)
                     || indexed_by_test(left)
