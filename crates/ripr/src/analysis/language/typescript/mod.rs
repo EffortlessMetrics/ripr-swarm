@@ -42,6 +42,7 @@ pub(crate) use oxc_ast::ast::{
 };
 pub(crate) use oxc_parser::Parser;
 pub(crate) use oxc_span::{GetSpan, SourceType};
+pub(crate) use relation_index::RelationIndex;
 pub(crate) use std::path::{Path, PathBuf};
 
 mod actionability;
@@ -116,6 +117,7 @@ mod probe_shape;
 #[cfg(test)]
 mod rejection_equality_tests;
 mod related_tests;
+mod relation_index;
 #[cfg(test)]
 mod replaced_block_tests;
 mod repo;
@@ -589,6 +591,12 @@ impl TypeScriptAdapter {
             is_test_file,
         );
 
+        // #10028: invert the test corpus once so each owner's relation scans
+        // (pass-1 candidates, module-entry union, the two named-limitation
+        // passes) pre-filter by body-name / import-shape / re-export-exposure
+        // keys instead of scanning every workspace test per owner.
+        let relation_index = relation_index::RelationIndex::build(&all_tests, &reexport_index);
+
         // Phase 2: for each accepted changed file, classify each changed
         // line that falls inside an owner.
         let mut findings: Vec<Finding> = Vec::new();
@@ -808,6 +816,7 @@ impl TypeScriptAdapter {
                             &all_tests,
                             Some(&options.root),
                             &reexport_index,
+                            &relation_index,
                             alias_map_ref,
                         )
                     });
@@ -914,6 +923,7 @@ impl TypeScriptAdapter {
                             &all_tests,
                             Some(&options.root),
                             &reexport_index,
+                            &relation_index,
                             alias_map_ref,
                         )
                     });

@@ -5611,7 +5611,14 @@ pub(crate) fn classify_change_with_alias_state(
             owner.file.as_path() == file || normalized_path(&owner.file) == changed_file
         })
         .find(|owner| line >= owner.start_line && line <= owner.end_line)?;
-    let context = owner_line_context(owner, all_tests, workspace_root, reexport_index, alias_map);
+    let context = owner_line_context(
+        owner,
+        all_tests,
+        workspace_root,
+        reexport_index,
+        &RelationIndex::empty(),
+        alias_map,
+    );
     classify_resolved_owner(
         file,
         line,
@@ -5648,20 +5655,39 @@ pub(crate) fn owner_line_context<'a>(
     all_tests: &'a [TypeScriptTest],
     workspace_root: Option<&Path>,
     reexport_index: &ReExportIndex,
+    relation_index: &RelationIndex,
     alias_map: Option<&TsAliasMap>,
 ) -> OwnerLineContext<'a> {
-    let related_candidates =
-        related_test_candidates(owner, all_tests, workspace_root, reexport_index, alias_map);
-    let mock_paths =
-        collect_related_mock_paths(owner, all_tests, workspace_root, reexport_index, alias_map);
+    let related_candidates = related_test_candidates(
+        owner,
+        all_tests,
+        workspace_root,
+        reexport_index,
+        alias_map,
+        relation_index,
+    );
+    let mock_paths = collect_related_mock_paths(
+        owner,
+        all_tests,
+        workspace_root,
+        reexport_index,
+        alias_map,
+        relation_index,
+    );
     let named_limitations_from_ownership: Vec<TypeScriptNamedLimitation> =
         if let Some(root) = workspace_root {
-            named_limitations_for_unresolved_ownership(owner, all_tests, root, &related_candidates)
+            named_limitations_for_unresolved_ownership(
+                owner,
+                all_tests,
+                relation_index,
+                root,
+                &related_candidates,
+            )
         } else {
             Vec::new()
         };
     let named_limitations_from_spy: Vec<TypeScriptNamedLimitation> =
-        named_limitations_for_spy_fabrication(owner, all_tests);
+        named_limitations_for_spy_fabrication(owner, all_tests, relation_index);
     OwnerLineContext {
         related_candidates,
         mock_paths,

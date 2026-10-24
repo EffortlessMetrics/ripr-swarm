@@ -131,8 +131,14 @@ fn relation_of(
         .find(|owner| change.line >= owner.start_line && change.line <= owner.end_line)
         .ok_or("owner not extracted")?;
     let tests = extract_tests(Path::new(TEST_FILE), test_source);
-    let candidates =
-        related_test_candidates(owner, &tests, Some(&root), &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        owner,
+        &tests,
+        Some(&root),
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     let _ = std::fs::remove_dir_all(&root);
     candidates
         .iter()
@@ -408,8 +414,14 @@ fn class_gate_withholds_every_row_miss() -> Result<(), String> {
         .find(|owner| owner.name == "applyDiscount")
         .ok_or("owner not extracted")?;
     let tests = extract_tests(Path::new(TEST_FILE), &source);
-    let candidates =
-        related_test_candidates(&owner, &tests, Some(&root), &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        Some(&root),
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     let _ = std::fs::remove_dir_all(&root);
     assert_eq!(candidates.len(), 1);
     let shape = classify_probe_shape_detail(RETURN_CHANGE.text);
