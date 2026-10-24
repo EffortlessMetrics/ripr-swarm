@@ -91,7 +91,11 @@ impl OwnerExtractionCache {
         let entry_bytes = key
             .source_len
             .saturating_add(key.path.len())
-            .saturating_add(owners.len().saturating_mul(std::mem::size_of::<TypeScriptOwner>()));
+            .saturating_add(
+                owners
+                    .len()
+                    .saturating_mul(std::mem::size_of::<TypeScriptOwner>()),
+            );
         if self.entries.len() >= self.max_entries
             || self.approx_bytes.saturating_add(entry_bytes) > self.max_approx_bytes
         {
@@ -128,10 +132,11 @@ pub(crate) fn extract_owners_cached(relative: &Path, source: &str) -> Vec<TypeSc
         path,
     };
     let cached = OWNER_EXTRACTION_CACHE.with(|cache| {
-        cache
-            .try_borrow_mut()
-            .ok()
-            .and_then(|mut cache| cache.as_mut().and_then(|cache| cache.entries.get(&key).cloned()))
+        cache.try_borrow_mut().ok().and_then(|mut cache| {
+            cache
+                .as_mut()
+                .and_then(|cache| cache.entries.get(&key).cloned())
+        })
     });
     if let Some(owners) = cached {
         return owners;
@@ -216,15 +221,27 @@ mod tests {
     #[test]
     fn byte_overflow_clears_and_starts_over() {
         let mut cache = OwnerExtractionCache::with_bounds(usize::MAX, 8);
-        let key = key_for("src/a.ts", "export function alpha(): number {\n    return 1;\n}\n");
+        let key = key_for(
+            "src/a.ts",
+            "export function alpha(): number {\n    return 1;\n}\n",
+        );
         cache.insert(key.clone(), &[]);
         assert_eq!(cache.entries.len(), 1);
-        cache.insert(key_for("src/b.ts", "export function beta(): number {\n    return 2;\n}\n"), &[]);
+        cache.insert(
+            key_for(
+                "src/b.ts",
+                "export function beta(): number {\n    return 2;\n}\n",
+            ),
+            &[],
+        );
         assert_eq!(
             cache.entries.len(),
             1,
             "exceeding the byte bound clears, then keeps the newest"
         );
-        assert!(cache.entries.contains_key(&key_for("src/b.ts", "export function beta(): number {\n    return 2;\n}\n")));
+        assert!(cache.entries.contains_key(&key_for(
+            "src/b.ts",
+            "export function beta(): number {\n    return 2;\n}\n"
+        )));
     }
 }
