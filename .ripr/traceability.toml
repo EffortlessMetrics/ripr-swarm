@@ -18166,6 +18166,12 @@ outputs = [
   "docs/specs/RIPR-SPEC-0288-agent-stub-rewrite-clarity.md",
   "docs/OUTPUT_SCHEMA.md",
   "docs/AGENT_WORKFLOWS.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0289"
 name = "Edit-cage parse-error refusal leads with the plain fix-the-syntax-error hint"
 spec = "docs/specs/RIPR-SPEC-0289-edit-cage-parse-error-hint.md"
