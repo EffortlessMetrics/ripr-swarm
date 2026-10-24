@@ -9,7 +9,9 @@
 //! per file policy): run that normalize call over those ranges, emit the
 //! changed characters, and keep the ordering. `known_decompositions_match_ucd`
 //! cross-checks a sample. U+2126 (Ohm) and U+212B (Angstrom) singletons live
-//! outside the ranges and are intentionally not folded. Every entry is a
+//! outside the ranges and are intentionally not folded; so are the
+//! combining-mark singletons U+0340, U+0341, U+0343 and U+0344, which the
+//! mark-range exclusion leaves out. Every entry is a
 //! genuine canonical decomposition, so two spellings that fold to one key are
 //! canonically equivalent (never a wrong merge). Coverage is partial by
 //! design: scripts outside the table (Hangul, Indic, ...) and mark reordering

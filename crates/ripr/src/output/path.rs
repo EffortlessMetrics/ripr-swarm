@@ -50,8 +50,12 @@ pub(crate) const fn host_paths_normalization_insensitive() -> bool {
 /// filename byte, so `a\b.rs` and `a/b.rs` stay distinct. `case_insensitive`
 /// folds case per code point, conservatively: a character folds to its
 /// lowercase only when that is a single code point that upper-cases straight
-/// back to it, so one-way folds (Kelvin sign to `k`, `U+1E9E` to `ss`-bearing
-/// `ß`, Ohm and Angstrom signs) never merge names NTFS keeps distinct. This
+/// back to it, so one-way folds never merge names NTFS keeps distinct: the
+/// Kelvin, Ohm and Angstrom signs, and `U+1E9E` (it lowercases to `ß`, but `ß`
+/// uppercases to `SS`, so the round trip fails). Case tables are the current
+/// Rust Unicode tables, so newer letters (Georgian Mtavruli, Cherokee small
+/// letters) fold and could over-merge on an old NTFS volume whose `$UpCase`
+/// predates them (accepted; very narrow). This
 /// can still miss equivalences the filesystem makes (e.g. `ς` vs `σ`), which
 /// only keeps files apart. On a host that also ignores normalization
 /// ([`host_paths_normalization_insensitive`], macOS) it additionally folds
@@ -519,7 +523,6 @@ mod tests {
             ("\u{2126}.rs", "\u{3c9}.rs"),
             ("\u{212b}.rs", "\u{e5}.rs"),
             ("\u{1e9e}.rs", "\u{df}.rs"),
-            ("\u{3c3}.rs", "\u{3c2}.rs"),
         ] {
             for norm in [false, true] {
                 assert_ne!(
@@ -542,9 +545,12 @@ mod tests {
             path_identity_key_with(dotted, true, true, true),
             path_identity_key_with(spelled, true, true, true)
         );
-        assert_eq!(
-            path_identity_key_with(dotted, true, true, false),
-            path_identity_key_with(dotted, true, true, false)
+        // Known conservative miss: NTFS `$UpCase` treats sigma and final
+        // sigma as one name; we keep them apart (a missed merge, never a
+        // wrong one).
+        assert_ne!(
+            path_identity_key_with(Path::new("\u{3c3}.rs"), true, true, false),
+            path_identity_key_with(Path::new("\u{3c2}.rs"), true, true, false)
         );
     }
 
