@@ -8,7 +8,7 @@
 use crate::domain::LanguageId;
 use crate::domain::language_capability::{
     CAPABILITY_CELLS, COMMON_NON_CLAIMS, CapabilityCell, LANGUAGE_CAPABILITIES_SCHEMA_VERSION,
-    SupportState, cell_id, semantic_digest,
+    SupportState, cell_id, render_registry_block, semantic_digest,
 };
 use serde_json::{Value, json};
 
@@ -76,6 +76,15 @@ pub(crate) fn render_json(language: Option<LanguageId>) -> String {
         "claim_boundary": CLAIM_BOUNDARY,
     });
     let mut text = serde_json::to_string_pretty(&document).unwrap_or_else(|_| "{}".to_string());
+    text.push('\n');
+    text
+}
+
+/// The generated `docs/status/SUPPORT_TIERS.md` registry block (markers
+/// included, trailing newline added), from the one renderer in the domain.
+/// Whole table only; `cargo xtask capability-docs` consumes this.
+pub(crate) fn render_markdown() -> String {
+    let mut text = render_registry_block(CAPABILITY_CELLS);
     text.push('\n');
     text
 }

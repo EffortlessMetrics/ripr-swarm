@@ -6,6 +6,9 @@
 //! runs the body once per row, so it is read as the body with the names
 //! replaced by that row's literals, exactly as `it.each` rows are.
 //!
+//! An empty table (`const rows: Array<[number, number]> = []`) runs the body
+//! no times, so the loop is read as holding no assertions (#9683).
+//!
 //! Fail-closed: anything else keeps the loop's own assertions. The table
 //! `const` must be a top-level binding the test mentions only in its
 //! declaration and in this loop (a `rows.push(...)` or a second read could
@@ -65,7 +68,13 @@ pub(crate) fn table_loop_consts(
                     else {
                         continue;
                     };
-                    let Some(rows) = literal_array_rows(array, source) else {
+                    // An empty table runs the loop body zero times: the loop
+                    // contributes no assertions rather than keeping its own.
+                    let rows = if array.elements.is_empty() {
+                        Vec::new()
+                    } else if let Some(rows) = literal_array_rows(array, source) {
+                        rows
+                    } else {
                         continue;
                     };
                     tables.push(TableConst {

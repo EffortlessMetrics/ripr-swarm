@@ -34,7 +34,10 @@ pub(crate) use rust::producer_gap_names_seam_shape;
 #[cfg(feature = "lang-typescript")]
 mod typescript;
 
-pub(crate) use adapter::{LanguageAdapter, LanguageDiffResult, LanguageRepoResult};
+pub(crate) use adapter::{
+    LanguageAdapter, LanguageDiffResult, LanguageRepoResult, RepoCapFired, RepoFileAccounting,
+    RepoLimitingStage,
+};
 pub(crate) use id::LanguageId;
 #[cfg(all(test, feature = "lang-perl"))]
 pub(crate) use perl::{

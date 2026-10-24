@@ -1657,6 +1657,23 @@ mod tests {
     }
 
     #[test]
+    fn one_line_else_if_ladder_with_several_continuations_keeps_the_first_arm() {
+        let owner = tail_owner(
+            "pub fn tier(units: u32) -> &'static str {\n    if units >= 100 { \"bulk\" } else if units >= 10 { \"pack\" } else if units > 1 { \"few\" } else { \"single\" }\n}",
+        );
+        let first = probe(ProbeFamily::Predicate, "units >= 100", 2);
+        let rival = probe(ProbeFamily::Predicate, "units >= 10", 2);
+
+        let sinks = local_flow_sinks(&first, Some(&owner));
+
+        assert_eq!(sinks.len(), 1);
+        assert_eq!(sinks[0].kind, FlowSinkKind::ReturnValue);
+        assert_eq!(sinks[0].text, "\"bulk\"");
+        // A later arm's condition is not the first condition, so it has no sink.
+        assert!(local_flow_sinks(&rival, Some(&owner)).is_empty());
+    }
+
+    #[test]
     fn one_line_else_if_ladder_fails_closed_off_plain_value_arms() {
         for body in [
             // A statement inside a later arm is not a plain branch value.

@@ -489,12 +489,26 @@ fn existing_target_error(path: &Path, root: &Path, ci: Option<&InitCi>) -> Strin
 /// Preserve lossless aliases and filesystem traversal; only resolve the
 /// physical path if the supplied absolute spelling cannot be represented.
 fn init_command_root(root: &Path) -> Result<String, String> {
-    output::path::absolute_command_root_display(root).or_else(|error| {
-        let resolved = root.canonicalize().map_err(|resolve_error| {
-            format!("{error}; cannot resolve selected root: {resolve_error}")
-        })?;
-        output::path::command_root_display(root, &resolved)
-    })
+    output::path::absolute_command_root_display(root)
+        .or_else(|error| {
+            let resolved = root.canonicalize().map_err(|resolve_error| {
+                format!("{error}; cannot resolve selected root: {resolve_error}")
+            })?;
+            output::path::command_root_display(root, &resolved)
+        })
+        .map(|display| without_current_dir_suffix(&display))
+}
+
+/// Joining the selected root `.` onto the working directory leaves a trailing
+/// `/.` ("/work/demo/."). It names the same directory as "/work/demo", so every
+/// root init prints in a command or a note drops it (#9244). A bare filesystem
+/// root ("/") and a bare drive root keep their spelling: stripping would
+/// leave an empty or drive-relative argument.
+fn without_current_dir_suffix(display: &str) -> String {
+    match display.strip_suffix("/.") {
+        Some(rest) if !rest.is_empty() && !rest.ends_with(':') => rest.to_string(),
+        _ => display.to_string(),
+    }
 }
 
 /// Init and doctor prescribe the same workflow write. Bind it to the selected
@@ -653,13 +667,9 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
         let root_flag = if in_cwd {
             String::new()
         } else {
-            let trimmed = root_display
-                .strip_suffix("/.")
-                .filter(|rest| !rest.is_empty())
-                .unwrap_or(&root_display);
             format!(
                 " --root {}",
-                crate::agent::loop_commands::shell_arg(trimmed)
+                crate::agent::loop_commands::shell_arg(&root_display)
             )
         };
         let doctor = format!("ripr doctor{root_flag}");
@@ -1595,6 +1605,56 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
+    }
+
+    /// #9244: a root selected as `<dir>/.` (what the default `.` becomes after
+    /// it is joined onto the working directory) prints as `<dir>` in the
+    /// recovery commands and the workflow refresh note.
+    #[test]
+    fn init_roots_drop_the_trailing_current_dir_segment() -> Result<(), String> {
+        let root = temp_root("dotroot")?;
+        let dotted = root.join(".");
+        let shown = output::path::human_path(&root);
+
+        assert_eq!(init_command_root(&dotted)?, shown);
+        assert_eq!(init_command_root(&root)?, shown);
+
+        write(&root.join(CONFIG_FILE_NAME), "[analysis]\n")?;
+        let message = init_plan(&options(&dotted))
+            .err()
+            .ok_or("an existing config without --force must block")?;
+        assert!(
+            message.contains(&format!("--root {}`", shell_quote_for_test(&shown))),
+            "{message}"
+        );
+        assert!(!message.contains("/.`"), "{message}");
+
+        let guidance = workflow_refresh_guidance(&dotted);
+        assert!(
+            guidance.contains(&format!("--root {}`", shell_quote_for_test(&shown))),
+            "{guidance}"
+        );
+        assert!(!guidance.contains("/.`"), "{guidance}");
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn current_dir_suffix_is_kept_where_stripping_changes_the_target() {
+        assert_eq!(without_current_dir_suffix("/work/demo/."), "/work/demo");
+        assert_eq!(without_current_dir_suffix("/work/demo"), "/work/demo");
+        assert_eq!(without_current_dir_suffix("/work/.hidden"), "/work/.hidden");
+        // `/.` is the filesystem root itself and a drive root ends in `:/.`;
+        // the stripped spellings ("" and a drive-relative `X:`) would name
+        // something else.
+        assert_eq!(without_current_dir_suffix("/."), "/.");
+        let drive_root = format!("{}:/.", 'D');
+        assert_eq!(without_current_dir_suffix(&drive_root), drive_root);
+    }
+
+    fn shell_quote_for_test(path: &str) -> String {
+        crate::agent::loop_commands::shell_arg(path)
     }
 
     #[test]

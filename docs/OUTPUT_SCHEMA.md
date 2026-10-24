@@ -131,7 +131,7 @@ map is:
 | `ripr agent card --json` and the `RepairCardV1` DTO (RIPR-SPEC-0192, RIPR-SPEC-0194; `ripr agent card` is the default CLI handoff, #4667) | `schema_version` | `repair_card.v1` |
 | `RepairCardV1` detail references and overflow disclosure (RIPR-SPEC-0193, #4666) | `budget_version` | `repair-card-budget-v1` |
 | `ripr agent card --json` refusal stdout envelope (`agent_card_refusal`; RIPR-SPEC-0202, #5007) | `schema_version` | `0.1` |
-| `ripr agent stub --json` document and its refusal stdout envelope (`kind: rust_test_stub`, `state: ready` or `refused`; #7762) | `schema_version` | `0.2` |
+| `ripr agent stub --json` document and its refusal stdout envelope (`kind: rust_test_stub`, `state: ready` or `refused`; #7762; ready-document `next_repair` is additive on `0.3`, #8727) | `schema_version` | `0.3` |
 
 The MCP tool envelopes carry the schema-versioned document as
 `structuredContent` in every successful response; a result whose complete
@@ -307,7 +307,7 @@ no witness-producing finding still renders its card with the `unavailable`
 instruction (RIPR-SPEC-0194 acceptance) — that in-band card state is typed
 already and is not a refusal.
 
-## Agent stub (`rust_test_stub`, schema `0.2`)
+## Agent stub (`rust_test_stub`, schema `0.3`)
 
 `ripr agent stub --json` emits one `rust_test_stub` document on stdout when
 the producer yields a stub (`state: ready`, exit 0). A producer refusal
@@ -325,9 +325,23 @@ stay `null` and `warnings` stays `[]`. Both selector refusals keep exit 3,
 the JSON on stdout, and the human decision prose on stderr. If the stdout
 write itself fails, no document was delivered and the command exits `2`.
 
+Schema `0.3` is additive on `0.2` (#8727): the ready document may carry a
+`next_repair` block naming the repair journey the stub feeds — the
+`ripr agent repair --seam-id <id> --phase before` start command and the repair
+packet's `allowed_edit_surface` file the stub's test must land in. When the
+stub's chosen placement differs from the packet's admitted surface (the stub
+producer routes by owner shape; the packet by its recommended-test authority),
+`placement_divergence` names both files so the divergence is stated at
+generation time instead of refusing later at the repair before phase's
+dirty-premise gate. The block is present only when the classified seam
+establishes the repair route (the same fail-closed flip the pilot's offered
+repair start uses); otherwise the key stays absent rather than inventing a
+route — notably for `--at --kind` file-parse selections, which carry no
+classified entry. The `0.2` field set is unchanged; refused envelopes keep it.
+
 Schema `0.2` replaces `0.1` for all ready and refused stub documents (#7762).
-The field set is unchanged; the new refusal-kind spelling requires the new
-version. Consumers must recognize `0.2`, dispatch on `state`, and distinguish
+Ready stub documents add `already_present`; the new refusal-kind spelling
+requires the new version. Consumers must recognize `0.2`, dispatch on `state`, and distinguish
 `selector_ambiguous` (choose a specific path or seam ID) from `seam_not_found`
 (correct or re-list the selector). Legacy `0.1` did not distinguish ambiguity
 from absence. The disclosure fields introduced in `0.1` (#7290) remain:
@@ -340,13 +354,24 @@ from absence. The disclosure fields introduced in `0.1` (#7290) remain:
   from the shared grip-to-exposure table (`strongly_gripped` → `exposed`,
   `weakly_gripped` → `weakly_exposed`, `ungripped` → `no_static_path`, …),
   else `null`. No per-surface translation fork.
-- `warnings` — when the class is omitted from agent packet/repair results,
-  one string reusing that omission reason, for example
-  `seam <id> is configured off for strongly_gripped seams and is not included in agent results`.
-  Empty when the class is included in agent results or the grip is unknown.
+- `warnings` — one string naming why the class carries omission prose. A
+  `strongly_gripped` seam is exposed because its tests already discriminate
+  it, so the warning says exactly that (`seam <id> is strongly_gripped:
+  existing tests already discriminate it, so a stub would add nothing`); the
+  default `Off` severity for the class is the agent-brief rendering policy,
+  not user configuration, so the packet/brief "configured off" wording is not
+  reused here (#8891). A class a user severity actually disables keeps the
+  packet wording, for example `seam <id> is configured off for
+  weakly_gripped seams and is not included in agent results`. Empty when the
+  class is included in agent results or the grip is unknown.
   Human output prints the same strings. Serving a strongly_gripped seam as
   a scaffold remains `state: ready` / exit 0; the warning is disclosure,
   not a refusal.
+- `already_present` — `true` when the placement already holds the identical
+  test function ripr would write (a second run for the same seam recomputes
+  byte-identical text). A repeated `--write` then reports the stub as already
+  written instead of appending a `_2`-suffixed duplicate; `written` stays
+  `false` for that run (#8891).
 
 Existing fields (`placement`, `test_name`, `text`, `fill_ins`,
 `derived_inputs`, `written`, `run_command`, and the refusal `refusal`
@@ -529,6 +554,23 @@ the state names a runnable command, and for the `source-build` profile. The
 document root is `canonical_next_action.subject.root`; doctor reads no diff, so
 `diff_source` is the fixed no-base committed mode, never a live-tree claim. The
 human line and this object agree by construction (Control 9).
+
+### Doctor volatile timing fields and stable output (#9807)
+
+The timing fields `ripr doctor --json` can carry are volatile: their values
+change on every run, so a run that changed nothing still produced a full-field
+diff on every timing value. The volatile fields are the top-level `elapsed_ms`
+run total, the top-level `segments[]` named segment timings, and the per-entry
+`elapsed_ms` on each `checks[]` check and each `runtime_probes[]` probe.
+
+Since #9807 the default `ripr doctor --json` document omits all of them, so the
+machine-readable output is byte-stable across runs that changed nothing and can
+be committed, snapshotted, or diffed directly. `ripr doctor --json --timings`
+restores the full projection with every timing field. All omitted fields remain
+declared and optional in
+[`schemas/ripr/doctor.schema.json`](../schemas/ripr/doctor.schema.json) —
+schema `0.4` is unchanged and a timed document stays legal — and the human
+screen is unaffected: it always prints its run-time summary.
 
 ### What `--json` now probes, and where that shows up
 
@@ -1552,6 +1594,14 @@ The evidence-first fields are additive in schema `0.2`:
   examined row (one per matched assertion, one per test that supplied none).
   Rows listed only as `assertion_not_observing` take only window slots the
   oracle rows leave free, so the oracle rows and their order are unchanged.
+- `related_tests[].role` — (optional, additive, #5563) the row's decision
+  role, a controlled `related_test_role` value, independent of `miss`.
+  `examined_only` marks a row retained only to show an examined test whose
+  assertions matched nothing (RIPR-SPEC-0224); decision paths skip it.
+  `contributing` is the default and is omitted from output; an artifact
+  without the field reads every row as `contributing`. `miss` never changes
+  which decision paths consume a row, and the role is not runtime execution
+  evidence.
 - `oracle_kind` and `oracle_strength` summarize the strongest related oracle
   currently visible to the finding.
 - `suggested_next_action` mirrors `recommended_next_step` for action-oriented
@@ -2643,6 +2693,13 @@ Expired entries are not applied; expired and unmatched selectors surface as
 warnings. A missing or malformed policy fails the run (fail-closed): the run
 never silently emits unfiltered counts as if a policy had been applied.
 
+`findings[].analysis_scope` (#5531) is distinct from the top-level
+`analysis_scope` object (partial/limited scope disclosure). It is the typed
+per-finding scope, emitted as the single value `"repo"` for findings produced
+by a repo-mode run and omitted for diff-scoped findings (diff bytes are
+unchanged). Consumers such as the gap ledger read it instead of the legacy
+`analysis_scope: repo` evidence line; any other value is rejected by the schema.
+
 Three surfaces change when the flag is present:
 
 - `summary.suppressed_by_policy` — count of suppressed findings. The
@@ -2970,6 +3027,11 @@ while `call_effect` remains the fallback for other observable calls.
 - `missing_input`
 - `missing_exact_assertion`
 - `observation_unconfirmed`
+
+`related_test_role` values:
+
+- `contributing`
+- `examined_only`
 
 `next_action_class` values:
 
@@ -3593,6 +3655,61 @@ gap. On success the verify document gains one additive member,
 Any other outcome is a named refusal (`agent verify gap binding refused: ...`,
 exit `3`, empty stdout), and `--gap-id` over a `repo-exposure-json` snapshot is
 an operational error (exit `2`).
+
+### Gap-Bound Repair Start
+
+For a TypeScript finding whose repair packet is complete, `ripr check` prints
+`ripr agent repair --gap-id <gap> --base <base> --phase before` as the start
+line (RIPR-SPEC-0311, #9103). The command re-runs the diff-scoped check against
+`--base`, requires the same shared packet validator to accept the finding, and
+otherwise refuses with "the repair packet is not ready" and writes nothing.
+A refused start restores the shared workflow artifacts to the bytes they had
+before the invocation (removing only files it created). On
+acceptance it writes `before.check-findings.json` (a `check-findings-json`
+artifact) and `gap-repair-packet.json` under the attempt's artifacts and a
+repair-attempt manifest whose `seam_id` is the canonical gap id and which
+carries one additive member, `gap_binding: { "base": "<base>",
+"base_commit": "<full commit>" }` (the spelling and the commit it resolved to).
+Seam attempts omit `gap_binding`, so their bytes are unchanged. The packet names
+the gap as its `seam_id`; edits are caged to the packet's test file. The
+persisted `next_command` is the ordinary `--attempt <id> --phase after`.
+`agent repair --phase after` for a gap attempt re-runs the same producer against
+`base_commit` into `target/ripr/workflow/after.check-findings.json`, requires the
+gap open before and `exposed` after through `agent verify --gap-id`, and enforces
+the edit cage. Absence from the after snapshot is never closure. An open or absent
+gap is a typed refusal (exit 3) recorded against the attempt's retry budget; it
+stays `awaiting_edit`. A compliant finish issues the gap-bound receipt below; the
+closure is also the `verify.bound_gap` of the `repair_after_result` envelope.
+Let-bound, imported and reach-barrier variants stay unrouted. Python keeps its
+terminal reason. The static result is exposure evidence only; it does not
+claim a runtime mutation outcome.
+
+### Gap-Bound Receipt
+
+A compliant gap-bound finish writes `target/ripr/reports/agent-receipt.json`
+(schema `0.5`, RIPR-SPEC-0311 item 8, #9103) for the gap: `seam.seam_id` and
+`provenance.seam_id` are the canonical gap id, and the receipt carries two
+additive members that seam receipts omit:
+
+- `bound_gap`: `gap_id`, `before_classification`, `after_classification`,
+  `file`, `line`, `closed: true`. It is copied from the verify document only
+  when that document's bound gap is the receipt's seam and reads closed.
+- `repair_attempt.gap_binding`: `base` (the `--base` spelling) and
+  `base_commit` (the full commit the before phase resolved it to).
+
+Issuance is fail-closed on closure evidence. The canonical verify render
+recomputes `bound_gap` from the two `check-findings-json` snapshots (open
+before, `exposed` after), so a verify document that names a gap that did not
+close, or whose closure was edited, is refused (`[gap_binding]` or
+`[not_canonical]`). `ripr agent receipt --seam-id <gap>` over a verify
+document produced without `--gap-id` is refused ("requires an agent verify
+document bound to that gap"). A not-closed, absent or cage-refused finish
+issues no receipt. The receipt reads the after snapshot as its analysis
+outcome, retains the receipt and verify document as the attempt's terminal
+evidence, and `agent status` reads it as showing the gap closed only when it is
+`advisory` with improved static grip. The receipt is static exposure evidence:
+`verification.status` is `verification_not_run` and the provenance limits state
+no runtime mutation execution and no runtime adequacy claim.
 
 ## Repo Seam Inventory
 
@@ -16711,9 +16828,13 @@ failed`, `git diff failed`) and `null` otherwise. The terminal and Markdown "Ins
 carries a matching scope line: `change-first (Rust seams on lines changed since
 <base> rank first)` for `changed`, `whole repository` for `no_change`, and
 `whole repository (current change unavailable: <reason>)` for `unavailable`.
-The change-first scope and the change counts cover Rust seam ranking only. A
-Python preview repair card shown as the top recommendation is still selected
-from the committed diff against the base, not from uncommitted edits.
+The change-first scope and the change counts cover Rust seam ranking only. When
+the Rust ranking is empty and a Python preview repair card leads the
+recommendation, the scope line instead reads `change-first (python (preview)
+seams on lines changed since <base> rank first)` so it names what was actually
+ranked (#9857); a Python preview repair card shown as the top recommendation is
+still selected from the committed diff against the base, not from uncommitted
+edits.
 `actionable_seams_in_change`, `withheld_seams_in_change` and
 `top_recommendation_in_change` are `null` unless `state` is `changed`;
 `top_recommendation_in_change` is also `null` when no seam is ranked.
@@ -18398,7 +18519,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.97",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.99",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -19153,7 +19274,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.45",
+    "schema_version": "1.46",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -19166,8 +19287,8 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.97",
-      "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
+      "schema_version": "1.99",
+      "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
       "cfg_features_hash": "…",
@@ -19249,16 +19370,26 @@ targeted-rerun receipt shape:
 }
 ```
 
-`input_fingerprint.analyzer_version` names the build, not only the package
-version: `<version>+<commit>` for a clean build, with `-dirty+src:<digest>`
-appended for a build with uncommitted source changes, or `<version>+unknown+src:<digest>`
-when no commit is recorded. Two builds of one version therefore report
-`input_changed:analyzer_version` against each other's receipts.
+`input_fingerprint.analyzer_version` names the source build and its compiled
+language features, not only the package version. Its source prefix is
+`<version>+<commit>` for a clean build,
+`<version>+<commit>-dirty+src:<digest>` for uncommitted source changes, or
+`<version>+unknown+src:<digest>` when no commit is recorded. If a dirty or
+commit-less build has no source digest, `process:<pid>:<nanos>` replaces
+`src:<digest>` so persisted entries are not reused across processes.
+Every form ends with
+`+languages:rust=<bit>,typescript=<bit>,python=<bit>,perl=<bit>`, in that order,
+where each bit is exactly `0` or `1`. These are the analyzer's compiled Cargo
+features; `cfg_features_hash` separately identifies the analyzed workspace's
+feature configuration. Different source or language-feature identities report
+`input_changed:analyzer_version` against each other's receipts, even when the
+package version and cache generations match. Treat the complete identity as
+opaque when comparing receipts.
 
 `cache.schema_version` and `cache.input_fingerprint.schema_version` version
-the file-fact cache and its input identity, not this report. They move
-whenever cache identity changes, so a consumer dispatches on the top-level
-`schema_version` and treats the nested values as opaque. Nested
+the file-fact cache and its input identity, not this report. They change with
+those cache contracts, independently of analyzer identity. A consumer dispatches
+on the top-level `schema_version` and treats the nested values as opaque. Nested
 `analyzer_version` is the producing build identity described above and also
 moves.
 
