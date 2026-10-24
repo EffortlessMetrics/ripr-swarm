@@ -231,17 +231,27 @@ fn status_count(outcome: &Outcome, state: &str) -> usize {
 fn a_resolved_conflict_clears_only_its_own_earlier_failure() -> Result<(), String> {
     let clean = pr_json("true", "clean", HEAD, "main");
     let failed = r#"[{"context":"merge-ready conflict","state":"failure","creator":{"login":"github-actions[bot]"}},{"context":"merge-ready conflict","state":"failure","creator":{"login":"github-actions[bot]"}}]"#;
-    let outcome = run_with_statuses(&[clean.clone()], "0", failed, "cleared")?;
+    let outcome = run_with_statuses(std::slice::from_ref(&clean), "0", failed, "cleared")?;
     assert_eq!(status_count(&outcome, "success"), 1, "{}", outcome.log);
     assert_eq!(outcome.comments, 0);
 
     let already_clear = r#"[{"context":"merge-ready conflict","state":"success","creator":{"login":"github-actions[bot]"}},{"context":"merge-ready conflict","state":"failure","creator":{"login":"github-actions[bot]"}}]"#;
-    let outcome = run_with_statuses(&[clean.clone()], "0", already_clear, "already-clear")?;
+    let outcome = run_with_statuses(
+        std::slice::from_ref(&clean),
+        "0",
+        already_clear,
+        "already-clear",
+    )?;
     assert_eq!(outcome.statuses, 0, "{}", outcome.log);
 
     let foreign_creator =
         r#"[{"context":"merge-ready conflict","state":"failure","creator":{"login":"someone"}}]"#;
-    let outcome = run_with_statuses(&[clean.clone()], "0", foreign_creator, "foreign-creator")?;
+    let outcome = run_with_statuses(
+        std::slice::from_ref(&clean),
+        "0",
+        foreign_creator,
+        "foreign-creator",
+    )?;
     assert_eq!(outcome.statuses, 0, "{}", outcome.log);
 
     let other_context = r#"[{"context":"Ripr Rust Small Result","state":"failure"}]"#;
