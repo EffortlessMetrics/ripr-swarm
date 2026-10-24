@@ -147,7 +147,7 @@ impl TypeScriptAdmissionContext {
                     if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const
                         && declaration.declarations.iter().any(require_declarator))
             })
-            .then(|| BindingScan::of_source(program.source_text))
+            .then(|| BindingScan::of_source(program.source_text, program.source_type))
             .flatten();
         let mut context = Self {
             block_functions_are_lexical,
@@ -319,9 +319,10 @@ struct BindingScan {
 }
 
 impl BindingScan {
-    fn of_source(source: &str) -> Option<Self> {
-        let code = super::tests_extract::byte_preserving_code_mask(source)
-            .filter(|code| !super::tests_extract::file_is_opaque(code))?;
+    fn of_source(source: &str, source_type: SourceType) -> Option<Self> {
+        let code =
+            super::tests_extract::byte_preserving_code_mask_for_source_type(source, source_type)
+                .filter(|code| !super::tests_extract::file_is_opaque(code))?;
         Some(Self {
             writes: super::tests_extract::strict_identifier_writes(&code),
             functions: super::tests_extract::function_declaration_names(&code),
@@ -403,7 +404,10 @@ fn verified_extended_registrations(
     program: &oxc_ast::ast::Program<'_>,
     imports: &[TypeScriptImport],
 ) -> Vec<TypeScriptImport> {
-    let Some(code) = super::tests_extract::byte_preserving_code_mask(program.source_text) else {
+    let Some(code) = super::tests_extract::byte_preserving_code_mask_for_source_type(
+        program.source_text,
+        program.source_type,
+    ) else {
         return Vec::new();
     };
     if super::tests_extract::file_is_opaque(&code) {

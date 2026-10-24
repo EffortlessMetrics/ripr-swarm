@@ -17,6 +17,7 @@ mod gap_admission;
 mod helper_transfer;
 mod implicit_effect;
 pub(in crate::analysis) use implicit_effect::{ImplicitExpansionContext, ImplicitExpansionMemo};
+mod facade_reach;
 mod implicit_call;
 mod infection;
 mod macro_item_names;
@@ -66,6 +67,10 @@ pub(in crate::analysis) use decision::{
 pub(in crate::analysis) use diff_touched::DiffTouchedTests;
 pub(in crate::analysis) use effect_carrier::EffectStateCarrier;
 pub(in crate::analysis) use element_field_pin::observes_returned_element_field;
+pub(in crate::analysis) use facade_reach::{
+    FacadeReachWitness, RUST_FACADE_REACH_MESSAGE, facade_reach_limitation_detail_lines,
+    facade_reach_witness, facade_reach_witness_pointer,
+};
 pub(in crate::analysis) use flow::{local_flow_sinks, propagation_evidence_with_witness};
 pub(in crate::analysis) use framework_oracle::withhold_framework_oracle_gap;
 pub(in crate::analysis) use gap_admission::{

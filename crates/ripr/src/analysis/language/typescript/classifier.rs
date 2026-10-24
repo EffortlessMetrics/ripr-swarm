@@ -854,7 +854,26 @@ fn ts_mask_typeof_consumed_owner_names(
 /// expected (at the start, or after an operator or opening punctuation);
 /// elsewhere it is division.
 pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
-    ts_mask_with(text, true)
+    let prepared = super::literal_mask::prepare(text, None);
+    ts_mask_lexically(
+        &prepared.code,
+        !prepared.regex_known,
+        &prepared.operand_ends,
+    )
+}
+
+/// Preserve the parser's syntax kind: identical bytes can mean JSX code in
+/// `.tsx` and a type assertion followed by a regex literal in `.ts`.
+pub(crate) fn ts_mask_literals_and_comments_for_source_type(
+    text: &str,
+    source_type: SourceType,
+) -> String {
+    let prepared = super::literal_mask::prepare(text, Some(source_type));
+    ts_mask_lexically(
+        &prepared.code,
+        !prepared.regex_known,
+        &prepared.operand_ends,
+    )
 }
 
 /// [`ts_mask_literals_and_comments`] with every `/` read as division, so a
@@ -862,10 +881,22 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
 /// runs on this mask. A real regex literal holding a quote can misread the rest
 /// of its line here; callers require agreement of both masks.
 pub(crate) fn ts_mask_literals_and_comments_division_only(text: &str) -> String {
-    ts_mask_with(text, false)
+    ts_mask_lexically(text, false, &std::collections::BTreeSet::new())
 }
 
-fn ts_mask_with(text: &str, regex_allowed: bool) -> String {
+fn ts_mask_lexically(
+    text: &str,
+    regex_allowed: bool,
+    operand_ends: &std::collections::BTreeSet<usize>,
+) -> String {
+    fn next_char(
+        chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+        offset: &mut usize,
+    ) -> Option<char> {
+        let c = chars.next()?;
+        *offset += c.len_utf8();
+        Some(c)
+    }
     #[derive(Clone, Copy)]
     enum Mode {
         Code,
@@ -946,7 +977,9 @@ fn ts_mask_with(text: &str, regex_allowed: bool) -> String {
     // One entry per open `${`: the brace depth inside that interpolation.
     let mut interpolations: Vec<usize> = Vec::new();
     let mut chars = text.chars().peekable();
-    while let Some(c) = chars.next() {
+    let mut source_offset = 0usize;
+    while let Some(c) = next_char(&mut chars, &mut source_offset) {
+        let at = source_offset - c.len_utf8();
         if let Mode::RegexFlags = mode {
             if c.is_ascii_alphabetic() {
                 out.push(' ');
@@ -969,12 +1002,12 @@ fn ts_mask_with(text: &str, regex_allowed: bool) -> String {
                         out.push(c);
                     }
                     '/' if chars.peek() == Some(&'/') => {
-                        chars.next();
+                        next_char(&mut chars, &mut source_offset);
                         mode = Mode::LineComment;
                         out.push_str("  ");
                     }
                     '/' if chars.peek() == Some(&'*') => {
-                        chars.next();
+                        next_char(&mut chars, &mut source_offset);
                         mode = Mode::BlockComment;
                         out.push_str("  ");
                     }
@@ -1046,7 +1079,7 @@ fn ts_mask_with(text: &str, regex_allowed: bool) -> String {
             }
             Mode::Quote(quote) => {
                 if c == '\\' {
-                    chars.next();
+                    next_char(&mut chars, &mut source_offset);
                     out.push_str("  ");
                 } else if c == quote || c == '\n' {
                     mode = Mode::Code;
@@ -1058,14 +1091,14 @@ fn ts_mask_with(text: &str, regex_allowed: bool) -> String {
             }
             Mode::Template => {
                 if c == '\\' {
-                    chars.next();
+                    next_char(&mut chars, &mut source_offset);
                     out.push_str("  ");
                 } else if c == '`' {
                     mode = Mode::Code;
                     prev = Some(c);
                     out.push(c);
                 } else if c == '$' && chars.peek() == Some(&'{') {
-                    chars.next();
+                    next_char(&mut chars, &mut source_offset);
                     interpolations.push(0);
                     mode = Mode::Code;
                     prev = Some('{');
@@ -1076,7 +1109,7 @@ fn ts_mask_with(text: &str, regex_allowed: bool) -> String {
             }
             Mode::Regex { in_class } => {
                 if c == '\\' {
-                    chars.next();
+                    next_char(&mut chars, &mut source_offset);
                     out.push_str("  ");
                 } else if c == '\n' {
                     mode = Mode::Code;
@@ -1107,13 +1140,23 @@ fn ts_mask_with(text: &str, regex_allowed: bool) -> String {
             }
             Mode::BlockComment => {
                 if c == '*' && chars.peek() == Some(&'/') {
-                    chars.next();
+                    next_char(&mut chars, &mut source_offset);
                     mode = Mode::Code;
                     out.push_str("  ");
                 } else {
                     out.push(' ');
                 }
             }
+        }
+        if operand_ends.contains(&at) {
+            mode = Mode::Code;
+            prev = Some(')');
+            word.clear();
+            word_after_dot = false;
+            after_space = false;
+            dots = 0;
+            postfix_op = false;
+            op_after_operand = false;
         }
     }
     out
@@ -5786,7 +5829,9 @@ pub(crate) fn classify_change_with_alias_state(
             &owner.name,
             &owner.params,
             owner.start_line,
-            module_source.as_deref(),
+            module_source
+                .as_deref()
+                .map(|source| (source, source_type_for(&owner.file))),
         );
         mock_facts.admit_spy_files(
             related_candidates

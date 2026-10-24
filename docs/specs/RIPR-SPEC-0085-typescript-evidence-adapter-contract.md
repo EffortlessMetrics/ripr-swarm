@@ -51,7 +51,7 @@ Policy impact:
 
 RIPR already ships a TypeScript adapter. It is **not** greenfield and it is
 **not** a regex pile: it is built on the `oxc` AST (`oxc_parser` / `oxc_ast`
-/ `oxc_span`, gated behind the `lang-typescript` feature, blessed by ADR
+/ `oxc_span` / `oxc_ast_visit`, gated behind the `lang-typescript` feature, blessed by ADR
 0008), and it already performs *preview-grade* test discovery, oracle
 extraction (`toBe` / `toEqual` / `toThrow` / `rejects.toThrow`), owner and
 related-test inference, a Bun cross-language bridge, static limits, and
