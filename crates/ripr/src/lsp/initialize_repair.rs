@@ -76,14 +76,12 @@ impl FrameScan {
     /// frame-end arithmetic would overflow (an anomalous admitted length):
     /// both fail closed into pass-through.
     fn frame_end(&self) -> Option<usize> {
-        self.header_len()?
-            .checked_add(self.content_length?)
+        self.header_len()?.checked_add(self.content_length?)
     }
 
     /// Whether the buffer already holds the complete framed message.
     fn frame_complete(&self) -> bool {
-        self.frame_end()
-            .is_some_and(|end| end <= self.buf.len())
+        self.frame_end().is_some_and(|end| end <= self.buf.len())
     }
 }
 
@@ -181,7 +179,11 @@ impl<R: AsyncRead + Unpin> AsyncRead for InitializeRepairReader<R> {
                 return Pin::new(&mut this.inner).poll_read(cx, buf);
             }
             if this.scan.content_length.is_some() {
-                if let Some(frame_end) = this.scan.frame_end().filter(|end| *end <= this.scan.buf.len()) {
+                if let Some(frame_end) = this
+                    .scan
+                    .frame_end()
+                    .filter(|end| *end <= this.scan.buf.len())
+                {
                     // Settle exactly one frame: a single chunk read can carry
                     // the following frames too, and those must pass through
                     // untouched behind the inspected one.
@@ -276,7 +278,8 @@ fn settle_frame(frame: Vec<u8>) -> Vec<u8> {
 
 /// Rebuilds a framed message, rewriting or appending Content-Length and
 /// keeping every other header line as received.
-fn build_frame(original_header: &[u8], body: &[u8]) -> Vec<u8> {    let header_text = String::from_utf8_lossy(original_header);
+fn build_frame(original_header: &[u8], body: &[u8]) -> Vec<u8> {
+    let header_text = String::from_utf8_lossy(original_header);
     let mut out = String::with_capacity(header_text.len() + 32);
     let mut found = false;
     for line in header_text.split("\r\n") {
@@ -567,7 +570,10 @@ mod tests {
             text.contains("caf%C3%A9-repo"),
             "the governed frame is repaired: {text}"
         );
-        assert!(text.contains("exit"), "trailing frame passes through: {text}");
+        assert!(
+            text.contains("exit"),
+            "trailing frame passes through: {text}"
+        );
         Ok(())
     }
 
@@ -593,7 +599,8 @@ mod tests {
         .map_err(|err| format!("read_to_end must terminate with an overflowing length: {err}"))?
         .map_err(|err| format!("read failed: {err}"))?;
         assert_eq!(
-            out, framed.as_bytes(),
+            out,
+            framed.as_bytes(),
             "an anomalous governing length must pass through byte-identical"
         );
         Ok(())
@@ -606,10 +613,17 @@ mod tests {
     /// through unchanged.
     #[tokio::test]
     async fn duplicate_envelope_fields_pass_through_unrepaired() -> Result<(), String> {
-        let params = r#""params":{"processId":null,"rootUri":"file:///tmp/café-repo","capabilities":{}}"#;
+        let params =
+            r#""params":{"processId":null,"rootUri":"file:///tmp/café-repo","capabilities":{}}"#;
         for (name, body) in [
-            ("id", format!(r#"{{"jsonrpc":"2.0","id":0,"id":1,"method":"initialize",{params}}}"#)),
-            ("method", format!(r#"{{"jsonrpc":"2.0","method":"other","method":"initialize",{params}}}"#)),
+            (
+                "id",
+                format!(r#"{{"jsonrpc":"2.0","id":0,"id":1,"method":"initialize",{params}}}"#),
+            ),
+            (
+                "method",
+                format!(r#"{{"jsonrpc":"2.0","method":"other","method":"initialize",{params}}}"#),
+            ),
         ] {
             let input = frame(&body);
             let out = settle_frame(input.clone());
