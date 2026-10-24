@@ -415,7 +415,9 @@ fn implements_trait_in(
     // A trait named through a workspace member crate is the workspace's even
     // when that member's files are not indexed, so its declaration is not in
     // `traits` (#10061). Fail-closed: a member that re-exports a foreign
-    // trait is read as the workspace's, which only withholds credit.
+    // trait is read as the workspace's, which only withholds credit. The same
+    // holds when a member crate is itself named `core`, `alloc` or `std`: it
+    // shadows the std traits of that root and reads as the workspace's.
     match segments.as_slice() {
         [_] => workspace_import(name) || (traits.contains(name) && !foreign_import(name)),
         [root, ..] => {
@@ -1085,36 +1087,58 @@ mod tests {
         let by_path = impl_method("size_hint", "rcore::Stream", "util/b.rs");
         let outside_import = impl_method("size_hint", "Stream", "util/c.rs");
         let outside_path = impl_method("size_hint", "other::Stream", "util/d.rs");
-        let index = RustIndex::from_owned(OwnedRustIndex {
-            files: BTreeMap::from([
-                file("util/a.rs", "use rcore::Stream;\npub fn lonely() {}\n"),
-                file("util/b.rs", "pub fn lonely() {}\n"),
-                file("util/c.rs", "use outside::Stream;\npub fn lonely() {}\n"),
-                file("util/d.rs", "pub fn lonely() {}\n"),
-            ]),
-            functions: vec![
-                declaration,
+        // With the declaration indexed, and with the member unindexed (the
+        // Draft/Fast shape): the root and bare-name arms must not need
+        // `traits.contains`. `workspace_crates` names a member that
+        // `package_names` (the root manifest alone) does not.
+        for declared in [true, false] {
+            let mut functions = vec![
                 by_import.clone(),
                 by_path.clone(),
                 outside_import.clone(),
                 outside_path.clone(),
-            ],
-            package_names: BTreeSet::from(["rcore".to_string(), "rutil".to_string()]),
-            ..Default::default()
-        });
-        let names = UnseenReachNames::build(&index);
-        for owner in [&by_import, &by_path] {
-            assert!(
-                !owner_may_be_reached_unseen(owner, &index),
-                "{}",
-                owner.id.0
-            );
-            assert!(!names.may_reach_unseen(owner), "{}", owner.id.0);
-        }
-        // Discriminating negatives: a non-member crate stays foreign.
-        for owner in [&outside_import, &outside_path] {
-            assert!(owner_may_be_reached_unseen(owner, &index), "{}", owner.id.0);
-            assert!(names.may_reach_unseen(owner), "{}", owner.id.0);
+            ];
+            if declared {
+                functions.push(declaration.clone());
+            }
+            let mut index = RustIndex::from_owned(OwnedRustIndex {
+                files: BTreeMap::from([
+                    file("util/a.rs", "use rcore::Stream;\npub fn lonely() {}\n"),
+                    file("util/b.rs", "pub fn lonely() {}\n"),
+                    file("util/c.rs", "use outside::Stream;\npub fn lonely() {}\n"),
+                    file("util/d.rs", "pub fn lonely() {}\n"),
+                ]),
+                functions,
+                package_names: BTreeSet::from(["rutil".to_string()]),
+                ..Default::default()
+            });
+            index.workspace_crates = BTreeSet::from(["rcore".to_string(), "rutil".to_string()]);
+            let names = UnseenReachNames::build(&index);
+            for owner in [&by_import, &by_path] {
+                assert!(
+                    !owner_may_be_reached_unseen(owner, &index),
+                    "{} declared={declared}",
+                    owner.id.0
+                );
+                assert!(
+                    !names.may_reach_unseen(owner),
+                    "{} declared={declared}",
+                    owner.id.0
+                );
+            }
+            // Discriminating negatives: a non-member crate stays foreign.
+            for owner in [&outside_import, &outside_path] {
+                assert!(
+                    owner_may_be_reached_unseen(owner, &index),
+                    "{} declared={declared}",
+                    owner.id.0
+                );
+                assert!(
+                    names.may_reach_unseen(owner),
+                    "{} declared={declared}",
+                    owner.id.0
+                );
+            }
         }
     }
 

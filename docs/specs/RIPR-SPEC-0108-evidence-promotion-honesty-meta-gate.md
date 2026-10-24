@@ -604,6 +604,8 @@ Rust family coverage for same-method-other-impl identity (#4760):
 | workspace-trait impl no source names, beside a same-file test of another function | `rust_unreached_workspace_trait_impl_borrows_no_oracle` | `no_static_path` (only a foreign trait's impl is dispatched without spelling its method; #9169) |
 | impl of a trait declared in a sibling workspace crate, beside a same-leaf-name file's doctest | `rust_cross_crate_trait_impl_borrows_no_doctest` | `no_static_path` (a trait imported from a workspace member is the workspace's; the same-crate control reads the same; #10061) |
 
+Limits of the sibling-crate trait rule (#10061), none of which gain behavior there: a glob import of an unindexed member's trait (`use rcore::*;`) and a re-export (`pub use rcore::Stream;` then `use crate::Stream;`) are not recognized and keep the foreign-trait reading, so those impls can still borrow a same-leaf-name oracle (fail-open). `[workspace] members` globs that are not a trailing `/*` are not expanded (pre-existing). A member crate named `core`, `alloc` or `std` shadows the std traits of that root and reads as the workspace's, and a member that re-exports a foreign trait imported by name does too (fail-closed: credit withheld).
+
 Rust family coverage for free-function receiver identity (#7006):
 
 | family | corpus case | expected state |
