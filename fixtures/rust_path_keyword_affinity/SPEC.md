@@ -7,9 +7,9 @@ Spec: RIPR-SPEC-0172
 A Rust crate whose changed lines are owner-less: an import
 (`pub(crate) use std::collections::BTreeMap` to `BTreeSet`), a changed
 `pub union ChangedItem {` declaration line and its field type, a changed
-`macro_rules! changed_item {` line and body, and a `SEED_BASE` constant. Integration tests
-in the same package assert on `crate::helper::pick(1)`, on a block declaring
-its own `union OtherItem`, and on a block declaring its own `macro_rules!
+`macro_rules! changed_item {` line and body, and a `SEED_BASE` constant.
+Integration tests in the same package assert on `crate::helper::pick(1)`, on a
+block declaring its own `union OtherItem`, and on a block declaring its own `macro_rules!
 other_item`: different code that shares only a path or declaration keyword with
 the changed lines. A further test asserts on `SEED_BASE`, a real identifier of
 the changed constant.
@@ -28,9 +28,11 @@ ripr check --root fixtures/rust_path_keyword_affinity/input --diff fixtures/rust
 
 ## Then
 
-The import, `pub union ChangedItem {` and `macro_rules! changed_item {` findings relate no test: `crate`, `union` and
-`macro_rules` as declaration introducers are syntax, not names for the changed
-behavior, so they do not seed assertion-target affinity. The unrelated
+The import, `pub union ChangedItem {` and `macro_rules! changed_item {`
+findings relate no test. `union` and `macro_rules` as declaration introducers
+are syntax, not names for the changed behavior, so they do not seed
+assertion-target affinity; the `crate` keyword in the import is dropped by the
+#9172/#9205 keyword filter. The unrelated
 `assert_eq!`s are not credited as oracles. The `SEED_BASE` constant still
 relates the `seeds_base` test through the shared identifier.
 
