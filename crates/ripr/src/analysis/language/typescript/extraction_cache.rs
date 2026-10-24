@@ -43,6 +43,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
+use std::rc::Rc;
 
 use oxc_parser::Parser;
 
@@ -125,7 +126,7 @@ pub(crate) struct FileFacts {
 }
 
 struct FileFactsCache {
-    entries: HashMap<CacheKey, FileFacts>,
+    entries: HashMap<CacheKey, Rc<FileFacts>>,
     approx_bytes: usize,
     max_entries: usize,
     max_approx_bytes: usize,
@@ -185,8 +186,8 @@ impl FileFactsCache {
             .saturating_add(phase_two_bytes)
     }
 
-    fn insert(&mut self, key: CacheKey, facts: &FileFacts) {
-        let entry_bytes = Self::entry_bytes(&key, facts);
+    fn insert(&mut self, key: CacheKey, facts: Rc<FileFacts>) {
+        let entry_bytes = Self::entry_bytes(&key, &facts);
         if self.entries.len() >= self.max_entries
             || self.approx_bytes.saturating_add(entry_bytes) > self.max_approx_bytes
         {
@@ -197,7 +198,7 @@ impl FileFactsCache {
         // Replacing an existing key double-counts its bytes; the bound is
         // approximate by contract, so the drift is acceptable.
         self.approx_bytes = self.approx_bytes.saturating_add(entry_bytes);
-        self.entries.insert(key, facts.clone());
+        self.entries.insert(key, facts);
     }
 }
 
@@ -219,12 +220,17 @@ thread_local! {
 /// refusal or failure is NOT cached and returns `Err` so the caller skips
 /// the file exactly as before (#10071, replacing the #10044/#10051/#10063
 /// caches). Reentrancy or a poisoned cell degrades to an uncached parse.
+///
+/// The result is `Rc`-wrapped: the cache is thread-local and single-owner
+/// per lookup, so a hit is a cheap pointer clone instead of deep-cloning
+/// the owners/export/phase-2 vectors for every workspace file on every
+/// save (Gemini review on #10078).
 pub(crate) fn file_facts_cached(
     relative: &Path,
     source: &str,
     workspace_root: &Path,
     alias_map: Option<&TsAliasMap>,
-) -> Result<FileFacts, String> {
+) -> Result<Rc<FileFacts>, String> {
     let path = normalized_path(relative);
     let alias_digest = alias_map.map_or((0, 0), TsAliasMap::cache_digest);
     let key = CacheKey {
@@ -236,7 +242,7 @@ pub(crate) fn file_facts_cached(
         cache.try_borrow_mut().ok().and_then(|mut cache| {
             cache
                 .as_mut()
-                .and_then(|cache| cache.entries.get(&key).cloned())
+                .and_then(|cache| cache.entries.get(&key).map(Rc::clone))
         })
     });
     if let Some(facts) = cached {
@@ -248,46 +254,50 @@ pub(crate) fn file_facts_cached(
     // fills every fact from this one parse.
     let worker_root = workspace_root.to_path_buf();
     let worker_alias = alias_map.cloned();
-    let facts = parse_on_worker(relative, source, move |relative, source, allocator| {
-        let ret = Parser::new(allocator, source, source_type_for(relative)).parse();
-        let parse_error = if ret.errors.is_empty() {
-            None
-        } else {
-            // Same disclosure string `parse_error_reason` produces, so the
-            // parse-limit output is byte-identical to the previous
-            // dedicated parse-error pass.
-            Some(format!(
-                "{} parser error(s): {}",
-                ret.errors.len(),
-                ret.errors[0]
-            ))
-        };
-        let mut facts = FileFacts {
-            parse_error,
-            owners: Vec::new(),
-            export_facts: ModuleExportFacts::default(),
-            phase_two: PhaseTwoFacts::default(),
-        };
-        if facts.parse_error.is_some() {
-            // Parse-error files cache default facts, matching each
-            // consumer's previous parse-error contract.
-            return facts;
-        }
-        facts.owners = owners_from_program(&ret.program, relative, source);
-        facts.export_facts = super::related_tests::module_export_facts(
-            relative,
-            &ret.program.body,
-            source,
-            worker_alias.as_ref(),
-            worker_root.as_path(),
-        );
-        facts.phase_two = phase_two_facts_from_program(&ret.program, source);
-        facts
-    })?;
+    let facts = Rc::new(parse_on_worker(
+        relative,
+        source,
+        move |relative, source, allocator| {
+            let ret = Parser::new(allocator, source, source_type_for(relative)).parse();
+            let parse_error = if ret.errors.is_empty() {
+                None
+            } else {
+                // Same disclosure string `parse_error_reason` produces, so the
+                // parse-limit output is byte-identical to the previous
+                // dedicated parse-error pass.
+                Some(format!(
+                    "{} parser error(s): {}",
+                    ret.errors.len(),
+                    ret.errors[0]
+                ))
+            };
+            let mut facts = FileFacts {
+                parse_error,
+                owners: Vec::new(),
+                export_facts: ModuleExportFacts::default(),
+                phase_two: PhaseTwoFacts::default(),
+            };
+            if facts.parse_error.is_some() {
+                // Parse-error files cache default facts, matching each
+                // consumer's previous parse-error contract.
+                return facts;
+            }
+            facts.owners = owners_from_program(&ret.program, relative, source);
+            facts.export_facts = super::related_tests::module_export_facts(
+                relative,
+                &ret.program.body,
+                source,
+                worker_alias.as_ref(),
+                worker_root.as_path(),
+            );
+            facts.phase_two = phase_two_facts_from_program(&ret.program, source);
+            facts
+        },
+    )?);
     FILE_FACTS_CACHE.with(|cache| {
         if let Ok(mut cache) = cache.try_borrow_mut() {
             let cache = cache.get_or_insert_with(FileFactsCache::default);
-            cache.insert(key, &facts);
+            cache.insert(key, Rc::clone(&facts));
         }
     });
     Ok(facts)
@@ -304,7 +314,7 @@ pub(crate) fn export_facts_cached(
     alias_map: Option<&TsAliasMap>,
 ) -> Option<ModuleExportFacts> {
     file_facts_cached(relative, source, workspace_root, alias_map)
-        .map(|facts| facts.export_facts)
+        .map(|facts| facts.export_facts.clone())
         .ok()
 }
 
@@ -320,7 +330,7 @@ pub(crate) fn phase_two_facts_cached(
     alias_map: Option<&TsAliasMap>,
 ) -> Option<PhaseTwoFacts> {
     file_facts_cached(relative, source, workspace_root, alias_map)
-        .map(|facts| facts.phase_two)
+        .map(|facts| facts.phase_two.clone())
         .ok()
 }
 
@@ -598,7 +608,7 @@ mod tests {
         let mut cache = FileFactsCache::with_bounds(2, usize::MAX);
         for index in 0..3 {
             let key = key_for(&format!("src/f{index}.ts"), ENUM_SOURCE);
-            cache.insert(key, &default_facts());
+            cache.insert(key, Rc::new(default_facts()));
         }
         assert_eq!(
             cache.entries.len(),
@@ -611,9 +621,9 @@ mod tests {
     #[test]
     fn byte_overflow_clears_and_starts_over() {
         let mut cache = FileFactsCache::with_bounds(usize::MAX, 8);
-        cache.insert(key_for("src/a.ts", ENUM_SOURCE), &default_facts());
+        cache.insert(key_for("src/a.ts", ENUM_SOURCE), Rc::new(default_facts()));
         assert_eq!(cache.entries.len(), 1);
-        cache.insert(key_for("src/b.ts", ENUM_SOURCE), &default_facts());
+        cache.insert(key_for("src/b.ts", ENUM_SOURCE), Rc::new(default_facts()));
         assert_eq!(
             cache.entries.len(),
             1,

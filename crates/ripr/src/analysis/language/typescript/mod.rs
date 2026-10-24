@@ -604,7 +604,7 @@ impl TypeScriptAdapter {
                 // session re-save without re-parsing the whole workspace.
                 // Test extraction stays uncached because committed snapshots
                 // read the filesystem.
-                all_owners.extend(facts.owners);
+                all_owners.extend(facts.owners.clone());
             }
         }
 
