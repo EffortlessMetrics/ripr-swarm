@@ -127,6 +127,12 @@ pub(super) struct PythonTestRebinding {
     /// The test or its module binds names this walk cannot enumerate, so no
     /// name is trusted.
     pub(super) opaque: bool,
+    /// Code outside the test function may run at the owner implicitly (#5491
+    /// `missing_input` fails closed on it): an autouse fixture, `pytestmark`,
+    /// a setup or teardown hook, a module-level call, or a `conftest.py` on
+    /// the directory chain that declares a fixture or hook. Decided by
+    /// existence, never by reading what that code calls.
+    pub(super) implicit_reach: bool,
 }
 
 impl PythonTestRebinding {
@@ -163,6 +169,7 @@ pub(super) fn python_test_rebinding(
         module_bound: Vec::new(),
         module_opaque: false,
         attributes: Vec::new(),
+        implicit_reach: false,
     }
 }
 
