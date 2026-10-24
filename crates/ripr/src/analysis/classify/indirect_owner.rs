@@ -244,8 +244,42 @@ fn names_owner_as_value(code: &str, name: &str) -> bool {
         let imported = line_starts_with_use(code, at);
         let called = after.starts_with(['(', '!']) || after.starts_with("::<");
         let field_label = after.starts_with(':') && !after.starts_with("::");
-        !(defined || method || imported || called || field_label)
+        !(defined
+            || method
+            || imported
+            || called
+            || field_label
+            || typed_fn_pointer_initializer(code, at))
     })
+}
+
+/// The mention is the initializer of a `let f: fn(..) -> .. = owner;` binding.
+/// The typed function-pointer reading follows that binding to its calls and
+/// either credits or keeps the gap on the evidence (RIPR-SPEC-0115, #9478), so
+/// this limit leaves the shape to it.
+fn typed_fn_pointer_initializer(code: &str, at: usize) -> bool {
+    let mut before = code[..at].trim_end();
+    // Drop a path prefix such as `crate::` or `self::tests::`.
+    while let Some(rest) = before.strip_suffix("::") {
+        let rest = rest.trim_end();
+        let start = rest
+            .rfind(|ch: char| !is_ident_char(ch))
+            .map_or(0, |index| index + 1);
+        before = rest[..start].trim_end();
+    }
+    let Some(before) = before.strip_suffix('=') else {
+        return false;
+    };
+    if before.ends_with(['=', '!', '<', '>']) {
+        return false;
+    }
+    let Some(let_at) = identifier_offsets(before, "let").last() else {
+        return false;
+    };
+    let binding = &before[let_at + 3..];
+    binding
+        .find(':')
+        .is_some_and(|colon| binding[colon + 1..].trim_start().starts_with("fn("))
 }
 
 fn ends_at_boundary(text: &str) -> bool {

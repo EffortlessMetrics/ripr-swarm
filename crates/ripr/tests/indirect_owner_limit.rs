@@ -196,11 +196,11 @@ fn a_path_value_in_an_argument_is_a_limit_not_a_gap() -> Result<(), String> {
 }
 
 #[test]
-fn a_function_pointer_binding_is_a_limit_not_a_gap() -> Result<(), String> {
+fn an_untyped_function_pointer_binding_is_a_limit_not_a_gap() -> Result<(), String> {
     let lib = values(
         "    #[test]
     fn through_pointer() {
-        let f: fn(u32) -> u32 = inc;
+        let f = inc;
         assert_eq!(f(2), 3);
     }
 ",
