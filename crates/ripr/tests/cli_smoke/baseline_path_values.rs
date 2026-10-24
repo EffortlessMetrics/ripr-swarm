@@ -131,7 +131,17 @@ fn explicit_option_named_paths_and_unreadable_inputs_keep_advisory_reports() -> 
             ],
         )?;
         assert_eq!(output.status.code(), Some(0), "{output:?}");
-        assert!(output.stderr.is_empty(), "{output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if unreadable {
+            // #9856: the router now echoes the input-missing warning to stderr
+            // (exit 0 and report contents are unchanged).
+            assert!(
+                stderr.contains("./input-directory"),
+                "unreadable input must be named on stderr: {output:?}"
+            );
+        } else {
+            assert!(stderr.is_empty(), "{output:?}");
+        }
         let text = std::fs::read_to_string(root.join(out))
             .map_err(|error| format!("read report: {error}"))?;
         let report: serde_json::Value =

@@ -140,8 +140,11 @@ Known gaps against the child issues, each deliberate for this first harness:
   as the cause. A test fails if a generated-exclusion row has no such pair. A
   per-path cause in `ripr`'s output would be a public schema change and is not
   part of this harness.
-- The #1609 manifest does not exist yet. The reader takes `candidate.sha` only
-  and is tested against an inline fixture, not the real DTO.
+- The #1609 manifest is not filled until the cut. Its DTO and admission
+  (`LiveHeadSnapshot::admit`, schema 1.1) already exist; the reader takes
+  `candidate.sha` only, and a test requires it to read the same commit the
+  admission validator accepts from the same bytes. The harness does not run
+  the admission checks itself.
 - A control passed with `--removal-control` instead of a manifest is bound to
   the candidate by `--version` only; the packet says so in the control detail.
 - The candidate in the packet is the shipped binary, not the manifest's own

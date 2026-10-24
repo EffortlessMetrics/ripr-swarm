@@ -240,6 +240,39 @@ impl RelatedTestCandidateIndex {
         self
     }
 
+    /// Whether `probe` sits in a root build script no package source mounts:
+    /// the exact answer the related-test gate uses (same root-relative path).
+    pub(in crate::analysis) fn probe_in_unmounted_build_script(
+        &self,
+        probe: &Probe,
+        owner_fn: Option<&FunctionSummary>,
+        index: &RustIndex,
+    ) -> bool {
+        probe_index_path(
+            &probe.location.file,
+            self.analysis_root.as_deref(),
+            owner_fn,
+            index,
+        )
+        .is_some_and(|relative| root_build_script_unmounted(index, &relative))
+    }
+
+    /// #9871: the probe's file as the index keys it (root-relative), the same
+    /// resolution the related-test gate uses.
+    pub(in crate::analysis) fn probe_index_file(
+        &self,
+        probe: &Probe,
+        index: &RustIndex,
+    ) -> Option<std::path::PathBuf> {
+        probe_index_path(
+            &probe.location.file,
+            self.analysis_root.as_deref(),
+            None,
+            index,
+        )
+        .map(std::path::PathBuf::from)
+    }
+
     /// Record which tests the diff adds or changes, so they lead their
     /// confidence tier (#8387). Never admits a test or raises a confidence.
     pub(in crate::analysis) fn with_diff_touched(
@@ -718,6 +751,14 @@ fn find_related_tests_with_candidates<'a>(
         RelatedTestCandidates::FullScan => None,
     };
     let probe_path = probe_index_path(&probe.location.file, analysis_root, owner_fn, index);
+    // #9173: a root build script is unreachable from package tests unless one
+    // really mounts it; see `root_build_script_unmounted`.
+    if probe_path
+        .as_deref()
+        .is_some_and(|relative| root_build_script_unmounted(index, relative))
+    {
+        return Vec::new();
+    }
     let owner_package_prefix = owner_fn.and_then(|owner| package_prefix(&owner.file));
 
     // #2971 ambiguity rule: a call to `owner_name` can bypass the
@@ -932,13 +973,14 @@ fn find_related_tests_with_candidates<'a>(
         };
         let calls_owner_by_name = !owner_name.is_empty()
             && !property_only_owner_call
-            && (test.calls.iter().any(|call| {
-                call.name == owner_name
-                    && !(receiver_calls_cannot_reach_owner
-                        && super::helper_transfer::mentions_only_as_receiver_call(
-                            &call.text, owner_name,
-                        ))
-            }) || body_contains_owner_call(&test.body, owner_name));
+            && if receiver_calls_cannot_reach_owner {
+                // The body fallback must preserve the same free-call identity
+                // as captured calls; a receiver spelling cannot restore it.
+                test_calls_free_function(test, owner_name)
+            } else {
+                test.calls.iter().any(|call| call.name == owner_name)
+                    || body_contains_owner_call(&test.body, owner_name)
+            };
         // A formatting macro or `to_string()` on a value typed as the owner's
         // self type runs a changed `Display`/`Debug` `fmt` without naming it.
         let dispatches_to_fmt = owner_fn.is_some_and(|owner| {
@@ -2452,6 +2494,202 @@ const GENERIC_PROBE_TOKENS: &[&str] = &[
     "test",
     "tests",
 ];
+
+/// Whether the root-relative `path` is a package's root `build.rs`: the file
+/// name is `build.rs` and no `src`, `tests`, `examples` or `benches`
+/// directory sits above it. A `package.build = "tools/gen.rs"` script is not
+/// recognised and keeps the ordinary relation rules.
+pub(in crate::analysis) fn is_root_build_script(path: &str) -> bool {
+    let mut parts = path.rsplit('/');
+    parts.next() == Some("build.rs")
+        && !parts.any(|part| matches!(part, "src" | "tests" | "examples" | "benches"))
+}
+
+/// The one authority for "no package test can reach this build script": the
+/// root-relative `path` is a root `build.rs` and no source file of its own
+/// package mounts it (#9173). Both the related-test gate and the
+/// `no_static_path` next step read this answer.
+pub(in crate::analysis) fn root_build_script_unmounted(index: &RustIndex, path: &str) -> bool {
+    is_root_build_script(path) && !package_mounts_build_script(index, path)
+}
+
+/// Whether any indexed source file of the build script's own package mounts
+/// it. The package is the script's directory; a file belongs to it only
+/// through a conventional target directory (`src`, `tests`, `examples`,
+/// `benches`) directly below, so a workspace member (`member/tests/x.rs`)
+/// or a nested package (`a/b/src/lib.rs` for `a/build.rs`) does not count.
+/// Library, binary and test-helper files all count.
+fn package_mounts_build_script(index: &RustIndex, script: &str) -> bool {
+    let package_dir = script.strip_suffix("build.rs").unwrap_or("");
+    index.files().iter().any(|(file, facts)| {
+        let normalized = normalize_path(file);
+        let Some(rest) = normalized.strip_prefix(package_dir) else {
+            return false;
+        };
+        let first = rest.split('/').next().unwrap_or("");
+        rest.contains('/')
+            && matches!(first, "src" | "tests" | "examples" | "benches")
+            && source_mounts_build_script(&facts.data().source)
+    })
+}
+
+/// Whether `source` mounts a build script: an `include!` or `#[path]` whose
+/// arguments hold a string-literal path with an exact `build.rs` component.
+/// Including the script's generated `OUT_DIR` output is not a mount. Comments and string
+/// literals are masked first, so a mention in either, `mybuild.rs`, and
+/// `build.rs.bak` do not count; a multi-line argument list is read whole.
+fn source_mounts_build_script(source: &str) -> bool {
+    if !source.contains("include!") && !source.contains("#[path") {
+        return false;
+    }
+    let (masked, literals) = mask_comments_and_literals(source);
+    ["include!", "#[path"].iter().any(|needle| {
+        masked.match_indices(needle).any(|(at, _)| {
+            let args = &masked[at + needle.len()..];
+            let span = &args[..balanced_end(args)];
+            literal_ids(span).any(|id| {
+                literals.get(id).is_some_and(|literal| {
+                    literal.split(['/', '\\']).any(|part| part == "build.rs")
+                })
+            })
+        })
+    })
+}
+
+/// Replace comments with spaces and every string literal with `"<n>"`
+/// (`n` indexes the returned literal contents), so structure scans cannot be
+/// fooled by text inside comments or strings. Char literals become `' '`.
+fn mask_comments_and_literals(source: &str) -> (String, Vec<String>) {
+    let chars: Vec<char> = source.chars().collect();
+    let mut masked = String::with_capacity(source.len());
+    let mut literals = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let next = chars.get(i + 1).copied();
+        if c == '/' && next == Some('/') {
+            while i < chars.len() && chars[i] != '\n' {
+                i += 1;
+            }
+        } else if c == '/' && next == Some('*') {
+            let mut depth = 0usize;
+            while i < chars.len() {
+                if chars[i] == '/' && chars.get(i + 1) == Some(&'*') {
+                    depth += 1;
+                    i += 2;
+                } else if chars[i] == '*' && chars.get(i + 1) == Some(&'/') {
+                    depth -= 1;
+                    i += 2;
+                    if depth == 0 {
+                        break;
+                    }
+                } else {
+                    if chars[i] == '\n' {
+                        masked.push('\n');
+                    }
+                    i += 1;
+                }
+            }
+            masked.push(' ');
+        } else if c == 'r'
+            && (next == Some('"') || next == Some('#'))
+            && raw_string_hashes(&chars, i).is_some()
+            && !masked.ends_with(|prev: char| prev.is_alphanumeric() || prev == '_')
+        {
+            let hashes = raw_string_hashes(&chars, i).unwrap_or(0);
+            let start = i + 2 + hashes;
+            let mut end = start;
+            while end < chars.len()
+                && !(chars[end] == '"' && (0..hashes).all(|k| chars.get(end + 1 + k) == Some(&'#')))
+            {
+                end += 1;
+            }
+            literals.push(chars[start..end.min(chars.len())].iter().collect());
+            masked.push_str(&format!("\"{}\"", literals.len() - 1));
+            i = (end + 1 + hashes).min(chars.len());
+        } else if c == '"' {
+            let mut literal = String::new();
+            i += 1;
+            while i < chars.len() && chars[i] != '"' {
+                if chars[i] == '\\' && i + 1 < chars.len() {
+                    literal.push(chars[i + 1]);
+                    i += 2;
+                } else {
+                    literal.push(chars[i]);
+                    i += 1;
+                }
+            }
+            i += 1;
+            literals.push(literal);
+            masked.push_str(&format!("\"{}\"", literals.len() - 1));
+        } else if c == '\'' && is_char_literal(&chars, i) {
+            i += 1;
+            if chars.get(i) == Some(&'\\') {
+                i += 1;
+            }
+            while i < chars.len() && chars[i] != '\'' {
+                i += 1;
+            }
+            i += 1;
+            masked.push_str("' '");
+        } else {
+            masked.push(c);
+            i += 1;
+        }
+    }
+    (masked, literals)
+}
+
+/// The `#` count of a raw string opening at `at` (`r"`, `r#"`), if it is one.
+fn raw_string_hashes(chars: &[char], at: usize) -> Option<usize> {
+    let mut hashes = 0;
+    while chars.get(at + 1 + hashes) == Some(&'#') {
+        hashes += 1;
+    }
+    (chars.get(at + 1 + hashes) == Some(&'"')).then_some(hashes)
+}
+
+/// `'x'` and `'\n'` are char literals; `'a` followed by anything else is a
+/// lifetime or label.
+fn is_char_literal(chars: &[char], at: usize) -> bool {
+    match chars.get(at + 1) {
+        Some('\\') => true,
+        Some(_) => chars.get(at + 2) == Some(&'\''),
+        None => false,
+    }
+}
+
+/// Length of the argument group that starts `args`: through the matching
+/// close of an opening bracket, or up to the first unmatched close (`]` of
+/// `#[path = "..."]`).
+fn balanced_end(args: &str) -> usize {
+    let mut depth = 0usize;
+    for (at, c) in args.char_indices() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                if depth == 0 {
+                    return at;
+                }
+                depth -= 1;
+                if depth == 0 {
+                    return at + 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    args.len()
+}
+
+/// The literal indexes named by `"<n>"` placeholders in masked text.
+fn literal_ids(masked: &str) -> impl Iterator<Item = usize> + '_ {
+    masked
+        .split('"')
+        .skip(1)
+        .step_by(2)
+        .filter_map(|id| id.parse().ok())
+}
 
 /// Whether a test file is named for the probe's source stem: the stem is a
 /// whole `_` word of the test file's own stem (`tests/pricing.rs`,
@@ -10760,6 +10998,182 @@ try_parse_summary(raw).map_err(Into::into)"
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].0.name, "repo_lane_deserializes_fields_correctly");
         assert_eq!(related[0].1, RelationReason::AssertionTargetAffinity);
+    }
+
+    /// #9173: a package's root `build.rs` runs under Cargo before the package
+    /// compiles, so a test merely named for a token of the changed
+    /// expression (here from a string literal) must not relate to it.
+    #[test]
+    fn root_build_script_probe_relates_no_name_token_test() {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            tests: vec![test(
+                "tests/test_lints.rs",
+                "test_allow_attributes",
+                "let x = 1; let _ = x;",
+            )],
+            ..Default::default()
+        });
+        let expression = ".arg(\"--cap-lints=allow\")";
+
+        for file in ["build.rs", "./build.rs", "member/build.rs"] {
+            let probe = probe(file, expression);
+            let indexed = find_related_tests_with_candidate_index(
+                &probe,
+                None,
+                &index,
+                true,
+                None,
+                None,
+                &RelatedTestCandidateIndex::new(&index),
+            );
+            let full_scan = find_related_tests_with_candidates(
+                &probe,
+                None,
+                &index,
+                true,
+                None,
+                None,
+                RelatedTestCandidates::FullScan,
+            );
+            assert!(
+                indexed.is_empty(),
+                "indexed related for {file}: {indexed:?}"
+            );
+            assert!(full_scan.is_empty(), "full scan related for {file}");
+        }
+
+        // An absolute checkout path under `src` is judged root-relative: the
+        // root `build.rs` still relates nothing, a real `src/build.rs` does.
+        let root = Path::new("/work/src/shop");
+        let candidate_index = RelatedTestCandidateIndex::new(&index).with_analysis_root(root);
+        for (file, expected) in [
+            ("/work/src/shop/build.rs", 0),
+            ("/work/src/shop/src/build.rs", 1),
+        ] {
+            let probe = probe(file, expression);
+            let related = find_related_tests_with_candidate_index(
+                &probe,
+                None,
+                &index,
+                true,
+                None,
+                None,
+                &candidate_index,
+            );
+            assert_eq!(related.len(), expected, "{file}: {related:?}");
+        }
+
+        // Discriminating control: the same expression in a `src/` file keeps
+        // the name-token relation, and `src/build.rs` is an ordinary module.
+        for file in ["src/probe.rs", "src/build.rs"] {
+            let probe = probe(file, expression);
+            let related = find_related_tests(&probe, None, &index, true, None, None);
+            assert_eq!(related.len(), 1, "control for {file}");
+            assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
+        }
+    }
+
+    /// #9173: the mount scanner reads structure, not text. Each negative
+    /// fails if comment/string masking, argument joining or exact-component
+    /// matching is removed.
+    #[test]
+    fn mount_scanner_reads_structure_not_text() {
+        for mount in [
+            "include!(\"../build.rs\");",
+            "include!(\n    \"../build.rs\"\n);",
+            "#[path = \"../build.rs\"]\nmod script;",
+            "#[path=\"..\\\\build.rs\"] mod script;",
+            "/* old */ include!(r#\"../build.rs\"#);",
+            "let c = 'x'; include!(\"../build.rs\");",
+        ] {
+            assert!(source_mounts_build_script(mount), "mount: {mount}");
+        }
+        for plain in [
+            "// include!(\"../build.rs\");",
+            "/* include!(\"../build.rs\"); */",
+            "/* /* nested */ include!(\"../build.rs\"); */",
+            "let s = \"include!(\\\"../build.rs\\\")\";",
+            "let s = r#\"#[path = \"../build.rs\"]\"#;",
+            "include!(\"../mybuild.rs\");",
+            "include!(\"../build.rs.bak\");",
+            "include!( concat!(env!(\"OUT_DIR\"), \"/gen.rs\") );",
+            "include!(\"../fixtures/data.rs\"); // build.rs OUT_DIR",
+            "mod build; let _ = \"build.rs\";",
+        ] {
+            assert!(!source_mounts_build_script(plain), "plain: {plain}");
+        }
+    }
+
+    /// #9173: a source file of the build script's own package that mounts it
+    /// (`src/lib.rs`, `tests/common/mod.rs`, a test) restores the ordinary
+    /// relation; a mount in a workspace member, a nested package, or an
+    /// unrelated mention does not.
+    #[test]
+    fn mounting_package_source_restores_build_script_relation() -> Result<(), String> {
+        let expression = ".arg(\"--cap-lints=allow\")";
+        const TEST: &str = "#[test]\nfn test_allow_attributes() {}\n";
+        const MOUNT: &str = "include!(\"../build.rs\");\n";
+        let index_with = |files: &[(&str, &str)]| -> Result<RustIndex, String> {
+            let mut tests = Vec::new();
+            let mut file_map = BTreeMap::new();
+            for (path, source) in files {
+                let facts = crate::analysis::syntax::ra::summarize_file_with_parser(
+                    std::path::Path::new(path),
+                    source,
+                )
+                .map_err(|error| error.to_string())?;
+                tests.extend(facts.tests.clone());
+                file_map.insert(PathBuf::from(path), facts);
+            }
+            Ok(RustIndex::from_owned(
+                crate::analysis::facts::OwnedRustIndex {
+                    tests,
+                    files: file_map.into_iter().collect(),
+                    ..Default::default()
+                },
+            ))
+        };
+        let related_for = |index: &RustIndex, file: &str| {
+            let probe = probe(file, expression);
+            find_related_tests(&probe, None, index, true, None, None).len()
+        };
+        let mounted = format!("{MOUNT}{TEST}");
+
+        // Mounted from a test, the library root, or a test helper module.
+        for files in [
+            vec![("tests/lints.rs", mounted.as_str())],
+            vec![("tests/lints.rs", TEST), ("src/lib.rs", MOUNT)],
+            vec![("tests/lints.rs", TEST), ("src/main.rs", MOUNT)],
+            vec![("tests/lints.rs", TEST), ("tests/common/mod.rs", MOUNT)],
+        ] {
+            let index = index_with(&files)?;
+            assert_eq!(related_for(&index, "build.rs"), 1, "mounted: {files:?}");
+        }
+
+        // Unmounted, or only mentioned in a comment.
+        let plain = index_with(&[("tests/lints.rs", TEST)])?;
+        assert_eq!(related_for(&plain, "build.rs"), 0);
+        let commented = index_with(&[
+            ("tests/lints.rs", TEST),
+            ("src/lib.rs", "// include!(\"../build.rs\");\n"),
+        ])?;
+        assert_eq!(related_for(&commented, "build.rs"), 0);
+
+        // Root package versus a workspace member: the member's mount does
+        // not re-enable the root script, and the root's mount does not
+        // re-enable the member's.
+        let workspace = index_with(&[
+            ("tests/lints.rs", TEST),
+            ("member/tests/lints.rs", &mounted),
+        ])?;
+        assert_eq!(related_for(&workspace, "build.rs"), 0);
+        assert!(related_for(&workspace, "member/build.rs") > 0);
+
+        // Nested packages: `a/b` mounting its own script does not enable `a`.
+        let nested = index_with(&[("a/tests/lints.rs", TEST), ("a/b/tests/lints.rs", &mounted)])?;
+        assert_eq!(related_for(&nested, "a/build.rs"), 0);
+        assert!(related_for(&nested, "a/b/build.rs") > 0);
+        Ok(())
     }
 
     /// Another crate's common assertion token does not silence the only

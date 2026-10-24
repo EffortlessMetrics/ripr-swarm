@@ -1,4 +1,4 @@
-//! RIPR-SPEC-0246 rule 7: an edit to a ternary condition's comparison needs a
+//! RIPR-SPEC-0246 rule 9: an edit to a ternary condition's comparison needs a
 //! tested input the two comparisons treat differently.
 //!
 //! `return \`${n} item${n === 1 ? "" : "s"}\`` becoming `n <= 1` changes the

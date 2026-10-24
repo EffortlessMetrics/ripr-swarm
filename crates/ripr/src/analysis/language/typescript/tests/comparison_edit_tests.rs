@@ -1,4 +1,4 @@
-//! RIPR-SPEC-0246 rule 7: a ternary-condition comparison edit keeps `exposed`
+//! RIPR-SPEC-0246 rule 9: a ternary-condition comparison edit keeps `exposed`
 //! only when a tested input makes the two comparisons differ.
 
 use super::*;

@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -47,7 +47,7 @@
+         return Err(Box::new(ParseError::Truncated));
+     }
+     if frame[0] != id {
+-        return Err(ParseError::InvalidData.into());
++        return Err(Box::new(ParseError::InvalidData));
+     }
+     Ok(Response { id, len: frame.len() - 1 })
+ }
