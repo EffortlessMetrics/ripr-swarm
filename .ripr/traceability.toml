@@ -13,6 +13,7 @@ tests = [
   "crates/ripr/src/analysis/probes/classify.rs::tests::array_length_texts_follow_bracket_nesting",
   "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::replaced_type_header_is_static_unknown_but_const_default_call_is_probed",
   "crates/ripr/src/analysis/classify/reach.rs::given_mixed_reaching_and_proximity_relations_when_building_reach_evidence_then_only_reaching_tests_are_named",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::keyword_probe_tokens_do_not_relate_tests_by_name",
   "crates/ripr/tests/finding_identity_contract.rs",
   "crates/ripr/src/analysis/input_boundary.rs::fanout_boundary_rejects_excluded_aliases_to_captured_files",
   "crates/ripr/tests/cli_smoke/native_fanout.rs::fanout_excluded_alias_in_git_refuses_captured_target",
@@ -18365,7 +18366,7 @@ fixtures = []
 code = [
   "crates/ripr/src/output/pilot/render/complete.rs",
   "crates/ripr/src/output/pilot/commands.rs",
-  "crates/ripr/src/output/pilot/current_change.rs",
+  "crates/ripr/src/edit_cage/mod.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0318-pilot-dirty-target-next-steps.md",
