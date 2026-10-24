@@ -71,12 +71,12 @@ jobs:
           if [ "$state" != "dirty" ]; then
             # A conflict this workflow reported on this head may since have been
             # resolved by the base moving; a re-check clears only its own failure.
-            prior="$(gh api "repos/$REPOSITORY/commits/$HEAD_SHA/statuses?per_page=100" --jq '[.[] | select(.context == "merge-ready conflict")][0].state // "none"')"
+            prior="$(gh api "repos/$REPOSITORY/commits/$HEAD_SHA/statuses?per_page=100" --jq '[.[] | select(.context == "merge-ready conflict" and .creator.login == "github-actions[bot]")][0].state // "none"')"
             if [ "$prior" = "failure" ]; then
               gh api "repos/$REPOSITORY/statuses/$HEAD_SHA" \
                 -f state=success \
                 -f context="merge-ready conflict" \
-                -f description="No conflict with $BASE_REF; routed-rust.yml owns the qualification" > /dev/null
+                -f description="No conflict with $BASE_REF" > /dev/null
               echo "Cleared the earlier conflict status: mergeable_state=$state."
             fi
             echo "mergeable_state=$state; routed-rust.yml owns the result."

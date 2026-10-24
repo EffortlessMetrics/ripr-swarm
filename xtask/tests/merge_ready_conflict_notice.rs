@@ -230,17 +230,36 @@ fn status_count(outcome: &Outcome, state: &str) -> usize {
 #[test]
 fn a_resolved_conflict_clears_only_its_own_earlier_failure() -> Result<(), String> {
     let clean = pr_json("true", "clean", HEAD, "main");
-    let failed = r#"[{"context":"merge-ready conflict","state":"failure"},{"context":"merge-ready conflict","state":"failure"}]"#;
+    let failed = r#"[{"context":"merge-ready conflict","state":"failure","creator":{"login":"github-actions[bot]"}},{"context":"merge-ready conflict","state":"failure","creator":{"login":"github-actions[bot]"}}]"#;
     let outcome = run_with_statuses(&[clean.clone()], "0", failed, "cleared")?;
     assert_eq!(status_count(&outcome, "success"), 1, "{}", outcome.log);
     assert_eq!(outcome.comments, 0);
 
-    let already_clear = r#"[{"context":"merge-ready conflict","state":"success"},{"context":"merge-ready conflict","state":"failure"}]"#;
+    let already_clear = r#"[{"context":"merge-ready conflict","state":"success","creator":{"login":"github-actions[bot]"}},{"context":"merge-ready conflict","state":"failure","creator":{"login":"github-actions[bot]"}}]"#;
     let outcome = run_with_statuses(&[clean.clone()], "0", already_clear, "already-clear")?;
+    assert_eq!(outcome.statuses, 0, "{}", outcome.log);
+
+    let foreign_creator =
+        r#"[{"context":"merge-ready conflict","state":"failure","creator":{"login":"someone"}}]"#;
+    let outcome = run_with_statuses(&[clean.clone()], "0", foreign_creator, "foreign-creator")?;
     assert_eq!(outcome.statuses, 0, "{}", outcome.log);
 
     let other_context = r#"[{"context":"Ripr Rust Small Result","state":"failure"}]"#;
     let outcome = run_with_statuses(&[clean], "0", other_context, "other-context")?;
+    assert_eq!(outcome.statuses, 0, "{}", outcome.log);
+    Ok(())
+}
+
+#[test]
+fn a_moved_head_never_clears_a_status_on_the_requested_head() -> Result<(), String> {
+    let moved = pr_json(
+        "true",
+        "clean",
+        "def67890def67890def67890def67890def67890",
+        "main",
+    );
+    let failed = r#"[{"context":"merge-ready conflict","state":"failure","creator":{"login":"github-actions[bot]"}}]"#;
+    let outcome = run_with_statuses(&[moved], "0", failed, "moved-with-failure")?;
     assert_eq!(outcome.statuses, 0, "{}", outcome.log);
     Ok(())
 }
