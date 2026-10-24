@@ -18402,7 +18402,7 @@ fixtures = []
 code = [
   "crates/ripr/src/output/pilot/render/complete.rs",
   "crates/ripr/src/output/pilot/commands.rs",
-  "crates/ripr/src/output/pilot/current_change.rs",
+  "crates/ripr/src/edit_cage/mod.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0318-pilot-dirty-target-next-steps.md",
