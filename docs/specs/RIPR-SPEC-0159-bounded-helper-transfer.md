@@ -355,6 +355,10 @@ can only hint that a caller "may lead here" without changing anything.
   binding, or a block-local `fn` inside a macro argument); this is a named
   limit tracked in #9971.
 
+  A relative `use super::<entry>;` in a `src/` unit test is refused even when
+  `super` is the crate root (verdict-corpus row
+  `spec0236-seam-private-tier-src-test-chain` moves gap to limited).
+
   Accepted conservative losses (tracked in #9971): the fully qualified
   spelling of a crate-root re-export of an inline-module entry
   (`qual_reach::entry(..)` for `mod inner { pub fn entry }` plus
