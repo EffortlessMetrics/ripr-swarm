@@ -16018,6 +16018,52 @@ fn finding_hover_spells_the_unconfirmed_observation_in_words() -> Result<(), Str
     Ok(())
 }
 
+// #9929: the "discriminator missing:" branch of the discriminator line and the
+// witness `missing discriminator` reason also spell the marker in words.
+#[test]
+fn finding_hover_with_named_missing_discriminator_spells_markers_in_words() -> Result<(), String> {
+    use super::hover::finding_hover_response;
+    use crate::domain::MissingDiscriminatorFact;
+
+    let mut finding = sample_finding();
+    finding.ripr.reveal.discriminate = StageEvidence::new(
+        StageState::Yes,
+        Confidence::Medium,
+        "strong oracle, changed value never named (observation_unverified)",
+    );
+    finding.activation.missing_discriminators = vec![
+        MissingDiscriminatorFact {
+            value: "amount == threshold".to_string(),
+            reason: "input unexecuted (observation_unverified)".to_string(),
+            flow_sink: None,
+        },
+        MissingDiscriminatorFact {
+            value: "other".to_string(),
+            reason: "missing proof: `raise ValueError(\"observation_unverified\")`.".to_string(),
+            flow_sink: None,
+        },
+    ];
+    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+    let hover = finding_hover_response(&finding, &diagnostic);
+    let text = match hover.contents {
+        HoverContents::Markup(markup) => markup.value,
+        _ => return Err("expected markup hover".to_string()),
+    };
+    if text.contains("(observation_unverified)") {
+        return Err(format!("hover kept the producer marker:\n{text}"));
+    }
+    for needle in [
+        "* discriminator missing: `amount == threshold`, `other`; related oracle: strong oracle, changed value never named\n",
+        "- missing discriminator: `amount == threshold` \u{2014} input unexecuted\n",
+        "`raise ValueError(\"observation_unverified\")`.",
+    ] {
+        if !text.contains(needle) {
+            return Err(format!("missing {needle:?} in:\n{text}"));
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn finding_hover_response_includes_evidence_details() -> Result<(), String> {
     use super::hover::finding_hover_response;
