@@ -5,7 +5,7 @@
 //! except a condition that is itself a boolean literal and so provably inert
 //! (`skipif(False)`), and `importorskip` of a module every interpreter has.
 
-use super::{PythonImport, PythonTest, expr_full_name};
+use super::{PythonFramework, PythonImport, PythonTest, expr_full_name};
 use rustpython_parser::ast::{self, Expr, Stmt};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,7 +29,7 @@ pub(super) fn activation_control(test: &PythonTest) -> Option<&str> {
             | (
                 "unittest.skip" | "unittest.skipIf" | "unittest.skipUnless",
                 DeclarationSite::Class,
-            ) => test.framework == "unittest",
+            ) => test.framework == PythonFramework::Unittest,
             _ => true,
         })
         .map(|control| control.name.as_str())

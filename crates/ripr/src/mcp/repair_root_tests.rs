@@ -89,24 +89,50 @@ fn selected_root_argv(
     assert_selected_unix_root(fixture, &argv[3])
 }
 
+/// #10009: the bounded MCP projection renders next actions with the portable
+/// root `.` (ADR 0022), like the repair card: presentation only, never
+/// execution authority. The argv shape is still observed through a real
+/// shell, and the raw display must name neither the selected checkout nor
+/// the decoy.
+fn portable_root_argv(
+    fixture: &RootFixture,
+    command: &str,
+    expected: &[&[u8]],
+) -> Result<(), String> {
+    let argv = shell_argv(fixture, command)?;
+    assert_eq!(argv, expected, "MCP projection lost the portable root");
+    let display_path = fixture.root.to_string_lossy();
+    let decoy_path = fixture.decoy.to_string_lossy();
+    assert!(
+        !command.contains(display_path.as_ref()),
+        "MCP projection leaked the host-local root: {command}"
+    );
+    assert!(
+        !command.contains(decoy_path.as_ref()),
+        "MCP projection leaked the decoy path: {command}"
+    );
+    Ok(())
+}
+
 /// Ordinary awaiting-edit continuation prints `ripr continue` (#7879).
-/// The Unix-root identity proof is the same as the advanced after-phase
-/// spelling: the `--root` value must name this fixture, not the decoy.
-fn selected_continue_root_argv(
+/// #10009: the MCP projection binds the portable root `.`; the CLI-side
+/// literal-root identity proof lives in `selected_continue_root_argv_cli`.
+fn selected_continue_portable_argv(
     fixture: &RootFixture,
     command: &str,
     attempt: &str,
 ) -> Result<(), String> {
-    let argv = shell_argv(fixture, command)?;
-    let expected = [
-        b"continue".as_slice(),
-        b"--root",
-        fixture.root.as_os_str().as_bytes(),
-        b"--attempt",
-        attempt.as_bytes(),
-    ];
-    assert_eq!(argv, expected, "continue argv lost the selected Unix root");
-    assert_selected_unix_root(fixture, &argv[2])
+    portable_root_argv(
+        fixture,
+        command,
+        &[
+            b"continue",
+            b"--root",
+            b".",
+            b"--attempt",
+            attempt.as_bytes(),
+        ],
+    )
 }
 
 fn assert_selected_unix_root(fixture: &RootFixture, root_arg: &[u8]) -> Result<(), String> {
@@ -173,9 +199,30 @@ fn restart_root_parity(fixture: &RootFixture, class: &str) -> Result<(), String>
     let mcp_command = document["next_command"]
         .as_str()
         .ok_or_else(|| "missing MCP restart".to_string())?;
-    for command in [cli_command.command.as_str(), mcp_command] {
-        selected_root_argv(fixture, command, "--seam-id", "seam:freshness", "before")?;
-    }
+    // #10009 split: the CLI display keeps binding the selected repository
+    // (paste-and-run from any working directory), while the bounded MCP
+    // projection renders the same action with the portable root `.`.
+    selected_root_argv(
+        fixture,
+        cli_command.command.as_str(),
+        "--seam-id",
+        "seam:freshness",
+        "before",
+    )?;
+    portable_root_argv(
+        fixture,
+        mcp_command,
+        &[
+            b"agent",
+            b"repair",
+            b"--root",
+            b".",
+            b"--seam-id",
+            b"seam:freshness",
+            b"--phase",
+            b"before",
+        ],
+    )?;
     // Recreate only the bad root-rendering operator as a separate control.
     // The real decoy exists, but its identity must not pass the primary oracle.
     let old_root = crate::agent::loop_commands::bound_root(
@@ -199,7 +246,7 @@ fn restart_root_parity(fixture: &RootFixture, class: &str) -> Result<(), String>
 }
 
 #[test]
-fn durable_selected_restart_failed_preserves_literal_unix_root() -> Result<(), String> {
+fn durable_selected_restart_failed_cli_binds_root_mcp_projects_portable() -> Result<(), String> {
     let fixture = literal_root_fixture("restart-failed")?;
     write(
         &fixture.root.join("tests/target.rs"),
@@ -228,7 +275,7 @@ fn durable_selected_restart_failed_preserves_literal_unix_root() -> Result<(), S
 }
 
 #[test]
-fn durable_selected_restart_open_gap_preserves_literal_unix_root() -> Result<(), String> {
+fn durable_selected_restart_open_gap_cli_binds_root_mcp_projects_portable() -> Result<(), String> {
     let fixture = literal_root_fixture("restart-open-gap")?;
     let packet = finish_without_receipt(&fixture.root, &fixture.id)?;
     issue_terminal_receipt_with_grip(
@@ -246,7 +293,7 @@ fn durable_selected_restart_open_gap_preserves_literal_unix_root() -> Result<(),
 }
 
 #[test]
-fn durable_selected_awaiting_literal_unix_root_retains_after_control() -> Result<(), String> {
+fn durable_selected_awaiting_mcp_projects_portable_continue_root() -> Result<(), String> {
     let fixture = literal_root_fixture("restart-awaiting-positive")?;
     let document = selected_action_parity(
         &fixture.root,
@@ -257,7 +304,7 @@ fn durable_selected_awaiting_literal_unix_root_retains_after_control() -> Result
     let command = document["next_command"]
         .as_str()
         .ok_or_else(|| "missing awaiting continuation".to_string())?;
-    selected_continue_root_argv(&fixture, command, fixture.id.as_str())?;
+    selected_continue_portable_argv(&fixture, command, fixture.id.as_str())?;
     assert_eq!(document["command_routes"].as_array().map(Vec::len), Some(2));
     Ok(())
 }

@@ -22,6 +22,13 @@ Start here:
   Analyzer limit: Static limit `unresolved_pytest_fixture`: a related pytest test depends on fixture-sourced values; syntax-first preview evidence cannot prove whether the fixture supplies the…
   Related test: tests/test_pricing.py:11 test_apply_discount_fixture_case
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator unknown
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: 1 related Python test(s) found for owner `apply_discount`
     - infection unknown: Static limit `unresolved_pytest_fixture` prevents a safe Python infection claim
     - 4 more detail line(s) in --format human-full

@@ -159,7 +159,10 @@ fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a
 }
 
 pub(super) fn print_help() {
-    println!("{FIRST_PR_HELP}");
+    println!(
+        "{}",
+        crate::cli::help::render_command_help(FIRST_PR_HELP, &[])
+    );
 }
 
 /// Help body for `ripr first-pr` / `ripr start-here`. Also the flag source for
