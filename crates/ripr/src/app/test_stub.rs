@@ -2397,9 +2397,9 @@ impl Size {
             },
             test_name: "clamp_to_boundary".to_string(),
             text: String::new(),
+            already_present: false,
             fill_ins: Vec::new(),
             derived_inputs: Vec::new(),
-            already_present: false,
         };
         let next = next_repair_for(root, &RiprConfig::default(), &entry, &stub)
             .ok_or("a repair-ready stub must name its repair journey")?;
