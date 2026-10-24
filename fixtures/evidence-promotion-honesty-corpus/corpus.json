@@ -11843,6 +11843,308 @@
         }
       ],
       "control": "must_stay_no_static_path"
+    },
+    {
+      "id": "rust_module_reach_control_qualified",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/module_reach_control_qualified",
+      "vector": "module_qualified_own_library_call_reaches_the_entry",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "exposed"
+        }
+      ],
+      "control": "must_stay_exposed"
+    },
+    {
+      "id": "rust_module_reach_bare_import_control",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/module_reach_bare_import_control",
+      "vector": "imported_own_library_entry_bare_call_reaches_the_entry",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "exposed"
+        }
+      ],
+      "control": "must_stay_exposed"
+    },
+    {
+      "id": "rust_module_reach_cfg_comment_hidden",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/module_reach_cfg_comment_hidden",
+      "vector": "cfg_hidden_by_a_comment_does_not_admit_a_gated_module_entry",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_module_reach_include_spaced_shadow",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/module_reach_include_spaced_shadow",
+      "vector": "spaced_include_macro_may_rebind_the_library_name",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_module_reach_multiline_qualified_text",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/module_reach_multiline_qualified_text",
+      "vector": "qualified_spelling_in_a_multiline_string_is_not_a_call",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_module_reach_multiline_bare_text",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/module_reach_multiline_bare_text",
+      "vector": "bare_spelling_in_a_multiline_string_is_not_a_call",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_module_reach_namespace_alias_import",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/module_reach_namespace_alias_import",
+      "vector": "aliased_library_name_import_prefix_is_not_the_library",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_module_reach_local_module_self_import",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/module_reach_local_module_self_import",
+      "vector": "self_import_of_a_test_crate_module_is_not_the_library",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_module_reach_macro_expanded_shadow",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/module_reach_macro_expanded_shadow",
+      "vector": "item_position_macro_may_declare_a_module_named_like_the_library",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_module_reach_absolute_import_rebound",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/module_reach_absolute_import_rebound",
+      "vector": "absolute_import_with_rebound_library_name_is_not_the_library",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_module_reach_root_const_decoy",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/module_reach_root_const_decoy",
+      "vector": "root_value_binding_and_decoy_reexport_do_not_credit_the_entry",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_module_reach_cfg_alt_reexport",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/module_reach_cfg_alt_reexport",
+      "vector": "cfg_alternate_reexport_rebinds_the_module_path_away_from_the_changed_file",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_module_reach_path_remap_reexport",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/module_reach_path_remap_reexport",
+      "vector": "path_remap_rebinds_the_module_path_away_from_the_changed_file",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_module_reach_path_actual_name_decoy",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/module_reach_path_actual_name_decoy",
+      "vector": "path_remapped_file_under_another_name_does_not_bind_the_same_named_inline_module",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_module_reach_body_local_use_shadow",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/module_reach_body_local_use_shadow",
+      "vector": "function_local_import_shadows_the_exact_looking_file_level_import",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
+      ]
     }
   ]
 }
