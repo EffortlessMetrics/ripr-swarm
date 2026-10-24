@@ -546,6 +546,7 @@ pub(super) fn collect_tests_from_statements(
                     framework,
                     assertions,
                     assertion_admission,
+                    bare_sibling_modules: Vec::new(),
                     constant_rebinding: python_test_rebinding(
                         &function.args,
                         &function.body,
@@ -628,6 +629,7 @@ pub(super) fn collect_tests_from_statements(
                     framework,
                     assertions,
                     assertion_admission,
+                    bare_sibling_modules: Vec::new(),
                     constant_rebinding: python_test_rebinding(
                         &function.args,
                         &function.body,
