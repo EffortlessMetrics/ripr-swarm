@@ -317,7 +317,7 @@ fn load_review_comments_analysis_outcome(
             path.display()
         ));
     }
-    // #9010: a findings-bounded check document is a prefix, never a complete
+    // #9010: a findings-bounded check document is a bounded subset, never a complete
     // outcome; present non-`true` (including malformed) fails closed.
     if crate::output::gate::discloses_limited_findings_bound(&value)
         || crate::output::gate::discloses_bounded_analysis_document(&value)
@@ -583,8 +583,8 @@ fn review_comments_with_admission(
             output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
         write_text_file(&options.out, &rendered_json)?;
         receipt.write_atomic(&receipt_path)?;
-        println!("Wrote {}", options.out.display());
-        println!("Wrote {}", markdown_path.display());
+        println!("Wrote {}", output::path::human_path(&options.out));
+        println!("Wrote {}", output::path::human_path(&markdown_path));
         return Ok(());
     }
 
@@ -882,8 +882,8 @@ fn review_comments_with_admission(
     let rendered_json = output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
     write_text_file(&options.out, &rendered_json)?;
     receipt.write_atomic(&receipt_path)?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", markdown_path.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&markdown_path));
     Ok(())
 }
 

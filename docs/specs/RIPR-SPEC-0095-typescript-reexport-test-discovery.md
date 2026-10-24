@@ -138,63 +138,63 @@ involves indirection that ripr cannot verify at runtime.
 
 ## Acceptance Examples
 
-### Single-hop credit (must credit via re-export chain)
+1. Single-hop credit (must credit via re-export chain):
 
-```
-owner:              isRawNetworkError in src/util.ts
-barrel:             src/index.ts — export { isRawNetworkError } from './util'
-test import:        import { isRawNetworkError } from '../src/index'
-test assertion:     expect(isRawNetworkError(e)).toBe(true)
+   ```
+   owner:              isRawNetworkError in src/util.ts
+   barrel:             src/index.ts — export { isRawNetworkError } from './util'
+   test import:        import { isRawNetworkError } from '../src/index'
+   test assertion:     expect(isRawNetworkError(e)).toBe(true)
 
-Before fix:         no_static_path, 0 related tests
-After fix:          exposed, 2 related tests,
-                    relation_reason: re_export_chain_followed,
-                    relation_confidence: medium
-```
+   Before fix:         no_static_path, 0 related tests
+   After fix:          exposed, 2 related tests,
+                       relation_reason: re_export_chain_followed,
+                       relation_confidence: medium
+   ```
 
-### No-false-credit control (must stay no_static_path)
+2. No-false-credit control (must stay no_static_path):
 
-```
-owner:              isRawNetworkError in src/util.ts
-barrel:             src/index.ts — export { isRawNetworkError } from './other'
-test import:        import { isRawNetworkError } from '../src/index'
+   ```
+   owner:              isRawNetworkError in src/util.ts
+   barrel:             src/index.ts — export { isRawNetworkError } from './other'
+   test import:        import { isRawNetworkError } from '../src/index'
 
-After fix:          no_static_path, 0 related tests
-                    (chain resolves to src/other.ts, not src/util.ts)
-```
+   After fix:          no_static_path, 0 related tests
+                       (chain resolves to src/other.ts, not src/util.ts)
+   ```
 
-### Two-hop chain (credited within the bound)
+3. Two-hop chain (credited within the bound):
 
-```
-owner:              isRawNetworkError in src/util.ts
-chain:              index.ts → errors.ts → util.ts  (two named hops)
-test import:        import { isRawNetworkError } from '../src/index'
+   ```
+   owner:              isRawNetworkError in src/util.ts
+   chain:              index.ts → errors.ts → util.ts  (two named hops)
+   test import:        import { isRawNetworkError } from '../src/index'
 
-After:              exposed, 1 related test,
-                    relation_reason: re_export_chain_followed
-```
+   After:              exposed, 1 related test,
+                       relation_reason: re_export_chain_followed
+   ```
 
-### Directory star barrel (unjs/ufo shape)
+4. Directory star barrel (unjs/ufo shape):
 
-```
-owner:              withoutBase in src/utils.ts
-barrel:             src/index.ts — export * from './url'; export * from './utils'
-test import:        import { withoutBase } from '../src'
+   ```
+   owner:              withoutBase in src/utils.ts
+   barrel:             src/index.ts — export * from './url'; export * from './utils'
+   test import:        import { withoutBase } from '../src'
 
-Before:             no_static_path, 0 related tests
-After:              exposed, 2 related tests,
-                    relation_reason: re_export_chain_followed
-```
+   Before:             no_static_path, 0 related tests
+   After:              exposed, 2 related tests,
+                       relation_reason: re_export_chain_followed
+   ```
 
-### Barrel other-name control (must stay no_static_path)
+5. Barrel other-name control (must stay no_static_path):
 
-```
-owner:              applyDiscount in src/a.ts
-barrel:             src/index.ts — export { applyDiscount } from './a'; export * from './b'
-test import:        import { formatCents } from '../src'
+   ```
+   owner:              applyDiscount in src/a.ts
+   barrel:             src/index.ts — export { applyDiscount } from './a'; export * from './b'
+   test import:        import { formatCents } from '../src'
 
-After:              no_static_path, 0 related tests
-```
+   After:              no_static_path, 0 related tests
+   ```
 
 ## Test Mapping
 

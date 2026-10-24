@@ -9688,6 +9688,97 @@ fn allow_attribute_detection_sees_suppressions_after_raw_string_reasons() {
     }
 }
 
+/// Char literals (`')'`, `'"'`, `'['`, escapes, multibyte) in an attribute
+/// must not desync the paren span or comma split, and lifetimes must not
+/// swallow following text.
+#[test]
+fn allow_attribute_detection_sees_suppressions_after_char_literals() {
+    let guarded = guarded_allow_attribute_lints();
+    for literal in [
+        "')'",
+        "'\"'",
+        "'('",
+        "'['",
+        "']'",
+        "','",
+        "'\\''",
+        "'\\\\'",
+        "'\\u{29}'",
+        "'🦀'",
+        "'é'",
+        "'€'",
+        "'\\n'",
+        "'\\x41'",
+        "b'('",
+        "'\\u{1F980}'",
+    ] {
+        for text in [
+            format!(
+                concat!(
+                    "#",
+                    "[cfg_attr(test, allow(dead_code, reason = {}), expect(warnings))]"
+                ),
+                literal
+            ),
+            format!(
+                concat!(
+                    "#",
+                    "[allow(dead_code, reason = {})]\n",
+                    "#",
+                    "[expect(warnings)]"
+                ),
+                literal
+            ),
+        ] {
+            let warning_line = if text.contains('\n') { 2 } else { 1 };
+            assert_eq!(
+                guarded_allow_attributes_in_text(&text, &guarded),
+                vec![
+                    (1, "allow(dead_code)".to_string()),
+                    (warning_line, "expect(warnings)".to_string()),
+                ],
+                "char literal must retain both suppressions: {text}",
+            );
+        }
+    }
+    // A lifetime tick is not a char literal: it must not swallow a following
+    // suppression (tick first), nor a real char literal after it, and a char
+    // literal comma must not split the attribute (split-only discriminator).
+    for (body, expected) in [
+        (
+            "x = &'a T, allow(dead_code), y = ')', expect(warnings)",
+            vec!["allow(dead_code)", "expect(warnings)"],
+        ),
+        (
+            "x = &'a T, allow(dead_code), expect(warnings)",
+            vec!["allow(dead_code)", "expect(warnings)"],
+        ),
+        ("x = ',', allow(dead_code)", vec!["allow(dead_code)"]),
+        (
+            "x = ',', allow(dead_code), y = ',', expect(warnings)",
+            vec!["allow(dead_code)", "expect(warnings)"],
+        ),
+        (
+            "allow(dead_code), x = 'a, expect(warnings)",
+            vec!["allow(dead_code)", "expect(warnings)"],
+        ),
+        (
+            "allow(dead_code), expect(warnings), x = 'a",
+            vec!["allow(dead_code)", "expect(warnings)"],
+        ),
+    ] {
+        let text = format!(concat!("#", "[cfg_attr(test, {})]"), body);
+        assert_eq!(
+            guarded_allow_attributes_in_text(&text, &guarded)
+                .into_iter()
+                .map(|(_, f)| f)
+                .collect::<Vec<_>>(),
+            expected,
+            "lifetime/char mix must retain suppressions: {text}",
+        );
+    }
+}
+
 #[test]
 fn allow_attribute_detection_keeps_fake_attributes_inside_raw_reasons() {
     let reason = "r#\"\"), allow(warnings), (\"#";
@@ -56088,6 +56179,41 @@ fn gh_pr_status_real_cli_schema() -> Result<(), String> {
             available.contains(field),
             "real gh rejects production field {field}: {text}"
         );
+    }
+    Ok(())
+}
+
+/// #5531: the capability registry checks are hosted. The docs-gate step must
+/// invoke both commands, key off the SUPPORT_TIERS.md, LANGUAGE_ADAPTER_PREVIEW.md and docs/specs paths, and
+/// must not use a failure-swallowing form.
+#[test]
+fn routed_rust_docs_gate_runs_capability_registry_checks() -> Result<(), String> {
+    let workflow = routed_rust_workflow_text()?;
+    let docs_gate = workflow
+        .split("\n  docs-gate:")
+        .nth(1)
+        .and_then(|rest| rest.split("\n  result:").next())
+        .ok_or("routed-rust.yml must declare a docs-gate job before result")?;
+    for needle in [
+        "cargo xtask capability-docs --check",
+        "cargo xtask check-capability-producers",
+        "docs/status/SUPPORT_TIERS\\.md",
+        "docs/LANGUAGE_ADAPTER_PREVIEW\\.md",
+        "core.quotePath=false",
+        "docs/specs/",
+    ] {
+        if !docs_gate.contains(needle) {
+            return Err(format!("docs-gate must contain `{needle}`"));
+        }
+    }
+    for line in docs_gate.lines().map(str::trim) {
+        if (line.contains("capability-docs") || line.contains("check-capability-producers"))
+            && line.contains("|| true")
+        {
+            return Err(format!(
+                "docs-gate must not swallow capability failures: {line}"
+            ));
+        }
     }
     Ok(())
 }

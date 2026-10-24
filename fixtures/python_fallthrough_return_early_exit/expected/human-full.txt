@@ -41,7 +41,7 @@ Evidence
   - source function argument value total = 2000.0 at line 5
 
 Weakness
-  - A strong Python oracle reaches `quote`, but static evidence does not place a related test input inside the guarding arm `not (total > 1000)`; every observed input leaves the changed line unexecuted (observation_unverified). Add a test input that satisfies the guarding condition
+  - A strong Python oracle reaches `quote`, but static evidence does not place a related test input inside the guarding arm `not (total > 1000)`; every observed input leaves the changed line unexecuted. Add a test input that satisfies the guarding condition
   - missing discriminator not (total > 1000): each strong related test input satisfies at least one preceding early-exit condition (`total > 1000`) and exits the owner before the changed line; observed total = 2000.0; the changed line never executes under an observed input
 
 Python repair card (preview/advisory)

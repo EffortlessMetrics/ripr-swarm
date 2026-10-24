@@ -1,0 +1,47 @@
+{
+  "case_id": "unnum-0095-ex2-barrel-name-collision",
+  "subject_id": "authored-ts-vitest-unnum",
+  "diff": "cases/unnum-0095-ex2-barrel-name-collision.diff",
+  "anchor": {
+    "file": "src/collide/util.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boolean",
+  "test_shape": "vitest_expect_tobe_barrel_resolves_to_other_module",
+  "hard_case": "the barrel re-exports the name from `./other`, so the chain resolves to a same-named function in a different file",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "Node.js v22.22.0, vitest 4.1.11, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return e.code === \"ECONNRESET\" || e.code === \"EPIPE\";",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the edit changes the owner's observable behavior"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "`src/collide/index.ts` re-exports `isRawNetworkError` from `./other`, and the tests import it through that barrel, so they exercise `other.ts`. The edit lands in `util.ts`'s function of the same name, which no test reaches. RIPR-SPEC-0095 example 2 (must stay `no_static_path`, zero related tests): the name matches but the chain resolves elsewhere, so crediting it would be a false credit.",
+  "labeling_observation": {
+    "ripr_commit": "2939c0d",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0095#2"
+  ]
+}

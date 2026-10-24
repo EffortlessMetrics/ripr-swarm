@@ -21,13 +21,20 @@ Start here:
   Canonical gap: gap:python:src/policy.py:DiscountPolicy.apply:predicate_boundary:predicate:amount>=threshold
   Changed behavior: if amount >= threshold:
   Missing discriminator (1 of 2): Related Python test reaches `apply` but the strongest extracted oracle is `unknown`; add or strengthen a focused assertion for the changed boundary
-  Related test: tests/test_policy.py:4 test_discount_policy_apply
+  Related test: tests/test_policy.py:4 test_discount_policy_apply (has no assertion)
   Suggested test file: tests/test_policy.py
   Suggested test: test_discount_policy_apply
   Test node: tests/test_policy.py::test_discount_policy_apply
   Verify command: python -m pytest tests/test_policy.py::test_discount_policy_apply (high)
   Next step — Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `amount == threshold`
   Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: 1 related Python test(s) found for owner `apply`
     - infection yes: Changed Python predicate can alter branch selection: `if amount >= threshold:`
     - 5 more detail line(s) in --format human-full

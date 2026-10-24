@@ -986,12 +986,13 @@ fn fallback_identity_for(
     static_class: Option<&str>,
 ) -> Option<String> {
     match (path, line) {
-        // Normalize exactly like the baseline writers
-        // (`baseline_update.rs` / `baseline_delta.rs`): a candidate reported
-        // as `./src/x.rs` or `src\x.rs` must still match the legacy entry.
+        // Normalize through the baseline stored-string owner
+        // (`baseline::normalize_fallback_path`): a candidate reported as
+        // `./src/x.rs` or `src\x.rs` must still match the legacy entry. A
+        // missing static class renders as `unknown` (gate-only behavior).
         (Some(path), Some(line)) => Some(format!(
             "{}:{line}:{}",
-            path.replace('\\', "/").trim_start_matches("./"),
+            crate::output::baseline::normalize_fallback_path(path),
             static_class.unwrap_or("unknown")
         )),
         _ => None,
@@ -1553,7 +1554,7 @@ pub(crate) fn discloses_limited_partial_scope(value: &Value) -> bool {
 }
 
 /// Whether a JSON document discloses the `limited_findings_bound` run state
-/// (#5203): the producer rendered a findings-array prefix, not the full
+/// (#5203): the producer rendered a findings-array bounded subset, not the full
 /// analysis set. The producer emits exactly one position (`run_limitations[]`,
 /// the only slot the check schema opens for this state), so only that
 /// position is read; a future producer adding positions extends this predicate.
@@ -1598,7 +1599,7 @@ fn findings_bound_input_error(value: &Value, path: &Path, role: &str) -> Option<
 /// It also fails closed on `analysis_outcome.document_complete: false` (#9010):
 /// the producer emits that additive member only when the findings array was
 /// cut by the byte budget, so the analysis verdict can read complete while the
-/// document holds just a prefix of the findings.
+/// document holds just a bounded subset of the findings.
 pub(crate) fn discloses_incomplete_analysis_outcome(value: &Value) -> bool {
     value
         .pointer("/analysis_outcome/analysis_complete")
@@ -1608,7 +1609,7 @@ pub(crate) fn discloses_incomplete_analysis_outcome(value: &Value) -> bool {
 }
 
 /// Whether the check document discloses `analysis_outcome.document_complete:
-/// false` (#9010): the rendered findings are a budget-bounded prefix.
+/// false` (#9010): the rendered findings are a budget-bounded subset.
 pub(crate) fn discloses_bounded_analysis_document(value: &Value) -> bool {
     // A present non-`true` member (including a malformed one) cannot
     // establish a complete document.
@@ -1673,7 +1674,8 @@ fn resolve_root_path(root: &Path, path: &Path) -> PathBuf {
 }
 
 fn display_path(path: &Path) -> String {
-    let value = path.display().to_string().replace('\\', "/");
+    let value =
+        crate::output::path::fold_verbatim_on_host(path.display().to_string().replace('\\', "/"));
     if value.is_empty() {
         ".".to_string()
     } else {

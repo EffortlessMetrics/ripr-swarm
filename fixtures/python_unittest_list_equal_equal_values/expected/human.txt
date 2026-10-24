@@ -23,6 +23,13 @@ Start here:
   Missing discriminator: A strong Python list oracle reaches `labels`, but static evidence cannot establish that list equality discriminates this change. Review the old and new return values under Python…
   Related test: tests/test_labels.py:4 test_labels (ripr could not confirm that this assertion observes the changed behavior)
   Evidence: reach yes · infection yes · propagation yes · observation weak · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: 1 related Python test(s) found for owner `labels`
     - infection yes: Changed Python return expression can alter the owner return value: `return [1, True]`
     - 5 more detail line(s) in --format human-full

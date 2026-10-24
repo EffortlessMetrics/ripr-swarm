@@ -549,6 +549,7 @@ mod tests {
 
     fn static_unknown_finding(expression: &str, owner: &str) -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_lib.rs:binding:test".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -590,6 +591,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }],
             recommended_next_step: None,
             language: None,

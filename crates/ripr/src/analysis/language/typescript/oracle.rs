@@ -252,6 +252,27 @@ pub(crate) fn statement_completes_abruptly(stmt: &Statement<'_>) -> bool {
     }
 }
 
+/// `true` when the handler is `catch (e) { throw e; }`: its one statement
+/// throws the very binding it caught, so the protected body's failure still
+/// fails the test (#9685). A bare `catch`, a different thrown value
+/// (`throw new Error(...)`), or any other statement keeps the swallow reading.
+fn catch_only_rethrows_caught_error(handler: &oxc_ast::ast::CatchClause<'_>) -> bool {
+    let Some(caught) = handler
+        .param
+        .as_ref()
+        .and_then(|param| super::owners::binding_identifier_name(&param.pattern))
+    else {
+        return false;
+    };
+    let [Statement::ThrowStatement(throw_stmt)] = handler.body.body.as_slice() else {
+        return false;
+    };
+    matches!(
+        throw_stmt.argument.get_inner_expression(),
+        Expression::Identifier(thrown) if thrown.name == caught
+    )
+}
+
 /// `true` when the `try` block's first statement is a non-throwing exit, so
 /// nothing can throw into its `catch` and the handler body is dead code
 /// (#9150). Collection and the conditional-credit walker skip such a handler.
@@ -525,6 +546,9 @@ pub(crate) fn collect_expect_assertions_in_statement(
             // A handler can swallow a synchronous assertion failure or an
             // awaited matcher rejection. Without proving that it rethrows,
             // the protected body cannot supply a discriminator (#8242). A
+            // handler whose only statement rethrows the caught error passes
+            // the failure through, so the body keeps its discriminators
+            // (#9685). A
             // finalizer that can return, throw, or break/continue out of the
             // try replaces the body's and handler's completion, discarding
             // their failure, so neither supplies one either (#8508). The
@@ -533,7 +557,12 @@ pub(crate) fn collect_expect_assertions_in_statement(
                 .finalizer
                 .as_ref()
                 .is_some_and(|finalizer| finalizer_can_replace_completion(&finalizer.body));
-            if try_stmt.handler.is_none() && !finalizer_replaces {
+            if try_stmt
+                .handler
+                .as_ref()
+                .is_none_or(|handler| catch_only_rethrows_caught_error(handler))
+                && !finalizer_replaces
+            {
                 collect_expect_assertions_from_statement_vec(
                     &try_stmt.block.body,
                     source,
@@ -2991,18 +3020,26 @@ pub(crate) fn related_mock_payload_oracle(related: &[RelatedTest]) -> Option<Str
 /// relation set: the mock producer set must be identical to that set, so a
 /// cross-package test the relation layer excluded (or an alias the relation
 /// layer resolved differently) cannot re-enter through the mock collector
-/// and force a wrong actionable `mocked_module` signal on the finding.
+/// and force a wrong actionable `mocked_module` signal on the finding. The
+/// `relation_index` MUST likewise be the same pre-filter, so the collector
+/// sees exactly the candidates pass 1 admitted (#10028).
 pub(crate) fn collect_related_mock_paths(
     owner: &TypeScriptOwner,
     all_tests: &[TypeScriptTest],
     workspace_root: Option<&Path>,
     reexport_index: &ReExportIndex,
     alias_map: Option<&TsAliasMap>,
+    relation_index: &RelationIndex,
 ) -> Vec<String> {
     let mut paths: Vec<String> = Vec::new();
-    for candidate in
-        related_test_candidates(owner, all_tests, workspace_root, reexport_index, alias_map)
-    {
+    for candidate in related_test_candidates(
+        owner,
+        all_tests,
+        workspace_root,
+        reexport_index,
+        alias_map,
+        relation_index,
+    ) {
         for path in &candidate.test.mocks_in_file {
             if !paths.iter().any(|existing| existing == path) {
                 paths.push(path.clone());

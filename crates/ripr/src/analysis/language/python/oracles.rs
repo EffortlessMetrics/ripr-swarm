@@ -11,7 +11,7 @@ pub(super) fn collect_assertions_from_statements(
     standard_unittest_list: bool,
 ) -> Vec<PythonAssertion> {
     let mut out = Vec::new();
-    collect_assertions(statements, source, &mut out);
+    collect_assertions(statements, source, &[], &mut out);
     if standard_unittest_list
         && let [Stmt::Expr(expr)] = statements
         && let Expr::Call(call) = expr.value.as_ref()
@@ -28,12 +28,13 @@ pub(super) fn collect_assertions_from_statements(
 fn collect_assertions(
     statements: &[Stmt],
     source: &SourceText<'_>,
+    loops: &[String],
     out: &mut Vec<PythonAssertion>,
 ) {
     for (index, stmt) in statements.iter().enumerate() {
         match stmt {
             Stmt::Assert(assert_stmt) => {
-                out.push(assertion_from_assert(assert_stmt, source));
+                out.push(assertion_from_assert(assert_stmt, source, loops));
             }
             Stmt::Expr(expr_stmt) => {
                 if let Some(assertion) = assertion_from_expr(expr_stmt.value.as_ref(), source) {
@@ -45,55 +46,57 @@ fn collect_assertions(
                 // never runs, so it can never fail (#9691).
                 let truth = constant_truth(if_stmt.test.as_ref());
                 if truth != Some(false) {
-                    collect_assertions(&if_stmt.body, source, out);
+                    collect_assertions(&if_stmt.body, source, loops, out);
                 }
                 if truth != Some(true) {
-                    collect_assertions(&if_stmt.orelse, source, out);
+                    collect_assertions(&if_stmt.orelse, source, loops, out);
                 }
             }
             Stmt::For(for_stmt) => {
-                collect_assertions(&for_stmt.body, source, out);
-                collect_assertions(&for_stmt.orelse, source, out);
+                let inner = loop_names(loops, for_stmt.target.as_ref());
+                collect_assertions(&for_stmt.body, source, &inner, out);
+                collect_assertions(&for_stmt.orelse, source, loops, out);
             }
             Stmt::AsyncFor(for_stmt) => {
-                collect_assertions(&for_stmt.body, source, out);
-                collect_assertions(&for_stmt.orelse, source, out);
+                let inner = loop_names(loops, for_stmt.target.as_ref());
+                collect_assertions(&for_stmt.body, source, &inner, out);
+                collect_assertions(&for_stmt.orelse, source, loops, out);
             }
             Stmt::While(while_stmt) => {
                 if constant_truth(while_stmt.test.as_ref()) != Some(false) {
-                    collect_assertions(&while_stmt.body, source, out);
+                    collect_assertions(&while_stmt.body, source, loops, out);
                 }
-                collect_assertions(&while_stmt.orelse, source, out);
+                collect_assertions(&while_stmt.orelse, source, loops, out);
             }
             Stmt::With(with_stmt) => {
                 let after = &statements[index + 1..];
                 collect_with_item_assertions(&with_stmt.items, &with_stmt.body, after, source, out);
-                collect_assertions(&with_stmt.body, source, out);
+                collect_assertions(&with_stmt.body, source, loops, out);
             }
             Stmt::AsyncWith(with_stmt) => {
                 let after = &statements[index + 1..];
                 collect_with_item_assertions(&with_stmt.items, &with_stmt.body, after, source, out);
-                collect_assertions(&with_stmt.body, source, out);
+                collect_assertions(&with_stmt.body, source, loops, out);
             }
             Stmt::Try(try_stmt) => {
                 if !handlers_swallow_assertion_errors(&try_stmt.handlers) {
-                    collect_assertions(&try_stmt.body, source, out);
+                    collect_assertions(&try_stmt.body, source, loops, out);
                 }
-                collect_except_handler_assertions(&try_stmt.handlers, source, out);
-                collect_assertions(&try_stmt.orelse, source, out);
-                collect_assertions(&try_stmt.finalbody, source, out);
+                collect_except_handler_assertions(&try_stmt.handlers, source, loops, out);
+                collect_assertions(&try_stmt.orelse, source, loops, out);
+                collect_assertions(&try_stmt.finalbody, source, loops, out);
             }
             Stmt::TryStar(try_stmt) => {
                 if !handlers_swallow_assertion_errors(&try_stmt.handlers) {
-                    collect_assertions(&try_stmt.body, source, out);
+                    collect_assertions(&try_stmt.body, source, loops, out);
                 }
-                collect_except_handler_assertions(&try_stmt.handlers, source, out);
-                collect_assertions(&try_stmt.orelse, source, out);
-                collect_assertions(&try_stmt.finalbody, source, out);
+                collect_except_handler_assertions(&try_stmt.handlers, source, loops, out);
+                collect_assertions(&try_stmt.orelse, source, loops, out);
+                collect_assertions(&try_stmt.finalbody, source, loops, out);
             }
             Stmt::Match(match_stmt) => {
                 for case in &match_stmt.cases {
-                    collect_assertions(&case.body, source, out);
+                    collect_assertions(&case.body, source, loops, out);
                 }
             }
             _ => {}
@@ -407,23 +410,35 @@ fn expr_root_name(expr: &Expr) -> Option<&str> {
 fn collect_except_handler_assertions(
     handlers: &[ast::ExceptHandler],
     source: &SourceText<'_>,
+    loops: &[String],
     out: &mut Vec<PythonAssertion>,
 ) {
     for handler in handlers {
         let ast::ExceptHandler::ExceptHandler(handler) = handler;
-        collect_assertions(&handler.body, source, out);
+        collect_assertions(&handler.body, source, loops, out);
     }
 }
 
 fn assertion_from_assert(
     assert_stmt: &ast::StmtAssert,
     source: &SourceText<'_>,
+    loops: &[String],
 ) -> PythonAssertion {
-    let (oracle_kind, oracle_strength, oracle_shape) =
+    let (mut oracle_kind, mut oracle_strength, oracle_shape) =
         oracle_for_assert_expr(assert_stmt.test.as_ref(), source);
+    // RIPR-SPEC-0238 rule 25: a property check relates the owner to itself
+    // or to the value it was given, so it pins no value (#9594).
+    if oracle_strength == OracleStrength::Strong
+        && let Expr::Compare(compare) = assert_stmt.test.as_ref()
+        && is_property_compare(compare, loops, source)
+    {
+        oracle_kind = OracleKind::RelationalCheck;
+        oracle_strength = OracleStrength::Weak;
+    }
     PythonAssertion {
         text: text_for_range(source, assert_stmt.range).trim().to_string(),
         callable_call: None,
+        helper_derived: false,
         // The failure message observes nothing (RIPR-SPEC-0238 rule 4).
         gate_text: format!(
             "assert {}",
@@ -552,6 +567,7 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
         return Some(PythonAssertion {
             gate_text: format!("{text}\n{callable_call}"),
             callable_call: Some(callable_call),
+            helper_derived: false,
             text,
             line: line_for_range_start(source, call.range),
             oracle_kind,
@@ -574,6 +590,7 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
         text,
         gate_text,
         callable_call: None,
+        helper_derived: false,
         line: line_for_range_start(source, call.range),
         oracle_kind,
         oracle_strength,
@@ -622,6 +639,66 @@ fn oracle_for_assert_expr(
             PythonOracleShape::BroadSmokeAssertion,
         ),
     }
+}
+
+/// The loop variables in scope inside a `for` body: the enclosing ones plus
+/// every name its target binds.
+fn loop_names(outer: &[String], target: &Expr) -> Vec<String> {
+    fn bound(target: &Expr, out: &mut Vec<String>) {
+        match target {
+            Expr::Name(name) => out.push(name.id.to_string()),
+            Expr::Tuple(tuple) => tuple.elts.iter().for_each(|elt| bound(elt, out)),
+            Expr::List(list) => list.elts.iter().for_each(|elt| bound(elt, out)),
+            Expr::Starred(starred) => bound(starred.value.as_ref(), out),
+            _ => {}
+        }
+    }
+    let mut names = outer.to_vec();
+    bound(target, &mut names);
+    names
+}
+
+/// RIPR-SPEC-0238 rule 25: `f(f(x)) == f(x)` compares a call with itself, and
+/// `f(1, n) == n` over a loop variable `n` compares a call with a value it
+/// was handed. Either holds for many wrong implementations (any constant is
+/// idempotent; `n / 1` equals `n`), so neither pins a value. The shared
+/// operand may sit anywhere in the call's arguments, keywords included.
+fn is_property_compare(compare: &ast::ExprCompare, loops: &[String], source: &str) -> bool {
+    let ([ast::CmpOp::Eq], [right]) = (compare.ops.as_slice(), compare.comparators.as_slice())
+    else {
+        return false;
+    };
+    let left = compare.left.as_ref();
+    [(left, right), (right, left)]
+        .into_iter()
+        .any(|(call, other)| {
+            let Expr::Call(call) = call else {
+                return false;
+            };
+            let arguments = text_for_range(
+                source,
+                TextRange::new(call.func.range().end(), call.range.end()),
+            );
+            match other {
+                Expr::Name(name) => {
+                    loops.iter().any(|loop_name| loop_name == name.id.as_str())
+                        && super::mentions_python_name(&arguments, name.id.as_str())
+                }
+                Expr::Call(_) => {
+                    let inner = code_without_spacing(&text_for_range(source, other.range()));
+                    let arguments = code_without_spacing(&arguments);
+                    // The shared call must start at an identifier boundary,
+                    // so `f(1)` is not found inside `xf(1)`.
+                    arguments.match_indices(&inner).any(|(start, _)| {
+                        !arguments[..start]
+                            .chars()
+                            .next_back()
+                            .is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || ch == '.')
+                    })
+                }
+                _ => false,
+            }
+        })
 }
 
 fn oracle_for_compare(
