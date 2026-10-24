@@ -601,6 +601,7 @@ fn packet_to_findings_with_currentness(
                     relation_confidence: perl_relation_confidence,
                     miss: None,
                     miss_support: None,
+                    role: crate::domain::RelatedTestRole::Contributing,
                 }
             })
             .collect();

@@ -5221,6 +5221,7 @@ mod seam_diagnostic_tests {
             relation_confidence: None,
             miss: None,
             miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         };
 
         let path = absolute_related_test_path(Path::new("/repo"), &test);
@@ -5240,6 +5241,7 @@ mod seam_diagnostic_tests {
             relation_confidence: None,
             miss: None,
             miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         };
 
         let path = absolute_related_test_path(Path::new("/repo"), &test);
@@ -5578,6 +5580,7 @@ mod diagnostic_policy_tests {
             relation_confidence: None,
             miss: None,
             miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         });
 
         let message = lsp_message(&finding);
@@ -5610,6 +5613,7 @@ mod diagnostic_policy_tests {
             relation_confidence: None,
             miss: None,
             miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         });
 
         let grouped = finding_diagnostics_by_uri_with_profile(
@@ -5663,6 +5667,7 @@ mod diagnostic_policy_tests {
                 relation_confidence: None,
                 miss: None,
                 miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             });
             finding
         };
@@ -6539,6 +6544,7 @@ mod lsp_next_step_parity_tests {
                 relation_confidence: None,
                 miss: None,
                 miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }],
             recommended_next_step: Some(
                 "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `amount == threshold`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.".to_string(),

@@ -2421,6 +2421,7 @@ mod tests {
                 relation_confidence: None,
                 miss: None,
                 miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }];
         } else {
             finding.activation.missing_discriminators.clear();
@@ -4767,6 +4768,7 @@ mod tests {
                 relation_confidence: None,
                 miss: None,
                 miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             });
         }
         finding
@@ -5843,6 +5845,7 @@ mod tests {
                 relation_confidence: None,
                 miss: None,
                 miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             });
         }
         assert_eq!(finding.related_tests.len(), 9);
@@ -5990,6 +5993,7 @@ mod tests {
                 relation_confidence: None,
                 miss: None,
                 miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             });
         }
         for index in 0..13 {
@@ -6141,6 +6145,7 @@ mod tests {
             relation_confidence: None,
             miss: None,
             miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         });
 
         let digest = super::sections::render_finding_digest_with_config(
@@ -6187,6 +6192,7 @@ mod tests {
                 relation_confidence: None,
                 miss: None,
                 miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             })
             .collect();
         finding.related_tests_matched_total = Some(81);
@@ -7389,6 +7395,7 @@ mod tests {
             relation_confidence: None,
             miss: None,
             miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }];
         finding.recommended_next_step = Some("Add a focused Perl assertion.".to_string());
         finding.language = Some(LanguageId::Perl);
@@ -7713,6 +7720,7 @@ mod tests {
                 relation_confidence: None,
                 miss: None,
                 miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }],
             recommended_next_step: Some("Add assertion for disabled path result.".to_string()),
             language: None,
@@ -8713,6 +8721,7 @@ mod tests {
             relation_confidence: None,
             miss: None,
             miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         };
         finding.related_tests.push(related_test.clone());
         let mut duplicate_finding = unknown_finding();
@@ -8770,6 +8779,7 @@ mod tests {
             relation_confidence: None,
             miss: None,
             miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         };
         let packed = |lines: std::ops::Range<usize>, total: usize| {
             let mut finding = unknown_finding();
