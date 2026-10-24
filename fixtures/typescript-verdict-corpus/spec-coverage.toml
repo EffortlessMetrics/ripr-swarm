@@ -735,6 +735,8 @@ reason = "Rust analyzer transfer rule over Rust syntax; a TypeScript case cannot
 # Rust bounded scanner-state transitions
 [[spec]]
 id = "RIPR-SPEC-0163"
+scope = "out"
+reason = "Rust analyzer transfer rule over Rust syntax; a TypeScript case cannot label it"
 
 # Rust spec 0164
 [[spec]]
