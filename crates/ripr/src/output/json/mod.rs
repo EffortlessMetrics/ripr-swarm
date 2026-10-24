@@ -844,6 +844,53 @@ mod tests {
     }
 
     #[test]
+    fn findings_priority_next_step_breaks_class_ties_before_sort_order() -> Result<(), String> {
+        use super::report::{FindingsBudgetSource, render_with_config};
+        use crate::config::RiprConfig;
+
+        // Same class, same currentness, same file: only the later finding in
+        // sort order carries a recommended next step, so it is kept first.
+        let mut output = sample_output(None);
+        output.findings = ["early", "late"]
+            .iter()
+            .enumerate()
+            .map(|(index, name)| {
+                finding_with_expression_in_file(
+                    "src/a.rs",
+                    name,
+                    10 + 10 * index,
+                    ExposureClass::WeaklyExposed,
+                    ProbeFamily::ReturnValue,
+                    "value",
+                    vec![],
+                )
+            })
+            .collect();
+        let kept_id = |output: &CheckOutput| -> Result<String, String> {
+            let raw = render_with_config(
+                output,
+                &RiprConfig::default(),
+                Some((1, FindingsBudgetSource::Configured)),
+            );
+            let value: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+            value["findings"][0]["id"]
+                .as_str()
+                .map(str::to_string)
+                .ok_or("kept finding id".to_string())
+        };
+        // Control: no next step on either, the sort order decides.
+        assert_eq!(kept_id(&output)?, output.findings[0].id);
+        output.findings[1].recommended_next_step =
+            Some("Add an exact assertion for the boundary.".to_string());
+        assert_eq!(
+            kept_id(&output)?,
+            output.findings[1].id,
+            "a recommended next step outranks sort order within one class"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn findings_priority_ties_keep_sort_order_and_name_extra_files() -> Result<(), String> {
         use super::report::{FindingsBudgetSource, render_with_config};
         use crate::config::RiprConfig;

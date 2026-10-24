@@ -98,6 +98,29 @@ fn check_findings_byte_budget_bounds_array_with_disclosed_totals() -> Result<(),
                 .any(|row| row["id"] == kept_id.as_str()),
             "bounded finding {kept_id} must be an analyzed finding (first was {first_id})"
         );
+        // The retained finding must be a top-priority one: no analyzed finding
+        // may have a stronger (lower) gap-class rank than the kept finding.
+        let class_rank = |class: &str| match class {
+            "reachable_unrevealed" => 0,
+            "weakly_exposed" => 1,
+            "no_static_path" => 2,
+            "exposed" => 4,
+            _ => 3,
+        };
+        let kept_class = bounded_findings[0]["classification"]
+            .as_str()
+            .ok_or("bounded finding must carry a classification")?;
+        let best_rank = baseline_findings
+            .iter()
+            .filter_map(|row| row["classification"].as_str())
+            .map(class_rank)
+            .min()
+            .ok_or("baseline must carry classifications")?;
+        assert_eq!(
+            class_rank(kept_class),
+            best_rank,
+            "budget 1 must keep a strongest-class finding, kept {kept_class}"
+        );
         let again = run_ripr_with_env(&args, &[("RIPR_CHECK_FINDINGS_BYTES", "1")]);
         assert_eq!(
             again.stdout, bounded.stdout,

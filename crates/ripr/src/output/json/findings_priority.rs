@@ -11,6 +11,7 @@
 
 use crate::domain::{ExposureClass, Finding, SourceCurrentness};
 use std::collections::BTreeMap;
+use std::path::Path;
 
 /// Most files named by name in the omitted-set disclosure; the rest are counted.
 const OMITTED_FILES_NAMED: usize = 5;
@@ -59,7 +60,7 @@ pub(super) fn omitted_summary(findings: &[Finding], kept: &[usize]) -> String {
         }
     }
     let mut by_class: BTreeMap<(u8, &'static str), usize> = BTreeMap::new();
-    let mut by_file: BTreeMap<String, usize> = BTreeMap::new();
+    let mut by_file: BTreeMap<&Path, usize> = BTreeMap::new();
     let mut omitted = 0usize;
     let mut non_current = 0usize;
     for (finding, kept) in findings.iter().zip(&is_kept) {
@@ -71,9 +72,7 @@ pub(super) fn omitted_summary(findings: &[Finding], kept: &[usize]) -> String {
             .entry((class_rank(&finding.class), finding.class.as_str()))
             .or_default() += 1;
         *by_file
-            .entry(crate::output::path::display_path(
-                &finding.probe.location.file,
-            ))
+            .entry(finding.probe.location.file.as_path())
             .or_default() += 1;
         if finding.source_currentness != SourceCurrentness::CandidateCurrent {
             non_current += 1;
@@ -84,12 +83,13 @@ pub(super) fn omitted_summary(findings: &[Finding], kept: &[usize]) -> String {
         .map(|((_, label), count)| format!("{label}={count}"))
         .collect::<Vec<_>>()
         .join(", ");
-    let mut files: Vec<(&String, &usize)> = by_file.iter().collect();
-    files.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+    let mut files: Vec<(&Path, usize)> = by_file.iter().map(|(file, n)| (*file, *n)).collect();
+    // Count descending, then path order; display_path only for the named files.
+    files.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
     let named = files
         .iter()
         .take(OMITTED_FILES_NAMED)
-        .map(|(file, count)| format!("{file}={count}"))
+        .map(|(file, count)| format!("{}={count}", crate::output::path::display_path(file)))
         .collect::<Vec<_>>()
         .join(", ");
     let more = files.len().saturating_sub(OMITTED_FILES_NAMED);

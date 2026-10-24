@@ -10172,6 +10172,7 @@ tests = [
   "crates/ripr/src/app/task_first.rs::tests::held_inline_target_follows_the_selected_proposal_file",
   "crates/ripr/src/output/human.rs::tests::bounded_human_output_prints_repair_only_for_the_routed_top_finding",
   "crates/ripr/src/output/json/mod.rs::tests::findings_byte_budget_keeps_actionable_findings_over_file_order",
+  "crates/ripr/src/output/json/mod.rs::tests::findings_priority_next_step_breaks_class_ties_before_sort_order",
   "crates/ripr/src/output/json/mod.rs::tests::findings_priority_ties_keep_sort_order_and_name_extra_files",
 ]
 fixtures = ["fixtures/human_full_shared_parse_port"]

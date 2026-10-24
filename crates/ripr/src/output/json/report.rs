@@ -96,9 +96,9 @@ fn analyzed_revisions_json(out: &mut String, output: &CheckOutput) {
 }
 
 /// Carries a findings-array byte-budget truncation so the JSON renderer can
-/// self-declare the rendered prefix (#5203). `rendered + omitted == total`
+/// self-declare the rendered subset (#5203). `rendered + omitted == total`
 /// always reconciles (#5091): `summary.findings` keeps the full analysis
-/// count while `findings[]` holds the `rendered` prefix.
+/// count while `findings[]` holds the `rendered` bounded subset.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FindingsBoundInfo {
     pub(crate) rendered: usize,
@@ -125,7 +125,7 @@ impl FindingsBoundInfo {
             "rendered {} of {} findings within the findings-array byte budget ({setting}); \
              kept the highest-priority findings (candidate-current first, then \
              reachable_unrevealed, weakly_exposed, no_static_path, the unknown classes, \
-             exposed last) in sort order; {}",
+             exposed last, then a recommended next step) in sort order; {}",
             self.rendered, self.total, self.omitted
         )
     }
@@ -247,7 +247,7 @@ pub(crate) fn render_with_config(
     }
     out.push_str("  \"findings\": [\n");
     // Full-set group totals: `canonical_gap_group_size` describes the analyzed
-    // group (like `related_tests_total`), not the rendered prefix (#5203).
+    // group (like `related_tests_total`), not the rendered subset (#5203).
     let canonical_gap_counts = canonical_gap_counts(&output.findings);
     let suppressed_selectors: BTreeMap<&str, &str> = output
         .suppression
@@ -263,7 +263,7 @@ pub(crate) fn render_with_config(
     // deterministic `sort_findings` order; once the emitted array bytes
     // (payloads plus separators) exceed the budget, the rest is disclosed
     // rather than rendered. The first finding always renders so a nonempty
-    // analysis never yields an empty prefix; worst case is budget plus one
+    // analysis never yields an empty bounded subset; worst case is budget plus one
     // finding. Unbounded (`None`) renders everything. The cutoff is evaluated
     // after each finding so separators stay exactly as before when the
     // budget does not engage.
@@ -271,12 +271,9 @@ pub(crate) fn render_with_config(
     // the budget keeps the most actionable ones; the kept set is then emitted
     // in the unchanged sort order. Without an engaged budget every finding
     // renders and the output is byte-identical to the sort-order stream.
-    let mut kept: Vec<(usize, String)> = Vec::new();
-    let mut array_bytes = 0usize;
-    for idx in findings_priority::priority_order(&output.findings) {
-        let mut payload = String::new();
+    let render_payload = |out: &mut String, idx: usize| {
         finding_json_with_config_and_counts(
-            &mut payload,
+            out,
             &output.findings[idx],
             2,
             config,
@@ -286,21 +283,46 @@ pub(crate) fn render_with_config(
                 .copied(),
             &output.root,
         );
-        // Payload plus the `,\n` separator that precedes every later finding.
-        array_bytes += payload.len() + if kept.is_empty() { 0 } else { 2 };
-        kept.push((idx, payload));
-        if findings_budget.is_some_and(|(budget, _)| array_bytes > budget) {
-            break;
+    };
+    // Indices of the rendered findings in emission (sort) order; only built
+    // when a budget is configured, since only a budget can omit findings.
+    let mut kept_indices: Vec<usize> = Vec::new();
+    let rendered_findings;
+    if let Some((budget, _)) = findings_budget {
+        let mut kept: Vec<(usize, String)> = Vec::new();
+        let mut array_bytes = 0usize;
+        for idx in findings_priority::priority_order(&output.findings) {
+            let mut payload = String::new();
+            render_payload(&mut payload, idx);
+            // Payload plus the `,\n` separator that precedes every later finding.
+            array_bytes += payload.len() + if kept.is_empty() { 0 } else { 2 };
+            kept.push((idx, payload));
+            if array_bytes > budget {
+                break;
+            }
         }
-    }
-    kept.sort_by_key(|(idx, _)| *idx);
-    let rendered_findings = kept.len();
-    for (position, (_, payload)) in kept.iter().enumerate() {
-        out.push_str(payload);
-        if position + 1 != rendered_findings {
-            out.push(',');
+        kept.sort_by_key(|(idx, _)| *idx);
+        rendered_findings = kept.len();
+        for (position, (idx, payload)) in kept.iter().enumerate() {
+            out.push_str(payload);
+            if position + 1 != rendered_findings {
+                out.push(',');
+            }
+            out.push('\n');
+            kept_indices.push(*idx);
         }
-        out.push('\n');
+    } else {
+        // Unbounded (`=0`): stream directly in sort order, no priority sort and
+        // no buffering.
+        let total = output.findings.len();
+        for idx in 0..total {
+            render_payload(&mut out, idx);
+            if idx + 1 != total {
+                out.push(',');
+            }
+            out.push('\n');
+        }
+        rendered_findings = total;
     }
     out.push_str("  ]");
     let findings_bound = if rendered_findings < output.findings.len() {
@@ -309,10 +331,7 @@ pub(crate) fn render_with_config(
             total: output.findings.len(),
             budget,
             source,
-            omitted: findings_priority::omitted_summary(
-                &output.findings,
-                &kept.iter().map(|(idx, _)| *idx).collect::<Vec<_>>(),
-            ),
+            omitted: findings_priority::omitted_summary(&output.findings, &kept_indices),
         })
     } else {
         None
@@ -320,7 +339,7 @@ pub(crate) fn render_with_config(
     // #9010: a budget-bounded document must not read as a complete outcome.
     // `analysis_complete` stays the analysis verdict (no new outcome kind);
     // this additive, only-when-bounded disclosure sits beside it so the shared
-    // incomplete-outcome predicate can fail closed on a findings prefix.
+    // incomplete-outcome predicate can fail closed on a findings subset.
     if let (Some(bound), Some(at)) = (findings_bound.as_ref(), analysis_outcome_close_at) {
         // `at` was recorded before the findings array was appended, so it must
         // sit on a char boundary inside the buffer.
@@ -598,7 +617,7 @@ pub(crate) fn render_with_config(
         out.push_str("  ]");
     }
     // Additive run-state block — emitted only when the findings-array byte
-    // budget engaged and the rendered findings are a strict prefix (#5203).
+    // budget engaged and the rendered findings are a strict bounded subset (#5203).
     // Absent otherwise, so unbounded runs keep byte-identical output. Uses the
     // `run_limitations[]` vocabulary (`limited_*` run status,
     // `downstream_consumable: false`) so a bounded document never presents as
@@ -622,13 +641,13 @@ pub(crate) fn render_with_config(
         out.push_str("  ]");
     }
     // Alignment rows must resolve inside the document: compute over the
-    // rendered prefix so a bounded run never references omitted findings.
+    // rendered subset so a bounded run never references omitted findings.
     // Unbounded runs pass the full set, exactly as before.
     let kept_findings: Vec<Finding>;
     let aligned_findings: &[Finding] = if findings_bound.is_some() {
-        kept_findings = kept
+        kept_findings = kept_indices
             .iter()
-            .map(|(idx, _)| output.findings[*idx].clone())
+            .map(|idx| output.findings[*idx].clone())
             .collect();
         &kept_findings
     } else {
