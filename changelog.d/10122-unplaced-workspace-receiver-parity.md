@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- An inherent-receiver check that fails only because the assertion macro cannot be verified, while no Cargo target placement is available (an unresolvable `include!` or `#[path]` somewhere in the workspace), keeps the existing name-based relation instead of recording a receiver mismatch; no new trust is granted and a receiver that would not resolve with a trusted macro is still refused (#10122).

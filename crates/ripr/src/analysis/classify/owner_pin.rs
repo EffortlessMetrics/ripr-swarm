@@ -1710,6 +1710,12 @@ impl OwnerPinSyntax {
             .get_or_init(|| super::out_parameter::workspace_macro_names(index))
     }
 
+    /// Whether no file can be placed in a Cargo target, because an include or
+    /// `#[path]` somewhere in the workspace cannot be resolved.
+    pub(in crate::analysis) fn target_placement_unavailable(&self, index: &RustIndex) -> bool {
+        self.target_roots(index).disabled
+    }
+
     /// Workspace routing inputs, computed once per run.
     fn target_roots(&self, index: &RustIndex) -> &TargetRoots {
         self.target_roots.get_or_init(|| TargetRoots::new(index))
