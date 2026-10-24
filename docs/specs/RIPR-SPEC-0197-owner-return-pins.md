@@ -2714,9 +2714,9 @@ scope, and a bare arm re-binding the scrutinee's own name is declined too), so
 it only ever removes a credit; a field access, path segment, comparison, the
 scrutinee of a one-line `match`, a use in an earlier arm's result or an
 unrelated local keeps it.
-Two verdict-corpus rows move from credited to limited, both inside their
-acceptable verdicts and abstained rather than actionable: `strsim-sorensen-dice-equal`
+One verdict-corpus row moves from credited to limited, inside its acceptable
+verdicts and abstained rather than actionable: `strsim-sorensen-dice-equal`
 (`if b == a` follows `let a: String = a.chars().filter(..).collect()`, so `a` is
-a rebound local, not the passed argument) and `grid-match-guard` (the bare arm
-`n if 0 > n` re-binds the scrutinee's own name, which the scan declines rather
-than proving it is the same value).
+a rebound local, not the passed argument). A bare first-arm binder of the
+scrutinee's own name (`match n { n if 0 > n => .. }`, `grid-match-guard`) binds the
+same value and keeps its credit.
