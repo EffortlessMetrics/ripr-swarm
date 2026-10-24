@@ -1,0 +1,10 @@
+use super::*;
+
+fn raw_base() -> u32 {
+    2
+}
+
+#[test]
+fn the_raw_shift_is_seven_l_rawpath() {
+    assert_eq!(shifted_raw(raw_base()), 9);
+}

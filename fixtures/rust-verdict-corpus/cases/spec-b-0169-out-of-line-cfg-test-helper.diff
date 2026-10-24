@@ -1,0 +1,12 @@
+diff --git a/src/l_outline/tests.rs b/src/l_outline/tests.rs
+--- a/src/l_outline/tests.rs
++++ b/src/l_outline/tests.rs
+@@ -1,7 +1,7 @@
+ use super::*;
+ 
+ fn outline_base() -> u32 {
+-    4
++    2 + 2
+ }
+ 
+ #[test]

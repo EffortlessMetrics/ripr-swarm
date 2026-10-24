@@ -193,26 +193,26 @@ file occurrence under a closed rule set:
 
 ## Acceptance Examples
 
-- `src/lib.rs` with `#[cfg(test)] mod tests;` and an out-of-line
-  `src/tests.rs`: the child's unattributed helpers gain `CfgTestModule` and
-  the provenance chain records the module edge.
-- `#[cfg(test)] include!("fragment.rs");` beside a production unit: the
-  fragment's helpers gain `CfgTestModule` through the include edge.
-- `#[path = "nested/renamed.rs"] mod nested;` with `mod child;` inside
-  `renamed.rs`: the child is `nested/child.rs`, not
-  `nested/renamed/child.rs`. Likewise, `include!("fragments/body.rs")` with
-  `mod child;` inside the fragment selects `fragments/child.rs`, not the
-  outer including unit's `child.rs`.
-- `#[cfg(test)] #[r#path = "support/raw.rs"] mod raw;` composes the same
-  `CfgTestModule` role and parent chain as `#[cfg(test)] #[path =
-  "support/plain.rs"] mod plain;`. Default-layout decoys (`src/raw.rs`,
-  `src/plain.rs`) stay production.
-- `#[cfg_attr(é, path = "alternate.rs")] mod imp;` with `src/imp.rs` indexed:
-  the unreadable condition fails closed to a typed unknown, so the
-  default-layout file is not resolved as the module child.
-- Two sibling files under `tests/` with the manifest at the root: both are
-  crate roots regardless of resolution order, and the second sibling's
-  `#[cfg(test)] mod helpers;` still composes.
+1. `src/lib.rs` with `#[cfg(test)] mod tests;` and an out-of-line
+   `src/tests.rs`: the child's unattributed helpers gain `CfgTestModule` and
+   the provenance chain records the module edge.
+2. `#[cfg(test)] include!("fragment.rs");` beside a production unit: the
+   fragment's helpers gain `CfgTestModule` through the include edge.
+3. `#[path = "nested/renamed.rs"] mod nested;` with `mod child;` inside
+   `renamed.rs`: the child is `nested/child.rs`, not
+   `nested/renamed/child.rs`. Likewise, `include!("fragments/body.rs")` with
+   `mod child;` inside the fragment selects `fragments/child.rs`, not the
+   outer including unit's `child.rs`.
+4. `#[cfg(test)] #[r#path = "support/raw.rs"] mod raw;` composes the same
+   `CfgTestModule` role and parent chain as `#[cfg(test)] #[path =
+   "support/plain.rs"] mod plain;`. Default-layout decoys (`src/raw.rs`,
+   `src/plain.rs`) stay production.
+5. `#[cfg_attr(é, path = "alternate.rs")] mod imp;` with `src/imp.rs` indexed:
+   the unreadable condition fails closed to a typed unknown, so the
+   default-layout file is not resolved as the module child.
+6. Two sibling files under `tests/` with the manifest at the root: both are
+   crate roots regardless of resolution order, and the second sibling's
+   `#[cfg(test)] mod helpers;` still composes.
 
 ## Test Mapping
 

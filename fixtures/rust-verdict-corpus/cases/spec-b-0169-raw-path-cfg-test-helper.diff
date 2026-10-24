@@ -1,0 +1,12 @@
+diff --git a/src/support/raw.rs b/src/support/raw.rs
+--- a/src/support/raw.rs
++++ b/src/support/raw.rs
+@@ -1,7 +1,7 @@
+ use super::*;
+ 
+ fn raw_base() -> u32 {
+-    2
++    1 + 1
+ }
+ 
+ #[test]

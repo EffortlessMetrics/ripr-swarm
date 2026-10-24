@@ -1,0 +1,15 @@
+//! A production file whose name starts with test_.
+
+pub fn shifted_named(base: u32) -> u32 {
+    base + 13
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_named_shift_is_thirteen_l_named() {
+        assert_eq!(shifted_named(1), 14);
+    }
+}

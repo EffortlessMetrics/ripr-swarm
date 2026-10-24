@@ -1,0 +1,12 @@
+diff --git a/src/contract_test.rs b/src/contract_test.rs
+--- a/src/contract_test.rs
++++ b/src/contract_test.rs
+@@ -1,7 +1,7 @@
+ use specb_layout::l_target::shifted_target;
+ 
+ fn target_base() -> u32 {
+-    1
++    0 + 1
+ }
+ 
+ #[test]

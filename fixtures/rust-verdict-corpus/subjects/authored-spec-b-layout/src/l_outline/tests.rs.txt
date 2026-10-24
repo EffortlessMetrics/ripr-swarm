@@ -1,0 +1,10 @@
+use super::*;
+
+fn outline_base() -> u32 {
+    4
+}
+
+#[test]
+fn the_outline_shift_is_three_l_outline() {
+    assert_eq!(shifted_outline(outline_base()), 7);
+}

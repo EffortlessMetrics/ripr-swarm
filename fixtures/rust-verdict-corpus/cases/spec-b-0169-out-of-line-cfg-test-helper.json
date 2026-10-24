@@ -1,0 +1,53 @@
+{
+  "case_id": "spec-b-0169-out-of-line-cfg-test-helper",
+  "subject_id": "authored-spec-b-layout",
+  "diff": "cases/spec-b-0169-out-of-line-cfg-test-helper.diff",
+  "anchor": {
+    "file": "src/l_outline/tests.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "cfg_test_out_of_line_helper_edit",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "3",
+        "mutated_line": "3",
+        "outcome": "tests_failed",
+        "failing_test": "l_outline::tests::the_outline_shift_is_three_l_outline",
+        "equivalence_review": "not equivalent: l_outline::tests::the_outline_shift_is_three_l_outline fails on it"
+      },
+      {
+        "replacement": "5",
+        "mutated_line": "5",
+        "outcome": "tests_failed",
+        "failing_test": "l_outline::tests::the_outline_shift_is_three_l_outline",
+        "equivalence_review": "not equivalent: l_outline::tests::the_outline_shift_is_three_l_outline fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The edited line is a helper in the out-of-line child of a cfg(test) module, so it carries a test-only role and seeds no production probe. The helper feeds an assert_eq! against 7, so either neighbor fails the test. Spec cells: RIPR-SPEC-0169#1.",
+  "labeling_observation": {
+    "ripr_commit": "5fc9de08",
+    "full_checkout_verdict": "silent",
+    "full_checkout_classifications": [],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0169#1"
+  ]
+}

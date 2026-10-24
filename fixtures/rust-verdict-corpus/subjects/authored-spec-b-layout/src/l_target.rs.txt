@@ -1,0 +1,5 @@
+//! The library function a declared test target drives.
+
+pub fn shifted_target(base: u32) -> u32 {
+    base + 9
+}

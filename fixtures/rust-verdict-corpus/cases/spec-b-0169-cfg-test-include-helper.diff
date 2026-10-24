@@ -1,0 +1,10 @@
+diff --git a/src/l_include_fragment.rs b/src/l_include_fragment.rs
+--- a/src/l_include_fragment.rs
++++ b/src/l_include_fragment.rs
+@@ -1,5 +1,5 @@
+ fn include_base() -> u32 {
+-    6
++    3 + 3
+ }
+ 
+ #[test]

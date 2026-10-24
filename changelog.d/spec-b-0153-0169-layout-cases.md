@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- RIPR-SPEC-0153 and RIPR-SPEC-0169 acceptance examples are numbered and measured by the Rust verdict corpus: six runtime-labeled source-role cases (test-only helpers behind an out-of-line cfg(test) module, a cfg(test) include, a raw `r#path` module and a declared `[[test]]` target; an undeclared `_test.rs` file and a `test_*.rs` file stay production) plus two existing cases cited. Examples that are configuration, silence on an edit no test can distinguish, or file resolution the diff never edits are waived with reasons (#9271).

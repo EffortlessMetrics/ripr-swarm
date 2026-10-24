@@ -725,3 +725,15 @@ reason = "Rust analyzer transfer rule over Rust syntax; a TypeScript case cannot
 id = "RIPR-SPEC-0159"
 scope = "out"
 reason = "Rust analyzer transfer rule over Rust syntax; a TypeScript case cannot label it"
+
+# Rust source-role layout rules over Cargo targets
+[[spec]]
+id = "RIPR-SPEC-0153"
+scope = "out"
+reason = "Rust source-role layout rules over Cargo targets; a TypeScript case cannot label it"
+
+# Rust source-role composition over cfg(test) module edges
+[[spec]]
+id = "RIPR-SPEC-0169"
+scope = "out"
+reason = "Rust source-role composition over cfg(test) module edges; a TypeScript case cannot label it"

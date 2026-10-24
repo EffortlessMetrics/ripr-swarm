@@ -1,0 +1,8 @@
+//! A cfg(test) module whose body lives in an out-of-line file.
+
+pub fn shifted_outline(base: u32) -> u32 {
+    base + 3
+}
+
+#[cfg(test)]
+mod tests;

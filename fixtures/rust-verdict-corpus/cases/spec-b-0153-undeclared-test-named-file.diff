@@ -1,0 +1,12 @@
+diff --git a/src/l_unconfirmed_test.rs b/src/l_unconfirmed_test.rs
+--- a/src/l_unconfirmed_test.rs
++++ b/src/l_unconfirmed_test.rs
+@@ -1,7 +1,7 @@
+ //! Named like a test file but declared in no manifest target: production.
+ 
+ pub fn shifted_unconfirmed(base: u32) -> u32 {
+-    base + 11
++    11 + base
+ }
+ 
+ #[cfg(test)]
