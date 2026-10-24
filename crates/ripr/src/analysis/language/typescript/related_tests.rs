@@ -170,12 +170,12 @@ impl ReExportIndex {
             let Some(source) = sources.get(relative) else {
                 continue;
             };
-            // Per-file facts come from the content-keyed cache (#10063): a
-            // re-save with one edited file re-parses only that file instead
-            // of every non-test source in the workspace. Facts depend on the
-            // workspace root and the tsconfig alias map, both carried by the
-            // cache key.
-            let Some(file_facts) = super::export_facts_cache::export_facts_cached(
+            // Per-file facts come from the content-keyed combined cache
+            // (#10071, #10063): a re-save with one edited file re-parses only
+            // that file instead of every non-test source in the workspace.
+            // Facts depend on the workspace root and the tsconfig alias map,
+            // both carried by the cache key.
+            let Some(file_facts) = super::extraction_cache::export_facts_cached(
                 relative,
                 source.as_str(),
                 workspace_root,
