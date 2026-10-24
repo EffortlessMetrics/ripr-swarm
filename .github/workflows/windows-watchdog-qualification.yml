@@ -4,7 +4,7 @@ name: Windows Watchdog Qualification
 # windows-advisory-shards.yml (#9272). It extracts that workflow's shipped test
 # step at run time, swaps only the 44-minute timer for a 12-second one and the
 # nextest command for a native fixture, and checks what the watchdog actually
-# did on a Windows runner: mapped root, primary reaped, owned descendant ended,
+# did on a Windows runner: mapped PID in the descendant's ancestry, primary reaped, owned descendant ended,
 # an unowned sentinel left alone. The primary-only-kill mutation must fail the
 # descendant oracle, and the forced-missing-mapping cell keeps its limitation.
 # A shortened timer qualifies only the shorter bound, not the 44-minute one.
@@ -54,7 +54,7 @@ jobs:
           [ "${{ matrix.mode }}" != primary-only ] || grep -q 'taskkill //F //PID' target/wrapper.sh || { echo "mutation missed" >&2; exit 1; }
           [ "${{ matrix.mode }}" != unmapped ] || grep -q 'no-such-winpid' target/wrapper.sh || { echo "mutation missed" >&2; exit 1; }
           printf '%s\n' 'ping -n 600 127.0.0.1 > /dev/null &' 'child=$!' 'cat "/proc/$child/winpid" > target/fixture.child' > target/fixture.sh
-          printf '%s\n' 'powershell -NoProfile -Command "(Get-CimInstance Win32_Process -Filter \"ProcessId=$(cat target/fixture.child)\").ParentProcessId" > target/fixture.root' 'wait' >> target/fixture.sh
+          printf '%s\n' 'powershell -NoProfile -Command "\$p = $(cat target/fixture.child); while (\$p) { \$p; \$p = (Get-CimInstance Win32_Process -Filter \"ProcessId=\$p\").ParentProcessId }" > target/fixture.chain' 'wait' >> target/fixture.sh
 
       - name: Run the wrapper against a forced stall
         shell: bash
@@ -71,18 +71,19 @@ jobs:
         shell: bash
         run: |
           alive() { powershell -NoProfile -Command "if (Get-Process -Id $1 -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }"; }
-          root=$(tr -cd 0-9 < target/fixture.root); child=$(cat target/fixture.child); sentinel=$(cat target/sentinel.pid)
+          child=$(cat target/fixture.child); sentinel=$(cat target/sentinel.pid)
           marker=$(cat target/shard-1.watchdog 2> /dev/null || true); fail=0
-          echo "wrapper exit $(cat target/wrapper.exit), status $(cat target/shard-1.status 2> /dev/null), root=$root child=$child sentinel=$sentinel"; echo "marker: $marker"
+          mapped=${marker#fired winpid=}
+          echo "wrapper exit $(cat target/wrapper.exit), status $(cat target/shard-1.status 2> /dev/null), mapped=$mapped child=$child sentinel=$sentinel"; echo "ancestors: $(tr '\r\n' '  ' < target/fixture.chain)"; echo "marker: $marker"
           [ "$(cat target/wrapper.exit)" = 124 ] && [ "$(cat target/shard-1.status)" = 124 ] || { echo "FAIL status not 124"; fail=1; }
           alive "$sentinel" || { echo "FAIL unowned sentinel was not left running"; fail=1; }
           if [ "${{ matrix.mode }}" = unmapped ]; then
             case "$marker" in "fired unmapped"*) ;; *) echo "FAIL missing mapping was not recorded as unmapped"; fail=1 ;; esac
             alive "$child" && echo "limitation: unmapped path left the descendant running (no native-cleanup credit)"
           else
-            [ "$marker" = "fired winpid=$root" ] || { echo "FAIL marker does not name the independently recorded root"; fail=1; }
+            grep -vx "$child" target/fixture.chain | tr -d '\r' | grep -qx "$mapped" || { echo "FAIL marker PID is not an ancestor of the descendant in the independently recorded chain"; fail=1; }
             grep -q "ProcessId *: $child" target/shard-1.processes 2> /dev/null || { echo "FAIL process snapshot does not list the descendant"; fail=1; }
-            alive "$root" && { echo "FAIL primary not reaped"; fail=1; }
+            alive "$mapped" && { echo "FAIL primary not reaped"; fail=1; }
             if alive "$child"; then descendant=alive; else descendant=ended; fi; echo "descendant $descendant"
             # The primary-only mutation passes only if the descendant oracle rejects it.
             if [ "${{ matrix.mode }}" = primary-only ]; then
