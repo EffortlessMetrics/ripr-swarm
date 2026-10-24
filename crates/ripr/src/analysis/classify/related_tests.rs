@@ -4353,42 +4353,6 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
     index: Option<&RustIndex>,
     pin_syntax: &super::OwnerPinSyntax,
 ) -> bool {
-    inherent_receiver_call_resolves_with(test, method, impl_type, index, pin_syntax, true)
-}
-
-/// A receiver check that fails only because the target-root placement is
-/// unavailable (a dynamic `include!` or unresolved `#[path]` somewhere in the
-/// workspace) and would pass if the standard assertion macro could be
-/// verified. Placement cannot be closed there, and a generated include may
-/// mount a source file into another crate (#10122), so no trust is granted;
-/// the caller keeps the name-based relation main already applies instead of
-/// recording a receiver mismatch that was never established.
-pub(in crate::analysis) fn inherent_receiver_resolves_if_macros_trusted(
-    test: &TestSummary,
-    method: &str,
-    impl_type: &str,
-    index: &RustIndex,
-    pin_syntax: &super::OwnerPinSyntax,
-) -> bool {
-    pin_syntax.target_placement_unavailable(index)
-        && inherent_receiver_call_resolves_with(
-            test,
-            method,
-            impl_type,
-            Some(index),
-            pin_syntax,
-            false,
-        )
-}
-
-fn inherent_receiver_call_resolves_with(
-    test: &TestSummary,
-    method: &str,
-    impl_type: &str,
-    index: Option<&RustIndex>,
-    pin_syntax: &super::OwnerPinSyntax,
-    gate_macros: bool,
-) -> bool {
     // The legacy text scan cannot be a deny gate: its last `let` can live in
     // an expired sibling block, and it cannot read a qualified unit variant.
     // The AST below establishes the same bounded type heads in live scope.
@@ -4414,23 +4378,17 @@ fn inherent_receiver_call_resolves_with(
             }
         })
     };
-    executable_call_resolves_with(
-        test,
-        index,
-        pin_syntax,
-        &|node, scope| {
-            inherent_call_node_resolves(
-                node,
-                scope,
-                method,
-                impl_type,
-                &unit_struct,
-                &unit_variant,
-                &factory,
-            )
-        },
-        gate_macros,
-    )
+    executable_call_resolves(test, index, pin_syntax, &|node, scope| {
+        inherent_call_node_resolves(
+            node,
+            scope,
+            method,
+            impl_type,
+            &unit_struct,
+            &unit_variant,
+            &factory,
+        )
+    })
 }
 
 /// A helper-name graph supplies candidates, never executable function identity.
@@ -4492,20 +4450,6 @@ fn executable_call_resolves(
     pin_syntax: &super::OwnerPinSyntax,
     resolves: &dyn Fn(SyntaxNode, Option<&SyntaxNode>) -> bool,
 ) -> bool {
-    executable_call_resolves_with(test, index, pin_syntax, resolves, true)
-}
-
-/// [`executable_call_resolves`], optionally reading assertion operands without
-/// the macro-binding gate. Only [`inherent_receiver_resolves_if_macros_trusted`]
-/// turns the gate off, to name a refusal that exists solely because the
-/// assertion macro cannot be verified.
-fn executable_call_resolves_with(
-    test: &TestSummary,
-    index: Option<&RustIndex>,
-    pin_syntax: &super::OwnerPinSyntax,
-    resolves: &dyn Fn(SyntaxNode, Option<&SyntaxNode>) -> bool,
-    gate_macros: bool,
-) -> bool {
     let parse = match index {
         Some(index) => index.source_syntax.parse_fragment(&test.body),
         None => crate::analysis::syntax::parse_clean_source_file(&test.body),
@@ -4527,23 +4471,22 @@ fn executable_call_resolves_with(
             .filter(executable)
             .filter_map(ast::MacroCall::cast)
             .any(|call| {
-                let binding_admitted = !gate_macros
-                    || index.is_none_or(|index| {
-                        let offset = u32::from(call.syntax().text_range().start()) as usize;
-                        let line = test.start_line
-                            + test.body[..offset]
-                                .bytes()
-                                .filter(|byte| *byte == b'\n')
-                                .count();
-                        call.path().is_some_and(|path| {
-                            pin_syntax.targeted_macro_binding_is_unambiguous(
-                                test,
-                                line,
-                                &path.syntax().text().to_string(),
-                                index,
-                            )
-                        })
-                    });
+                let binding_admitted = index.is_none_or(|index| {
+                    let offset = u32::from(call.syntax().text_range().start()) as usize;
+                    let line = test.start_line
+                        + test.body[..offset]
+                            .bytes()
+                            .filter(|byte| *byte == b'\n')
+                            .count();
+                    call.path().is_some_and(|path| {
+                        pin_syntax.targeted_macro_binding_is_unambiguous(
+                            test,
+                            line,
+                            &path.syntax().text().to_string(),
+                            index,
+                        )
+                    })
+                });
                 binding_admitted && assertion_arguments_resolve(&call, index, resolves)
             })
 }
@@ -5191,14 +5134,17 @@ fn owner_call_relation_reason(
         return RelationReason::WeakTokenSubstring;
     }
     if requires_inherent_receiver_identity(owner) {
-        if inherent_receiver_call_resolves(test, owner_name, &impl_type, Some(index), pin_syntax) {
-            return RelationReason::DirectOwnerCall;
-        }
-        if !inherent_receiver_resolves_if_macros_trusted(
-            test, owner_name, &impl_type, index, pin_syntax,
+        return if inherent_receiver_call_resolves(
+            test,
+            owner_name,
+            &impl_type,
+            Some(index),
+            pin_syntax,
         ) {
-            return RelationReason::WeakTokenSubstring;
-        }
+            RelationReason::DirectOwnerCall
+        } else {
+            RelationReason::WeakTokenSubstring
+        };
     }
     // The formatting dispatch already bound the value to this impl's type
     // and trait, and refused a second `fmt` for the same pair.
