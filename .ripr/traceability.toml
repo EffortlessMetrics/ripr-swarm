@@ -8682,6 +8682,8 @@ fixtures = [
   "fixtures/same_crate_trait_impl_same_leaf_doctest_control",
   "fixtures/cross_crate_trait_impl_direct_owner_positive",
   "fixtures/member_reexport_foreign_trait_keeps_dispatch_allowance",
+  "fixtures/compile_time_marker_test_no_observation",
+  "fixtures/asserting_same_file_test_positive_control",
   "fixtures/evidence-promotion-honesty-corpus/perl-packets",
   "fixtures/evidence-promotion-honesty-corpus/reports/perl_same_sub_other_package.json",
   "fixtures/evidence-promotion-honesty-corpus/reports/perl_import_alias_defining_package.json",
