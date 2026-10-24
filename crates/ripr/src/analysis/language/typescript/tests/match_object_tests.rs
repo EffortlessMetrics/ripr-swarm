@@ -385,8 +385,14 @@ fn match_object_facts_read_field_construction_changes_only() -> Result<(), Strin
         .find(|owner| owner.name == "buildProfile")
         .ok_or("owner buildProfile not extracted")?;
     let tests = extract_tests(Path::new("tests/profile.test.ts"), &test);
-    let candidates =
-        related_test_candidates(&owner, &tests, Some(&root), &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        Some(&root),
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     let read = |family: ProbeFamily| {
         let facts =
             ts_match_object_facts(&family, FIELD_OLD, &owner, &candidates, None, Some(&root));
