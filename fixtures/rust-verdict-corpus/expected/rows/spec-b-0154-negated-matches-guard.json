@@ -1,0 +1,40 @@
+{
+  "case_id": "spec-b-0154-negated-matches-guard",
+  "subject_id": "authored-spec-b-guards",
+  "origin": "authored",
+  "anchor": "src/g_matches.rs:4",
+  "behavior_family": "return_value",
+  "test_shape": "err_return_guard_negated_matches",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {},
+  "oracle": {
+    "expected": {
+      "kind": "exact_value",
+      "strength": "strong",
+      "test": "one_doubles_to_two_g_matches",
+      "spec": "RIPR-SPEC-0154#2"
+    },
+    "observed_kind": "exact_value",
+    "observed_strength": "strong",
+    "observed_all": [
+      {
+        "test": "one_doubles_to_two_g_matches",
+        "kind": "exact_value",
+        "strength": "strong"
+      }
+    ],
+    "outcome": "match"
+  }
+}

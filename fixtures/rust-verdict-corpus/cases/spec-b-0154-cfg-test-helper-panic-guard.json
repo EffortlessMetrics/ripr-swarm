@@ -1,0 +1,53 @@
+{
+  "case_id": "spec-b-0154-cfg-test-helper-panic-guard",
+  "subject_id": "authored-spec-b-guards",
+  "diff": "cases/spec-b-0154-cfg-test-helper-panic-guard.diff",
+  "anchor": {
+    "file": "src/g_cfg_helper.rs",
+    "line": 17
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "cfg_test_helper_panic_guard_edit",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if result == expected {",
+        "mutated_line": "if result == expected {",
+        "outcome": "tests_failed",
+        "failing_test": "g_cfg_helper::tests::the_boundary_is_eleven_g_cfg_helper",
+        "equivalence_review": "not equivalent: g_cfg_helper::tests::the_boundary_is_eleven_g_cfg_helper fails on it"
+      },
+      {
+        "replacement": "if expected == result {",
+        "mutated_line": "if expected == result {",
+        "outcome": "tests_failed",
+        "failing_test": "g_cfg_helper::tests::the_boundary_is_eleven_g_cfg_helper",
+        "equivalence_review": "not equivalent: g_cfg_helper::tests::the_boundary_is_eleven_g_cfg_helper fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The changed line is the guard inside the cfg(test) helper expect_class; test-only code seeds no probe, so ripr stays silent. Both mutants make the helper panic on the matching rows and fail the test. Spec cells: RIPR-SPEC-0154#3.",
+  "labeling_observation": {
+    "ripr_commit": "ae90b830",
+    "full_checkout_verdict": "silent",
+    "full_checkout_classifications": [],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0154#3"
+  ]
+}

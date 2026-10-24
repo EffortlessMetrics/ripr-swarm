@@ -1,0 +1,12 @@
+diff --git a/src/g_matches.rs b/src/g_matches.rs
+--- a/src/g_matches.rs
++++ b/src/g_matches.rs
+@@ -1,7 +1,7 @@
+ //! A negated matches! guard in a Result-returning test.
+ 
+ pub fn doubled(x: u32) -> u32 {
+-    x * 2
++    2 * x
+ }
+ 
+ #[cfg(test)]

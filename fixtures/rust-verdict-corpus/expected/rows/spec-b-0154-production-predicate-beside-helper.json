@@ -1,0 +1,22 @@
+{
+  "case_id": "spec-b-0154-production-predicate-beside-helper",
+  "subject_id": "authored-spec-b-guards",
+  "origin": "authored",
+  "anchor": "src/g_cfg_prod.rs:5",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "production_predicate_beside_cfg_test_helper",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

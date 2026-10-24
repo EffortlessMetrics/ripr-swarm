@@ -1,0 +1,18 @@
+//! A negated matches! guard in a Result-returning test.
+
+pub fn doubled(x: u32) -> u32 {
+    x * 2
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn one_doubles_to_two_g_matches() -> Result<(), ()> {
+        if !matches!(doubled(1), 2) {
+            return Err(());
+        }
+        Ok(())
+    }
+}

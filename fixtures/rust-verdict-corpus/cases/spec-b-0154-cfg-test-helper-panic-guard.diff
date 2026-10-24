@@ -1,0 +1,12 @@
+diff --git a/src/g_cfg_helper.rs b/src/g_cfg_helper.rs
+--- a/src/g_cfg_helper.rs
++++ b/src/g_cfg_helper.rs
+@@ -14,7 +14,7 @@
+     use super::*;
+ 
+     fn expect_class(result: &str, expected: &str) {
+-        if result != expected {
++        if expected != result {
+             panic!("expected {expected}, got {result}");
+         }
+     }

@@ -1,0 +1,55 @@
+{
+  "case_id": "spec-b-0154-production-predicate-beside-helper",
+  "subject_id": "authored-spec-b-guards",
+  "diff": "cases/spec-b-0154-production-predicate-beside-helper.diff",
+  "anchor": {
+    "file": "src/g_cfg_prod.rs",
+    "line": 5
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "production_predicate_beside_cfg_test_helper",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if 10 <= n {",
+        "mutated_line": "if 10 <= n {",
+        "outcome": "tests_failed",
+        "failing_test": "g_cfg_prod::tests::the_boundary_is_eleven_g_cfg_prod",
+        "equivalence_review": "not equivalent: g_cfg_prod::tests::the_boundary_is_eleven_g_cfg_prod fails on it"
+      },
+      {
+        "replacement": "if 11 < n {",
+        "mutated_line": "if 11 < n {",
+        "outcome": "tests_failed",
+        "failing_test": "g_cfg_prod::tests::the_boundary_is_eleven_g_cfg_prod",
+        "equivalence_review": "not equivalent: g_cfg_prod::tests::the_boundary_is_eleven_g_cfg_prod fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The production predicate is still a probe while a cfg(test) panic-guard helper sits beside it; the direct asserts at 11 and 10 straddle the boundary, so both mutants fail the test. Spec cells: RIPR-SPEC-0154#3.",
+  "labeling_observation": {
+    "ripr_commit": "ae90b830",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0154#3"
+  ]
+}

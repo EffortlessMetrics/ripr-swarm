@@ -1,0 +1,18 @@
+//! A relational guard: its assert! twin is a weak relational check.
+
+pub fn score(x: u32) -> u32 {
+    x * 2
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_positive_input_scores_above_zero_g_twin_strength() -> Result<(), String> {
+        if !(score(2) > 0) {
+            return Err("score must be positive".to_string());
+        }
+        Ok(())
+    }
+}

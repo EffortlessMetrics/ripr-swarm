@@ -1,0 +1,12 @@
+diff --git a/src/g_opaque.rs b/src/g_opaque.rs
+--- a/src/g_opaque.rs
++++ b/src/g_opaque.rs
+@@ -1,7 +1,7 @@
+ //! The guard condition is a helper call, so its meaning is opaque.
+ 
+ pub fn tripled(x: u32) -> u32 {
+-    x * 3
++    3 * x
+ }
+ 
+ #[cfg(test)]
