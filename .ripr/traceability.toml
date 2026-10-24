@@ -13410,6 +13410,8 @@ tests = [
   "crates/ripr/src/analysis/facts/test_helpers/tests.rs::plain_helper_withheld_for_a_boxed_or_referenced_closure",
   "crates/ripr/src/analysis/facts/test_helpers/tests.rs::unused_closure_helper_keeps_credit_for_a_call_less_closure",
   "crates/ripr/src/analysis/facts/test_helpers/tests.rs::plain_helper_withholding_is_per_helper_not_per_call",
+  "crates/ripr/src/analysis/facts/test_helpers/tests.rs::plain_helper_withheld_for_an_adapter_closure_run_inside_the_argument",
+  "crates/ripr/src/analysis/facts/test_helpers/tests.rs::named_closure_argument_keeps_plain_helper_credit_as_a_disclosed_residual",
   "crates/ripr/tests/owner_pin_execution/function_pointer.rs::function_pointer_pins_only_the_observed_owner_value",
   "crates/ripr/tests/owner_pin_execution/function_pointer.rs::function_pointer_runtime_controls_observe_the_same_value",
   "crates/ripr/tests/owner_pin_execution/function_pointer.rs::function_pointer_standard_glob_keeps_observation_and_macro_refusal",

@@ -1940,7 +1940,10 @@ method call in its body refuses the credit, so a bare literal, `&|| ..`,
 credit. The withholding is per helper, not per parameter or per call: a helper
 whose own assertion observes the owner directly also loses credit for a test
 that hands it any call-making closure, and one such call withholds the helper
-from the whole test (a missed advisory, fail-closed). Not recognized, so they
+from the whole test (a missed advisory, fail-closed). Likewise a closure an
+iterator or `Option` adapter runs eagerly inside the argument
+(`xs.iter().map(|v| gate(*v)).count()`, `.any(..)`, `.unwrap_or_else(|| ..)`)
+is withheld although the base credited it: a deliberate missed advisory. Not recognized, so they
 keep the plain-helper credit (known residual): a closure bound to a name first
 (`let f = || ..; run(f)`), a function item, and a closure with no call. The
 tracing forwarding shape is a limitation, not a credit, until the receiving call

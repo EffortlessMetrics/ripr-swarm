@@ -1503,4 +1503,42 @@ fn plain_helper_withholding_is_per_helper_not_per_call() -> Result<(), Box<dyn E
     Ok(())
 }
 
+#[test]
+fn plain_helper_withheld_for_an_adapter_closure_run_inside_the_argument()
+-> Result<(), Box<dyn Error>> {
+    // Deliberate missed advisory (#9997): these closures run eagerly while the
+    // argument is evaluated, so the base credit was correct, but the
+    // withholding scan treats any call-making closure in an argument as one the
+    // helper may never run. Fail-closed over precise.
+    for body in [
+        "        run_test([1u32, 2].iter().map(|v| gate(*v)).count() > 0, || true);\n",
+        "        run_test([1u32, 2].iter().any(|v| gate(*v)), || true);\n",
+        "        run_test(Some(true).unwrap_or_else(|| gate(11)), || true);\n",
+    ] {
+        let index = index_for(&callback_source(UNUSED_CLOSURE_HELPER, body))?;
+        let test = test_named(&index, "boundary")?;
+        assert!(
+            test.assertions.is_empty(),
+            "{body}: {:?}",
+            assertion_texts(test)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn named_closure_argument_keeps_plain_helper_credit_as_a_disclosed_residual()
+-> Result<(), Box<dyn Error>> {
+    // Known residual (#9997): a closure bound to a name first is not a literal
+    // in the argument, so the withholding scan does not see it and the
+    // over-credit remains. Pinned so a later fix flips this test knowingly.
+    let index = index_for(&callback_source(
+        UNUSED_CLOSURE_HELPER,
+        "        let c = || gate(11);\n        run_test(true, c);\n",
+    ))?;
+    let test = test_named(&index, "boundary")?;
+    assert_eq!(assertion_texts(test), vec!["assert_eq!(want, true);"]);
+    Ok(())
+}
+
 mod assertion_macros;

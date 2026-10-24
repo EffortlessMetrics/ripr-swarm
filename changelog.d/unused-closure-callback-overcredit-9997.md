@@ -9,3 +9,6 @@
   A closure bound to a name first or a function item is not recognized and
   keeps the old credit, and the withholding is per helper, so a helper whose
   own assertion observes the owner also loses credit for such a call.
+  Closures an iterator or `Option` adapter runs inside the argument
+  (`.map(|v| gate(*v))`, `.any(..)`, `.unwrap_or_else(..)`) are withheld too, a
+  deliberate fail-closed missed advisory.
