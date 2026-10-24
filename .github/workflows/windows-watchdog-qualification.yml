@@ -91,7 +91,7 @@ jobs:
               [ "$descendant" = ended ] || { echo "FAIL descendant remained running"; fail=1; }
             fi
           fi
-          taskkill //F //PID "$child" > /dev/null 2>&1; taskkill //F //PID "$sentinel" > /dev/null 2>&1
+          taskkill //F //PID "$child" > /dev/null 2>&1 || true; taskkill //F //PID "$sentinel" > /dev/null 2>&1 || true
           exit "$fail"
 
       - name: Upload qualification receipts
