@@ -4751,8 +4751,10 @@ fn visible_receiver_binding_names_type(
                         compact_impl_type_name(text).as_deref() == Some(impl_type)
                     });
             }
-            // A bare imported enum variant is a value of the enum.
-            return unit_variant(name);
+            // A bare type name is a value only for a verified unit struct
+            // (no binding or item above shadows it); a bare imported enum
+            // variant is a value of the enum.
+            return (name == impl_type && unit_struct(impl_type)) || unit_variant(name);
         }
     }
     false
