@@ -2714,44 +2714,17 @@ fn literal_ids(masked: &str) -> impl Iterator<Item = usize> + '_ {
         .filter_map(|id| id.parse().ok())
 }
 
-/// Rust keywords long enough to pass `ASSERTION_TOKEN_MIN_LEN`. A path or
-/// declaration keyword (`crate::helper(..)`, `pub(crate) use`, `const`,
+/// Whether `token` is a strict or reserved Rust keyword (`RUST_KEYWORDS`). A
+/// path or declaration keyword (`crate::helper(..)`, `pub(crate) use`, `const`,
 /// `static`) is syntax shared by unrelated code, so it must never tie a test
 /// to a probe through assertion-target affinity (#9171).
 fn is_rust_keyword(token: &str) -> bool {
-    matches!(
-        token,
-        "crate"
-            | "super"
-            | "where"
-            | "const"
-            | "static"
-            | "async"
-            | "await"
-            | "match"
-            | "break"
-            | "while"
-            | "trait"
-            | "unsafe"
-            | "extern"
-            | "struct"
-            | "return"
-            | "yield"
-            | "macro"
-            | "final"
-            | "override"
-            | "typeof"
-            | "unsized"
-            | "virtual"
-            | "abstract"
-            | "become"
-            | "continue"
-    )
+    RUST_KEYWORDS.contains(&token)
 }
 
 /// Weak declaration introducers that are not reserved words: `union` and
 /// `macro_rules` are legal identifiers outside a declaration, so they cannot
-/// live in `is_rust_keyword`. A token whose every occurrence in `text` is the
+/// live in `RUST_KEYWORDS`. A token whose every occurrence in `text` is the
 /// declaration form (`union Name {`, `union Name<T>`, `macro_rules!`) is syntax
 /// shared by unrelated code and must not seed assertion-target affinity
 /// (#9171); an occurrence used as an identifier (`a.union(b)`, `let union`)
