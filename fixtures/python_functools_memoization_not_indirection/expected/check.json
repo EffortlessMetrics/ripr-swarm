@@ -79,7 +79,9 @@
           "line": 8,
           "oracle_strength": "unknown",
           "oracle_kind": "unknown",
-          "oracle": ""
+          "oracle": "",
+          "miss": "no_assertion",
+          "why": "has no assertion"
         }
       ],
       "repair_placement": {

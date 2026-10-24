@@ -20,11 +20,15 @@
 # Case ids containing `spec0234` were named before the TypeScript rules were
 # renumbered; they cite today's RIPR-SPEC-0243.
 #
-# `floor` is the covered-example count `verdict-corpus check` protects. Raise
-# it when coverage grows; lowering it is a reviewed edit with a reason.
+# `floor` is the covered-example count `verdict-corpus check` protects. For
+# RIPR-SPEC-0243 a PR that adds an example need not raise it: the xtask test
+# asserts no 0243 example is uncovered, so an uncited example fails there, and
+# every PR editing this line conflicts with the others (#9859). Other specs
+# have no such assertion; raising the floor stays a separate decision.
+# Lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 131
+floor = 152
 
 # Operator grid and false-credit traps (verdict_corpus_grid.rs). `cell_floor`
 # is the count of covered operator-by-truth cells (7 operators x credited,
@@ -599,24 +603,24 @@ scope = "out"
 reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
 
 # TypeScript Preview Static Facts
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0027"
-reason = "acceptance examples are prose, not numbered; TypeScript corpus cases cite the spec in their reasoning"
+scope = "in"
 
 # TypeScript Bounded Re-Export Test Discovery
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0095"
-reason = "acceptance examples are prose, not numbered; ts-vitest-line-total-reexport cites the spec in its reasoning"
+scope = "in"
 
 # TypeScript toThrow Exact-Payload Oracle Upgrade
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0097"
-reason = "acceptance examples are prose, not numbered; ts-vitest-add-line-message cites the spec in its reasoning"
+scope = "in"
 
 # TypeScript Exposed Observation Guard
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0098"
-reason = "acceptance examples are prose, not numbered; ts-nodetest-audit-log cites the spec in its reasoning"
+scope = "in"
 
 # Owner call shape projection for drill-in surfaces
 [[spec]]
@@ -742,3 +746,21 @@ reason = "Rust analyzer transfer rule over Rust syntax; a TypeScript case cannot
 id = "RIPR-SPEC-0159"
 scope = "out"
 reason = "Rust analyzer transfer rule over Rust syntax; a TypeScript case cannot label it"
+
+# Rust unsafe boundary probes
+[[spec]]
+id = "RIPR-SPEC-0168"
+scope = "out"
+reason = "Rust/Cargo analyzer behavior; a TypeScript case cannot label it"
+
+# Cargo path-dependency diff scope
+[[spec]]
+id = "RIPR-SPEC-0171"
+scope = "out"
+reason = "Rust/Cargo analyzer behavior; a TypeScript case cannot label it"
+
+# Cargo cross-crate dependency edges
+[[spec]]
+id = "RIPR-SPEC-0172"
+scope = "out"
+reason = "Rust/Cargo analyzer behavior; a TypeScript case cannot label it"

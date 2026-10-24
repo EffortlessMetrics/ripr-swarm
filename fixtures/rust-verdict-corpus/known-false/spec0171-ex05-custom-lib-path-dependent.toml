@@ -1,0 +1,3 @@
+case = "spec0171-ex05-custom-lib-path-dependent"
+issue = 10101
+reason = "A dependent crate test is not related when the changed owner sits under a custom [lib] path (#10101)."

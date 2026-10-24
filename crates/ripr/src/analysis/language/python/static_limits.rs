@@ -2,6 +2,7 @@ use super::PythonFramework;
 use super::admission::PythonAssertionAdmission;
 use super::approx_band::{PythonBandReading, parse_expression, python_band_reading};
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
+use super::caplog_text::PythonLogEvidence;
 use super::related_tests::{
     PythonRelatedCandidate, PythonRelationKind, body_calls_owner, dunder_method_class,
     is_python_identifier_char, line_prefix_looks_like_comment_or_string, test_imports_owner_module,
@@ -36,7 +37,7 @@ pub(super) fn static_limit_for_change(
         line_text,
         None,
     );
-    static_limit_for_focused_change(line_text, None, &focus, owner, related_candidates)
+    static_limit_for_focused_change(line_text, None, None, &focus, owner, related_candidates)
 }
 
 /// `focus` is the one the finding's rows are selected with (#5572): only the
@@ -45,6 +46,7 @@ pub(super) fn static_limit_for_change(
 pub(super) fn static_limit_for_focused_change(
     line_text: &str,
     old_line_text: Option<&str>,
+    log_evidence: Option<&PythonLogEvidence>,
     focus: &PythonAssertionFocus,
     owner: &PythonOwner,
     related_candidates: &[PythonRelatedCandidate<'_>],
@@ -182,9 +184,11 @@ pub(super) fn static_limit_for_focused_change(
             missing: "Static limit `unsupported_syntax`: a related Python test compares the result with `approx(..., rel=..., abs=...)`; the preview adapter does not evaluate the tolerance band, so it cannot tell whether a numeric edit stays inside it. Verify with a runtime test or tighten the tolerance.".to_string(),
         });
     }
-    if changed_logging_call_literal(trimmed).is_some_and(|literal| {
-        related_candidates_have_log_membership_limit(related_candidates, focus, literal)
-    }) {
+    if log_evidence.is_none()
+        && changed_logging_call_literal(trimmed).is_some_and(|literal| {
+            related_candidates_have_log_membership_limit(related_candidates, focus, literal)
+        })
+    {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::UnsupportedSyntax,
             evidence: "static_limit unsupported_syntax: related test reads the changed log message through `caplog` membership"
@@ -838,21 +842,36 @@ fn related_candidates_have_log_membership_limit(
 /// The string literals an assertion checks for membership in `caplog.text`,
 /// read from the parsed expression so spacing, parentheses, line breaks and
 /// implicit literal concatenation do not change what is recognized.
-fn caplog_membership_literals(gate_text: &str) -> Vec<String> {
+pub(super) fn caplog_membership_literals(gate_text: &str) -> Vec<String> {
+    caplog_literals(gate_text, false)
+}
+
+/// The literals that must all hold for the assertion to pass: a single
+/// membership or an `and` chain of them. A literal under `or` is not one of
+/// them (`assert A in caplog.text or B in caplog.text` still passes when A
+/// alone disappears), so crediting an edit never reads through an `or`.
+pub(super) fn caplog_required_literals(gate_text: &str) -> Vec<String> {
+    caplog_literals(gate_text, true)
+}
+
+fn caplog_literals(gate_text: &str, conjunctive_only: bool) -> Vec<String> {
     let expression = gate_text.trim_start();
     let expression = expression.strip_prefix("assert").unwrap_or(expression);
     let mut literals = Vec::new();
     if let Some(value) = parse_expression(expression) {
-        collect_caplog_membership_literals(&value, &mut literals);
+        collect_caplog_membership_literals(&value, conjunctive_only, &mut literals);
     }
     literals
 }
 
-fn collect_caplog_membership_literals(expr: &Expr, out: &mut Vec<String>) {
+fn collect_caplog_membership_literals(expr: &Expr, conjunctive_only: bool, out: &mut Vec<String>) {
     match expr {
         Expr::BoolOp(bool_op) => {
+            if conjunctive_only && bool_op.op != ast::BoolOp::And {
+                return;
+            }
             for value in &bool_op.values {
-                collect_caplog_membership_literals(value, out);
+                collect_caplog_membership_literals(value, conjunctive_only, out);
             }
         }
         Expr::Compare(compare)
@@ -960,9 +979,68 @@ fn line_uses_known_static_cli_symbol(text: &str, import: &PythonImport) -> bool 
             contains_python_call_shape(text, "sys.exit")
                 || contains_python_call_shape(text, "sys.stdout.write")
                 || contains_python_call_shape(text, "sys.stderr.write")
+                || prints_to_standard_stream(text)
         }
         _ => false,
     }
+}
+
+/// `print(..., file=sys.stderr)` names a standard stream, not an imported
+/// implementation: a test reads it back through `capsys` without resolving `sys`.
+///
+/// The whole changed line must be that one `print` call, with `sys.stderr` or
+/// `sys.stdout` as its `file=` argument and no other use of `sys` anywhere on
+/// the line (`print(sys.argv[0], file=sys.stderr)` still reads an unresolved
+/// attribute, and a conditional or second call may print elsewhere).
+fn prints_to_standard_stream(text: &str) -> bool {
+    // Offset of the parsed text inside `parse_expression`'s wrapper source.
+    const WRAPPER_PREFIX: usize = "_ = (\n".len();
+    let trimmed = text.trim();
+    let Some(Expr::Call(call)) = parse_expression(trimmed) else {
+        return false;
+    };
+    if !matches!(call.func.as_ref(), Expr::Name(name) if name.id.as_str() == "print") {
+        return false;
+    }
+    let file_keywords: Vec<_> = call
+        .keywords
+        .iter()
+        .filter(|keyword| {
+            keyword
+                .arg
+                .as_ref()
+                .is_some_and(|arg| arg.as_str() == "file")
+        })
+        .collect();
+    let [file_keyword] = file_keywords.as_slice() else {
+        return false;
+    };
+    if !matches!(
+        expr_full_name(&file_keyword.value).as_deref(),
+        Some("sys.stderr" | "sys.stdout")
+    ) {
+        return false;
+    }
+    let start = usize::try_from(u32::from(file_keyword.range.start())).ok();
+    let end = usize::try_from(u32::from(file_keyword.range.end())).ok();
+    let (Some(start), Some(end)) = (start, end) else {
+        return false;
+    };
+    let (Some(start), Some(end)) = (
+        start.checked_sub(WRAPPER_PREFIX),
+        end.checked_sub(WRAPPER_PREFIX),
+    ) else {
+        return false;
+    };
+    let (Some(before), Some(after)) = (trimmed.get(..start), trimmed.get(end..)) else {
+        return false;
+    };
+    !contains_identifier(before, "sys") && !contains_identifier(after, "sys")
+}
+
+fn contains_identifier(text: &str, identifier: &str) -> bool {
+    text.match_indices(identifier)
+        .any(|(index, _)| has_identifier_boundary(text, index, identifier.len()))
 }
 
 /// Heuristic-only relations that cannot honestly grade a gap (#9421, #9423).
