@@ -9363,20 +9363,22 @@ fn did_save_retries_unchanged_content_after_a_failed_refresh_over_the_wire() -> 
             "params": {"textDocument": {"uri": uri.as_str()}, "text": "fn same() {}\n"}
         });
         write_lsp_message(&mut client_write, save.clone()).await?;
-        let first = log_notification_messages(
-            &read_lsp_messages_for(&mut client_read, Duration::from_millis(2500)).await?,
-        );
-        if !first
-            .iter()
-            .any(|message| message.starts_with("ripr analysis refresh failed"))
-        {
-            return Err(format!("expected the first refresh to fail: {first:?}"));
+        // Event-driven waits: block on the observable log, not a wall-clock
+        // window, so load cannot make the witness miss the event (#10033).
+        let first = read_logs_until(&mut client_read, |message| {
+            message.starts_with("ripr analysis refresh failed")
+        })
+        .await?;
+        if first.is_empty() {
+            return Err("expected the first refresh to fail".to_string());
         }
 
         write_lsp_message(&mut client_write, save).await?;
-        let second = log_notification_messages(
-            &read_lsp_messages_for(&mut client_read, Duration::from_millis(2500)).await?,
-        );
+        let second = read_logs_until(&mut client_read, |message| {
+            message.contains("didSave deduplicated")
+                || message.starts_with("ripr analysis refresh queued")
+        })
+        .await?;
         if second
             .iter()
             .any(|message| message.contains("didSave deduplicated"))
@@ -9384,12 +9386,6 @@ fn did_save_retries_unchanged_content_after_a_failed_refresh_over_the_wire() -> 
             return Err(format!(
                 "re-save after a failed refresh was deduplicated: {second:?}"
             ));
-        }
-        if !second
-            .iter()
-            .any(|message| message.starts_with("ripr analysis refresh queued"))
-        {
-            return Err(format!("re-save did not schedule a refresh: {second:?}"));
         }
         server_task.abort();
         Ok(())
@@ -14742,6 +14738,32 @@ where
             Err(_) => return Ok(messages),
         }
     }
+}
+
+/// Reads `window/logMessage` texts until one satisfies `stop`, returning all
+/// logs seen (the matching one last). The deadline is only a hang guard.
+async fn read_logs_until<R>(
+    reader: &mut R,
+    stop: impl Fn(&str) -> bool,
+) -> Result<Vec<String>, String>
+where
+    R: AsyncRead + Unpin,
+{
+    tokio::time::timeout(Duration::from_mins(1), async {
+        let mut seen = Vec::new();
+        loop {
+            let message = read_lsp_message(reader).await?;
+            for text in log_notification_messages(std::slice::from_ref(&message)) {
+                let done = stop(&text);
+                seen.push(text);
+                if done {
+                    return Ok::<Vec<String>, String>(seen);
+                }
+            }
+        }
+    })
+    .await
+    .map_err(|elapsed| format!("timed out waiting for expected log: {elapsed}"))?
 }
 
 fn log_notification_messages(messages: &[serde_json::Value]) -> Vec<String> {

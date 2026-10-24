@@ -1133,13 +1133,17 @@ impl Backend {
         duration: Duration,
         kind: AnalysisFailureKind,
     ) {
+        // Record the failure (and drop uncovered save digests) before the
+        // client can observe the failure log: a client that re-saves
+        // identical bytes in response to that log must not race the
+        // invalidation and be deduplicated (#10033).
+        self.mark_attempt_failed(request, kind, &message);
         self.client
             .log_message(
                 MessageType::WARNING,
                 refresh_failed_log_message(&message, duration),
             )
             .await;
-        self.mark_attempt_failed(request, kind, &message);
         self.publish_analysis_status().await;
     }
 
