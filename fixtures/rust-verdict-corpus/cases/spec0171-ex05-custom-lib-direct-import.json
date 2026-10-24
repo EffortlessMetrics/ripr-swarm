@@ -43,5 +43,13 @@
   "reasoning": "meter pins tally::weight(5) to 15 directly, so a changed weight fails the integration test. The owner sits under a custom [lib] path, which a dependent still imports by library name. Spec cells: RIPR-SPEC-0171 example 5.",
   "spec_examples": [
     "RIPR-SPEC-0171#5"
-  ]
+  ],
+  "labeling_observation": {
+    "ripr_commit": "f402552d",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
 }
