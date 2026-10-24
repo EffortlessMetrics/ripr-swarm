@@ -5270,6 +5270,8 @@ fn source_may_bind_root(source: &str, root: &str) -> bool {
         })
 }
 
+pub(super) use crate::analysis::syntax::has_cfg_attr;
+
 fn indexed_item_nesting(
     index: &RustIndex,
     file: &Path,

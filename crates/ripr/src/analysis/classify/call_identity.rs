@@ -75,6 +75,7 @@ type TestKey = (PathBuf, usize, String);
 /// two same-named owners share one source line (inline sibling modules).
 type SharedOwnerScopes = BTreeMap<PathBuf, (Arc<str>, Option<Arc<super::owner_pin::FileScopes>>)>;
 
+type SoloIdentities = BTreeMap<String, Option<std::sync::Arc<OwnerCallIdentity>>>;
 type SharedIdentities = BTreeMap<(bool, String), Option<std::sync::Arc<OwnerCallIdentity>>>;
 
 /// Per-index memos for the call-identity family (#7716 residual).
@@ -100,7 +101,7 @@ pub(crate) struct CallIdentityMemos {
     pub(super) owner_file_scopes: Mutex<SharedOwnerScopes>,
     /// #9218: the same per owner, built even when the owner has no
     /// same-named rival, for resolving a qualified call's spelled path.
-    solo_identities: Mutex<SharedIdentities>,
+    solo_identities: Mutex<SoloIdentities>,
     /// RIPR-SPEC-0035: every workspace `const`/`static` by name with its
     /// file and masked initializer, built once per index on first use by
     /// the owner-return pin's self-computed expected-value check.
