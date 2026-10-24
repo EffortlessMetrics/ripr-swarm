@@ -147,4 +147,70 @@ mod tests {
         );
         Ok(())
     }
+
+    type IndexedTest = (String, usize, bool, usize);
+
+    fn indexed_tests(name: &str, test_file: &str) -> Result<Vec<IndexedTest>, Box<dyn Error>> {
+        let dir = temp_dir(name)?;
+        let root = dir.0.as_path();
+        fs::create_dir_all(root.join("src"))?;
+        fs::create_dir_all(root.join("tests"))?;
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"macrocase\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        fs::write(
+            root.join("src/lib.rs"),
+            "pub fn is_adult(age: u32) -> bool {\n    age >= 18\n}\n",
+        )?;
+        fs::write(root.join("tests/gen.rs"), test_file)?;
+        let index = build_index(
+            root,
+            &[PathBuf::from("src/lib.rs"), PathBuf::from("tests/gen.rs")],
+        )?;
+        Ok(index
+            .tests()
+            .iter()
+            .map(|test| {
+                (
+                    test.name.clone(),
+                    test.start_line,
+                    test.calls.iter().any(|call| call.name == "is_adult"),
+                    test.assertions.len(),
+                )
+            })
+            .collect())
+    }
+
+    #[test]
+    fn literal_tests_in_an_identity_macro_are_indexed_at_the_invocation()
+    -> Result<(), Box<dyn Error>> {
+        let identity = "macro_rules! suite {\n    ($($t:tt)*) => { $($t)* };\n}\n\nsuite! {\n    #[test]\n    fn adult() {\n        assert!(macrocase::is_adult(18));\n    }\n\n    #[test]\n    fn minor() {\n        assert!(!macrocase::is_adult(17));\n    }\n}\n";
+        assert_eq!(
+            indexed_tests("identity-macro-tests", identity)?,
+            vec![
+                ("adult".to_string(), 5, true, 1),
+                ("minor".to_string(), 5, true, 1),
+            ]
+        );
+        // Negative control: the same literal tokens inside a macro that is
+        // not the identity (it gates them) register nothing.
+        let gating = identity.replace(
+            "{ $($t)* }",
+            "{ #[cfg(feature = \"slow\")] mod gated { $($t)* } }",
+        );
+        assert_ne!(gating, identity);
+        assert!(indexed_tests("gating-macro-tests", &gating)?.is_empty());
+        // And no double registration alongside an ordinary test.
+        let mixed = format!(
+            "{identity}\n#[test]\nfn plain() {{\n    assert!(macrocase::is_adult(30));\n}}\n"
+        );
+        let mut names: Vec<_> = indexed_tests("mixed-macro-tests", &mixed)?
+            .into_iter()
+            .map(|test| test.0)
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["adult", "minor", "plain"]);
+        Ok(())
+    }
 }

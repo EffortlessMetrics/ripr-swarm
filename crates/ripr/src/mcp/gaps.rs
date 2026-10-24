@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-pub(crate) const GAP_LIST_SCHEMA_VERSION: &str = "ripr-mcp-gap-list-v2";
+pub(crate) const GAP_LIST_SCHEMA_VERSION: &str = "ripr-mcp-gap-list-v3";
 pub(crate) const GAP_SCHEMA_VERSION: &str = "ripr-mcp-gap-v1";
 
 /// `ripr_get_gap` / `ripr://gap/{canonical_id}` never authorizes an
@@ -28,6 +28,10 @@ pub(crate) struct RepairFixSite {
     pub(crate) line: usize,
     pub(crate) oracle: Option<String>,
     pub(crate) oracle_kind: &'static str,
+    /// The governed inline `#[cfg(test)]` module the repair is confined to,
+    /// when the fix site is the seam's own production file (#5516). `None`
+    /// for a test-surface fix site.
+    pub(crate) inline_test_module: Option<String>,
 }
 
 /// Producer-fact repair readiness for one canonical item, computed once when
@@ -82,6 +86,21 @@ impl RepairReadiness {
             self.fix_site = None;
             self.ineligibility = Some(*code);
             self.seam_detail = Some(detail.clone());
+        }
+        // A fix site on the seam's own production file is not a test surface,
+        // but the shared validator admitted that seam with its one governed
+        // inline test module as the edit target (#5210). Promote only when
+        // that module's file is exactly the fix site the finding named, so
+        // the confinement stated here is the one the cage enforces; any
+        // other combination stays refused.
+        if let Some(SeamVerdict::AdmittedInline { file, module }) = verdict
+            && self.ineligibility == Some("fix_site_not_test_surface")
+            && let Some(site) = self.fix_site.as_mut()
+            && site.file == *file
+        {
+            site.inline_test_module = Some(module.clone());
+            self.ready = true;
+            self.ineligibility = None;
         }
         self
     }
@@ -166,6 +185,7 @@ impl RepairReadiness {
                 line: test.line,
                 oracle: test.oracle.clone(),
                 oracle_kind: test.oracle_kind.as_str(),
+                inline_test_module: None,
             })
             .collect::<Vec<_>>();
         let Some(first) = candidates.first().cloned() else {
@@ -213,7 +233,7 @@ impl RepairReadiness {
                 "no strong, high-confidence directly-related test establishes an exact fix site"
             }
             Some("fix_site_not_test_surface") => {
-                "the strongest established fix site is not a test-surface path; only test-surface paths can be the authored edit target (inline `#[cfg(test)]` modules don't qualify their file)"
+                "the strongest established fix site is not a test-surface path, and the shared repair gate did not admit it as the seam's one governed inline `#[cfg(test)]` module; only test-surface paths or that admitted module can be the authored edit target"
             }
             Some(
                 crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED
@@ -225,6 +245,13 @@ impl RepairReadiness {
                 "the shared seam-level repair validator behind `ripr repair` does not admit this item"
             }
             Some(_other) => "the producer did not establish every repair-readiness fact",
+            None if self
+                .fix_site
+                .as_ref()
+                .is_some_and(|site| site.inline_test_module.is_some()) =>
+            {
+                "every evaluated producer fact is established: candidate-current source, an established discriminator, and a strong directly-related test fix site inside the seam's own governed inline `#[cfg(test)]` module, which the shared repair gate admitted"
+            }
             None => {
                 "every evaluated producer fact is established: candidate-current source, an established discriminator, and a strong directly-related test fix site on a test surface"
             }
@@ -413,7 +440,7 @@ fn gap_evidence_core(
                 "miss": test.miss.map(|miss| miss.as_str()),
                 "why": crate::output::related_test_miss::related_test_miss_reason(
                     test,
-                    &finding.activation.missing_discriminators,
+                    &finding.probe.family,
                 ),
             })
         })
@@ -517,19 +544,38 @@ pub(crate) fn budget_items(
         .collect()
 }
 
+/// Tolerate exactly one trailing slash on a captured resource id (#9895).
+/// Clients — especially LLMs hand-assembling `ripr://` links — not
+/// uncommonly produce `ripr://gap/{id}/`; every id-bearing resource route
+/// normalizes that single slash instead of answering `item_not_found` for
+/// an id that merely looks typo'd. Two trailing slashes still miss: the
+/// second one is not a normalization artifact, it is a different (invalid)
+/// id.
+pub(crate) fn trim_one_trailing_slash(id: &str) -> &str {
+    id.strip_suffix('/').unwrap_or(id)
+}
+
 /// Extract the canonical item id from a `ripr://gap/{id}` resource URI.
 ///
 /// The producer gap id embeds a workspace-relative path (Python, and since
 /// #5268 Rust), so the suffix is read whole: the `ripr://gap/` prefix alone
-/// routes the URI, and only an empty suffix fails. Returns `None` for any
-/// other URI, including the exact status resource.
+/// routes the URI, and only an empty suffix fails. One trailing slash is
+/// normalized away (see [`trim_one_trailing_slash`]). Returns `None` for
+/// any other URI, including the exact status resource.
 pub(crate) fn gap_resource_id(uri: &str) -> Option<&str> {
-    uri.strip_prefix("ripr://gap/").filter(|id| !id.is_empty())
+    uri.strip_prefix("ripr://gap/")
+        .map(trim_one_trailing_slash)
+        // A residual trailing slash means the URI carried more than one —
+        // that id does not exist, so the route misses rather than
+        // normalizing a second slash away. Gap ids embed workspace-relative
+        // paths, so only the trailing position is rejected.
+        .filter(|id| !id.is_empty() && !id.ends_with('/'))
 }
 
 /// Extract the snapshot id from a `ripr://snapshot/{id}` resource URI.
 pub(crate) fn snapshot_resource_id(uri: &str) -> Option<&str> {
     uri.strip_prefix("ripr://snapshot/")
+        .map(trim_one_trailing_slash)
         .filter(|id| !id.is_empty() && !id.contains('/'))
 }
 
@@ -643,6 +689,7 @@ pub(crate) fn test_finding() -> Result<Finding, String> {
     };
     let stage = || StageEvidence::new(StageState::Unknown, Confidence::Unknown, "test");
     Ok(Finding {
+        analysis_scope: crate::domain::AnalysisScope::Diff,
         id: "finding:test:1".to_string(),
         canonical_gap: Some(crate::domain::FindingCanonicalGap {
             id: "gap:test:1".to_string(),
@@ -692,6 +739,8 @@ pub(crate) fn test_finding() -> Result<Finding, String> {
             relation_reason: Some(crate::domain::RelationReason::DirectOwnerCall),
             relation_confidence: Some(crate::domain::RelationConfidence::High),
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }],
         recommended_next_step: Some("add a boundary assertion for 10000".to_string()),
         language: Some(crate::domain::LanguageId::Rust),
@@ -1205,6 +1254,63 @@ mod tests {
         Ok(())
     }
 
+    fn not_test_surface_readiness(file: &str) -> RepairReadiness {
+        let mut readiness = ready_readiness();
+        readiness.ready = false;
+        readiness.ineligibility = Some("fix_site_not_test_surface");
+        if let Some(site) = readiness.fix_site.as_mut() {
+            site.file = file.to_string();
+        }
+        readiness
+    }
+
+    /// #5516: only the exact inline module the shared validator admitted can
+    /// lift `fix_site_not_test_surface`; a different file, a plain admission
+    /// or no verdict keeps the refusal, and a refusal still wins.
+    #[test]
+    fn inline_admission_lifts_only_the_matching_non_surface_fix_site() -> Result<(), String> {
+        let inline = SeamVerdict::AdmittedInline {
+            file: "src/lib.rs".to_string(),
+            module: "tests".to_string(),
+        };
+        let lifted = not_test_surface_readiness("src/lib.rs").with_seam_verdict(Some(&inline));
+        let site = lifted
+            .fix_site
+            .as_ref()
+            .ok_or("lifted readiness lost its fix site")?;
+        if !lifted.ready
+            || lifted.ineligibility.is_some()
+            || site.inline_test_module.as_deref() != Some("tests")
+            || !lifted.reason().contains("governed inline")
+            || lifted.reason().contains("on a test surface")
+        {
+            return Err(format!(
+                "matching inline admission did not lift: {lifted:?}"
+            ));
+        }
+        let other_file = not_test_surface_readiness("src/other.rs");
+        for (name, readiness, verdict) in [
+            ("different file", other_file.clone(), Some(&inline)),
+            (
+                "plain admission",
+                other_file.clone(),
+                Some(&SeamVerdict::Admitted),
+            ),
+            ("no verdict", other_file.clone(), None),
+        ] {
+            let kept = readiness.clone().with_seam_verdict(verdict);
+            if kept != readiness {
+                return Err(format!("{name} must keep the refusal: {kept:?}"));
+            }
+        }
+        // A test-surface site is never rewritten by an inline verdict.
+        let surface = ready_readiness().with_seam_verdict(Some(&inline));
+        if surface != ready_readiness() {
+            return Err(format!("test-surface readiness changed: {surface:?}"));
+        }
+        Ok(())
+    }
+
     fn ready_readiness() -> RepairReadiness {
         RepairReadiness {
             ready: true,
@@ -1214,6 +1320,7 @@ mod tests {
                 line: 2,
                 oracle: Some("assert_eq!(f(), 1);".to_string()),
                 oracle_kind: "exact_value",
+                inline_test_module: None,
             }),
             ineligibility: None,
             seam_detail: None,
@@ -1420,10 +1527,10 @@ mod tests {
         };
         let reason = readiness.reason();
         for needle in [
-            "only test-surface paths can be the authored edit target",
+            "only test-surface paths or that admitted module can be the authored edit target",
             "inline",
             "#[cfg(test)]",
-            "don't qualify their file",
+            "did not admit",
         ] {
             if !reason.contains(needle) {
                 return Err(format!(
@@ -1619,6 +1726,40 @@ mod tests {
         assert_eq!(snapshot_resource_id("ripr://gap/x"), None);
     }
 
+    /// #9895: every id-bearing resource route tolerates exactly one
+    /// trailing slash — `ripr://gap/{id}/` addresses the same item as
+    /// `ripr://gap/{id}` — while a second slash, or a slash that would
+    /// leave the id empty, still misses.
+    #[test]
+    fn resource_id_routes_tolerate_one_trailing_slash() {
+        for (uri, expected) in [
+            ("ripr://gap/gap:test:1/", Some("gap:test:1")),
+            (
+                "ripr://gap/gap:rust:src/lib.rs:nested/",
+                Some("gap:rust:src/lib.rs:nested"),
+            ),
+            // A second slash is a different (invalid) id, not a
+            // normalization artifact.
+            ("ripr://gap/gap:test:1//", None),
+            // The bare prefix with only a slash still routes nowhere.
+            ("ripr://gap//", None),
+        ] {
+            assert_eq!(gap_resource_id(uri), expected, "gap route: {uri}");
+        }
+        for (uri, expected) in [
+            (
+                "ripr://snapshot/snapshot:sha256:x/",
+                Some("snapshot:sha256:x"),
+            ),
+            ("ripr://snapshot/snapshot:sha256:x//", None),
+            ("ripr://snapshot//", None),
+            // The single-segment grammar stays strict inside the id.
+            ("ripr://snapshot/a/b/", None),
+        ] {
+            assert_eq!(snapshot_resource_id(uri), expected, "snapshot route: {uri}");
+        }
+    }
+
     /// #5268 review: the producer gap id embeds a workspace-relative path,
     /// so the advertised `ripr://gap/{id}` resource must parse the suffix
     /// whole — a nested-file Rust (or Python) finding's resource link has to
@@ -1632,10 +1773,22 @@ mod tests {
             Some(nested)
         );
         assert_eq!(
+            gap_resource_id(&format!("ripr://gap/{nested}/")),
+            Some(nested),
+            "one trailing slash must not truncate a nested id"
+        );
+        assert_eq!(
             crate::mcp::repair_card::repair_card_resource_id(&format!(
                 "ripr://repair-card/{nested}"
             )),
             Some(nested)
+        );
+        assert_eq!(
+            crate::mcp::repair_card::repair_card_resource_id(&format!(
+                "ripr://repair-card/{nested}/"
+            )),
+            Some(nested),
+            "one trailing slash must not truncate a nested repair-card id"
         );
         // A snapshot id never carries a path, so its grammar stays strict.
         assert_eq!(snapshot_resource_id("ripr://snapshot/a/b"), None);
@@ -1691,7 +1844,7 @@ mod tests {
         let [direct, advisory] = finding.related_tests.as_slice() else {
             return Err(format!("expected two rows: {:?}", finding.related_tests));
         };
-        let why = related_test_miss_reason(direct, &finding.activation.missing_discriminators)
+        let why = related_test_miss_reason(direct, &finding.probe.family)
             .ok_or("the direct row should have a reason")?;
         let item = GapItem::from_finding(&finding, Path::new("/test-root"))?;
         let rows = item.evidence_core["related_tests"]

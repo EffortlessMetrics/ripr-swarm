@@ -28,7 +28,30 @@ exercised boundary from a missing one.
   `strip_prefix`/`strip_suffix`, `chars().next()`/`next_back()`,
   `char::len_utf8`, `map_or` with a literal default and the identity
   closure, `checked_add`/`checked_sub`, and bounded string slicing
-  from exact indices.
+  from exact indices. Exact integer arithmetic (`+ - * / %`, with
+  precedence and parentheses, failing closed on a leading sign,
+  overflow, underflow, division by zero, or an operand or result at or
+  above `i32::MAX`),
+  `split_whitespace().count()` and
+  `chars().count()` are credit-only families (#9637): a chain that
+  uses one may close a boundary through an observed equality row but
+  never names a missing input, so no row on the boundary leaves the
+  stage unknown. A comparison operand that is itself such a chain over
+  `&str`/`String`/integer owner parameters, same-file constants and
+  literals resolves the same way, but only for ordering predicates
+  (`<`, `<=`, `>`, `>=`): an `==` or `!=` guard never credits, because one
+  on-boundary row cannot discriminate its neighbours. Integer owner
+  parameters must be 32 bits or wider (`u32`, `i32`, `u64`, `i64`,
+  `u128`, `i128`, `usize`, `isize`); `u8`/`i8`/`u16`/`i16` stay unknown.
+  A computed or call-result argument, a generic or slice receiver and a
+  rebound parameter stay unknown, and a local initializer that reads a
+  parameter that is rebound, assigned, `mut`, or bound by `for`/`if let`/
+  `match`/closure earlier (`let x = x + 10;`) is unresolved. A direct
+  closed-form operand is known only when every related call row
+  evaluates it; a computed local keeps its existing any-row semantics
+  (#3295), where one evaluable row suffices. The difference is
+  deliberate: the direct form is new and fails closed on a row that may
+  sit on the other side.
 - Failure modes are typed and named: `Unsupported` names the earliest
   edge (unknown method family, non-identity closure, `map_or_else`,
   dynamic non-input identifier, over-limit chain/literal);
@@ -111,6 +134,10 @@ exercised boundary from a missing one.
 - The classifier wiring test
   (`activation_evidence_resolves_computed_local_boundary_operands`) and
   the end-to-end diff-analysis test.
+- The public `method_hop_relations` integration target (#9603) pins
+  receiver-only rejection, helper reach despite a receiver-name collision,
+  genuine bare and module-qualified free calls through the body fallback,
+  and the existing relation fallback without a method hop.
 - Golden blast radius measured: the equality-boundary fixture flips
   (the intended behavior change) and `observation_unverified_call_deletion`
   gains the additive boolean observed-value fact; `cargo xtask goldens
@@ -124,6 +151,11 @@ exercised boundary from a missing one.
   predicate through the #3294 live-span relation.
 - Observation/discrimination still requires the test's own oracle; an
   exact input value establishes activation/infection evidence only.
+- For a free owner reached through a method hop, related-test name matching
+  uses the existing free-call reader for both captured calls and the full
+  body fallback. A receiver-only spelling cannot supply owner-call identity
+  or hide an actual helper relation; genuine bare and module-qualified free
+  calls remain direct owner calls (#9603).
 - Chain depth and literal size are bounded and the limit is disclosed
   (`Unsupported`), never silently truncated.
 - Exact operand comparison uses the classifier's existing literal
@@ -151,54 +183,66 @@ exercised boundary from a missing one.
 
 ## Acceptance Examples
 
-- Accept: `end = input.rfind(delim).map_or(1, |idx| idx)` with
-  `input = "ab"`, `delim = 'x'` → `end = 1` exactly; `start =
-  delim.len_utf8()` → `1`; the boundary is observed.
-- Accept: `strip_prefix` absent → the `None` arm flows into the
-  evaluated default.
-- Reject: exactness from a method outside the families, a non-identity
-  closure, a dynamic input, or a shadowed/out-of-scope binding.
-- Accept: `let unit = if si { KIB } else { KB };` with `KIB = 1_024` and a
-  related test calling the owner with `(1_024, true)`: `unit` is `1024`
-  under that row, equals `bytes`, and the boundary is observed
-  (`local-boundary-flag-hit`, `local-boundary-flag-negated`).
-- Reject: the same local with tests at `(1_000, true)` and `(1_024,
-  false)`: each input is the other flag's boundary, no row sits on
-  `unit`, and the verdict stays a gap (`local-boundary-flag-trap`).
-- Reject: `let si = !si;` before the same local, with tests at
-  `(1_024, true)`: the flag the local reads is the opposite of the
-  caller's literal, so the pinned 1_024 is not the boundary and the
-  verdict stays unresolved (`local-boundary-flag-shadowed`).
-- Reject: `for si in [false] { let unit = if si { KIB } else { KB }; .. }`
-  with tests at `(1_024, true)` (`local-boundary-flag-loop`), and a
-  function-local `const KB: u64 = 2_000;` shadowing the file's `KB`
-  (`local-boundary-flag-alias`).
-- Reject: the real `bytesize` edit `bytes < unit` to `bytes <= unit`,
-  whose only direct row binds `bytes` to a string literal: the verdict
-  stays `infection_unknown` (`bytesize-format-unit-first-run`).
-
-- Accept: `fn check(expected: &str, size: Size, si: bool)` asserting on
-  `size.hit_as(si)`, `hit_as(&self, si)` calling `hit(self.0, si)`, and a
-  test calling `check("1 big", Size::kib(1), true)` with `pub const fn
-  kib(count: u64) -> Self { Size(count * KIB) }`: the owner row is `bytes
-  = 1024`, `si = true`, so infection reads `yes` at the changed boundary.
-  The helper's assertion observes the method's result and a method hop never
-  forwards, so the verdict abstains at `propagation_unknown`
-  (`method-hop-field-read-hit`, and `method-hop-field-read-name-collision`
-  where the owner is named `to_string` and the helper also calls
-  `expected.to_string()`).
-- Reject: the same chain with rows that never equal the selected unit
-  (`method-hop-field-read-trap`): no boundary input is credited.
-- Reject: a receiver rebound before the call, a receiver that is not a
-  parameter, a parameter typed as another type, two call sites, a
-  non-unique method, a constructor argument that is not a literal, a
-  constructor whose body is not one tail expression, a product that
-  overflows the field type, a shadowed, duplicated or imported constant,
-  a tuple struct declared twice, a named-field struct, and `self.1` for a
-  one-field struct: each keeps the earlier stop or withdraws the rows
-  (`method-hop-field-read-rebound`, `method-hop-field-read-nonliteral`,
-  `method-hop-field-read-second-ctor`, and the unit tests below). These keep
-  `infection_unknown`.
+1. Accept: `end = input.rfind(delim).map_or(1, |idx| idx)` with
+   `input = "ab"`, `delim = 'x'` → `end = 1` exactly; `start =
+   delim.len_utf8()` → `1`; the boundary is observed.
+2. Accept: `strip_prefix` absent → the `None` arm flows into the
+   evaluated default.
+3. Reject: exactness from a method outside the families
+   (`input.to_ascii_uppercase().rfind(delim)`).
+4. Reject: exactness through a non-identity closure
+   (`map_or(1, |idx| idx + 0)`).
+5. Reject: exactness from a dynamic input, a `map_or` default that is a
+   local computed from the input rather than a literal or a bound input.
+   When some rows evaluate and one row's chain is refused, the local stays
+   unresolved: the refused row may sit on the boundary, so the other rows
+   cannot support a missing discriminator.
+6. Reject: exactness through a shadowed or out-of-scope binding (`let end =
+   end + start - start;` between the chain and the comparison).
+7. Accept: `let unit = if si { KIB } else { KB };` with `KIB = 1_024` and a
+   related test calling the owner with `(1_024, true)`: `unit` is `1024`
+   under that row, equals `bytes`, and the boundary is observed
+   (`local-boundary-flag-hit`, `local-boundary-flag-negated`).
+8. Reject: the same local with tests at `(1_000, true)` and `(1_024,
+   false)`: each input is the other flag's boundary, no row sits on
+   `unit`, and the verdict stays a gap (`local-boundary-flag-trap`).
+9. Reject: `let si = !si;` before the same local, with tests at
+   `(1_024, true)`: the flag the local reads is the opposite of the
+   caller's literal, so the pinned 1_024 is not the boundary and the
+   verdict stays unresolved (`local-boundary-flag-shadowed`).
+10. Reject: `for si in [false] { let unit = if si { KIB } else { KB }; .. }`
+    with tests at `(1_024, true)` (`local-boundary-flag-loop`).
+11. Reject: a function-local `const KB: u64 = 2_000;` shadowing the file's
+    `KB` (`local-boundary-flag-alias`).
+12. Reject: the real `bytesize` edit `bytes < unit` to `bytes <= unit`,
+    whose only direct row binds `bytes` to a string literal: the verdict
+    stays `infection_unknown` (`bytesize-format-unit-first-run`).
+13. Accept: `fn check(expected: &str, size: Size, si: bool)` asserting on
+    `size.hit_as(si)`, `hit_as(&self, si)` calling `hit(self.0, si)`, and a
+    test calling `check("1 big", Size::kib(1), true)` with `pub const fn
+    kib(count: u64) -> Self { Size(count * KIB) }`: the owner row is `bytes
+    = 1024`, `si = true`, so infection reads `yes` at the changed boundary.
+    The helper's assertion observes the method's result and a method hop never
+    forwards, so the verdict abstains at `propagation_unknown`
+    (`method-hop-field-read-hit`, and `method-hop-field-read-name-collision`
+    where the owner is named `to_string` and the helper also calls
+    `expected.to_string()`).
+14. Reject: the same chain with rows that never equal the selected unit
+    (`method-hop-field-read-trap`): no boundary input is credited.
+15. Reject: a receiver rebound before the call
+    (`method-hop-field-read-rebound`): the earlier stop is kept.
+16. Reject: a constructor argument that is not a literal
+    (`method-hop-field-read-nonliteral`): every row is withdrawn.
+17. Reject: a constructor shape the product reader declines
+    (`method-hop-field-read-second-ctor`, `Size::shifted(1)` shifts instead
+    of multiplying): no receiver value is built.
+18. Reject: a receiver that is not a parameter, a parameter typed as another
+    type, two call sites, a non-unique method, a constructor whose body is
+    not one tail expression, a product that overflows the field type, a
+    shadowed, duplicated or imported constant, a tuple struct declared
+    twice, a named-field struct, and `self.1` for a one-field struct: each
+    keeps the earlier stop or withdraws the rows. These keep
+    `infection_unknown`.
 
 ## Test Mapping
 

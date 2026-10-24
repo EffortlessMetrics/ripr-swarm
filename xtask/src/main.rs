@@ -14016,7 +14016,12 @@ fn check_rust_source_role_authority() -> Result<(), String> {
     /// the reason it is not a role authority. New entries need the reason in
     /// the surrounding code and a review that the check stays display- or
     /// identity-scoped.
-    const ALLOWED_SITE_PATTERNS: [(&str, &str, &str); 8] = [
+    const ALLOWED_SITE_PATTERNS: [(&str, &str, &str); 9] = [
+        (
+            "crates/ripr/src/output/related_test_role_tests.rs",
+            "\"#[cfg(test)]\"",
+            "#5563 source-text guard strips test modules from production text it scans for miss-based eligibility; it decides no analysis role",
+        ),
         (
             "crates/ripr/src/output/review_comments.rs",
             "starts_with(\"tests",
@@ -14086,7 +14091,7 @@ fn check_rust_source_role_authority() -> Result<(), String> {
     /// authority may be consumed only by this inventoried set; new consumers
     /// extend the inventory here with a reason so role consumers stay
     /// reviewable.
-    const IS_TEST_FILE_CONSUMERS: [&str; 12] = [
+    const IS_TEST_FILE_CONSUMERS: [&str; 13] = [
         "crates/ripr/src/analysis/classify/owner_shape.rs",
         "crates/ripr/src/analysis/test_grip_evidence.rs",
         "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
@@ -14115,6 +14120,10 @@ fn check_rust_source_role_authority() -> Result<(), String> {
         // modules never name the owner's; the layout authority stays
         // `is_test_file` and the module decides no role of its own.
         "crates/ripr/src/analysis/classify/call_identity.rs",
+        // #9982: a facade crate's integration test is a file under `tests/**`
+        // of the facade package; the layout authority stays `is_test_file`
+        // and the module decides no role of its own.
+        "crates/ripr/src/analysis/classify/facade_reach.rs",
     ];
 
     let files = tracked_files()?;
@@ -14593,6 +14602,7 @@ fn check_output_contracts() -> Result<(), String> {
             | "value_context"
             | "oracle_alignment"
             | "related_test_miss"
+            | "related_test_role"
             | "source_currentness"
             | "static_limit_kind"
             | "agent_card_refusal_kind"

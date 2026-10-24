@@ -51,7 +51,7 @@
 
 use super::expr_full_name;
 use super::{PythonAssertion, PythonImport, PythonOracleShape};
-use rustpython_parser::ast::{self, Expr, Stmt};
+use rustpython_parser::ast::{self, Expr, Ranged, Stmt};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Assertion admission for one extracted Python test.
@@ -1151,7 +1151,7 @@ impl TestScope {
     }
 }
 
-fn bound_names(statements: &[Stmt], out: &mut BTreeSet<String>) {
+pub(super) fn bound_names(statements: &[Stmt], out: &mut BTreeSet<String>) {
     for stmt in statements {
         match stmt {
             Stmt::Assign(assign) => {
@@ -1700,4 +1700,111 @@ impl BodyScan<'_> {
                 }
             })
     }
+}
+
+/// Whether code outside any test function can run at the owner implicitly in
+/// this module, from evidence RIPR can see (#5491 `missing_input`): an autouse
+/// fixture, any `pytestmark`, `pytest_plugins`, a runtest hook, any setup or
+/// teardown hook or class-body statement, a class with a base other than
+/// `object`/`unittest.TestCase`/none or with a decorator (it can inherit or
+/// install hooks), or a module-level effect. Decided by existence so the row
+/// pass fails closed without reading what that code calls. Autouse fixtures
+/// imported by name, import side effects, plugins from ini/addopts and
+/// `sitecustomize` stay invisible.
+pub(super) fn module_implicit_reach(
+    source: &str,
+    statements: &[Stmt],
+    imports: &[PythonImport],
+) -> bool {
+    let mut context = PythonAdmissionContext {
+        safe_bases: safe_base_spellings(imports),
+        ..PythonAdmissionContext::default()
+    };
+    let mut lifecycle = Vec::new();
+    context.collect(statements, &mut lifecycle);
+    context.has_implicit_fixture
+        || context.has_plugins
+        || context.has_runtest_hook
+        || !context.opaque_classes.is_empty()
+        || !lifecycle.is_empty()
+        // A star import can bring an autouse fixture or hook into the module.
+        || imports
+            .iter()
+            .any(|import| import.alias == "*" || import.imported == "*")
+        || defines_assertion_like_helper(statements)
+        || has_non_test_class_method(statements)
+        || statements.iter().any(|statement| match statement {
+            // A `pytest_*` function in a test module is a live hook, like conftest's.
+            Stmt::FunctionDef(function) => function.name.as_str().starts_with("pytest_"),
+            Stmt::AsyncFunctionDef(function) => function.name.as_str().starts_with("pytest_"),
+            _ => false,
+        })
+        || module_level_effects(source, statements)
+}
+
+/// A function defined in the module whose name suggests an assertion helper
+/// (`assert_*`, `check_*`, `verify_*`): a test calling it through `self` hides
+/// the owner call inside it.
+fn defines_assertion_like_helper(statements: &[Stmt]) -> bool {
+    statements.iter().any(|statement| match statement {
+        Stmt::FunctionDef(function) => is_assertion_like_name(function.name.as_str()),
+        Stmt::AsyncFunctionDef(function) => is_assertion_like_name(function.name.as_str()),
+        Stmt::ClassDef(class) => defines_assertion_like_helper(&class.body),
+        _ => false,
+    })
+}
+
+fn is_assertion_like_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    ["assert", "check", "verify"]
+        .iter()
+        .any(|prefix| lower.starts_with(prefix))
+}
+
+/// A method of a class in the module whose name does not start with `test`: a
+/// helper the tests may call through `self` (hooks and fixtures are handled
+/// separately).
+fn has_non_test_class_method(statements: &[Stmt]) -> bool {
+    statements.iter().any(|statement| match statement {
+        Stmt::ClassDef(class) => class.body.iter().any(|member| match member {
+            Stmt::FunctionDef(function) => !function.name.as_str().starts_with("test"),
+            Stmt::AsyncFunctionDef(function) => !function.name.as_str().starts_with("test"),
+            Stmt::ClassDef(_) => has_non_test_class_method(std::slice::from_ref(member)),
+            _ => false,
+        }),
+        _ => false,
+    })
+}
+
+/// A module-level statement that can run code or rewrite another module at
+/// import: any `pytestmark`, a statement whose source holds a call, or an
+/// attribute or subscript assignment (`s.can_reserve = fake`). Imports,
+/// definitions, docstrings and plain constants do not count.
+pub(super) fn module_level_effects(source: &str, statements: &[Stmt]) -> bool {
+    let writes_through = |target: &Expr| matches!(target, Expr::Attribute(_) | Expr::Subscript(_));
+    statements.iter().any(|statement| match statement {
+        Stmt::FunctionDef(_)
+        | Stmt::AsyncFunctionDef(_)
+        | Stmt::ClassDef(_)
+        | Stmt::Import(_)
+        | Stmt::ImportFrom(_)
+        | Stmt::Pass(_) => false,
+        Stmt::Expr(expr) if matches!(expr.value.as_ref(), Expr::Constant(_)) => false,
+        Stmt::Assign(assign)
+            if assign.targets.iter().any(|target| {
+                writes_through(target)
+                    || matches!(target, Expr::Name(name) if name.id.as_str() == "pytestmark")
+            }) =>
+        {
+            true
+        }
+        Stmt::AugAssign(assign) if writes_through(&assign.target) => true,
+        Stmt::AnnAssign(assign) if writes_through(&assign.target) => true,
+        other => {
+            let range = other.range();
+            source
+                .get(usize::from(range.start())..usize::from(range.end()))
+                .is_none_or(|text| text.contains('('))
+        }
+    })
 }

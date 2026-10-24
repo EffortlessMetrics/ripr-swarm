@@ -811,6 +811,15 @@ pub(in crate::analysis) fn withhold_call_budget_gap(
                 )
             )
         {
+            // Legacy decision-set preservation (#5563): before the explicit
+            // role, rewriting an examined `assertion_not_observing` miss to
+            // `observation_unconfirmed` is what made the row eligible for
+            // the decision set, so the saturated examined-only row keeps
+            // joining it. The role changes here by that existing rule, not
+            // because of the miss value read.
+            if related.is_examined_only() {
+                related.role = crate::domain::RelatedTestRole::Contributing;
+            }
             related.miss = Some(RelatedTestMiss::ObservationUnconfirmed);
         }
     }
@@ -1190,6 +1199,8 @@ mod tests {
             relation_reason: Some(RelationReason::DirectOwnerCall),
             relation_confidence: Some(RelationConfidence::High),
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }
     }
 
@@ -1206,6 +1217,7 @@ mod tests {
                 flow_sink: None,
             });
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:gap-admission".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -2215,6 +2227,27 @@ fn plain() { row(100); }
                         "{call_derived:?}"
                     );
                 }
+                // #5563: an examined-only row on the saturated test joins the
+                // decision set exactly as the old miss rewrite made it
+                // eligible, and a contributing row's membership is unchanged.
+                let mut examined = finding_for(class.clone(), &related);
+                examined.related_tests[0].miss = Some(RelatedTestMiss::AssertionNotObserving);
+                examined.related_tests[0].role = crate::domain::RelatedTestRole::ExaminedOnly;
+                assert_eq!(examined.oracle_related_tests().count(), 0);
+                assert!(withhold_call_budget_gap(&mut examined, &index));
+                assert_eq!(examined.oracle_related_tests().count(), 1);
+                assert_eq!(
+                    examined.related_tests[0].miss,
+                    Some(RelatedTestMiss::ObservationUnconfirmed)
+                );
+                let witness = crate::domain::DiagnosticWitness::from_finding(&examined);
+                let mut as_before = examined.clone();
+                as_before.related_tests[0].role = crate::domain::RelatedTestRole::Contributing;
+                assert_eq!(
+                    witness.map(|w| w.fix_site.map(|site| site.test_name)),
+                    crate::domain::DiagnosticWitness::from_finding(&as_before)
+                        .map(|w| w.fix_site.map(|site| site.test_name))
+                );
                 // An assertion ripr read keeps its strength miss.
                 let mut weak = finding_for(class.clone(), &related);
                 weak.related_tests[0].miss = Some(RelatedTestMiss::WeakAssertion);

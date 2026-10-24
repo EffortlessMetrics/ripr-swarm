@@ -5800,6 +5800,29 @@ fn perl_related_test_miss_is_the_only_field_the_rule_writes() -> Result<(), Stri
     Ok(())
 }
 
+/// #5564 control 10: a finding-wide discriminator is never turned into a
+/// row-owned support record. Perl v1 has no row-owned discriminator fact, so
+/// every matrix row keeps `miss_support: None`, including on findings that do
+/// carry a finding-wide discriminator.
+#[test]
+fn perl_v1_never_attaches_row_support_from_a_finding_wide_discriminator() -> Result<(), String> {
+    let mut with_discriminator = 0;
+    let mut explained_rows = 0;
+    for packet in miss_matrix_packets()? {
+        let finding = only_finding(&packet)?;
+        with_discriminator += usize::from(!finding.activation.missing_discriminators.is_empty());
+        for row in &finding.related_tests {
+            explained_rows += usize::from(row.miss.is_some());
+            assert_eq!(row.miss_support, None, "{}", row.name);
+        }
+    }
+    // Not vacuous: some finding carries a finding-wide discriminator and some
+    // row carries a miss.
+    assert!(with_discriminator > 0);
+    assert!(explained_rows > 0);
+    Ok(())
+}
+
 #[path = "recommendation_tests.rs"]
 mod recommendation_tests;
 
