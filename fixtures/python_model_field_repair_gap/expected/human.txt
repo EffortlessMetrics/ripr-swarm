@@ -28,6 +28,13 @@ Start here:
   Verify command: python -m pytest tests/test_users.py::test_build_user_smoke (high)
   Next step — Python preview: strengthen the existing related test with a field/object assertion for missing discriminator `result.active == True`
   Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: 1 related Python test(s) found for owner `build_user`
     - infection yes: Changed Python field or attribute construction can alter object state: `return User(active=True)`
     - 5 more detail line(s) in --format human-full

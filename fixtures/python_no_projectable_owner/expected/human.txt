@@ -22,6 +22,13 @@ Start here:
   Analyzer limit: Static limit `missing_import_graph`: the changed line is a module-level statement (a constant, decorator argument or conditional definition) that runs when a test imports the…
   Related test: tests/test_constants.py:4 test_base_discount
   Evidence: reach weak · infection unknown · propagation unknown · observation weak · discriminator unknown
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach weak: 1 heuristic Python test link(s) found for owner `<module>`; relation is uncertain
     - infection unknown: Static limit `missing_import_graph` prevents a safe Python infection claim
     - 4 more detail line(s) in --format human-full

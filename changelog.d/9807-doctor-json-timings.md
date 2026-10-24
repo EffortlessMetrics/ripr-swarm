@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr doctor --json` is now byte-stable across runs that changed nothing: the volatile timing fields (the top-level `elapsed_ms` and `segments`, and the per-entry `elapsed_ms` on checks and runtime probes) are omitted from the default JSON document, and the new `--timings` flag restores them (`ripr doctor --json --timings`). The published schema is unchanged — every omitted field stays declared and optional — and the human doctor output still prints its run-time summary (#9807).

@@ -264,6 +264,61 @@ call.
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::manifests_with_unindexed_files_names_partial_packages`
 - `crates/ripr/src/analysis/syntax/ra.rs::tests::impl_context_names_the_self_type_only_for_plain_named_impls`
 
+## Path keywords never seed assertion-target affinity (#9171)
+
+An owner-less probe (an import, a `const`, a struct or field line) relates a
+test through `assertion_target_affinity` when a long identifier of the changed
+expression appears in the test's assertion tokens. Rust keywords are syntax,
+not names for the changed behavior: a keyword at least as long as the
+assertion-token minimum length (`ASSERTION_TOKEN_MIN_LEN`, five bytes; `crate`
+qualifies) passes the length gate, so `pub(crate) use ..` or
+`crate::seed() + 2` used to relate every test that asserts on any `crate::..`
+path and credit its oracle to the change. Strict and reserved keywords
+(`RUST_KEYWORDS`: `crate`, `super`, `where`, `const`, `static`, `match`, ...)
+are dropped when probe tokens are built (#9172), so they never seed this
+signal. `union` and `macro_rules` are not reserved words, so they are judged
+by use: an occurrence that declares an item (`union Name {`, `union Name<T>`,
+`macro_rules!`) is syntax and is refused on the probe side and on the
+assertion side alike, while an occurrence used as an identifier (`a.union(&b)`)
+still counts. The scan is textual in both directions. A declaration spelled
+inside a comment or string literal is read as a declaration (lost relation).
+Prose that is not a declaration, such as `/// the union of A and B` or the string
+`"union of sets"`, reads as an identifier use and still seeds affinity (lost
+precision, not a safety issue: the relation stays a medium-confidence
+`assertion_target_affinity` that does not claim a discriminator). A `where`
+after the name counts only as a whole word (`union Name wherever` is not a
+declaration). A real identifier shared with the assertion still relates.
+The `pub(crate) use ..` reach fix is owned by #9172 (keyword tokens dropped
+when probe tokens are built) and #9205; this section's #9171 change adds the
+`union` / `macro_rules` declaration-introducer refusal. Fixture:
+`fixtures/rust_path_keyword_affinity`.
+
+## Root build scripts relate no test by name (#9173)
+
+Cargo compiles and runs a package's root `build.rs` before the package, as a
+separate crate; no test of the package can call into it. A probe in a root
+`build.rs` (judged on the analysis-root-relative path, with no `src`, `tests`,
+`examples` or `benches` directory above it) therefore relates no test through a
+name, stem or substring token, unless an indexed source file of the script's own
+package mounts it. The package is the script's directory; a file belongs to it
+through a `src`, `tests`, `examples` or `benches` directory directly below, so
+a workspace member's or nested package's file does not count, while library,
+binary and test-helper files all do. A mount is an `include!` or `#[path]`
+whose arguments (read whole, across lines, after masking comments and string
+literals) hold a string-literal path with an exact `build.rs` component. Including the
+script's generated `OUT_DIR` output is not a mount (it is the script's output,
+not its functions). A comment, a string mention, `mybuild.rs` and
+`build.rs.bak` are not mounts. A `package.build = "tools/gen.rs"` script is not
+recognised and keeps the ordinary rules; a mount in a file the index does not
+hold is not seen. When a mount exists the ordinary rules apply and the
+standard next step is kept. When none does, the `no_static_path` next step (and
+the closing human-output note) does not ask for a co-located test: it names
+building the package and inspecting the script's output, or moving the logic
+into a callable library function. One helper, `root_build_script_unmounted`,
+decides both the relation gate and the wording. Repo-mode seams never come from
+a build script, so `test_grip_evidence` needs no guard. Fixture:
+`fixtures/rust_build_script_no_test_reach`.
+
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/classify/related_tests.rs` —

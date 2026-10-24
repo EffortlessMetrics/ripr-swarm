@@ -595,6 +595,8 @@ pub(crate) fn related_profile_bun_tests(
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }
         })
         .collect::<Vec<_>>();
@@ -1302,6 +1304,7 @@ pub(crate) fn bun_cross_language_finding_for_changed_rust_line_with_profile(
     let (reach_state, observe_state, discriminate_state) =
         bun_cross_language_stage_states(hint.verdict);
     Some(Finding {
+        analysis_scope: crate::domain::AnalysisScope::Diff,
         id: probe.id.0.clone(),
         canonical_gap: None,
         probe,
