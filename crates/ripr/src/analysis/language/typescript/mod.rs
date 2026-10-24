@@ -101,6 +101,7 @@ mod oracle;
 mod owner_path_tests;
 mod owners;
 mod package;
+mod phase_two_cache;
 #[cfg(test)]
 mod predicate_activation_tests;
 mod value_hiding_guard;
