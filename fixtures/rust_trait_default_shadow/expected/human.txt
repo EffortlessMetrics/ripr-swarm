@@ -16,7 +16,7 @@ Start here:
   Canonical gap: gap:rust:src/lib.rs:advance:return_value:return_value:4*self.step
   Changed behavior: 4 * self.step()
   Missing discriminator (1 of 3): No detected assertion observes the changed value, error, field, or effect
-  Related test: src/lib.rs:35 advances (no call to the changed code found; linked by name only)
+  Related test: src/lib.rs:35 advances (no established call path to the changed code; linked by name only)
   Next step: The indexed related tests do not establish a call to the changed owner. Inspect
     existing tests, doctests and examples before changing assertions; they may already constrain the
     changed behavior. Add or strengthen a test only if that inspection finds a gap

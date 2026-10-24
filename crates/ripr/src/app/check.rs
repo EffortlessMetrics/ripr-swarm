@@ -74,7 +74,7 @@ pub(crate) fn check_workspace_worktree_with_origins(
     String,
 > {
     check_with_progress_and_origins(input, config, AnalysisProgressScope::Worktree, None)
-        .map(|(output, origins, _)| (output, origins))
+        .map(|(output, origins, _, _)| (output, origins))
         .map_err(Into::into)
 }
 
@@ -116,6 +116,7 @@ pub(crate) fn check_workspace_worktree_with_sources_open_rust_paths_and_progress
         CheckOutput,
         crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
         crate::analysis::consumed_source::ConsumedRustSources,
+        Option<crate::analysis::language_outcome::LanguageCompletenessView>,
     ),
     CoreError,
 > {
@@ -175,7 +176,7 @@ pub(crate) fn check_workspace_repo_with_origins(
     String,
 > {
     check_with_progress_and_origins(input, config, AnalysisProgressScope::Repo, None)
-        .map(|(output, origins, _)| (output, origins))
+        .map(|(output, origins, _, _)| (output, origins))
         .map_err(Into::into)
 }
 
@@ -211,6 +212,7 @@ fn check_with_progress_and_origins(
         CheckOutput,
         crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
         crate::analysis::consumed_source::ConsumedRustSources,
+        Option<crate::analysis::language_outcome::LanguageCompletenessView>,
     ),
     CoreError,
 > {
@@ -241,6 +243,7 @@ fn check_with_progress_and_origins_with_open_rust_paths(
         CheckOutput,
         crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
         crate::analysis::consumed_source::ConsumedRustSources,
+        Option<crate::analysis::language_outcome::LanguageCompletenessView>,
     ),
     CoreError,
 > {
@@ -293,6 +296,7 @@ fn check_with_progress_and_origins_run(
         CheckOutput,
         crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
         crate::analysis::consumed_source::ConsumedRustSources,
+        Option<crate::analysis::language_outcome::LanguageCompletenessView>,
     ),
     CoreError,
 > {
@@ -448,6 +452,7 @@ fn check_with_progress_and_origins_run(
     let suppression_policy = input.suppression_policy.clone();
     let origins = analysis.rust_diagnostic_origins.clone();
     let consumed_sources = std::mem::take(&mut analysis.rust_consumed_sources);
+    let language_view = analysis.language_view.take();
     let human_output = matches!(input.format, OutputFormat::Human | OutputFormat::HumanFull);
     let mut output = output_builder::check_output_from_analysis(input, analysis);
     // #6340: only a human-rendered run pays for the Python test walk; JSON, LSP
@@ -462,7 +467,7 @@ fn check_with_progress_and_origins_run(
             .map_err(CoreError::suppression_policy_invalid)?;
     }
     progress.complete();
-    Ok((output, origins, consumed_sources))
+    Ok((output, origins, consumed_sources, language_view))
 }
 
 /// Whether the all-no-path human note could name unlinked Python tests. This
@@ -526,6 +531,7 @@ pub fn repo_seam_inventory_input(input: CheckInput) -> CheckOutput {
             ignored_source_paths: Vec::new(),
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
+            language_view: None,
         },
     )
 }
@@ -1415,6 +1421,7 @@ mod tests {
             ignored_source_paths: Vec::new(),
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
+            language_view: None,
         }
     }
 

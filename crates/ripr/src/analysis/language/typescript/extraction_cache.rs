@@ -45,17 +45,20 @@ const MAX_APPROX_BYTES: usize = 256 * 1024 * 1024;
 /// Identity of one extraction: where the source lives, how long it is, and
 /// a fingerprint of its bytes. Any edit changes the fingerprint and/or the
 /// length, so a lookup can never serve owners for stale content.
+///
+/// Shared with the phase-2 parse-facts cache (#10051): both caches key
+/// pure `(path, source)` computations by identical content identity.
 #[derive(Clone, PartialEq, Eq, Hash)]
-struct CacheKey {
-    path: String,
-    source_len: usize,
-    fingerprint: (u64, u64),
+pub(crate) struct CacheKey {
+    pub(crate) path: String,
+    pub(crate) source_len: usize,
+    pub(crate) fingerprint: (u64, u64),
 }
 
 /// Two independent 64-bit hashes over different domain separators, composed
 /// into a 128-bit fingerprint. `DefaultHasher::new` is keyed deterministically
 /// within a process, which is all the cache needs.
-fn source_fingerprint(path: &str, source: &str) -> (u64, u64) {
+pub(crate) fn source_fingerprint(path: &str, source: &str) -> (u64, u64) {
     let mut first = std::collections::hash_map::DefaultHasher::new();
     first.write_u8(0xA7);
     first.write(path.as_bytes());

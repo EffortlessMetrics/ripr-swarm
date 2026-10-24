@@ -104,7 +104,7 @@
           "relation_reason": "weak_token_substring",
           "relation_confidence": "low",
           "miss": "no_call_path",
-          "why": "no call to the changed code found; linked by name only"
+          "why": "no established call path to the changed code; linked by name only"
         },
         {
           "name": "combinations_inexact_size_hints",
@@ -116,7 +116,7 @@
           "relation_reason": "weak_token_substring",
           "relation_confidence": "low",
           "miss": "no_call_path",
-          "why": "no call to the changed code found; linked by name only"
+          "why": "no established call path to the changed code; linked by name only"
         },
         {
           "name": "combinations_inexact_size_hints",
@@ -128,7 +128,7 @@
           "relation_reason": "weak_token_substring",
           "relation_confidence": "low",
           "miss": "no_call_path",
-          "why": "no call to the changed code found; linked by name only"
+          "why": "no established call path to the changed code; linked by name only"
         },
         {
           "name": "combinations_inexact_size_hints",
@@ -140,7 +140,7 @@
           "relation_reason": "weak_token_substring",
           "relation_confidence": "low",
           "miss": "no_call_path",
-          "why": "no call to the changed code found; linked by name only"
+          "why": "no established call path to the changed code; linked by name only"
         },
         {
           "name": "combinations_inexact_size_hints",
@@ -152,7 +152,7 @@
           "relation_reason": "weak_token_substring",
           "relation_confidence": "low",
           "miss": "no_call_path",
-          "why": "no call to the changed code found; linked by name only"
+          "why": "no established call path to the changed code; linked by name only"
         }
       ],
       "stop_reasons": [],

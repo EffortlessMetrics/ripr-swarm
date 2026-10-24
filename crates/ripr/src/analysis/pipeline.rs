@@ -1906,13 +1906,12 @@ fn run_pipeline_for_diff_text_with_language_config(
             analysis_outcome.as_ref()
         )
     );
+    let language_view =
+        super::language_outcome::LanguageCompletenessView::from_aggregate(&diff_language_aggregate);
     debug_assert!(
-        super::language_outcome::LanguageCompletenessView::from_aggregate(&diff_language_aggregate)
-            .reconcile_public_runs(&language_runs)
-            .is_ok(),
+        language_view.reconcile_public_runs(&language_runs).is_ok(),
         "{:?}",
-        super::language_outcome::LanguageCompletenessView::from_aggregate(&diff_language_aggregate)
-            .reconcile_public_runs(&language_runs)
+        language_view.reconcile_public_runs(&language_runs)
     );
     #[cfg(test)]
     if let Ok(mut aggregates) = DIFF_AGGREGATES.lock() {
@@ -1936,6 +1935,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         ignored_source_paths: Vec::new(),
         rust_diagnostic_origins,
         rust_consumed_sources,
+        language_view: Some(language_view),
     })
 }
 
@@ -2159,13 +2159,12 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
         "{:?}",
         super::language_outcome::reconcile(&repo_language_aggregate, languages, &findings, None)
     );
+    let language_view =
+        super::language_outcome::LanguageCompletenessView::from_aggregate(&repo_language_aggregate);
     debug_assert!(
-        super::language_outcome::LanguageCompletenessView::from_aggregate(&repo_language_aggregate)
-            .reconcile_public_runs(&language_runs)
-            .is_ok(),
+        language_view.reconcile_public_runs(&language_runs).is_ok(),
         "{:?}",
-        super::language_outcome::LanguageCompletenessView::from_aggregate(&repo_language_aggregate)
-            .reconcile_public_runs(&language_runs)
+        language_view.reconcile_public_runs(&language_runs)
     );
     #[cfg(test)]
     if let Ok(mut aggregates) = REPO_AGGREGATES.lock() {
@@ -2196,6 +2195,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
         ignored_source_paths: Vec::new(),
         rust_diagnostic_origins,
         rust_consumed_sources,
+        language_view: Some(language_view),
     })
 }
 
