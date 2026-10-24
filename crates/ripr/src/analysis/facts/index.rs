@@ -133,6 +133,10 @@ pub struct RustIndex {
     /// `package_names` plus the crate names of every workspace member, indexed
     /// or not (#10061). Not serialized, like `macro_owned_crates`.
     pub(crate) workspace_crates: BTreeSet<String>,
+    /// The directories of the workspace members (as read from the root
+    /// manifest), so a trait declared in a member the index does not hold can
+    /// be resolved on demand (#10061). Not serialized.
+    pub(crate) workspace_member_dirs: Vec<std::path::PathBuf>,
     /// Whether a drop-in assertion crate (`pretty_assertions`) imported by a
     /// file is the registry package. Unset for an index assembled without a
     /// manifest walk, which verifies nothing.

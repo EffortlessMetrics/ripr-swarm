@@ -15,7 +15,7 @@ Start here:
   Why no path: no related test was found that reaches this change
   Canonical gap: gap:rust:src/lib.rs:impl Step for Inc::process:match_arm:match_arm:none
   Changed behavior: None =>
-  Related test (1 of 2 matched rows): src/lib.rs:29 other_test (no call to the changed code found; linked by file location only)
+  Related test (1 of 2 matched rows): src/lib.rs:29 other_test (no established call path to the changed code; linked by file location only)
   Next step: ripr found no static test path to this change — this is not a coverage assessment. A
     test may already exercise it through macros, helper-call chains, or integration tests that
     ripr's static model does not yet trace. If none does, add a co-located test that reaches and

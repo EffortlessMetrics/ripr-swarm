@@ -5682,7 +5682,8 @@ mod tests {
             Some(Some(crate::domain::RelationReason::WeakTokenSubstring))
         );
         assert!(
-            retained[0].contains("no call to the changed code found; linked by name only"),
+            retained[0]
+                .contains("no established call path to the changed code; linked by name only"),
             "disclosure stays visible: {}",
             retained[0]
         );

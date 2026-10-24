@@ -133,6 +133,7 @@ pub(crate) fn extend_index_from_loaded_files_with_cache(
     index.package_names = manifest_package_names(root);
     index.macro_owned_crates = macro_owned_crates(root, index);
     index.workspace_crates = workspace_member_crates(root, index);
+    index.workspace_member_dirs = absolute_member_dirs(root);
     index.drop_in_manifests = super::drop_in::DropInManifests::new(root);
     index.member_crates = super::member_crates::MemberCrates::new(root);
     Ok(stats)
@@ -300,6 +301,7 @@ fn build_index_with_file_fact_cache_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
     index.root_library_name = manifest_library_name(root);
     index.macro_owned_crates = macro_owned_crates(root, &index);
     index.workspace_crates = workspace_member_crates(root, &index);
+    index.workspace_member_dirs = absolute_member_dirs(root);
     index.drop_in_manifests = super::drop_in::DropInManifests::new(root);
     index.member_crates = super::member_crates::MemberCrates::new(root);
     cancellation::checkpoint()?;
@@ -653,6 +655,7 @@ fn build_index_with_adapters(
     index.root_library_name = manifest_library_name(root);
     index.macro_owned_crates = macro_owned_crates(root, &index);
     index.workspace_crates = workspace_member_crates(root, &index);
+    index.workspace_member_dirs = absolute_member_dirs(root);
     index.drop_in_manifests = super::drop_in::DropInManifests::new(root);
     index.member_crates = super::member_crates::MemberCrates::new(root);
     cancellation::checkpoint()?;
@@ -759,6 +762,14 @@ fn workspace_member_crates(root: &Path, index: &RustIndex) -> std::collections::
         names.extend(manifest_package_names(&root.join(directory)));
     }
     names
+}
+
+/// [`workspace_member_directories`] joined onto `root`.
+fn absolute_member_dirs(root: &Path) -> Vec<PathBuf> {
+    workspace_member_directories(root)
+        .into_iter()
+        .map(|directory| root.join(directory))
+        .collect()
 }
 
 /// The `[workspace] members` directories (literal paths and trailing `/*`

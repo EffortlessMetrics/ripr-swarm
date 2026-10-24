@@ -11841,6 +11841,31 @@
           "reach": "yes"
         }
       ]
+    },
+    {
+      "id": "rust_macro_passthrough_sibling_binding_not_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/macro_passthrough_sibling_item_macro_binding",
+      "vector": "identity_item_macro_wrapped_test_with_sibling_binding_macro_never_promoted",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        }
+      ],
+      "control": "must_stay_no_static_path"
     }
   ]
 }

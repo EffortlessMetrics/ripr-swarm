@@ -1582,22 +1582,22 @@ pub(crate) fn detect_owner_extraction_gap(
         return None;
     }
     let changed: std::collections::HashSet<usize> = changed_lines.iter().copied().collect();
-    let Ok(gap) = parse_on_worker(file, source, move |file, source, allocator| {
-        let ret = Parser::new(allocator, source, source_type_for(file)).parse();
-        if !ret.errors.is_empty() {
-            // Parse-error disclosure owns this case; do not double-report.
-            return None;
+    // Parse-error content yields default (empty) facts, which correctly
+    // produces no gap — parse-error disclosure owns that case.
+    let facts = super::phase_two_cache::phase_two_facts_cached(file, source)?;
+    for shape in &facts.gap_shapes {
+        if let Some(sample_line) =
+            (shape.lines.0..=shape.lines.1).find(|line| changed.contains(line))
+        {
+            return Some(TypeScriptOwnerExtractionGap {
+                file: file.to_path_buf(),
+                sample_line,
+                shape: shape.shape,
+                snippet: snippet_for_span(source, shape.span.0, shape.span.1),
+            });
         }
-        find_owner_extraction_gap(&ret.program.body, &SourceText::new(source), &changed)
-    }) else {
-        return None;
-    };
-    gap.map(|(sample_line, shape, span)| TypeScriptOwnerExtractionGap {
-        file: file.to_path_buf(),
-        sample_line,
-        shape,
-        snippet: snippet_for_span(source, span.0, span.1),
-    })
+    }
+    None
 }
 
 /// Changed lines that sit inside a runtime enum member (`High = 3,`). The
@@ -1611,52 +1611,23 @@ pub(crate) fn changed_enum_member_lines(
     source: &str,
     changed_lines: &[usize],
 ) -> std::collections::BTreeMap<usize, String> {
-    // A file without the keyword has no enum; skip the extra parse.
+    // A file without the keyword has no enum; skip the facts lookup.
     if changed_lines.is_empty() || !source.contains("enum") {
         return std::collections::BTreeMap::new();
     }
     let changed: std::collections::HashSet<usize> = changed_lines.iter().copied().collect();
-    parse_on_worker(file, source, move |file, source, allocator| {
-        let ret = Parser::new(allocator, source, source_type_for(file)).parse();
-        if !ret.errors.is_empty() {
-            return std::collections::BTreeMap::new();
+    // Parse-error content yields default (empty) facts, matching the
+    // parse-error disclosure owning that case.
+    let Some(facts) = super::phase_two_cache::phase_two_facts_cached(file, source) else {
+        return std::collections::BTreeMap::new();
+    };
+    let mut lines = std::collections::BTreeMap::new();
+    for member in &facts.enum_members {
+        for line in (member.lines.0..=member.lines.1).filter(|line| changed.contains(line)) {
+            lines.entry(line).or_insert_with(|| member.identity.clone());
         }
-        let raw = source;
-        let source = SourceText::new(source);
-        let mut lines = std::collections::BTreeMap::new();
-        let mut collect = |decl: &oxc_ast::ast::TSEnumDeclaration<'_>| {
-            if decl.declare {
-                return;
-            }
-            for member in &decl.body.members {
-                let start = source.line_for_offset(member.span.start as usize);
-                let end = source.line_for_offset(member.span.end as usize);
-                // Enum and member names, not the line, identify the member so
-                // the finding id survives unrelated line shifts.
-                let name = raw
-                    .get(member.id.span().start as usize..member.id.span().end as usize)
-                    .unwrap_or("");
-                let identity = format!("{}::{name}", decl.id.name);
-                for line in (start..=end).filter(|line| changed.contains(line)) {
-                    lines.entry(line).or_insert_with(|| identity.clone());
-                }
-            }
-        };
-        for stmt in &ret.program.body {
-            match stmt {
-                Statement::TSEnumDeclaration(decl) => collect(decl),
-                Statement::ExportNamedDeclaration(export) => {
-                    if let Some(Declaration::TSEnumDeclaration(decl)) = export.declaration.as_ref()
-                    {
-                        collect(decl);
-                    }
-                }
-                _ => {}
-            }
-        }
-        lines
-    })
-    .unwrap_or_default()
+    }
+    lines
 }
 
 /// 1-based inclusive line ranges of top-level ambient declarations
@@ -1666,112 +1637,121 @@ pub(crate) fn changed_enum_member_lines(
 /// behavior to probe. A file that does not parse yields no ranges, so its
 /// lines stay probed.
 pub(crate) fn ambient_declaration_lines(file: &Path, source: &str) -> Vec<(usize, usize)> {
-    parse_on_worker(file, source, |file, source, allocator| {
-        let ret = Parser::new(allocator, source, source_type_for(file)).parse();
-        if !ret.errors.is_empty() {
-            return Vec::new();
-        }
-        let source = SourceText::new(source);
-        ret.program
-            .body
-            .iter()
-            .filter(|stmt| match stmt {
-                Statement::ExportNamedDeclaration(export) => export
-                    .declaration
-                    .as_ref()
-                    .is_some_and(|declaration| declaration.declare()),
-                _ => stmt
-                    .as_declaration()
-                    .is_some_and(|declaration| declaration.declare()),
-            })
-            .map(|stmt| {
-                let span = stmt.span();
-                (
-                    source.line_for_offset(span.start as usize),
-                    source.line_for_offset(span.end as usize),
-                )
-            })
-            .collect()
-    })
-    .unwrap_or_default()
+    // Parse-error content yields default (empty) facts, so its lines stay
+    // probed — exactly the previous contract.
+    super::phase_two_cache::phase_two_facts_cached(file, source)
+        .map(|facts| facts.ambient_ranges)
+        .unwrap_or_default()
 }
 
-/// Walk top-level statements for unsupported owner shapes intersecting a
-/// changed line. Returns `(sample_line, shape, (span_start, span_end))`.
-fn find_owner_extraction_gap(
+/// Parse-derived facts phase 2 reads per changed file (#10051). One parse
+/// per `(path, content)` serves all three phase-2 consumers, which used to
+/// re-parse the changed file three separate times (~2.0 s on a 5 MB file
+/// per save). Every fact is a pure function of the source bytes; the
+/// per-diff `changed_lines` filtering happens at call time, so one cached
+/// extraction serves every diff of the same content.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct PhaseTwoFacts {
+    /// Every unsupported owner shape span in source order. Filtering to the
+    /// first entry whose line range intersects a changed line reproduces the
+    /// previous first-hit short-circuit exactly.
+    pub(crate) gap_shapes: Vec<GapShape>,
+    /// Non-declare enum members with `EnumName::member_name` identities (the
+    /// names, not the lines, identify a member so finding ids survive line
+    /// shifts).
+    pub(crate) enum_members: Vec<EnumMember>,
+    /// 1-based inclusive line ranges of top-level ambient declarations.
+    pub(crate) ambient_ranges: Vec<(usize, usize)>,
+}
+
+/// One unsupported owner shape: its disclosure label, byte span (for the
+/// snippet), and precomputed 1-based line range (for the changed-line gate).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GapShape {
+    pub(crate) shape: &'static str,
+    pub(crate) span: (usize, usize),
+    pub(crate) lines: (usize, usize),
+}
+
+/// One runtime enum member: its 1-based line range and stable identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EnumMember {
+    pub(crate) lines: (usize, usize),
+    pub(crate) identity: String,
+}
+
+/// Extract every phase-2 fact from one parse. `None` mirrors the previous
+/// worker-failure behavior (all three consumers degrade to "no facts");
+/// parse errors yield `Some` with default (empty) facts, matching the
+/// previous per-consumer parse-error contracts (parse-error disclosure owns
+/// those files).
+pub(crate) fn extract_phase_two_facts(file: &Path, source: &str) -> Option<PhaseTwoFacts> {
+    parse_on_worker(file, source, |file, source, allocator| {
+        let ret = Parser::new(allocator, source, source_type_for(file)).parse();
+        let mut facts = PhaseTwoFacts::default();
+        if !ret.errors.is_empty() {
+            return facts;
+        }
+        let text = SourceText::new(source);
+        collect_gap_shapes(&ret.program.body, &text, &mut facts.gap_shapes);
+        collect_enum_members(&ret.program.body, source, &text, &mut facts.enum_members);
+        collect_ambient_ranges(&ret.program.body, &text, &mut facts.ambient_ranges);
+        facts
+    })
+    .ok()
+}
+
+/// Walk top-level statements for unsupported owner shapes, collecting every
+/// shape span in source order.
+fn collect_gap_shapes(
     statements: &oxc_allocator::Vec<'_, Statement<'_>>,
     source: &SourceText<'_>,
-    changed: &std::collections::HashSet<usize>,
-) -> Option<(usize, &'static str, (usize, usize))> {
+    out: &mut Vec<GapShape>,
+) {
+    let mut push = |shape: &'static str, span: oxc_span::Span| {
+        out.push(GapShape {
+            shape,
+            span: (span.start as usize, span.end as usize),
+            lines: (
+                source.line_for_offset(span.start as usize),
+                source.line_for_offset(span.end as usize),
+            ),
+        });
+    };
     for stmt in statements {
         match stmt {
             Statement::TSEnumDeclaration(decl) => {
-                if let Some(hit) = span_hits_changed_line(decl.span, source, changed) {
-                    return Some((
-                        hit,
-                        "enum declaration",
-                        (decl.span.start as usize, decl.span.end as usize),
-                    ));
-                }
+                push("enum declaration", decl.span);
             }
             Statement::TSModuleDeclaration(decl) => {
-                if let Some(hit) = span_hits_changed_line(decl.span, source, changed) {
-                    return Some((
-                        hit,
-                        "module/namespace declaration",
-                        (decl.span.start as usize, decl.span.end as usize),
-                    ));
-                }
+                push("module/namespace declaration", decl.span);
             }
             Statement::ClassDeclaration(class) => {
-                if let Some(gap) = unsupported_class_element_gap(class, source, changed) {
-                    return Some(gap);
-                }
+                collect_class_element_shapes(class, &mut push);
             }
             Statement::ExportNamedDeclaration(export) => match export.declaration.as_ref() {
                 Some(Declaration::TSEnumDeclaration(decl)) => {
-                    if let Some(hit) = span_hits_changed_line(decl.span, source, changed) {
-                        return Some((
-                            hit,
-                            "enum declaration",
-                            (decl.span.start as usize, decl.span.end as usize),
-                        ));
-                    }
+                    push("enum declaration", decl.span);
                 }
                 Some(Declaration::TSModuleDeclaration(decl)) => {
-                    if let Some(hit) = span_hits_changed_line(decl.span, source, changed) {
-                        return Some((
-                            hit,
-                            "module/namespace declaration",
-                            (decl.span.start as usize, decl.span.end as usize),
-                        ));
-                    }
+                    push("module/namespace declaration", decl.span);
                 }
                 Some(Declaration::ClassDeclaration(class)) => {
-                    if let Some(gap) = unsupported_class_element_gap(class, source, changed) {
-                        return Some(gap);
-                    }
+                    collect_class_element_shapes(class, &mut push);
                 }
                 _ => {}
             },
             Statement::ExportDefaultDeclaration(export) => {
-                if let ExportDefaultDeclarationKind::ClassDeclaration(class) = &export.declaration
-                    && let Some(gap) = unsupported_class_element_gap(class, source, changed)
-                {
-                    return Some(gap);
+                if let ExportDefaultDeclarationKind::ClassDeclaration(class) = &export.declaration {
+                    collect_class_element_shapes(class, &mut push);
                 }
             }
             Statement::ExpressionStatement(statement) => {
-                if let Some(gap) =
-                    expression_statement_function_gap(&statement.expression, source, changed)
-                {
-                    return Some(gap);
-                }
+                collect_expression_statement_function_shapes(&statement.expression, &mut push);
             }
             _ => {}
         }
     }
-    None
 }
 
 /// A function value carried by a top-level expression statement that the
@@ -1783,32 +1763,30 @@ fn find_owner_extraction_gap(
 /// - a function inside a top-level call: an IIFE (`(function () {...})()`,
 ///   `(function () {...}.call(this))`, `!function () {...}()`) or a wrapper
 ///   argument (`define([...], function () {...})`).
-fn expression_statement_function_gap(
+///
+/// Shapes are collected in the order the previous first-hit scan checked
+/// them (callee, then arguments) so changed-line filtering picks the same
+/// sample.
+fn collect_expression_statement_function_shapes(
     expression: &Expression<'_>,
-    source: &SourceText<'_>,
-    changed: &std::collections::HashSet<usize>,
-) -> Option<(usize, &'static str, (usize, usize))> {
-    let hit = |function: &Expression<'_>, shape: &'static str| {
-        let span = function.span();
-        span_hits_changed_line(span, source, changed)
-            .map(|line| (line, shape, (span.start as usize, span.end as usize)))
-    };
+    push: &mut impl FnMut(&'static str, oxc_span::Span),
+) {
     match expression.without_parentheses() {
         Expression::AssignmentExpression(assign) => {
             let oxc_ast::ast::AssignmentTarget::StaticMemberExpression(target) = &assign.left
             else {
-                return None;
+                return;
             };
             if is_commonjs_export_target(target) {
-                return None;
+                return;
             }
             let value = assign.right.without_parentheses();
-            is_function_value(value)
-                .then(|| hit(value, "member-assigned function"))
-                .flatten()
+            if is_function_value(value) {
+                push("member-assigned function", value.span());
+            }
         }
         Expression::UnaryExpression(unary) => {
-            expression_statement_function_gap(&unary.argument, source, changed)
+            collect_expression_statement_function_shapes(&unary.argument, push);
         }
         Expression::CallExpression(call) => {
             let callee = match call.callee.without_parentheses() {
@@ -1820,19 +1798,21 @@ fn expression_statement_function_gap(
                 }
                 callee => callee,
             };
-            if is_function_value(callee)
-                && let Some(gap) = hit(callee, "function inside a top-level call")
-            {
-                return Some(gap);
+            if is_function_value(callee) {
+                push("function inside a top-level call", callee.span());
             }
-            call.arguments
+            for argument in call
+                .arguments
                 .iter()
                 .filter_map(|argument| argument.as_expression())
-                .map(Expression::without_parentheses)
-                .filter(|argument| is_function_value(argument))
-                .find_map(|argument| hit(argument, "function inside a top-level call"))
+            {
+                let argument = argument.without_parentheses();
+                if is_function_value(argument) {
+                    push("function inside a top-level call", argument.span());
+                }
+            }
         }
-        _ => None,
+        _ => {}
     }
 }
 
@@ -1859,13 +1839,12 @@ fn is_commonjs_export_target(target: &oxc_ast::ast::StaticMemberExpression<'_>) 
     }
 }
 
-/// Scan class body elements for the unsupported member shapes the extractor
-/// skips, returning the first one that intersects a changed line.
-fn unsupported_class_element_gap(
+/// Collect the unsupported member shapes the extractor skips, in element
+/// order.
+fn collect_class_element_shapes(
     class: &Class<'_>,
-    source: &SourceText<'_>,
-    changed: &std::collections::HashSet<usize>,
-) -> Option<(usize, &'static str, (usize, usize))> {
+    push: &mut impl FnMut(&'static str, oxc_span::Span),
+) {
     for element in &class.body.body {
         let (shape, span) = match element {
             ClassElement::PropertyDefinition(prop) => {
@@ -1894,21 +1873,76 @@ fn unsupported_class_element_gap(
             }
             _ => continue,
         };
-        if let Some(hit) = span_hits_changed_line(span, source, changed) {
-            return Some((hit, shape, (span.start as usize, span.end as usize)));
-        }
+        push(shape, span);
     }
-    None
 }
 
-/// First changed line inside `span`'s line range, if any.
-fn span_hits_changed_line(
-    span: impl GetSpan,
+/// Runtime enum members of top-level (or exported-top-level) declarations,
+/// in source order. Ambient `declare enum` is type-only and never listed.
+fn collect_enum_members(
+    statements: &oxc_allocator::Vec<'_, Statement<'_>>,
+    raw: &str,
     source: &SourceText<'_>,
-    changed: &std::collections::HashSet<usize>,
-) -> Option<usize> {
-    let span = span.span();
-    let start_line = source.line_for_offset(span.start as usize);
-    let end_line = source.line_for_offset(span.end as usize);
-    (start_line..=end_line).find(|line| changed.contains(line))
+    out: &mut Vec<EnumMember>,
+) {
+    let mut collect = |decl: &oxc_ast::ast::TSEnumDeclaration<'_>| {
+        if decl.declare {
+            return;
+        }
+        for member in &decl.body.members {
+            // Enum and member names, not the line, identify the member so
+            // the finding id survives unrelated line shifts.
+            let name = raw
+                .get(member.id.span().start as usize..member.id.span().end as usize)
+                .unwrap_or("");
+            out.push(EnumMember {
+                lines: (
+                    source.line_for_offset(member.span.start as usize),
+                    source.line_for_offset(member.span.end as usize),
+                ),
+                identity: format!("{}::{name}", decl.id.name),
+            });
+        }
+    };
+    for stmt in statements {
+        match stmt {
+            Statement::TSEnumDeclaration(decl) => collect(decl),
+            Statement::ExportNamedDeclaration(export) => {
+                if let Some(Declaration::TSEnumDeclaration(decl)) = export.declaration.as_ref() {
+                    collect(decl);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// 1-based inclusive line ranges of top-level ambient declarations
+/// (`declare function`, `export declare const`, `declare module 'x' { ... }`,
+/// `declare global { ... }`), read from the syntax tree. They are type-only
+/// and erased at compile time, so a changed line inside one has no runtime
+/// behavior to probe.
+fn collect_ambient_ranges(
+    statements: &oxc_allocator::Vec<'_, Statement<'_>>,
+    source: &SourceText<'_>,
+    out: &mut Vec<(usize, usize)>,
+) {
+    for stmt in statements {
+        let ambient = match stmt {
+            Statement::ExportNamedDeclaration(export) => export
+                .declaration
+                .as_ref()
+                .is_some_and(|declaration| declaration.declare()),
+            _ => stmt
+                .as_declaration()
+                .is_some_and(|declaration| declaration.declare()),
+        };
+        if ambient {
+            let span = stmt.span();
+            out.push((
+                source.line_for_offset(span.start as usize),
+                source.line_for_offset(span.end as usize),
+            ));
+        }
+    }
 }

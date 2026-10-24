@@ -76,6 +76,7 @@ mod discovery;
 mod dropped_term_guard;
 mod enum_member_guard;
 mod error_payload_guard;
+mod export_facts_cache;
 mod extraction_cache;
 mod field_update_guard;
 mod guard_entry_guard;
@@ -101,6 +102,7 @@ mod oracle;
 mod owner_path_tests;
 mod owners;
 mod package;
+mod phase_two_cache;
 #[cfg(test)]
 mod predicate_activation_tests;
 mod value_hiding_guard;

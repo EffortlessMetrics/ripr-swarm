@@ -1202,7 +1202,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
     // client has persisted, through the same canonical path as
     // `ripr check --worktree`. Document quarantine remains the independent
     // authority that prevents unsaved buffers from being served as current.
-    let (output, origins, consumed_sources) =
+    let (output, origins, consumed_sources, language_view) =
         match check_workspace_worktree_with_sources_open_rust_paths_and_progress(
             input,
             config.repo_config(),
@@ -1505,6 +1505,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         unavailable_adapter: super::state::UnavailableAdapterCoverage::from_preview_advisories(
             &output.preview_language_advisories,
         ),
+        language_view,
     };
     Ok(WorkspaceDiagnostics { snapshot, batches })
 }
@@ -1707,6 +1708,7 @@ fn git_timeout_limited_diagnostics(
         component_outcomes,
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
+        language_view: None,
     };
     WorkspaceDiagnostics {
         snapshot,
@@ -1812,6 +1814,7 @@ pub(super) fn oversized_diff_limited_diagnostics(
         component_outcomes,
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
+        language_view: None,
     };
     WorkspaceDiagnostics { snapshot, batches }
 }
@@ -6734,6 +6737,7 @@ mod delivery_tests {
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
+            language_view: None,
         })
     }
 

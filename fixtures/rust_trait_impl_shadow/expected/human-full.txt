@@ -30,7 +30,7 @@ Evidence
   - observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect
   - discriminator no: No assertion found on related tests
   - local flow reaches returned value: String::from("") (line 7)
-  - related test src/lib.rs:28 render_is_empty uses strong exact value oracle: assert_eq!(Sample.render(), String::from("")); misses: no call to the changed code found; linked by name only
+  - related test src/lib.rs:28 render_is_empty uses strong exact value oracle: assert_eq!(Sample.render(), String::from("")); misses: no established call path to the changed code; linked by name only
   - source assertion argument value "" at line 29
 
 Weakness

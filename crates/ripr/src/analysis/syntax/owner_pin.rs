@@ -1002,6 +1002,15 @@ fn macro_binding_sites_in_tree(
             if binding_free_local_wrapper(binding_free, &call, &tokens, trusted) {
                 continue;
             }
+            // An accepted identity invocation over literal `fn` items binds
+            // nothing; its tests are scanned from their own expansion
+            // (#8999).
+            if binding_free
+                .passthrough
+                .contains(&call.syntax().text_range().start())
+            {
+                continue;
+            }
             for token in &tokens {
                 let name = token.text().trim_start_matches("r#");
                 if trusted.contains(&name) {
@@ -1380,6 +1389,8 @@ struct BindingFreeFileIndex {
     rules: Vec<ast::MacroRules>,
     modules: Vec<SyntaxNode>,
     calls: Vec<ast::MacroCall>,
+    /// Calls accepted as the identity over literal `fn` items (#8999).
+    passthrough: BTreeSet<ra_ap_syntax::TextSize>,
 }
 
 #[cfg(test)]
@@ -1422,6 +1433,7 @@ impl BindingFreeFileIndex {
             rules,
             modules,
             calls,
+            passthrough: super::passthrough_item_macros::passthrough_invocation_starts(root),
         }
     }
 }

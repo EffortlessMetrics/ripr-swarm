@@ -30,7 +30,7 @@ Evidence
   - observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect
   - discriminator no: No assertion found on related tests
   - local flow reaches returned value: (0, Some(input.len())) (line 16)
-  - related test tests/config_parse.rs:4 config_strict_parse_reports_length uses strong exact value oracle: assert_eq!(config.parse(input).1, Some(3)); misses: no call to the changed code found; linked by name only
+  - related test tests/config_parse.rs:4 config_strict_parse_reports_length uses strong exact value oracle: assert_eq!(config.parse(input).1, Some(3)); misses: no established call path to the changed code; linked by name only
   - source assertion argument value 3 at line 7
 
 Weakness
