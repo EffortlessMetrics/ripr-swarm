@@ -10,6 +10,11 @@ name: Windows Watchdog Qualification
 # A shortened timer qualifies only the shorter bound, not the 44-minute one.
 on:
   workflow_dispatch:
+  # Temporary: a workflow file is dispatchable only once it is on main, so this
+  # branch runs it from its own push. Removed in the next commit.
+  push:
+    branches: [claude/windows-shard-watchdog-9272]
+    paths: [.github/workflows/windows-watchdog-qualification.yml]
 
 permissions:
   contents: read
@@ -38,7 +43,7 @@ jobs:
           mkdir -p target
           f=.github/workflows/windows-advisory-shards.yml
           awk '/name: Run workspace tests/{s=1} s&&/run: \|/{r=1;next} r&&/^$/{exit} r{print substr($0,11)}' "$f" > target/wrapper.sh
-          sed -i -e 's/\${{ matrix.shard }}/1/' -e 's/seq 1 264/seq 1 12/' -e 's/sleep 10/sleep 1/' target/wrapper.sh
+          sed -i -e 's/[$][{][{] matrix.shard [}][}]/1/' -e 's/seq 1 264/seq 1 12/' -e 's/sleep 10/sleep 1/' target/wrapper.sh
           sed -i -e 's#^cargo nextest run .* > target/shard-\$shard.log 2>&1 &#bash target/fixture.sh > target/shard-$shard.log 2>\&1 \&#' target/wrapper.sh
           case "${{ matrix.mode }}" in
             primary-only) sed -i 's#taskkill //F //T //PID#taskkill //F //PID#' target/wrapper.sh ;;
