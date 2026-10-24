@@ -381,7 +381,11 @@ fn implements_trait_in(
 /// workspace (not `crate`, `self` or `super`), so a name imported from
 /// `std::ops` or a dependency shows up here. Comments are masked first and
 /// any whitespace may follow `use`; a `use` inside another word (`reuse`,
-/// `because use`) advances only past the matched keyword.
+/// `because use`) advances only past the matched keyword. This is a text scan,
+/// not a parser: a `//` or `/*` inside a string literal is read as a comment
+/// and can hide an import after it. A hidden import is not recorded as
+/// foreign, so a bare same-named trait reads as the workspace's and the
+/// finding fails toward `no_static_path`.
 fn foreign_imported_names(source: &str) -> Vec<String> {
     let masked = mask_comments(source);
     let is_ident = |c: char| c.is_alphanumeric() || c == '_';
@@ -994,13 +998,21 @@ mod tests {
         let imports = |source: &str| foreign_imported_names(source).contains(&"Add".to_string());
         assert!(imports("use std::ops::Add;\n"));
         assert!(imports("// because the trait\nuse std::ops::Add;\n"));
-        assert!(imports("fn reuse() {}\nuse std::ops::Add;\n"));
+        // The matched `use` sits inside a word, with a real import after it.
+        assert!(imports(
+            "fn reuse() { let because = 1; } use std::ops::Add;\n"
+        ));
+        assert!(imports("const S: u8 = house; use std::ops::Add;\n"));
         assert!(imports("use\nstd::ops::Add;\n"));
         assert!(imports("pub  use\tstd::ops::Add;\n"));
         assert!(!imports("// use std::ops::Add;\nfn f() {}\n"));
         assert!(!imports("/* use std::ops::Add; */ fn f() {}\n"));
         assert!(!imports("use crate::Add;\n"));
-        assert!(!imports("use crates_x::Sub;\n"));
+        // Roots that only start like a local keyword are foreign imports.
+        assert!(imports("use crates_x::Add;\n"));
+        assert!(imports("use selfish::Add;\n"));
+        assert!(imports("use superconsole::Add;\n"));
+        assert!(!imports("/* /* */ use std::ops::Add; */ fn f() {}\n"));
         // A foreign import after a commented one still counts.
         assert!(imports("/* use crate::Add; */ use std::ops::Add;\n"));
     }

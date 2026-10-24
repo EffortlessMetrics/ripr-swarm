@@ -9,4 +9,6 @@
   longer lends a strong oracle, so some findings read `reachable_unrevealed`
   ("inspect first") where they used to read `weakly_exposed`. Known limitation:
   a bare trait name that arrives through a glob import and collides with a
-  workspace trait of the same name is read as the workspace trait.
+  workspace trait of the same name is read as the workspace trait, and a `//` or
+  `/*` inside a string literal can hide a later `use` from the import scan, which
+  also fails toward `no_static_path`.
