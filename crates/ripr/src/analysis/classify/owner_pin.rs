@@ -66,7 +66,7 @@ use crate::analysis::facts::FileFactsView;
 use crate::analysis::facts::drop_in::DropInManifests;
 use crate::analysis::facts::{
     DOCTEST_FUNCTION_NAME, ExecutionContext, FunctionContainer, ModulePathTarget,
-    RustIncludeLimitation, SourceRoleProvenanceEdgeKind,
+    SourceRoleProvenanceEdgeKind,
 };
 use crate::analysis::sync_memo::SyncMemo;
 use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equality};
@@ -1587,53 +1587,11 @@ struct TargetRoots {
     memo: SyncMemo<BTreeMap<PathBuf, Option<BTreeSet<PathBuf>>>>,
 }
 
-/// #10122: an include of a Cargo build-script output
-/// (`include!(concat!(env!("OUT_DIR"), "/name.rs"));`) in a package whose own
-/// `build.rs` is indexed. Its target is generated into that package's output
-/// directory, so it does not mount a workspace source file into another crate
-/// and does not change which crate a workspace file belongs to. Any other
-/// dynamic expression, a path that leaves the output directory, or a package
-/// without an indexed build script keeps the whole-workspace refusal.
-fn is_build_output_include(limitation: &RustIncludeLimitation, index: &RustIndex) -> bool {
-    if limitation.reason_code != "rust_include_dynamic_expression" {
-        return false;
-    }
-    let compact: String = limitation
-        .expression
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect();
-    let Some(literal) = compact
-        .strip_prefix("include!(concat!(env!(\"OUT_DIR\"),\"/")
-        .and_then(|rest| rest.strip_suffix("\"));"))
-    else {
-        return false;
-    };
-    let plain = !literal.is_empty()
-        && literal
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b'/'))
-        && !literal.contains("..");
-    plain
-        && limitation
-            .parent
-            .ancestors()
-            .skip(1)
-            .filter(|directory| directory.file_name().is_some_and(|name| name == "src"))
-            .any(|src| {
-                src.parent()
-                    .is_some_and(|package| index.files().get(&package.join("build.rs")).is_some())
-            })
-}
-
 impl TargetRoots {
     fn new(index: &RustIndex) -> Self {
         // A lexical-fallback file records no module declarations, so its
         // children get no edge either.
-        let disabled = index
-            .include_limitations
-            .iter()
-            .any(|limitation| !is_build_output_include(limitation, index))
+        let disabled = !index.include_limitations.is_empty()
             || index.files().iter().any(|(_, facts)| {
                 facts.used_lexical_fallback
                     || facts
