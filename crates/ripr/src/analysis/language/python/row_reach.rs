@@ -195,7 +195,7 @@ pub(super) fn row_reaches_owner_only_by_direct_calls(
         }
         // The test's own `def name(` / `class name(` header is not a call.
         let head = code[..start].trim_end();
-        if head.ends_with("def") || head.ends_with("class") {
+        if starts_definition_header(head) {
             // A local definition of the owner's own name shadows it.
             if is_name_of_owner(owner, call_names, ident) {
                 return false;
@@ -506,6 +506,29 @@ fn other_occurrences_are_plain(code: &str, name: &str, assign_at: usize) -> bool
         }
     }
     true
+}
+
+/// `head` (the text before an identifier, trimmed) ends in a whole-token `def`
+/// or `class` that itself begins a statement: nothing before it on its line but
+/// whitespace, `async`, or a previous statement closed by `:` or `;`. A longer
+/// identifier merely ending in those letters (`undef`, `subclass`, `my_class`)
+/// is an ordinary word, so the next call is vetted instead of skipped.
+fn starts_definition_header(head: &str) -> bool {
+    let word = |ch: char| ch == '_' || ch.is_alphanumeric();
+    for keyword in ["def", "class"] {
+        let Some(before) = head.strip_suffix(keyword) else {
+            continue;
+        };
+        if before.chars().next_back().is_some_and(word) {
+            continue;
+        }
+        let line = before.rsplit('\n').next().unwrap_or_default().trim();
+        let line = line.strip_suffix("async").map_or(line, str::trim_end);
+        if line.is_empty() || line.ends_with(':') || line.ends_with(';') {
+            return true;
+        }
+    }
+    false
 }
 
 /// A framework API call on a receiver whose identity is established:

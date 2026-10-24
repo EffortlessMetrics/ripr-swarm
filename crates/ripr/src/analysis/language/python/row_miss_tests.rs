@@ -313,6 +313,28 @@ fn assert_subject_withheld(imports: &str, subject: &str, label: &str) -> Result<
 }
 
 #[test]
+fn identifier_ending_in_def_or_class_is_not_a_definition_header() -> Result<(), String> {
+    let probe = "from src.helpers import boundary_probe\n\n";
+    for (label, setup) in [
+        ("undef", "x = undef"),
+        ("subclass", "kind = subclass"),
+        ("my_class", "y = my_class"),
+        ("trailing _def", "z = some_def"),
+        ("unicode prefix", "w = \u{e9}class"),
+        ("def as an argument tail", "v = [1, undef]"),
+    ] {
+        assert_subject_withheld(
+            probe,
+            &format!(
+                "def test_subject():\n    assert can_reserve(5, 3) == True\n    {setup}\n    boundary_probe([1])\n"
+            ),
+            label,
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
 fn rebound_builtin_or_foreign_receiver_api_never_gets_missing_input() -> Result<(), String> {
     let body = "def test_subject():\n    assert can_reserve(5, 3) == True\n    ";
     for (label, imports, subject) in [
