@@ -1026,6 +1026,235 @@ pub(super) fn definition_module_path(function: &FunctionSummary) -> Option<Vec<S
     Some(path)
 }
 
+/// The module path of a root-package library item that an integration test
+/// may spell as `<lib>::<module>::..::item` (#8999): `definition_module_path`
+/// when each module segment is declared exactly once across the package's
+/// `src/` files (so a binary that also declares the module, or neither
+/// root, refuses) and no file of the root package carries a `#[path]` remap, which could move a
+/// module file away from the layout the path is read from. A crate-root item
+/// has the empty path and needs neither check.
+pub(super) fn root_library_item_module_path(
+    index: &RustIndex,
+    function: &FunctionSummary,
+) -> Option<Vec<String>> {
+    let module = definition_module_path(function)?;
+    if module.is_empty() {
+        return Some(module);
+    }
+    if package_remaps_module_paths(index, None)
+        || module
+            .iter()
+            .any(|segment| module_declaration_is_ambiguous(index, segment, false))
+    {
+        return None;
+    }
+    Some(module)
+}
+
+/// Whether `source` may splice or generate items this scan does not read: it
+/// does not parse cleanly, defines a macro, invokes an `include`-family macro
+/// (however its tokens are spaced or commented) or invokes any macro in item
+/// position (when `item_position_macros`). Read from the syntax tree, so `include /* c */ !(..)` counts.
+pub(super) fn source_may_splice_items(source: &str, item_position_macros: bool) -> bool {
+    use ra_ap_syntax::{AstNode, ast};
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return true;
+    };
+    parse.tree().syntax().descendants().any(|node| {
+        if ast::MacroRules::can_cast(node.kind()) || ast::MacroDef::can_cast(node.kind()) {
+            return true;
+        }
+        let Some(call) = ast::MacroCall::cast(node) else {
+            return false;
+        };
+        let include_like = call
+            .path()
+            .and_then(|path| path.segment())
+            .and_then(|segment| segment.name_ref())
+            .is_none_or(|name| name.text().trim_start_matches("r#").starts_with("include"));
+        include_like
+            || item_position_macros
+                && call.syntax().parent().is_some_and(|parent| {
+                    ast::SourceFile::can_cast(parent.kind())
+                        || ast::ItemList::can_cast(parent.kind())
+                        || ast::MacroItems::can_cast(parent.kind())
+                })
+    })
+}
+
+/// Whether every segment of the entry's definition module path is bound by
+/// exactly one unconditional, un-remapped library declaration (binary roots are
+/// ignored), so `<lib>::<path>` names the file the entry was read from.
+pub(super) fn library_module_path_is_bound(
+    index: &RustIndex,
+    function: &FunctionSummary,
+    module: &[String],
+) -> bool {
+    module
+        .iter()
+        .all(|segment| !module_declaration_is_ambiguous(index, segment, true))
+        && library_declaration_chain_reaches_file(index, &function.file)
+}
+
+/// Walk the declaration chain from `src/lib.rs`: each file-module segment of
+/// `file` must be declared by exactly one out-of-line, unconditional,
+/// un-remapped `mod <segment>;` at the top level of the previous file, with no
+/// other module of that name there, and the declared module's file must be
+/// the next link. The last link must be `file` itself, so a same-named inline
+/// module, or a `#[path]` that sends the file to another name, never binds the
+/// path to the indexed definition.
+fn library_declaration_chain_reaches_file(index: &RustIndex, file: &Path) -> bool {
+    use ra_ap_syntax::{AstNode, ast, ast::HasModuleItem, ast::HasName};
+    let Some(segments) = file_module_segments(file) else {
+        return false;
+    };
+    let target = super::related_tests::normalize_path(file);
+    let mut current = PathBuf::from("src/lib.rs");
+    // Inline module names entered since `current` was loaded: they extend the
+    // directory the next out-of-line declaration loads from.
+    let mut inline_path: Vec<String> = Vec::new();
+    let mut container: Option<Vec<ast::Item>> = None;
+    for segment in &segments {
+        if container.is_none() {
+            let Some(facts) = index.files().get(&current) else {
+                return false;
+            };
+            let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&facts.source)
+            else {
+                return false;
+            };
+            container = Some(parse.tree().items().collect());
+        }
+        let items = container.take().unwrap_or_default();
+        let same_named: Vec<ast::Module> = items
+            .into_iter()
+            .filter_map(|item| match item {
+                ast::Item::Module(module)
+                    if module
+                        .name()
+                        .is_some_and(|n| n.text().trim_start_matches("r#") == segment) =>
+                {
+                    Some(module)
+                }
+                _ => None,
+            })
+            .collect();
+        let [declaration] = same_named.as_slice() else {
+            return false;
+        };
+        if super::owner_pin::has_cfg_attr(declaration)
+            || ast::HasAttrs::attrs(declaration)
+                .any(|attr| has_path_attribute(&attr.syntax().text().to_string()))
+        {
+            return false;
+        }
+        if let Some(items) = declaration.item_list() {
+            if super::owner_pin::has_cfg_attr(&items) {
+                return false;
+            }
+            inline_path.push(segment.clone());
+            container = Some(items.items().collect());
+            continue;
+        }
+        let normalized = super::related_tests::normalize_path(&current);
+        let mut directory = match normalized.rsplit_once('/') {
+            Some((directory, name)) if name == "lib.rs" || name == "mod.rs" => {
+                directory.to_string()
+            }
+            Some((directory, name)) => {
+                format!("{directory}/{}", name.trim_end_matches(".rs"))
+            }
+            None => return false,
+        };
+        for inline in inline_path.drain(..) {
+            directory = format!("{directory}/{inline}");
+        }
+        let flat = PathBuf::from(format!("{directory}/{segment}.rs"));
+        let nested = PathBuf::from(format!("{directory}/{segment}/mod.rs"));
+        current = match (
+            index.files().get(&flat).is_some(),
+            index.files().get(&nested).is_some(),
+        ) {
+            (true, false) => flat,
+            (false, true) => nested,
+            _ => return false,
+        };
+    }
+    inline_path.is_empty() && super::related_tests::normalize_path(&current) == target
+}
+
+/// Whether the root package's `src/` files declare `mod <segment>` other than
+/// exactly once, declare it (or an enclosing inline module, or the item's own
+/// file) under a `cfg`/`cfg_attr`, or may splice unread items (macros,
+/// `include!`). Read from parsed module items, so an attribute hidden from a
+/// text scan by a comment or string is still seen; an unparsable file
+/// refuses.
+fn module_declaration_is_ambiguous(index: &RustIndex, segment: &str, library_only: bool) -> bool {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+    let mut declarations = 0usize;
+    for (path, facts) in index.files().iter() {
+        if package_key(path).is_some() || under_tests_dir(path) {
+            continue;
+        }
+        // The library-only form (an imported entry) ignores binary roots: a
+        // binary that also declares the module does not rebind the library's.
+        let normalized = super::related_tests::normalize_path(path);
+        let body = src_body(&normalized);
+        if library_only && (body == Some("main.rs") || body.is_some_and(|b| b.starts_with("bin/")))
+        {
+            continue;
+        }
+        if source_may_splice_items(&facts.source, true) {
+            return true;
+        }
+        let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&facts.source) else {
+            return true;
+        };
+        let is_lib_root = src_body(&super::related_tests::normalize_path(path)) == Some("lib.rs");
+        if !is_lib_root && super::owner_pin::has_cfg_attr(&parse.tree()) {
+            return true;
+        }
+        for module in parse
+            .tree()
+            .syntax()
+            .descendants()
+            .filter_map(ast::Module::cast)
+        {
+            let named = module
+                .name()
+                .is_some_and(|name| name.text().trim_start_matches("r#") == segment);
+            if !named {
+                continue;
+            }
+            declarations += 1;
+            // A `#[path]` on the declaration binds the module to another file.
+            if library_only
+                && ast::HasAttrs::attrs(&module)
+                    .any(|attr| has_path_attribute(&attr.syntax().text().to_string()))
+            {
+                return true;
+            }
+            let gated = |module: &ast::Module| {
+                super::owner_pin::has_cfg_attr(module)
+                    || module
+                        .item_list()
+                        .is_some_and(|items| super::owner_pin::has_cfg_attr(&items))
+            };
+            if gated(&module)
+                || module
+                    .syntax()
+                    .ancestors()
+                    .skip(1)
+                    .filter_map(ast::Module::cast)
+                    .any(|a| gated(&a))
+            {
+                return true;
+            }
+        }
+    }
+    declarations != 1
+}
+
 /// The package a file belongs to. A relative path keeps
 /// [`super::related_tests::package_prefix`] (`crates/<name>/`, the directory
 /// above `src/` or `tests/`, or `None` for the root package). That leaves an

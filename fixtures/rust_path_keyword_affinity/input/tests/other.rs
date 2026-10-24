@@ -10,12 +10,12 @@ fn picks_two() {
 }
 
 #[test]
-fn checks_union_result() {
+fn checks_sibling_item() {
     assert_eq!({ union OtherItem { sibling_slot: u32 } 2 }, 2);
 }
 
 #[test]
-fn checks_macro_result() {
+fn checks_sibling_macro() {
     assert_eq!({ macro_rules! other_item { () => { 3 } } other_item!() }, 3);
 }
 

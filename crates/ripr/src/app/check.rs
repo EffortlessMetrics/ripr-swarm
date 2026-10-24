@@ -47,12 +47,22 @@ pub fn check_workspace_with_config(
 
 /// [`check_workspace_with_config`] keeping the failure typed, so a caller
 /// (the MCP refresh) can name the recovery route for the failure family
-/// instead of re-reading rendered text.
+/// instead of re-reading rendered text. Also returns the run's crate-private
+/// mixed-language completeness view (#6475), the same sidecar the LSP
+/// refresh receives; the public entry points are unchanged.
 pub(crate) fn check_workspace_with_config_typed(
     input: CheckInput,
     config: &RiprConfig,
-) -> Result<CheckOutput, CoreError> {
-    check_with_progress_core(input, config, AnalysisProgressScope::Diff, None)
+) -> Result<
+    (
+        CheckOutput,
+        Option<crate::analysis::language_outcome::LanguageCompletenessView>,
+    ),
+    CoreError,
+> {
+    let (output, _, _, view) =
+        check_with_progress_and_origins(input, config, AnalysisProgressScope::Diff, None)?;
+    Ok((output, view))
 }
 
 pub fn check_workspace_worktree_with_config(

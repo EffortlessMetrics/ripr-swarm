@@ -2,10 +2,10 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_path_keyword_affinity/input
 
-Summary: 5 probes (0 exposed, 0 weak, 0 unrevealed, 1 no path, 4 unknown); 5 of 5 findings unsuppressed (1 base-side evidence, not candidate edit targets)
+Summary: 6 probes (0 exposed, 0 weak, 0 unrevealed, 1 no path, 5 unknown); 6 of 6 findings unsuppressed (1 base-side evidence, not candidate edit targets)
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 1 changed file(s), 8 changed line(s), 4 candidate line(s), 5 probe(s), 5 finding(s)
+  Counts: 1 changed file(s), 12 changed line(s), 5 candidate line(s), 6 probe(s), 6 finding(s)
 
 Start here:
   State: limited by static analysis
@@ -40,10 +40,11 @@ Next: drill into the top finding:
   no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.rs:static_unknown:bd010b89 --root <cwd>/fixtures/rust_path_keyword_affinity/input` for the full gate's answer
 
 Hidden:
-  4 finding(s) omitted: 3 lower-priority, 1 base-side evidence (not candidate edit targets).
+  5 finding(s) omitted: 4 lower-priority, 1 base-side evidence (not candidate edit targets).
     - ./src/lib.rs:1 (unknown, lower-priority candidate)
+    - ./src/lib.rs:3 (unknown, lower-priority candidate)
     - ./src/lib.rs:4 (no path, lower-priority candidate)
-    - ./src/lib.rs:9 (unknown, lower-priority candidate)
-    - ./src/lib.rs:9 (unknown, base-side)
+    - ./src/lib.rs:7 (unknown, lower-priority candidate)
+    - ./src/lib.rs:7 (unknown, base-side)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
