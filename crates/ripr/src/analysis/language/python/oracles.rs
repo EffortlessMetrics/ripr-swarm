@@ -599,6 +599,20 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
     })
 }
 
+/// `any(<test> for record in caplog.records)`: a membership check over the
+/// captured log records, the same output observation as `in caplog.text`.
+fn any_over_captured_records(call: &ast::ExprCall) -> bool {
+    expr_full_name(call.func.as_ref()).is_some_and(|name| name == "any")
+        && matches!(
+            call.args.as_slice(),
+            [Expr::GeneratorExp(generator)]
+                if generator
+                    .generators
+                    .iter()
+                    .any(|comprehension| expr_observes_output(&comprehension.iter))
+        )
+}
+
 fn oracle_for_assert_expr(
     expr: &Expr,
     source: &str,
@@ -618,6 +632,11 @@ fn oracle_for_assert_expr(
                 OracleStrength::Smoke,
                 PythonOracleShape::BroadSmokeAssertion,
             )),
+        Expr::Call(call) if any_over_captured_records(call) => (
+            OracleKind::RelationalCheck,
+            OracleStrength::Weak,
+            PythonOracleShape::OutputAssertion,
+        ),
         Expr::Call(call) => {
             if expr_full_name(call.func.as_ref()).is_some_and(|name| name == "isinstance") {
                 (
@@ -760,6 +779,8 @@ fn compare_observes_field(compare: &ast::ExprCompare) -> bool {
 fn expr_observes_output(expr: &Expr) -> bool {
     expr_full_name(expr).is_some_and(|name| {
         name == "caplog.text"
+            || name == "caplog.messages"
+            || name == "caplog.records"
             || name == "capsys.readouterr.out"
             || name.ends_with(".output")
             || name.ends_with(".stdout")
@@ -780,6 +801,16 @@ fn expr_observes_output(expr: &Expr) -> bool {
                 || expr_observes_output(subscript.slice.as_ref())
         }
         Expr::BoolOp(bool_op) => bool_op.values.iter().any(expr_observes_output),
+        // `any(... for record in caplog.records)` and `[... for record in
+        // caplog.records]` read the captured records.
+        Expr::GeneratorExp(generator) => generator
+            .generators
+            .iter()
+            .any(|comprehension| expr_observes_output(&comprehension.iter)),
+        Expr::ListComp(list) => list
+            .generators
+            .iter()
+            .any(|comprehension| expr_observes_output(&comprehension.iter)),
         _ => false,
     }
 }
