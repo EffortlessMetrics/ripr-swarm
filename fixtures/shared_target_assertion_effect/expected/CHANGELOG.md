@@ -25,3 +25,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — shared_target_assertion_effect (3)
+
+Reason:
+RIPR-SPEC-0122: bounded evidence legend defines the Summary count terms (#9244 item 4)
+
+Command:
+`cargo xtask goldens bless shared_target_assertion_effect --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -336,7 +336,7 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
             Expect::Refused(kind) => {
                 assert_eq!(output.status.code(), Some(3), "{needle}: {stdout}{stderr}");
                 let (envelope, _) = split_refusal_envelope(&stdout, &stderr)?;
-                assert_eq!(envelope["schema_version"], "0.2");
+                assert_eq!(envelope["schema_version"], "0.3");
                 assert_eq!(envelope["state"], "refused");
                 assert!(
                     stdout.contains(&format!("\"kind\": \"{kind}\"")),
@@ -353,7 +353,7 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
                 assert!(output.status.success(), "{needle}: {stdout}{stderr}");
                 let ready: serde_json::Value =
                     serde_json::from_str(&stdout).map_err(|error| error.to_string())?;
-                assert_eq!(ready["schema_version"], "0.2");
+                assert_eq!(ready["schema_version"], "0.3");
                 let document: serde_json::Value = serde_json::from_str(&stdout)
                     .map_err(|error| format!("{needle}: stub JSON: {error}: {stdout}"))?;
                 assert_eq!(document["written"], true, "{needle}");
@@ -1005,7 +1005,7 @@ fn split_refusal_envelope<'a>(
 }
 
 fn assert_selector_refusal(envelope: &serde_json::Value, kind: &str) {
-    assert_eq!(envelope["schema_version"], "0.2");
+    assert_eq!(envelope["schema_version"], "0.3");
     assert_eq!(envelope["kind"], "rust_test_stub");
     assert_eq!(envelope["state"], "refused");
     assert_eq!(envelope["refusal"]["kind"], kind);
@@ -1085,7 +1085,7 @@ fn absent_selectors_keep_not_found_and_explicit_disclosures() -> Result<(), Stri
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
         let (envelope, prose) = split_refusal_envelope(&stdout, &stderr)?;
-        assert_eq!(envelope["schema_version"], "0.2");
+        assert_eq!(envelope["schema_version"], "0.3");
         assert_eq!(envelope["state"], "refused");
         assert_eq!(envelope["refusal"]["kind"], "seam_not_found");
         for field in ["owner", "grip_class", "classification"] {
@@ -1182,7 +1182,7 @@ fn ambiguous_at_files_refuse_with_disambiguation_and_no_write() -> Result<(), St
             );
             let ready: serde_json::Value =
                 serde_json::from_slice(&control.stdout).map_err(|error| error.to_string())?;
-            assert_eq!(ready["schema_version"], "0.2");
+            assert_eq!(ready["schema_version"], "0.3");
             assert_eq!(ready["state"], "ready");
             assert_eq!(
                 ready["owner"],
@@ -1245,7 +1245,7 @@ fn ambiguous_at_tied_seams_refuse_without_weakening_nested_selection() -> Result
         );
         let ready: serde_json::Value =
             serde_json::from_slice(&selected.stdout).map_err(|error| error.to_string())?;
-        assert_eq!(ready["schema_version"], "0.2");
+        assert_eq!(ready["schema_version"], "0.3");
         assert_eq!(ready["state"], "ready");
         assert_eq!(ready["seam_id"], id);
         assert_eq!(ready["written"], false);
@@ -1272,7 +1272,7 @@ fn ambiguous_at_tied_seams_refuse_without_weakening_nested_selection() -> Result
     );
     let ready: serde_json::Value =
         serde_json::from_slice(&nested.stdout).map_err(|error| error.to_string())?;
-    assert_eq!(ready["schema_version"], "0.2");
+    assert_eq!(ready["schema_version"], "0.3");
     assert_eq!(ready["state"], "ready");
     assert_eq!(ready["owner"], "src/lib.rs::fallible");
     scratch.cleanup()
@@ -1342,7 +1342,9 @@ const STRONGLY_GRIPPED_CLAMP: &str = "pub fn clamp_to(x: i32) -> i32 {\n    if x
 
 /// #7290: `ripr agent stub --at --kind` still yields a ready scaffold for a
 /// seam inventory classifies `strongly_gripped`, and both JSON and human
-/// output disclose that class with the packet/repair omission reason.
+/// output disclose that class. #8891: the disclosure names the real reason
+/// (the seam is exposed; nothing was configured off), not the packet/brief
+/// "configured off" wording.
 #[test]
 fn at_kind_stub_discloses_strongly_gripped_classification() -> Result<(), String> {
     let scratch = kind_refusal_crate(STRONGLY_GRIPPED_CLAMP)?;
@@ -1377,10 +1379,13 @@ fn at_kind_stub_discloses_strongly_gripped_classification() -> Result<(), String
         .as_str()
         .ok_or_else(|| format!("warning must be a string: {document}"))?;
     assert!(
-        warning.contains(
-            "is configured off for strongly_gripped seams and is not included in agent results"
-        ),
+        warning.contains("is strongly_gripped")
+            && warning.contains("existing tests already discriminate it"),
         "{warning}"
+    );
+    assert!(
+        !warning.contains("configured off"),
+        "nothing was configured off for an exposed seam: {warning}"
     );
 
     let mut human = ripr_command();
@@ -1404,10 +1409,13 @@ fn at_kind_stub_discloses_strongly_gripped_classification() -> Result<(), String
     );
     let stdout = String::from_utf8_lossy(&human.stdout);
     assert!(
-        stdout.contains(
-            "is configured off for strongly_gripped seams and is not included in agent results"
-        ),
+        stdout.contains("is strongly_gripped")
+            && stdout.contains("existing tests already discriminate it"),
         "{stdout}"
+    );
+    assert!(
+        !stdout.contains("configured off"),
+        "nothing was configured off for an exposed seam: {stdout}"
     );
     assert!(
         stdout.contains("Test stub"),
