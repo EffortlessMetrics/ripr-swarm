@@ -2109,7 +2109,7 @@ fn check_from_a_subcrate_discloses_workspace_root_and_honors_explicit_root() -> 
         .map_err(|error| format!("canonicalize workspace root: {error}"))?;
     let expected_disclosure = format!(
         "ripr: resolved workspace root to {} (Cargo.toml contains [workspace])",
-        expected_root.display()
+        printed_path(&expected_root)
     );
     assert!(
         String::from_utf8_lossy(&implicit.stderr).contains(&expected_disclosure),
@@ -2276,7 +2276,7 @@ fn check_from_a_package_source_dir_analyzes_the_crate_root() -> Result<(), Strin
     let stderr = String::from_utf8_lossy(&from_src.stderr);
     let disclosure = format!(
         "ripr: resolved workspace root to {} (nearest Cargo.toml)",
-        expected_root.display()
+        printed_path(&expected_root)
     );
     assert!(stderr.contains(&disclosure), "stderr:\n{stderr}");
     Ok(())

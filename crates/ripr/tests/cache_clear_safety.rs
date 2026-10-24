@@ -695,6 +695,18 @@ fn root_flag_fixture(label: &str) -> Result<PathBuf, String> {
     Ok(root)
 }
 
+/// Whether a `cache status --json` document names `expected`. The report
+/// prints the plain host spelling while `expected` is built from a
+/// canonicalized root, which carries a `\\?\` prefix and mixed separators on
+/// Windows, so the two are compared as resolved paths, not as text.
+fn reports_cache_dir(json: &serde_json::Value, expected: &Path) -> bool {
+    let (Some(reported), Ok(expected)) = (json["cache_dir"].as_str(), fs::canonicalize(expected))
+    else {
+        return false;
+    };
+    fs::canonicalize(reported).is_ok_and(|reported| reported == expected)
+}
+
 #[test]
 fn cache_status_and_clear_root_flag_target_the_checked_root_from_a_different_cwd()
 -> Result<(), String> {
@@ -737,7 +749,7 @@ fn cache_status_and_clear_root_flag_target_the_checked_root_from_a_different_cwd
     let without = run_ripr_default_cache(&elsewhere, &["cache", "status", "--json"], &[])?;
     let without_json: serde_json::Value =
         serde_json::from_slice(&without.stdout).map_err(|error| error.to_string())?;
-    if without_json["cache_dir"].as_str() == real_cache.to_str() {
+    if reports_cache_dir(&without_json, &real_cache) {
         return Err("cwd without --root unexpectedly resolved the checked root".to_string());
     }
 
@@ -750,7 +762,7 @@ fn cache_status_and_clear_root_flag_target_the_checked_root_from_a_different_cwd
     let with_json: serde_json::Value =
         serde_json::from_slice(&with.stdout).map_err(|error| error.to_string())?;
     if !(with.status.success()
-        && with_json["cache_dir"].as_str() == real_cache.to_str()
+        && reports_cache_dir(&with_json, &real_cache)
         && with_json["entry_count"].as_u64().unwrap_or(0) > 0
         && with_json["status"] != "not_found")
     {

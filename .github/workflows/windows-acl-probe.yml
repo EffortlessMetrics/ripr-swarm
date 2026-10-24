@@ -55,7 +55,7 @@ jobs:
       - name: Probe from bash (Git for Windows)
         shell: bash
         run: |
-          echo "== whoami /priv (bash)"; whoami /priv | grep -E "Restore|Backup|TakeOwn"
+          echo "== whoami /priv (bash)"; cmd //c "whoami /priv" | grep -E "Restore|Backup|TakeOwn" || true
           d="$RUNNER_TEMP/acl-bash-$$"; mkdir -p "$d"
           icacls "$(cygpath -w "$d")" /deny "$USERNAME:(AD)" > /dev/null
           if cmd //c "mkdir \"$(cygpath -w "$d")\\cmdchild\"" > /dev/null 2>&1; then echo "bash : cmd mkdir SUCCEEDED (deny not enforced)"; else echo "bash : cmd mkdir DENIED"; fi
