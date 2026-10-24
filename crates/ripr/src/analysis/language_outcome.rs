@@ -26,11 +26,13 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 mod diff_aggregate;
+mod reconcile;
 #[cfg(test)]
 pub(crate) use diff_aggregate::DiffCompleteness;
 pub(crate) use diff_aggregate::DiffLanguageAggregate;
 pub(crate) use diff_aggregate::LanguageAggregate;
 use diff_aggregate::repo_static_facts_limit;
+pub(crate) use reconcile::reconcile;
 
 pub(crate) const LANGUAGE_ANALYSIS_OUTCOME_SCHEMA_VERSION: &str = "1";
 
@@ -558,6 +560,8 @@ fn count_findings(findings: &[Finding]) -> BTreeMap<String, usize> {
 
 #[cfg(test)]
 mod diff_tests;
+#[cfg(test)]
+mod reconcile_tests;
 #[cfg(test)]
 mod repo_tests;
 #[cfg(test)]
