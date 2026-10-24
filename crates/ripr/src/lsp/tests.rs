@@ -1085,6 +1085,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
+        language_view: None,
     };
 
     // Call the pure code_lens_response directly to verify the handler→helper path.
@@ -9920,6 +9921,7 @@ async fn did_open_matching_disk_bytes_with_stale_committed_snapshot_keeps_refres
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
+        language_view: None,
     };
     backend
         .refresh_plan(WorkspaceDiagnostics {
@@ -14957,6 +14959,7 @@ fn sample_analysis_snapshot(
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
+        language_view: None,
     }
 }
 
@@ -21994,6 +21997,7 @@ fn quarantine_workspace_diagnostics(
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
+        language_view: None,
     };
     WorkspaceDiagnostics {
         snapshot,
@@ -22587,6 +22591,7 @@ fn partition_workspace_diagnostics(
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
+        language_view: None,
     };
     WorkspaceDiagnostics {
         snapshot,
@@ -22883,6 +22888,24 @@ fn disabled_language_fixture_with_changed_python(
     })
 }
 
+/// A view whose only row is `label` recorded as not selected, as the
+/// producer's aggregate does for a disabled or uncompiled adapter.
+fn not_selected_language_view(
+    label: &str,
+) -> crate::analysis::language_outcome::LanguageCompletenessView {
+    use crate::analysis::language_outcome::{
+        LanguageAggregate, LanguageAnalysisOutcomeV1, LanguageCompletenessView,
+    };
+    let mut aggregate = LanguageAggregate::new("full".to_string());
+    aggregate.record(LanguageAnalysisOutcomeV1::not_selected(
+        label,
+        1,
+        "language not in the effective [languages].enabled set",
+        "full",
+    ));
+    LanguageCompletenessView::from_aggregate(&aggregate.finish())
+}
+
 fn disabled_language_workspace_diagnostics(
     fixture: &DisabledLanguageFixture,
     partial_scope: Option<crate::analysis::PartialDiffScope>,
@@ -22926,6 +22949,7 @@ fn disabled_language_workspace_diagnostics(
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
         unavailable_adapter,
+        language_view: Some(not_selected_language_view("python")),
     };
     Ok(WorkspaceDiagnostics {
         snapshot,
@@ -23260,6 +23284,7 @@ async fn workspace_status_uncompiled_perl_recovery_does_not_claim_enablement() -
                 enabled: false,
             },
         ]),
+        language_view: Some(not_selected_language_view("perl")),
     };
     backend
         .refresh_plan(WorkspaceDiagnostics {
@@ -28098,13 +28123,17 @@ fn typed_worktree_timeout_recovers_origins_and_consumed_sources_for_open_paths()
         };
         assert!(error.is_git_invocation_timeout(), "{error}");
         input.git_timeout = Some(Duration::from_secs(30));
-        let (output, origins, consumed_sources) =
+        let (output, origins, consumed_sources, language_view) =
             crate::app::check_workspace_worktree_with_sources_open_rust_paths_and_progress(
                 input,
                 config.repo_config(),
                 &open_paths,
                 None,
             )?;
+        // The producer's aggregate view travels beside the output to the
+        // editor entry point (#6475).
+        let view = language_view.ok_or("the run must carry its language view")?;
+        assert!(view.rows.iter().any(|row| row.label == "rust"));
         let tracked = output
             .findings
             .iter()
