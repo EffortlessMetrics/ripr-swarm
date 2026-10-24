@@ -342,16 +342,14 @@ fn arguments_are_empty(call: &ast::MethodCallExpr) -> bool {
         .map(|argument| compact(&argument.syntax().text().to_string()))
         .collect();
     compacted.is_empty()
-        || compacted
-            .iter()
-            .all(|argument| {
-                EMPTY.iter().any(|empty| {
-                    argument.as_str() == *empty
-                        || argument
-                            .strip_prefix(empty)
-                            .is_some_and(|rest| rest.starts_with('.'))
-                })
+        || compacted.iter().all(|argument| {
+            EMPTY.iter().any(|empty| {
+                argument.as_str() == *empty
+                    || argument
+                        .strip_prefix(empty)
+                        .is_some_and(|rest| rest.starts_with('.'))
             })
+        })
 }
 
 const ADDITIVE_WRITERS: &[&str] = &[
