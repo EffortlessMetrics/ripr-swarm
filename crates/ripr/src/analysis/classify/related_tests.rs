@@ -2182,7 +2182,7 @@ fn declares_value_named(source: &str, name: &str) -> bool {
 }
 
 /// Whether the test body binds `name` (a `let`, a closure or function
-/// parameter, a match arm, or a nested `mod`) in a lexical scope that contains
+/// parameter, a match arm, or a nested `mod`/`struct`/`enum`/`fn`/`type` item) in a lexical scope that contains
 /// a direct call of `name`: only such a binding can shadow the imported entry.
 /// A binding whose scope holds no call (`let _u = |name: u32| name + 1;`) does
 /// not. An unparsable body refuses.
@@ -2201,10 +2201,12 @@ fn body_pattern_shadows_a_call(body: &str, name: &str, call_line_in_body: Option
         .descendants_with_tokens()
         .filter_map(|element| element.into_token())
         .filter(|token| {
-            use ra_ap_syntax::SyntaxKind::{COLON2, DOT, FN_KW, IDENT, L_PAREN, WHITESPACE};
+            use ra_ap_syntax::SyntaxKind::{
+                COLON2, COMMENT, DOT, FN_KW, IDENT, L_PAREN, WHITESPACE,
+            };
             let skip = |mut next: Option<ra_ap_syntax::SyntaxToken>, forward: bool| {
                 while let Some(token) = &next {
-                    if token.kind() != WHITESPACE {
+                    if !matches!(token.kind(), WHITESPACE | COMMENT) {
                         break;
                     }
                     next = if forward {
@@ -2273,15 +2275,32 @@ fn body_pattern_shadows_a_call(body: &str, name: &str, call_line_in_body: Option
             pattern
                 .name()
                 .is_some_and(|n| n.text().trim_start_matches("r#") == name)
-        } else if let Some(module) = ast::Module::cast(node.clone()) {
-            module
-                .name()
-                .is_some_and(|n| n.text().trim_start_matches("r#") == name)
+        } else if let Some(item) = ast::Item::cast(node.clone()) {
+            // A body-local item of the name: a module, struct (tuple
+            // constructor), enum, union, type alias, trait or fn.
+            let item_name = match &item {
+                ast::Item::Module(i) => i.name(),
+                ast::Item::Struct(i) => i.name(),
+                ast::Item::Enum(i) => i.name(),
+                ast::Item::Union(i) => i.name(),
+                ast::Item::TypeAlias(i) => i.name(),
+                ast::Item::Trait(i) => i.name(),
+                ast::Item::Fn(i) => i.name(),
+                ast::Item::Const(i) => i.name(),
+                ast::Item::Static(i) => i.name(),
+                _ => None,
+            };
+            item_name.is_some_and(|n| n.text().trim_start_matches("r#") == name)
         } else {
             false
         };
         if !binds {
             return false;
+        }
+        if ast::Item::can_cast(node.kind()) {
+            // Items are visible throughout their enclosing block.
+            return block_of(&node)
+                .is_none_or(|scope| calls.iter().any(|call| scope.contains_range(*call)));
         }
         match scope_of(&node) {
             Some(scope) => calls.iter().any(|call| scope.contains_range(*call)),

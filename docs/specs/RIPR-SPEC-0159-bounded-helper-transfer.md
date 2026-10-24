@@ -325,21 +325,40 @@ can only hint that a caller "may lead here" without changing anything.
   refuses. The package-wide macro-definition and item-position-macro scan on
   the library side is deliberately coarse and fail-closed. A bare call is read from the masked file at
   its own line, so a spelling only in a string or comment is not a call.
-  The qualified spelling is refused for a path longer or shorter than
-  the entry's own, another crate name, a test file that declares any item, `let`, closure
-  or typed parameter named like the crate, a module declared in the test
-  crate under the library's name (`mod <lib>;` or inline), aliases anything
-  to that name (`use x as <lib>`), imports a path ending in it (raw `r#`
-  spellings included), a raw `r#` module segment, or has any glob import or
-  an `include`-family macro however its tokens are spaced or commented, a macro definition, or any macro invoked in item position in the test file (an expansion may declare a module named like the library); a
-  unit test inside `src/`; a test module child (only `tests/<name>.rs` and
-  `tests/<name>/main.rs` roots qualify); a call spelled only in a string
-  or comment, including a multiline raw string or block comment that ends
-  on a line holding a real call (the call is read from the masked file at
-  its own line); a workspace member's entry; a `src/main.rs` entry, and an
-  entry whose module path is not placed under the library (a
-  binary-shared module, a `#[path]` package, a module not declared exactly
-  once, or declared under `cfg`/`cfg_attr`). The edge
+  The qualified spelling is refused for:
+  - a path longer or shorter than the entry's own, or another crate name;
+  - a test file that declares any item, `let`, closure or typed parameter
+    named like the crate, declares a module (`mod <lib>;` or inline) under
+    the library's name, aliases anything to that name (`use x as <lib>`), or
+    imports a path ending in it (raw `r#` spellings included);
+  - a raw `r#` module segment, a glob import, an `include`-family macro
+    however its tokens are spaced or commented, a macro definition, or any
+    macro invoked in item position in the test file (an expansion may
+    declare a module named like the library);
+  - a unit test inside `src/`, a test module child (only `tests/<name>.rs`
+    and `tests/<name>/main.rs` roots qualify), a workspace member's entry or
+    a `src/main.rs` entry;
+  - a call spelled only in a string or comment, including a multiline raw
+    string or block comment that ends on a line holding a real call (the
+    call is read from the masked file at its own line);
+  - an entry whose module path is not placed under the library (a
+    binary-shared module, a `#[path]` package, a module not declared
+    exactly once, or declared under `cfg`/`cfg_attr`).
+
+  A refused case may still render `limitation_last_established_edge: test -> entry`
+  from the pre-existing name-only hint path (SPEC-0114/0115); that is a
+  projection wording limit, not a reach promotion (tracked in #10026).
+
+  Fail-open shapes kept as known limits (tracked in #9971): the bare-call
+  prefix proof returns the older name-only result when the package has no
+  resolvable `[lib]` name (a moved `[lib] path`), when the entry sits in a
+  workspace member, and when the test file has no own-crate import at all
+  (for example `mod foo { pub use std::cmp; } use self::foo::cmp::max;` in a
+  member crate). A body-local `struct`, `enum`, `union`, `type`, `trait`,
+  `fn`, `const`/`static` or `mod` of the entry's name whose block holds the
+  call refuses.
+
+  The edge
   carries relation only: argument rows and entry pairing still read a
   direct call site, so the qualified spelling adds no new value-credit
   path of its own (the argument reader may still read a qualified

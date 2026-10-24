@@ -53,25 +53,21 @@ fn manifest(package: &str, lib_name: Option<&str>) -> String {
     )
 }
 
-/// The changed helper is on line 2 of every library source below (line 3 for
-/// the inline-module source).
-fn diff(path: &str, nested: bool) -> String {
-    let (hunk, old, new) = if nested {
-        (
-            "@@ -2,3 +2,3 @@\n     fn is_bulk(qty: u32) -> bool {",
-            "        qty >= 10",
-            "        10 <= qty",
-        )
-    } else {
-        (
-            "@@ -1,3 +1,3 @@\n fn is_bulk(qty: u32) -> bool {",
-            "    qty >= 10",
-            "    10 <= qty",
-        )
-    };
-    let close = if nested { "     }" } else { " }" };
+/// A diff changing the helper's `qty >= 10` body line in `source`: the hunk
+/// starts at the `fn is_bulk` line actually present in the file, so its line
+/// numbers match the file at every nesting depth.
+fn diff(path: &str, source: &str) -> String {
+    let lines: Vec<&str> = source.lines().collect();
+    let at = lines
+        .iter()
+        .position(|line| line.trim_start().starts_with("fn is_bulk"))
+        .unwrap_or(0);
+    let signature = lines.get(at).copied().unwrap_or_default();
+    let body_indent = " ".repeat(signature.len() - signature.trim_start().len() + 4);
+    let close_indent = " ".repeat(signature.len() - signature.trim_start().len());
     format!(
-        "diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n{hunk}\n-{old}\n+{new}\n{close}\n"
+        "diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -{start},3 +{start},3 @@\n {signature}\n-{body_indent}qty >= 10\n+{body_indent}10 <= qty\n {close_indent}}}\n",
+        start = at + 1,
     )
 }
 
@@ -97,17 +93,15 @@ const BARE: &str = "    assert_eq!(order_discount(10), 5);\n    assert_eq!(order
 struct Package<'a> {
     manifest: String,
     diff_path: &'a str,
-    nested: bool,
     files: Vec<(&'a str, String)>,
 }
 
 impl<'a> Package<'a> {
     /// The root package with `src/lib.rs` = `lib` and `tests/api.rs` = `tests`.
-    fn root(lib: &str, nested: bool, tests: &str) -> Package<'a> {
+    fn root(lib: &str, tests: &str) -> Package<'a> {
         Package {
             manifest: manifest("qual_reach", None),
             diff_path: "src/lib.rs",
-            nested,
             files: vec![
                 ("src/lib.rs", lib.to_string()),
                 ("tests/api.rs", tests.to_string()),
@@ -133,7 +127,13 @@ impl<'a> Package<'a> {
             scratch.write(path, content)?;
         }
         let diff_file = scratch.0.join("change.diff");
-        scratch.write("change.diff", &diff(self.diff_path, self.nested))?;
+        let source = self
+            .files
+            .iter()
+            .find(|(path, _)| *path == self.diff_path)
+            .map(|(_, content)| content.as_str())
+            .unwrap_or_default();
+        scratch.write("change.diff", &diff(self.diff_path, source))?;
         let report = check_workspace(CheckInput {
             root: scratch.0.clone(),
             diff_file: Some(diff_file),
@@ -169,14 +169,14 @@ impl<'a> Package<'a> {
 
 const LINKED: Option<&str> = Some("helper_owner_call");
 
-fn root_relation(lib: &str, nested: bool, tests: &str) -> Result<Option<String>, String> {
-    Package::root(lib, nested, tests).relation()
+fn root_relation(lib: &str, tests: &str) -> Result<Option<String>, String> {
+    Package::root(lib, tests).relation()
 }
 
 #[test]
 fn imported_spelling_is_the_linked_baseline() -> Result<(), String> {
     let tests = format!("use qual_reach::order_discount;\n{}", test_file(BARE));
-    assert_eq!(root_relation(LIB, false, &tests)?.as_deref(), LINKED);
+    assert_eq!(root_relation(LIB, &tests)?.as_deref(), LINKED);
     Ok(())
 }
 
@@ -186,21 +186,21 @@ fn imported_spelling_is_the_linked_baseline() -> Result<(), String> {
 /// refusals keep passing; that revert run was recorded on #9139.
 fn own_crate_qualified_entry_call_links() -> Result<(), String> {
     let tests = test_file(&qualified("qual_reach"));
-    assert_eq!(root_relation(LIB, false, &tests)?.as_deref(), LINKED);
+    assert_eq!(root_relation(LIB, &tests)?.as_deref(), LINKED);
     Ok(())
 }
 
 #[test]
 fn another_crate_qualifier_does_not_link() -> Result<(), String> {
     let tests = test_file(&qualified("other_crate"));
-    assert_eq!(root_relation(LIB, false, &tests)?, None);
+    assert_eq!(root_relation(LIB, &tests)?, None);
     Ok(())
 }
 
 #[test]
 fn a_longer_path_does_not_link() -> Result<(), String> {
     let tests = test_file(&qualified("qual_reach::util"));
-    assert_eq!(root_relation(LIB, false, &tests)?, None);
+    assert_eq!(root_relation(LIB, &tests)?, None);
     Ok(())
 }
 
@@ -226,14 +226,14 @@ fn a_rebindable_crate_name_does_not_link() -> Result<(), String> {
     ];
     for rebind in rebinds {
         let tests = format!("{rebind}{}", test_file(&qualified("qual_reach")));
-        assert_eq!(root_relation(LIB, false, &tests)?, None, "{rebind}");
+        assert_eq!(root_relation(LIB, &tests)?, None, "{rebind}");
     }
     // The same crate-name line inside the test body.
     let body = format!(
         "    let qual_reach = other_crate::make();\n{}",
         qualified("qual_reach")
     );
-    assert_eq!(root_relation(LIB, false, &test_file(&body))?, None);
+    assert_eq!(root_relation(LIB, &test_file(&body))?, None);
     for line in [
         "    use some_dep::qual_reach;",
         "    use inner::order_discount as qual_reach;",
@@ -241,18 +241,14 @@ fn a_rebindable_crate_name_does_not_link() -> Result<(), String> {
         "    let helper = |qual_reach: u32| qual_reach;",
     ] {
         let body = format!("{line}\n{}", qualified("qual_reach"));
-        assert_eq!(
-            root_relation(LIB, false, &test_file(&body))?,
-            None,
-            "{line}"
-        );
+        assert_eq!(root_relation(LIB, &test_file(&body))?, None, "{line}");
     }
     // Control: an unrelated import keeps the link.
     let tests = format!(
         "use std::fmt::Debug;\n{}",
         test_file(&qualified("qual_reach"))
     );
-    assert_eq!(root_relation(LIB, false, &tests)?.as_deref(), LINKED);
+    assert_eq!(root_relation(LIB, &tests)?.as_deref(), LINKED);
     Ok(())
 }
 
@@ -260,12 +256,12 @@ fn a_rebindable_crate_name_does_not_link() -> Result<(), String> {
 fn an_entry_outside_the_crate_root_does_not_link() -> Result<(), String> {
     let baseline = format!("use qual_reach::order_discount;\n{}", test_file(BARE));
     assert_eq!(
-        root_relation(NESTED_LIB, true, &baseline)?.as_deref(),
+        root_relation(NESTED_LIB, &baseline)?.as_deref(),
         LINKED,
         "the use spelling must link, or this negative proves nothing"
     );
     let tests = test_file(&qualified("qual_reach"));
-    assert_eq!(root_relation(NESTED_LIB, true, &tests)?, None);
+    assert_eq!(root_relation(NESTED_LIB, &tests)?, None);
     Ok(())
 }
 
@@ -279,12 +275,12 @@ fn a_unit_test_inside_src_does_not_link() -> Result<(), String> {
     };
     let baseline = Package {
         files: vec![("src/lib.rs", unit(BARE))],
-        ..Package::root("", false, "")
+        ..Package::root("", "")
     };
     assert_eq!(baseline.relation()?.as_deref(), LINKED);
     let qualified_unit = Package {
         files: vec![("src/lib.rs", unit(&qualified("qual_reach")))],
-        ..Package::root("", false, "")
+        ..Package::root("", "")
     };
     // File proximity may still relate a same-file test; the qualified spelling
     // earns no helper-chain link there.
@@ -300,7 +296,6 @@ fn a_workspace_member_does_not_link() -> Result<(), String> {
     let member = |tests: String| Package {
         manifest: manifest("qual_reach", None),
         diff_path: "crates/inner/src/lib.rs",
-        nested: false,
         files: vec![
             ("src/lib.rs", "pub fn root() {}\n".to_string()),
             ("crates/inner/Cargo.toml", manifest("inner", None)),
@@ -345,7 +340,6 @@ fn an_entry_in_a_binary_crate_does_not_link() -> Result<(), String> {
     let binary = |tests: String| Package {
         manifest: manifest("qual_reach", None),
         diff_path: "src/main.rs",
-        nested: false,
         files: vec![
             ("src/main.rs", main_source.clone()),
             ("tests/api.rs", tests),
@@ -366,7 +360,7 @@ fn an_entry_in_a_binary_crate_does_not_link() -> Result<(), String> {
 fn a_hyphenated_package_links_through_its_underscored_name() -> Result<(), String> {
     let package = Package {
         manifest: manifest("qual-reach", None),
-        ..Package::root(LIB, false, &test_file(&qualified("qual_reach")))
+        ..Package::root(LIB, &test_file(&qualified("qual_reach")))
     };
     assert_eq!(package.relation()?.as_deref(), LINKED);
     Ok(())
@@ -376,7 +370,7 @@ fn a_hyphenated_package_links_through_its_underscored_name() -> Result<(), Strin
 fn a_lib_name_is_the_only_admitted_spelling() -> Result<(), String> {
     let with_lib = |crate_name: &str| Package {
         manifest: manifest("qual_reach", Some("shared_lib")),
-        ..Package::root(LIB, false, &test_file(&qualified(crate_name)))
+        ..Package::root(LIB, &test_file(&qualified(crate_name)))
     };
     assert_eq!(with_lib("shared_lib").relation()?.as_deref(), LINKED);
     assert_eq!(with_lib("qual_reach").relation()?, None);
@@ -393,15 +387,12 @@ fn a_quoted_own_crate_call_beside_a_foreign_call_does_not_link() -> Result<(), S
         "    let r = other::order_discount(10); // qual_reach::order_discount(10)",
     ];
     for line in quoted {
-        assert_eq!(root_relation(LIB, false, &test_file(line))?, None, "{line}");
+        assert_eq!(root_relation(LIB, &test_file(line))?, None, "{line}");
     }
     // Control: a real own-crate call beside a quoted foreign one still links.
     let control =
         "    let r = qual_reach::order_discount(10); let n = \"other::order_discount(10)\";";
-    assert_eq!(
-        root_relation(LIB, false, &test_file(control))?.as_deref(),
-        LINKED
-    );
+    assert_eq!(root_relation(LIB, &test_file(control))?.as_deref(), LINKED);
     Ok(())
 }
 
@@ -420,7 +411,7 @@ fn a_test_module_child_does_not_link() -> Result<(), String> {
             ),
             ("tests/api/child.rs", test_file(&qualified("qual_reach"))),
         ],
-        ..Package::root("", false, "")
+        ..Package::root("", "")
     };
     assert_eq!(package.relation()?, None);
     // Control: the child file is indexed and reaches the chain (the bare
@@ -434,11 +425,11 @@ fn a_test_module_child_does_not_link() -> Result<(), String> {
                 format!("use qual_reach::order_discount;\n{}", test_file(BARE)),
             ),
         ],
-        ..Package::root("", false, "")
+        ..Package::root("", "")
     };
     assert_eq!(child_bare.relation()?.as_deref(), LINKED);
     // Control: the same test as a test-crate root links.
-    let root = Package::root(LIB, false, &test_file(&qualified("qual_reach")));
+    let root = Package::root(LIB, &test_file(&qualified("qual_reach")));
     assert_eq!(root.relation()?.as_deref(), LINKED);
     Ok(())
 }
@@ -473,7 +464,6 @@ fn module_package<'a>(
     Package {
         manifest: manifest("qual_reach", None),
         diff_path: module_file,
-        nested: false,
         files,
     }
 }
@@ -499,8 +489,7 @@ fn a_module_qualified_own_crate_call_links() -> Result<(), String> {
         assert_eq!(package.relation()?.as_deref(), LINKED, "{module_file}");
     }
     let inline = Package {
-        nested: true,
-        ..Package::root(PUB_INLINE_LIB, true, &qualified_path)
+        ..Package::root(PUB_INLINE_LIB, &qualified_path)
     };
     assert_eq!(inline.relation()?.as_deref(), LINKED);
     Ok(())
@@ -573,7 +562,6 @@ fn an_unplaceable_module_does_not_link() -> Result<(), String> {
     let binary = |tests: String| Package {
         manifest: manifest("qual_reach", None),
         diff_path: "src/inner.rs",
-        nested: false,
         files: vec![
             ("src/main.rs", "mod inner;\nfn main() {}\n".to_string()),
             ("src/inner.rs", MODULE_SRC.to_string()),
@@ -623,8 +611,7 @@ fn a_module_qualified_call_fails_closed_on_rebinding_and_include() -> Result<(),
 fn nested_cfg_and_shadowing_module_shapes_fail_closed() -> Result<(), String> {
     let nested_lib = "pub mod outer {\n    pub mod inner {\n        fn is_bulk(qty: u32) -> bool {\n            10 <= qty\n        }\n\n        pub fn order_discount(qty: u32) -> u32 {\n            if is_bulk(qty) { 5 } else { 0 }\n        }\n    }\n}\n";
     let nested = |tests: String| Package {
-        nested: true,
-        ..Package::root(nested_lib, true, &tests)
+        ..Package::root(nested_lib, &tests)
     };
     assert_eq!(
         nested(spelled("qual_reach::outer::inner::order_discount"))
@@ -1033,10 +1020,9 @@ fn an_imported_suffix_must_spell_the_entrys_module_path() -> Result<(), String> 
     // Root re-export scope: a decoy module's `pub use`, a competing root
     // value binding, or a non-public re-export never credits the entry.
     let reexport_tests = format!("use qual_reach::order_discount;\n{}", test_file(BARE));
-    let nested = |lib: &str| Package::root(lib, true, &reexport_tests);
+    let nested = |lib: &str| Package::root(lib, &reexport_tests);
     let valid_reexport = "mod inner {\n    fn is_bulk(qty: u32) -> bool {\n        10 <= qty\n    }\n\n    pub fn order_discount(qty: u32) -> u32 {\n        if is_bulk(qty) { 5 } else { 0 }\n    }\n}\npub use inner::order_discount;\n";
     let control = Package {
-        nested: true,
         ..nested(valid_reexport)
     };
     assert_eq!(
@@ -1063,24 +1049,18 @@ fn an_imported_suffix_must_spell_the_entrys_module_path() -> Result<(), String> 
             "pub use inner::order_discount;\n",
             &format!("{extra}{tail}"),
         );
-        let package = Package {
-            nested: true,
-            ..nested(&lib)
-        };
+        let package = Package { ..nested(&lib) };
         assert_eq!(package.relation()?, None, "{extra}{tail}");
         assert_ne!(package.classification()?, "exposed", "{extra}{tail}");
     }
     let private = valid_reexport.replace("pub use inner", "use inner");
-    let package = Package {
-        nested: true,
-        ..nested(&private)
-    };
+    let package = Package { ..nested(&private) };
     assert_eq!(package.relation()?, None, "private re-export");
     // A unit test inside `src/` whose module shadows the std path.
     let unit_lib = format!(
         "{LIB}\n#[cfg(test)]\nmod tests {{\n    mod foreign {{\n        pub use std::cmp::max as order_discount;\n    }}\n    use self::foreign::order_discount;\n\n    #[test]\n    fn discount_boundary() {{\n        assert_eq!(order_discount(10, 5), 10);\n        assert_eq!(order_discount(9, 5), 9);\n    }}\n}}\n"
     );
-    let package = Package::root(&unit_lib, false, "");
+    let package = Package::root(&unit_lib, "");
     assert_ne!(package.relation()?.as_deref(), LINKED, "unit shadow");
     assert_ne!(package.classification()?, "exposed", "unit shadow");
     Ok(())
@@ -1161,7 +1141,6 @@ fn the_declaration_chain_must_reach_the_definitions_file() -> Result<(), String>
     let package = |lib: &str| Package {
         manifest: manifest("qual_reach", None),
         diff_path: "src/cmp.rs",
-        nested: false,
         files: vec![
             ("src/lib.rs", lib.to_string()),
             ("src/cmp.rs", LIB.to_string()),
@@ -1209,6 +1188,10 @@ fn a_nearer_binding_inside_the_test_body_shadows_the_import() -> Result<(), Stri
         "    let order_discount = foreign::order_discount;\n    assert_eq!(order_discount(10), 5);",
         "    let f = |order_discount: fn(u32) -> u32| order_discount(10);\n    assert_eq!(f(foreign::order_discount), 5);",
         "    mod order_discount {}\n    assert_eq!(order_discount(10), 5);",
+        "    #[allow(non_camel_case_types)]\n    struct order_discount(u32);\n    assert_eq!(order_discount(10).0, 10);",
+        "    #[allow(non_camel_case_types)]\n    struct order_discount(u32);\n    let _ = order_discount(10);",
+        "    fn order_discount(_: u32) -> u32 { 5 }\n    assert_eq!(order_discount(10), 5);",
+        "    const order_discount: fn(u32) -> u32 = |x| x;\n    assert_eq!(order_discount(10), 10);",
     ] {
         let package = module_package(
             "src/inner.rs",
@@ -1218,6 +1201,37 @@ fn a_nearer_binding_inside_the_test_body_shadows_the_import() -> Result<(), Stri
         );
         assert_ne!(package.relation()?.as_deref(), LINKED, "{body}");
         assert_ne!(package.classification()?, "exposed", "{body}");
+    }
+    Ok(())
+}
+
+/// A closure parameter named like the entry shadows only the calls inside the
+/// closure; outer calls (spelled with an interior comment, on their own lines)
+/// still reach the imported entry, while a plain or comment-split call inside
+/// the shadow scope refuses.
+#[test]
+fn a_closure_shadow_does_not_veto_commented_outer_calls() -> Result<(), String> {
+    let import = "use qual_reach::inner::order_discount;\n";
+    let outer = "    assert_eq!(order_discount /* outer */ (10), 5);\n    assert_eq!(order_discount(9), 0);";
+    let closure = "    let _unused = |order_discount: fn(u32) -> u32| order_discount(10);\n";
+    let package = module_package(
+        "src/inner.rs",
+        MODULE_LIB,
+        format!("{import}{}", test_file(&format!("{closure}{outer}"))),
+        vec![],
+    );
+    assert_eq!(package.relation()?.as_deref(), LINKED);
+    for shadowed in [
+        "    let f = |order_discount: fn(u32) -> u32| order_discount /* c */ (10);\n    assert_eq!(f(foreign::order_discount), 5);",
+        "    let order_discount = foreign::order_discount;\n    assert_eq!(order_discount /* c */ (10), 5);",
+    ] {
+        let package = module_package(
+            "src/inner.rs",
+            MODULE_LIB,
+            format!("{import}{}", test_file(shadowed)),
+            vec![],
+        );
+        assert_ne!(package.relation()?.as_deref(), LINKED, "{shadowed}");
     }
     Ok(())
 }
@@ -1232,7 +1246,6 @@ fn unit_crate_imports_scoped_bindings_and_inline_ancestors() -> Result<(), Strin
     let unit = |lib: &str, import: &str, calls: &str| Package {
         manifest: manifest("qual_reach", None),
         diff_path: "src/cmp.rs",
-        nested: false,
         files: vec![
             ("src/lib.rs", lib.to_string()),
             ("src/cmp.rs", LIB.to_string()),
@@ -1298,7 +1311,6 @@ fn unit_crate_imports_scoped_bindings_and_inline_ancestors() -> Result<(), Strin
     let nested = Package {
         manifest: manifest("qual_reach", None),
         diff_path: "src/outer/cmp.rs",
-        nested: false,
         files: vec![
             (
                 "src/lib.rs",
