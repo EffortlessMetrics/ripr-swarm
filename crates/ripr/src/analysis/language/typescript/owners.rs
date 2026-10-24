@@ -238,11 +238,6 @@ fn owners_from_commonjs_export(
 fn without_reassigned_commonjs_exports(
     owners: Vec<(TypeScriptOwner, bool)>,
 ) -> Vec<TypeScriptOwner> {
-    let commonjs_names: Vec<String> = owners
-        .iter()
-        .filter(|(_, commonjs)| *commonjs)
-        .map(|(owner, _)| owner.name.clone())
-        .collect();
     // #7507: every bare `module.exports = <fn>` assigns the SAME default
     // slot, whatever the function id names it. Two such assignments mean the
     // first value is dead — the name-grouping below would keep both because
@@ -252,13 +247,26 @@ fn without_reassigned_commonjs_exports(
         .iter()
         .filter(|(owner, commonjs)| *commonjs && owner.exported_as_default)
         .count();
-    // Name multiplicity in one pass: a large CommonJS module otherwise pays
-    // an O(owners x names) scan here (#10017).
-    let mut commonjs_name_counts: std::collections::HashMap<String, usize> =
-        std::collections::HashMap::new();
-    for name in &commonjs_names {
-        *commonjs_name_counts.entry(name.clone()).or_insert(0) += 1;
-    }
+    // Name multiplicity in one pass over borrowed names: a large CommonJS
+    // module otherwise pays an O(owners x names) scan (#10017), and cloning
+    // every CommonJS owner name into a counting map allocates one string per
+    // export (#10087). Only the rare duplicated names are kept, as owned
+    // strings, so the counting map's borrow of `owners` ends before the
+    // consuming filter below.
+    let duplicated: std::collections::HashSet<String> = {
+        let mut commonjs_name_counts: std::collections::HashMap<&str, usize> =
+            std::collections::HashMap::new();
+        for (owner, commonjs) in &owners {
+            if *commonjs {
+                *commonjs_name_counts.entry(owner.name.as_str()).or_insert(0) += 1;
+            }
+        }
+        commonjs_name_counts
+            .into_iter()
+            .filter(|(_, count)| *count > 1)
+            .map(|(name, _)| name.to_string())
+            .collect()
+    };
     owners
         .into_iter()
         .filter(|(owner, commonjs)| {
@@ -268,7 +276,7 @@ fn without_reassigned_commonjs_exports(
             if owner.exported_as_default && bare_default_count > 1 {
                 return false;
             }
-            commonjs_name_counts.get(&owner.name).copied().unwrap_or(0) == 1
+            !duplicated.contains(&owner.name)
         })
         .map(|(owner, _)| owner)
         .collect()
@@ -291,7 +299,7 @@ fn without_reassigned_esm_bindings(
     if owners.is_empty() {
         return owners;
     }
-    let reassigned: std::collections::HashSet<String> =
+    let reassigned: std::collections::HashSet<&str> =
         dead_reassigned_esm_bindings(body).into_iter().collect();
     if reassigned.is_empty() {
         return owners;
@@ -302,7 +310,7 @@ fn without_reassigned_esm_bindings(
             // A class method shares only the binding name with a reassigned
             // top-level binding; its receiver keeps it live, so the
             // name-only drop must not take it.
-            owner.class_name.is_some() || !reassigned.contains(&owner.name)
+            owner.class_name.is_some() || !reassigned.contains(owner.name.as_str())
         })
         .collect()
 }
@@ -314,13 +322,14 @@ fn without_reassigned_esm_bindings(
 /// the walk records any plain identifier write and lets the caller
 /// intersect with its owners. Live `export { ident as default }` is not a
 /// snapshot, so a later write still drops (fail-closed).
-fn dead_reassigned_esm_bindings(body: &[Statement<'_>]) -> Vec<String> {
-    // Membership sets, not growing scanned Vecs: a large generated module
-    // (tens of thousands of top-level bindings) turns a per-binding linear
-    // scan into quadratic wall time (#10017). Insertion order is preserved
+fn dead_reassigned_esm_bindings<'a>(body: &'a [Statement<'a>]) -> Vec<&'a str> {
+    // Membership sets borrow the AST arena instead of owning one String per
+    // top-level binding: a large generated module (tens of thousands of
+    // bindings) otherwise allocates that many strings twice (#10087). The
+    // #10017 quadratic-scan fix is unchanged. Insertion order is preserved
     // where a consumer observes it (`reassigned` iterates in statement
     // order below); every other use is membership only.
-    let mut declared: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut declared: std::collections::HashSet<&'a str> = std::collections::HashSet::new();
     for stmt in body {
         match stmt {
             Statement::VariableDeclaration(decl)
@@ -328,13 +337,13 @@ fn dead_reassigned_esm_bindings(body: &[Statement<'_>]) -> Vec<String> {
             {
                 for declarator in &decl.declarations {
                     for identifier in declarator.id.get_binding_identifiers() {
-                        declared.insert(identifier.name.to_string());
+                        declared.insert(identifier.name.as_str());
                     }
                 }
             }
             Statement::FunctionDeclaration(func) => {
                 if let Some(id) = &func.id {
-                    declared.insert(id.name.to_string());
+                    declared.insert(id.name.as_str());
                 }
             }
             // `export let price = ...` / `export function price() ...` bind
@@ -347,13 +356,13 @@ fn dead_reassigned_esm_bindings(body: &[Statement<'_>]) -> Vec<String> {
                 {
                     for declarator in &decl.declarations {
                         for identifier in declarator.id.get_binding_identifiers() {
-                            declared.insert(identifier.name.to_string());
+                            declared.insert(identifier.name.as_str());
                         }
                     }
                 }
                 Some(oxc_ast::ast::Declaration::FunctionDeclaration(func)) => {
                     if let Some(id) = &func.id {
-                        declared.insert(id.name.to_string());
+                        declared.insert(id.name.as_str());
                     }
                 }
                 _ => {}
@@ -364,13 +373,13 @@ fn dead_reassigned_esm_bindings(body: &[Statement<'_>]) -> Vec<String> {
     if declared.is_empty() {
         return Vec::new();
     }
-    let mut snapshot_exports: Vec<(String, u32)> = Vec::new();
-    let mut reassigned: Vec<(String, u32)> = Vec::new();
-    let mut reassigned_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut snapshot_exports: Vec<(&'a str, u32)> = Vec::new();
+    let mut reassigned: Vec<(&'a str, u32)> = Vec::new();
+    let mut reassigned_names: std::collections::HashSet<&'a str> = std::collections::HashSet::new();
     for stmt in body {
         if let Some(name) = snapshot_default_export_local(stmt)
-            && declared.contains(&name)
-            && !snapshot_exports.iter().any(|(seen, _)| seen == &name)
+            && declared.contains(name)
+            && !snapshot_exports.iter().any(|(seen, _)| *seen == name)
         {
             snapshot_exports.push((name, stmt.span().start));
         }
@@ -383,7 +392,7 @@ fn dead_reassigned_esm_bindings(body: &[Statement<'_>]) -> Vec<String> {
         }
         let offset = stmt.span().start;
         for name in assigned_identifiers_in_statement(stmt) {
-            if declared.contains(&name) && reassigned_names.insert(name.clone()) {
+            if declared.contains(name) && reassigned_names.insert(name) {
                 reassigned.push((name, offset));
             }
         }
@@ -393,7 +402,7 @@ fn dead_reassigned_esm_bindings(body: &[Statement<'_>]) -> Vec<String> {
     // A binding that is also a named export (`export let price`, `export {
     // price }`, `export { price as alias }`) is live for named importers, who
     // observe the later write, so the snapshot cannot excuse it (fail-closed).
-    let named_exports: std::collections::HashSet<String> =
+    let named_exports: std::collections::HashSet<&str> =
         named_exported_locals(body).into_iter().collect();
     reassigned
         .into_iter()
@@ -411,8 +420,8 @@ fn dead_reassigned_esm_bindings(body: &[Statement<'_>]) -> Vec<String> {
 /// bindings: `export let|var|function name`, `export { name }` and
 /// `export { name as alias }` (but not `as default`, which the caller treats
 /// separately).
-fn named_exported_locals(body: &[Statement<'_>]) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
+fn named_exported_locals<'a>(body: &'a [Statement<'a>]) -> Vec<&'a str> {
+    let mut out: Vec<&'a str> = Vec::new();
     for stmt in body {
         let Statement::ExportNamedDeclaration(export) = stmt else {
             continue;
@@ -421,13 +430,13 @@ fn named_exported_locals(body: &[Statement<'_>]) -> Vec<String> {
             Some(oxc_ast::ast::Declaration::VariableDeclaration(decl)) => {
                 for declarator in &decl.declarations {
                     for identifier in declarator.id.get_binding_identifiers() {
-                        out.push(identifier.name.to_string());
+                        out.push(identifier.name.as_str());
                     }
                 }
             }
             Some(oxc_ast::ast::Declaration::FunctionDeclaration(func)) => {
                 if let Some(id) = &func.id {
-                    out.push(id.name.to_string());
+                    out.push(id.name.as_str());
                 }
             }
             _ => {}
@@ -435,7 +444,7 @@ fn named_exported_locals(body: &[Statement<'_>]) -> Vec<String> {
         if export.source.is_none() {
             for specifier in &export.specifiers {
                 if let Some(name) = specifier.local.identifier_name() {
-                    out.push(name.to_string());
+                    out.push(name.as_str());
                 }
             }
         }
@@ -445,7 +454,7 @@ fn named_exported_locals(body: &[Statement<'_>]) -> Vec<String> {
 
 /// Local name snapshotted by `export default ident` / `export default
 /// (ident)`. Live `export { ident as default }` is not a snapshot.
-fn snapshot_default_export_local(stmt: &Statement<'_>) -> Option<String> {
+fn snapshot_default_export_local<'a>(stmt: &'a Statement<'a>) -> Option<&'a str> {
     let Statement::ExportDefaultDeclaration(export) = stmt else {
         return None;
     };
@@ -454,7 +463,7 @@ fn snapshot_default_export_local(stmt: &Statement<'_>) -> Option<String> {
         expression = &paren.expression;
     }
     match expression {
-        Expression::Identifier(ident) => Some(ident.name.to_string()),
+        Expression::Identifier(ident) => Some(ident.name.as_str()),
         _ => None,
     }
 }
@@ -462,15 +471,15 @@ fn snapshot_default_export_local(stmt: &Statement<'_>) -> Option<String> {
 /// Plain identifier writes inside one top-level statement: `name = ...`
 /// (any operator), `++name` / `name++`. Member, destructuring-pattern and
 /// computed writes are not plain bindings and are ignored.
-fn assigned_identifiers_in_statement(stmt: &Statement<'_>) -> Vec<String> {
+fn assigned_identifiers_in_statement<'a>(stmt: &'a Statement<'a>) -> Vec<&'a str> {
     use oxc_ast::ast::Expression;
-    let mut out = Vec::new();
-    fn push_ident(target: &oxc_ast::ast::IdentifierReference<'_>, out: &mut Vec<String>) {
-        if !out.iter().any(|seen: &String| seen == target.name.as_str()) {
-            out.push(target.name.to_string());
+    let mut out: Vec<&'a str> = Vec::new();
+    fn push_ident<'a>(target: &'a oxc_ast::ast::IdentifierReference<'a>, out: &mut Vec<&'a str>) {
+        if !out.iter().any(|seen| *seen == target.name.as_str()) {
+            out.push(target.name.as_str());
         }
     }
-    fn walk_expression(expression: &Expression<'_>, out: &mut Vec<String>) {
+    fn walk_expression<'a>(expression: &'a Expression<'a>, out: &mut Vec<&'a str>) {
         match expression {
             Expression::AssignmentExpression(assign) => {
                 if let AssignmentTarget::AssignmentTargetIdentifier(target) = &assign.left {
@@ -539,13 +548,13 @@ fn assigned_identifiers_in_statement(stmt: &Statement<'_>) -> Vec<String> {
 /// rule 5). Without this, a default import of such an owner would lose its
 /// declaration anchor. Only class-free owners qualify: a method is never the
 /// module's default export itself.
-fn mark_default_exported_bindings(body: &[Statement<'_>], owners: &mut [TypeScriptOwner]) {
-    let mut default_locals: Vec<String> = Vec::new();
+fn mark_default_exported_bindings<'a>(body: &'a [Statement<'a>], owners: &mut [TypeScriptOwner]) {
+    let mut default_locals: std::collections::HashSet<String> = std::collections::HashSet::new();
     for stmt in body {
         match stmt {
             Statement::ExportDefaultDeclaration(export) => {
                 if let ExportDefaultDeclarationKind::Identifier(ident) = &export.declaration {
-                    default_locals.push(ident.name.to_string());
+                    default_locals.insert(ident.name.to_string());
                 }
             }
             Statement::ExportNamedDeclaration(export)
@@ -558,7 +567,7 @@ fn mark_default_exported_bindings(body: &[Statement<'_>], owners: &mut [TypeScri
                     if module_export_name_text(&specifier.exported).as_deref() == Some("default")
                         && let Some(local) = module_export_name_text(&specifier.local)
                     {
-                        default_locals.push(local);
+                        default_locals.insert(local);
                     }
                 }
             }
@@ -571,7 +580,7 @@ fn mark_default_exported_bindings(body: &[Statement<'_>], owners: &mut [TypeScri
     for owner in owners.iter_mut() {
         if owner.class_name.is_none()
             && owner.owner_kind != OwnerKind::ModuleFunction
-            && default_locals.contains(&owner.name)
+            && default_locals.contains(owner.name.as_str())
         {
             owner.exported_as_default = true;
         }
@@ -611,6 +620,13 @@ fn mark_commonjs_default_binding(
         if let Expression::Identifier(ident) = &assign.right {
             target = Some(ident.name.as_str());
         }
+    }
+    // No `module.exports = <ident>` twin to find and no inline default-export
+    // owner whose gate could clear it: the whole pass is a no-op, including
+    // its three full-source mask builds — the expensive part on a large ESM
+    // module that never touches `module.exports` (#10087).
+    if target.is_none() && !owners.iter().any(|owner| owner.commonjs_default_export) {
+        return;
     }
     let declarations = target.map_or(0, |name| {
         program
@@ -830,7 +846,7 @@ fn mark_default_object_members(body: &[Statement<'_>], owners: &mut [TypeScriptO
     let (Some(object), None) = (objects.next(), objects.next()) else {
         return;
     };
-    let mut members: Vec<String> = Vec::new();
+    let mut members: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for property in &object.properties {
         let ObjectPropertyKind::ObjectProperty(property) = property else {
             return;
@@ -845,15 +861,14 @@ fn mark_default_object_members(body: &[Statement<'_>], owners: &mut [TypeScriptO
         else {
             return;
         };
-        if key.name != value.name || members.iter().any(|seen| seen == key.name.as_str()) {
+        if key.name != value.name || !members.insert(key.name.as_str()) {
             return;
         }
-        members.push(key.name.to_string());
     }
     // An arrow owner qualifies only when its top-level binding is `const`:
     // a `let`/`var` arrow can be rebound inside a nested function or block,
     // which the top-level reassignment pass does not see.
-    let const_names: Vec<&str> = body
+    let const_names: std::collections::HashSet<&str> = body
         .iter()
         .filter_map(|stmt| match stmt {
             Statement::VariableDeclaration(decl) => Some(&**decl),
@@ -871,10 +886,10 @@ fn mark_default_object_members(body: &[Statement<'_>], owners: &mut [TypeScriptO
     for owner in owners.iter_mut() {
         let callable = match owner.owner_kind {
             OwnerKind::Function => true,
-            OwnerKind::ArrowFunction => const_names.contains(&owner.name.as_str()),
+            OwnerKind::ArrowFunction => const_names.contains(owner.name.as_str()),
             _ => false,
         };
-        if owner.class_name.is_none() && callable && members.contains(&owner.name) {
+        if owner.class_name.is_none() && callable && members.contains(owner.name.as_str()) {
             owner.default_object_member = true;
         }
     }

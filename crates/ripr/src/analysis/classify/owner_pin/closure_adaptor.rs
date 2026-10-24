@@ -1174,6 +1174,7 @@ mod tests {
                 .to_string(),
             parameters: vec!["days".to_string(), "want".to_string()],
             call_lines,
+            eager_call_lines: Vec::new(),
         };
         let runs = |call_lines: Vec<usize>, argument: &str| {
             argument_sequences(

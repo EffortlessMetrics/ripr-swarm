@@ -1,0 +1,9 @@
+diff --git a/src/auditedObserved.ts b/src/auditedObserved.ts
+--- a/src/auditedObserved.ts
++++ b/src/auditedObserved.ts
+@@ -1,4 +1,4 @@
+ export function chargeObserved(amount: number, percent: number): number {
+-  console.log("observed", amount * 9);
++  console.log("observed", amount * 8);
+   return amount - Math.floor((amount * percent) / 100);
+ }

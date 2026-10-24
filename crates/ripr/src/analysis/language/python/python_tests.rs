@@ -1210,6 +1210,7 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         imports: Vec::new(),
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
+        route_methods: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         unplain_decorators: Vec::new(),
         decorator_lines: None,
@@ -1711,6 +1712,7 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         imports: Vec::new(),
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
+        route_methods: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         unplain_decorators: Vec::new(),
         decorator_lines: None,
@@ -1773,6 +1775,7 @@ fn shared_src_layout_module_name_identifies_owner_only_from_its_project() -> Res
         imports: Vec::new(),
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
+        route_methods: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         unplain_decorators: Vec::new(),
         decorator_lines: None,
@@ -1857,6 +1860,7 @@ fn nested_src_layout_rival_claims_tests_under_its_own_root() {
         imports: Vec::new(),
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
+        route_methods: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         unplain_decorators: Vec::new(),
         decorator_lines: None,
@@ -1908,6 +1912,7 @@ fn same_stem_related_handles_missing_stems() {
         imports: Vec::new(),
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
+        route_methods: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         unplain_decorators: Vec::new(),
         decorator_lines: None,
@@ -3889,6 +3894,40 @@ fn line_uses_imported_symbol_matches_attribute_access_on_imported_alias() {
     assert!(!line_uses_imported_symbol("    unrelated", &imports));
 }
 
+/// `file=sys.stderr` on a `print` names a standard stream; any other `sys`
+/// attribute use is still an imported symbol the adapter does not resolve.
+#[test]
+fn print_to_a_standard_stream_is_not_an_unresolved_import() {
+    let sys = vec![PythonImport {
+        imported: "sys".to_string(),
+        alias: "sys".to_string(),
+        source_module: String::new(),
+    }];
+    for line in [
+        "    print(f\"warning: {message}\", file=sys.stderr)",
+        "    print(message, file = sys.stdout)",
+        "    print(message, flush=True, file=sys.stderr)",
+    ] {
+        assert!(!line_uses_imported_symbol(line, &sys), "{line}");
+    }
+    for line in [
+        "    print(message, file=sys.argv)",
+        "    print(sys.argv[0], file=sys.stderr)",
+        "    print(f\"warning: {message}\", sys.platform, file=sys.stderr)",
+        "    print(\"a\", file=sys.stderr) if sys.argv else print(\"b\", file=open(\"f\", \"w\"))",
+        "    log(sys.argv, file=sys.stderr); print(\"x\")",
+        "    x = fmt(sys.argv, \"file=sys.stderr\"); print(x)",
+        "    print(message, file=sys.stderr if flag else other)",
+        "    print(message, file=sys.stderr_alt())",
+        "    print(message, file=sys.stderr, flush=sys.flags)",
+        "    log(message, file=sys.stderr)",
+        "    return sys.platform",
+        "    print(sys.modules)",
+    ] {
+        assert!(line_uses_imported_symbol(line, &sys), "{line}");
+    }
+}
+
 #[test]
 fn classify_probe_shape_assign_with_non_call_rhs_falls_through_to_predicate() {
     // `total = amount + 10` is an assignment whose LHS is a plain
@@ -4001,6 +4040,7 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         imports: Vec::new(),
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
+        route_methods: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         unplain_decorators: Vec::new(),
         decorator_lines: None,
@@ -4080,6 +4120,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         imports: Vec::new(),
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
+        route_methods: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         unplain_decorators: Vec::new(),
         decorator_lines: None,
@@ -4160,6 +4201,7 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         imports: Vec::new(),
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
+        route_methods: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         unplain_decorators: Vec::new(),
         decorator_lines: None,
@@ -4697,6 +4739,89 @@ fn workspace_pass_withholds_relation_for_same_named_function_in_unimported_modul
         ));
     };
     assert_eq!(imported_finding.related_tests.len(), 1);
+    Ok(())
+}
+
+fn route_relation_for(decorator: &str, call: &str) -> Result<bool, String> {
+    let owners = extract_owners(
+        Path::new("app/items.py"),
+        &format!("api = object()\n\n{decorator}\ndef items(payload):\n    return payload\n"),
+    );
+    let owner = owners
+        .iter()
+        .find(|owner| owner.name == "items")
+        .ok_or_else(|| "expected items owner".to_string())?;
+    let tests = extract_tests(
+        Path::new("tests/test_items.py"),
+        &format!("def test_items(client):\n    response = client.{call}\n    assert response\n"),
+    );
+    Ok(related_test_candidates(owner, &tests)
+        .iter()
+        .any(|candidate| candidate.relation == PythonRelationKind::ApiClientRouteCall))
+}
+
+#[test]
+fn api_client_route_relation_requires_the_decorator_verb() -> Result<(), String> {
+    // Verb decorators relate only to a client call with the same verb.
+    assert!(route_relation_for(
+        "@api.post(\"/items\")",
+        "post(\"/items\")"
+    )?);
+    assert!(!route_relation_for(
+        "@api.post(\"/items\")",
+        "get(\"/items\")"
+    )?);
+    assert!(!route_relation_for(
+        "@api.delete(\"/items\")",
+        "put(\"/items\")"
+    )?);
+    // A GET route also serves HEAD.
+    assert!(route_relation_for(
+        "@api.get(\"/items\")",
+        "head(\"/items\")"
+    )?);
+    assert!(!route_relation_for(
+        "@api.get(\"/items\")",
+        "post(\"/items\")"
+    )?);
+    // A literal methods list names the accepted verbs.
+    let multi = "@api.route(\"/items\", methods=[\"POST\", \"PUT\"])";
+    assert!(route_relation_for(multi, "put(\"/items\")")?);
+    assert!(!route_relation_for(multi, "get(\"/items\")")?);
+    // A GET route declared through `methods` also serves HEAD.
+    assert!(route_relation_for(
+        "@api.route(\"/items\", methods=[\"GET\"])",
+        "head(\"/items\")"
+    )?);
+    // A path that contains the word does not hide the real keyword argument.
+    let tricky = "@api.route(\"/api/methods/list\", methods=[\"POST\"])";
+    assert!(route_relation_for(tricky, "post(\"/api/methods/list\")")?);
+    assert!(!route_relation_for(tricky, "get(\"/api/methods/list\")")?);
+    // Only the decorator's own `methods` keyword names verbs: another call's
+    // `methods=` keyword nested in its arguments is not the route's.
+    let nested =
+        "@api.api_route(\"/items\", openapi_extra=dict(methods=[\"POST\"]), methods=[\"GET\"])";
+    assert!(route_relation_for(nested, "get(\"/items\")")?);
+    assert!(!route_relation_for(nested, "post(\"/items\")")?);
+    // A comment inside a plain literal list does not make it unknown.
+    let commented =
+        "@api.api_route(\"/items\", methods=[\n    \"POST\",  # create\n    \"PUT\",\n])";
+    assert!(route_relation_for(commented, "put(\"/items\")")?);
+    assert!(!route_relation_for(commented, "get(\"/items\")")?);
+    // A concatenated list is not a plain literal, so the verb stays unknown
+    // rather than being truncated to its first half.
+    let joined = "@api.api_route(\"/items\", methods=[\"POST\"] + [\"PUT\"])";
+    assert!(route_relation_for(joined, "put(\"/items\")")?);
+    assert!(route_relation_for(joined, "get(\"/items\")")?);
+    // An unknown verb keeps the path-only relation instead of dropping it.
+    assert!(route_relation_for(
+        "@api.route(\"/items\")",
+        "post(\"/items\")"
+    )?);
+    assert!(route_relation_for(
+        "@api.api_route(\"/items\", methods=VERBS)",
+        "get(\"/items\")"
+    )?);
     Ok(())
 }
 
