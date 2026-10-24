@@ -1,0 +1,104 @@
+name: Windows Watchdog Qualification
+
+# Manual native forced-stall control for the shard watchdog in
+# windows-advisory-shards.yml (#9272). It extracts that workflow's shipped test
+# step at run time, swaps only the 44-minute timer for a 12-second one and the
+# nextest command for a native fixture, and checks what the watchdog actually
+# did on a Windows runner: mapped root, primary reaped, owned descendant ended,
+# an unowned sentinel left alone. The primary-only-kill mutation must fail the
+# descendant oracle, and the forced-missing-mapping cell keeps its limitation.
+# A shortened timer qualifies only the shorter bound, not the 44-minute one.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  forced-stall:
+    name: forced-stall-${{ matrix.mode }}
+    runs-on: windows-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [mapped, primary-only, unmapped]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Extract the shipped wrapper and build the fixture
+        shell: bash
+        run: |
+          mkdir -p target
+          f=.github/workflows/windows-advisory-shards.yml
+          awk '/name: Run workspace tests/{s=1} s&&/run: \|/{r=1;next} r&&/^$/{exit} r{print substr($0,11)}' "$f" > target/wrapper.sh
+          sed -i -e 's/\${{ matrix.shard }}/1/' -e 's/seq 1 264/seq 1 12/' -e 's/sleep 10/sleep 1/' target/wrapper.sh
+          sed -i -e 's#^cargo nextest run .* > target/shard-\$shard.log 2>&1 &#bash target/fixture.sh > target/shard-$shard.log 2>\&1 \&#' target/wrapper.sh
+          case "${{ matrix.mode }}" in
+            primary-only) sed -i 's#taskkill //F //T //PID#taskkill //F //PID#' target/wrapper.sh ;;
+            unmapped) sed -i 's#/proc/$nextest_pid/winpid#/proc/$nextest_pid/no-such-winpid#' target/wrapper.sh ;;
+          esac
+          grep -q 'bash target/fixture.sh' target/wrapper.sh || { echo "fixture substitution missed" >&2; exit 1; }
+          grep -q 'seq 1 12' target/wrapper.sh || { echo "timer substitution missed" >&2; exit 1; }
+          [ "${{ matrix.mode }}" != primary-only ] || grep -q 'taskkill //F //PID' target/wrapper.sh || { echo "mutation missed" >&2; exit 1; }
+          [ "${{ matrix.mode }}" != unmapped ] || grep -q 'no-such-winpid' target/wrapper.sh || { echo "mutation missed" >&2; exit 1; }
+          printf '%s\n' 'ping -n 600 127.0.0.1 > /dev/null &' 'child=$!' 'cat "/proc/$child/winpid" > target/fixture.child' > target/fixture.sh
+          printf '%s\n' 'powershell -NoProfile -Command "(Get-CimInstance Win32_Process -Filter \"ProcessId=$(cat target/fixture.child)\").ParentProcessId" > target/fixture.root' 'wait' >> target/fixture.sh
+
+      - name: Run the wrapper against a forced stall
+        shell: bash
+        run: |
+          ping -n 900 127.0.0.1 > /dev/null &
+          cat "/proc/$!/winpid" > target/sentinel.pid
+          set +e
+          bash target/wrapper.sh > target/wrapper.out 2>&1
+          echo $? > target/wrapper.exit
+          cat target/wrapper.out
+
+      - name: Check what the watchdog did
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          alive() { powershell -NoProfile -Command "if (Get-Process -Id $1 -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }"; }
+          root=$(tr -cd 0-9 < target/fixture.root); child=$(cat target/fixture.child); sentinel=$(cat target/sentinel.pid)
+          marker=$(cat target/shard-1.watchdog 2> /dev/null || true); fail=0
+          echo "wrapper exit $(cat target/wrapper.exit), status $(cat target/shard-1.status 2> /dev/null), root=$root child=$child sentinel=$sentinel"; echo "marker: $marker"
+          [ "$(cat target/wrapper.exit)" = 124 ] && [ "$(cat target/shard-1.status)" = 124 ] || { echo "FAIL status not 124"; fail=1; }
+          alive "$sentinel" || { echo "FAIL unowned sentinel was not left running"; fail=1; }
+          if [ "${{ matrix.mode }}" = unmapped ]; then
+            case "$marker" in "fired unmapped"*) ;; *) echo "FAIL missing mapping was not recorded as unmapped"; fail=1 ;; esac
+            alive "$child" && echo "limitation: unmapped path left the descendant running (no native-cleanup credit)"
+          else
+            [ "$marker" = "fired winpid=$root" ] || { echo "FAIL marker does not name the independently recorded root"; fail=1; }
+            grep -q "ProcessId *: $child" target/shard-1.processes 2> /dev/null || { echo "FAIL process snapshot does not list the descendant"; fail=1; }
+            alive "$root" && { echo "FAIL primary not reaped"; fail=1; }
+            if alive "$child"; then descendant=alive; else descendant=ended; fi; echo "descendant $descendant"
+            # The primary-only mutation passes only if the descendant oracle rejects it.
+            if [ "${{ matrix.mode }}" = primary-only ]; then
+              [ "$descendant" = alive ] || { echo "FAIL oracle did not reject primary-only kill"; fail=1; }
+            else
+              [ "$descendant" = ended ] || { echo "FAIL descendant remained running"; fail=1; }
+            fi
+          fi
+          taskkill //F //PID "$child" > /dev/null 2>&1; taskkill //F //PID "$sentinel" > /dev/null 2>&1
+          exit "$fail"
+
+      - name: Upload qualification receipts
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: watchdog-qualification-${{ matrix.mode }}
+          path: |
+            target/wrapper.sh
+            target/wrapper.out
+            target/wrapper.exit
+            target/fixture.*
+            target/sentinel.pid
+            target/shard-1.*
+          if-no-files-found: warn
