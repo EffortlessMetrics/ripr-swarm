@@ -91,12 +91,24 @@ fn all_findings(source: String, diff: String) -> Result<Vec<Value>, String> {
 /// A negative must be uncredited, not merely unconfirmed. The changed line
 /// names the `out` parameter, so any credit would also confirm observation:
 /// an uncredited case is therefore neither `exposed` nor a `yes`
-/// discriminator.
+/// discriminator, and it stays in the weak-or-unknown classes.
 fn assert_uncredited(finding: &Value, context: &str) {
     assert_ne!(finding["classification"], "exposed", "{context}: {finding}");
     assert_ne!(
         finding["ripr"]["discriminate"]["state"], "yes",
         "{context}: {finding}"
+    );
+    let class = finding["classification"].as_str().unwrap_or_default();
+    assert!(
+        matches!(
+            class,
+            "weakly_exposed"
+                | "reachable_unrevealed"
+                | "propagation_unknown"
+                | "infection_unknown"
+                | "static_unknown"
+        ),
+        "{context}: unexpected class {class}: {finding}"
     );
 }
 
@@ -815,6 +827,75 @@ fn a_generic_or_trait_typed_output_is_not_credited() -> Result<(), String> {
         let owner = format!("{signature}\n{NEW}\n        out.push('x');\n    }}");
         let finding = finding_custom(&owner, OLD, NEW, &test)?;
         assert_uncredited(&finding, signature);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_user_type_named_like_a_std_buffer_is_not_credited() -> Result<(), String> {
+    let test = format!("{BUILD}        assert_eq!(s, \"+570\");");
+    for prelude in [
+        "mod m { pub struct String; impl String { pub fn new() -> Self { String } pub fn push(&mut self, _c: char) {} } }\nuse m::String;\n",
+        "struct Noop;\ntype String = Noop;\n",
+        "struct String;\n",
+        "use other::*;\n",
+    ] {
+        let owner = owner_with(&[NEW, "        out.push_str(\"570\");"]);
+        let finding = finding_custom_in(prelude, &owner, OLD, NEW, &test)?;
+        assert_uncredited(&finding, prelude);
+    }
+    // A std import of the same names keeps the credit.
+    let owner = owner_with(&[NEW, "        out.push_str(\"570\");"]);
+    let finding = finding_custom_in("use std::collections::VecDeque;\n", &owner, OLD, NEW, &test)?;
+    assert_eq!(finding["classification"], "exposed", "{finding}");
+    assert_eq!(finding["ripr"]["discriminate"]["state"], "yes", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn only_certainly_non_empty_write_arguments_are_credited() -> Result<(), String> {
+    let test = format!("{BUILD}        assert_eq!(s, \"+570\");");
+    for changed in [
+        "        out.write_all(b\"\");",
+        "        out.push_str(&format!(\"\"));",
+        "        out.extend_from_slice(&[0u8; 0]);",
+        "        out.append(&mut Vec::<u8>::new());",
+        "        write!(out, \"\").unwrap();",
+        "        write!(out, \"{}\", &\"\").unwrap();",
+        "        out.extend(None::<char>);",
+        "        out.extend(Vec::<char>::new());",
+        "        out.push_str(&String::new());",
+    ] {
+        let owner = owner_with(&[changed]);
+        let finding = finding_custom(&owner, "        // old", changed, &test)?;
+        assert_uncredited(&finding, changed);
+    }
+    // Certainly non-empty arguments keep the credit.
+    for changed in [
+        "        write!(out, \"+\").unwrap();",
+        "        out.push_str(&format!(\"{:02}\", minutes.abs()));",
+        "        out.push_str(\"+\");",
+    ] {
+        let owner = owner_with(&[changed]);
+        let finding = finding_custom(&owner, "        // old", changed, &test)?;
+        assert_eq!(finding["classification"], "exposed", "{changed}: {finding}");
+        assert_eq!(
+            finding["ripr"]["discriminate"]["state"], "yes",
+            "{changed}: {finding}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_helper_call_between_setup_and_assertion_is_not_credited() -> Result<(), String> {
+    for body in [
+        "        let mut s = String::new();\n        OffsetFormat.format(&mut s, 570);\n        quit_now();\n        assert_eq!(s, \"+570\");",
+        "        let mut s = String::new();\n        OffsetFormat.format(&mut s, 570);\n        util::quit_now();\n        assert_eq!(s, \"+570\");",
+        "        util::quit_now();\n        let mut s = String::new();\n        OffsetFormat.format(&mut s, 570);\n        assert_eq!(s, \"+570\");",
+    ] {
+        let finding = finding(body)?;
+        assert_uncredited(&finding, body);
     }
     Ok(())
 }

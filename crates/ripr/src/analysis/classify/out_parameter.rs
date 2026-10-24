@@ -31,6 +31,7 @@ use crate::analysis::classify::{
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::rust_index::{FunctionSummary, OracleFact, RustIndex, TestSummary};
 use crate::analysis::syntax::parse_clean_source_file;
+use ra_ap_syntax::AstToken;
 use ra_ap_syntax::{
     AstNode, SyntaxKind, SyntaxNode,
     ast::{self, HasArgList, HasName},
@@ -68,6 +69,16 @@ pub(in crate::analysis) fn assertion_out_parameter(
     if !owner_item_context_is_inert(owner, index, &impl_type) {
         return None;
     }
+    // A user type, alias or glob import named like the std buffers could make
+    // `push` a no-op, in the owner's file or the test's.
+    if [&owner.file, &test.file].into_iter().any(|file| {
+        index
+            .files()
+            .get(file)
+            .is_none_or(|facts| file_shadows_buffer_types(&facts.source))
+    }) {
+        return None;
+    }
     let impl_trait = owner_dispatch_trait(owner);
     let [left, right] = assertion_comparison_operands(&assertion.text)?;
     // Exactly one operand may be the candidate local that a matching call
@@ -88,7 +99,7 @@ pub(in crate::analysis) fn assertion_out_parameter(
             local_written_by_owner_call(
                 owner,
                 &out_parameters,
-                (impl_type.as_str(), impl_trait.as_deref()),
+                (impl_type.as_str(), impl_trait.as_deref(), macro_names),
                 test,
                 assertion,
                 &operand,
@@ -252,21 +263,15 @@ fn is_clearly_nonempty(expected: &str) -> bool {
 /// The local starts as a recognized empty collection, so a clearly non-empty
 /// expected value cannot equal its initial state.
 fn is_empty_constructor(initial: &str) -> bool {
-    const EMPTY: &[&str] = &[
-        "String::new()",
-        "String::default()",
-        "Vec::new()",
-        "Vec::default()",
-        "VecDeque::new()",
-        "BTreeMap::new()",
-        "BTreeSet::new()",
-        "HashMap::new()",
-        "HashSet::new()",
-    ];
-    EMPTY.contains(&initial)
-        || (initial.ends_with(')')
-            && (initial.starts_with("String::with_capacity(")
-                || initial.starts_with("Vec::with_capacity(")))
+    matches!(
+        initial,
+        "String::new()"
+            | "String::default()"
+            | "Vec::new()"
+            | "Vec::default()"
+            | "VecDeque::new()"
+            | "VecDeque::default()"
+    )
 }
 
 fn nonempty_expr(expression: &ast::Expr) -> bool {
@@ -317,54 +322,141 @@ fn nonempty_expr(expression: &ast::Expr) -> bool {
     }
 }
 
-/// An argument list whose arguments are all empty spellings writes nothing.
-fn arguments_are_empty(call: &ast::MethodCallExpr) -> bool {
-    const EMPTY: &[&str] = &[
-        "\"\"",
-        "&\"\"",
-        "[]",
-        "&[]",
-        "String::new()",
-        "&String::new()",
-        "Vec::new()",
-        "&Vec::new()",
-        "vec![]",
-        "&vec![]",
-        "std::iter::empty()",
-        "iter::empty()",
-        "None",
-    ];
-    let Some(arguments) = call.arg_list() else {
-        return true;
+/// Whether a `format!`-style template certainly produces text: it holds a
+/// non-placeholder character, or a placeholder with an explicit width.
+fn template_is_nonempty(template: &str) -> bool {
+    let chars: Vec<char> = template.chars().collect();
+    let mut at = 0;
+    while at < chars.len() {
+        match chars[at] {
+            '{' if chars.get(at + 1) == Some(&'{') => return true,
+            '}' if chars.get(at + 1) == Some(&'}') => return true,
+            '{' => {
+                let mut end = at + 1;
+                while end < chars.len() && chars[end] != '}' {
+                    end += 1;
+                }
+                let inner: String = chars[at + 1..end.min(chars.len())].iter().collect();
+                if let Some((_, spec)) = inner.split_once(':') {
+                    let mut spec: Vec<char> = spec.chars().collect();
+                    if spec.len() >= 2 && matches!(spec[1], '<' | '^' | '>') {
+                        spec.drain(..2);
+                    } else if spec.first().is_some_and(|ch| matches!(ch, '<' | '^' | '>')) {
+                        spec.remove(0);
+                    }
+                    while spec.first().is_some_and(|ch| matches!(ch, '+' | '-' | '#')) {
+                        spec.remove(0);
+                    }
+                    if spec.first() == Some(&'0') {
+                        spec.remove(0);
+                    }
+                    if spec.first().is_some_and(|ch| ('1'..='9').contains(ch)) {
+                        return true;
+                    }
+                }
+                at = end + 1;
+            }
+            _ => return true,
+        }
+    }
+    false
+}
+
+/// `lit`, `&lit` or `&format!(template, ..)` that certainly yields text, or
+/// a plain identifier (data-dependent: a named limit).
+fn nonempty_text_argument(argument: &ast::Expr) -> bool {
+    let mut expression = argument.clone();
+    while let ast::Expr::RefExpr(reference) = &expression {
+        let Some(inner) = reference.expr() else {
+            return false;
+        };
+        expression = inner;
+    }
+    match &expression {
+        ast::Expr::Literal(literal) => match literal.kind() {
+            ast::LiteralKind::String(text) => text.value().is_ok_and(|value| !value.is_empty()),
+            ast::LiteralKind::ByteString(text) => text.value().is_ok_and(|value| !value.is_empty()),
+            _ => false,
+        },
+        ast::Expr::PathExpr(path) => is_plain_ident(&compact(&path.syntax().text().to_string())),
+        ast::Expr::MacroExpr(mac) => mac.macro_call().is_some_and(|mac| {
+            mac.path()
+                .is_some_and(|path| compact(&path.syntax().text().to_string()) == "format")
+                && mac.token_tree().is_some_and(|tree| {
+                    tree.syntax()
+                        .children_with_tokens()
+                        .filter_map(|element| element.into_token())
+                        .find(|token| token.kind() == SyntaxKind::STRING)
+                        .and_then(ast::String::cast)
+                        .and_then(|text| {
+                            text.value().ok().map(|value| template_is_nonempty(&value))
+                        })
+                        .unwrap_or(false)
+                })
+        }),
+        _ => false,
+    }
+}
+
+fn nonempty_collection_argument(argument: &ast::Expr) -> bool {
+    let mut expression = argument.clone();
+    while let ast::Expr::RefExpr(reference) = &expression {
+        let Some(inner) = reference.expr() else {
+            return false;
+        };
+        expression = inner;
+    }
+    match &expression {
+        ast::Expr::ArrayExpr(array) => {
+            array.semicolon_token().is_none() && array.exprs().next().is_some()
+        }
+        ast::Expr::MethodCallExpr(call) => {
+            call.arg_list()
+                .is_some_and(|args| args.args().next().is_none())
+                && call
+                    .name_ref()
+                    .is_some_and(|name| matches!(strip_raw(name.text()), "chars" | "bytes"))
+                && call.receiver().is_some_and(|receiver| {
+                    matches!(&receiver, ast::Expr::Literal(_)) && nonempty_text_argument(&receiver)
+                })
+        }
+        _ => false,
+    }
+}
+
+/// Positive allowlist: a method call writes only when its arguments certainly
+/// add data. Anything else (including identifier-valued collections) is not
+/// credited.
+fn call_certainly_writes(method: &str, call: &ast::MethodCallExpr) -> bool {
+    let Some(list) = call.arg_list() else {
+        return false;
     };
-    let compacted: Vec<String> = arguments
-        .args()
-        .map(|argument| compact(&argument.syntax().text().to_string()))
-        .collect();
-    compacted.is_empty()
-        || compacted.iter().all(|argument| {
-            EMPTY.iter().any(|empty| {
-                argument.as_str() == *empty
-                    || argument
-                        .strip_prefix(empty)
-                        .is_some_and(|rest| rest.starts_with('.'))
-            })
-        })
+    let arguments: Vec<ast::Expr> = list.args().collect();
+    match (method, arguments.as_slice()) {
+        ("push" | "push_back" | "push_front" | "write_char", [_]) => true,
+        ("push_str" | "write_str", [text]) => nonempty_text_argument(text),
+        ("insert", [_, _]) => true,
+        ("insert_str", [_, text]) => nonempty_text_argument(text),
+        ("write_all", [bytes]) => {
+            nonempty_text_argument(bytes) || nonempty_collection_argument(bytes)
+        }
+        ("extend" | "extend_from_slice", [items]) => nonempty_collection_argument(items),
+        _ => false,
+    }
 }
 
 const ADDITIVE_WRITERS: &[&str] = &[
     "push",
-    "push_str",
     "push_back",
     "push_front",
+    "write_char",
+    "push_str",
+    "write_str",
     "insert",
+    "insert_str",
+    "write_all",
     "extend",
     "extend_from_slice",
-    "append",
-    "write_str",
-    "write_char",
-    "write_fmt",
-    "write_all",
 ];
 
 const READ_ONLY_METHODS: &[&str] = &[
@@ -411,7 +503,7 @@ fn classify_statement(
                 let method = call.name_ref()?;
                 let method = strip_raw(method.text());
                 if let Some(receiver) = bare_name_receiver(&call, name) {
-                    if ADDITIVE_WRITERS.contains(&method) && !arguments_are_empty(&call) {
+                    if ADDITIVE_WRITERS.contains(&method) && call_certainly_writes(method, &call) {
                         return Some((StatementKind::Write, receiver));
                     }
                     if method == "clear" && call.arg_list()?.args().next().is_none() {
@@ -442,13 +534,30 @@ fn classify_statement(
                     return None;
                 }
                 let tree = mac.token_tree()?;
-                let first = tree
+                let tokens: Vec<_> = tree
                     .syntax()
                     .children_with_tokens()
                     .filter_map(|element| element.into_token())
+                    .filter(|token| !token.kind().is_trivia())
+                    .collect();
+                let first = tokens
+                    .iter()
                     .find(|token| token.kind() == SyntaxKind::IDENT)?;
-                return (strip_raw(first.text()) == name)
-                    .then_some((StatementKind::Write, first.text_range()));
+                if strip_raw(first.text()) != name {
+                    return None;
+                }
+                // `writeln!` always adds a newline; `write!` needs a template
+                // that certainly yields text.
+                let writes = path.ends_with("writeln")
+                    || tokens
+                        .iter()
+                        .find(|token| token.kind() == SyntaxKind::STRING)
+                        .and_then(|token| ast::String::cast(token.clone()))
+                        .and_then(|text| {
+                            text.value().ok().map(|value| template_is_nonempty(&value))
+                        })
+                        .unwrap_or(false);
+                return writes.then_some((StatementKind::Write, first.text_range()));
             }
             _ => return None,
         }
@@ -785,10 +894,112 @@ fn owner_item_context_is_inert(
     })
 }
 
+/// A `let` of a plain value or an assertion macro; nothing else may sit
+/// between the test's start and its assertion.
+fn simple_test_statement(node: &SyntaxNode, macro_names: &[String]) -> bool {
+    if !straight_line(node, macro_names) {
+        return false;
+    }
+    match ast::Stmt::cast(node.clone()) {
+        Some(ast::Stmt::LetStmt(definition)) => {
+            definition.let_else().is_none()
+                && definition
+                    .initializer()
+                    .is_some_and(|initializer| simple_value(&initializer))
+        }
+        Some(ast::Stmt::ExprStmt(statement)) => {
+            matches!(statement.expr(), Some(ast::Expr::MacroExpr(_)))
+        }
+        _ => false,
+    }
+}
+
+fn simple_value(expression: &ast::Expr) -> bool {
+    match expression {
+        ast::Expr::Literal(_) | ast::Expr::PathExpr(_) => true,
+        ast::Expr::RefExpr(reference) => reference.expr().is_some_and(|inner| simple_value(&inner)),
+        ast::Expr::MacroExpr(_) => true,
+        ast::Expr::RecordExpr(record) => record.record_expr_field_list().is_some_and(|list| {
+            list.fields()
+                .all(|field| field.expr().is_none_or(|value| simple_value(&value)))
+                && list.spread().is_none()
+        }),
+        ast::Expr::CallExpr(call) => {
+            let callee = call
+                .expr()
+                .map(|callee| compact(&callee.syntax().text().to_string()))
+                .unwrap_or_default();
+            matches!(
+                callee.as_str(),
+                "String::new"
+                    | "String::from"
+                    | "Vec::new"
+                    | "VecDeque::new"
+                    | "Some"
+                    | "Ok"
+                    | "Err"
+            ) && call
+                .arg_list()
+                .is_some_and(|args| args.args().all(|argument| simple_value(&argument)))
+        }
+        _ => false,
+    }
+}
+
+/// Whether `source` defines, imports or aliases a type named `String`, `Vec`
+/// or `VecDeque`, or glob-imports from anywhere but `super`/`self`/`std`.
+fn file_shadows_buffer_types(source: &str) -> bool {
+    const NAMES: &[&str] = &["String", "Vec", "VecDeque"];
+    if !NAMES.iter().any(|name| source.contains(name)) && !source.contains('*') {
+        return false;
+    }
+    let Some(parse) = parse_clean_source_file(source) else {
+        return true;
+    };
+    let tree = parse.tree();
+    for node in tree.syntax().descendants() {
+        if let Some(item) = ast::Use::cast(node.clone()) {
+            let text = compact(&item.syntax().text().to_string());
+            let std_rooted = text.starts_with("usestd::")
+                || text.starts_with("usecore::")
+                || text.starts_with("usealloc::");
+            let names_buffer = NAMES.iter().any(|name| word_occurrences(&text, name) > 0);
+            let glob = text.contains('*');
+            let local_glob = matches!(text.as_str(), "usesuper::*;" | "useself::*;");
+            if (!std_rooted && names_buffer) || (glob && !std_rooted && !local_glob) {
+                return true;
+            }
+        }
+    }
+    let tokens: Vec<_> = tree
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .collect();
+    tokens.windows(2).any(|pair| {
+        pair[1].kind() == SyntaxKind::IDENT
+            && NAMES.contains(&strip_raw(pair[1].text()))
+            && matches!(
+                pair[0].text(),
+                "struct"
+                    | "enum"
+                    | "type"
+                    | "trait"
+                    | "union"
+                    | "mod"
+                    | "fn"
+                    | "const"
+                    | "static"
+                    | "as"
+            )
+    })
+}
+
 fn local_written_by_owner_call(
     owner: &FunctionSummary,
     out_parameters: &[(usize, String)],
-    (impl_type, impl_trait): (&str, Option<&str>),
+    (impl_type, impl_trait, macro_names): (&str, Option<&str>, &[String]),
     test: &TestSummary,
     assertion: &OracleFact,
     local: &str,
@@ -831,6 +1042,19 @@ fn local_written_by_owner_call(
         return None;
     };
     if !is_owned_local_definition(&items[*definition_at], local) {
+        return None;
+    }
+    // Every other statement before the assertion must be a plain setup
+    // statement: a helper that exits or panics there could stop the test
+    // before the assertion runs.
+    if items
+        .iter()
+        .enumerate()
+        .take(*assertion_at)
+        .any(|(at, node)| {
+            at != *definition_at && at != *call_at && !simple_test_statement(node, macro_names)
+        })
+    {
         return None;
     }
     // An expected value equal to the local's initial state (or an empty

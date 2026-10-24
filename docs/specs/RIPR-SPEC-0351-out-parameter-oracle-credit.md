@@ -1,4 +1,4 @@
-# RIPR-SPEC-0351: A test that asserts on the local it passed as `&mut` observes the changed method
+# RIPR-SPEC-0351: A test that asserts on the local it passed as `&mut` observes the changed method only when the changed expression writes through that parameter
 
 Status: proposed
 
@@ -59,8 +59,8 @@ method when every link is syntactic and exact:
    mention it.
 3. In the same test body, that local is bound exactly once by
    `let mut local = <recognized empty constructor>;` (`String::new()`,
-   `Vec::new()`, `default()`/`with_capacity(..)` of those and the std maps
-   and sets; no `let ... else`), and no statement between that binding and
+   `String::default()`, `Vec::new()`, `Vec::default()`, `VecDeque::new()`,
+   `VecDeque::default()`; no `let ... else`), and no statement between that binding and
    the call mentions it.
 4. The next mention is a top-level statement that calls the method, possibly
    through `?`, `.unwrap()` or `.expect(..)`, passing exactly `&mut local` at
@@ -98,20 +98,32 @@ assertion reads the call's out-parameter; it grants no strength or reach.
   exact-value oracle, the helper decides that a discriminator exists, not
   that the test passes.
 - The owner is accepted by an allowlist, not a blocklist. Every use of the
-  out-parameter in the owner body must be a top-level additive write
-  statement (`push`, `push_str`, `insert`, `extend`, `append`, `write_*`, or
-  a std `write!`/`writeln!`), a `clear()` before the first write, or a
-  read-only method call (`len`, `is_empty`, ...) on the bare identifier. Any
-  other use (passing it onward, reborrowing, aliasing, a deref or
-  parenthesized receiver, closure capture, an unknown method such as
-  `clone_from` or `split_off`, any other macro) refuses, as does a write with
-  only empty arguments.
+  out-parameter in the owner body must be a top-level write statement, a
+  `clear()` before the first write, or a read-only method call (`len`,
+  `is_empty`, ...) on the bare identifier. Later additive writes after the
+  changed write are allowed because an additive write cannot erase it; every
+  other later use (passing it onward, reborrowing, aliasing, a deref or
+  parenthesized receiver, closure capture, an unknown or destructive method
+  such as `clone_from`, `split_off`, `truncate` or `drain`, any other macro)
+  refuses.
+- A write counts only when its arguments certainly add data: `push`,
+  `push_back`, `push_front`, `write_char` and two-argument `insert` always;
+  `push_str`, `write_str`, `insert_str` and `write_all` with a non-empty
+  string or byte-string literal, `&format!(..)` whose template has
+  non-placeholder text or a placeholder with an explicit width, or a plain
+  identifier (data-dependent: a named limit); `extend`/`extend_from_slice`
+  with a non-empty array literal or `"lit".chars()`/`.bytes()`; `write!` with
+  such a template; `writeln!` into the parameter. `append`, empty literals,
+  `format!("")`, `None`, empty constructors and every other argument form
+  are not writes.
 - The writes must be straight-line top-level statements with no `return`,
   `break`, `continue` or `?` before the last one. A write inside an
   `if`/`match` arm, loop or closure refuses, because the test input may not
   execute it. The changed expression must itself be such a write with no
-  branch, loop, closure or early exit inside it, so a changed token on an
-  unexercised conditional side is not credited.
+  branch, loop, closure or early exit inside it (tokens `if`, `match`,
+  `for`, `while`, `loop`, `|`, `?`, `return`, `break`). A changed token that
+  selects a side without those tokens (`then_some`, indexing, `get`, width
+  or precision, `abs()`) is not detected; see follow-up #10058.
 - Capacity-only operations (`reserve`, `shrink_to_fit`, ...) are not writes.
   `extend_from_slice`/`extend`/`append` with a data-dependent argument (a
   local that may be empty) are accepted as writes; only literally empty
@@ -122,6 +134,13 @@ assertion reads the call's out-parameter; it grants no strength or reach.
   `deprecated`), and the file may hold exactly one method of that name in
   impls of the owner's type, so a `cfg`-gated twin cannot be the active one.
   Twins in other files are not seen.
+- A user type, alias, `use` or non-`super` glob import named `String`, `Vec`
+  or `VecDeque` in the owner's file or the test's file refuses credit; a
+  std-rooted import of those names does not.
+- Between the start of the test and its assertion, every statement other
+  than the setup definition and the owner call must be a `let` of a plain
+  value or an assertion macro; a helper call there refuses. A helper hidden
+  inside the owner call's receiver or arguments is not followed (#10058).
 - The parameter type must be a concrete `&mut String`, `&mut Vec<..>` or
   `&mut VecDeque<..>`; generic, `impl Trait` and `dyn Trait` outputs refuse.
 - Every statement at or before the last write may contain none of `return`,
