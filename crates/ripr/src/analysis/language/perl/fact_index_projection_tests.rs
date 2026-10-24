@@ -28,22 +28,38 @@ fn digest(packet: &PerlFactPacket) -> (String, usize) {
     let findings = packet_to_findings_with_currentness(packet, &BTreeMap::new(), |_, _| {
         crate::domain::SourceCurrentness::UnresolvedSubject
     });
-    // `analysis_scope` was added to `Finding` after the digests were recorded
-    // (#9941). Every Perl finding is diff-scoped, so dropping that one line
-    // renders exactly the field set the pre-index implementation produced.
+    // These snapshots predate `analysis_scope` (#9941) and the absent
+    // related-test support field (#5564). Retain their original field set.
     let rendered = pre_index_debug(&format!("{findings:#?}"));
     let mut hasher = Sha256::new();
     hasher.update(rendered.as_bytes());
     (hex_bytes(&hasher.finalize()), findings.len())
 }
 
-// Preserve the representation-only normalization already accepted by #10007.
+// Ignore later default metadata while retaining the original projection bytes.
+// `Some` support and equally named text outside RelatedTest direct fields stay
+// observable. The indentation is the derived pretty-Debug layout, not a parser
+// for arbitrary source or user text.
 fn pre_index_debug(rendered: &str) -> String {
-    rendered
-        .lines()
-        .filter(|line| line.trim_start() != "analysis_scope: Diff,")
-        .collect::<Vec<_>>()
-        .join("\n")
+    let mut related_test_indent = None;
+    let mut lines = Vec::new();
+    for line in rendered.lines() {
+        let trimmed = line.trim_start();
+        let indent = line.len() - trimmed.len();
+        if trimmed == "RelatedTest {" {
+            related_test_indent = Some(indent);
+        }
+        let absent_support = related_test_indent.is_some_and(|item_indent| {
+            indent == item_indent + 4 && trimmed == "miss_support: None,"
+        });
+        if related_test_indent == Some(indent) && matches!(trimmed, "}," | "}") {
+            related_test_indent = None;
+        }
+        if trimmed != "analysis_scope: Diff," && !absent_support {
+            lines.push(line);
+        }
+    }
+    lines.join("\n")
 }
 
 #[derive(Clone, Copy)]
