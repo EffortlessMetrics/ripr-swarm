@@ -56093,7 +56093,7 @@ fn gh_pr_status_real_cli_schema() -> Result<(), String> {
 }
 
 /// #5531: the capability registry checks are hosted. The docs-gate step must
-/// invoke both commands, key off the SUPPORT_TIERS.md and docs/specs paths, and
+/// invoke both commands, key off the SUPPORT_TIERS.md, LANGUAGE_ADAPTER_PREVIEW.md and docs/specs paths, and
 /// must not use a failure-swallowing form.
 #[test]
 fn routed_rust_docs_gate_runs_capability_registry_checks() -> Result<(), String> {
@@ -56107,6 +56107,8 @@ fn routed_rust_docs_gate_runs_capability_registry_checks() -> Result<(), String>
         "cargo xtask capability-docs --check",
         "cargo xtask check-capability-producers",
         "docs/status/SUPPORT_TIERS\\.md",
+        "docs/LANGUAGE_ADAPTER_PREVIEW\\.md",
+        "core.quotePath=false",
         "docs/specs/",
     ] {
         if !docs_gate.contains(needle) {
