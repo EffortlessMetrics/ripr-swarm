@@ -1296,10 +1296,19 @@ fn owner_rebinds_operand(owner: &FunctionSummary, operand: &str, predicate_line:
         .map(|(_, line)| line)
         .collect::<Vec<_>>()
         .join("\n");
-    let Some((_, body)) = through_predicate.split_once('{') else {
+    let Some((signature, body)) = through_predicate.split_once('{') else {
         return false;
     };
     let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    // Only a `mut` parameter can be changed in place by a receiver call
+    // (`x.add_assign(5)`); an immutable one cannot, so `x.abs()` stays a read.
+    let mut_parameter = signature.match_indices("mut").any(|(start, _)| {
+        !signature[..start].ends_with(is_word)
+            && signature[start + 3..]
+                .trim_start()
+                .strip_prefix(operand)
+                .is_some_and(|rest| rest.trim_start().starts_with(':'))
+    });
     body.match_indices(operand).any(|(start, _)| {
         let before = &body[..start];
         let after = &body[start + operand.len()..];
@@ -1324,6 +1333,14 @@ fn owner_rebinds_operand(owner: &FunctionSummary, operand: &str, predicate_line:
                 .iter()
                 .any(|assignment| after_trimmed.starts_with(assignment));
         let binding_keyword = matches!(last_word, "let" | "mut" | "ref");
+        // `x.add_assign(5)` on a `mut` parameter: a receiver call (whitespace
+        // tolerant) may mutate it in place, so it no longer holds the input.
+        let receiver_call = mut_parameter
+            && after_trimmed.strip_prefix('.').is_some_and(|rest| {
+                let rest = rest.trim_start();
+                let name_len = rest.chars().take_while(|ch| is_word(*ch)).count();
+                name_len > 0 && rest[name_len..].trim_start().starts_with(['(', ':'])
+            });
         // A pattern name sits before the arm's own `=>`: a guard use
         // (`n if 0 > n =>`), the scrutinee of a one-line match, or a use in an
         // earlier arm's result (`Some(v) => x, None =>`) is not a binding. An
@@ -1382,6 +1399,7 @@ fn owner_rebinds_operand(owner: &FunctionSummary, operand: &str, predicate_line:
             .matches('|')
             .count();
         assigned
+            || receiver_call
             || destructuring_assignment
             || binding_keyword
             || match_arm_pattern
@@ -9853,6 +9871,44 @@ assert_eq!(input.amount, 100);"#
         ] {
             assert_eq!(unread_mentions(source, "add"), count, "{source}");
         }
+    }
+
+    #[test]
+    fn a_receiver_call_mutates_only_a_mut_parameter() {
+        // #9197: `x.add_assign(5)` changes a `mut` parameter in place, so the
+        // name no longer holds the test's input; on an immutable parameter the
+        // same shape (`x.abs()`, `x.min(3)`) is a read and keeps the credit.
+        let credited = |signature: &str, prelude: &str| {
+            let owner = function(&format!(
+                "pub fn thr({signature}) -> bool {{\n{prelude}\n    x > 102\n}}"
+            ));
+            let parameters = vec!["x".to_string()];
+            let line = 2 + prelude.lines().count();
+            credited_parameter(&owner, &parameters, "x", &Some("x".to_string()), line).is_some()
+        };
+        for prelude in [
+            "    x.add_assign(5);",
+            "    x .add_assign (5);",
+            "    x\n        .add_assign(5);",
+            "    x.saturating_add_assign::<i32>(5);",
+        ] {
+            assert!(!credited("mut x: i32", prelude), "{prelude}");
+            assert!(!credited("mut  x : i32", prelude), "{prelude}");
+            // Not mutable: the call cannot change the parameter.
+            assert!(credited("x: i32", prelude), "{prelude}");
+        }
+        for prelude in [
+            "    let _ = x.abs();",
+            "    let _ = x.min(3);",
+            "    let _ = self.x.add(1);",
+        ] {
+            assert!(credited("x: i32", prelude), "{prelude}");
+        }
+        // A `mut` parameter read by a method that cannot be a mutation is
+        // still declined (fail-closed: the scan does not know the method).
+        assert!(!credited("mut x: i32", "    let _ = x.abs();"));
+        // A different `mut` parameter does not make `x` mutable.
+        assert!(credited("mut y: i32, x: i32", "    x.add_assign(5);"));
     }
 
     #[test]

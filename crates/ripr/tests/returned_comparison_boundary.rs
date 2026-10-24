@@ -38,6 +38,19 @@ fn findings_wrapped(
     old: &str,
     test: &str,
 ) -> Result<Vec<Finding>, String> {
+    findings_with_parameter("x: i32", prefix, suffix, new, old, test)
+}
+
+/// [`findings_wrapped`] with the owner's parameter declared as `parameter`
+/// (`mut x: i32` for an in-place mutation).
+fn findings_with_parameter(
+    parameter: &str,
+    prefix: &str,
+    suffix: &str,
+    new: &str,
+    old: &str,
+    test: &str,
+) -> Result<Vec<Finding>, String> {
     let changed_line = 2 + prefix.lines().count();
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
@@ -59,7 +72,7 @@ fn findings_wrapped(
     )?;
     write(
         "src/lib.rs",
-        &format!("pub fn thr(x: i32) -> bool {{\n{prefix}{new}\n{suffix}}}\n"),
+        &format!("pub fn thr({parameter}) -> bool {{\n{prefix}{new}\n{suffix}}}\n"),
     )?;
     write("tests/it.rs", test)?;
     // Fixture construction: the changed line sits where the diff says it does,
@@ -78,7 +91,7 @@ fn findings_wrapped(
         ));
     }
     let diff = format!(
-        "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,{n} +1,{n} @@\n pub fn thr(x: i32) -> bool {{\n{ctx}-{old}\n+{new}\n{post} }}\n",
+        "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,{n} +1,{n} @@\n pub fn thr({parameter}) -> bool {{\n{ctx}-{old}\n+{new}\n{post} }}\n",
         n = changed_line + 1 + suffix.lines().count(),
         ctx = prefix
             .lines()
@@ -562,6 +575,43 @@ fn a_rebound_or_mutated_parameter_does_not_satisfy_the_equality_boundary() -> Re
                 "{prefix:?} {return_value:?}"
             );
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_receiver_call_on_a_mut_parameter_makes_the_predicate_boundary_unresolved() -> Result<(), String>
+{
+    // #9197: `x.add_assign(5)` changes the `mut` parameter in place, so the
+    // observed 101 is not the compared value and the predicate reads
+    // infection-unknown; a read-only receiver call on an immutable parameter
+    // keeps the credit.
+    let read = |parameter: &str, prefix: &str| -> Result<(ExposureClass, usize), String> {
+        let findings = findings_with_parameter(
+            parameter,
+            prefix,
+            "",
+            "    if x > 101 { true } else { false }",
+            "    if x > 100 { true } else { false }",
+            AT_NEW_THRESHOLD,
+        )?;
+        let predicate = family(&findings, "predicate")?;
+        Ok((
+            predicate.class.clone(),
+            predicate.activation.missing_discriminators.len(),
+        ))
+    };
+    for prefix in ["    x.add_assign(5);\n", "    x\n        .add_assign(5);\n"] {
+        let (class, missing) = read("mut x: i32", prefix)?;
+        assert_eq!(class, ExposureClass::InfectionUnknown, "{prefix:?}");
+        assert_eq!(missing, 0, "{prefix:?}");
+    }
+    for (parameter, prefix) in [
+        ("x: i32", "    let _ = x.abs();\n"),
+        ("x: i32", "    let _ = x.min(3);\n"),
+    ] {
+        let (control, _) = read(parameter, prefix)?;
+        assert_ne!(control, ExposureClass::InfectionUnknown, "{prefix:?}");
     }
     Ok(())
 }
