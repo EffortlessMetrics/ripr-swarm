@@ -427,6 +427,8 @@ fn context_from_artifact_honors_max_related_tests_beyond_json_render_cap() -> Re
                 relation_reason: Some(RelationReason::DirectOwnerCall),
                 relation_confidence: Some(RelationConfidence::High),
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             })
             .collect();
         write_check_artifact(&path, &input, &config, &[finding.clone()], false)?;

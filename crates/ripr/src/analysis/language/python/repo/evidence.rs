@@ -291,6 +291,7 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
     // Conftests with implicit setup, and every conftest actually read
     // (#6657): a chain conftest that was not read cannot be ruled out.
     let mut implicit_conftests: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut reach_conftests: BTreeSet<PathBuf> = BTreeSet::new();
     let mut read_conftests: BTreeSet<PathBuf> = BTreeSet::new();
 
     // Evidence sources first, so production items can relate against the
@@ -310,6 +311,9 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
                         read_conftests.insert(relative.clone());
                         if facts.conftest_implicit_setup {
                             implicit_conftests.insert(relative.clone());
+                        }
+                        if facts.conftest_declares_fixture_or_hook {
+                            reach_conftests.insert(relative.clone());
                         }
                     }
                     files.push(PythonRepoFileRecord {
@@ -344,6 +348,11 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
     super::super::fixtures::taint_admission_by_conftest(
         &mut all_tests,
         &implicit_conftests,
+        |conftest| !read_conftests.contains(conftest) && root.join(conftest).is_file(),
+    );
+    super::super::fixtures::mark_implicit_reach_by_conftest(
+        &mut all_tests,
+        &reach_conftests,
         |conftest| !read_conftests.contains(conftest) && root.join(conftest).is_file(),
     );
 

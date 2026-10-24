@@ -306,6 +306,18 @@ Updated:
 ## Pending — error_variant_wrapper_wrong_receiver_pin (24)
 
 Reason:
+RIPR-SPEC-0108: a name-token relation no longer credits an oracle (#9169)
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_wrong_receiver_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — error_variant_wrapper_wrong_receiver_pin (25)
+
+Reason:
 RIPR-SPEC-0122: route-not-ready refusal names its missing evidence (#9604 batch C)
 
 Command:
@@ -357,6 +369,18 @@ Updated:
 
 Reason:
 RIPR-SPEC-0122: bounded evidence legend defines the Summary count terms (#9244 item 4)
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_wrong_receiver_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — error_variant_wrapper_wrong_receiver_pin (29)
+
+Reason:
+RIPR-SPEC-0224
 
 Command:
 `cargo xtask goldens bless error_variant_wrapper_wrong_receiver_pin --reason "..."`

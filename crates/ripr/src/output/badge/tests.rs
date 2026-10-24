@@ -89,6 +89,8 @@ fn related_test(name: &str, file: &str, line: usize) -> RelatedTest {
         relation_reason: None,
         relation_confidence: None,
         miss: None,
+        miss_support: None,
+        role: crate::domain::RelatedTestRole::Contributing,
     }
 }
 

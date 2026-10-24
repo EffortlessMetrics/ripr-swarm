@@ -348,6 +348,10 @@ pub(crate) struct Snapshot {
     /// names it so a snapshot never reads as the default-branch diff when it
     /// was analyzed against another revision.
     pub(crate) base: Option<String>,
+    /// The producer's mixed-language completeness view bound at commit time
+    /// (#6475). Served as `session.language_completeness`; deliberately not
+    /// part of the snapshot identity, so existing identities are unchanged.
+    pub(crate) language_view: Option<crate::analysis::language_outcome::LanguageCompletenessView>,
 }
 
 /// The scope-relevant working-tree facts one snapshot was analyzed against.
@@ -474,6 +478,7 @@ impl Snapshot {
             selection,
             scope,
             base: None,
+            language_view: None,
         })
     }
 
@@ -1086,7 +1091,7 @@ impl WorkspaceSession {
             desired_input["base"] = json!("explicit");
             desired_input["base_revision"] = json!(base);
         }
-        json!({
+        let mut document = json!({
             "schema_version": SESSION_SCHEMA_VERSION,
             "attempt_state": self.attempt_state(),
             "current_attempt": if self.in_flight {
@@ -1116,8 +1121,35 @@ impl WorkspaceSession {
                     "the session is in-memory: restarting the server drops the snapshot unless a new ripr_refresh commits one",
                 ])
                 .collect::<Vec<_>>(),
-        })
+        });
+        // Additive (#6475): per-language completeness from the committed
+        // snapshot's aggregate view. Absent without a snapshot or a view, so
+        // consumers that ignore the field see the unchanged v1 shape.
+        if let Some(view) = self
+            .last_good
+            .as_ref()
+            .and_then(|snapshot| snapshot.language_view.as_ref())
+        {
+            document["language_completeness"] = language_completeness_document(view);
+        }
+        document
     }
+}
+
+/// `[{language, status}]` in label order, straight from the aggregate-owned
+/// view: one row per canonical language label, with the closed status
+/// spelling the aggregate records (`complete`, `complete_zero`, `partial`,
+/// `unavailable`, `invalid`, `failed`, `unsupported`, `not_selected`,
+/// `no_current_scope`).
+fn language_completeness_document(
+    view: &crate::analysis::language_outcome::LanguageCompletenessView,
+) -> Value {
+    Value::Array(
+        view.rows
+            .iter()
+            .map(|row| json!({ "language": row.label, "status": row.status.as_str() }))
+            .collect(),
+    )
 }
 
 /// Guard that clears [`WorkspaceSession::in_flight`] on every terminal path.
@@ -1461,7 +1493,7 @@ pub(crate) fn run_check(
         git_timeout: Some(crate::app::default_cli_git_timeout()),
         ..Default::default()
     };
-    let output = crate::app::check_workspace_with_config_typed(input, &config)
+    let (output, language_view) = crate::app::check_workspace_with_config_typed(input, &config)
         .map_err(|error| check_failure(&error, base))?;
     // The seam inventory is gathered once inside this bounded attempt and
     // feeds both consumers: the shared repair validator that decides each
@@ -1477,6 +1509,7 @@ pub(crate) fn run_check(
     );
     let mut snapshot = Snapshot::from_output_admitted(&output, root_identity, &admission)?;
     snapshot.base = base.map(str::to_string);
+    snapshot.language_view = language_view;
     // Bind the repair-card producers inside the same bounded attempt, after
     // the shared check authority completed: the snapshot commits complete —
     // items, findings, head, and card seams — or not at all (RIPR-SPEC-0215).
@@ -1662,6 +1695,192 @@ mod tests {
             Err(failure) if failure.code == code => Ok(()),
             Err(failure) => Err(format!("expected {code}, got {}", failure.code)),
         }
+    }
+
+    /// A session whose committed snapshot carries a producer view: rust ran
+    /// to its boundary with nothing found, python was not selected.
+    fn session_with_language_view() -> Result<WorkspaceSession, String> {
+        use crate::analysis::language_outcome::{
+            FixtureDiffResult, LanguageAggregate, LanguageAnalysisOutcomeV1,
+            LanguageCompletenessView,
+        };
+        let touched = std::collections::BTreeSet::from(["rust".to_string()]);
+        let mut aggregate = LanguageAggregate::new("full".to_string());
+        for child in LanguageAnalysisOutcomeV1::from_diff_result(
+            crate::domain::LanguageId::Rust,
+            &FixtureDiffResult {
+                changed_files: 1,
+                ..FixtureDiffResult::default()
+            },
+            &[],
+            &touched,
+            "full",
+        ) {
+            aggregate.record(child);
+        }
+        aggregate.record(LanguageAnalysisOutcomeV1::not_selected(
+            "python",
+            1,
+            "language not in the effective [languages].enabled set",
+            "full",
+        ));
+        let view = LanguageCompletenessView::from_aggregate(&aggregate.finish());
+        let mut session = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+        let mut snapshot = Snapshot::from_output(
+            &output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?,
+            Some("root:sha256:test"),
+        )
+        .map_err(|failure| failure.detail)?;
+        snapshot.language_view = Some(view);
+        session.last_good = Some(Arc::new(snapshot));
+        Ok(session)
+    }
+
+    #[test]
+    fn status_serves_per_language_completeness_from_the_view() -> Result<(), String> {
+        let document = session_with_language_view()?.session_document(&SessionProfile::built_in());
+        // Literal expectation, independent of the view code under test.
+        assert_eq!(
+            document["language_completeness"],
+            json!([
+                { "language": "python", "status": "not_selected" },
+                { "language": "rust", "status": "complete_zero" }
+            ])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn status_without_a_view_keeps_the_unchanged_shape() -> Result<(), String> {
+        for session in [
+            WorkspaceSession::default(),
+            session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?,
+        ] {
+            let document = session.session_document(&SessionProfile::built_in());
+            assert!(
+                document.get("language_completeness").is_none(),
+                "{document}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn every_emitted_session_key_is_declared_by_the_status_schema() -> Result<(), String> {
+        let document = session_with_language_view()?.session_document(&SessionProfile::built_in());
+        let schema = super::super::protocol::status_success_schema();
+        let declared = schema["properties"]["session"]["properties"]
+            .as_object()
+            .ok_or("session schema must declare properties")?;
+        let required = schema["properties"]["session"]["required"]
+            .as_array()
+            .ok_or("session schema must declare required")?;
+        for key in document
+            .as_object()
+            .ok_or("session must be an object")?
+            .keys()
+        {
+            assert!(declared.contains_key(key), "undeclared session key {key}");
+        }
+        // The addition is optional: absent from `required`, so a document
+        // without it (no snapshot) still satisfies the closed schema.
+        assert!(!required.contains(&json!("language_completeness")));
+        let item = &declared["language_completeness"]["items"];
+        for row in document["language_completeness"]
+            .as_array()
+            .ok_or("language_completeness must be an array")?
+        {
+            let status = row["status"].as_str().ok_or("status must be a string")?;
+            assert!(
+                item["properties"]["status"]["enum"]
+                    .as_array()
+                    .ok_or("status enum")?
+                    .iter()
+                    .any(|allowed| allowed == status),
+                "{status}"
+            );
+        }
+        Ok(())
+    }
+
+    /// #6475: MCP carries no per-language state of its own. What it commits
+    /// and serves (the typed outcome and its limitations) must agree with
+    /// the aggregate-owned view on every shared mixed-language fixture.
+    /// Expectations are literal and independent of the view code.
+    #[test]
+    fn committed_snapshot_agrees_with_the_language_completeness_view() -> Result<(), String> {
+        use crate::analysis::language_outcome::{DiffCompleteness, LanguageCompletenessView};
+        use crate::output::language_view_agreement_tests as shared;
+        // (fixture, committed limitation kinds); `None` = refused as unsupported.
+        let expected: [(&str, Option<&[&str]>); 9] = [
+            ("complete", Some(&[])),
+            ("complete_zero", Some(&[])),
+            ("partial", Some(&["producer_failure"])),
+            ("unavailable", Some(&["language_adapter_unavailable"])),
+            ("invalid", Some(&["language_adapter_unavailable"])),
+            ("failed", Some(&["producer_failure"])),
+            ("unsupported", None),
+            (
+                "repo_partial_with_not_selected",
+                Some(&["language_adapter_unavailable"]),
+            ),
+            (
+                "configured_uncompiled_perl_dual_row",
+                Some(&["language_adapter_unavailable"]),
+            ),
+        ];
+        let fixtures = shared::fixtures()?;
+        assert_eq!(fixtures.len(), expected.len());
+        for (name, kinds) in expected {
+            let fixture = fixtures
+                .iter()
+                .find(|fixture| fixture.name == name)
+                .ok_or_else(|| format!("missing fixture {name}"))?;
+            let aggregate = shared::aggregate_for(fixture);
+            let view = LanguageCompletenessView::from_aggregate(&aggregate);
+            let produced = view.total_findings;
+            let findings = (0..produced)
+                .map(|_| shared::rust_finding())
+                .collect::<Result<Vec<_>, _>>()?;
+            let outcome = shared::analysis_outcome(fixture, produced as u64)?;
+            let output = shared::check_output(findings, view.public_runs.clone(), outcome);
+            let committed = Snapshot::from_output(&output, Some("root:sha256:test"));
+            match (kinds, committed) {
+                (None, Err(failure)) => {
+                    assert_eq!(failure.code, CODE_UNSUPPORTED_PROFILE, "{name}");
+                    assert!(
+                        failure.detail.contains("language_scope_unsupported"),
+                        "{name}: {}",
+                        failure.detail
+                    );
+                }
+                (Some(kinds), Ok(snapshot)) => {
+                    let served: Vec<String> = serde_json::to_value(&snapshot.outcome)
+                        .map_err(|error| format!("{name}: {error}"))?["limitations"]
+                        .as_array()
+                        .map(|limitations| {
+                            limitations
+                                .iter()
+                                .filter_map(|item| item["kind"].as_str().map(str::to_string))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    assert_eq!(served, kinds, "{name}");
+                    // The view calls a run incomplete exactly when MCP serves
+                    // a non-complete outcome.
+                    assert_eq!(
+                        view.completeness == DiffCompleteness::Incomplete,
+                        !snapshot.outcome.kind.is_complete(),
+                        "{name}"
+                    );
+                }
+                (None, Ok(_)) => return Err(format!("{name}: unsupported input was committed")),
+                (Some(_), Err(failure)) => {
+                    return Err(format!("{name}: refused: {}", failure.detail));
+                }
+            }
+        }
+        Ok(())
     }
 
     #[test]

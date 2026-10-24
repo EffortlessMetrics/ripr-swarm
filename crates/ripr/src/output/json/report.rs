@@ -1,7 +1,7 @@
 use crate::app::CheckOutput;
 use crate::config::RiprConfig;
 use crate::domain::{
-    Finding, FindingCanonicalGap, FlowSinkFact, MissingDiscriminatorFact, RelatedTest,
+    Finding, FindingCanonicalGap, FlowSinkFact, MissingDiscriminatorFact, ProbeFamily, RelatedTest,
     StageEvidence, ValueFact,
 };
 use crate::output::agent_seam_packets::{
@@ -921,12 +921,7 @@ fn finding_json_with_config_and_counts(
         .take(related_rendered)
         .enumerate()
     {
-        related_test_json(
-            out,
-            test,
-            &finding.activation.missing_discriminators,
-            indent + 2,
-        );
+        related_test_json(out, test, &finding.probe.family, indent + 2);
         if idx + 1 != related_rendered {
             out.push(',');
         }
@@ -1684,7 +1679,7 @@ fn typescript_repair_packet_json(record: &crate::output::gap_decision_ledger::Ga
 pub(super) fn related_test_json(
     out: &mut String,
     test: &RelatedTest,
-    missing_discriminators: &[MissingDiscriminatorFact],
+    family: &ProbeFamily,
     indent: usize,
 ) {
     let sp = "  ".repeat(indent);
@@ -1717,8 +1712,7 @@ pub(super) fn related_test_json(
     // TypeScript preview findings and on legacy callers that set None.
     // #5344: `miss` and `why` say why this test would not notice the change;
     // both are omitted when the analyzer established no miss.
-    let why =
-        crate::output::related_test_miss::related_test_miss_reason(test, missing_discriminators);
+    let why = crate::output::related_test_miss::related_test_miss_reason(test, family);
     let has_miss = test.miss.is_some();
     let has_reason = test.relation_reason.is_some();
     let has_confidence = test.relation_confidence.is_some();
@@ -2051,6 +2045,8 @@ mod evidence_path_separator_tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }],
             recommended_next_step: None,
             language: None,
