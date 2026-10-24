@@ -441,9 +441,22 @@ mod tests {
     }
 
     #[test]
-    fn a_function_pointer_binding_is_a_value() {
-        let code = "let f: fn(u32) -> u32 = call_through_pointer; assert_eq!(f(2), 6);";
+    fn an_untyped_function_pointer_binding_is_a_value() {
+        let code = "let f = call_through_pointer; assert_eq!(f(2), 6);";
         assert!(names_owner_as_value(code, "call_through_pointer"));
+    }
+
+    #[test]
+    fn a_typed_function_pointer_binding_is_left_to_the_typed_reading() {
+        for code in [
+            "let f: fn(u32) -> u32 = call_through_pointer; assert_eq!(f(2), 6);",
+            "let f: fn(u32) -> u32 = crate::call_through_pointer; assert_eq!(f(2), 6);",
+        ] {
+            assert!(
+                !names_owner_as_value(code, "call_through_pointer"),
+                "{code}"
+            );
+        }
     }
 
     #[test]
