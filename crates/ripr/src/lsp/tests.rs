@@ -9357,14 +9357,23 @@ fn did_save_retries_unchanged_content_after_a_failed_refresh_over_the_wire() -> 
             }),
         )
         .await?;
+        // Event-driven waits: block on the observable log, not a wall-clock
+        // window, so load cannot make the witness miss the event (#10033).
+        // A fresh session's didOpen schedules its own (failing) refresh;
+        // settle it first so the first-save wait cannot consume it.
+        let opened = read_logs_until(&mut client_read, |message| {
+            message.starts_with("ripr analysis refresh failed")
+        })
+        .await?;
+        if opened.is_empty() {
+            return Err("expected the didOpen refresh to fail".to_string());
+        }
         let save = serde_json::json!({
             "jsonrpc": "2.0",
             "method": "textDocument/didSave",
             "params": {"textDocument": {"uri": uri.as_str()}, "text": "fn same() {}\n"}
         });
         write_lsp_message(&mut client_write, save.clone()).await?;
-        // Event-driven waits: block on the observable log, not a wall-clock
-        // window, so load cannot make the witness miss the event (#10033).
         let first = read_logs_until(&mut client_read, |message| {
             message.starts_with("ripr analysis refresh failed")
         })
