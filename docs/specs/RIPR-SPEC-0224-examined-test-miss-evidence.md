@@ -85,6 +85,27 @@ so changing only the explanation changes no decision field.
 - A finding-wide fact is never attached to one test by renderer convention. A
   row without its own support falls back to `observation_unconfirmed` or no
   miss; it never borrows another row's fact (#5564).
+- The support is one typed, bounded record, `RelatedTest::miss_support`
+  (`RelatedTestMissSupport`: the `value` the row misses and an optional
+  `flow_sink`). It is semantic data, not prose, and is selected by the
+  producer before the row is projected. It is evidence only: it joins no
+  class, confidence, ranking, window, actionability, fix-site or identity
+  decision. The `miss` wire token is unchanged; the field is additive,
+  optional and skipped when absent, so artifacts that predate it read as no
+  support.
+- `output::related_test_miss` renders `missing_input` and
+  `missing_exact_assertion` detail from the stored `miss`, the finding's typed
+  `ProbeFamily` and the row's own `miss_support`, and never reads the
+  finding-wide `missing_discriminators`. `missing_input` reads `enters` for a
+  side-effect or call-deletion guard, `reaches` for a predicate or returned
+  comparison boundary, and `selects arm` for a match arm; any other family, or
+  absent support, renders the generic sentence with no guessed value. Wording
+  never depends on ` == ` in the value. Absence of support is a real state.
+- A producer that proves one finding-wide fact applies to every row it assigns
+  the miss to may attach that same support to each of them explicitly (Rust).
+  Perl v1 has no row-owned discriminator fact, so it attaches none. The
+  finding-level "To change the verdict" summary still reads the finding-wide
+  list and is labelled as finding-level evidence.
 
 ### Assertion admission
 
@@ -167,7 +188,9 @@ static limit, one row at a time, in `python/row_miss.rs`:
   whose own owner calls all bind, resolve both compared operands and place
   neither on the boundary. The row-owned part is the omission computed in
   `boundary.rs` from that row's own calls; the boundary quoted in the "why"
-  text is the finding-wide changed boundary. A free-function call counts as an
+  text is the finding's changed-boundary fact, carried as the row's
+  `miss_support` only because that row's omission proof holds against it. A
+  sibling without the proof carries no support. A free-function call counts as an
   owner call only when the row's import resolves the name to the owner's
   module; a same-named function of another module is not one. An unresolved
   operand or an unreadable call is unknown, and another row's input never
@@ -219,7 +242,7 @@ Python does not yet write:
   (`RelatedTest::is_unmatched`), which `oracle_related_tests` and its
   decisional consumers read; emitting it would move ordering and witnesses.
 - `missing_exact_assertion`: `missing_discriminators` is finding-wide and no
-  row-owned observed-surface fact exists.
+  row-owned observed-surface fact exists; no `miss_support` is attached.
 - `assertion_not_credited`: no typed refusal (#5446). Skipped, xfail and
   expected-failure tests keep the classifier's `static_unknown` and no oracle
   credit.
@@ -252,13 +275,16 @@ not yet satisfy all of it, and these gaps are tracked rather than claimed away:
   its next step. Changing a row's miss can therefore change triage ordering,
   next step, limit kind or fix-site selection. These readers are examples, not
   a complete inventory; #5563 owns the inventory and the decoupling.
-- Row-owned support (#5564): the annotation pass computes boundary and
-  exact-assertion presence once from the finding-wide `missing_discriminators`
-  list and assigns `missing_input` or `missing_exact_assertion` to eligible
-  rows, so a row can carry a fact that belongs to another test.
-- Family-typed rendering (#5493): the reason renderer ignores the finding's
-  `ProbeFamily` and hard-codes its fact lookups, and `input_boundary_fact`
-  selects predicate facts by ` == ` text.
+- Row-owned support (#5564): the Rust annotation pass still computes boundary
+  and exact-assertion presence once from the finding-wide
+  `missing_discriminators` list and assigns `missing_input` or
+  `missing_exact_assertion` to every eligible row. It now attaches that same
+  fact to each row it assigns as `miss_support`, an explicit universal
+  application rather than renderer borrowing; per-row proof that the fact
+  applies to each test is not yet computed.
+- Family-typed fact selection (#5493): the renderer is family-typed, but the
+  Rust producer's `input_boundary_fact` still selects predicate and
+  returned-comparison facts by ` == ` text.
 
 Until those land, Rust is listed as supported in the capability table only for
 the vocabulary it emits, not as conforming to decision independence, row
@@ -562,7 +588,10 @@ actionability or rendered output.
   selection beside a stronger row.
 - `crates/ripr/src/analysis/classify/reveal.rs::tests` — examined misses are
   listed and rank after matched tests.
-- `crates/ripr/src/output/related_test_miss.rs::tests` — reason prose.
+- `crates/ripr/src/output/related_test_miss.rs::tests` — reason prose and the
+  row-owned support controls (#5564): per-row boundaries, no cross-row or
+  finding-wide borrowing, typed-family wording, absent support, row-order
+  permutation and serde ownership.
 - `crates/ripr/src/analysis/language/perl/tests.rs` — the Perl v1 rule: only
   a direct, reachable, strong row without sink alignment is unconfirmed. These
   controls consume frozen packets (#5510); whether the live perl-lsp emitter

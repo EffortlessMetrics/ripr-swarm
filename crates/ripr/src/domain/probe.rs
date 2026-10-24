@@ -26,6 +26,22 @@ impl ProbeFamily {
         !matches!(self, ProbeFamily::StaticUnknown)
     }
 
+    /// Inverse of [`ProbeFamily::as_str`] for projections that hold only the
+    /// wire token (`ContextPacketProbe::family`). `None` for an unknown token.
+    pub(crate) fn from_wire(token: &str) -> Option<Self> {
+        Some(match token {
+            "predicate" => ProbeFamily::Predicate,
+            "return_value" => ProbeFamily::ReturnValue,
+            "error_path" => ProbeFamily::ErrorPath,
+            "call_deletion" => ProbeFamily::CallDeletion,
+            "field_construction" => ProbeFamily::FieldConstruction,
+            "side_effect" => ProbeFamily::SideEffect,
+            "match_arm" => ProbeFamily::MatchArm,
+            "static_unknown" => ProbeFamily::StaticUnknown,
+            _ => return None,
+        })
+    }
+
     pub fn as_str(&self) -> &'static str {
         match self {
             ProbeFamily::Predicate => "predicate",
@@ -471,6 +487,37 @@ pub struct RelatedTest {
     /// classification decision reads this field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub miss: Option<RelatedTestMiss>,
+    /// The one typed fact the producer established for **this row** that
+    /// backs a `missing_input` or `missing_exact_assertion` miss (#5564).
+    /// `None` when the producer could not establish row ownership; renderers
+    /// then use generic wording and never borrow a finding-wide
+    /// `missing_discriminators` entry. Evidence only: no decision reads it
+    /// and it is not part of finding identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub miss_support: Option<RelatedTestMissSupport>,
+}
+
+/// Row-owned supporting fact for a discriminator-backed [`RelatedTestMiss`]
+/// (#5564). Semantic data, not prose: the shared renderer chooses the wording
+/// from the miss, the finding's probe family and this record.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RelatedTestMissSupport {
+    /// The value or boundary the row misses (`amount == threshold`).
+    pub value: String,
+    /// The sink the fact was established against, when the producer knows it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flow_sink: Option<FlowSinkFact>,
+}
+
+impl RelatedTestMissSupport {
+    /// Support carrying the value and sink of a discriminator fact the
+    /// producer has established applies to the row it attaches this to.
+    pub(crate) fn from_fact(fact: &MissingDiscriminatorFact) -> Self {
+        Self {
+            value: fact.value.clone(),
+            flow_sink: fact.flow_sink.clone(),
+        }
+    }
 }
 
 impl RelatedTest {

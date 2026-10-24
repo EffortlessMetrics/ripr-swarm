@@ -42,13 +42,22 @@
 //!   skip / xfail rows stay `activation_limited` with no oracle credit.
 //! - `missing_exact_assertion`: no row-owned exact-discriminator fact exists;
 //!   `missing_discriminators` is finding-wide.
+//!
+//! `missing_input` carries `RelatedTest::miss_support` (#5564): the finding's
+//! predicate boundary fact, attached only because this row's own omission
+//! proof holds against it. When no boundary fact exists the row keeps the miss
+//! with no support and renders the generic wording. No other miss carries
+//! support.
 
 use super::assertion_selection::PythonAssertionFocus;
 use super::boundary::python_row_boundary_omission;
 use super::related_tests::PythonRelatedCandidate;
 use super::sink_alignment::{AlignmentPrep, classify_sink_alignment_prepared};
 use super::{PythonOwner, PythonTest};
-use crate::domain::{ExposureClass, OracleStrength, ProbeFamily, RelatedTest, RelatedTestMiss};
+use crate::domain::{
+    ExposureClass, MissingDiscriminatorFact, OracleStrength, ProbeFamily, RelatedTest,
+    RelatedTestMiss, RelatedTestMissSupport,
+};
 
 /// The changed line, as the classifier saw it.
 pub(super) struct RowMissChange<'a> {
@@ -56,6 +65,10 @@ pub(super) struct RowMissChange<'a> {
     pub(super) line_text: &'a str,
     pub(super) old_line_text: Option<&'a str>,
     pub(super) focus: &'a PythonAssertionFocus,
+    /// The finding's changed-boundary fact. It describes the change, not a
+    /// row: a row may carry it as `miss_support` only after that row's own
+    /// omission proof (`python_row_boundary_omission`) holds against it.
+    pub(super) boundary_fact: Option<&'a MissingDiscriminatorFact>,
 }
 
 /// Annotate `rows` (one per `candidates` entry, in order) in place.
@@ -87,6 +100,16 @@ pub(super) fn annotate_row_misses(
     let prep = AlignmentPrep::new(change.owner, all_tests);
     for (row, candidate) in rows.iter_mut().zip(candidates) {
         row.miss = row_miss(row, candidate, candidates, change, &prep);
+        // #5564: `missing_input` is assigned only from this row's own
+        // omission proof, so the boundary that proof was made against is
+        // this row's support. Any other miss carries none; a missing
+        // boundary fact leaves the row generic.
+        row.miss_support = match row.miss {
+            Some(RelatedTestMiss::MissingInput) => {
+                change.boundary_fact.map(RelatedTestMissSupport::from_fact)
+            }
+            _ => None,
+        };
     }
 }
 

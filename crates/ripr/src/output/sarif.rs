@@ -1567,6 +1567,7 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
         }];
 
         let rendered = render_findings_sarif(&output, &RiprConfig::default(), &[]);
@@ -1632,6 +1633,7 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
         }];
 
         let rendered = render_findings_sarif(&output, &RiprConfig::default(), &[]);
@@ -2382,6 +2384,7 @@ weakly_gripped = "note"
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
         }];
         finding.recommended_next_step = Some("Add a focused Perl assertion.".to_string());
         finding.language = Some(LanguageId::Perl);
@@ -2522,6 +2525,7 @@ weakly_gripped = "note"
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
             }],
             recommended_next_step: Some("Add an equality-boundary assertion".to_string()),
             language: None,
