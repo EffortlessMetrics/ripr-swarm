@@ -468,7 +468,17 @@ and single-platform CI was the root cause enabling both.
   75-minute step limit with no output (jobs 119992784688 and 120026188944). The
   runner executable is copied to `target/advisory-run/` first, because
   `cargo test --workspace` rebuilds `xtask.exe` and Windows will not replace a
-  running image. The check steps still redirect to a file and replay it with
+  running image. Job-log delivery runs on its own thread behind a bounded
+  queue, so a stalled job-log pipe cannot delay the deadline: the log file keeps
+  every line and the runner reports what the job log lost. After a termination
+  request it observes the primary for ten seconds and reports a failed or
+  unconfirmed termination instead of waiting indefinitely or claiming success.
+  A read error on the command's pipe or a write error on the log file means the
+  log may be incomplete, so the status file is withheld and the summarizer
+  refuses the step. Repeating `--timeout-minutes`, `--log` or `--status` is
+  refused. The Windows-native forced-deadline control runs with
+  `workflow_dispatch` input `runner_probe_only` (job
+  `windows-advisory-runner-probe`), without the full lanes. The check steps still redirect to a file and replay it with
   `cat`. Every step also carries its own `timeout-minutes` as a backstop above
   the runner deadline, and later steps run under `!cancelled()`. The job
   deadline (270 minutes) exceeds the sum of the step deadlines

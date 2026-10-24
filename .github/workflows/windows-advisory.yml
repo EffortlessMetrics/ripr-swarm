@@ -12,6 +12,11 @@ on:
         required: false
         type: boolean
         default: false
+      runner_probe_only:
+        description: "Run only the native windows-advisory-run forced-deadline control (#9272); skip the full lanes"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -85,7 +90,7 @@ concurrency:
 jobs:
   windows-advisory:
     name: windows-advisory
-    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'windows-ci') || contains(github.event.pull_request.labels.*.name, 'full-ci'))
+    if: ${{ !inputs.runner_probe_only && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'windows-ci') || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
     runs-on: windows-latest
     # Above the sum of the cargo step deadlines below (15+45+15+15+75+75, including the runner build), so the
     # cargo steps alone cannot exhaust it. Checkout, toolchain, cache, summary
@@ -350,7 +355,7 @@ jobs:
   # audit responsibility (docs/CI.md, Advisory Windows Lane).
   windows-advisory-subset:
     name: windows-advisory-subset
-    if: github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))
+    if: ${{ !inputs.runner_probe_only && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) }}
     runs-on: windows-latest
     timeout-minutes: 45
     env:
@@ -1520,3 +1525,26 @@ jobs:
             target/subset-selector-literal.status
             target/selector-literal/
           if-no-files-found: ignore
+
+  # Native forced-deadline control for `windows-advisory-run` (#9272). The
+  # runner's deadline and leaked-descendant tests need `sh`, so they are
+  # Unix-only; this runs the Windows-native one on its own, without the
+  # two-hour workspace repeats.
+  windows-advisory-runner-probe:
+    name: windows-advisory-runner-probe
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.runner_probe_only }}
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: ripr-windows-advisory-1.95-${{ runner.os }}
+          save-if: false
+
+      - name: Native forced-deadline control
+        timeout-minutes: 30
+        run: cargo test -p xtask --bin xtask windows_native_deadline -- --nocapture
