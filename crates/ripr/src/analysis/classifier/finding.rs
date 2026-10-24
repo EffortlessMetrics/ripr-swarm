@@ -125,13 +125,20 @@ pub(in crate::analysis) fn build_finding(
     ) && evidence.reach.state == StageState::Weak
         && !context.owner_assertion_shaped
         && !context.related_tests.is_empty()
-        && context.related_tests.iter().all(|(_, reason)| {
+        && context.related_tests.iter().all(|(test, reason)| {
             // Name or path affinity (`owner_named_test`, `import_path_affinity`,
             // `fixture_owner_affinity`) never runs the owner either (#10053);
-            // a seam-callee row keeps its own reading. Rows reaching by known
-            // implicit dispatch withhold the finding upstream, never here.
+            // a seam-callee row keeps its own reading. `AssertionTargetAffinity`
+            // for a function owner is not emitted in diff mode (it needs a
+            // non-function owner), so it does not reach this arm in practice.
             *reason != crate::domain::RelationReason::SeamCalleeCall
                 && !reason.establishes_reach(context.owner_fn.is_some())
+                // A row that reaches the owner by known implicit dispatch
+                // (`==`, `format!`, an operator) is not an inspection-only
+                // pointer, even when its relation reason is proximity-only.
+                && !evidence
+                    .implicit_dispatch_tests
+                    .contains(&(test.file.clone(), test.name.clone()))
         })
         && !wrapper_error_seam_expression(&[context.probe.expression.as_str()])
     {

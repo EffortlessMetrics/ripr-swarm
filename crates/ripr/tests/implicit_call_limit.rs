@@ -540,3 +540,73 @@ mod tests {
     let edit = diff(line, "        self.0 + 2", "        self.0 + 1");
     unreached(lib, &edit, line, "local trait named Add")
 }
+
+#[test]
+fn an_affinity_linked_implicit_dispatch_row_is_not_an_inspection_only_pointer() -> Result<(), String>
+{
+    // #10053: `PartialEq` is owned elsewhere, so the gap is not withheld, and the
+    // only related test is linked by name (`eq_...`) yet reaches `eq` through `==`.
+    // It must not be told it "does not establish a call to the changed owner".
+    let lib = "use std::sync::atomic::{AtomicU32, Ordering};
+
+pub static COMPARISONS: AtomicU32 = AtomicU32::new(0);
+
+pub struct Tag(pub u32);
+
+impl PartialEq for Tag {
+    fn eq(&self, other: &Tag) -> bool {
+        COMPARISONS.fetch_add(2 - 1, Ordering::SeqCst);
+        self.0 == other.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn eq_runs_when_two_tags_are_compared() {
+        let same = Tag(7) == Tag(7);
+        assert!(same || !same);
+    }
+}
+";
+    let line = line_of(lib, "COMPARISONS.fetch_add(")?;
+    let edit = diff(
+        line,
+        "        COMPARISONS.fetch_add(1, Ordering::SeqCst);",
+        "        COMPARISONS.fetch_add(2 - 1, Ordering::SeqCst);",
+    );
+    let findings = findings_on(lib, &edit, line)?;
+    let gaps: Vec<&Finding> = findings
+        .iter()
+        .filter(|f| f.class == ExposureClass::WeaklyExposed)
+        .collect();
+    if gaps.is_empty() {
+        return Err(format!(
+            "premise: a weakly_exposed finding, got {findings:?}"
+        ));
+    }
+    for finding in gaps {
+        let rows: Vec<_> = finding
+            .related_tests
+            .iter()
+            .map(|test| (test.name.as_str(), test.relation_reason))
+            .collect();
+        if rows
+            != [(
+                "eq_runs_when_two_tags_are_compared",
+                Some(ripr::domain::RelationReason::OwnerNamedTest),
+            )]
+        {
+            return Err(format!("premise: one owner-named row, got {rows:?}"));
+        }
+        let step = finding.recommended_next_step.as_deref().unwrap_or_default();
+        if step.contains("do not establish a call") {
+            return Err(format!(
+                "implicit-dispatch row told it never calls the owner: {step}"
+            ));
+        }
+    }
+    Ok(())
+}

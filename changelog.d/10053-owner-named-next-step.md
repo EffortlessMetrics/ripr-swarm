@@ -1,2 +1,2 @@
 <!-- section: Fixed -->
-- A weak-reach finding whose only related tests are linked by `owner_named_test`, `import_path_affinity` or `fixture_owner_affinity` (none of which runs the owner) now gets the inspect-existing-tests next step instead of "Strengthen the related assertion" or "Replace broad assertions" (#10053).
+- A weak-reach finding whose only related tests are linked by `owner_named_test`, `import_path_affinity` or `fixture_owner_affinity` (none of which runs the owner) now gets the inspect-existing-tests next step instead of "Strengthen the related assertion" or "Replace broad assertions" (#10053). A name-linked test that reaches the owner through a known implicit dispatch (`==`, `format!`, an operator) keeps the template advice instead.
