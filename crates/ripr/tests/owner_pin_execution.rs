@@ -22,6 +22,8 @@ mod literal_json_output;
 mod effect_assertion_sweep;
 #[path = "owner_pin_execution/effect_assertions.rs"]
 mod effect_assertions;
+#[path = "owner_pin_execution/function_pointer.rs"]
+mod function_pointer;
 
 struct Scratch(PathBuf);
 
