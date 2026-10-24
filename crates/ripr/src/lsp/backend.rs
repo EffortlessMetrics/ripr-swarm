@@ -12545,6 +12545,79 @@ mod work_done_progress_guard_tests {
     use crate::lsp::progress::ProgressEvent;
     use tower_lsp_server::LspService;
 
+    /// Wrong-order control for #10033: the failure must be recorded (uncovered
+    /// save digests dropped) before the failure log is sent. The client
+    /// channel is bounded, so with an undrained socket the log send stays
+    /// pending; the digest must already be gone while it is pending. Under
+    /// the old order (log first) the digest would still match here.
+    #[test]
+    fn refresh_failure_drops_uncovered_save_digest_before_failure_log_is_sent() -> Result<(), String>
+    {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| format!("failed to start test runtime: {err}"))?;
+        runtime.block_on(async {
+            let (service, _socket) =
+                LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+            let backend = service.inner();
+            let uri = "file:///workspace/src/lib.rs"
+                .parse::<Uri>()
+                .map_err(|err| format!("uri: {err}"))?;
+            backend.record_saved_content_digest_and_advance(&uri, "d".to_string());
+            if !backend.saved_content_digest_matches(&uri, "d") {
+                return Err("precondition: digest recorded".to_string());
+            }
+            let decision = backend.refresh_scheduler.request(
+                PathBuf::from("/workspace"),
+                LspAnalysisConfig::default(),
+                backend.workspace_revision(),
+                0,
+                RefreshScope::Interactive,
+                RefreshReason::DidSave,
+            );
+            let RefreshDecision::Start(request) = &decision else {
+                return Err(format!("expected Start decision, got {decision:?}"));
+            };
+            let request = request.as_ref().clone();
+
+            // Saturate the bounded client channel without draining it, until
+            // a send stays pending.
+            let pending = Duration::from_millis(50);
+            let mut saturated = false;
+            for _ in 0..64 {
+                let send = backend
+                    .client
+                    .log_message(tower_lsp_server::ls_types::MessageType::INFO, "fill");
+                if tokio::time::timeout(pending, send).await.is_err() {
+                    saturated = true;
+                    break;
+                }
+            }
+            if !saturated {
+                return Err("precondition: client channel never backed up".to_string());
+            }
+
+            // The failure log now cannot complete. The report must have
+            // dropped the digest before reaching it.
+            let report = backend.report_refresh_failure_after(
+                &request,
+                "forced failure".to_string(),
+                Duration::from_millis(1),
+                AnalysisFailureKind::AnalysisError,
+            );
+            if tokio::time::timeout(pending, report).await.is_ok() {
+                return Err("expected the failure log send to stay pending".to_string());
+            }
+            if backend.saved_content_digest_matches(&uri, "d") {
+                return Err(
+                    "uncovered save digest remained while the failure log was pending".to_string(),
+                );
+            }
+            Ok(())
+        })
+    }
+
     #[test]
     fn dropped_refresh_guard_invalidates_only_uncovered_save_digests() -> Result<(), String> {
         let runtime = tokio::runtime::Builder::new_current_thread()

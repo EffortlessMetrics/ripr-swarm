@@ -9361,26 +9361,20 @@ fn did_save_retries_unchanged_content_after_a_failed_refresh_over_the_wire() -> 
         // window, so load cannot make the witness miss the event (#10033).
         // A fresh session's didOpen schedules its own (failing) refresh;
         // settle it first so the first-save wait cannot consume it.
-        let opened = read_logs_until(&mut client_read, |message| {
+        read_logs_until(&mut client_read, |message| {
             message.starts_with("ripr analysis refresh failed")
         })
         .await?;
-        if opened.is_empty() {
-            return Err("expected the didOpen refresh to fail".to_string());
-        }
         let save = serde_json::json!({
             "jsonrpc": "2.0",
             "method": "textDocument/didSave",
             "params": {"textDocument": {"uri": uri.as_str()}, "text": "fn same() {}\n"}
         });
         write_lsp_message(&mut client_write, save.clone()).await?;
-        let first = read_logs_until(&mut client_read, |message| {
+        read_logs_until(&mut client_read, |message| {
             message.starts_with("ripr analysis refresh failed")
         })
         .await?;
-        if first.is_empty() {
-            return Err("expected the first refresh to fail".to_string());
-        }
 
         write_lsp_message(&mut client_write, save).await?;
         let second = read_logs_until(&mut client_read, |message| {
@@ -14758,21 +14752,27 @@ async fn read_logs_until<R>(
 where
     R: AsyncRead + Unpin,
 {
-    tokio::time::timeout(Duration::from_mins(1), async {
-        let mut seen = Vec::new();
+    let mut seen = Vec::new();
+    let outcome = tokio::time::timeout(Duration::from_mins(1), async {
         loop {
             let message = read_lsp_message(reader).await?;
             for text in log_notification_messages(std::slice::from_ref(&message)) {
                 let done = stop(&text);
                 seen.push(text);
                 if done {
-                    return Ok::<Vec<String>, String>(seen);
+                    return Ok::<(), String>(());
                 }
             }
         }
     })
-    .await
-    .map_err(|elapsed| format!("timed out waiting for expected log: {elapsed}"))?
+    .await;
+    match outcome {
+        Ok(Ok(())) => Ok(seen),
+        Ok(Err(error)) => Err(format!("{error}; logs seen: {seen:?}")),
+        Err(elapsed) => Err(format!(
+            "timed out waiting for expected log: {elapsed}; logs seen: {seen:?}"
+        )),
+    }
 }
 
 fn log_notification_messages(messages: &[serde_json::Value]) -> Vec<String> {
