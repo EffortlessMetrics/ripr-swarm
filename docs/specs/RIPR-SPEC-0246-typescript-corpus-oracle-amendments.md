@@ -64,6 +64,7 @@ implementation bug.
 | `jest-spec0234-ex10`: `[150].forEach((v) => { expect(priceEx10(v)).toBe(140); })` | `weakly_exposed` | the edit fails the test |
 | `jest-order-assert-in-then`: `return orderTotal([10, 20]).then((total) => { expect(total).toBe(30); })` | `weakly_exposed` | both mutants fail the test |
 | `nodetest-member-subtest`: `await t.test("...", () => { assert.strictEqual(memberPrice(30), 25); })` | `weakly_exposed` | both mutants fail the test |
+| `mocha-before-hook-trimmed-name`: `names.push(name.trim())` becomes `names.push(name)`, a mocha `before` hook calls `register("  alpha ")` and a test reads the state through `registered()` | `weakly_exposed` | the edit fails the test that reads the hook's state |
 
 ## Behavior
 
@@ -278,6 +279,59 @@ clauses are not modeled; each can leave a reachable arm read as
 `weakly_exposed`. Rule 6 only removes credit and runs
 after the #8569 unentered-guard rule.
 
+**Rule 7. A mocha setup hook that calls the owner makes the gap unknown.**
+(Added 2026-10-22, #9496.) When all of these hold, a `weakly_exposed` result
+reads `static_unknown` instead, with a missing note saying that a
+synchronous mocha setup hook calls the owner outside every test body and
+whether a test observes what the hook set is not established, and a stop
+reason `gap_evidence_unresolved`:
+
+- the ladder result is the strong-oracle arm whose observation guard fails
+  to confirm the changed sink (no candidate witnesses it), the changed line
+  is a side effect (`names.push(...)`, a call), and the finding carries no
+  static limit, and is not the module-entry arm (an owner reached only
+  through a same-module caller keeps its own verdict);
+- a hook registered directly in the file or in a `describe` that encloses an
+  oracle-eligible related candidate is `before`, `beforeEach` or
+  `beforeAll`, is not `async` or a generator, takes no parameter (`done`),
+  has a block body without `return`, and calls the owner. A hook in a sibling
+  `describe` does not count. The call is read from the hook body with
+  comments and string contents blanked, through the same owner-identity gates
+  a test body gets (declaration anchor, shadowing, module mocks, spy
+  fabrication, import source), and only a plain, aliased, imported or
+  re-exported owner call counts;
+- mocha provenance holds. Mocha's hooks are globals, so the file must import
+  `mocha`, `chai` or a `chai-*` plugin and show no jest, vitest, bun, ava or
+  `node:test` signal (an import, or a `jest.` / `vi.` member use anywhere in
+  the file). The hook identifier must not be declared in scope or imported
+  from anything but `mocha`.
+
+The recommended next step then says a mocha setup hook calls the changed
+owner outside every test body, that no new assertion is needed on that
+evidence, and that no repair packet is emitted.
+
+Rule 7 removes an actionable gap and credits nothing. It adds no relation,
+oracle kind, relation reason, class or output field: the hook text is an
+internal extraction fact, and the visible footprint is the missing line, the
+discriminate summary and the stop reason. A hook the rule cannot read keeps
+`weakly_exposed`. Known limits (a wrongly kept gap, never a credit): a
+hook that returns, awaits or takes `done` and a hook behind a helper are not
+read, and nothing here decides whether the test that reads the hook's state
+discriminates the change; that credit is deferred (Decision 9).
+
+**Rule 8. A counted-loop header change read only through a mock call count is
+unknown.** (Added 2026-10-22, #9496.) When the old and the new changed line are
+both counted `for (init; test; update)` headers that differ, and a related
+oracle-eligible test asserts a mock's call count (`callCount()` or
+`calls.length` in the observed expression), a ladder result of
+`weakly_exposed` with a strong oracle reads `static_unknown` with stop reason
+`gap_evidence_unresolved`. The predicate-boundary witness does not apply to a
+loop header, and the adapter does not model how many iterations the loop
+runs, so neither a gap nor a credit is established. `for...of`, `for...in`,
+`while` and `if` changes are not read. Rule 8 only moves `weakly_exposed` to
+`static_unknown`; it credits nothing. The credit, which needs an iteration
+count model, is tracked in #9874.
+
 ### Decisions
 
 The owner delegated these choices on 2026-10-04 ("make reasonable
@@ -339,6 +393,16 @@ and the rejected alternative.
    with a differing value; anything unreadable fails open. Rejected: also
    reading `||` chains, whose falsy semantics need a separate input model.
    Recorded on #9437.
+
+9. **Hook-set state (rule 7, 2026-10-22).** Adopted: abstain
+   (`static_unknown`, `gap_evidence_unresolved`) when a synchronous mocha
+   setup hook calls the owner and no candidate witnesses the changed sink;
+   credit nothing. An independent review of a credit design (a new
+   non-oracle relation, a state fact on the owner module and an evaluator
+   of the old and new writes) found it over-built for one row and open on
+   getter identity, hook exclusivity, unconditional execution and JavaScript
+   evaluator divergence. Rejected for now: crediting the reading test, which
+   stays gated on a second real mocha-hook corpus row. Recorded on #9496.
 
 ## Required Evidence
 
@@ -419,6 +483,15 @@ and the rejected alternative.
     (`throw new Error(...)`, `Promise.reject(...)`): `exposed`. An edit
     outside the `catch` arm: the ladder result.
 
+16. A mocha file importing `chai`, `before(() => { register("  alpha "); })`
+    in the `describe`, the owner `register` with the change `names.push(name.trim())`
+    to `names.push(name)`, tests `expect(registered()).to.deep.equal(["alpha"])`
+    and `expect(register("beta")).to.equal(2)`: `static_unknown` with stop
+    reason `gap_evidence_unresolved`. Without the hook, with the hook in a
+    sibling `describe`, `async`, taking `done`, calling another function,
+    naming `register` only in a comment or string, or in a file that imports
+    `vitest` or uses `jest.`: `weakly_exposed`.
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs`
@@ -432,6 +505,9 @@ and the rejected alternative.
 - `crates/ripr/src/analysis/language/typescript/tests/catch_arm_tests.rs` and
   `catch_arm_guard.rs` unit tests pin rule 6 (example 15); corpus case
   `shape-async-catch-fallback-unexercised` pins the row.
+- `crates/ripr/src/analysis/language/typescript/tests/mocha_hook_owner_tests.rs`
+  pins rule 7 (example 16); corpus case `mocha-before-hook-trimmed-name`
+  pins the row.
 
 ## Implementation Mapping
 
@@ -452,11 +528,17 @@ and the rejected alternative.
   `unresolved_assertions_only`, `body_asserts_in_unmodeled_callback` (rule 4).
 - `crates/ripr/src/analysis/language/typescript/catch_arm_guard.rs`,
   `classifier.rs`: `ts_catch_arm_unreached` (rule 6).
+- `crates/ripr/src/analysis/language/typescript/loop_count_guard.rs`,
+  `classifier.rs`: `ts_loop_count_unmodeled` (rule 8).
 - `crates/ripr/src/analysis/language/typescript/table_rows.rs`:
   `callback_case_assertions`, shared with RIPR-SPEC-0243 rule 11.
 - `crates/ripr/src/analysis/language/typescript/literal_matcher_guard.rs`:
   `LooseLiteralConst::row_cell` (rule 2, a `forEach` element naming a
   literal `const`).
+- `crates/ripr/src/analysis/language/typescript/hook_owner_guard.rs`,
+  `tests_extract.rs`: `collect_mocha_setup_hooks`, `file_has_mocha_provenance`
+  (`TypeScriptTest::setup_hook_bodies`); `classifier.rs`: `hook_owner_unknown`
+  (rule 7).
 
 ## Metrics
 

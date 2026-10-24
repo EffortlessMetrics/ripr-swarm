@@ -63,6 +63,8 @@ mod boundary;
 mod classify;
 mod deleted_lines;
 mod guard_activation;
+mod helper_inline;
+mod message_pin;
 mod wrapped_call;
 use classify::{PythonNoBehaviorContext, classify_change_with_context};
 #[cfg(test)]
@@ -81,6 +83,7 @@ mod reexports;
 mod related_tests;
 mod repo;
 mod row_miss;
+mod row_reach;
 mod setup_receivers;
 mod sink_alignment;
 mod source_facts;
@@ -352,6 +355,27 @@ impl PythonOwner {
     }
 }
 
+/// Closed set of Python test frameworks the adapter classifies tests under.
+///
+/// Every consumer matches this exhaustively, so adding a variant is a compile
+/// error until each verify-command, placement and activation site decides it.
+/// `capability_disposition_tests` additionally binds each variant to its
+/// `python/<framework>/diff/repair_routing` capability cell.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PythonFramework {
+    Pytest,
+    Unittest,
+}
+
+impl PythonFramework {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pytest => "pytest",
+            Self::Unittest => "unittest",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PythonTest {
     name: String,
@@ -379,7 +403,7 @@ struct PythonTest {
     parametrize: Option<parametrize::PythonParametrizeCases>,
     /// Parameters Hypothesis `@given(...)` supplies (#6601); never fixtures.
     generated_inputs: Vec<String>,
-    framework: &'static str,
+    framework: PythonFramework,
     assertions: Vec<PythonAssertion>,
     /// Whether RIPR can say this test has no assertion, or only that it
     /// recognized none (#5571).
@@ -782,6 +806,7 @@ impl PythonAdapter {
         let mut fixture_defs_by_file: BTreeMap<PathBuf, Vec<PythonFixtureDef>> = BTreeMap::new();
         // Conftests that install implicit setup around tests (#6657).
         let mut implicit_conftests: BTreeSet<PathBuf> = BTreeSet::new();
+        let mut reach_conftests: BTreeSet<PathBuf> = BTreeSet::new();
         let mut helper_modules_by_file: BTreeMap<PathBuf, helper_assertions::PythonHelperModule> =
             BTreeMap::new();
         let mut docstring_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
@@ -831,6 +856,12 @@ impl PythonAdapter {
             {
                 implicit_conftests.insert(relative.clone());
             }
+            if facts.conftest_declares_fixture_or_hook
+                || (relative.file_name().and_then(|name| name.to_str()) == Some("conftest.py")
+                    && !facts.limitations.is_empty())
+            {
+                reach_conftests.insert(relative.clone());
+            }
             if is_test_file(relative) {
                 all_tests.extend(facts.tests);
             } else {
@@ -839,11 +870,21 @@ impl PythonAdapter {
         }
         fixtures::attach_fixture_defs(&mut all_tests, &fixture_defs_by_file);
         helper_assertions::apply_helper_assertions(&mut all_tests, &helper_modules_by_file);
-        fixtures::taint_admission_by_conftest(&mut all_tests, &implicit_conftests, |conftest| {
-            // A chain conftest that exists but was never read (capped,
-            // excluded or unreadable) cannot be ruled out.
+        // A chain conftest that exists but was never read (capped, excluded or
+        // unreadable) cannot be ruled out.
+        let unreadable_conftest = |conftest: &Path| {
             !workspace_read.sources.contains_key(conftest) && options.root.join(conftest).is_file()
-        });
+        };
+        fixtures::taint_admission_by_conftest(
+            &mut all_tests,
+            &implicit_conftests,
+            unreadable_conftest,
+        );
+        fixtures::mark_implicit_reach_by_conftest(
+            &mut all_tests,
+            &reach_conftests,
+            unreadable_conftest,
+        );
         reexports::apply_package_reexports(&mut all_owners, |file| {
             workspace_read.sources.get(file).map(String::as_str)
         });
@@ -1171,6 +1212,7 @@ impl PythonAdapter {
             production_files,
             skipped_files,
             partial_reason,
+            file_accounting: repo::file_accounting(&input),
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
         })
@@ -1193,6 +1235,9 @@ mod bool_oracle_tests;
 mod conftest_admission_tests;
 
 #[cfg(test)]
+mod source_facts_tests;
+
+#[cfg(test)]
 mod deleted_lines_tests;
 
 #[cfg(test)]
@@ -1203,6 +1248,12 @@ mod dunder_entry_tests;
 
 #[cfg(test)]
 mod helper_assertions_tests;
+
+#[cfg(test)]
+mod capability_disposition_tests;
+
+#[cfg(test)]
+mod helper_inline_tests;
 
 #[cfg(test)]
 mod helper_owner_call_tests;

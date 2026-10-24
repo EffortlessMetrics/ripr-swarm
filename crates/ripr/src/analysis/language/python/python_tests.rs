@@ -1306,10 +1306,10 @@ fn is_unittest_class_accepts_bare_and_dotted_test_case_bases() -> Result<(), Str
         Path::new("tests/test_neither.py"),
         "class C(object):\n    def test_c(self):\n        pass\n",
     );
-    if bare.first().map(|t| t.framework) != Some("unittest") {
+    if bare.first().map(|t| t.framework) != Some(PythonFramework::Unittest) {
         return Err("bare `TestCase` base should mark unittest framework".to_string());
     }
-    if dotted.first().map(|t| t.framework) != Some("unittest") {
+    if dotted.first().map(|t| t.framework) != Some(PythonFramework::Unittest) {
         return Err("`unittest.TestCase` base should mark unittest framework".to_string());
     }
     if !neither.is_empty() {
@@ -1945,7 +1945,7 @@ fn same_stem_related_handles_missing_stems() {
         parametrized: false,
         parametrize: None,
         generated_inputs: Vec::new(),
-        framework: "pytest",
+        framework: PythonFramework::Pytest,
         assertions: Vec::new(),
         assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
     };
@@ -3120,8 +3120,8 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             unresolved,
         ),
         (
-            "same-module helper with an arbitrary name",
-            "def run_case(value):\n    assert apply_discount(value) == 10\n\ndef test_x():\n    run_case(20)\n",
+            "same-module helper with an arbitrary name and a computed argument (a literal one is credited by helper_inline)",
+            "def run_case(value):\n    assert apply_discount(value) == 10\n\ndef test_x():\n    run_case(10 + 10)\n",
             unresolved,
         ),
         (
@@ -3470,7 +3470,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         parametrized: false,
         parametrize: None,
         generated_inputs: Vec::new(),
-        framework: "pytest",
+        framework: PythonFramework::Pytest,
         assertions: Vec::new(),
         assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
     };
@@ -3492,7 +3492,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         parametrized: false,
         parametrize: None,
         generated_inputs: Vec::new(),
-        framework: "pytest",
+        framework: PythonFramework::Pytest,
         assertions: Vec::new(),
         assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
     };
@@ -3514,7 +3514,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         parametrized: false,
         parametrize: None,
         generated_inputs: Vec::new(),
-        framework: "pytest",
+        framework: PythonFramework::Pytest,
         assertions: Vec::new(),
         assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
     };
@@ -3740,10 +3740,10 @@ class Async(unittest.TestCase):
                 tests.iter().map(|t| t.name.as_str()).collect::<Vec<_>>()
             )
         })?;
-    if async_test.framework != "unittest" {
+    if async_test.framework != PythonFramework::Unittest {
         return Err(format!(
             "async test inside unittest.TestCase should be unittest, got {}",
-            async_test.framework
+            async_test.framework.as_str()
         ));
     }
     Ok(())
@@ -3939,6 +3939,8 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         relation_reason: None,
         relation_confidence: None,
         miss: None,
+        miss_support: None,
+        role: crate::domain::RelatedTestRole::Contributing,
     };
 
     // Strong oracle on a wrapper's return value -> does not observe the owner.
@@ -4017,6 +4019,8 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         relation_reason: None,
         relation_confidence: None,
         miss: None,
+        miss_support: None,
+        role: crate::domain::RelatedTestRole::Contributing,
     }];
     // Without the alias import, the oracle names neither owner nor sink.
     assert!(!strong_oracle_observes_owner(&owner, line, &related, &[]));
@@ -4044,7 +4048,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         parametrized: false,
         parametrize: None,
         generated_inputs: Vec::new(),
-        framework: "pytest",
+        framework: PythonFramework::Pytest,
         assertions: Vec::new(),
         assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
     };
@@ -4097,6 +4101,8 @@ fn align_strong(oracle: &str) -> RelatedTest {
         relation_reason: None,
         relation_confidence: None,
         miss: None,
+        miss_support: None,
+        role: crate::domain::RelatedTestRole::Contributing,
     }
 }
 
@@ -4126,7 +4132,7 @@ fn align_importing_test(imported: &str, module: &str) -> PythonTest {
         parametrized: false,
         parametrize: None,
         generated_inputs: Vec::new(),
-        framework: "pytest",
+        framework: PythonFramework::Pytest,
         assertions: Vec::new(),
         assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
     }
@@ -4175,7 +4181,7 @@ fn sink_alignment_is_alias_when_oracle_uses_import_alias() {
         parametrized: false,
         parametrize: None,
         generated_inputs: Vec::new(),
-        framework: "pytest",
+        framework: PythonFramework::Pytest,
         assertions: Vec::new(),
         assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
     };

@@ -1,3 +1,4 @@
+use super::PythonFramework;
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::source_utils::normalized_path;
 use super::{
@@ -305,6 +306,8 @@ pub(super) fn related_tests_for_candidates(
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }
         })
         .collect()
@@ -319,7 +322,7 @@ pub(super) fn verify_command_for_test(test: &PythonTest) -> Option<String> {
 pub(super) fn verify_command_for_test_on(test: &PythonTest, windows: bool) -> Option<String> {
     let path = normalized_path(&test.file);
     match test.framework {
-        "pytest" => {
+        PythonFramework::Pytest => {
             let node = test.qualified_name.replace('.', "::");
             // #8752: the quoting grammar must match the host's default shell
             // or the suggested command fails for exactly the paths that need
@@ -338,7 +341,7 @@ pub(super) fn verify_command_for_test_on(test: &PythonTest, windows: bool) -> Op
                 crate::domain::PYTEST_VERIFY_PROGRAM
             ))
         }
-        "unittest" => {
+        PythonFramework::Unittest => {
             let module = unittest_module_for_path(&path)?;
             let selector = if windows {
                 shell_quote_file_arg_for_host(&format!("{module}.{}", test.qualified_name), true)?
@@ -351,7 +354,6 @@ pub(super) fn verify_command_for_test_on(test: &PythonTest, windows: bool) -> Op
             };
             Some(format!("python -m unittest {selector}"))
         }
-        _ => None,
     }
 }
 
@@ -437,7 +439,7 @@ pub(super) fn python_repair_placement_on(
         .nth(1)
         .map(|_| candidate.test.line);
     match candidate.test.framework {
-        "pytest" => {
+        PythonFramework::Pytest => {
             let node = candidate.test.qualified_name.replace('.', "::");
             let node_id = format!("{path}::{node}");
             Some(PythonRepairPlacement {
@@ -451,7 +453,7 @@ pub(super) fn python_repair_placement_on(
                 location_reason: "strengthen existing weak pytest relation",
             })
         }
-        "unittest" => Some(PythonRepairPlacement {
+        PythonFramework::Unittest => Some(PythonRepairPlacement {
             repair_action: "strengthen_existing_test",
             suggested_test_file: path,
             suggested_test_name: candidate.test.name.clone(),
@@ -461,7 +463,6 @@ pub(super) fn python_repair_placement_on(
             verify_command_confidence: "high",
             location_reason: "strengthen existing weak unittest relation",
         }),
-        _ => None,
     }
 }
 
@@ -751,9 +752,10 @@ fn binds_in_target_list(body: &str, var: &str) -> bool {
 }
 
 /// Whether the `var` occurrence just after `before` and just before `after`
-/// binds it through a chained assignment (`x = r = [1]`), or a single-element
-/// bracketed target (`[r] = ...`, `(r) = ...`, `for (r) in ...`,
-/// `with a as [r]`). A bare call argument `f(r)` is not a binding.
+/// binds it through a chained assignment (`x = r = [1]`), or a bracketed target
+/// of one or more nested single-element brackets (`[r] = ...`, `( r), x = ...`,
+/// `((r), x) = ...`, `for ((r), x) in ...`, `with a as [r]`). A bare call
+/// argument `f(r)` is not a binding.
 fn chained_or_bracketed_target(body: &str, idx: usize, before: &str, after: &str) -> bool {
     let line_start = body[..idx].rfind('\n').map_or(0, |at| at + 1);
     let not_line_start = !body[line_start..idx].trim().is_empty();
@@ -761,31 +763,162 @@ fn chained_or_bracketed_target(body: &str, idx: usize, before: &str, after: &str
     if not_line_start && plain_assign(after) {
         return true;
     }
-    let Some(closer) = after.chars().next().filter(|c| matches!(c, ']' | ')')) else {
-        return false;
-    };
-    let opener = if closer == ']' { '[' } else { '(' };
-    if !before.ends_with(opener) {
+    // Peel each matching `(` ... `)` / `[` ... `]` pair around the name, so
+    // spacing, nesting (`(( r ))`) and a split across lines do not change the
+    // reading.
+    let mut head_end = before.len();
+    let mut rest = after.trim_start();
+    let mut peeled = false;
+    while let Some(closer) = rest.chars().next().filter(|c| matches!(c, ']' | ')')) {
+        let opener = if closer == ']' { '[' } else { '(' };
+        let Some(open_at) = body
+            .get(..head_end)
+            .map(str::trim_end)
+            .filter(|head| head.ends_with(opener))
+            .map(|head| head.len() - 1)
+        else {
+            break;
+        };
+        head_end = body
+            .get(..open_at)
+            .map_or(open_at, |head| head.trim_end_matches([' ', '\t']).len());
+        rest = rest[1..].trim_start();
+        peeled = true;
+    }
+    if !peeled {
         return false;
     }
-    let rest = after[1..].trim_start_matches([' ', '\t']);
+    let head = body.get(..head_end).unwrap_or("");
+    let head_line = head
+        .get(head.rfind('\n').map_or(0, |at| at + 1)..)
+        .unwrap_or("");
     plain_assign(rest)
-        || (rest.starts_with(',') && opener_is_target_position(&body[line_start..idx - 1]))
-        || rest.starts_with("in ")
-        || before[..before.len() - 1].trim_end().ends_with(" as")
+        || (rest.starts_with(',') && opener_is_target_position(head_line))
+        // `in` binds only inside a `for` target list (`for (r) in items`,
+        // `for x, (r) in items`); a membership test such as
+        // `assert ((r)) in items` rebinds nothing.
+        || (rest.starts_with("in ") && is_inside_for_target(head_line))
+        || head.trim_end().ends_with(" as")
+}
+
+/// Whether `head` (the text of a line before a peeled target) sits in the
+/// target list of a `for` statement: the last whole word `for` has no `in`,
+/// `=` or `:` after it.
+fn is_inside_for_target(head: &str) -> bool {
+    let mut search = head.len();
+    while let Some(at) = head[..search].rfind("for") {
+        let boundary_before = !head[..at].ends_with(is_python_identifier_char);
+        let boundary_after = !head[at + 3..].starts_with(is_python_identifier_char);
+        if boundary_before && boundary_after {
+            let targets = &head[at + 3..];
+            return !targets.contains(['=', ':'])
+                && !targets
+                    .split(|ch: char| !is_python_identifier_char(ch))
+                    .any(|word| word == "in");
+        }
+        search = at;
+    }
+    false
 }
 
 /// Whether text before a bracket opener puts it in a binding-target position
-/// (line start, or after `for`, `as`, `,` or `*`) rather than a call argument
-/// list (`len(r), 0` in `self.assertEqual(len(r), 0)`).
+/// (line start, or after `for`, `as`, `,`, `*`, `;`, a compound-header `:` or another opener that is itself
+/// in target position) rather than a call argument list (`len(r), 0` in
+/// `self.assertEqual(len(r), 0)`).
 fn opener_is_target_position(head: &str) -> bool {
-    let head = head.trim_end();
+    let mut head = head.trim_end();
+    while let Some(outer) = head.strip_suffix(['(', '[']) {
+        head = outer.trim_end();
+    }
     head.is_empty()
-        || head.ends_with([',', '*'])
+        || head.ends_with([',', '*', ';'])
+        || (head.ends_with(':') && is_compound_header_colon(head))
         || head
             .rsplit(|ch: char| !is_python_identifier_char(ch))
             .next()
             .is_some_and(|word| word == "for" || word == "as")
+}
+
+/// Whether the `:` that ends `head` closes a compound-statement header
+/// (`if c:`, `else:`, `for x in y:`) rather than a dict value, slice or
+/// annotation colon: the line starts with a header keyword and the brackets
+/// opened before the colon are balanced.
+fn is_compound_header_colon(head: &str) -> bool {
+    let first = head
+        .trim_start()
+        .split(|ch: char| !is_python_identifier_char(ch))
+        .next()
+        .unwrap_or("");
+    let header = matches!(
+        first,
+        "if" | "elif"
+            | "else"
+            | "try"
+            | "except"
+            | "finally"
+            | "while"
+            | "for"
+            | "with"
+            | "def"
+            | "class"
+            | "async"
+            | "match"
+            | "case"
+    );
+    header && brackets_balanced_outside_strings(head)
+}
+
+/// Whether every bracket opened in `text` is closed by its own kind, ignoring
+/// string-literal contents (`")"`, `'}'`, `""" } """`) and a trailing `#`
+/// comment. A mismatch, an unmatched closer or an unterminated string is not
+/// balanced, so the caller does not treat the head as a compound-statement
+/// header and the receiver keeps its credit.
+fn brackets_balanced_outside_strings(text: &str) -> bool {
+    let chars: Vec<char> = text.chars().collect();
+    let mut stack: Vec<char> = Vec::new();
+    let mut index = 0;
+    while index < chars.len() {
+        let ch = chars[index];
+        index += 1;
+        match ch {
+            '(' => stack.push(')'),
+            '[' => stack.push(']'),
+            '{' => stack.push('}'),
+            ')' | ']' | '}' if stack.pop() != Some(ch) => return false,
+            '"' | '\'' => {
+                // A tripled quote opens a string closed only by the same
+                // complete delimiter; otherwise one quote delimits it.
+                let width = if chars.get(index..index + 2) == Some(&[ch, ch][..]) {
+                    3
+                } else {
+                    1
+                };
+                index += width - 1;
+                let mut closed = false;
+                while index < chars.len() {
+                    let inner = chars[index];
+                    if inner == '\\' {
+                        index += 2;
+                    } else if inner == ch
+                        && chars[index..].iter().take(width).all(|c| *c == ch)
+                        && chars.len() - index >= width
+                    {
+                        index += width;
+                        closed = true;
+                        break;
+                    } else {
+                        index += 1;
+                    }
+                }
+                if !closed {
+                    return false;
+                }
+            }
+            '#' => break,
+            _ => {}
+        }
+    }
+    stack.is_empty()
 }
 
 /// Whether the construction at `idx` is the whole right-hand side of its
@@ -803,7 +936,7 @@ fn construction_is_whole_value(body: &str, idx: usize, construct: &str) -> bool 
 /// Whether the test rebinds the builtin `name` (an import, an assignment,
 /// a `def`/`class`/`for`/`as`/walrus target, or a parameter), so a call spelled
 /// `name(...)` is no longer the builtin.
-fn builtin_is_shadowed(test: &PythonTest, name: &str) -> bool {
+pub(super) fn builtin_is_shadowed(test: &PythonTest, name: &str) -> bool {
     test.imports.iter().any(|import| import.alias == name)
         || test_rebinds_import_alias(test, name)
         || test.constant_rebinding.rebinds(name)
