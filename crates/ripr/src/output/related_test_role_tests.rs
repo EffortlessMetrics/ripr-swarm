@@ -1,7 +1,7 @@
 //! Controls for RIPR-SPEC-0224 / #5563: a related row's decision role is its
 //! explicit `role`, never its explanatory `miss`.
 
-use super::{
+use crate::domain::{
     ActivationEvidence, Confidence, DeltaKind, DiagnosticWitness, ExposureClass, Finding,
     OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RelatedTestMiss,
     RelatedTestRole, RelationReason, RevealEvidence, RiprEvidence, SourceLocation, StageEvidence,
@@ -206,11 +206,120 @@ fn annotating_an_existing_row_changes_no_decision() -> Result<(), String> {
     Ok(())
 }
 
-/// Control 7: a source-text guard. Eligibility helpers and the lines that
-/// consume them must not name the explanatory miss.
+/// Calls whose closure argument decides which rows a path keeps or counts.
+const ELIGIBILITY_CALLS: [&str; 11] = [
+    ".filter(",
+    ".partition(",
+    ".retain(",
+    ".any(",
+    ".all(",
+    ".find(",
+    ".position(",
+    ".filter_map(",
+    ".take_while(",
+    ".skip_while(",
+    ".is_some_and(",
+];
+
+/// Production text of a source file: everything before its first test module.
+fn production_text(source: &str) -> &str {
+    source.split("\n#[cfg(test)]").next().unwrap_or(source)
+}
+
+fn reads_miss(text: &str) -> bool {
+    if text.contains("is_unmatched") || text.contains("RelatedTestMiss") {
+        return true;
+    }
+    text.match_indices(".miss").any(|(at, _)| {
+        !text[at + ".miss".len()..]
+            .chars()
+            .next()
+            .is_some_and(|next| next.is_alphanumeric() || next == '_')
+    })
+}
+
+/// Every closure argument (possibly spanning lines) of an eligibility call
+/// that reads the explanatory miss, as `line: snippet`.
+fn miss_reading_closures(source: &str) -> Vec<String> {
+    let mut hits = Vec::new();
+    for call in ELIGIBILITY_CALLS {
+        for (at, _) in source.match_indices(call) {
+            let start = at + call.len();
+            let mut depth = 1usize;
+            let mut end = start;
+            for (offset, ch) in source[start..].char_indices() {
+                match ch {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = start + offset;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let argument = &source[start..end];
+            if reads_miss(argument) {
+                let line = source[..at].matches('\n').count() + 1;
+                let snippet = argument.split_whitespace().collect::<Vec<_>>().join(" ");
+                hits.push(format!("{line}: {call}{snippet})"));
+            }
+        }
+    }
+    hits
+}
+
+/// Documented explanation-only readers and producers allowed to name the miss
+/// inside such a closure: `(path suffix, snippet fragment)`.
+const MISS_CLOSURE_ALLOWLIST: [(&str, &str); 3] = [
+    // Tracked RIPR-SPEC-0224 gap: the exact-oracle next step still excludes
+    // `missing_exact_assertion` rows after the role check; eligibility itself
+    // is the role.
+    (
+        "analysis/classify/decision.rs",
+        "test.miss != Some(RelatedTestMiss::MissingExactAssertion)",
+    ),
+    // Producer: the annotation pass selects not-yet-annotated rows to write
+    // their miss; it never decides decision eligibility.
+    (
+        "analysis/classifier/finding.rs",
+        ".filter(|test| test.miss.is_none() && test.oracle.is_some())",
+    ),
+    (
+        "analysis/classifier/finding.rs",
+        ".filter(|test| test.miss.is_none())",
+    ),
+];
+
+fn production_sources(
+    dir: &std::path::Path,
+    out: &mut Vec<(String, String)>,
+) -> Result<(), String> {
+    for entry in std::fs::read_dir(dir).map_err(|error| error.to_string())? {
+        let path = entry.map_err(|error| error.to_string())?.path();
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if path.is_dir() {
+            if name != "tests" {
+                production_sources(&path, out)?;
+            }
+        } else if name.ends_with(".rs") && !name.contains("tests") {
+            let text = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
+            out.push((
+                path.display().to_string(),
+                production_text(&text).to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Control 7: the eligibility helpers never name the miss, and no production
+/// closure that decides row eligibility anywhere in the crate reads it.
 #[test]
 fn decision_helpers_never_branch_on_the_miss() -> Result<(), String> {
-    let probe = include_str!("probe.rs");
+    let probe = include_str!("../domain/probe.rs");
     for name in [
         "pub fn is_contributing(&self) -> bool {\n        self.role",
         "pub fn is_examined_only(&self) -> bool {",
@@ -222,66 +331,52 @@ fn decision_helpers_never_branch_on_the_miss() -> Result<(), String> {
         let body = &probe[start..];
         let end = body.find("\n    }\n").ok_or("unterminated helper")?;
         let body = &body[..end];
-        for needle in [".miss", "RelatedTestMiss", "miss:"] {
-            assert!(!body.contains(needle), "helper `{name}` reads {needle}");
-        }
+        assert!(
+            !reads_miss(body) && !body.contains("miss:"),
+            "helper `{name}` reads the miss"
+        );
     }
-    let consumers = [
-        (
-            "domain/diagnostic_witness.rs",
-            include_str!("diagnostic_witness.rs"),
-        ),
-        (
-            "analysis/classify/decision.rs",
-            include_str!("../analysis/classify/decision.rs"),
-        ),
-        (
-            "analysis/classify/reveal.rs",
-            include_str!("../analysis/classify/reveal.rs"),
-        ),
-        (
-            "analysis/classifier/finding.rs",
-            include_str!("../analysis/classifier/finding.rs"),
-        ),
-        (
-            "analysis/language/rust/oracles.rs",
-            include_str!("../analysis/language/rust/oracles.rs"),
-        ),
-        (
-            "analysis/language/rust/probes.rs",
-            include_str!("../analysis/language/rust/probes.rs"),
-        ),
-        (
-            "analysis/language/rust/mod.rs",
-            include_str!("../analysis/language/rust/mod.rs"),
-        ),
-        (
-            "analysis/language/rust/lexical_test_grip.rs",
-            include_str!("../analysis/language/rust/lexical_test_grip.rs"),
-        ),
-        (
-            "output/human/triage.rs",
-            include_str!("../output/human/triage.rs"),
-        ),
-    ];
-    for (path, source) in consumers {
+    let mut sources = Vec::new();
+    production_sources(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut sources,
+    )?;
+    assert!(
+        sources.len() > 100,
+        "scan found only {} files",
+        sources.len()
+    );
+    let mut violations = Vec::new();
+    for (path, source) in &sources {
         assert!(
             !source.contains("is_unmatched"),
             "{path} uses the retired is_unmatched"
         );
-        // Test modules legitimately build rows; scan production text only.
-        let production = source.split("#[cfg(test)]").next().unwrap_or(source);
-        for (index, line) in production.lines().enumerate() {
-            let eligibility = line.contains("is_examined_only()")
-                || line.contains("is_contributing()")
-                || line.contains("oracle_related_tests()");
-            let reads_miss = line.contains("RelatedTestMiss") || line.contains(".miss");
-            assert!(
-                !(eligibility && reads_miss),
-                "{path}:{} mixes row eligibility with the miss: {line}",
-                index + 1
-            );
+        for hit in miss_reading_closures(source) {
+            let allowed = MISS_CLOSURE_ALLOWLIST
+                .iter()
+                .any(|(suffix, fragment)| path.ends_with(suffix) && hit.contains(fragment));
+            if !allowed {
+                violations.push(format!("{path}:{hit}"));
+            }
         }
     }
+    assert!(
+        violations.is_empty(),
+        "closures read the miss:\n{}",
+        violations.join("\n")
+    );
     Ok(())
+}
+
+#[test]
+fn the_miss_closure_scan_catches_multi_line_and_helper_shapes() {
+    let multi_line = "fn eligible(f: &Finding) -> usize {\n    f.related_tests\n        .iter()\n        .filter(|test| {\n            let reaches = test.line > 0;\n            reaches\n                && test.miss\n                    != Some(RelatedTestMiss::AssertionNotObserving)\n        })\n        .count()\n}\n";
+    assert_eq!(miss_reading_closures(multi_line).len(), 1);
+    let legacy = "rows.iter().any(|t| t.is_unmatched())";
+    assert_eq!(miss_reading_closures(legacy).len(), 1);
+    let clean = "rows.iter().filter(|t| t.is_contributing() && t.miss_support.is_none())";
+    assert!(miss_reading_closures(clean).is_empty());
+    let test_tail = "fn a() {}\n#[cfg(test)]\nmod tests { fn b(r: &[RelatedTest]) { r.iter().any(|t| t.miss.is_some()); } }";
+    assert!(miss_reading_closures(production_text(test_tail)).is_empty());
 }

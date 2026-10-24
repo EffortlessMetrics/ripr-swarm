@@ -2498,9 +2498,9 @@ fn analyze_related_assertions(
                 // A refusal row was part of the legacy oracle-row set; only a
                 // test whose assertions matched nothing is examined-only.
                 role: if refused_here {
-                    RelatedTestRole::Contributing
+                    crate::domain::RelatedTestRole::Contributing
                 } else {
-                    RelatedTestRole::ExaminedOnly
+                    crate::domain::RelatedTestRole::ExaminedOnly
                 },
             });
         }
