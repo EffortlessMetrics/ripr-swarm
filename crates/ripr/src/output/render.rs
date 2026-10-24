@@ -1942,6 +1942,7 @@ fn happy_path_passes() {
 
     fn sample_finding(file: &str, line: usize) -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_lib_rs:42:error_path".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -1987,6 +1988,8 @@ fn happy_path_passes() {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }],
             recommended_next_step: Some("add stronger assertion".to_string()),
             language: None,

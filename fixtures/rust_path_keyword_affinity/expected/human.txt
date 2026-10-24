@@ -1,0 +1,50 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_path_keyword_affinity/input
+
+Summary: 6 probes (0 exposed, 0 weak, 0 unrevealed, 1 no path, 5 unknown); 6 of 6 findings unsuppressed (1 base-side evidence, not candidate edit targets)
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 12 changed line(s), 5 candidate line(s), 6 probe(s), 6 finding(s)
+
+Start here:
+  State: limited by static analysis
+  Safe next action: inspect the named static limitation before treating this as repair-ready
+  File: ./src/lib.rs:13
+  Static exposure: unknown (severity: note, confidence 0.50)
+  Why unknown: the analysis could not determine a static exposure state
+  Changed behavior: pub const SEED_BASE: u32 = 1;
+  Analyzer limit: No strong discriminator was detected
+  Related test: tests/other.rs:25 seeds_base
+  Next step: Inspect the changed behavior and its existing tests; ripr has not established a test
+    gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place
+    this line inside an analyzed Rust function. Add or strengthen a test only if this inspection
+    finds a gap. Compare the original and changed implementations with a focused run using the
+    project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification
+    may remain unknown
+  Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator unknown
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+    - reach yes: Related tests appear to reach changed owner: seeds_base
+    - infection unknown: Changed syntax is not mapped to a high-confidence probe family
+    - 7 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/rust_path_keyword_affinity/input --diff <cwd>/fixtures/rust_path_keyword_affinity/diff.patch --mode fast probe:src_lib.rs:static_unknown:bd010b89
+  ripr context --root <cwd>/fixtures/rust_path_keyword_affinity/input --diff <cwd>/fixtures/rust_path_keyword_affinity/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:bd010b89
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.rs:static_unknown:bd010b89 --root <cwd>/fixtures/rust_path_keyword_affinity/input` for the full gate's answer
+
+Hidden:
+  5 finding(s) omitted: 4 lower-priority, 1 base-side evidence (not candidate edit targets).
+    - ./src/lib.rs:1 (unknown, lower-priority candidate)
+    - ./src/lib.rs:3 (unknown, lower-priority candidate)
+    - ./src/lib.rs:4 (no path, lower-priority candidate)
+    - ./src/lib.rs:7 (unknown, lower-priority candidate)
+    - ./src/lib.rs:7 (unknown, base-side)
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json

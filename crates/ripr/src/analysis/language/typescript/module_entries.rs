@@ -38,6 +38,11 @@ pub(crate) struct TypeScriptModuleEntry {
     /// `true` when this entry is the module's default export, so a default
     /// import under any local name binds it.
     pub(crate) exported_as_default: bool,
+    /// `Some(kind)` when the entry is a method of the owner's own class
+    /// that reaches the owner through `this.method(...)` calls
+    /// (`class_entries`), not an exported top-level name. `name` is then the
+    /// method name (`constructor` for a constructor).
+    pub(crate) class_member: Option<TypeScriptMethodKind>,
 }
 
 /// One top-level declaration of the module.
@@ -182,6 +187,7 @@ fn record_export(
         .insert(TypeScriptModuleEntry {
             name: exported.to_string(),
             exported_as_default: exported == "default",
+            class_member: None,
         });
 }
 

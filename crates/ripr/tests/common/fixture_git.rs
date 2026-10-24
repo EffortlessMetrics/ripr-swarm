@@ -294,10 +294,50 @@ fn spawn_stream_drain(
     })
 }
 
+fn fixture_git_command(root: &Path, args: &[&str]) -> Command {
+    // Fixture inputs are the owned root and explicit arguments/local config.
+    // Ambient Git selectors, injected config, identities and object paths
+    // must not redirect or change setup. Do this on the child command, never
+    // by mutating the multithreaded test process's environment.
+    let mut command = Command::new("git");
+    for (key, _) in std::env::vars_os() {
+        if key
+            .to_string_lossy()
+            .to_ascii_uppercase()
+            .starts_with("GIT_")
+        {
+            command.env_remove(key);
+        }
+    }
+    let null_config = if cfg!(windows) { "NUL" } else { "/dev/null" };
+    command
+        .args(args)
+        .current_dir(root)
+        .env("GIT_CONFIG_GLOBAL", null_config)
+        .env("GIT_CONFIG_SYSTEM", null_config)
+        // System attributes are independent of system config. Reestablish
+        // this guard after clearing inherited Git variables.
+        .env("GIT_ATTR_NOSYSTEM", "1")
+        // Git reads its default ignore/attributes files independently of
+        // global config, including a HOME fallback when XDG is unset.
+        .env("XDG_CONFIG_HOME", root.join(".git").join("fixture-xdg"))
+        .env("LC_ALL", "C");
+    command
+}
+
 fn run_git_deadline(
     root: &Path,
     args: &[&str],
     deadline: Duration,
+) -> Result<FixtureGitOutcome, String> {
+    run_git_command_deadline(root, args, deadline, fixture_git_command(root, args))
+}
+
+fn run_git_command_deadline(
+    root: &Path,
+    args: &[&str],
+    deadline: Duration,
+    mut command: Command,
 ) -> Result<FixtureGitOutcome, String> {
     // Mirror the canonical runner in `crate::git`: a zero deadline is refused
     // before spawning. Spawning would let any git that exits before the first
@@ -309,16 +349,7 @@ fn run_git_deadline(
             root.display()
         )));
     }
-    // Fixture repositories are always their own temp tree: an inherited
-    // hook/wrapper repository selector must not redirect fixture setup into
-    // the outer repository.
-    let mut child = Command::new("git")
-        .args(args)
-        .current_dir(root)
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_COMMON_DIR")
-        .env_remove("GIT_INDEX_FILE")
+    let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -417,6 +448,149 @@ mod tests {
         if is_retryable_checkout(&["checkout", "-b", "probe-branch"]) {
             return Err("branch creation must never retry".to_string());
         }
+        Ok(())
+    }
+
+    #[test]
+    fn fixture_setup_preserves_utf8_bytes_in_its_own_worktree() -> Result<(), String> {
+        let root = unique_root("bytes with spaces")?;
+        fixture_git_ok(&root, &["init", "-q", "-b", "main"])?;
+        fixture_git_ok(&root, &["config", "user.name", "Fixture"])?;
+        fixture_git_ok(&root, &["config", "user.email", "fixture@example.invalid"])?;
+        let contents = "corpus: café, İstanbul, 日本語\n";
+        std::fs::write(root.join("corpus.txt"), contents)
+            .map_err(|error| format!("write corpus fixture: {error}"))?;
+        fixture_git_ok(&root, &["add", "corpus.txt"])?;
+        fixture_git_ok(&root, &["commit", "-q", "-m", "corpus fixture"])?;
+        let stored = fixture_git_output(&root, &["show", "HEAD:corpus.txt"])?;
+        assert_eq!(stored, contents);
+        let top = fixture_git_output(&root, &["rev-parse", "--show-toplevel"])?;
+        assert_eq!(
+            std::fs::canonicalize(top.trim()).map_err(|error| error.to_string())?,
+            std::fs::canonicalize(&root.0).map_err(|error| error.to_string())?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn fixture_setup_keeps_explicit_local_and_command_configuration() -> Result<(), String> {
+        let root = unique_root("explicit-config")?;
+        fixture_git_ok(&root, &["init", "-q"])?;
+        fixture_git_ok(&root, &["config", "fixture.setting", "local"])?;
+        assert_eq!(
+            fixture_git_output(&root, &["config", "--get", "fixture.setting"])?,
+            "local\n"
+        );
+        assert_eq!(
+            fixture_git_output(
+                &root,
+                &[
+                    "-c",
+                    "fixture.setting=command",
+                    "config",
+                    "--get",
+                    "fixture.setting"
+                ]
+            )?,
+            "command\n"
+        );
+        // Isolating default global ignores must retain explicit fixture
+        // choices, including a command-line override of the local file.
+        std::fs::write(root.join("local.ignore"), "local.txt\n")
+            .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("command.ignore"), "command.txt\n")
+            .map_err(|error| error.to_string())?;
+        fixture_git_ok(&root, &["config", "core.excludesFile", "local.ignore"])?;
+        assert_eq!(
+            fixture_git_output(&root, &["check-ignore", "local.txt"])?,
+            "local.txt\n"
+        );
+        assert_eq!(
+            fixture_git_output(
+                &root,
+                &[
+                    "-c",
+                    "core.excludesFile=command.ignore",
+                    "check-ignore",
+                    "command.txt"
+                ]
+            )?,
+            "command.txt\n"
+        );
+        // System-attribute isolation must not discard explicitly selected
+        // attribute files, including a command-line override of the local one.
+        std::fs::write(
+            root.join("local.attributes"),
+            "corpus.txt fixture-layer=local\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("command.attributes"),
+            "corpus.txt fixture-layer=command\n",
+        )
+        .map_err(|error| error.to_string())?;
+        fixture_git_ok(
+            &root,
+            &["config", "core.attributesFile", "local.attributes"],
+        )?;
+        assert_eq!(
+            fixture_git_output(&root, &["check-attr", "fixture-layer", "--", "corpus.txt"])?,
+            "corpus.txt: fixture-layer: local\n"
+        );
+        assert_eq!(
+            fixture_git_output(
+                &root,
+                &[
+                    "-c",
+                    "core.attributesFile=command.attributes",
+                    "check-attr",
+                    "fixture-layer",
+                    "--",
+                    "corpus.txt",
+                ]
+            )?,
+            "corpus.txt: fixture-layer: command\n"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn fixture_setup_disables_system_attributes() -> Result<(), String> {
+        let root = unique_root("system-attributes")?;
+        // Establish that this Git can report an enabled system-attributes
+        // path. A missing capability must not masquerade as isolation. Use a
+        // separate child with the guard explicitly disabled and the same
+        // bounded spawn/drain owner; never change the parent or system files.
+        let args = ["var", "GIT_ATTR_SYSTEM"];
+        let mut control = fixture_git_command(&root, &args);
+        control.env("GIT_ATTR_NOSYSTEM", "0");
+        let output = match run_git_command_deadline(&root, &args, FIXTURE_GIT_DEADLINE, control)? {
+            FixtureGitOutcome::Finished(output) => output,
+            FixtureGitOutcome::TimedOut(error) => return Err(error),
+        };
+        if !output.status.success() || String::from_utf8_lossy(&output.stdout).trim().is_empty() {
+            return Err(format!(
+                "positive control did not identify the system attributes path: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        let variables = fixture_git_output(&root, &["var", "-l"])?;
+        assert!(
+            !variables
+                .lines()
+                .any(|line| line.starts_with("GIT_ATTR_SYSTEM=")),
+            "fixture child still enables system attributes: {variables}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn fixture_setup_reports_stable_english_diagnostics() -> Result<(), String> {
+        let root = unique_root("diagnostic")?;
+        let error = fixture_git_output(&root, &["not-a-fixture-subcommand"])
+            .err()
+            .ok_or("invalid git command unexpectedly succeeded")?;
+        assert!(error.contains("is not a git command"), "{error}");
         Ok(())
     }
 

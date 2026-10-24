@@ -217,6 +217,10 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckIdentityRegistry => super::identity_registry::check_identity_registry(),
         XtaskCommand::CheckDocArtifacts => super::check_doc_artifacts(),
         XtaskCommand::CheckSupportTiers => super::check_support_tiers(),
+        XtaskCommand::CheckCapabilityProducers(args) => {
+            super::policy::check_capability_producers(&args)
+        }
+        XtaskCommand::CapabilityDocs(args) => super::policy::capability_docs(&args),
         XtaskCommand::CheckDocIndex => super::check_doc_index(),
         XtaskCommand::CheckChangelogFragments(args) => {
             super::policy::check_changelog_fragments_with_args(&args)

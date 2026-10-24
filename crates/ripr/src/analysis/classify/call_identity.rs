@@ -94,6 +94,9 @@ pub(crate) struct CallIdentityMemos {
     /// scope parses then serve every probe and every pin of the run instead
     /// of dying with each construction.
     identities: Mutex<SharedIdentities>,
+    /// #9218: the same per owner, built even when the owner has no
+    /// same-named rival, for resolving a qualified call's spelled path.
+    solo_identities: Mutex<SharedIdentities>,
     /// RIPR-SPEC-0035: every workspace `const`/`static` by name with its
     /// file and masked initializer, built once per index on first use by
     /// the owner-return pin's self-computed expected-value check.
@@ -278,6 +281,30 @@ pub(in crate::analysis) fn shared_owner_call_identity(
     built
 }
 
+/// [`shared_owner_call_identity`] for an owner that may have no rival
+/// (#9218): the identity used to settle a qualified call's spelled path.
+fn shared_solo_owner_call_identity(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+) -> Option<std::sync::Arc<OwnerCallIdentity>> {
+    let key = owner.id.0.clone();
+    if let Some(memo) = index
+        .call_identity_memos
+        .solo_identities
+        .lock()
+        .ok()
+        .and_then(|identities| identities.get(&key).cloned())
+    {
+        return memo;
+    }
+    let built = OwnerCallIdentity::new_with(owner, index.functions().iter(), index, true)
+        .map(std::sync::Arc::new);
+    if let Ok(mut identities) = index.call_identity_memos.solo_identities.lock() {
+        return identities.entry(key).or_insert(built).clone();
+    }
+    built
+}
+
 /// The owner and its same-named, same-package module-level rivals.
 pub(in crate::analysis) struct OwnerCallIdentity {
     name: String,
@@ -346,6 +373,19 @@ impl OwnerCallIdentity {
         same_named: impl IntoIterator<Item = &'a FunctionSummary>,
         index: &RustIndex,
     ) -> Option<Self> {
+        Self::new_with(owner, same_named, index, false)
+    }
+
+    /// [`Self::new`], or with `solo` an identity of the owner alone when it
+    /// has no rival (#9218): every spelled path then settles on the owner
+    /// exactly when it names the owner's module, and stays unsettled
+    /// otherwise.
+    fn new_with<'a>(
+        owner: &FunctionSummary,
+        same_named: impl IntoIterator<Item = &'a FunctionSummary>,
+        index: &RustIndex,
+        solo: bool,
+    ) -> Option<Self> {
         if owner.item.container != FunctionContainer::Free {
             return None;
         }
@@ -369,7 +409,9 @@ impl OwnerCallIdentity {
                 rivals.push(function);
             }
         }
-        if rivals.is_empty() || package_remaps_module_paths(index, owner_package.as_deref()) {
+        if (rivals.is_empty() && !solo)
+            || package_remaps_module_paths(index, owner_package.as_deref())
+        {
             return None;
         }
         let layout = CrateLayout::new(index, owner_package.as_deref());
@@ -396,7 +438,7 @@ impl OwnerCallIdentity {
                 _ => {}
             }
         }
-        if definitions.len() < 2 {
+        if definitions.len() < 2 && !solo {
             return None;
         }
         Some(Self {
@@ -578,26 +620,13 @@ impl OwnerCallIdentity {
     /// the owner is the root package. From any other crate: the import
     /// names the manifests give the owner's library (`MemberCrates`).
     fn own_crate_names(&self, test: &TestSummary, index: &RustIndex) -> BTreeSet<String> {
-        let test_package = package_key(&test.file);
-        let same_package = test_package == self.owner_package;
-        let mut names = BTreeSet::new();
-        if same_package && !under_tests_dir(&test.file) {
-            return names;
-        }
-        // An integration test imports only the package's library, never a
-        // binary's crate.
-        if same_package
-            && self.owner_package.is_none()
-            && self.owner_crate.as_deref() == Some("lib")
-        {
-            names.extend(index.package_names.iter().cloned());
-        }
-        if let Some(owner_root) =
-            super::owner_pin::target_root(&self.owner_file, index, &BTreeSet::new())
-        {
-            names.extend(index.member_crates.import_names(&test.file, &owner_root));
-        }
-        names
+        own_crate_names_of(
+            &self.owner_file,
+            self.owner_package.as_deref(),
+            self.owner_crate.as_deref(),
+            test,
+            index,
+        )
     }
 
     fn target_of(&self, matches: &Matches) -> CallTarget {
@@ -997,6 +1026,235 @@ pub(super) fn definition_module_path(function: &FunctionSummary) -> Option<Vec<S
     Some(path)
 }
 
+/// The module path of a root-package library item that an integration test
+/// may spell as `<lib>::<module>::..::item` (#8999): `definition_module_path`
+/// when each module segment is declared exactly once across the package's
+/// `src/` files (so a binary that also declares the module, or neither
+/// root, refuses) and no file of the root package carries a `#[path]` remap, which could move a
+/// module file away from the layout the path is read from. A crate-root item
+/// has the empty path and needs neither check.
+pub(super) fn root_library_item_module_path(
+    index: &RustIndex,
+    function: &FunctionSummary,
+) -> Option<Vec<String>> {
+    let module = definition_module_path(function)?;
+    if module.is_empty() {
+        return Some(module);
+    }
+    if package_remaps_module_paths(index, None)
+        || module
+            .iter()
+            .any(|segment| module_declaration_is_ambiguous(index, segment, false))
+    {
+        return None;
+    }
+    Some(module)
+}
+
+/// Whether `source` may splice or generate items this scan does not read: it
+/// does not parse cleanly, defines a macro, invokes an `include`-family macro
+/// (however its tokens are spaced or commented) or invokes any macro in item
+/// position (when `item_position_macros`). Read from the syntax tree, so `include /* c */ !(..)` counts.
+pub(super) fn source_may_splice_items(source: &str, item_position_macros: bool) -> bool {
+    use ra_ap_syntax::{AstNode, ast};
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return true;
+    };
+    parse.tree().syntax().descendants().any(|node| {
+        if ast::MacroRules::can_cast(node.kind()) || ast::MacroDef::can_cast(node.kind()) {
+            return true;
+        }
+        let Some(call) = ast::MacroCall::cast(node) else {
+            return false;
+        };
+        let include_like = call
+            .path()
+            .and_then(|path| path.segment())
+            .and_then(|segment| segment.name_ref())
+            .is_none_or(|name| name.text().trim_start_matches("r#").starts_with("include"));
+        include_like
+            || item_position_macros
+                && call.syntax().parent().is_some_and(|parent| {
+                    ast::SourceFile::can_cast(parent.kind())
+                        || ast::ItemList::can_cast(parent.kind())
+                        || ast::MacroItems::can_cast(parent.kind())
+                })
+    })
+}
+
+/// Whether every segment of the entry's definition module path is bound by
+/// exactly one unconditional, un-remapped library declaration (binary roots are
+/// ignored), so `<lib>::<path>` names the file the entry was read from.
+pub(super) fn library_module_path_is_bound(
+    index: &RustIndex,
+    function: &FunctionSummary,
+    module: &[String],
+) -> bool {
+    module
+        .iter()
+        .all(|segment| !module_declaration_is_ambiguous(index, segment, true))
+        && library_declaration_chain_reaches_file(index, &function.file)
+}
+
+/// Walk the declaration chain from `src/lib.rs`: each file-module segment of
+/// `file` must be declared by exactly one out-of-line, unconditional,
+/// un-remapped `mod <segment>;` at the top level of the previous file, with no
+/// other module of that name there, and the declared module's file must be
+/// the next link. The last link must be `file` itself, so a same-named inline
+/// module, or a `#[path]` that sends the file to another name, never binds the
+/// path to the indexed definition.
+fn library_declaration_chain_reaches_file(index: &RustIndex, file: &Path) -> bool {
+    use ra_ap_syntax::{AstNode, ast, ast::HasModuleItem, ast::HasName};
+    let Some(segments) = file_module_segments(file) else {
+        return false;
+    };
+    let target = super::related_tests::normalize_path(file);
+    let mut current = PathBuf::from("src/lib.rs");
+    // Inline module names entered since `current` was loaded: they extend the
+    // directory the next out-of-line declaration loads from.
+    let mut inline_path: Vec<String> = Vec::new();
+    let mut container: Option<Vec<ast::Item>> = None;
+    for segment in &segments {
+        if container.is_none() {
+            let Some(facts) = index.files().get(&current) else {
+                return false;
+            };
+            let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&facts.source)
+            else {
+                return false;
+            };
+            container = Some(parse.tree().items().collect());
+        }
+        let items = container.take().unwrap_or_default();
+        let same_named: Vec<ast::Module> = items
+            .into_iter()
+            .filter_map(|item| match item {
+                ast::Item::Module(module)
+                    if module
+                        .name()
+                        .is_some_and(|n| n.text().trim_start_matches("r#") == segment) =>
+                {
+                    Some(module)
+                }
+                _ => None,
+            })
+            .collect();
+        let [declaration] = same_named.as_slice() else {
+            return false;
+        };
+        if super::owner_pin::has_cfg_attr(declaration)
+            || ast::HasAttrs::attrs(declaration)
+                .any(|attr| has_path_attribute(&attr.syntax().text().to_string()))
+        {
+            return false;
+        }
+        if let Some(items) = declaration.item_list() {
+            if super::owner_pin::has_cfg_attr(&items) {
+                return false;
+            }
+            inline_path.push(segment.clone());
+            container = Some(items.items().collect());
+            continue;
+        }
+        let normalized = super::related_tests::normalize_path(&current);
+        let mut directory = match normalized.rsplit_once('/') {
+            Some((directory, name)) if name == "lib.rs" || name == "mod.rs" => {
+                directory.to_string()
+            }
+            Some((directory, name)) => {
+                format!("{directory}/{}", name.trim_end_matches(".rs"))
+            }
+            None => return false,
+        };
+        for inline in inline_path.drain(..) {
+            directory = format!("{directory}/{inline}");
+        }
+        let flat = PathBuf::from(format!("{directory}/{segment}.rs"));
+        let nested = PathBuf::from(format!("{directory}/{segment}/mod.rs"));
+        current = match (
+            index.files().get(&flat).is_some(),
+            index.files().get(&nested).is_some(),
+        ) {
+            (true, false) => flat,
+            (false, true) => nested,
+            _ => return false,
+        };
+    }
+    inline_path.is_empty() && super::related_tests::normalize_path(&current) == target
+}
+
+/// Whether the root package's `src/` files declare `mod <segment>` other than
+/// exactly once, declare it (or an enclosing inline module, or the item's own
+/// file) under a `cfg`/`cfg_attr`, or may splice unread items (macros,
+/// `include!`). Read from parsed module items, so an attribute hidden from a
+/// text scan by a comment or string is still seen; an unparsable file
+/// refuses.
+fn module_declaration_is_ambiguous(index: &RustIndex, segment: &str, library_only: bool) -> bool {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+    let mut declarations = 0usize;
+    for (path, facts) in index.files().iter() {
+        if package_key(path).is_some() || under_tests_dir(path) {
+            continue;
+        }
+        // The library-only form (an imported entry) ignores binary roots: a
+        // binary that also declares the module does not rebind the library's.
+        let normalized = super::related_tests::normalize_path(path);
+        let body = src_body(&normalized);
+        if library_only && (body == Some("main.rs") || body.is_some_and(|b| b.starts_with("bin/")))
+        {
+            continue;
+        }
+        if source_may_splice_items(&facts.source, true) {
+            return true;
+        }
+        let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&facts.source) else {
+            return true;
+        };
+        let is_lib_root = src_body(&super::related_tests::normalize_path(path)) == Some("lib.rs");
+        if !is_lib_root && super::owner_pin::has_cfg_attr(&parse.tree()) {
+            return true;
+        }
+        for module in parse
+            .tree()
+            .syntax()
+            .descendants()
+            .filter_map(ast::Module::cast)
+        {
+            let named = module
+                .name()
+                .is_some_and(|name| name.text().trim_start_matches("r#") == segment);
+            if !named {
+                continue;
+            }
+            declarations += 1;
+            // A `#[path]` on the declaration binds the module to another file.
+            if library_only
+                && ast::HasAttrs::attrs(&module)
+                    .any(|attr| has_path_attribute(&attr.syntax().text().to_string()))
+            {
+                return true;
+            }
+            let gated = |module: &ast::Module| {
+                super::owner_pin::has_cfg_attr(module)
+                    || module
+                        .item_list()
+                        .is_some_and(|items| super::owner_pin::has_cfg_attr(&items))
+            };
+            if gated(&module)
+                || module
+                    .syntax()
+                    .ancestors()
+                    .skip(1)
+                    .filter_map(ast::Module::cast)
+                    .any(|a| gated(&a))
+            {
+                return true;
+            }
+        }
+    }
+    declarations != 1
+}
+
 /// The package a file belongs to. A relative path keeps
 /// [`super::related_tests::package_prefix`] (`crates/<name>/`, the directory
 /// above `src/` or `tests/`, or `None` for the root package). That leaves an
@@ -1258,6 +1516,285 @@ fn call_qualifiers(body: &str, name: &str) -> Vec<Option<Vec<String>>> {
     calls
 }
 
+/// [`OwnerCallIdentity::own_crate_names`] for an owner given by its file,
+/// package and crate class.
+fn own_crate_names_of(
+    owner_file: &Path,
+    owner_package: Option<&str>,
+    owner_crate: Option<&str>,
+    test: &TestSummary,
+    index: &RustIndex,
+) -> BTreeSet<String> {
+    let Some(owner_root) = super::owner_pin::target_root(owner_file, index, &BTreeSet::new())
+    else {
+        return BTreeSet::new();
+    };
+    let test_package = package_key(&test.file);
+    let same_package = test_package.as_deref() == owner_package;
+    let mut names = BTreeSet::new();
+    if same_package && !under_tests_dir(&test.file) {
+        return names;
+    }
+    // An integration test imports only the package's library, never a
+    // binary's crate.
+    if same_package && owner_package.is_none() && owner_crate == Some("lib") {
+        names.extend(index.package_names.iter().cloned());
+    }
+    names.extend(index.member_crates.import_names(&test.file, &owner_root));
+    names
+}
+
+/// #9218: whether every module-qualified free call of the owner's name in a
+/// captured call line settles on the owner's own module, so the line's
+/// arguments may be read as an input of the owner. A bare call (`thr(5)`)
+/// keeps the name-only reading its consumers always had, a type-path call
+/// (`Type::thr(5)`) never lends arguments (the free-call reader skips it),
+/// and a receiver call is no free call. Any other qualified spelling
+/// (`rival::thr(5)`) must resolve to the owner: through the shared
+/// same-named-rival identity when the owner has rivals, otherwise only as
+/// `crate::<owner module>::thr` from the owner's own crate sources or as
+/// `super::thr` from a test beside a file-level owner. Everything else
+/// (an unreadable qualifier, an import-bound module, a dependency path, a
+/// `#[path]`-remapped package) declines: it supplies no input row, which
+/// only keeps a gap open.
+pub(super) fn qualified_owner_calls_resolve(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    call_text: &str,
+) -> bool {
+    if owner.item.container != FunctionContainer::Free {
+        return true;
+    }
+    call_qualifiers(call_text, &owner.name)
+        .into_iter()
+        .all(|qualifier| match qualifier {
+            None => false,
+            Some(segments) if segments.is_empty() => true,
+            Some(segments) if names_a_type(&segments) => true,
+            Some(segments) => qualified_call_names_owner(index, owner, test, &segments),
+        })
+}
+
+fn names_a_type(qualifier: &[String]) -> bool {
+    qualifier.last().is_some_and(|last| {
+        last.starts_with(|ch: char| ch.is_ascii_uppercase())
+            || super::related_tests::is_primitive_type_qualifier(last)
+    })
+}
+
+/// One `use` leaf: its full path (the last segment is a name or `*`) and
+/// the name it is renamed to, if any.
+type UseLeaf = (Vec<String>, Option<String>);
+
+/// Expand a masked `use` tree (`a::{b, c::d}`, `a::b as c`, `a::*`) into its
+/// leaves. A group whose braces do not balance yields nothing.
+fn expand_use_tree(tree: &str, prefix: &[String], out: &mut Vec<UseLeaf>) {
+    let tree = tree.trim();
+    let Some(open) = tree.find('{') else {
+        let (path, renamed) = match tree.split_once(" as ") {
+            Some((path, alias)) => (path, Some(alias.trim().to_string())),
+            None => (tree, None),
+        };
+        let mut segments = prefix.to_vec();
+        segments.extend(
+            path.split("::")
+                .map(str::trim)
+                .filter(|segment| !segment.is_empty())
+                .map(str::to_string),
+        );
+        out.push((segments, renamed));
+        return;
+    };
+    let mut segments = prefix.to_vec();
+    segments.extend(
+        tree[..open]
+            .split("::")
+            .map(str::trim)
+            .filter(|segment| !segment.is_empty())
+            .map(str::to_string),
+    );
+    let mut depth = 0usize;
+    let mut start = open + 1;
+    let mut parts = Vec::new();
+    for (at, ch) in tree.char_indices().skip_while(|(at, _)| *at < open) {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    parts.push(&tree[start..at]);
+                    break;
+                }
+            }
+            ',' if depth == 1 => {
+                parts.push(&tree[start..at]);
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    for part in parts {
+        expand_use_tree(part, &segments, out);
+    }
+}
+
+/// Whether `owner`'s crate re-exports it into the module `module`
+/// (`pub use internal::inner;` in the crate root). Only the module's own
+/// file in the owner's crate target counts (a `main.rs`, `src/bin` or
+/// `tests` file is another crate), and only its top-level `pub use` items
+/// (a `use` inside a nested module or function binds there, and resolves
+/// against that scope). A leaf must not be renamed, must end in the owner's
+/// name or `*`, and its path must resolve to the owner's own module:
+/// `crate`/`self`/`super` against `module`, or a first segment that is a
+/// module the file declares itself. A dependency's path, an undeclared
+/// first segment or an unparseable file does not qualify.
+fn module_reexports_owner(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    owner_path: &[String],
+    owner_crate: &str,
+    module: &[String],
+) -> bool {
+    use ra_ap_syntax::ast::{HasModuleItem, HasName, HasVisibility};
+    use ra_ap_syntax::{AstNode, ast};
+    let owner_package = package_key(&owner.file);
+    let layout = CrateLayout::new(index, owner_package.as_deref());
+    index.files().iter().any(|(file, facts)| {
+        if package_key(file) != owner_package
+            || under_tests_dir(file)
+            || layout.class(file).as_deref() != Some(owner_crate)
+            || file_module_segments(file).is_none_or(|segments| segments != module)
+        {
+            return false;
+        }
+        let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&facts.data().source)
+        else {
+            return false;
+        };
+        let tree = parse.tree();
+        let declared: BTreeSet<String> = tree
+            .items()
+            .filter_map(|item| match item {
+                ast::Item::Module(module) => module.name().map(|name| name.text().to_string()),
+                _ => None,
+            })
+            .collect();
+        // Every top-level `pub use` leaf that binds the owner's name, or a
+        // glob that might: explicit leaves beat globs, so the answer is the
+        // explicit binding when there is one, else the globs together.
+        let mut explicit = Vec::new();
+        let mut globs = Vec::new();
+        for item in tree.items() {
+            let ast::Item::Use(use_item) = item else {
+                continue;
+            };
+            let Some(use_tree) = use_item.use_tree() else {
+                continue;
+            };
+            if use_item.visibility().is_none() {
+                continue;
+            }
+            let text = mask_comments_and_strings(&use_tree.syntax().text().to_string());
+            // A leading `::` (also inside a group) names an extern crate.
+            let external = text.match_indices("::").any(|(at, _)| {
+                matches!(
+                    text[..at].trim_end().chars().next_back(),
+                    None | Some('{' | ',')
+                )
+            });
+            let mut leaves = Vec::new();
+            expand_use_tree(&text, &[], &mut leaves);
+            for (path, alias) in leaves {
+                let Some((last, target)) = path.split_last() else {
+                    continue;
+                };
+                let owns = !external
+                    && alias.is_none()
+                    && target.first().is_some_and(|first| {
+                        let resolved = match first.as_str() {
+                            "crate" | "self" | "super" => keyword_module(target, module),
+                            _ if declared.contains(first) => Some(join(module, target)),
+                            _ => None,
+                        };
+                        resolved.is_some_and(|resolved| resolved == owner_path)
+                    });
+                if last == "*" {
+                    globs.push(owns);
+                } else if alias.as_deref().unwrap_or(last) == owner.name {
+                    explicit.push(owns);
+                }
+            }
+        }
+        if explicit.is_empty() {
+            !globs.is_empty() && globs.iter().all(|owns| *owns)
+        } else {
+            explicit.iter().all(|owns| *owns)
+        }
+    })
+}
+
+fn qualified_call_names_owner(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    qualifier: &[String],
+) -> bool {
+    // The owner's spelled path must settle on the owner: through the
+    // same-named-rival identity when there are rivals (any other answer
+    // declines), else the owner-alone identity, which reads `use`-bound and
+    // in-file module paths, `crate`/`self`/`super` and the crate's own name.
+    if let Some(identity) = shared_owner_call_identity(index, owner) {
+        return identity.resolve_call(test, index, qualifier) == CallTarget::Owner;
+    }
+    if let Some(identity) = shared_solo_owner_call_identity(index, owner)
+        && identity.resolve_call(test, index, qualifier) == CallTarget::Owner
+    {
+        return true;
+    }
+    // A path anchored at the owner's crate through a verified re-export
+    // (`crate_name::inner` for `pub use internal::inner;`).
+    let owner_package = package_key(&owner.file);
+    if package_remaps_module_paths(index, owner_package.as_deref()) {
+        return false;
+    }
+    let Some(owner_path) = definition_module_path(owner) else {
+        return false;
+    };
+    let layout = CrateLayout::new(index, owner_package.as_deref());
+    let CrateClass::Crate(owner_crate) = layout.classify(&owner.file) else {
+        return false;
+    };
+    let names = own_crate_names_of(
+        &owner.file,
+        owner_package.as_deref(),
+        Some(&owner_crate),
+        test,
+        index,
+    );
+    let (anchored, rest) = match qualifier.split_first() {
+        // `crate` names the test's own crate target: it is the owner's only
+        // when the test file belongs to the owner's target (a `main.rs` or
+        // `src/bin` test is another crate).
+        Some((first, rest)) if first == "crate" => (
+            package_key(&test.file) == owner_package
+                && !under_tests_dir(&test.file)
+                && !under_tests_dir(&owner.file)
+                && layout.class(&test.file).as_deref() == Some(owner_crate.as_str()),
+            rest,
+        ),
+        Some((first, rest)) => (
+            names.contains(first)
+                && !index.files().get(&test.file).is_some_and(|facts| {
+                    mentions_word(&facts.data().source, &format!("mod {first}"))
+                }),
+            rest,
+        ),
+        None => (false, qualifier),
+    };
+    anchored && module_reexports_owner(index, owner, &owner_path, &owner_crate, rest)
+}
+
 /// The spelled module path of every mention of `name` in `body` that is no
 /// call and could be the function used as a value (`.map(a::render)`, `let
 /// f = render;`), in the same shape as [`call_qualifiers`]. Calls, method
@@ -1443,6 +1980,7 @@ mod tests {
             index.extend_tests(facts.tests.iter().cloned());
             index.insert_file_only(PathBuf::from(path), facts);
         }
+        crate::analysis::facts::compose_fixture_source_roles(&mut index, Path::new(""));
         index
     }
 
@@ -2779,5 +3317,58 @@ mod tests {
     fn a_mixed_path_form_index_has_no_identity() {
         let index = index(&[("src/lib.rs", RENDER_LIB), ("/w/x/src/lib.rs", BIN_UTIL)]);
         assert_eq!(settle(&index, "src/lib.rs::a::render", "doubles_two"), None);
+    }
+
+    /// #9218: a qualified call feeds the owner's inputs only when its
+    /// spelled path resolves to the owner's module (no-rival path).
+    #[test]
+    fn qualified_calls_lend_inputs_only_when_they_resolve_to_the_owner() {
+        let lib = "pub mod pricing {\n    pub fn thr(x: i32) -> bool { x > 1 }\n}\n\
+                   pub mod other {\n    pub fn thr2(x: i32) -> bool { x > 1 }\n}\n\
+                   pub fn root(x: i32) -> bool { x > 1 }\n\
+                   #[cfg(test)]\nmod tests {\n    use super::*;\n    use crate::other as alias;\n    use crate::pricing as pm;\n    \
+                   #[test]\n    fn unit() { assert!(pricing::thr(1)); }\n}\n";
+        let index = index(&[("src/lib.rs", lib)]);
+        let owner_of = |suffix: &str| {
+            index
+                .functions()
+                .iter()
+                .find(|function| function.id.0.ends_with(suffix))
+                .cloned()
+        };
+        let thr = owner_of("::pricing::thr");
+        let root = owner_of("::root");
+        let test = index.tests().iter().find(|test| test.name == "unit");
+        assert!(
+            thr.is_some() && root.is_some() && test.is_some(),
+            "fixture items must be indexed"
+        );
+        let (Some(thr), Some(root), Some(test)) = (thr, root, test) else {
+            return;
+        };
+        let resolves = |owner: &FunctionSummary, text: &str| {
+            qualified_owner_calls_resolve(&index, owner, test, text)
+        };
+        // Bare and type-path spellings keep their reading.
+        assert!(resolves(&thr, "assert!(thr(1));"));
+        assert!(resolves(&thr, "assert!(Type::thr(1));"));
+        // The owner's module path resolves, spelled absolutely or through
+        // an in-file module name; a different module or an unbound one
+        // declines.
+        assert!(resolves(&thr, "assert!(crate::pricing::thr(1));"));
+        assert!(resolves(&thr, "assert!(pricing::thr(1));"));
+        assert!(resolves(&thr, "assert!(pm::thr(1));"));
+        assert!(!resolves(&thr, "assert!(crate::other::thr(1));"));
+        assert!(!resolves(&thr, "assert!(alias::thr(1));"));
+        assert!(!resolves(&thr, "assert!(rival::thr(1));"));
+        assert!(!resolves(&thr, "assert!(thr(1) + rival::thr(2));"));
+        assert!(!resolves(&thr, "assert!(<T as R>::thr(1));"));
+        // A root-level owner resolves `crate::root`/`super::root` but not
+        // another module's path.
+        assert!(resolves(&root, "assert!(crate::root(1));"));
+        assert!(resolves(&root, "assert!(super::root(1));"));
+        assert!(!resolves(&root, "assert!(rival::root(1));"));
+        assert!(!resolves(&root, "assert!(crate::pricing::root(1));"));
+        assert!(!resolves(&thr, "assert!(super::thr(1));"));
     }
 }

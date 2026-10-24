@@ -1,0 +1,9 @@
+diff --git a/src/orderSumMultiline.ts b/src/orderSumMultiline.ts
+index 0000000..1111111 100644
+--- a/src/orderSumMultiline.ts
++++ b/src/orderSumMultiline.ts
+@@ -1,3 +1,3 @@
+ export async function orderSumMultiline(items: number[]): Promise<number> {
+-  return items.reduce((sum, item) => sum + item, 0);
++  return items.reduce((sum, item) => sum + item, 1);
+ }
