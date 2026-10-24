@@ -1078,6 +1078,26 @@ fn closure_callback_helpers_that_may_not_observe_the_closure_grant_nothing()
             "        run_test({ return; true }, || gate(11))\n",
         ),
         (
+            "exit hidden in a format argument of the helper call",
+            CALLBACK_HELPER,
+            "        run_test(format!(\"{}\", { return; 1 }).is_empty(), || gate(11));\n",
+        ),
+        (
+            "exit hidden in a preceding transparent macro statement",
+            CALLBACK_HELPER,
+            "        let _ = format!(\"{}\", { return; \"x\" });\n        run_test(true, || gate(11));\n",
+        ),
+        (
+            "question mark hidden in a preceding transparent macro",
+            CALLBACK_HELPER,
+            "        let _ = format!(\"{}\", missing()?);\n        run_test(true, || gate(11));\n",
+        ),
+        (
+            "exit hidden in a transparent macro before the helper's invocation",
+            "    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        let _ = format!(\"{}\", { return; 1 });\n        let got = f();\n        assert_eq!(got, want);\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
             "closure whose only call is under an async block",
             CALLBACK_HELPER,
             "        run_test(true, || async { gate(11) });\n",
@@ -1265,6 +1285,21 @@ fn closure_callback_credit_ignores_an_unrelated_nested_fn_exit_in_the_test()
     let index = index_for(&callback_source(
         CALLBACK_HELPER,
         "        fn other() {\n            return;\n        }\n        run_test(true, || gate(11));\n",
+    ))?;
+
+    assert_eq!(
+        assertion_texts(test_named(&index, "boundary")?),
+        vec!["assert_eq!(got, want);"]
+    );
+    Ok(())
+}
+
+#[test]
+fn closure_callback_credit_keeps_benign_transparent_macro_arguments() -> Result<(), Box<dyn Error>>
+{
+    let index = index_for(&callback_source(
+        CALLBACK_HELPER,
+        "        let label = 1;\n        let _ = format!(\"{}\", label);\n        run_test(format!(\"{}\", label).len() > 0, || gate(11));\n",
     ))?;
 
     assert_eq!(

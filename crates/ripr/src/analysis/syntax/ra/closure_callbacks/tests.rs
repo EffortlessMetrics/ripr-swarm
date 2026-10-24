@@ -89,6 +89,26 @@ fn closure_literal_positions_require_a_call_that_runs_with_the_closure()
         (
             "closure return in an argument",
             "run((|| { return 1; })(), || gate(1));",
+            vec![],
+        ),
+        (
+            "hidden return in a transparent macro argument",
+            "run(&format!(\"{}\", { return; \"x\" }), || gate(1));",
+            vec![],
+        ),
+        (
+            "hidden return in a preceding macro statement",
+            "let _ = format!(\"{}\", { return; \"x\" }); run(true, || gate(1));",
+            vec![],
+        ),
+        (
+            "hidden question mark in a tail macro argument",
+            "run(format!(\"{}\", x?), || gate(1))",
+            vec![],
+        ),
+        (
+            "benign transparent macro arguments",
+            "run(&format!(\"hi {}\", \"bob\"), || gate(1));",
             vec![1],
         ),
         (
@@ -256,6 +276,16 @@ fn invoked_parameters_are_plain_singly_bound_statement_level_calls() -> Result<(
         (
             "after an assertion macro",
             "fn h(f: impl Fn() -> bool) { assert!(true); let _ = f(); }",
+            vec![(0, "f")],
+        ),
+        (
+            "after a transparent macro hiding an exit",
+            "fn h(f: impl Fn() -> bool) { let _ = format!(\"{}\", { return; 1 }); let _ = f(); }",
+            vec![],
+        ),
+        (
+            "after a transparent macro with a benign argument",
+            "fn h(f: impl Fn() -> bool, x: u8) { let _ = format!(\"{}\", x); let _ = f(); }",
             vec![(0, "f")],
         ),
         (

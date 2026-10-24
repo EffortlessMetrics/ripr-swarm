@@ -22,6 +22,7 @@
 //! tracing `with_default` shape of #9981) are not repaired here.
 
 use super::*;
+use crate::analysis::syntax::node_has_macro_escape;
 use ra_ap_syntax::ast::HasArgList;
 
 /// A helper parameter the helper body invokes directly (`f()`).
@@ -131,7 +132,8 @@ fn eager_statement_exprs(body: &ast::BlockExpr) -> Vec<(ast::Expr, TextSize)> {
         // The statement's own operands run before the call: an exit or an
         // opaque macro anywhere in it (`run({ return; x }, ..)`) means the
         // call may never run, so it is not yielded either.
-        let barrier = may_exit_early(statement.syntax()) || has_opaque_macro(statement.syntax());
+        let barrier =
+            may_exit_early(statement.syntax()) || node_has_macro_escape(statement.syntax());
         if let Some(expression) = expression
             && !barrier
         {
@@ -143,44 +145,12 @@ fn eager_statement_exprs(body: &ast::BlockExpr) -> Vec<(ast::Expr, TextSize)> {
     }
     if let Some(tail) = list.tail_expr()
         && !may_exit_early(tail.syntax())
-        && !has_opaque_macro(tail.syntax())
+        && !node_has_macro_escape(tail.syntax())
     {
         let end = tail.syntax().text_range().end();
         reached.push((tail, end));
     }
     reached
-}
-
-/// Whether `node` holds a macro invocation other than the assertion and
-/// formatting macros whose expansion cannot exit or redirect the function.
-fn has_opaque_macro(node: &ra_ap_syntax::SyntaxNode) -> bool {
-    const TRANSPARENT: [&str; 14] = [
-        "assert",
-        "assert_eq",
-        "assert_ne",
-        "debug_assert",
-        "debug_assert_eq",
-        "debug_assert_ne",
-        "println",
-        "eprintln",
-        "print",
-        "eprint",
-        "format",
-        "vec",
-        "write",
-        "writeln",
-    ];
-    node.descendants()
-        .filter_map(ast::MacroCall::cast)
-        .any(|call| {
-            !call.path().is_some_and(|path| {
-                path.qualifier().is_none()
-                    && path
-                        .segment()
-                        .and_then(|segment| segment.name_ref())
-                        .is_some_and(|name| TRANSPARENT.iter().any(|known| *known == name.text()))
-            })
-        })
 }
 
 /// Whether the callback parameter's identity could change before it is

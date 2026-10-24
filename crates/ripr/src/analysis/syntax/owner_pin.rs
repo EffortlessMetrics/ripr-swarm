@@ -3927,6 +3927,16 @@ fn has_escape(
     })
 }
 
+/// Whether `node` holds a macro the shared trusted-macro escape authority
+/// ([`has_escape`]) refuses: an untrusted or rebindable macro, or a trusted
+/// macro whose operands hide an exit or a nested expansion, plus the
+/// closure-exit refusal. The same-file callback-helper producer (#9981)
+/// gates its credit on this before copying any facts, so diff output and the
+/// repo-exposure consumer agree on what may have exited.
+pub(crate) fn node_has_macro_escape(node: &SyntaxNode) -> bool {
+    has_escape(node, TRUSTED_MACRO_NAMES, &BTreeMap::new(), &[]).is_some()
+}
+
 fn opaque_macro_operand(tree: &ast::TokenTree) -> bool {
     opaque_macro_operand_with_json(tree, false)
 }

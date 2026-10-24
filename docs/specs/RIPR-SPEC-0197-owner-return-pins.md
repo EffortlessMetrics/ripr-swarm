@@ -1841,10 +1841,13 @@ analysis:
   tail call, or `let PAT = call;` without `else`), after only statements
   whose parsed syntax holds no `return`, `?`, `break`, `continue` or loop and
   no macro other than the assertion and formatting macros. Macro arguments
-  are token trees the parser does not read as expressions, so a `return` or
-  `?` written inside an argument of one of those transparent macros is not
-  detected; the transparent list is deliberately limited to macros that do
-  not themselves exit. The callback argument is a closure literal
+  are token trees the parser does not read as expressions, so a hidden exit
+  (`format!("{}", { return; x })`, `format!("{}", x?)`) is refused through the
+  same trusted-macro operand escape authority the owner-pin path uses
+  (`owner_pin::has_escape`), not a second token scan: it is an exit barrier
+  for the current call's operands, preceding statements and tails, and for the
+  helper's own prefix, before any fact is copied. Benign arguments
+  (`format!("{}", x)`) do not block. The callback argument is a closure literal
   (not `async`, not boxed, not a reference) whose body makes a call that is
   not under a nested closure, `async` block or `fn`.
 - Helper side: the callback parameter is an immutable plain identifier bound
