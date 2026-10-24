@@ -224,9 +224,9 @@ fn owner_named_test_that_never_calls_the_owner_prompts_inspection() -> Result<()
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
+    let guard = Fixture(root.clone());
     std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
     std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
-    let guard = Fixture(root.clone());
     let write = |path: &str, text: &str| {
         std::fs::write(root.join(path), text).map_err(|error| error.to_string())
     };
@@ -255,10 +255,11 @@ fn owner_named_test_that_never_calls_the_owner_prompts_inspection() -> Result<()
     assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
     assert_eq!(finding.ripr.reach.state.as_str(), "weak");
     assert!(
-        finding
-            .related_tests
-            .iter()
-            .all(|test| test.name == "compute_flags_are_independent"),
+        !finding.related_tests.is_empty()
+            && finding.related_tests.iter().all(|test| {
+                test.name == "compute_flags_are_independent"
+                    && test.relation_reason == Some(ripr::domain::RelationReason::OwnerNamedTest)
+            }),
         "setup: the only related test is the owner-named one: {finding:?}"
     );
     assert_eq!(finding.recommended_next_step.as_deref(), Some(INSPECT));

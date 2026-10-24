@@ -540,3 +540,50 @@ mod tests {
     let edit = diff(line, "        self.0 + 2", "        self.0 + 1");
     unreached(lib, &edit, line, "local trait named Add")
 }
+
+#[test]
+fn an_implicit_dispatch_row_is_not_an_inspection_only_pointer() -> Result<(), String> {
+    // #10053: a row that reaches the owner by known implicit dispatch (here
+    // `Drop` at scope exit, name-linked by `drop`) must not be told it "does
+    // not establish a call to the changed owner".
+    let lib = "use std::cell::Cell;
+use std::rc::Rc;
+
+pub struct Guard(pub Rc<Cell<u32>>);
+
+impl Drop for Guard {
+    fn drop(&mut self) {
+        self.0.set(self.0.get() + 2 - 1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dropping_the_guard_counts_once() {
+        let count = Rc::new(Cell::new(0));
+        {
+            let _guard = Guard(count.clone());
+        }
+        assert_eq!(count.get(), 1);
+    }
+}
+";
+    let line = line_of(lib, "self.0.set(")?;
+    let edit = diff(
+        line,
+        "        self.0.set(self.0.get() + 1);",
+        "        self.0.set(self.0.get() + 2 - 1);",
+    );
+    for finding in findings_on(lib, &edit, line)? {
+        let step = finding.recommended_next_step.clone().unwrap_or_default();
+        if step.contains("do not establish a call to the changed owner") {
+            return Err(format!(
+                "implicit dispatch row got the inspect step: {step}"
+            ));
+        }
+    }
+    Ok(())
+}
