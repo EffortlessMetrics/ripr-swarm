@@ -21,7 +21,7 @@ Start here:
   Canonical gap: gap:python:src/tax.py:tax_band:predicate_boundary:predicate:amount>=100
   Changed behavior: if amount >= 100:
   Missing discriminator (1 of 2): Related Python test reaches `tax_band` but the strongest extracted oracle is `unknown`; add or strengthen a focused assertion for the changed boundary
-  Related test: tests/test_tax.py:7 test_tax_band
+  Related test: tests/test_tax.py:7 test_tax_band (has no assertion)
   Suggested test file: tests/test_tax.py
   Suggested test: test_tax_band
   Test node: tests/test_tax.py::test_tax_band

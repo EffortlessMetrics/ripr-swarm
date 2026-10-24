@@ -404,6 +404,12 @@ struct PythonTest {
     /// Whether RIPR can say this test has no assertion, or only that it
     /// recognized none (#5571).
     assertion_admission: admission::PythonAssertionAdmission,
+    /// Modules this test imports by a bare name that resolve to a file or
+    /// directory beside the test file (`from runner import run_case` with
+    /// `tests/runner.py`): pytest's rootdir insertion makes them importable
+    /// and they are test support the single-file scan cannot read. Filled by
+    /// the workspace pass (`fixtures.rs`, #5491); empty until then.
+    bare_sibling_modules: Vec<PathBuf>,
     /// How the test and its module can rebind names and attributes; guards
     /// module-constant boundary resolution (`boundary.rs`, #4227).
     constant_rebinding: module_constants::PythonTestRebinding,
@@ -881,6 +887,14 @@ impl PythonAdapter {
             &reach_conftests,
             unreadable_conftest,
         );
+        fixtures::taint_builtin_fixture_overrides_by_conftest(
+            &mut all_tests,
+            &reach_conftests,
+            unreadable_conftest,
+        );
+        fixtures::record_bare_sibling_imports(&mut all_tests, |path| {
+            options.root.join(path).exists()
+        });
         reexports::apply_package_reexports(&mut all_owners, |file| {
             workspace_read.sources.get(file).map(String::as_str)
         });

@@ -1943,6 +1943,7 @@ fn same_stem_related_handles_missing_stems() {
         framework: PythonFramework::Pytest,
         assertions: Vec::new(),
         assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
+        bare_sibling_modules: Vec::new(),
     };
     // An owner with no file stem cannot match by stem.
     assert!(!same_stem_related(&test, &owner));
@@ -3468,6 +3469,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         framework: PythonFramework::Pytest,
         assertions: Vec::new(),
         assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
+        bare_sibling_modules: Vec::new(),
     };
     assert!(test_has_mocked_module(&mocked));
     let bare = PythonTest {
@@ -3490,6 +3492,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         framework: PythonFramework::Pytest,
         assertions: Vec::new(),
         assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
+        bare_sibling_modules: Vec::new(),
     };
     assert!(test_has_mocked_module(&bare));
     let clean = PythonTest {
@@ -3512,6 +3515,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         framework: PythonFramework::Pytest,
         assertions: Vec::new(),
         assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
+        bare_sibling_modules: Vec::new(),
     };
     assert!(!test_has_mocked_module(&clean));
 }
@@ -4044,6 +4048,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         framework: PythonFramework::Pytest,
         assertions: Vec::new(),
         assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
+        bare_sibling_modules: Vec::new(),
     };
     assert!(strong_oracle_observes_owner(
         &owner,
@@ -4127,6 +4132,7 @@ fn align_importing_test(imported: &str, module: &str) -> PythonTest {
         framework: PythonFramework::Pytest,
         assertions: Vec::new(),
         assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
+        bare_sibling_modules: Vec::new(),
     }
 }
 
@@ -4176,6 +4182,7 @@ fn sink_alignment_is_alias_when_oracle_uses_import_alias() {
         framework: PythonFramework::Pytest,
         assertions: Vec::new(),
         assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
+        bare_sibling_modules: Vec::new(),
     };
     let a = classify_sink_alignment(&owner, line, &related, std::slice::from_ref(&alias_test));
     assert_eq!(a.oracle_alignment, "alias");

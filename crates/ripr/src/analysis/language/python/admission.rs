@@ -710,6 +710,56 @@ fn is_test_support_path(path: &str) -> bool {
     })
 }
 
+/// Third-party assertion, matcher and soft-check libraries (and the pytest
+/// plugin namespace). Their entry points often carry no assertion-like name
+/// (`nose.tools.eq_`, `pytest_check.check.equal`, `pytest_assume.assume`), so
+/// a name imported from one is assertion-like by origin.
+const ASSERTION_LIBRARY_ROOTS: &[&str] = &[
+    "assertpy",
+    "expects",
+    "grappa",
+    "hamcrest",
+    "nose",
+    "nose2",
+    "pytest_assume",
+    "pytest_check",
+    "should_dsl",
+    "softest",
+    "sure",
+    "testfixtures",
+    "testtools",
+    "twisted",
+];
+
+/// Whether a qualified import comes from an assertion library or a pytest
+/// plugin module (`pytest_*`, other than `pytest_asyncio`).
+fn is_assertion_library(qualified: &str) -> bool {
+    let root = qualified.split('.').next().unwrap_or(qualified);
+    ASSERTION_LIBRARY_ROOTS.contains(&root)
+        || (root.starts_with("pytest_") && root != "pytest_asyncio")
+}
+
+/// Modules whose decorators wrap a test without asserting around it. Any other
+/// imported decorator (`responses.activate`, `freeze_time`) can check on exit.
+fn is_inert_decorator_module(qualified: &str) -> bool {
+    let root = qualified.split('.').next().unwrap_or(qualified);
+    matches!(
+        root,
+        "pytest"
+            | "pytest_asyncio"
+            | "functools"
+            | "contextlib"
+            | "hypothesis"
+            | "unittest"
+            | "typing"
+            | "typing_extensions"
+            | "dataclasses"
+            | "abc"
+            | "anyio"
+            | "asyncio"
+    )
+}
+
 /// Qualified callees that end or fail a test without an `assert`.
 /// `warnings.simplefilter("error")` turns any later warning into a failure;
 /// the filter action is not read, so every filter call counts.
@@ -720,7 +770,9 @@ const FAILING_CALLEES: &[&str] = &[
     "os.kill",
     "os.killpg",
     "signal.raise_signal",
+    "subprocess.run",
     "sys.exit",
+    "unittest.main",
     "warnings.filterwarnings",
     "warnings.simplefilter",
 ];
@@ -802,7 +854,7 @@ const INERT_BUILTINS: &[&str] = &[
 /// pytest's built-in fixtures. They supply inputs and capture state; they do
 /// not assert on their own, so requesting one does not make admission
 /// unresolved. Every other requested fixture might.
-const PYTEST_BUILTIN_FIXTURES: &[&str] = &[
+pub(super) const PYTEST_BUILTIN_FIXTURES: &[&str] = &[
     "cache",
     "capfd",
     "capfdbinary",
@@ -1388,6 +1440,17 @@ impl BodyScan<'_> {
     }
 
     fn decorator(&mut self, decorator: &Expr) {
+        // An imported decorator wraps the test and may check around it.
+        let head = match decorator {
+            Expr::Call(call) => call.func.as_ref(),
+            other => other,
+        };
+        if let Some(name) = dotted_name(head)
+            && let Some(qualified) = self.imported_name(&name)
+            && !is_inert_decorator_module(&qualified)
+        {
+            self.assertion_like = true;
+        }
         if let Expr::Call(_) = decorator {
             self.expr(decorator);
         } else if let Some(name) = dotted_name(decorator) {
@@ -1628,6 +1691,7 @@ impl BodyScan<'_> {
 
     fn import_is_assertion_like(&self, qualified: &str) -> bool {
         is_test_support_path(qualified)
+            || is_assertion_library(qualified)
             || (!self.scope.module_dir.is_empty()
                 && qualified.starts_with(&format!("{}.", self.scope.module_dir)))
             || FAILING_CALLEES.contains(&qualified)

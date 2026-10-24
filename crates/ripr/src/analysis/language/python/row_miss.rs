@@ -15,6 +15,12 @@
 //!   (`python_row_boundary_omission`). Fail closed: an unbound call, an
 //!   unresolved or computed operand, or another row's input is unknown, never
 //!   an omission.
+//! - `no_assertion`: a call-bearing row whose test is
+//!   `extraction_complete_no_assertion` (#5571) after the conftest chain pass
+//!   (#6657), with no activation control and no unread bare sibling module.
+//!   Parametrize is activation evidence, never an oracle. Anything
+//!   assertion-like, custom or dynamic is unresolved admission and keeps the
+//!   row at `miss: None`.
 //! - `observation_unconfirmed`: a strong family-selected assertion that this
 //!   row alone does not credit as observing the changed sink. Python's
 //!   alignment is a credit-only model, so no credit is an unresolved
@@ -30,10 +36,6 @@
 //!   (callbacks and aliases, parametrize and fixture `params`, `usefixtures`,
 //!   module `pytestmark`, conftest and plugins) are the same blind spots as
 //!   `no_assertion` (#6657), so the claim is withheld rather than guessed.
-//! - `no_assertion`: `extraction_complete_no_assertion` (#5571) still has the
-//!   cross-file blind spots of #6657 (conftest autouse fixtures, plugins, ini
-//!   `filterwarnings`, bare sibling imports); until they are accounted for the
-//!   state is not an established absence.
 //! - `assertion_not_observing`: alignment cannot tell an affirmative sibling
 //!   sink from an unresolved one. Row eligibility is the explicit
 //!   `RelatedTest::role` (#5563), not this value, so emitting it no longer
@@ -50,6 +52,7 @@
 //! with no support and renders the generic wording. No other miss carries
 //! support.
 
+use super::admission::PythonAssertionAdmission;
 use super::assertion_selection::PythonAssertionFocus;
 use super::boundary::python_row_boundary_omission;
 use super::related_tests::PythonRelatedCandidate;
@@ -127,13 +130,35 @@ fn row_miss(
         return None;
     }
     // No selected assertion (none recognized, or none family-relevant):
-    // admission is the authority and nothing is emitted from it here.
-    row.oracle.as_ref()?;
+    // admission is the authority, and only its established-absence state
+    // writes `no_assertion`.
+    if row.oracle.is_none() {
+        return no_assertion_miss(candidate.test, change.owner);
+    }
     match row.oracle_strength {
         OracleStrength::Weak | OracleStrength::Smoke => Some(RelatedTestMiss::WeakAssertion),
         OracleStrength::Strong => strong_row_miss(row, candidate, candidates, change, prep),
         _ => None,
     }
+}
+
+/// `no_assertion`: the row calls the owner and its test is established to hold no
+/// assertion-like construct. Admission (`admission.rs`) is the authority, the
+/// conftest chain pass (`fixtures.rs`, #6657) has already withheld every test
+/// a conftest can assert around, and this adds the row-local fail-closed
+/// guards: a test with a skip / xfail / expected-failure control is never
+/// credited with a reason it cannot reach, and a bare sibling module of the
+/// test (test support RIPR cannot read) other than the module under test
+/// keeps the row unknown. Invisible limits stay documented in RIPR-SPEC-0224.
+fn no_assertion_miss(test: &PythonTest, owner: &PythonOwner) -> Option<RelatedTestMiss> {
+    (test.assertion_admission == PythonAssertionAdmission::NoAssertionLike
+        && test.assertions.is_empty()
+        && test.activation_controls.is_empty()
+        && test
+            .bare_sibling_modules
+            .iter()
+            .all(|module| module == &owner.file))
+    .then_some(RelatedTestMiss::NoAssertion)
 }
 
 fn strong_row_miss(

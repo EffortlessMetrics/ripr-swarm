@@ -152,7 +152,7 @@ unsupported state as unknown and fabricates no reason conforms.
 | miss | Rust | Python | TypeScript | Perl v1 |
 | --- | --- | --- | --- | --- |
 | `no_call_path` | yes | pending (blocked on #6657-class blind spots) | no (absence unprovable from one file) | no |
-| `no_assertion` | yes | no (#6657) | no (admission blind spots) | no |
+| `no_assertion` | yes | yes (extraction-complete admission, fail-closed; residual limits below) | no (admission blind spots) | no |
 | `assertion_not_observing` | yes | no (credit-only alignment; withheld pending #5491) | no (withheld pending #5495) | no (#3223) |
 | `assertion_not_credited` | yes, unsplit until #5446 | no (#5446) | no (#5446) | no |
 | `weak_assertion` | yes | yes (weak and smoke only) | yes (weak and smoke only) | no |
@@ -223,6 +223,34 @@ static limit, one row at a time, in `python/row_miss.rs`:
   ones the owner body never rebinds; a relational change must keep the same
   operands; literals of mixed kind (`True` vs `1`) or with escapes are unknown,
   never unequal.
+- `no_assertion`: a call-bearing row (a relation that credits an oracle, never a
+  name- or location-only row) whose test is
+  `extraction_complete_no_assertion` after the workspace passes. Parametrize is
+  activation evidence, never an oracle, so a parametrized assertion-free test
+  carries it with no oracle. The row keeps `miss: None` instead when the test
+  has any skip / xfail / expected-failure control, when it imports by bare name
+  a module that sits beside the test file other than the module under test
+  (pytest's rootdir insertion makes it importable test support RIPR cannot
+  read; the module under test is exempt), when the finding is not a
+  `weakly_exposed` gap, or when admission is anything but established absence.
+  Admission is withheld for every shape that could assert outside the scanned
+  body: helper, `self.` and same-module calls, unittest and mock assertions,
+  `pytest.raises`/`warns`/`fail`, `raise`, nested defs, lambdas, comprehensions,
+  context managers, opaque fixtures, `usefixtures`, `pytestmark`, setup hooks,
+  imported decorators outside `pytest`/`functools`/`hypothesis`/`unittest`,
+  names imported from assertion libraries (`nose`, `pytest_check`,
+  `pytest_assume`, `hamcrest`, other `pytest_*` plugins), `subprocess.run`,
+  `sys.exit`, and `unittest.main`; a conftest autouse fixture, hook, plugin,
+  re-export or built-in fixture override (including `name=` renames) on the
+  directory chain, or an unreadable conftest, withholds it. Residual limits
+  that stay invisible, so the reason is explanation only and never a proof:
+  plugins or `usefixtures` set by `-p`, ini/`addopts`, entry points or
+  `filterwarnings = error` in an ini file, plugins registered dynamically, an
+  autouse fixture imported by name into the test module, a sibling helper
+  reached through a root-level module or a path-configured source root, an
+  assertion helper in a third-party library not named above and not
+  assertion-like by name, assertions raised inside a project module the test
+  imports, and a test that fails only by crashing the process.
 - `observation_unconfirmed`: a strong family-selected assertion that the row,
   evaluated alone, does not credit as observing the changed sink. Python's
   alignment only credits; no credit never becomes an affirmative mismatch.
@@ -240,10 +268,6 @@ Python does not yet write:
   module-level `pytestmark`, a conftest or a plugin may still reach the owner.
   Those rows keep no miss (`no_call_path` and `missing_input` alike); `dunder_protocol`, fixture-owner, helper-owner and
   activation-limited rows never carried the claim.
-- `no_assertion`: `extraction_complete_no_assertion` is not an established
-  absence while the cross-file blind spots of #6657 (conftest autouse
-  fixtures, plugins, ini `filterwarnings`, bare sibling imports) are
-  unaccounted for.
 - `assertion_not_observing`: alignment cannot separate an affirmative sibling
   sink from an unresolved one, so the value stays withheld here until
   alignment can make the affirmative claim. It does not mark a row
@@ -422,7 +446,7 @@ actionability. For Python, a `conftest.py` on the test's directory chain that
 declares an `autouse` fixture, a `pytest_runtest_*` hook or `pytest_plugins`,
 or a test-item hook (`pytest_collection_modifyitems` and similar), or that imports names from any module outside a short standard-library list (the name may be an autouse fixture or hook), builds an autouse fixture decorator, aliases the fixture decorator or an external fixture, star-imports or imports relatively, passes `**options` to `fixture`, or that could not be read, withholds `extraction_complete_no_assertion` from
 every test in its scope (#6657). Remaining blind spots (dynamically registered
-plugins, plugins or `usefixtures` set in pytest ini `addopts`, sibling-module helpers, TypeScript setup files) are tracked in #6657
+plugins, plugins or `usefixtures` set in pytest ini `addopts`, TypeScript setup files; Python bare sibling modules are recorded per test and withhold the Python `no_assertion` row) are tracked in #6657
 and #6889.
 
 ### Family-relevant assertion selection (Python)

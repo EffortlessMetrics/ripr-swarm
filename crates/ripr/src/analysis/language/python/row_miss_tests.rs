@@ -108,22 +108,403 @@ fn mixed_rows_keep_their_own_reasons() -> Result<(), String> {
     Ok(())
 }
 
+const CONTROL: &str = "def test_control():\n    score(0)\n";
+
+fn no_assertion_rows(finding: &Finding) -> Vec<String> {
+    finding
+        .related_tests
+        .iter()
+        .filter(|row| row.miss == Some(RelatedTestMiss::NoAssertion))
+        .map(|row| row.name.clone())
+        .collect()
+}
+
 #[test]
-fn no_assertion_is_not_emitted_while_cross_file_blind_spots_remain() -> Result<(), String> {
-    // #6657: a conftest autouse fixture or plugin may still assert around
-    // this test, so `extraction_complete_no_assertion` is not yet a proof.
+fn call_bearing_test_with_no_assertion_is_no_assertion() -> Result<(), String> {
     for tests in [
         "def test_score():\n    score(0)\n",
         "import pytest\n\n@pytest.mark.parametrize('value', [0, 1])\ndef test_score(value):\n    score(value)\n",
+        "def test_score(tmp_path, monkeypatch):\n    path = tmp_path / 'out'\n    path.write_text(str(score(0)))\n",
     ] {
         let finding = score_case(tests)?;
         assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{tests}");
         assert_eq!(finding.related_tests.len(), 1, "{tests}");
         let row = &finding.related_tests[0];
-        assert_eq!(row.miss, None, "{tests}");
+        assert_eq!(row.miss, Some(RelatedTestMiss::NoAssertion), "{tests}");
+        assert_eq!(row.miss_support, None, "{tests}");
+        // Parameters are activation evidence, never an oracle.
         assert_eq!(row.oracle, None, "{tests}");
     }
     Ok(())
+}
+
+/// Each shape could assert, fail the test or run assertion-like code outside
+/// the scanned body. Paired with the direct control: the same harness emits
+/// `no_assertion` for a bare call, so the withholding is the shape's own.
+#[test]
+fn assertion_like_shapes_never_get_no_assertion_beside_a_direct_control() -> Result<(), String> {
+    let control = score_case(&format!("{CONTROL}def test_shape():\n    score(0)\n"))?;
+    assert_eq!(
+        no_assertion_rows(&control).len(),
+        2,
+        "{:?}",
+        misses(&control)
+    );
+    let shapes: &[(&str, &str)] = &[
+        (
+            "same-module helper",
+            "def run_case(v):\n    assert v == 8\n\ndef test_shape():\n    run_case(score(0))\n",
+        ),
+        (
+            "assert-named helper",
+            "def test_shape():\n    assert_payload(score(0))\n",
+        ),
+        (
+            "unittest assertEqual",
+            "import unittest\n\nclass T(unittest.TestCase):\n    def test_shape(self):\n        self.assertEqual(score(0), 8)\n",
+        ),
+        (
+            "unittest assertRaises",
+            "import unittest\n\nclass T(unittest.TestCase):\n    def test_shape(self):\n        with self.assertRaises(ValueError):\n            score(0)\n",
+        ),
+        (
+            "self helper",
+            "class TestX:\n    def _run(self, v):\n        assert v == 8\n    def test_shape(self):\n        self._run(score(0))\n",
+        ),
+        (
+            "pytest.raises",
+            "import pytest\n\ndef test_shape():\n    with pytest.raises(ValueError):\n        score(0)\n",
+        ),
+        (
+            "pytest.warns",
+            "import pytest\n\ndef test_shape():\n    with pytest.warns(UserWarning):\n        score(0)\n",
+        ),
+        (
+            "pytest.fail",
+            "import pytest\n\ndef test_shape():\n    score(0)\n    pytest.fail('x')\n",
+        ),
+        (
+            "raise AssertionError",
+            "def test_shape():\n    if score(0) != 8:\n        raise AssertionError('bad')\n",
+        ),
+        (
+            "mock assertion",
+            "from unittest import mock\n\ndef test_shape():\n    m = mock.Mock()\n    score(0)\n    m.assert_called_once()\n",
+        ),
+        (
+            "nested def assert",
+            "def test_shape():\n    def inner():\n        assert score(0) == 8\n    inner()\n",
+        ),
+        (
+            "lambda",
+            "def test_shape():\n    f = lambda: verify(score(0))\n    f()\n",
+        ),
+        (
+            "comprehension helper",
+            "def test_shape():\n    [verify(score(v)) for v in (0, 1)]\n",
+        ),
+        (
+            "context manager",
+            "class Ctx:\n    def __enter__(self):\n        return self\n    def __exit__(self, *a):\n        assert False\n\ndef test_shape():\n    with Ctx():\n        score(0)\n",
+        ),
+        (
+            "same-module autouse fixture",
+            "import pytest\n\n@pytest.fixture(autouse=True)\ndef guard():\n    yield\n    assert LEAKS == []\n\ndef test_shape():\n    score(0)\n",
+        ),
+        (
+            "usefixtures",
+            "import pytest\n\n@pytest.mark.usefixtures('db')\ndef test_shape():\n    score(0)\n",
+        ),
+        (
+            "pytestmark usefixtures",
+            "import pytest\n\npytestmark = pytest.mark.usefixtures('db')\n\ndef test_shape():\n    score(0)\n",
+        ),
+        (
+            "opaque fixture parameter",
+            "def test_shape(checked_client):\n    score(0)\n",
+        ),
+        (
+            "asserting teardown fixture",
+            "import pytest\n\n@pytest.fixture\ndef res():\n    yield 1\n    assert False\n\ndef test_shape(res):\n    score(0)\n",
+        ),
+        (
+            "setUp that asserts",
+            "import unittest\n\nclass T(unittest.TestCase):\n    def setUp(self):\n        self.assertTrue(True)\n    def test_shape(self):\n        score(0)\n",
+        ),
+        (
+            "plugins",
+            "pytest_plugins = ['plugin_a']\n\ndef test_shape():\n    score(0)\n",
+        ),
+        (
+            "subprocess exit code",
+            "import subprocess\n\ndef test_shape():\n    score(0)\n    subprocess.run(['prog'], check=True)\n",
+        ),
+        (
+            "sys.exit",
+            "import sys\n\ndef test_shape():\n    score(0)\n    sys.exit(1)\n",
+        ),
+        (
+            "nose eq_",
+            "from nose.tools import eq_\n\ndef test_shape():\n    eq_(score(0), 8)\n",
+        ),
+        (
+            "pytest_check",
+            "from pytest_check import check\n\ndef test_shape():\n    check.equal(score(0), 8)\n",
+        ),
+        (
+            "imported decorator",
+            "from responses import activate\n\n@activate\ndef test_shape():\n    score(0)\n",
+        ),
+        (
+            "filterwarnings mark",
+            "import pytest\n\n@pytest.mark.filterwarnings('error')\ndef test_shape():\n    score(0)\n",
+        ),
+        (
+            "helper imported from test support",
+            "from tests.helpers import run_case\n\ndef test_shape():\n    run_case(score(0))\n",
+        ),
+        (
+            "dynamic callee",
+            "CHECKS = {}\n\ndef test_shape():\n    CHECKS['x'](score(0))\n",
+        ),
+    ];
+    for (label, tests) in shapes {
+        let finding = score_case(tests)?;
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .any(|row| row.name == "test_shape"),
+            "{label}: the shape must be a related row: {:?}",
+            misses(&finding)
+        );
+        assert!(
+            no_assertion_rows(&finding).is_empty(),
+            "{label}: {:?}",
+            misses(&finding)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn no_assertion_is_per_row_beside_a_weak_sibling_and_never_in_an_exposed_finding()
+-> Result<(), String> {
+    let finding =
+        score_case("def test_bare():\n    score(0)\n\ndef test_weak():\n    assert score(1)\n")?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(
+        miss_of(&finding, "test_bare"),
+        Some(RelatedTestMiss::NoAssertion)
+    );
+    assert_eq!(
+        miss_of(&finding, "test_weak"),
+        Some(RelatedTestMiss::WeakAssertion)
+    );
+    let exposed = score_case(
+        "def test_bare():\n    score(0)\n\ndef test_exact():\n    assert score(1) == 8\n",
+    )?;
+    assert_eq!(exposed.class, ExposureClass::Exposed);
+    assert!(
+        exposed.related_tests.iter().all(|row| row.miss.is_none()),
+        "{:?}",
+        misses(&exposed)
+    );
+    Ok(())
+}
+
+#[test]
+fn name_only_and_skipped_rows_never_get_no_assertion() -> Result<(), String> {
+    for tests in [
+        "def test_score_is_importable():\n    callable(score)\n",
+        "import pytest\n\n@pytest.mark.skip(reason='later')\ndef test_score():\n    score(0)\n",
+        "import pytest\n\n@pytest.mark.xfail\ndef test_score():\n    score(0)\n",
+    ] {
+        let finding = score_case(tests)?;
+        assert!(
+            no_assertion_rows(&finding).is_empty(),
+            "{tests}: {:?}",
+            misses(&finding)
+        );
+    }
+    Ok(())
+}
+
+mod workspace {
+    use super::*;
+    use crate::analysis::language::python::fixtures::{
+        record_bare_sibling_imports, taint_admission_by_conftest,
+        taint_builtin_fixture_overrides_by_conftest,
+    };
+    use crate::analysis::language::python::source_facts::extract_source_facts;
+    use std::collections::BTreeSet;
+    use std::path::PathBuf;
+
+    const TEST_FILE: &str = "tests/test_subject.py";
+
+    /// The row misses of the tests in `tests/test_subject.py`, after the
+    /// workspace passes both the repo and diff analyses run.
+    fn row_misses(
+        conftests: &[(&str, &str)],
+        unread: &[&str],
+        siblings: &[&str],
+        tests: &str,
+    ) -> Result<Vec<(String, Option<RelatedTestMiss>)>, String> {
+        row_misses_at(TEST_FILE, SCORE_IMPORT, conftests, unread, siblings, tests)
+    }
+
+    fn row_misses_at(
+        test_file: &str,
+        import: &str,
+        conftests: &[(&str, &str)],
+        unread: &[&str],
+        siblings: &[&str],
+        tests: &str,
+    ) -> Result<Vec<(String, Option<RelatedTestMiss>)>, String> {
+        let file = Path::new("src/subject.py");
+        let owners = extract_owners(file, SCORE);
+        let mut parsed = extract_tests(Path::new(test_file), &format!("{import}{tests}"));
+        let mut implicit = BTreeSet::new();
+        let mut reach = BTreeSet::new();
+        for (path, source) in conftests {
+            let facts = extract_source_facts(Path::new(path), source);
+            if facts.conftest_implicit_setup {
+                implicit.insert(PathBuf::from(path));
+            }
+            if facts.conftest_declares_fixture_or_hook {
+                reach.insert(PathBuf::from(path));
+            }
+        }
+        let is_unread = |conftest: &Path| unread.iter().any(|path| Path::new(path) == conftest);
+        taint_admission_by_conftest(&mut parsed, &implicit, is_unread);
+        taint_builtin_fixture_overrides_by_conftest(&mut parsed, &reach, is_unread);
+        record_bare_sibling_imports(&mut parsed, |path| {
+            siblings.iter().any(|sibling| Path::new(sibling) == path)
+        });
+        let finding = classify_change_with_old(
+            file,
+            2,
+            "    return 8",
+            Some("    return 7"),
+            &owners,
+            &parsed,
+        )
+        .ok_or("behavioral fixture must produce a finding")?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+        Ok(misses(&finding))
+    }
+
+    const BARE: &str = "def test_bare():\n    score(0)\n";
+    const AUTOUSE: &str = "import pytest\n\n@pytest.fixture(autouse=True)\ndef no_leaks():\n    yield\n    assert LEAKS == []\n";
+
+    fn bare_miss(
+        conftests: &[(&str, &str)],
+        unread: &[&str],
+        siblings: &[&str],
+        tests: &str,
+    ) -> Result<Option<RelatedTestMiss>, String> {
+        let rows = row_misses(conftests, unread, siblings, tests)?;
+        rows.into_iter()
+            .find(|(name, _)| name == "test_bare")
+            .map(|(_, miss)| miss)
+            .ok_or_else(|| "test_bare row".to_string())
+    }
+
+    #[test]
+    fn a_conftest_that_can_assert_around_the_test_withholds_no_assertion() -> Result<(), String> {
+        // Direct control: the same test with an inert conftest keeps the reason.
+        assert_eq!(
+            bare_miss(&[("tests/conftest.py", "import pytest\n")], &[], &[], BARE)?,
+            Some(RelatedTestMiss::NoAssertion)
+        );
+        for (label, conftest) in [
+            ("autouse", AUTOUSE),
+            (
+                "hook",
+                "def pytest_runtest_teardown(item):\n    assert item\n",
+            ),
+            ("plugins", "pytest_plugins = ['plugin_a']\n"),
+            ("reexport", "from fixtures_pkg import *\n"),
+        ] {
+            assert_eq!(
+                bare_miss(&[("tests/conftest.py", conftest)], &[], &[], BARE)?,
+                None,
+                "{label}"
+            );
+        }
+        // An ancestor conftest reaches nested tests; an unread one is unknown.
+        assert_eq!(
+            bare_miss(&[("conftest.py", AUTOUSE)], &[], &[], BARE)?,
+            None
+        );
+        assert_eq!(bare_miss(&[], &["tests/conftest.py"], &[], BARE)?, None);
+        Ok(())
+    }
+
+    #[test]
+    fn a_conftest_override_of_a_builtin_fixture_withholds_no_assertion() -> Result<(), String> {
+        let uses_tmp = "def test_bare(tmp_path):\n    score(0)\n";
+        // Control: a conftest declaring only an unrelated fixture is fine for
+        // a test that requests no built-in fixture.
+        let unrelated = "import pytest\n\n@pytest.fixture\ndef other():\n    return 1\n";
+        assert_eq!(
+            bare_miss(&[("tests/conftest.py", unrelated)], &[], &[], BARE)?,
+            Some(RelatedTestMiss::NoAssertion)
+        );
+        assert_eq!(
+            bare_miss(&[], &[], &[], uses_tmp)?,
+            Some(RelatedTestMiss::NoAssertion)
+        );
+        for override_source in [
+            "import pytest\n\n@pytest.fixture\ndef tmp_path():\n    yield 1\n    assert False\n",
+            "import pytest\n\n@pytest.fixture(name='tmp_path')\ndef fake():\n    yield 1\n    assert False\n",
+        ] {
+            assert_eq!(
+                bare_miss(
+                    &[("tests/conftest.py", override_source)],
+                    &[],
+                    &[],
+                    uses_tmp
+                )?,
+                None,
+                "{override_source}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_bare_sibling_module_other_than_the_module_under_test_withholds_no_assertion()
+    -> Result<(), String> {
+        let helper = "from runner import run_case\n\ndef test_bare():\n    run_case(score(0))\n";
+        // Control: the same import with no such module beside the test.
+        assert_eq!(
+            bare_miss(&[], &[], &[], helper)?,
+            Some(RelatedTestMiss::NoAssertion)
+        );
+        assert_eq!(bare_miss(&[], &[], &["tests/runner.py"], helper)?, None);
+        assert_eq!(bare_miss(&[], &[], &["tests/runner"], helper)?, None);
+        let plain_import = "import runner\n\ndef test_bare():\n    runner.go(score(0))\n";
+        assert_eq!(
+            bare_miss(&[], &[], &["tests/runner.py"], plain_import)?,
+            None
+        );
+        // The module under test beside its test is not test support.
+        let rows = row_misses_at(
+            "src/test_subject.py",
+            "from subject import score\n",
+            &[],
+            &[],
+            &["src/subject.py"],
+            BARE,
+        )?;
+        assert_eq!(
+            rows.iter().map(|(_, miss)| *miss).collect::<Vec<_>>(),
+            vec![Some(RelatedTestMiss::NoAssertion)],
+            "{rows:?}"
+        );
+        Ok(())
+    }
 }
 
 #[test]

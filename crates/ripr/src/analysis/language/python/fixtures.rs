@@ -170,3 +170,69 @@ pub(super) fn mark_implicit_reach_by_conftest(
         }
     }
 }
+
+/// A built-in fixture (`tmp_path`, `monkeypatch`, ...) is trusted not to
+/// assert, but a conftest may redefine it (`def tmp_path(): ...` or
+/// `@pytest.fixture(name="tmp_path")`) and assert in its teardown. Withhold
+/// `extraction_complete_no_assertion` from a test that requests a built-in
+/// fixture while a chain conftest declares any fixture or hook, or could not
+/// be read (#5491). Fails closed by existence, like the implicit-reach pass.
+pub(super) fn taint_builtin_fixture_overrides_by_conftest(
+    tests: &mut [PythonTest],
+    reach_conftests: &BTreeSet<PathBuf>,
+    mut is_unreadable_conftest: impl FnMut(&Path) -> bool,
+) {
+    for test in tests {
+        if test.assertion_admission != PythonAssertionAdmission::NoAssertionLike
+            || !test
+                .fixtures
+                .iter()
+                .any(|name| super::admission::PYTEST_BUILTIN_FIXTURES.contains(&name.as_str()))
+        {
+            continue;
+        }
+        if conftest_chain(&test.file).any(|conftest| {
+            reach_conftests.contains(&conftest) || is_unreadable_conftest(&conftest)
+        }) {
+            test.assertion_admission = PythonAssertionAdmission::Unresolved;
+        }
+    }
+}
+
+/// Record, per test, the modules it imports by a bare name that exist beside
+/// the test file (#5491). `is_present` answers for a workspace-relative path.
+/// A single-file module (`<dir>/<name>.py`) is recorded by that file so the
+/// row pass can exempt the module under test; a package or directory is
+/// recorded by its path and never exempted.
+pub(super) fn record_bare_sibling_imports(
+    tests: &mut [PythonTest],
+    mut is_present: impl FnMut(&Path) -> bool,
+) {
+    for test in tests {
+        if test.assertion_admission != PythonAssertionAdmission::NoAssertionLike {
+            continue;
+        }
+        let dir = test.file.parent().unwrap_or(Path::new(""));
+        let mut found: BTreeSet<PathBuf> = BTreeSet::new();
+        for import in &test.imports {
+            let module = if import.source_module.is_empty() {
+                import.imported.as_str()
+            } else {
+                import.source_module.as_str()
+            };
+            let Some(root) = module.split('.').next().filter(|root| !root.is_empty()) else {
+                continue;
+            };
+            let file = dir.join(format!("{root}.py"));
+            if is_present(&file) {
+                found.insert(file);
+            } else {
+                let package = dir.join(root);
+                if is_present(&package) {
+                    found.insert(package);
+                }
+            }
+        }
+        test.bare_sibling_modules = found.into_iter().collect();
+    }
+}
