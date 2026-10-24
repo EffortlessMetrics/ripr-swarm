@@ -2043,6 +2043,7 @@ fn analyze_related_assertions(
                 } else {
                     RelatedTestMiss::NoAssertion
                 }),
+                miss_support: None,
             });
             continue;
         }
@@ -2365,6 +2366,7 @@ fn analyze_related_assertions(
                     relation_reason,
                     relation_confidence,
                     miss: Some(RelatedTestMiss::NoCallPath),
+                    miss_support: None,
                 });
             } else if matched {
                 let observation_confirmed = !self_computed
@@ -2459,6 +2461,7 @@ fn analyze_related_assertions(
                         && (effect_observer_confirms(assertion)
                             || implicit_observer == Some(false)))
                     .then_some(RelatedTestMiss::ObservationUnconfirmed),
+                    miss_support: None,
                 });
             }
         }
@@ -2488,6 +2491,7 @@ fn analyze_related_assertions(
                 } else {
                     RelatedTestMiss::AssertionNotObserving
                 }),
+                miss_support: None,
             });
         }
     }
@@ -6015,6 +6019,7 @@ mod tests {
             relation_reason: reason,
             relation_confidence: reason.map(RelationReason::confidence),
             miss: None,
+            miss_support: None,
         }
     }
 
@@ -6303,6 +6308,7 @@ mod tests {
         let mut input: Vec<_> = (0..9)
             .map(|index| RelatedTest {
                 miss: Some(RelatedTestMiss::NoCallPath),
+                miss_support: None,
                 ..related(
                     &format!("doc_{index:02}"),
                     10 + index,
@@ -6312,6 +6318,7 @@ mod tests {
             .collect();
         input.push(RelatedTest {
             miss: Some(RelatedTestMiss::NoCallPath),
+            miss_support: None,
             ..related(
                 "truncate_to_zero",
                 40,
@@ -6408,6 +6415,7 @@ mod tests {
         let mut input: Vec<_> = (0..6)
             .map(|index| RelatedTest {
                 miss: Some(RelatedTestMiss::NoCallPath),
+                miss_support: None,
                 ..related(
                     &format!("doc_{index:02}"),
                     10 + index,
@@ -6423,6 +6431,7 @@ mod tests {
         ));
         input.push(RelatedTest {
             miss: Some(RelatedTestMiss::NoCallPath),
+            miss_support: None,
             ..related(
                 "truncate_to_zero",
                 40,
@@ -6471,6 +6480,7 @@ mod tests {
         let mut input = nine_file_location_rows_and_one_demoted_row();
         input.push(RelatedTest {
             miss: Some(RelatedTestMiss::NoCallPath),
+            miss_support: None,
             ..related(
                 "sibling_same_line",
                 40,
@@ -6492,6 +6502,7 @@ mod tests {
             input.push(RelatedTest {
                 oracle: Some(format!("assert_eq!(extra_{index}, 1);")),
                 miss: Some(RelatedTestMiss::NoCallPath),
+                miss_support: None,
                 ..related(
                     "truncate_to_zero",
                     40,
@@ -6525,6 +6536,7 @@ mod tests {
         let mut input: Vec<_> = (0..7)
             .map(|index| RelatedTest {
                 miss: Some(RelatedTestMiss::NoCallPath),
+                miss_support: None,
                 ..related(
                     &format!("doc_{index:02}"),
                     10 + index,
@@ -6540,6 +6552,7 @@ mod tests {
             input.push(RelatedTest {
                 oracle: Some(oracle.to_string()),
                 miss: Some(RelatedTestMiss::NoCallPath),
+                miss_support: None,
                 ..related(
                     "truncate_to_zero",
                     40,
@@ -6577,6 +6590,7 @@ mod tests {
         let mut input: Vec<_> = (0..6)
             .map(|index| RelatedTest {
                 miss: Some(RelatedTestMiss::NoCallPath),
+                miss_support: None,
                 ..related(
                     &format!("doc_{index:02}"),
                     10 + index,
@@ -6587,12 +6601,14 @@ mod tests {
         for (name, line) in [("demoted_a", 40), ("demoted_b", 41)] {
             input.push(RelatedTest {
                 miss: Some(RelatedTestMiss::NoCallPath),
+                miss_support: None,
                 ..related(name, line, Some(RelationReason::WeakTokenSubstring))
             });
         }
         for (name, line) in [("zz_extra_a", 90), ("zz_extra_b", 91)] {
             input.push(RelatedTest {
                 miss: Some(RelatedTestMiss::NoCallPath),
+                miss_support: None,
                 ..related(name, line, Some(RelationReason::WeakTokenSubstring))
             });
         }
@@ -6649,6 +6665,7 @@ mod tests {
         let mut input: Vec<_> = (0..5)
             .map(|index| RelatedTest {
                 miss: Some(RelatedTestMiss::NoCallPath),
+                miss_support: None,
                 ..related(
                     &format!("doc_{index:02}"),
                     10 + index,
@@ -6663,12 +6680,14 @@ mod tests {
         ] {
             input.push(RelatedTest {
                 miss: Some(RelatedTestMiss::NoCallPath),
+                miss_support: None,
                 ..related(name, line, Some(RelationReason::WeakTokenSubstring))
             });
         }
         for (name, line) in [("zz_extra_a", 90), ("zz_extra_b", 91)] {
             input.push(RelatedTest {
                 miss: Some(RelatedTestMiss::NoCallPath),
+                miss_support: None,
                 ..related(name, line, Some(RelationReason::WeakTokenSubstring))
             });
         }
@@ -6704,6 +6723,7 @@ mod tests {
         let mut input = nine_file_location_rows_and_one_demoted_row();
         input.push(RelatedTest {
             miss: Some(RelatedTestMiss::NoCallPath),
+            miss_support: None,
             ..related(
                 "second_demoted",
                 41,
@@ -6740,6 +6760,7 @@ mod tests {
         let mut input: Vec<_> = (0..9)
             .map(|index| RelatedTest {
                 miss: Some(RelatedTestMiss::NoCallPath),
+                miss_support: None,
                 ..related(
                     &format!("doc_{index:02}"),
                     10 + index,
@@ -6750,6 +6771,7 @@ mod tests {
         input.push(RelatedTest {
             oracle: None,
             miss: Some(RelatedTestMiss::AssertionNotObserving),
+            miss_support: None,
             ..related(
                 "truncate_to_zero",
                 40,
@@ -6777,6 +6799,7 @@ mod tests {
             .collect();
         input.push(RelatedTest {
             miss: Some(RelatedTestMiss::NoCallPath),
+            miss_support: None,
             ..related(
                 "truncate_to_zero",
                 40,

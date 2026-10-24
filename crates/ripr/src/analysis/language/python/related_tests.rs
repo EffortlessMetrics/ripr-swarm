@@ -306,6 +306,7 @@ pub(super) fn related_tests_for_candidates(
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
             }
         })
         .collect()

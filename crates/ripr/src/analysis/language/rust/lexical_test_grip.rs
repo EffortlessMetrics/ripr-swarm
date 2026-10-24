@@ -492,6 +492,7 @@ mod tests {
                     relation_reason: None,
                     relation_confidence: None,
                     miss: None,
+                    miss_support: None,
                 })
                 .into_iter()
                 .collect(),
