@@ -16,10 +16,10 @@
 //! call. The facts producer credits the
 //! helper's assertion through this path only when the two meet, so a closure
 //! that this path cannot show to run earns nothing from it. That statement is
-//! limited to this closure-callback path: the pre-existing plain-helper path
-//! is unchanged and still credits a helper that never invokes its closure
-//! parameter (#9997), and callbacks forwarded to another function (the
-//! tracing `with_default` shape of #9981) are not repaired here.
+//! limited to this closure-callback path. The plain-helper path (a helper that
+//! invokes no parameter, so it never runs a closure or only forwards it, the
+//! tracing `with_default` shape of #9981) asks [`passes_call_making_closure`]
+//! and lends nothing when the test hands it a call-making closure (#9997).
 
 use super::*;
 use crate::analysis::syntax::node_has_macro_escape;
@@ -93,6 +93,51 @@ pub(crate) fn closure_argument_positions(test_text: &str, helper: &str) -> Optio
         }
     }
     Some(positions)
+}
+
+/// Whether any call to `helper` in `test_text`, reached or not, passes an
+/// argument that contains a closure literal whose body holds a call. The plain-helper path asks this of
+/// a helper that never invokes a parameter directly (#9997): such a helper
+/// either never runs the closure or only forwards it, so its assertions cannot
+/// be shown to observe what the closure called. Deliberately broader than
+/// [`closure_argument_positions`]: no eager-reach, `async` or nested-call
+/// exemption applies, because this only withholds credit. Text that does not
+/// parse cleanly answers `true`.
+pub(crate) fn passes_call_making_closure(test_text: &str, helper: &str) -> bool {
+    let Some(parse) = parse_clean_source_file(test_text) else {
+        return true;
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::CallExpr::cast)
+        .filter(|call| single_segment_callee(call).as_deref() == Some(helper))
+        .filter_map(|call| call.arg_list())
+        .flat_map(|arguments| arguments.args())
+        .any(|argument| {
+            // Any closure literal inside the argument, so `&|| ..`, `(|| ..)`
+            // and `Box::new(|| ..)` count; one inside a nested `fn` item does not.
+            argument
+                .syntax()
+                .descendants()
+                .filter_map(ast::ClosureExpr::cast)
+                .filter(|closure| {
+                    !closure
+                        .syntax()
+                        .ancestors()
+                        .take_while(|ancestor| ancestor != argument.syntax())
+                        .any(|ancestor| ast::Fn::can_cast(ancestor.kind()))
+                })
+                .any(|closure| {
+                    closure.body().is_some_and(|body| {
+                        body.syntax().descendants().any(|node| {
+                            ast::CallExpr::can_cast(node.kind())
+                                || ast::MethodCallExpr::can_cast(node.kind())
+                        })
+                    })
+                })
+        })
 }
 
 /// End of the statement that eagerly invokes `name`, when the function body

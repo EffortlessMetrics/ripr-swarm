@@ -2044,6 +2044,7 @@ fn analyze_related_assertions(
                     RelatedTestMiss::NoAssertion
                 }),
                 miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             });
             continue;
         }
@@ -2367,6 +2368,7 @@ fn analyze_related_assertions(
                     relation_confidence,
                     miss: Some(RelatedTestMiss::NoCallPath),
                     miss_support: None,
+                    role: crate::domain::RelatedTestRole::Contributing,
                 });
             } else if matched {
                 let observation_confirmed = !self_computed
@@ -2462,6 +2464,7 @@ fn analyze_related_assertions(
                             || implicit_observer == Some(false)))
                     .then_some(RelatedTestMiss::ObservationUnconfirmed),
                     miss_support: None,
+                    role: crate::domain::RelatedTestRole::Contributing,
                 });
             }
         }
@@ -2492,6 +2495,13 @@ fn analyze_related_assertions(
                     RelatedTestMiss::AssertionNotObserving
                 }),
                 miss_support: None,
+                // A refusal row was part of the legacy oracle-row set; only a
+                // test whose assertions matched nothing is examined-only.
+                role: if refused_here {
+                    crate::domain::RelatedTestRole::Contributing
+                } else {
+                    crate::domain::RelatedTestRole::ExaminedOnly
+                },
             });
         }
     }
@@ -4755,7 +4765,7 @@ fn finalize_related_tests_with_owner_calls(
     // listed. Downstream selection (exact-oracle alignment, fix sites, repair
     // readiness) reads this window.
     let (mut oracle_rows, unmatched): (Vec<_>, Vec<_>) =
-        related.into_iter().partition(|test| !test.is_unmatched());
+        related.into_iter().partition(|test| test.is_contributing());
     // #8386: a bare `.unwrap()`/`.expect()` setup statement is not the
     // decisive oracle when the same test also has a real matched assertion;
     // listing both rows quoted the setup as a "smoke only" miss beside the
@@ -6025,6 +6035,7 @@ mod tests {
             relation_confidence: reason.map(RelationReason::confidence),
             miss: None,
             miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }
     }
 
@@ -6777,6 +6788,7 @@ mod tests {
             oracle: None,
             miss: Some(RelatedTestMiss::AssertionNotObserving),
             miss_support: None,
+            role: RelatedTestRole::ExaminedOnly,
             ..related(
                 "truncate_to_zero",
                 40,
@@ -7858,7 +7870,7 @@ mod tests {
             related[0].miss,
             Some(RelatedTestMiss::AssertionNotObserving)
         );
-        assert!(related[0].is_unmatched());
+        assert!(related[0].is_examined_only());
         assert_eq!(
             related[0].oracle.as_deref(),
             Some("assert_eq!(unrelated, 3);")
@@ -7950,7 +7962,13 @@ mod tests {
             vec!["assert!(score > 0);", "assert_eq!(score, 3);"],
             "{related:?}"
         );
-        assert_eq!(related.iter().filter(|test| test.is_unmatched()).count(), 6);
+        assert_eq!(
+            related
+                .iter()
+                .filter(|test| test.is_examined_only())
+                .count(),
+            6
+        );
     }
 
     #[test]
@@ -8022,7 +8040,7 @@ mod tests {
         assert_eq!(total, 9, "every examined test is counted");
         assert_eq!(related.len(), 8);
         assert!(
-            related.iter().all(|test| !test.is_unmatched()),
+            related.iter().all(|test| test.is_contributing()),
             "the miss is outside the window: {related:?}"
         );
     }

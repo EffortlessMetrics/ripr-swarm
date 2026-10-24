@@ -1497,12 +1497,12 @@ mod direct {
             for (row, base) in rows.iter().zip(&stripped) {
                 annotated_any |= row.miss.is_some();
                 // Order, identity, oracle, relation and confidence are the
-                // un-annotated row's; `is_unmatched` stays false.
+                // un-annotated row's; the role stays contributing.
                 let mut reset = row.clone();
                 reset.miss = None;
                 reset.miss_support = None;
                 assert_eq!(&reset, base);
-                assert!(!row.is_unmatched());
+                assert!(row.is_contributing());
             }
         }
         assert!(annotated_any, "positive control: some row gains a miss");

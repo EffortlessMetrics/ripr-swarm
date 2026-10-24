@@ -319,6 +319,7 @@ mod tests {
             relation_confidence: None,
             miss: Some(miss),
             miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }
     }
 
@@ -345,6 +346,7 @@ mod tests {
             relation_confidence: None,
             miss: None,
             miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }
     }
 

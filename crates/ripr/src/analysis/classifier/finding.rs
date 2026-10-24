@@ -351,12 +351,13 @@ fn annotate_related_test_misses(
         // assertion-level reason `reveal` recorded first
         // (`assertion_not_credited`) would point the reader at assertion
         // admission instead of the missing call. An `assertion_not_observing`
-        // row keeps its miss: that value is what marks it examined-only
-        // (`RelatedTest::is_unmatched`), and the no-static-path reach limit
-        // and fix-site selection read `oracle_related_tests` through it.
+        // row keeps its miss: the examined-only row
+        // (`RelatedTest::is_examined_only`, the explicit role, #5563) is
+        // skipped here, and the no-static-path reach limit and fix-site
+        // selection read `oracle_related_tests` through that role.
         for test in related_tests
             .iter_mut()
-            .filter(|test| !reaches(test) && !test.is_unmatched())
+            .filter(|test| !reaches(test) && test.is_contributing())
         {
             test.miss = Some(RelatedTestMiss::NoCallPath);
         }
@@ -717,6 +718,7 @@ mod tests {
             relation_confidence: None,
             miss: None,
             miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }
     }
 
@@ -798,6 +800,7 @@ mod tests {
             RelatedTest {
                 miss: Some(crate::domain::RelatedTestMiss::AssertionNotObserving),
                 miss_support: None,
+                role: crate::domain::RelatedTestRole::ExaminedOnly,
                 relation_reason: Some(RelationReason::SameTestFile),
                 ..matched_row("examined_only", OracleStrength::None)
             },
@@ -856,6 +859,12 @@ mod tests {
         let row = |name: &str, reason: RelationReason, miss| RelatedTest {
             relation_reason: Some(reason),
             miss,
+            // The reveal producer pairs examined-only rows with this miss.
+            role: if miss == Some(crate::domain::RelatedTestMiss::AssertionNotObserving) {
+                crate::domain::RelatedTestRole::ExaminedOnly
+            } else {
+                crate::domain::RelatedTestRole::Contributing
+            },
             ..matched_row(name, OracleStrength::None)
         };
         let mut rows = vec![
@@ -1085,6 +1094,7 @@ mod tests {
             relation_confidence: Some(crate::domain::RelationConfidence::High),
             miss: None,
             miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }
     }
 

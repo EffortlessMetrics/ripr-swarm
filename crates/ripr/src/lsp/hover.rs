@@ -637,7 +637,7 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
             // reason, so hover never grades an oracle that does not exist.
             let label = crate::output::related_test_miss::related_test_miss_label(test);
             let oracle_text = match (&why, &test.oracle) {
-                (Some(why), Some(oracle)) if test.is_unmatched() => format!(
+                (Some(why), Some(oracle)) if test.is_examined_only() => format!(
                     " {label}: {why}; checked `{}`",
                     crate::output::related_test_miss::checked_assertion_text(oracle)
                 ),
