@@ -1150,6 +1150,10 @@ the same file to Codecov Test Analytics only when `CODECOV_TOKEN` is available
 on trusted runs. Fork pull requests still run tests and upload the artifact, but
 skip the Codecov test-results upload because repository secrets are unavailable.
 
+### Experiment
+
+Experiment line for #9842: this edit deliberately conflicts with main.
+
 ### PR Staleness Watchdog
 
 GitHub sometimes silently drops the `pull_request` event delivery that creates
