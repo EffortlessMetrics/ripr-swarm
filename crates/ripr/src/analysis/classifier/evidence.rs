@@ -2,7 +2,7 @@ use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, AssertionRefusal, EffectStateCarrier,
     HELPER_RESULT_NOT_FORWARDED, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
     PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex, WrapperEntryPairing,
-    activation_and_boundary_input, assertion_observes_collection_argument,
+    activation_and_boundary_input, assertion_observes_collection_argument, assertion_out_parameter,
     body_contains_owner_call, call_parameter_names, callee_is_unique, chain_entry_pin_admits,
     chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
     confidence_score, constructor_starts_empty, contains_as_whole_word, current_path_witness_with,
@@ -86,6 +86,35 @@ pub(in crate::analysis) struct AssertionRefusalNote {
     pub(in crate::analysis) is_analyzer_limit: bool,
 }
 
+/// #9871: reach for a changed constant whose same-file readers are called by
+/// tests. A call to a reader is not a call that executes the read, so the
+/// stage is `weak`, never `yes`, and the class stays `static_unknown`.
+fn const_reader_reach(context: &ProbeContext<'_>) -> StageEvidence {
+    let constant = context.probe.changed_const_name().unwrap_or("the constant");
+    let readers = context
+        .const_readers
+        .iter()
+        .take(3)
+        .map(|reader| format!("`{}`", reader.name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let tests = context
+        .related_tests
+        .iter()
+        .filter(|(_, reason)| crate::analysis::classify::relation_establishes_reach(*reason, true))
+        .take(3)
+        .map(|(test, _)| test.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    StageEvidence::new(
+        StageState::Weak,
+        Confidence::Low,
+        format!(
+            "Tests call {readers}, which reads the changed constant `{constant}`; whether the tested path executes that read is not established: {tests}"
+        ),
+    )
+}
+
 fn return_ledger_limit(
     owner: &str,
     ledger: &crate::analysis::classify::ReturnedLedger,
@@ -135,6 +164,11 @@ impl ClassifiedProbeEvidence {
                 .owner_fn
                 .is_none_or(|owner| context.owner_may_be_reached_unseen(owner))
         });
+        let reach = if context.const_readers.is_empty() {
+            reach
+        } else {
+            const_reader_reach(context)
+        };
         let flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
         let returned_ledger = match (context.owner_fn, context.helper_chain.as_ref()) {
             (Some(owner), Some(chain)) if helper_only_reach(&context.related_tests) => {
@@ -803,6 +837,11 @@ impl ClassifiedProbeEvidence {
                             )
                         })
                 },
+                out_parameter_read: &|test, assertion| {
+                    context.owner_fn.and_then(|owner| {
+                        assertion_out_parameter(owner, context.index, test, assertion, pin_syntax)
+                    })
+                },
                 getter_reads_field: &|impl_type, getter, field| {
                     getter_plainly_reads(context.index, impl_type, getter, field)
                 },
@@ -1103,6 +1142,25 @@ impl ClassifiedProbeEvidence {
             discriminate
         };
 
+        // #9871: a test that calls a reader of the changed constant is related
+        // for reach only. Whether its path executes the read is unestablished,
+        // so no assertion is credited as observing or discriminating the
+        // constant: both stages stay unknown rather than yes/weak.
+        let (observe, discriminate) = if context.const_readers.is_empty() {
+            (observe, discriminate)
+        } else {
+            let unknown =
+                |summary: &str| StageEvidence::new(StageState::Unknown, Confidence::Low, summary);
+            (
+                unknown(
+                    "Not established: whether a test observes the changed constant; the tests only call a function that reads it",
+                ),
+                unknown(
+                    "Not established: whether a test discriminates the changed constant; the tests only call a function that reads it",
+                ),
+            )
+        };
+
         let ripr = RiprEvidence {
             reach: reach.clone(),
             infect: infect.clone(),
@@ -1125,8 +1183,11 @@ impl ClassifiedProbeEvidence {
                     .value_guard_subject()
                     .is_none_or(|subject| direct_call_name(subject) == Some(owner_name))
         };
-        let assertion_refusal = (observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
-            || discriminate.state != StageState::Yes)
+        // #9871: a reader-only relation has no owner pin to refuse against, so
+        // an owner-name scan would only add a misleading refusal note.
+        let assertion_refusal = (context.const_readers.is_empty()
+            && (observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
+                || discriminate.state != StageState::Yes))
             .then(|| {
                 let mut notes = Vec::new();
                 for (test, _) in &context.related_tests {

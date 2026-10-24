@@ -161,6 +161,12 @@ pub(super) struct PythonTestRebinding {
     /// The test's file is also changed in this diff, so its assertions may
     /// have been written for the new value (`module_value.rs`, #9423).
     pub(super) edited_in_diff: bool,
+    /// Code outside the test function may run at the owner implicitly (#5491
+    /// `missing_input` fails closed on it): an autouse fixture, `pytestmark`,
+    /// a setup or teardown hook, a module-level call, or a `conftest.py` on
+    /// the directory chain that declares a fixture or hook. Decided by
+    /// existence, never by reading what that code calls.
+    pub(super) implicit_reach: bool,
 }
 
 impl PythonTestRebinding {
@@ -198,6 +204,7 @@ pub(super) fn python_test_rebinding(
         module_opaque: false,
         attributes: Vec::new(),
         edited_in_diff: false,
+        implicit_reach: false,
     }
 }
 

@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/owner_return_pin_identity_traps/input
 
-Summary: 6 probes (0 exposed, 4 weak, 0 unrevealed, 0 no path, 2 unknown); 6 of 6 findings unsuppressed (2 base-side evidence, not candidate edit targets)
+Summary: 6 probes (0 exposed, 3 weak, 1 unrevealed, 0 no path, 2 unknown); 6 of 6 findings unsuppressed (2 base-side evidence, not candidate edit targets)
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 8 changed line(s), 4 candidate line(s), 6 probe(s), 6 finding(s)
@@ -26,6 +26,8 @@ Start here:
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: Related tests appear to reach next_word: fixed_reader_overrides_next_word
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 6 more detail line(s) in --format human-full
@@ -38,7 +40,7 @@ No test stub here: the owner is a trait default method or nested function, sits 
 
 Hidden:
   5 finding(s) omitted: 3 lower-priority, 2 base-side evidence (not candidate edit targets).
-    - ./src/lib.rs:7 (weak, lower-priority candidate)
+    - ./src/lib.rs:7 (unrevealed, lower-priority candidate)
     - ./src/lib.rs:7 (unknown, base-side)
     - ./src/lib.rs:50 (weak, lower-priority candidate)
     - ./src/lib.rs:55 (weak, lower-priority candidate)

@@ -213,7 +213,11 @@ fn owner_from_function(
         &text_for_range(context.source, range),
         !decorators.is_empty() || is_async,
         binding_only,
-    );
+    )
+    .with_calls_own_name(super::module_callees::calls_own_name(
+        &text_for_range(context.source, range),
+        name,
+    ));
     let same_class_callees = super::same_class_callees::same_class_callees_from_body(
         body,
         super::same_class_callees::method_receiver_name(&parameters, &decorators),

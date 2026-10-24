@@ -1255,6 +1255,11 @@ pub(super) fn classify_change_for_owner(
             owner,
             line_text,
             old_line_text,
+            focus: &focus,
+            boundary_fact: crate::domain::input_boundary_fact(
+                &missing_discriminators,
+                &ProbeFamily::Predicate,
+            ),
         },
         all_tests,
     );

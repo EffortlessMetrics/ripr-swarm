@@ -174,18 +174,24 @@ decisive stages behind a remainder count (#4324):
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
 ```
 
-The five-line legend immediately follows the compact line, once for the selected
+The seven-line legend immediately follows the compact line, once for the selected
 digest, including an exposed finding when selected. It explains static evidence,
 not execution or test adequacy. `weak` means partial evidence across the stages,
 and `no` means evidence was not found, never that a behavior is impossible.
+The final two lines define the words the `Summary:` count line prints (probe,
+exposed, weak, unrevealed, no path) in the same static vocabulary (#9244 item 4);
+the `unknown` count is already defined by the `States` line (`unknown/opaque =
+analysis limited`). They claim no runtime mutation outcome.
 No legend renders when there is no selected digest (empty, all-suppressed,
 base-side-only, or unresolved-currentness-only findings). The legend adds a fixed
-five lines; it does not expand the per-stage detail window. Full human and
-machine formats retain their existing contracts. This addresses item 1 only;
-the shared class vocabulary and per-class discoverability in items 2 and 3 are
-unchanged.
+seven lines; it does not expand the per-stage detail window. Full human and
+machine formats retain their existing contracts. This addresses item 1 and #9244
+item 4 only; the shared class vocabulary and per-class discoverability in items 2
+and 3 are unchanged.
 
 Stages summarize independent static signals. Observation can reflect a
 matching assertion, an extracted test check, or a preview adapter's related-test
@@ -359,6 +365,9 @@ a direct `ripr agent stub --at FILE:LINE --kind FAMILY` refusal names
 `FAMILY`, rather than the internal seam kind (#6689). Its `nearest:`
 suggestions are filtered to that family before the five-entry limit is
 applied. If the file contains only other families, the suggestions are empty.
+An empty list renders as `nearest: none`. A suffix selector searches reported
+gaps rather than every seam shape; an empty list must not claim that a filtered
+family has no seam in the file.
 
 Direct JSON stub refusals distinguish an absent selector (`seam_not_found`)
 from a suffix naming several files or disjoint same-kind seams that tie
@@ -604,10 +613,20 @@ string and as the bare token. All require the producer's `missing proof`
 expression to print unchanged in the human Evidence row.
 
 
-This item does not rewrite the Python Weakness section text (python
-`classify.rs`, rendered through `weakness_lines`), the LSP hover, pilot output
-or the agent packet routes. Those, with the python `classify.rs:686` and
-`classify.rs:691` reason texts, are tracked in #9929.
+The human Weakness list (`weakness_lines`, shown by `human-full`) applies the
+same anchored rewrite to the structured `missing` entries, so the Python
+adapter's reason text prints without the producer marker while the JSON
+`missing` strings keep it (#9929). The digest's "Missing discriminator" line
+prints the raw `missing` text truncated at 180 characters and is not rewritten;
+the marker sits past that window for the current producer forms. This item does
+not rewrite pilot output or the agent packet routes, which remain tracked in
+#9929.
+
+The LSP hover (finding hover, line hover and classified-seam hover) is prose for
+a person and applies the same anchored rewrite to its stage lines, the
+discriminator line's related-oracle summary, its Weakness list, and the seam
+hover's Strong/Weak evidence lists and missing-discriminator reasons; the
+structured finding and JSON keep the machine value (#9929).
 
 ### Next step for an unmapped infection input (#9244)
 
@@ -638,6 +657,11 @@ cannot be told apart from the probe. A complete after arm, a nested arrow and
 every other probe family print no note either. The probe fields and every
 machine output are unchanged; the note is static guidance only and claims no
 runtime outcome.
+
+Body presence includes a string or character literal even without a trailing
+comma. Comment-only text, including the producer's `/* old body unread */`
+placeholder, does not establish a body. A complete literal `after:` body is
+not a head-only row and prints no note.
 
 ## Non-Claims
 
@@ -688,10 +712,16 @@ runtime outcome.
 - `crates/ripr/src/output/human.rs::tests::render_finding_adds_no_arm_note_when_the_after_row_is_complete`
 - `crates/ripr/src/output/human.rs::tests::render_finding_arm_note_ignores_arrows_in_literals_and_comments`
 - `crates/ripr/tests/cli_smoke.rs::check_human_full_marks_head_only_match_arm_after_row`
+- `crates/ripr/src/output/human.rs::tests::render_finding_arm_note_preserves_literal_body_presence`
+- `crates/ripr/tests/cli_smoke.rs::check_human_full_keeps_a_final_literal_arm_body_note_without_a_comma`
 - `crates/ripr/src/analysis/classify/decision.rs::tests::infection_unknown_next_step_names_a_concrete_action`
 - `crates/ripr/src/output/human.rs::tests::human_evidence_spells_the_unconfirmed_observation_in_words`
 - `crates/ripr/src/output/human.rs::tests::plain_observation_wording_handles_each_producer_form`
 - `crates/ripr/src/output/human.rs::tests::shared_evidence_rows_spell_the_unconfirmed_observation_in_words`
+- `crates/ripr/src/output/human.rs::tests::weakness_list_drops_producer_marker_but_keeps_embedded_token_and_json`
+- `crates/ripr/src/lsp/tests.rs::finding_hover_spells_the_unconfirmed_observation_in_words`
+- `crates/ripr/src/lsp/tests.rs::finding_hover_with_named_missing_discriminator_spells_markers_in_words`
+- `crates/ripr/src/lsp/hover.rs::seam_hover_tests::seam_hover_spells_the_unconfirmed_observation_in_words`
 - `crates/ripr/src/output/human.rs::tests::plain_wording_leaves_backticked_source_literals_alone`
 - `crates/ripr/src/output/human.rs::tests::plain_observation_wording_never_modifies_embedded_source_text`
 - `crates/ripr/tests/observation_wording_python_literals.rs::single_backtick_before_the_token_prints_as_written`
@@ -703,6 +733,7 @@ runtime outcome.
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_refusal_preserves_the_requested_probe_family`
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub`
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_without_a_matching_family_suggests_no_other_seams`
+- `crates/ripr/tests/agent_stub_compiles.rs::kind_suffix_refusal_does_not_claim_filtered_family_is_absent`
 - `crates/ripr/src/output/human.rs::tests::bounded_human_output_caps_many_findings_and_reports_omitted_count`
 - `crates/ripr/src/output/human.rs::tests::terminal_safe_escapes_controls_and_bidi_but_keeps_lines_and_tabs`
 - `crates/ripr/tests/hostile_repos.rs::terminal_control_bytes_in_repo_text_never_reach_the_terminal`

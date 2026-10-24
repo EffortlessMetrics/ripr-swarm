@@ -2009,6 +2009,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             });
         }
         finding
@@ -2065,6 +2067,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }];
         finding.language = Some(LanguageId::Python);
         finding.language_status = Some(LanguageStatus::Preview);
@@ -2151,6 +2155,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }];
         finding.language = Some(LanguageId::Perl);
         finding.language_status = Some(LanguageStatus::Preview);

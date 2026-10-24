@@ -12,10 +12,11 @@ use super::classify::{
     DependencyEdgeContext, HelperChain, NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY,
     NO_REACHABLE_TEST_OBSERVE_SUMMARY, ProbeContext, RelatedTestCandidateIndex,
     TransitiveReachIndex, ambiguous_helper_entry_called_by_tests, confidence_score,
-    find_related_tests_with_candidate_index, is_assertion_shaped_owner,
+    find_related_tests_with_candidate_index, is_assertion_shaped_owner, relation_establishes_reach,
+    same_file_const_readers,
 };
 use super::probes::parser_expression_for_probe;
-use super::rust_index::RustIndex;
+use super::rust_index::{RustIndex, TestSummary};
 use crate::domain::*;
 
 #[cfg(test)]
@@ -57,7 +58,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
     let helper_chain = resolved_chain
         .clone()
         .filter(|chain| !chain.hops.is_empty());
-    let related_tests = find_related_tests_with_candidate_index(
+    let mut related_tests = find_related_tests_with_candidate_index(
         probe,
         owner_fn,
         index,
@@ -66,6 +67,55 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
         dependency_edges,
         candidate_index,
     );
+    // #9871: a changed constant has no owner function, so the finder had no
+    // name to search for and a test calling the function that reads the
+    // constant read as "no static test path". Relate the tests that call a
+    // same-file reader. The probe family is unchanged (`static_unknown`), so
+    // this only corrects the reach evidence; it cannot promote a verdict.
+    let mut const_readers = Vec::new();
+    if owner_fn.is_none() {
+        let mut through_readers: Vec<_> = Vec::new();
+        let probe_file = candidate_index.probe_index_file(probe, index);
+        let readers = probe_file
+            .as_deref()
+            .map(|file| same_file_const_readers(probe, file, index))
+            .unwrap_or_default();
+        for reader in readers {
+            let mut reached = false;
+            for (test, reason) in find_related_tests_with_candidate_index(
+                probe,
+                Some(reader),
+                index,
+                workspace_complete,
+                None,
+                dependency_edges,
+                candidate_index,
+            ) {
+                if !relation_establishes_reach(reason, true) {
+                    continue;
+                }
+                reached = true;
+                if !through_readers
+                    .iter()
+                    .any(|(seen, _): &(&TestSummary, RelationReason)| std::ptr::eq(*seen, test))
+                {
+                    through_readers.push((test, reason));
+                }
+            }
+            if reached {
+                const_readers.push(reader);
+            }
+        }
+        if !through_readers.is_empty() {
+            related_tests.retain(|(existing, _)| {
+                !through_readers
+                    .iter()
+                    .any(|(seen, _)| std::ptr::eq(*seen, *existing))
+            });
+            through_readers.append(&mut related_tests);
+            related_tests = through_readers;
+        }
+    }
     // RIPR-SPEC-0133: detect assertion-shaped owners (oracles) here, where the
     // full index is available; the context carries the verdict so guidance can
     // be reframed. The exposure class is never changed by this flag.
@@ -88,6 +138,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
     .with_owner_caller_names(candidate_index.owner_caller_names())
     .with_diff_touched(candidate_index.diff_touched());
     context.propagation_origin = propagation_origin;
+    context.const_readers = const_readers;
     context.unmounted_build_script =
         candidate_index.probe_in_unmounted_build_script(probe, owner_fn, index);
     let reveal_expression = parser_expression_for_probe(
@@ -823,6 +874,8 @@ pub(super) mod tests {
             relation_reason: Some(RelationReason::SameModule),
             relation_confidence: None,
             miss,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         };
         let mut rows = vec![
             row(Some(RelatedTestMiss::NoCallPath)),
@@ -1489,6 +1542,170 @@ pub(super) mod tests {
                 .stop_reasons
                 .iter()
                 .any(|reason| { reason.as_str() == StopReason::StaticProbeUnknown.as_str() })
+        );
+    }
+
+    /// #9871: a changed `const` with a same-file reader that a test calls.
+    fn const_probe_index(source: &str, reader_body: &str) -> (RustIndex, Probe) {
+        let mut reader = function("src/lib.rs", "score");
+        reader.start_line = 3;
+        reader.end_line = 5;
+        reader.body = reader_body.to_string().into();
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![reader],
+            tests: vec![test(
+                "tests/it.rs",
+                "score_test",
+                "score(1)",
+                "assert_eq!(score(1), 2);",
+            )],
+            files: BTreeMap::from([(
+                PathBuf::from("src/lib.rs"),
+                FileFacts {
+                    path: PathBuf::from("src/lib.rs"),
+                    source: source.to_string().into(),
+                    functions: vec![{
+                        let mut reader = function("src/lib.rs", "score");
+                        reader.start_line = 3;
+                        reader.end_line = 5;
+                        reader.body = reader_body.to_string().into();
+                        reader
+                    }],
+                    ..FileFacts::default()
+                },
+            )]),
+            ..Default::default()
+        });
+        let probe = Probe {
+            id: ProbeId("probe:src_lib_rs:1:static_unknown".to_string()),
+            location: SourceLocation::new("src/lib.rs", 1, 1),
+            owner: None,
+            family: ProbeFamily::StaticUnknown,
+            delta: DeltaKind::Unknown,
+            before: Some("pub const LIMIT: u32 = 3;".to_string()),
+            after: Some("pub const LIMIT: u32 = 4;".to_string()),
+            expression: "pub const LIMIT: u32 = 4;".to_string(),
+            expected_sinks: vec![],
+            required_oracles: vec![],
+        };
+        (index, probe)
+    }
+
+    #[test]
+    fn changed_const_relates_tests_that_call_its_reader_without_promoting() {
+        let (index, probe) = const_probe_index(
+            "pub const LIMIT: u32 = 4;\n\npub fn score(input: i32) -> bool {\n    input < LIMIT\n}\n",
+            "pub fn score(input: i32) -> bool {\n    input < LIMIT\n}",
+        );
+
+        let finding = classify_probe(&probe, &index, true, None);
+
+        // Fail closed: reach is corrected, the verdict is not.
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        assert_eq!(finding.ripr.reach.state, StageState::Weak);
+        // A reader-only relation credits no observation or discrimination.
+        assert_eq!(finding.ripr.reveal.observe.state, StageState::Unknown);
+        assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Unknown);
+        // No owner pin exists to refuse against, so no refusal note is added.
+        assert!(
+            !finding
+                .evidence
+                .iter()
+                .any(|line| line.starts_with(crate::domain::ASSERTION_NOT_CREDITED_PREFIX)),
+            "{:?}",
+            finding.evidence
+        );
+        assert!(
+            finding
+                .ripr
+                .reach
+                .summary
+                .contains("`score`, which reads the changed constant `LIMIT`"),
+            "{}",
+            finding.ripr.reach.summary
+        );
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .any(|related| related.name == "score_test"),
+            "{:?}",
+            finding.related_tests
+        );
+    }
+
+    #[test]
+    fn changed_const_nothing_reads_keeps_its_no_path_reach() {
+        // `score` does not read `LIMIT`: the test reaches a function the
+        // constant never touches, so no reader relates it.
+        let (index, probe) = const_probe_index(
+            "pub const LIMIT: u32 = 4;\n\npub fn score(input: i32) -> bool {\n    input < 9\n}\n",
+            "pub fn score(input: i32) -> bool {\n    input < 9\n}",
+        );
+
+        let finding = classify_probe(&probe, &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        assert!(
+            !finding
+                .ripr
+                .reach
+                .summary
+                .contains("reads the changed constant"),
+            "{}",
+            finding.ripr.reach.summary
+        );
+        assert!(
+            !finding
+                .related_tests
+                .iter()
+                .any(|related| related.name == "score_test"),
+            "{:?}",
+            finding.related_tests
+        );
+    }
+
+    #[test]
+    fn changed_const_with_the_same_name_in_another_path_is_not_read() {
+        let (index, probe) = const_probe_index(
+            "pub const LIMIT: u32 = 4;\n\npub fn score(input: i32) -> u32 {\n    crate::other::LIMIT\n}\n",
+            "pub fn score(input: i32) -> u32 {\n    crate::other::LIMIT\n}",
+        );
+
+        let finding = classify_probe(&probe, &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        assert!(
+            !finding
+                .ripr
+                .reach
+                .summary
+                .contains("reads the changed constant"),
+            "{}",
+            finding.ripr.reach.summary
+        );
+    }
+
+    #[test]
+    fn changed_const_declared_twice_is_not_traced_to_readers() {
+        // Two items spell `LIMIT` (an associated const per impl): the reader
+        // cannot be tied to the changed one, so no reader relation is made.
+        let (index, probe) = const_probe_index(
+            "pub const LIMIT: u32 = 4;\nimpl A { const LIMIT: u32 = 9; }\npub fn score(input: i32) -> bool {\n    input < LIMIT\n}\n",
+            "pub fn score(input: i32) -> bool {\n    input < LIMIT\n}",
+        );
+
+        let finding = classify_probe(&probe, &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        assert!(
+            !finding
+                .ripr
+                .reach
+                .summary
+                .contains("reads the changed constant"),
+            "{}",
+            finding.ripr.reach.summary
         );
     }
 
