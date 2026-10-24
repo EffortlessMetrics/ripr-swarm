@@ -1173,6 +1173,17 @@ the masker.
     value is the declared function.
     Rejected: crediting `require()` of an ES module's default export
     (runtime namespace object) and an arbitrary `module.exports = expr`.
+22. **Mock call counts (2026-10-22, #9684).**
+    Adopted: for a changed side-effect call (a probe whose
+    change is to what the owner's call sends), an assertion whose observed
+    expression is a plain identifier path ending `.mock.callCount()` or
+    `.mock.calls.length` counts calls and reads `mock_expectation` / weak,
+    like `toHaveBeenCalledTimes`, under any matcher (the classifier applies
+    this; extraction still labels the equality `exact_value`). Rejected:
+    crediting the count as an exact value of the arguments the changed call
+    sends. Not demoted: a deleted call or a value that decides how many
+    calls run (a count sees both), an aliased or optional-chained count,
+    and `mock.calls[0].arguments` pins, which keep their reading.
 
 ## Required Evidence
 
@@ -1450,7 +1461,6 @@ to `amount - 20`, and `tests/lib.test.ts` has
     expect.soft(d.perimeter).toBe(14);`: `exact_value` / strong, `exposed`
     (today `weakly_exposed`: only the unchanged `area` term reached the
     changed-value check). With only the `d.area` assertion: unchanged.
-
 40. `src/rank.ts` `return score >= 90 ? "gold" : "silver";` changed to
     `"bronze"`; the only running test is `it("...", () => {
     expect(rank(90)).to.equal("gold"); })` and the silver assertion is
@@ -1469,6 +1479,12 @@ to `amount - 20`, and `tests/lib.test.ts` has
     withdraws the second test, rule 18 shows `describeAttempt(0)` agrees on
     both versions). Corpus cases `node-t-skip-inside-test` and
     `node-first-attempt-nonnegative-bound`.
+43. `sender.send(orderId * 2)` rewritten as `sender.send(2 * orderId)`; test
+    `const send = mock.fn(); mockedSend(4, { send });
+    assert.equal(send.mock.callCount(), 1)`: `mock_expectation` / weak,
+    `weakly_exposed` (the count does not see the argument; today
+    `exact_value` / strong, `exposed`). `assert.deepEqual(
+    send.mock.calls[0].arguments, [8])` keeps its reading.
 
 ## Test Mapping
 
@@ -1481,6 +1497,10 @@ to `amount - 20`, and `tests/lib.test.ts` has
   cell, a table read elsewhere, a `let` or late table, a row of the wrong
   length, an early exit, a branch in the body, a non-block body). Corpus row
   `ts-grid-boundary-table` moves from gap to credited.
+
+- #9684 (decision 22): `tests/mock_call_count_tests.rs` pins the call-count
+  reading and its controls. Corpus row `ts-trap-mocked-send` moves from
+  credited to gap.
 
 - #9435 (rule 15): `crates/ripr/src/analysis/language/typescript/tests/returned_dataflow_tests.rs`
   pins each shape's credit and the fallbacks that reach the rule (a weak

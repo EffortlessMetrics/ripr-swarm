@@ -2475,6 +2475,41 @@ fn normalized_token_sequence(text: &str) -> String {
     out
 }
 
+/// `assert.equal(send.mock.callCount(), 1)` and
+/// `expect(send.mock.calls.length).toBe(1)` compare how many times a mock ran,
+/// not what it was called with. For a change to the arguments of a call the
+/// owner makes (a side-effect probe) they read like `toHaveBeenCalledTimes`,
+/// `mock_expectation` / weak, never the `exact_value` the equality matcher
+/// gives a computed result (#9684). A deleted call, or a value that decides
+/// how many calls run, is exactly what a count sees, so other families keep
+/// the assertion's own reading.
+pub(crate) fn mock_call_count_assertion(assertion: &TypeScriptAssertion) -> bool {
+    assertion.mock_payload.is_none()
+        && assertion
+            .observed_expression
+            .as_deref()
+            .is_some_and(is_mock_call_count_expression)
+}
+
+/// `<path>.mock.callCount()` or `<path>.mock.calls.length` on a plain
+/// identifier path (no optional chaining, indexing or alias).
+fn is_mock_call_count_expression(text: &str) -> bool {
+    let text = text.trim();
+    let Some(path) = text
+        .strip_suffix(".mock.callCount()")
+        .or_else(|| text.strip_suffix(".mock.calls.length"))
+    else {
+        return false;
+    };
+    !path.is_empty()
+        && path.split('.').all(|part| {
+            !part.is_empty()
+                && part
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+        })
+}
+
 pub(crate) fn mock_payload_from_assertion(
     matcher: &str,
     expect_call: &oxc_ast::ast::CallExpression<'_>,
