@@ -148,6 +148,25 @@ impl RelationIndex {
             // another module; the guards verify the import source identity.
             set.extend(self.default_imports.iter().copied());
         }
+        if owner.exported_as_default {
+            // Arms that reach a default-exported owner WITHOUT naming it:
+            // the fabrication guard matches a fabricated
+            // `spyOn(ns, "default")` (body token "default", no import record
+            // for dynamic imports), and re-export chains land on the local
+            // name "default" (`export { default as fp }` in a barrel records
+            // the exposure under "default", not owner.name). Admit both
+            // key sets; the relation guards still run per candidate.
+            if let Some(indices) = self.by_name.get("default") {
+                set.extend(indices.iter().copied());
+            }
+            if let Some(exposed) = self.reexport_exposed.get("default") {
+                for name in exposed {
+                    if let Some(indices) = self.by_name.get(name) {
+                        set.extend(indices.iter().copied());
+                    }
+                }
+            }
+        }
         if owner.owner_kind == OwnerKind::ModuleFunction {
             set.extend(self.side_effect_imports.iter().copied());
         }
@@ -321,5 +340,43 @@ mod tests {
         let tests = vec![test_with_body("a.test.ts", "x", vec![])];
         let index = RelationIndex::empty();
         assert_eq!(index.candidates(&owner("nobody"), &tests).len(), 1);
+    }
+
+    #[test]
+    fn default_owner_admits_fabricated_default_spy_and_barrel_alias() {
+        // A fabricated `vi.spyOn(ns, "default")` and a barrel
+        // `export { default as fp }` alias both reach a default-exported
+        // owner without ever naming it; the pre-filter must admit both or
+        // the indexed scan drops relations the full scan credits.
+        let tests = vec![
+            test_with_body(
+                "spy.test.ts",
+                "vi.spyOn(mod, \"default\").mockReturnValue(1);",
+                vec![],
+            ),
+            test_with_body(
+                "barrel.test.ts",
+                "fp();",
+                vec![import("./barrel", Some("fp"), "fp")],
+            ),
+            test_with_body("quiet.test.ts", "unrelated()", vec![]),
+        ];
+        let reexport = ReExportIndex::from_parts(
+            vec![(
+                ("barrel".to_string(), "fp".to_string()),
+                ("default".to_string(), "src/lib".to_string()),
+            )],
+            vec![],
+            vec![("src/lib".to_string(), "default".to_string())],
+        );
+        let index = RelationIndex::build(&tests, &reexport);
+        let mut default_owner = owner("formatPrice");
+        default_owner.exported_as_default = true;
+        let files: Vec<_> = index
+            .candidates(&default_owner, &tests)
+            .iter()
+            .map(|t| t.file.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(files, vec!["spy.test.ts", "barrel.test.ts"]);
     }
 }
