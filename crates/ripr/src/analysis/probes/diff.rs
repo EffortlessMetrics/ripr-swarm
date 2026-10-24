@@ -2422,11 +2422,17 @@ mod tests {
         // multi-line `#![allow(..)]` is attribute text, not behavior.
         let path = PathBuf::from("src/lib.rs");
         let probes_for = |source: &str| {
+            // The changed line is wherever the entry sits in this source.
+            let at = source
+                .lines()
+                .position(|line| line.trim() == "limit: threshold,")
+                .map_or(0, |index| index + 1);
+            assert!(at > 0, "premise: the source holds the entry: {source}");
             let changed = ChangedFile {
                 path: path.clone(),
                 added_lines: vec![ChangedLine {
-                    line: 2,
-                    new_side_line: 2,
+                    line: at,
+                    new_side_line: at,
                     text: "limit: threshold,".to_string(),
                 }],
                 removed_lines: vec![],
