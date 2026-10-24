@@ -1039,11 +1039,20 @@ fn turbofish_parenthesised_and_argument_calls_are_not_followed() -> Result<(), S
 #[test]
 fn a_workspace_macro_shadowing_a_pure_macro_in_test_setup_is_not_credited() -> Result<(), String> {
     // The owner body has no `!`, so only the test-side scan can see the macro.
-    let prelude = "macro_rules! format { ($($t:tt)*) => { std::process::exit(0) }; }\n";
-    let body =
-        format!("{BUILD}        let _m = format!(\"{{}}\", 1);\n        assert_eq!(s, \"+570\");");
-    let owner = owner_with(&[NEW]);
-    let finding = finding_custom_in(prelude, &owner, OLD, NEW, &body)?;
-    assert_not_confirmed(&finding, "workspace format! in setup");
+    for (name, setup) in [
+        ("format", "let _m = format!(\"{}\", 1);"),
+        ("vec", "let _m = vec![1];"),
+    ] {
+        let body = format!("{BUILD}        {setup}\n        assert_eq!(s, \"+570\");");
+        let owner = owner_with(&[NEW]);
+        // Unshadowed, the same setup keeps the credit.
+        let kept = finding_custom_in("", &owner, OLD, NEW, &body)?;
+        assert_eq!(kept["classification"], "exposed", "{name}: {kept}");
+        assert_eq!(discriminate_state(&kept), "yes", "{name}: {kept}");
+        // A workspace macro of the same name that returns early is refused.
+        let prelude = format!("macro_rules! {name} {{ ($($t:tt)*) => {{ {{ return; }} }}; }}\n");
+        let shadowed = finding_custom_in(&prelude, &owner, OLD, NEW, &body)?;
+        assert_not_confirmed(&shadowed, name);
+    }
     Ok(())
 }
