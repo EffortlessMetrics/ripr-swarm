@@ -646,7 +646,7 @@ fn is_block_opener(trimmed: &str) -> bool {
 /// `Some(false)` means the row provably fails the guard; `None` means the
 /// guard (or one conjunct) is unreadable for this row, which never excludes
 /// the row.
-fn condition_holds(
+pub(super) fn condition_holds(
     condition: &str,
     condition_line: usize,
     row: &CallRow,
