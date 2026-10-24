@@ -2,10 +2,6 @@
 
 Spec: RIPR-SPEC-0159
 
-Owner: analysis-fixtures
-
-Issue: #8999
-
 ## Given
 
 The module is declared `#[cfg(any())]` with a `// {` comment between the attribute and `pub mod inner;`. The changed line is the private helper `is_bulk` in `src/inner.rs`.

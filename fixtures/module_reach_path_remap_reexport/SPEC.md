@@ -2,10 +2,6 @@
 
 Spec: RIPR-SPEC-0159
 
-Owner: analysis-fixtures
-
-Issue: #8999
-
 ## Given
 
 The library remaps `inner` with `#[path = "foreign.rs"]`; `src/foreign.rs` is a std re-export, a binary root also declares `mod inner;` (so the file is compiled and a finding exists), while `src/inner.rs` holds the changed helper. The test imports `qual_reach::inner::order_discount`. The changed line is the private helper `is_bulk` in `src/inner.rs`.

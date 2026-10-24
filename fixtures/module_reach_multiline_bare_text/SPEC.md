@@ -2,10 +2,6 @@
 
 Spec: RIPR-SPEC-0159
 
-Owner: analysis-fixtures
-
-Issue: #8999
-
 ## Given
 
 The imported bare entry spelling appears only inside a multiline raw string; the only real call is a foreign `foreign::order_discount`. The changed line is the private helper `is_bulk` in `src/inner.rs`.

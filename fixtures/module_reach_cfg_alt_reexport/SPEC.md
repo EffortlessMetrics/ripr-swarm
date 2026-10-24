@@ -2,10 +2,6 @@
 
 Spec: RIPR-SPEC-0159
 
-Owner: analysis-fixtures
-
-Issue: #8999
-
 ## Given
 
 The library declares `inner` twice under complementary cfgs: `src/inner.rs` (inactive) and a `pub use std::cmp as inner;` re-export. The test imports `qual_reach::inner::order_discount`. The changed line is the private helper `is_bulk` in `src/inner.rs`.

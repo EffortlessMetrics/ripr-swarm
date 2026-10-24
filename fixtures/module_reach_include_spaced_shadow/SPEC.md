@@ -2,10 +2,6 @@
 
 Spec: RIPR-SPEC-0159
 
-Owner: analysis-fixtures
-
-Issue: #8999
-
 ## Given
 
 The test crate includes a file declaring `mod qual_reach` through `include /* c */ !(..)`. The changed line is the private helper `is_bulk` in `src/inner.rs`.

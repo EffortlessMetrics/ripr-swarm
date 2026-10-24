@@ -2,10 +2,6 @@
 
 Spec: RIPR-SPEC-0159
 
-Owner: analysis-fixtures
-
-Issue: #8999
-
 ## Given
 
 A real `use qual_reach::inner::order_discount;` import with a bare call. The changed line is the private helper `is_bulk` in `src/inner.rs`.

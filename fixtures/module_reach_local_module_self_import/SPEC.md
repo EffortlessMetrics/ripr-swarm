@@ -2,10 +2,6 @@
 
 Spec: RIPR-SPEC-0159
 
-Owner: analysis-fixtures
-
-Issue: #8999
-
 ## Given
 
 The test crate declares `mod qual_reach` and imports the entry through `self::qual_reach::inner::order_discount`. The changed line is the private helper `is_bulk` in `src/inner.rs`.

@@ -2,10 +2,6 @@
 
 Spec: RIPR-SPEC-0159
 
-Owner: analysis-fixtures
-
-Issue: #8999
-
 ## Given
 
 The qualified entry spelling appears only inside a multiline raw string whose closing line holds a foreign call of the same name. The changed line is the private helper `is_bulk` in `src/inner.rs`.

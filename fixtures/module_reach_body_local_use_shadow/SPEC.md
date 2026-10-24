@@ -2,10 +2,6 @@
 
 Spec: RIPR-SPEC-0159
 
-Owner: analysis-fixtures
-
-Issue: #8999
-
 ## Given
 
 The test file imports `qual_reach::inner::order_discount` at file level, but the test body re-imports `foreign::order_discount`, which shadows it. The changed line is the private helper `is_bulk` in `src/inner.rs`.
