@@ -74,7 +74,7 @@ pub(super) struct EvidenceEntry {
 ///   sentence and its fixed `... unexecuted (observation_unverified). Add a
 ///   test input ...` tail;
 /// - the TypeScript adapter's exact strong-oracle-no-flow summary.
-pub(super) fn plain_observation_wording(text: &str) -> String {
+pub(crate) fn plain_observation_wording(text: &str) -> String {
     const MARKER: &str = " (observation_unverified)";
     const PYTHON_PREFIX: &str = "A strong Python oracle reaches `";
     const PYTHON_METHOD_CALL: &str =

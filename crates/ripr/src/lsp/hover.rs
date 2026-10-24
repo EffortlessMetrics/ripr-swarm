@@ -12,6 +12,7 @@ use crate::output::agent_seam_packets::{
 };
 use crate::output::evidence_record::repair_start_command_for;
 use crate::output::first_useful_action::DEFAULT_FIRST_USEFUL_ACTION_OUT;
+use crate::output::human::plain_observation_wording;
 use crate::output::preview_actionability::{PreviewActionability, preview_actionability_for};
 use crate::output::typescript_packet_projection::typescript_gap_record_for;
 use serde_json::Value;
@@ -674,7 +675,7 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
         lines.push(String::new());
         lines.push("## Weakness".to_string());
         for item in &finding.missing {
-            lines.push(format!("- {item}"));
+            lines.push(format!("- {}", plain_observation_wording(item)));
         }
     }
 
@@ -880,8 +881,15 @@ fn push_missing_actionability_fields(
     ));
 }
 
+/// #9929: the hover is prose for a person, so the producer's machine marker
+/// `observation_unverified` is spelled in words here; the structured stage
+/// summary (JSON, diagnostic `data`) keeps the machine value.
 fn stage_line(name: &str, stage: &StageEvidence) -> String {
-    format!("* {name} {}: {}", stage.state.as_str(), stage.summary)
+    format!(
+        "* {name} {}: {}",
+        stage.state.as_str(),
+        plain_observation_wording(&stage.summary)
+    )
 }
 
 /// The producer's `discriminate` stage grades the strongest related oracle.
@@ -905,13 +913,13 @@ fn discriminator_stage_line(finding: &Finding) -> String {
         format!(
             "* discriminator not established ({}); related oracle: {}",
             finding.class.as_str(),
-            stage.summary
+            plain_observation_wording(&stage.summary)
         )
     } else {
         format!(
             "* discriminator missing: {}; related oracle: {}",
             missing.join(", "),
-            stage.summary
+            plain_observation_wording(&stage.summary)
         )
     }
 }
@@ -1319,7 +1327,7 @@ fn normalize_path(path: &Path) -> String {
 }
 
 fn seam_stage_line(name: &str, stage: &StageEvidence) -> String {
-    format!("* {name} {}: {}", stage.state.as_str(), stage.summary)
+    stage_line(name, stage)
 }
 
 fn push_classification_explanation(

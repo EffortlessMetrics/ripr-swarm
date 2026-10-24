@@ -1241,7 +1241,7 @@ mod sections;
 mod shared;
 mod triage;
 
-pub(crate) use evidence_lines::JsonPointerWording;
+pub(crate) use evidence_lines::{JsonPointerWording, plain_observation_wording};
 pub(crate) use sections::render_finding_with_config;
 
 #[cfg(test)]

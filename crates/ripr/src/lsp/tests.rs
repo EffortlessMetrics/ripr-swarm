@@ -15948,6 +15948,69 @@ fn finding_hover_response_includes_ripr_evidence_path() -> Result<(), String> {
     }
 }
 
+// #9929: hover is prose for a person. The producer's `observation_unverified`
+// marker is spelled in words on every stage/Weakness line; the structured
+// finding keeps the machine value, and
+// source text that merely embeds the token is never modified.
+#[test]
+fn finding_hover_spells_the_unconfirmed_observation_in_words() -> Result<(), String> {
+    use super::hover::{finding_hover_response, line_findings_hover_response};
+
+    let observe =
+        "no assertion text references this probe's changed expression (observation_unverified)";
+    let python = "A strong Python oracle reaches `kind`, but static evidence does not place a related test input inside the guarding arm `case _`; every observed input leaves the changed line unexecuted (observation_unverified). Add a test input that satisfies the guarding condition.";
+    let embedded = "missing proof: `raise ValueError(\"observation_unverified\")`.";
+    let mut finding = sample_finding();
+    finding.ripr.reveal.observe.summary = observe.to_string();
+    finding.ripr.reveal.discriminate = StageEvidence::new(
+        StageState::Yes,
+        Confidence::Medium,
+        "strong oracle, changed value never named (observation_unverified)",
+    );
+    finding.missing = vec![python.to_string(), embedded.to_string()];
+    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+
+    let markup_text = |hover: tower_lsp_server::ls_types::Hover| match hover.contents {
+        HoverContents::Markup(markup) => Ok(markup.value),
+        _ => Err("expected markup hover".to_string()),
+    };
+    let finding_hover = markup_text(finding_hover_response(&finding, &diagnostic))?;
+    let line_hover = markup_text(line_findings_hover_response(
+        &[&finding],
+        crate::config::LspDiagnosticProfile::Full,
+    ))?;
+    for (route, text) in [("finding", &finding_hover), ("line", &line_hover)] {
+        if text.contains("(observation_unverified)") {
+            return Err(format!("{route} hover kept the producer marker:\n{text}"));
+        }
+        if !text.contains(
+            "* observation weak: no assertion text references this probe's changed expression\n",
+        ) {
+            return Err(format!("{route} hover lost the observation line:\n{text}"));
+        }
+        if !text.contains("related oracle: strong oracle, changed value never named\n")
+            && !text.ends_with("related oracle: strong oracle, changed value never named")
+        {
+            return Err(format!(
+                "{route} hover lost the discriminator line:\n{text}"
+            ));
+        }
+    }
+    let unexecuted = "every observed input leaves the changed line unexecuted. Add a test input that satisfies the guarding condition.";
+    if !finding_hover.contains(&format!("- A strong Python oracle reaches `kind`, but static evidence does not place a related test input inside the guarding arm `case _`; {unexecuted}")) {
+        return Err(format!("Weakness reason text not rewritten:\n{finding_hover}"));
+    }
+    if !finding_hover.contains(&format!("- {embedded}")) {
+        return Err(format!(
+            "embedded token text was modified:\n{finding_hover}"
+        ));
+    }
+    if finding.missing[0] != python || finding.ripr.reveal.observe.summary != observe {
+        return Err("the structured finding must keep the machine marker".to_string());
+    }
+    Ok(())
+}
+
 #[test]
 fn finding_hover_response_includes_evidence_details() -> Result<(), String> {
     use super::hover::finding_hover_response;
