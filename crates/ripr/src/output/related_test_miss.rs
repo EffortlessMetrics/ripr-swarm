@@ -17,8 +17,10 @@ use crate::domain::{ProbeFamily, RelatedTest, RelatedTestMiss, RelationReason};
 pub(crate) fn related_test_miss_reason(test: &RelatedTest, family: &ProbeFamily) -> Option<String> {
     Some(match test.miss? {
         RelatedTestMiss::NoCallPath => match test.relation_reason.and_then(link_label) {
-            Some(link) => format!("no call to the changed code found; linked by {link} only"),
-            None => "no call to the changed code found".to_string(),
+            Some(link) => {
+                format!("no established call path to the changed code; linked by {link} only")
+            }
+            None => "no established call path to the changed code".to_string(),
         },
         RelatedTestMiss::NoAssertion => "has no assertion".to_string(),
         RelatedTestMiss::AssertionNotObserving => {
@@ -245,17 +247,30 @@ mod tests {
     }
 
     #[test]
+    fn shared_wording_stays_language_neutral() {
+        let mut test = test_with(Some(RelatedTestMiss::AssertionNotCredited), None);
+        let credited =
+            related_test_miss_reason(&test, &ProbeFamily::ReturnValue).unwrap_or_default();
+        assert!(!credited.contains("macro"), "{credited}");
+        test.miss = Some(RelatedTestMiss::NoCallPath);
+        test.relation_reason = None;
+        let path = related_test_miss_reason(&test, &ProbeFamily::ReturnValue).unwrap_or_default();
+        assert!(!path.contains("found"), "{path}");
+        assert!(path.starts_with("no established call path"), "{path}");
+    }
+
+    #[test]
     fn each_miss_names_a_checkable_fact() {
         let cases = [
             (
                 RelatedTestMiss::NoCallPath,
                 Some(RelationReason::SameTestFile),
-                "no call to the changed code found; linked by file location only",
+                "no established call path to the changed code; linked by file location only",
             ),
             (
                 RelatedTestMiss::NoCallPath,
                 Some(RelationReason::DirectOwnerCall),
-                "no call to the changed code found",
+                "no established call path to the changed code",
             ),
             (RelatedTestMiss::NoAssertion, None, "has no assertion"),
             (

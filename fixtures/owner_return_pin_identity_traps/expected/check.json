@@ -240,7 +240,7 @@
           "relation_reason": "weak_token_substring",
           "relation_confidence": "low",
           "miss": "no_call_path",
-          "why": "no call to the changed code found; linked by name only"
+          "why": "no established call path to the changed code; linked by name only"
         },
         {
           "name": "negative_input_exits_early",
@@ -252,7 +252,7 @@
           "relation_reason": "weak_token_substring",
           "relation_confidence": "low",
           "miss": "no_call_path",
-          "why": "no call to the changed code found; linked by name only"
+          "why": "no established call path to the changed code; linked by name only"
         }
       ],
       "stop_reasons": ["static_probe_unknown"],
