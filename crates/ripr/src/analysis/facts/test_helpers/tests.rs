@@ -1557,6 +1557,8 @@ fn plain_helper_keeps_credit_for_a_name_that_is_not_a_call_making_closure()
         "        let c = || true;\n        run_test(true, c);\n",
         "        { let c = || gate(11); }\n        let c = true;\n        run_test(true, c);\n",
         "        run_test(true, c);\n        let c = || gate(11);\n",
+        "        let c = || gate(11);\n        run_test(true, d);\n",
+        "        { let c = || gate(11); }\n        run_test(true, c);\n",
     ] {
         let index = index_for(&callback_source(UNUSED_CLOSURE_HELPER, body))?;
         let test = test_named(&index, "boundary")?;
@@ -1566,6 +1568,34 @@ fn plain_helper_keeps_credit_for_a_name_that_is_not_a_call_making_closure()
             "{body}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn alias_of_a_named_closure_keeps_plain_helper_credit_as_a_disclosed_residual()
+-> Result<(), Box<dyn Error>> {
+    // Known residual (#9997): `let h = c` is not a closure literal, so the
+    // alias is not followed. Pinned so a later fix flips this test knowingly.
+    let index = index_for(&callback_source(
+        UNUSED_CLOSURE_HELPER,
+        "        let c = || gate(11);\n        let h = c;\n        run_test(true, h);\n",
+    ))?;
+    let test = test_named(&index, "boundary")?;
+    assert_eq!(assertion_texts(test), vec!["assert_eq!(want, true);"]);
+    Ok(())
+}
+
+#[test]
+fn closure_parameter_shadowing_a_closure_binding_is_withheld_as_a_missed_advisory()
+-> Result<(), Box<dyn Error>> {
+    // Over-withhold pin: the inner `f` is a closure parameter, but the scan
+    // does not model shadowing, so the outer call-making `let f` withholds.
+    let index = index_for(&callback_source(
+        UNUSED_CLOSURE_HELPER,
+        "        let f = || gate(11);\n        let g = |f: bool| run_test(true, f);\n",
+    ))?;
+    let test = test_named(&index, "boundary")?;
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
     Ok(())
 }
 

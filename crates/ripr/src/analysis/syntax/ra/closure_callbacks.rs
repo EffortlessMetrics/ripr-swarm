@@ -124,7 +124,7 @@ pub(crate) fn passes_call_making_closure(test_text: &str, helper: &str) -> bool 
             call.arg_list().is_some_and(|arguments| {
                 arguments.args().any(|argument| {
                     holds_call_making_closure(argument.syntax())
-                        || bare_name(&argument)
+                        || bare_name(argument)
                             .is_some_and(|name| bound_to_call_making_closure(&call, &name))
                 })
             })
@@ -156,10 +156,10 @@ fn holds_call_making_closure(node: &ra_ap_syntax::SyntaxNode) -> bool {
 
 /// The identifier of an argument that is exactly a single-segment name, through
 /// parentheses and borrows (`c`, `(c)`, `&c`, `&mut c`).
-fn bare_name(argument: &ast::Expr) -> Option<String> {
+fn bare_name(argument: ast::Expr) -> Option<String> {
     match argument {
-        ast::Expr::ParenExpr(paren) => bare_name(&paren.expr()?),
-        ast::Expr::RefExpr(borrow) => bare_name(&borrow.expr()?),
+        ast::Expr::ParenExpr(paren) => bare_name(paren.expr()?),
+        ast::Expr::RefExpr(borrow) => bare_name(borrow.expr()?),
         ast::Expr::PathExpr(path) => {
             let path = path.path()?;
             if path.qualifier().is_some() {
@@ -179,7 +179,7 @@ fn bound_to_call_making_closure(call: &ast::CallExpr, name: &str) -> bool {
     call.syntax()
         .ancestors()
         .filter_map(ast::StmtList::cast)
-        .flat_map(|list| list.statements().collect::<Vec<_>>())
+        .flat_map(|list| list.statements())
         .filter_map(|statement| match statement {
             ast::Stmt::LetStmt(binding) => Some(binding),
             _ => None,
@@ -190,14 +190,14 @@ fn bound_to_call_making_closure(call: &ast::CallExpr, name: &str) -> bool {
                 if pattern.name().is_some_and(|bound| bound.text() == name))
         })
         .filter_map(|binding| binding.initializer())
-        .any(|initializer| closure_literal(&initializer).is_some_and(closure_makes_call))
+        .any(|initializer| closure_literal(initializer).is_some_and(closure_makes_call))
 }
 
-fn closure_literal(expression: &ast::Expr) -> Option<ast::ClosureExpr> {
+fn closure_literal(expression: ast::Expr) -> Option<ast::ClosureExpr> {
     match expression {
-        ast::Expr::ParenExpr(paren) => closure_literal(&paren.expr()?),
-        ast::Expr::RefExpr(borrow) => closure_literal(&borrow.expr()?),
-        ast::Expr::ClosureExpr(closure) => Some(closure.clone()),
+        ast::Expr::ParenExpr(paren) => closure_literal(paren.expr()?),
+        ast::Expr::RefExpr(borrow) => closure_literal(borrow.expr()?),
+        ast::Expr::ClosureExpr(closure) => Some(closure),
         _ => None,
     }
 }

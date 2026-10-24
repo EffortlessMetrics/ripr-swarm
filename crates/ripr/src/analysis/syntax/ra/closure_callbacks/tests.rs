@@ -576,6 +576,16 @@ fn a_name_bound_earlier_to_a_call_making_closure_is_withheld() {
             false,
         ),
         (
+            "closure parameter shadow is an over-withhold",
+            "fn t() { let f = || greet(); let g = |f| run(1, f); }",
+            true,
+        ),
+        (
+            "alias of a named closure is a residual",
+            "fn t() { let f = || greet(); let h = f; run(1, h); }",
+            false,
+        ),
+        (
             "function item by name is a residual",
             "fn t() { run(1, greet_fn); }",
             false,

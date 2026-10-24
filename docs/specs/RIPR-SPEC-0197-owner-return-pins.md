@@ -1957,7 +1957,12 @@ the plain-helper credit (known residual): a function item passed by name
 (`run(make)` with `fn make() { gate(11) }`; resolving it needs a file-level
 lookup this text-only scan does not have, and it is not decided fail-closed
 here), a boxed named closure (`let f = Box::new(|| ..)`), and a closure with no
-call. The tracing forwarding shape is a limitation, not a credit, until the
+call. Other indirections also keep credit as residuals: an alias (`let h = f;
+run(h)`), a deferred assignment (`let f; f = || ..;`), a conditional
+initializer, and a wrapping expression (`f.clone()`, `f as fn()`, a struct field
+or tuple holding the closure). The scan does not model shadowing, so a closure
+parameter `|f| run(1, f)` beside an outer call-making `let f` is withheld (a
+missed advisory). The tracing forwarding shape is a limitation, not a credit, until the
 receiving call is itself resolved.
 
 ## Required Evidence

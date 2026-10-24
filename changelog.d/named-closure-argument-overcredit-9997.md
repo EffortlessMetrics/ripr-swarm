@@ -4,5 +4,7 @@
   (`let c = || greet("bob"); run_test("hi bob", c);`, also `&c` and `(c)`), the
   same withholding a closure literal already got (#9997). Rebinding or `mut` on
   the name does not exempt it (a deliberate missed advisory). A function item
-  passed by name and a boxed named closure remain a documented residual and keep
+  passed by name, a boxed named closure, an alias (`let h = c`), a deferred
+  assignment, a conditional initializer and a wrapping expression (`c.clone()`,
+  `c as fn()`, a struct field or tuple) remain a documented residual and keep
   the old credit.
