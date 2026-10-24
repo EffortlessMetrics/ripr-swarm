@@ -2794,6 +2794,7 @@ pub(crate) fn related_tests_for_candidates(
                 relation_confidence,
                 miss: None,
                 miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }
         })
         .collect()

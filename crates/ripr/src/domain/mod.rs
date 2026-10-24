@@ -20,6 +20,8 @@ pub(crate) mod language_capability;
 mod language_capability_drift;
 mod next_action;
 mod probe;
+#[cfg(test)]
+mod related_test_role_tests;
 mod repair_card;
 mod summary;
 mod support;
@@ -110,8 +112,8 @@ pub(crate) use probe::{
 pub use probe::{
     ActivationEvidence, AnalysisScope, DeltaKind, Finding, FindingCanonicalGap, FlowSinkFact,
     FlowSinkKind, MissingDiscriminatorFact, ORACLE_ALIGNMENT_VALUES, Probe, ProbeFamily,
-    RelatedTest, RelatedTestMiss, RelatedTestMissSupport, SOURCE_CURRENTNESS_VALUES,
-    SourceCurrentness, StopReason, ValueContext, ValueFact,
+    RelatedTest, RelatedTestMiss, RelatedTestMissSupport, RelatedTestRole,
+    SOURCE_CURRENTNESS_VALUES, SourceCurrentness, StopReason, ValueContext, ValueFact,
 };
 pub use repair_card::{
     AgentCardRefusalKind, CardCurrentnessGoal, DEFAULT_REPAIR_CARD_MAX_DETAIL_ITEMS,

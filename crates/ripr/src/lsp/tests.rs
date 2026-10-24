@@ -1023,6 +1023,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
             relation_confidence: None,
             miss: None,
             miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }],
         recommended_next_step: None,
         language: None,
@@ -2595,6 +2596,7 @@ fn finding_diagnostic_and_hover_include_canonical_gap_id() -> Result<(), String>
         relation_confidence: None,
         miss: None,
         miss_support: None,
+        role: crate::domain::RelatedTestRole::Contributing,
     }];
     let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
     let canonical_gap_id = diagnostic
@@ -2731,6 +2733,7 @@ fn witness_finding() -> Finding {
         relation_confidence: None,
         miss: None,
         miss_support: None,
+        role: crate::domain::RelatedTestRole::Contributing,
     }];
 
     finding
@@ -3176,6 +3179,7 @@ fn finding_hover_renders_related_tests_and_oracle_text() -> Result<(), String> {
         relation_confidence: None,
         miss: None,
         miss_support: None,
+        role: crate::domain::RelatedTestRole::Contributing,
     });
     let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
     let uri = test_uri("file:///workspace/src/pricing.rs")?;
@@ -3486,6 +3490,7 @@ fn refresh_plan_accepts_actionable_snapshot_with_suppressed_finding() -> Result<
         relation_confidence: None,
         miss: None,
         miss_support: None,
+        role: crate::domain::RelatedTestRole::Contributing,
     }];
 
     let mut suppressed = sample_finding();
@@ -5284,6 +5289,7 @@ fn seam_repair_card_binds_a_finding_witness_in_a_git_workspace() -> Result<(), S
         relation_confidence: Some(crate::domain::RelationConfidence::High),
         miss: None,
         miss_support: None,
+        role: crate::domain::RelatedTestRole::Contributing,
     }];
     let mut snapshot = sample_analysis_snapshot(
         root.path().to_path_buf(),
@@ -9040,6 +9046,7 @@ fn diagnostic_for_finding_attaches_related_test_information() -> Result<(), Stri
         relation_confidence: None,
         miss: None,
         miss_support: None,
+        role: crate::domain::RelatedTestRole::Contributing,
     });
 
     let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
@@ -15971,6 +15978,7 @@ fn finding_hover_response_includes_evidence_details() -> Result<(), String> {
         relation_confidence: None,
         miss: None,
         miss_support: None,
+        role: crate::domain::RelatedTestRole::Contributing,
     }];
     finding.activation = ActivationEvidence {
         observed_values: vec![ValueFact {
@@ -16141,6 +16149,7 @@ fn packet_not_ready_preview_finding_for_profile() -> Finding {
         relation_confidence: None,
         miss: None,
         miss_support: None,
+        role: crate::domain::RelatedTestRole::Contributing,
     });
     finding
 }
@@ -16314,6 +16323,7 @@ fn python_preview_finding_delivery_is_byte_stable_across_profiles() -> Result<()
             relation_confidence: None,
             miss: None,
             miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         });
         let grouped = finding_diagnostics_by_uri_with_profile(
             Path::new("/workspace"),
@@ -27662,6 +27672,7 @@ fn fix_route_rust_finding() -> Finding {
         relation_confidence: None,
         miss: None,
         miss_support: None,
+        role: crate::domain::RelatedTestRole::Contributing,
     });
     finding
 }
@@ -28526,6 +28537,12 @@ fn hover_keeps_oracle_kind_on_a_matched_row_that_still_misses() -> Result<(), St
         relation_confidence: None,
         miss: Some(miss),
         miss_support: None,
+        // The reveal producer pairs examined-only rows with this miss.
+        role: if miss == RelatedTestMiss::AssertionNotObserving {
+            crate::domain::RelatedTestRole::ExaminedOnly
+        } else {
+            crate::domain::RelatedTestRole::Contributing
+        },
     };
     let mut no_assertion = related("calls_only", 30, RelatedTestMiss::NoAssertion);
     no_assertion.oracle = None;
@@ -28600,6 +28617,7 @@ fn oracle_wording_finding(kind: OracleKind, strength: OracleStrength) -> Finding
         relation_confidence: None,
         miss: None,
         miss_support: None,
+        role: crate::domain::RelatedTestRole::Contributing,
     }];
     finding
 }

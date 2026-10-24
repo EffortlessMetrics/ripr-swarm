@@ -212,6 +212,7 @@ mod tests {
             relation_confidence: None,
             miss,
             miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }
     }
 

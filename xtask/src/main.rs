@@ -13988,6 +13988,7 @@ fn check_output_contracts() -> Result<(), String> {
             | "value_context"
             | "oracle_alignment"
             | "related_test_miss"
+            | "related_test_role"
             | "source_currentness"
             | "static_limit_kind"
             | "agent_card_refusal_kind"

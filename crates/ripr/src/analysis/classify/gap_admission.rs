@@ -1191,6 +1191,7 @@ mod tests {
             relation_confidence: Some(RelationConfidence::High),
             miss: None,
             miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }
     }
 
