@@ -7355,7 +7355,7 @@ impl Backend {
                         snapshot.and_then(|snapshot| {
                             snapshot
                                 .unavailable_adapter
-                                .not_enabled_language(relative, snapshot.analysis_outcome.as_ref())
+                                .not_enabled_language(relative, snapshot.language_view.as_ref())
                         })
                     });
                 let not_analyzed = outside_partition || adapter_language.is_some();
@@ -9072,6 +9072,7 @@ mod top_limitation_selection_tests {
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
+            language_view: None,
         }
     }
 
@@ -11900,6 +11901,7 @@ mod delivery_selection_parity_tests {
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
+            language_view: None,
         };
         WorkspaceDiagnostics { snapshot, batches }
     }
@@ -13061,6 +13063,7 @@ mod list_actionable_items_tests {
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
+            language_view: None,
         }
     }
 
@@ -13719,6 +13722,7 @@ mod pull_disclosure_dedup_tests {
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
+            language_view: None,
         })
     }
 }

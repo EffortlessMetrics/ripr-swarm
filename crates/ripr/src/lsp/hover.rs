@@ -1626,6 +1626,7 @@ mod seam_hover_tests {
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: super::super::state::UnavailableAdapterCoverage::default(),
+            language_view: None,
         }
     }
 

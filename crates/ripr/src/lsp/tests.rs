@@ -1085,6 +1085,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
+        language_view: None,
     };
 
     // Call the pure code_lens_response directly to verify the handler→helper path.
@@ -9920,6 +9921,7 @@ async fn did_open_matching_disk_bytes_with_stale_committed_snapshot_keeps_refres
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
+        language_view: None,
     };
     backend
         .refresh_plan(WorkspaceDiagnostics {
@@ -14957,6 +14959,7 @@ fn sample_analysis_snapshot(
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
+        language_view: None,
     }
 }
 
@@ -21994,6 +21997,7 @@ fn quarantine_workspace_diagnostics(
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
+        language_view: None,
     };
     WorkspaceDiagnostics {
         snapshot,
@@ -22587,6 +22591,7 @@ fn partition_workspace_diagnostics(
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
+        language_view: None,
     };
     WorkspaceDiagnostics {
         snapshot,
@@ -22883,6 +22888,24 @@ fn disabled_language_fixture_with_changed_python(
     })
 }
 
+/// A view whose only row is `label` recorded as not selected, as the
+/// producer's aggregate does for a disabled or uncompiled adapter.
+fn not_selected_language_view(
+    label: &str,
+) -> crate::analysis::language_outcome::LanguageCompletenessView {
+    use crate::analysis::language_outcome::{
+        LanguageAggregate, LanguageAnalysisOutcomeV1, LanguageCompletenessView,
+    };
+    let mut aggregate = LanguageAggregate::new("full".to_string());
+    aggregate.record(LanguageAnalysisOutcomeV1::not_selected(
+        label,
+        1,
+        "language not in the effective [languages].enabled set",
+        "full",
+    ));
+    LanguageCompletenessView::from_aggregate(&aggregate.finish())
+}
+
 fn disabled_language_workspace_diagnostics(
     fixture: &DisabledLanguageFixture,
     partial_scope: Option<crate::analysis::PartialDiffScope>,
@@ -22926,6 +22949,7 @@ fn disabled_language_workspace_diagnostics(
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
         unavailable_adapter,
+        language_view: Some(not_selected_language_view("python")),
     };
     Ok(WorkspaceDiagnostics {
         snapshot,
@@ -23260,6 +23284,7 @@ async fn workspace_status_uncompiled_perl_recovery_does_not_claim_enablement() -
                 enabled: false,
             },
         ]),
+        language_view: Some(not_selected_language_view("perl")),
     };
     backend
         .refresh_plan(WorkspaceDiagnostics {
@@ -28098,13 +28123,17 @@ fn typed_worktree_timeout_recovers_origins_and_consumed_sources_for_open_paths()
         };
         assert!(error.is_git_invocation_timeout(), "{error}");
         input.git_timeout = Some(Duration::from_secs(30));
-        let (output, origins, consumed_sources) =
+        let (output, origins, consumed_sources, language_view) =
             crate::app::check_workspace_worktree_with_sources_open_rust_paths_and_progress(
                 input,
                 config.repo_config(),
                 &open_paths,
                 None,
             )?;
+        // The producer's aggregate view travels beside the output to the
+        // editor entry point (#6475).
+        let view = language_view.ok_or("the run must carry its language view")?;
+        assert!(view.rows.iter().any(|row| row.label == "rust"));
         let tracked = output
             .findings
             .iter()
@@ -28866,4 +28895,113 @@ fn perl_packet_backed_rows_agree_in_hover_related_information_and_data() -> Resu
         assert!(advisory_row["miss"].is_null() && advisory_row["why"].is_null());
     }
     Ok(())
+}
+
+/// A real git fixture with Python and Rust both changed, refreshed through
+/// the real analysis path under the default Rust-only language set.
+fn real_refresh_with_python_changed() -> Result<(TempLspRoot, WorkspaceDiagnostics), String> {
+    let root = unique_lsp_test_root("disabled-language-real-refresh")?;
+    write_lsp_scope_fixture(root.path())?;
+    fs::create_dir_all(root.path().join("zpy")).map_err(|err| format!("create zpy: {err}"))?;
+    fs::write(
+        root.path().join("zpy/pricing.py"),
+        "def price():\n    return 1\n",
+    )
+    .map_err(|err| format!("write pricing.py: {err}"))?;
+    run_lsp_scope_git(root.path(), &["init"])?;
+    run_lsp_scope_git(
+        root.path(),
+        &["config", "user.email", "ripr@example.invalid"],
+    )?;
+    run_lsp_scope_git(root.path(), &["config", "user.name", "RIPR Test"])?;
+    run_lsp_scope_git(
+        root.path(),
+        &[
+            "add",
+            "Cargo.toml",
+            "src/lib.rs",
+            "tests/end_to_end.rs",
+            "zpy/pricing.py",
+        ],
+    )?;
+    run_lsp_scope_git(root.path(), &["commit", "-m", "base"])?;
+    fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn gate_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
+    )
+    .map_err(|err| format!("edit lib.rs: {err}"))?;
+    fs::write(
+        root.path().join("zpy/pricing.py"),
+        "def price():\n    return 2\n",
+    )
+    .map_err(|err| format!("edit pricing.py: {err}"))?;
+
+    let config = LspAnalysisConfig {
+        base_ref: Some("HEAD".to_string()),
+        mode: Mode::Instant,
+        diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
+        ..LspAnalysisConfig::default()
+    };
+    let diagnostics = workspace_diagnostics_with_config(root.path(), &config, true)?;
+    Ok((root, diagnostics))
+}
+
+fn assert_python_recorded_not_selected(diagnostics: &WorkspaceDiagnostics) -> Result<(), String> {
+    // Independent literal expectation: python is a changed, unselected
+    // language, so the producer's view must carry it as such.
+    let view = diagnostics
+        .snapshot
+        .language_view
+        .as_ref()
+        .ok_or("the refresh must hand the producer's view to the snapshot")?;
+    assert!(
+        view.rows.iter().any(|row| row.label == "python"
+            && row.status == crate::analysis::language_outcome::LanguageOutcomeStatus::NotSelected),
+        "{view:?}"
+    );
+    Ok(())
+}
+
+/// #6475 end to end: with the Python adapter compiled in but not enabled,
+/// the opened changed Python document must read `not_analyzed`, which only
+/// holds when `diagnostics.rs` hands the producer's view to the snapshot.
+#[cfg(feature = "lang-python")]
+#[tokio::test]
+async fn real_refresh_binds_a_disabled_language_document_not_analyzed() -> Result<(), String> {
+    let (root, diagnostics) = real_refresh_with_python_changed()?;
+    assert_python_recorded_not_selected(&diagnostics)?;
+
+    let python_uri = file_uri_for_path(&root.path().join("zpy/pricing.py"))?;
+    let (service, socket) =
+        LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .did_open(quarantine_open_params(
+            &python_uri,
+            "def price():\n    return 2\n",
+        ))
+        .await;
+    backend
+        .refresh_plan(diagnostics)
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+    let status = workspace_status_json(backend).await?;
+    let python = open_document_entry(&status, python_uri.as_str())?;
+    if python["state"].as_str() != Some("not_analyzed") {
+        return Err(format!(
+            "a changed document of a disabled language must read not_analyzed: {python}"
+        ));
+    }
+    Ok(())
+}
+
+/// Without the Python adapter compiled in, the producer still records the
+/// changed Python files as not selected in the aggregate (aggregate-only: no
+/// preview advisory exists for an uncompiled adapter, so no per-document
+/// binding is claimed in this build). The view must still reach the snapshot.
+#[cfg(not(feature = "lang-python"))]
+#[test]
+fn real_refresh_records_an_uncompiled_language_as_not_selected() -> Result<(), String> {
+    let (_root, diagnostics) = real_refresh_with_python_changed()?;
+    assert_python_recorded_not_selected(&diagnostics)
 }
