@@ -115,8 +115,8 @@
           "oracle": "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"other receiver pin should observe ParseSummaryError::MalformedSource\".into());\n}",
           "relation_reason": "weak_token_substring",
           "relation_confidence": "low",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by name only"
         }
       ],
       "stop_reasons": [],
@@ -221,8 +221,8 @@
           "oracle": "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"other receiver pin should observe ParseSummaryError::MalformedSource\".into());\n}",
           "relation_reason": "weak_token_substring",
           "relation_confidence": "low",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by name only"
         }
       ],
       "stop_reasons": [],

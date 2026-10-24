@@ -171,6 +171,7 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
         });
 
         let mut out = String::new();
@@ -945,6 +946,7 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
         };
         let output = CheckOutput {
             harness_projections: Vec::new(),
@@ -1085,6 +1087,7 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
         };
         let output = CheckOutput {
             harness_projections: Vec::new(),
@@ -1264,6 +1267,7 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
             },
             RelatedTest {
                 name: "strict_check".to_string(),
@@ -1275,6 +1279,7 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
             },
         ];
 
@@ -1327,6 +1332,7 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
             })
             .collect();
         let mut out = String::new();
@@ -1357,6 +1363,7 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
             })
             .collect();
         let mut out = String::new();
@@ -1420,6 +1427,7 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
             })
             .collect();
         let mut out = String::new();
@@ -1449,6 +1457,7 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
             })
             .collect();
         assert_eq!(finding.related_tests_total(), 2);
@@ -1494,6 +1503,7 @@ mod tests {
                     relation_reason: None,
                     relation_confidence: None,
                     miss: None,
+                    miss_support: None,
                 })
                 .collect();
             finding.related_tests_matched_total = Some(count);
@@ -1535,6 +1545,7 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
             })
             .collect();
         finding.related_tests_matched_total = Some(9);
@@ -1912,6 +1923,7 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
         }];
         finding.recommended_next_step = Some("Add a focused Perl assertion.".to_string());
         finding.language = Some(LanguageId::Perl);

@@ -3797,8 +3797,18 @@ fn call_values_for_owner(
     } else {
         parameters.to_vec()
     };
-    let direct =
-        owner_call_parameter_values(related_tests, &owner.name, is_free(owner), &parameters);
+    // #9218: a module-qualified call that does not resolve to the owner's
+    // module (`rival::thr(101)`) supplies no owner input row.
+    let direct = owner_call_parameter_values_where(
+        related_tests,
+        &owner.name,
+        is_free(owner),
+        &parameters,
+        |test, call| {
+            super::call_identity::qualified_owner_calls_resolve(index, owner, test, &call.text)
+        },
+        &ReceiverParameters::none(),
+    );
     if !direct.is_empty() {
         return direct;
     }
@@ -4182,7 +4192,12 @@ fn chain_entry_rows(
                 // #9329 Devin review: a test-local `let Size = |n| ..` makes
                 // `Size(1024)` something other than the tuple constructor.
                 super::helper_transfer::test_body_shadows_name(index, test, name, call.line)
-            })
+            }) && super::call_identity::qualified_owner_calls_resolve(
+                index,
+                &entry.caller,
+                test,
+                &call.text,
+            )
         },
         &receivers,
     )

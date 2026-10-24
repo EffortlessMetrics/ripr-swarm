@@ -256,6 +256,45 @@ fn off_boundary_strong_row_is_missing_input_and_a_weak_sibling_is_not() -> Resul
     Ok(())
 }
 
+/// #5564: only the row whose own omission proof holds carries the boundary as
+/// `miss_support`; a weak or unresolved sibling carries none, and the
+/// finding-wide fact is not copied onto rows that did not establish it.
+#[test]
+fn missing_input_support_belongs_to_the_row_that_proved_the_omission() -> Result<(), String> {
+    let finding = reserve_case(
+        "def test_off_boundary():\n    assert can_reserve(5, 3) == True\n\ndef test_weak_on_boundary():\n    assert can_reserve(4, 4)\n\ndef test_unresolved(n):\n    assert can_reserve(n, 3) == True\n",
+    )?;
+    let support_of = |name: &str| {
+        finding
+            .related_tests
+            .iter()
+            .find(|row| row.name == name)
+            .map(|row| row.miss_support.clone())
+    };
+    let fact = finding
+        .activation
+        .missing_discriminators
+        .iter()
+        .find(|fact| fact.value.contains(" == "))
+        .ok_or("the boundary finding carries a boundary fact")?;
+    assert_eq!(fact.value, "qty == on_hand");
+    let owner = support_of("test_off_boundary")
+        .flatten()
+        .ok_or("the omitting row carries support")?;
+    assert_eq!(owner.value, fact.value);
+    assert_eq!(owner.flow_sink, fact.flow_sink);
+    // Discriminating negatives: the weak sibling and the unresolved row keep
+    // their own (or no) miss and no borrowed support.
+    assert_eq!(support_of("test_weak_on_boundary"), Some(None));
+    assert_eq!(support_of("test_unresolved"), Some(None));
+    for row in &finding.related_tests {
+        if row.miss != Some(RelatedTestMiss::MissingInput) {
+            assert_eq!(row.miss_support, None, "{}", row.name);
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn unresolved_row_inside_a_boundary_gap_does_not_borrow_a_sibling_fact() -> Result<(), String> {
     let finding = reserve_case(
@@ -687,6 +726,7 @@ mod direct {
                 line_text: &case.after,
                 old_line_text: Some(&case.before),
                 focus: &focus,
+                boundary_fact: None,
             },
             &case.tests,
         );
@@ -1364,6 +1404,55 @@ mod direct {
         Ok(())
     }
 
+    /// #5564: beside a strong row that omits the boundary, a strong row that
+    /// sits on it keeps neither the miss nor the support, even when the
+    /// pass is handed the finding's boundary fact (with its sink).
+    #[test]
+    fn strong_on_boundary_row_gets_no_miss_and_no_support() -> Result<(), String> {
+        use crate::domain::{FlowSinkFact, FlowSinkKind, MissingDiscriminatorFact};
+        let case = reserve(
+            "def test_off_boundary():\n    assert can_reserve(5, 3) == True\n\ndef test_on_boundary():\n    assert can_reserve(4, 4) == True\n",
+        )?;
+        let fact = MissingDiscriminatorFact {
+            value: "qty == on_hand".to_string(),
+            reason: "no related test passes the boundary".to_string(),
+            flow_sink: Some(FlowSinkFact {
+                kind: FlowSinkKind::ReturnValue,
+                text: "return True".to_string(),
+                line: 3,
+                owner: None,
+            }),
+        };
+        let family = classify_probe_shape(&case.after).0;
+        let focus = PythonAssertionFocus::for_change(family, &case.after, Some(&case.before));
+        let candidates = related_test_candidates(&case.owner, &case.tests);
+        let mut rows = related_tests_for_candidates(&candidates, Some(&focus));
+        annotate_row_misses(
+            &mut rows,
+            &candidates,
+            &ExposureClass::WeaklyExposed,
+            false,
+            &RowMissChange {
+                owner: &case.owner,
+                line_text: &case.after,
+                old_line_text: Some(&case.before),
+                focus: &focus,
+                boundary_fact: Some(&fact),
+            },
+            &case.tests,
+        );
+        let row = |name: &str| rows.iter().find(|row| row.name == name);
+        let off = row("test_off_boundary").ok_or("off-boundary row")?;
+        let on = row("test_on_boundary").ok_or("on-boundary row")?;
+        assert_eq!(off.miss, Some(RelatedTestMiss::MissingInput));
+        let support = off.miss_support.as_ref().ok_or("omitting row support")?;
+        assert_eq!(support.value, "qty == on_hand");
+        assert_eq!(support.flow_sink, fact.flow_sink);
+        assert_eq!(on.miss, None);
+        assert_eq!(on.miss_support, None);
+        Ok(())
+    }
+
     #[test]
     fn miss_annotation_changes_nothing_but_the_miss_field() -> Result<(), String> {
         let cases = [
@@ -1400,6 +1489,7 @@ mod direct {
                     line_text: &case.after,
                     old_line_text: Some(&case.before),
                     focus: &focus,
+                    boundary_fact: None,
                 },
                 &case.tests,
             );
@@ -1410,6 +1500,7 @@ mod direct {
                 // un-annotated row's; `is_unmatched` stays false.
                 let mut reset = row.clone();
                 reset.miss = None;
+                reset.miss_support = None;
                 assert_eq!(&reset, base);
                 assert!(!row.is_unmatched());
             }
@@ -1449,6 +1540,7 @@ mod direct {
                 line_text: &case.after,
                 old_line_text: Some(&case.before),
                 focus: &focus,
+                boundary_fact: None,
             },
             &case.tests,
         );

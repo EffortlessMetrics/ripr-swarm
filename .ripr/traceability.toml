@@ -8514,6 +8514,11 @@ id = "RIPR-SPEC-0108"
 name = "evidence-promotion honesty meta-gate"
 spec = "docs/specs/RIPR-SPEC-0108-evidence-promotion-honesty-meta-gate.md"
 tests = [
+  "crates/ripr/src/analysis/classify/reach.rs::tests::a_workspace_trait_impl_method_gets_no_unseen_reach_allowance",
+  "crates/ripr/src/analysis/classify/reach.rs::tests::trait_identity_follows_the_path_and_the_files_foreign_imports",
+  "crates/ripr/src/analysis/classify/reach.rs::tests::a_workspace_trait_impl_method_keeps_the_name_and_external_docs_allowances",
+  "crates/ripr/src/analysis/classify/reach.rs::tests::foreign_imports_are_read_from_use_items_not_from_text",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::name_only_test_cannot_supply_the_oracle_for_reach_from_another_test",
   "crates/ripr/tests/snapshot_field_admission.rs::snapshot_of_another_receiver_cannot_close_the_owner_field",
   "crates/ripr/tests/snapshot_field_admission.rs::snapshot_without_an_expected_file_cannot_close_the_owner_field",
   "crates/ripr/tests/owner_pin_execution.rs::trait_shadow_corpus_matches_compiled_owner_dispatch",
@@ -8644,6 +8649,7 @@ fixtures = [
   "fixtures/typescript_same_method_owner_identity_positive",
   "fixtures/typescript_reexport_no_false_credit",
   "fixtures/typescript_static_limit_taxonomy",
+  "fixtures/unreached_workspace_trait_impl_borrows_no_oracle",
   "fixtures/evidence-promotion-honesty-corpus/perl-packets",
   "fixtures/evidence-promotion-honesty-corpus/reports/perl_same_sub_other_package.json",
   "fixtures/evidence-promotion-honesty-corpus/reports/perl_import_alias_defining_package.json",
@@ -9484,6 +9490,11 @@ id = "RIPR-SPEC-0115"
 name = "rust transitive-reach witness"
 spec = "docs/specs/RIPR-SPEC-0115-rust-transitive-reach-witness.md"
 tests = [
+  "crates/ripr/src/analysis/extract/calls.rs::tests::safe_typed_function_pointer_calls_keep_their_target_and_arguments",
+  "crates/ripr/src/analysis/extract/calls.rs::tests::typed_pointer_resolution_refuses_local_targets_and_ambiguous_uses",
+  "crates/ripr/src/analysis/extract/calls.rs::tests::typed_pointer_refuses_scope_escape_attributes_and_shadowing",
+  "crates/ripr/src/analysis/extract/calls.rs::tests::typed_pointer_pin_requires_the_adjacent_original_assertion",
+  "crates/ripr/src/analysis/extract/calls.rs::tests::refused_annotations_consume_the_typed_alias_budget",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_test_calls_outer_which_calls_owner_then_witness_is_captured",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_no_path_to_owner_then_witness_is_none",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_two_witnesses_then_first_by_file_line_is_selected",
@@ -9543,6 +9554,7 @@ fixtures = [
   "fixtures/rust_transitive_reach_negative",
 ]
 code = [
+  "crates/ripr/src/analysis/extract/calls/function_alias.rs",
   "crates/ripr/src/analysis/classify/transitive_reach.rs",
   "crates/ripr/src/analysis/classify/related_tests.rs",
   "crates/ripr/src/analysis/classify/mod.rs",
@@ -9853,6 +9865,29 @@ tests = [
   "crates/ripr/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable",
   "crates/ripr/src/domain/language.rs::tests::static_limit_kind_describe_is_present_and_distinct",
   "crates/ripr/src/lsp/gap_artifacts.rs::tests::validation_accepts_rust_integration_public_api_static_limit_kind",
+  "crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::facade_reexport_with_a_test_naming_the_facade_names_the_limit_and_keeps_the_class",
+  "crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::reexports_that_cover_the_owner_fire",
+  "crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::reexports_that_do_not_provably_cover_the_owner_are_unchanged",
+  "crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::package_name_comes_from_the_manifest_not_the_directory",
+  "crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::absent_or_dev_only_dependency_edge_keeps_the_definite_result",
+  "crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::private_or_restricted_owner_never_fires",
+  "crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::limited_graph_keeps_the_definite_result",
+  "crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::test_in_the_owners_own_package_naming_the_facade_does_not_count",
+  "crates/ripr/src/analysis/classify/facade_reach.rs::tests::only_crate_root_unconditional_public_uses_count",
+  "crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::baseline_without_a_tying_facade_test_keeps_the_repair_gap",
+  "crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::narrowed_index_scopes_still_name_the_limit",
+  "crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::facade_tests_tie_to_the_owner_by_glob_or_type",
+  "crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::inherent_method_owners_are_named_by_their_type_not_the_method",
+  "crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::owner_module_chain_must_be_public",
+  "crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::binary_target_owner_never_fires",
+  "crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::test_that_never_names_the_facade_crate_is_unchanged",
+  "crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::doctest_of_another_module_sharing_a_name_token_is_not_related",
+  "crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::doctest_in_the_owners_own_file_stays_related",
+  "crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::doctest_of_another_module_that_calls_the_owner_stays_related",
+  "crates/ripr/src/analysis/classify/facade_reach.rs::tests::whole_crate_reexports_cover_any_owner",
+  "crates/ripr/src/analysis/classify/facade_reach.rs::tests::paths_must_be_a_prefix_of_the_owners_path",
+  "crates/ripr/src/analysis/classify/facade_reach.rs::tests::facade_tests_tie_by_owner_name_type_or_glob",
+  "crates/ripr/src/analysis/classify/facade_reach.rs::tests::pub_items_need_pub_attribute_free_declarations",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -9864,6 +9899,7 @@ code = [
   "crates/ripr/src/domain/language.rs",
   "crates/ripr/src/analysis/language/rust/mod.rs",
   "crates/ripr/src/analysis/rust_index.rs",
+  "crates/ripr/src/analysis/classify/facade_reach.rs",
   "crates/ripr/src/lsp/gap_artifacts.rs",
 ]
 outputs = [
@@ -11911,6 +11947,9 @@ name = "cross-crate test relation through dependency edges"
 spec = "docs/specs/RIPR-SPEC-0172-cross-crate-dependency-edge-relation.md"
 tests = [
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_ambiguous_owner_when_cross_crate_dependent_test_calls_owner_then_edge_admits",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::path_keyword_in_owner_less_probe_relates_no_assertion_test",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::declaration_introducer_in_probe_relates_no_assertion_test",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::every_long_rust_keyword_is_refused_as_assertion_affinity_seed",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::root_build_script_probe_relates_no_name_token_test",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::mounting_package_source_restores_build_script_relation",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::mount_scanner_reads_structure_not_text",
@@ -11970,6 +12009,7 @@ fixtures = [
   "fixtures/same_name_sibling_file_test",
   "fixtures/same_name_qualified_other_module",
   "fixtures/glob_import_qualified_other_module",
+  "fixtures/rust_path_keyword_affinity",
   "fixtures/rust_build_script_no_test_reach",
 ]
 code = [
@@ -13345,6 +13385,17 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/tests/owner_pin_execution/function_pointer.rs::function_pointer_pins_only_the_observed_owner_value",
+  "crates/ripr/tests/owner_pin_execution/function_pointer.rs::function_pointer_runtime_controls_observe_the_same_value",
+  "crates/ripr/tests/owner_pin_execution/function_pointer.rs::function_pointer_standard_glob_keeps_observation_and_macro_refusal",
+  "crates/ripr/tests/owner_pin_execution/function_pointer.rs::function_pointer_mask_pins_require_an_individually_discriminating_input",
+  "crates/ripr/tests/owner_pin_execution/function_pointer.rs::function_pointer_mask_runtime_controls_match_the_selected_input",
+  "crates/ripr/tests/owner_pin_execution/function_pointer.rs::function_pointer_rebound_mask_inputs_do_not_pin_the_changed_mask",
+  "crates/ripr/tests/owner_pin_execution/function_pointer.rs::function_pointer_rebound_mask_runtime_controls_miss_the_narrower_mask",
+  "crates/ripr/tests/owner_pin_execution/function_pointer.rs::function_pointer_invisible_inputs_withhold_exposure",
+  "crates/ripr/tests/owner_pin_execution/function_pointer.rs::function_pointer_invisible_runtime_controls_match_the_input",
+  "crates/ripr/tests/owner_pin_execution/function_pointer.rs::function_pointer_shared_targets_require_binary_assertion_trust",
+  "crates/ripr/tests/owner_pin_execution/function_pointer.rs::function_pointer_constant_readers_relate_without_promoting",
   "crates/ripr/src/analysis/test_grip_evidence/tests/shared_execution_context.rs::collection_grip_requires_assertion_trust_in_every_shared_context",
   "crates/ripr/tests/owner_pin_execution/shared_execution.rs::shared_target_macro_context_matches_executed_binary_controls",
   "crates/ripr/tests/owner_pin_execution/effect_assertions.rs::effect_assertions_require_execution_but_keep_reachable_oracles",
@@ -13377,6 +13428,14 @@ tests = [
   "crates/ripr/tests/returned_comparison_boundary.rs::a_mutated_parameter_does_not_take_the_intermediate_input",
   "crates/ripr/tests/returned_comparison_boundary.rs::an_equality_literal_move_is_separated_only_by_an_input_equal_to_one_literal",
   "crates/ripr/tests/returned_comparison_boundary.rs::a_qualified_rival_call_is_not_a_separating_input",
+  "crates/ripr/tests/returned_comparison_boundary.rs::a_qualified_rival_call_is_not_a_boundary_input",
+  "crates/ripr/tests/returned_comparison_boundary.rs::a_crate_qualified_owner_call_is_still_a_boundary_input",
+  "crates/ripr/tests/returned_comparison_boundary.rs::an_import_bound_owner_crate_path_is_still_a_boundary_input",
+  "crates/ripr/tests/returned_comparison_boundary.rs::a_genuine_reexport_of_the_owner_still_supplies_the_boundary_input",
+  "crates/ripr/tests/returned_comparison_boundary.rs::a_dependency_export_of_a_same_named_function_is_not_the_owner",
+  "crates/ripr/tests/returned_comparison_boundary.rs::a_reexport_outside_the_crate_roots_top_level_is_not_a_root_export",
+  "crates/ripr/tests/returned_comparison_boundary.rs::an_explicit_owner_export_beats_a_dependency_glob",
+  "crates/ripr/src/analysis/classify/call_identity.rs::tests::qualified_calls_lend_inputs_only_when_they_resolve_to_the_owner",
   "crates/ripr/tests/returned_comparison_boundary.rs::pattern_and_loop_rebindings_of_the_parameter_keep_the_gap",
   "crates/ripr/tests/check_helper_argument_pins.rs::a_helper_comparing_its_parameters_pins_the_arguments_the_test_passes",
   "crates/ripr/tests/check_helper_argument_pins.rs::a_direct_template_rendering_pins_a_scalar_owner",
@@ -13666,6 +13725,13 @@ tests = [
   "crates/ripr/src/analysis/classifier/evidence.rs::a_local_non_plain_drop_guard_keeps_return_value_exposed",
 ]
 fixtures = [
+  "fixtures/owner_return_pin_pointer_scope_escape",
+  "fixtures/owner_return_pin_pointer_raw_shadow",
+  "fixtures/owner_return_pin_pointer_glob_shadow",
+  "fixtures/owner_return_pin_pointer_cfg_binding",
+  "fixtures/owner_return_pin_pointer_invisible_input",
+  "fixtures/owner_return_pin_pointer_mask_rebound",
+  "fixtures/owner_return_pin_pointer_mask_unexercised",
   "fixtures/effect_assertion_after_return",
   "fixtures/effect_assertion_in_false_block",
   "fixtures/effect_assertion_runs_compact_mixed",
@@ -13742,6 +13808,9 @@ fixtures = [
   "fixtures/owner_return_pin_single_file_raw_rename_shadow",
 ]
 code = [
+  "crates/ripr/src/analysis/classify/mask_pin.rs",
+  "crates/ripr/src/analysis/test_grip_evidence/value_contradiction.rs",
+  "crates/ripr/src/analysis/extract/calls/function_alias.rs",
   "crates/ripr/src/analysis/classify/owner_pin/helper_arguments.rs",
   "crates/ripr/src/analysis/classify/changed_span.rs",
   "crates/ripr/src/analysis/classify/call_identity.rs",
@@ -13763,6 +13832,20 @@ code = [
   "crates/ripr/src/analysis/syntax/fn_signature.rs",
 ]
 outputs = [
+  "fixtures/owner_return_pin_pointer_scope_escape/expected/check.json",
+  "fixtures/owner_return_pin_pointer_scope_escape/expected/human.txt",
+  "fixtures/owner_return_pin_pointer_raw_shadow/expected/check.json",
+  "fixtures/owner_return_pin_pointer_raw_shadow/expected/human.txt",
+  "fixtures/owner_return_pin_pointer_glob_shadow/expected/check.json",
+  "fixtures/owner_return_pin_pointer_glob_shadow/expected/human.txt",
+  "fixtures/owner_return_pin_pointer_cfg_binding/expected/check.json",
+  "fixtures/owner_return_pin_pointer_cfg_binding/expected/human.txt",
+  "fixtures/owner_return_pin_pointer_invisible_input/expected/check.json",
+  "fixtures/owner_return_pin_pointer_invisible_input/expected/human.txt",
+  "fixtures/owner_return_pin_pointer_mask_rebound/expected/check.json",
+  "fixtures/owner_return_pin_pointer_mask_rebound/expected/human.txt",
+  "fixtures/owner_return_pin_pointer_mask_unexercised/expected/check.json",
+  "fixtures/owner_return_pin_pointer_mask_unexercised/expected/human.txt",
   "fixtures/predicate_boundary_oracle_refused/expected/check.json",
   "fixtures/predicate_empty_macro_boundary/expected/check.json",
   "fixtures/predicate_empty_macro_boundary/expected/human.txt",
@@ -14989,6 +15072,10 @@ tests = [
   "crates/ripr/src/analysis/language/python/row_miss_tests.rs::credited_strong_row_keeps_no_miss_beside_a_weak_row",
   "crates/ripr/src/analysis/language/python/row_miss_tests.rs::off_boundary_strong_row_is_missing_input_and_a_weak_sibling_is_not",
   "crates/ripr/src/analysis/language/python/row_miss_tests.rs::unresolved_row_inside_a_boundary_gap_does_not_borrow_a_sibling_fact",
+  "crates/ripr/src/analysis/language/python/row_miss_tests.rs::missing_input_support_belongs_to_the_row_that_proved_the_omission",
+  "crates/ripr/src/analysis/language/python/row_miss_tests.rs::direct::strong_on_boundary_row_gets_no_miss_and_no_support",
+  "crates/ripr/src/analysis/language/perl/tests.rs::perl_v1_never_attaches_row_support_from_a_finding_wide_discriminator",
+  "crates/ripr/src/analysis/classifier/finding.rs::tests::rust_attaches_the_universal_fact_only_to_rows_it_assigns_the_miss",
   "crates/ripr/src/analysis/language/python/row_miss_tests.rs::boundary_input_row_makes_the_finding_exposed_with_no_row_miss",
   "crates/ripr/src/analysis/language/python/row_miss_tests.rs::rebound_builtin_or_foreign_receiver_api_never_gets_missing_input",
   "crates/ripr/src/analysis/language/python/row_miss_tests.rs::callable_passed_by_reference_to_a_trusted_call_never_gets_missing_input",
