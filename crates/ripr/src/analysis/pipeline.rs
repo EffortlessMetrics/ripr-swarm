@@ -1906,6 +1906,14 @@ fn run_pipeline_for_diff_text_with_language_config(
             analysis_outcome.as_ref()
         )
     );
+    debug_assert!(
+        super::language_outcome::LanguageCompletenessView::from_aggregate(&diff_language_aggregate)
+            .reconcile_public_runs(&language_runs)
+            .is_ok(),
+        "{:?}",
+        super::language_outcome::LanguageCompletenessView::from_aggregate(&diff_language_aggregate)
+            .reconcile_public_runs(&language_runs)
+    );
     #[cfg(test)]
     if let Ok(mut aggregates) = DIFF_AGGREGATES.lock() {
         aggregates.insert(options.root.clone(), diff_language_aggregate);
@@ -2150,6 +2158,14 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
             .is_ok(),
         "{:?}",
         super::language_outcome::reconcile(&repo_language_aggregate, languages, &findings, None)
+    );
+    debug_assert!(
+        super::language_outcome::LanguageCompletenessView::from_aggregate(&repo_language_aggregate)
+            .reconcile_public_runs(&language_runs)
+            .is_ok(),
+        "{:?}",
+        super::language_outcome::LanguageCompletenessView::from_aggregate(&repo_language_aggregate)
+            .reconcile_public_runs(&language_runs)
     );
     #[cfg(test)]
     if let Ok(mut aggregates) = REPO_AGGREGATES.lock() {
