@@ -588,13 +588,12 @@ fn selected_action_parity(
     if let (Some(mcp_rendered), Some(cli_rendered)) =
         (document["next_command"].as_str(), cli_command)
     {
-        // The CLI display renders the bound root with stable separators
-        // (#4287) and shell-quotes it when the spelling needs one (spaces,
-        // quotes, backslashes), so compare against the rendered token, not
-        // the raw path: a literal-backslash Unix root must not fail here
-        // only because its display carries quoting.
+        // The CLI renders the bound root through `root_path_display` (#4287:
+        // a literal backslash in a Unix root is a filename character and is
+        // kept, not rewritten to `/`) and shell-quotes it when the spelling
+        // needs one, so compare against that rendered token, not the raw path.
         let host_root = crate::agent::loop_commands::shell_arg(
-            &crate::agent::loop_commands::display_path(root),
+            &crate::agent::loop_commands::root_path_display(root),
         );
         assert!(
             cli_rendered.contains(host_root.as_str()),

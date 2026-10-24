@@ -325,3 +325,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_src_layout_package_import (28)
+
+Reason:
+RIPR-SPEC-0224: Python related-test row gains missing_input when its own direct calls never reach the changed predicate boundary (#5491)
+
+Command:
+`cargo xtask goldens bless python_src_layout_package_import --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
