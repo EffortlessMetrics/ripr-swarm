@@ -867,7 +867,7 @@ fn turbofish_parenthesised_and_argument_calls_are_not_followed() -> Result<(), S
         call("util::go()"),
         call("std::process::exit(0)"),
         call("bye::<i32>()"),
-        format!("{}", call("570").replace("570);", "570).wrap::<u8>();")),
+        call("570").replace("570);", "570).wrap::<u8>();"),
     ] {
         assert_not_confirmed(&finding(&body)?, &body);
     }
