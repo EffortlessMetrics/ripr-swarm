@@ -47,6 +47,8 @@ const TAIL_LINES: usize = 8;
 const TERMINATION_WAIT: Duration = Duration::from_secs(10);
 /// Chunks the job-log queue holds before the sink is declared lagging.
 const SINK_QUEUE: usize = 4096;
+/// How long output in flight is awaited after descendants holding the pipe are terminated.
+const PIPE_DRAIN_AFTER_TERMINATION: Duration = Duration::from_secs(1);
 /// How long the queued job-log output is given to flush at exit.
 const SINK_FLUSH_WAIT: Duration = Duration::from_secs(5);
 
@@ -336,13 +338,15 @@ fn execute(options: &Options, out: Box<dyn Write + Send>) -> Result<Outcome, Str
         .stdout(writer)
         .stderr(stderr_writer);
     let spawned = OwnedProcess::spawn(command);
-    let mut child = match spawned {
+    let child = match spawned {
         Ok(child) => child,
         Err(err) => {
             let banner = format!("windows-advisory-run: could not start `{describe}`: {err}\n");
             output.emit(banner.as_bytes());
             let sink_note = output.sink.finish();
-            write_status(options, SPAWN_FAILED_STATUS)?;
+            if output.faults.is_empty() {
+                write_status(options, SPAWN_FAILED_STATUS)?;
+            }
             return Ok(Outcome {
                 status: SPAWN_FAILED_STATUS,
                 timed_out: false,
@@ -354,6 +358,7 @@ fn execute(options: &Options, out: Box<dyn Write + Send>) -> Result<Outcome, Str
             });
         }
     };
+    let mut child = Some(child);
     let (tx, rx) = mpsc::channel();
     spawn_reader(reader, tx);
 
@@ -379,15 +384,19 @@ fn execute(options: &Options, out: Box<dyn Write + Send>) -> Result<Outcome, Str
                 }
             }
         }
-        if exited.is_none() {
-            if let Some(status) = child
+        if exited.is_none()
+            && let Some(owned) = child.as_mut()
+        {
+            if let Some(status) = owned
                 .try_wait()
                 .map_err(|err| format!("poll `{describe}`: {err}"))?
             {
                 exited = Some((status.code(), Instant::now()));
             } else if started.elapsed() >= options.timeout {
                 timed_out = true;
-                let (status, error) = terminate(&mut child, TERMINATION_WAIT);
+                let (status, error) = child.take().map_or((None, None), |owned| {
+                    terminate_bounded(owned, TERMINATION_WAIT)
+                });
                 termination_error = error;
                 exited = Some((status, Instant::now()));
             }
@@ -405,10 +414,17 @@ fn execute(options: &Options, out: Box<dyn Write + Send>) -> Result<Outcome, Str
     if pipe_held_after_exit {
         // A descendant still holds the output pipe: end it so the step does not
         // outlive its command, then take whatever was already queued.
-        let (_, error) = terminate(&mut child, TERMINATION_WAIT);
-        termination_error = termination_error.or(error);
-        while let Ok(chunk) = rx.try_recv() {
-            output.handle(&mut slow, &mut tail, chunk);
+        if let Some(owned) = child.take() {
+            let (_, error) = terminate_bounded(owned, TERMINATION_WAIT);
+            termination_error = termination_error.or(error);
+        }
+        // Give output already in flight a moment to reach the supervisor.
+        let drain_until = Instant::now() + PIPE_DRAIN_AFTER_TERMINATION;
+        while let Some(left) = drain_until.checked_duration_since(Instant::now()) {
+            match rx.recv_timeout(left) {
+                Ok(chunk) => output.handle(&mut slow, &mut tail, chunk),
+                Err(_) => break,
+            }
         }
     }
 
@@ -487,7 +503,7 @@ fn execute(options: &Options, out: Box<dyn Write + Send>) -> Result<Outcome, Str
 
 /// The two owner calls `terminate` needs, so a termination failure with the
 /// primary still live can be injected in tests.
-trait OwnedTree {
+trait OwnedTree: Send + 'static {
     fn terminate_tree(&mut self) -> Result<(), String>;
     fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>>;
 }
@@ -526,6 +542,31 @@ fn terminate(child: &mut impl OwnedTree, wait: Duration) -> (Option<i32>, Option
                 );
             }
         }
+    }
+}
+
+/// `terminate` on a helper thread that owns the child. `terminate_tree` ends in
+/// the owner's unbounded reap, and so does dropping the owner, so a primary that
+/// survives a successful kill request would hang the supervisor after its status
+/// is decided. The thread takes that risk instead: if it has not returned in
+/// twice the observation budget, the child is left to the OS at process exit
+/// and the failure is reported.
+fn terminate_bounded(child: impl OwnedTree, wait: Duration) -> (Option<i32>, Option<String>) {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut child = child;
+        let _ = tx.send(terminate(&mut child, wait));
+    });
+    match rx.recv_timeout(wait * 2) {
+        Ok(result) => result,
+        Err(_) => (
+            None,
+            Some(format!(
+                "the termination call did not return within {}ms; the owned process is left \
+                 to the OS at exit",
+                (wait * 2).as_millis()
+            )),
+        ),
     }
 }
 
@@ -976,7 +1017,7 @@ mod windows_advisory_run_tests {
             .try_wait()
             .map_err(|err| err.to_string())?
             .is_none();
-        sentinel.kill().map_err(|err| err.to_string())?;
+        let _ = sentinel.kill();
         println!(
             "native deadline control: elapsed={elapsed:?} outcome={outcome:?} \
              descendant_pid={descendant} descendant_alive={descendant_alive} \
@@ -994,5 +1035,29 @@ mod windows_advisory_run_tests {
             "124\n"
         );
         Ok(())
+    }
+
+    struct HangingTree;
+
+    impl OwnedTree for HangingTree {
+        fn terminate_tree(&mut self) -> Result<(), String> {
+            // The owner's reap polls forever on a primary that will not die.
+            thread::sleep(Duration::from_mins(2));
+            Ok(())
+        }
+
+        fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+            Ok(None)
+        }
+    }
+
+    #[test]
+    fn a_termination_call_that_never_returns_is_abandoned_and_reported() {
+        let started = Instant::now();
+        let (status, error) = terminate_bounded(HangingTree, Duration::from_millis(200));
+        assert!(started.elapsed() < Duration::from_secs(10));
+        assert_eq!(status, None);
+        let error = error.unwrap_or_default();
+        assert!(error.contains("did not return"), "{error}");
     }
 }

@@ -470,9 +470,11 @@ and single-platform CI was the root cause enabling both.
   `cargo test --workspace` rebuilds `xtask.exe` and Windows will not replace a
   running image. Job-log delivery runs on its own thread behind a bounded
   queue, so a stalled job-log pipe cannot delay the deadline: the log file keeps
-  every line and the runner reports what the job log lost. After a termination
-  request it observes the primary for ten seconds and reports a failed or
-  unconfirmed termination instead of waiting indefinitely or claiming success.
+  every line and the runner reports what the job log lost. Termination runs on a helper thread that owns the child, because the
+  owner's reap and its drop poll without a bound; the runner observes the
+  primary for ten seconds, abandons a call that has not returned in twenty, and
+  reports a failed or unconfirmed termination instead of waiting indefinitely
+  or claiming success.
   A read error on the command's pipe or a write error on the log file means the
   log may be incomplete, so the status file is withheld and the summarizer
   refuses the step. Repeating `--timeout-minutes`, `--log` or `--status` is
