@@ -17403,7 +17403,6 @@ tests = [
   "crates/ripr/tests/caller_loop_selector_limit.rs::a_loop_shape_ripr_cannot_read_keeps_the_gap",
   "crates/ripr/tests/caller_loop_selector_limit.rs::a_consumer_that_is_not_an_exhausting_exact_collect_keeps_the_gap",
   "crates/ripr/tests/implicit_call_limit.rs::a_drop_impl_reached_at_scope_exit_is_withheld",
-  "crates/ripr/tests/implicit_call_limit.rs::an_implicit_dispatch_row_is_not_an_inspection_only_pointer",
   "crates/ripr/tests/implicit_call_limit.rs::an_iterator_impl_reached_through_collect_is_withheld",
   "crates/ripr/tests/implicit_call_limit.rs::an_operator_impl_reached_through_the_operator_is_withheld",
   "crates/ripr/tests/implicit_call_limit.rs::a_dyn_trait_method_called_on_an_untyped_receiver_is_withheld",
