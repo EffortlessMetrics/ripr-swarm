@@ -76,6 +76,29 @@
 //!   is a `Production` integration-target item); the assertions of helpers
 //!   the helper calls are not followed.
 //!
+//! - closure callback (#9981): a helper that eagerly invokes a closure
+//!   parameter (`let got = f(); assert_eq!(got, want);`) is credited when the
+//!   test passes, at that exact parameter position, a closure literal whose
+//!   body makes a call that runs when the closure is invoked. The parameter
+//!   must be an immutable plain identifier (no `mut` binding, no `&mut`
+//!   borrow) bound nowhere else in the helper, and the
+//!   invocation a direct statement of the helper's body block (`f();`, a
+//!   tail `f()`, or `let PAT = f();`), reached unconditionally and in order
+//!   (the test's helper call under the same rule): not under
+//!   `if`/`match`/a loop, not after a `return`, `?`, `break`, `continue` or
+//!   loop or unrecognized macro, not in a nested closure, macro argument or
+//!   method chain. Only
+//!   assertions that start after the invoking statement ends, compared by
+//!   source position (a same-line assertion is identified by its parser macro
+//!   site, never by text search) so two statements on one line are ordered,
+//!   are copied.
+//!   The parameter's own call is not added to the test. A helper that
+//!   invokes two or more closure parameters earns no credit. Boxed or
+//!   by-reference closures and callbacks forwarded to another function
+//!   (tracing's `with_default(subscriber, fun)`) are not credited by this
+//!   rule. A helper that never invokes the parameter keeps the plain-helper
+//!   behavior above (#9997).
+//!
 //! The credited calls sit outside the test's line span. Value resolution
 //! reads only [`TestFact::body_calls`], because a helper call's arguments
 //! name the helper's parameters, which the test's `let` bindings and case
@@ -86,7 +109,10 @@
 //! evidence the helper body really contains.
 
 use super::{FunctionFact, FunctionSourceRole, OracleFact, RustIndex, TestFact};
-use crate::analysis::syntax::{ModuleItemScopes, module_item_scopes, parser_oracles_for_function};
+use crate::analysis::syntax::{
+    InvokedCallbackParam, ModuleItemScopes, closure_argument_positions, invoked_callback_params,
+    macro_call_columns, module_item_scopes, parser_oracles_for_function,
+};
 use crate::analysis::workspace::{CargoHarnessVerdict, ManifestInventory};
 use rayon::prelude::*;
 use std::borrow::Cow;
@@ -171,6 +197,10 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
     let mut widened: BTreeMap<(PathBuf, usize, String), TestFact> = BTreeMap::new();
     let mut helper_oracles: BTreeMap<(PathBuf, usize, String), Option<Vec<OracleFact>>> =
         BTreeMap::new();
+    let mut helper_callbacks: BTreeMap<
+        (PathBuf, usize, String),
+        Option<Vec<InvokedCallbackParam>>,
+    > = BTreeMap::new();
     for test in index.tests().iter() {
         let (Some(functions_by_name), Some(scopes)) = (
             helpers_by_file.get(&test.file),
@@ -211,10 +241,54 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
                     .bound_names
                     .get(&test_key)
                     .is_none_or(|bound| bound.contains(&call.name))
-                || !helper_body_is_plain(scopes, &helper_key, helper)
                 || spans_overlap(helper, test)
             {
                 continue;
+            }
+            // #9981: a helper that invokes a closure parameter is not
+            // plain, but it is credited when this test passes a closure
+            // literal at exactly such a parameter.
+            let mut callback_names: Vec<String> = Vec::new();
+            let mut first_callback_end = (0, 0);
+            if !helper_body_is_plain(scopes, &helper_key, helper, &[]) {
+                let invoked = helper_callbacks
+                    .entry((test.file.clone(), helper.start_line, helper.name.clone()))
+                    .or_insert_with(|| invoked_callback_params(&helper.body))
+                    .as_deref()
+                    .unwrap_or_default();
+                // Exactly one invoked callback parameter: with two, an
+                // assertion between or after the invocations cannot be tied
+                // to the closure that holds the owner call.
+                let positions = if invoked.len() != 1 {
+                    None
+                } else {
+                    closure_argument_positions(&test.body, &call.name)
+                };
+                let reached = invoked
+                    .iter()
+                    .filter(|param| {
+                        positions
+                            .as_ref()
+                            .is_some_and(|set| set.contains(&param.position))
+                    })
+                    .collect::<Vec<_>>();
+                // Every invoked parameter is plain and singly bound, so all
+                // may be both bound and called; only reached ones set the
+                // earliest line.
+                let names = invoked
+                    .iter()
+                    .map(|param| param.name.clone())
+                    .collect::<Vec<_>>();
+                if reached.is_empty() || !helper_body_is_plain(scopes, &helper_key, helper, &names)
+                {
+                    continue;
+                }
+                first_callback_end = reached
+                    .iter()
+                    .map(|param| (helper.start_line + param.end_line - 1, param.end_column))
+                    .min()
+                    .unwrap_or((usize::MAX, 0));
+                callback_names = names;
             }
             // Parser-backed oracles only, as for ordinary tests: a
             // commented-out `assert_eq!` must not count.
@@ -225,6 +299,20 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
                 .clone()
             else {
                 continue;
+            };
+            // The closure runs at the helper's first invocation, so only an
+            // assertion at or after it can observe what the closure did.
+            let assertions = if callback_names.is_empty() {
+                assertions
+            } else {
+                let observing = assertions
+                    .into_iter()
+                    .filter(|assertion| starts_after(helper, assertion, first_callback_end))
+                    .collect::<Vec<_>>();
+                if observing.is_empty() {
+                    continue;
+                }
+                observing
             };
             // #7125 Production integration helpers are the check-helper
             // cell: copy `assert_eq!` only. `assert!` / `.contains()` in
@@ -252,6 +340,10 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
             // helper's lines, outside the test's span, so an exact fact
             // already present can only be this credit.
             for call in helper.calls.iter().cloned() {
+                // The callback parameter's own call names no function.
+                if callback_names.contains(&call.name) {
+                    continue;
+                }
                 if !credited.calls.contains(&call) {
                     credited.calls.push(call);
                 }
@@ -494,19 +586,48 @@ fn calls_directly(scopes: &ModuleItemScopes, test_key: &(usize, String), name: &
 /// in its body, and
 /// no name it binds (a `let` closure, a parameter) that it also calls,
 /// since any of these can shadow the owner the credited call names.
+///
+/// `callbacks` names closure parameters the caller already proved are plain,
+/// singly bound and invoked (#9981); only they may be both bound and called.
 fn helper_body_is_plain(
     scopes: &ModuleItemScopes,
     helper_key: &(usize, String),
     helper: &FunctionFact,
+    callbacks: &[String],
 ) -> bool {
     !scopes.fns_with_cfg.contains(helper_key)
         && !scopes.fns_with_local_use.contains(helper_key)
         && !scopes.fns_with_deferred_code.contains(helper_key)
         && helper.nested_fn_names.is_empty()
-        && scopes
-            .bound_names
-            .get(helper_key)
-            .is_some_and(|bound| !helper.calls.iter().any(|call| bound.contains(&call.name)))
+        && scopes.bound_names.get(helper_key).is_some_and(|bound| {
+            !helper
+                .calls
+                .iter()
+                .any(|call| bound.contains(&call.name) && !callbacks.contains(&call.name))
+        })
+}
+
+/// Whether `assertion` starts at or after `end`, the (line, byte column)
+/// where the callback-invoking statement ends. A later line is after and an
+/// earlier line is before; on the shared line the assertion's own text is
+/// located in that line, and a text that cannot be located is not admitted.
+fn starts_after(helper: &FunctionFact, assertion: &OracleFact, end: (usize, usize)) -> bool {
+    if assertion.line != end.0 {
+        return assertion.line > end.0;
+    }
+    // Same line: identify the assertion by its parser site, never by text
+    // search (a comment or string can repeat the spelling). Exactly one macro
+    // invocation on the line must carry the oracle's text.
+    let spelling = assertion.text.trim().trim_end_matches(';').trim();
+    let Some(sites) = macro_call_columns(&helper.body, assertion.line - helper.start_line + 1)
+    else {
+        return false;
+    };
+    let mut matching = sites.iter().filter(|(text, _)| text.trim() == spelling);
+    match (matching.next(), matching.next()) {
+        (Some((_, column)), None) => *column >= end.1,
+        _ => false,
+    }
 }
 
 /// Credited calls must sit outside the test's line span, which is what

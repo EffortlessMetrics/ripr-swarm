@@ -42,6 +42,7 @@ pub(crate) use oxc_ast::ast::{
 };
 pub(crate) use oxc_parser::Parser;
 pub(crate) use oxc_span::{GetSpan, SourceType};
+pub(crate) use relation_index::RelationIndex;
 pub(crate) use std::path::{Path, PathBuf};
 
 mod actionability;
@@ -75,6 +76,7 @@ mod discovery;
 mod dropped_term_guard;
 mod enum_member_guard;
 mod error_payload_guard;
+mod extraction_cache;
 mod field_update_guard;
 mod guard_entry_guard;
 mod hook_owner_guard;
@@ -115,6 +117,7 @@ mod probe_shape;
 #[cfg(test)]
 mod rejection_equality_tests;
 mod related_tests;
+mod relation_index;
 #[cfg(test)]
 mod replaced_block_tests;
 mod repo;
@@ -539,7 +542,12 @@ impl TypeScriptAdapter {
                 }
                 all_tests.extend(tests);
             } else {
-                all_owners.extend(extract_owners(relative, source));
+                // #10044: owner extraction is a pure function of (path,
+                // source); the process-lifetime cache lets an LSP session
+                // re-save without re-parsing the whole workspace. Test
+                // extraction stays uncached because committed snapshots
+                // read the filesystem.
+                all_owners.extend(extraction_cache::extract_owners_cached(relative, source));
             }
         }
         // Build tsconfig.json alias map unless explicitly opted out (RIPR-SPEC-0099).
@@ -582,6 +590,12 @@ impl TypeScriptAdapter {
             alias_map_ref,
             is_test_file,
         );
+
+        // #10028: invert the test corpus once so each owner's relation scans
+        // (pass-1 candidates, module-entry union, the two named-limitation
+        // passes) pre-filter by body-name / import-shape / re-export-exposure
+        // keys instead of scanning every workspace test per owner.
+        let relation_index = relation_index::RelationIndex::build(&all_tests, &reexport_index);
 
         // Phase 2: for each accepted changed file, classify each changed
         // line that falls inside an owner.
@@ -802,6 +816,7 @@ impl TypeScriptAdapter {
                             &all_tests,
                             Some(&options.root),
                             &reexport_index,
+                            &relation_index,
                             alias_map_ref,
                         )
                     });
@@ -908,6 +923,7 @@ impl TypeScriptAdapter {
                             &all_tests,
                             Some(&options.root),
                             &reexport_index,
+                            &relation_index,
                             alias_map_ref,
                         )
                     });

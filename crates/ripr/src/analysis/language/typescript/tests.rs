@@ -1957,7 +1957,14 @@ test("cart total observes receiver", () => {
 "#,
     );
 
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     let related = find_related_tests(&owner, &tests, None, &ReExportIndex::empty(), None);
 
     assert_eq!(candidates.len(), 1);
@@ -2185,7 +2192,14 @@ test("mocked applyDiscount stays ambiguous", () => {
 "#,
     );
 
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
 
     assert!(
         candidates
@@ -2239,7 +2253,14 @@ test("mocked arrow applyDiscount stays ambiguous", () => {
 "#,
     );
 
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
 
     assert!(
         candidates
@@ -2298,7 +2319,14 @@ test("mocked namespace applyDiscount stays ambiguous", () => {
 "#,
     );
 
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
 
     assert!(
         candidates
@@ -2348,7 +2376,14 @@ test("unmocked applyDiscount observes the owner", () => {
 "#,
     );
 
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
 
     assert_eq!(candidates.len(), 1);
     assert_eq!(
@@ -2462,7 +2497,14 @@ test("static build observes class method", () => {
 "#,
     );
 
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     let related = find_related_tests(&owner, &tests, None, &ReExportIndex::empty(), None);
 
     assert_eq!(candidates.len(), 1);
@@ -2544,7 +2586,14 @@ fn find_related_tests_matches_same_file_class_method_calls() {
 "#,
     );
 
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     let related = find_related_tests(&owner, &tests, None, &ReExportIndex::empty(), None);
 
     assert_eq!(candidates.len(), 1);
@@ -2704,7 +2753,14 @@ test("rate value observes initializer", () => {
 "#,
     );
 
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     let related = find_related_tests(&owner, &tests, None, &ReExportIndex::empty(), None);
 
     assert_eq!(candidates.len(), 1);
@@ -2829,7 +2885,14 @@ test("aliased use", () => {
 "#,
     );
 
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
 
     assert_eq!(candidates.len(), 3);
     for candidate in &candidates {
@@ -2867,7 +2930,14 @@ test("object key and member property are not the binding", () => {
 "#,
     );
     assert_eq!(tests.len(), 4);
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     assert!(candidates.is_empty(), "{candidates:?}");
 
     // Same name imported from a different module is not the owner.
@@ -2881,8 +2951,14 @@ test("foreign stop", () => {
 "#,
     );
     assert_eq!(other_module.len(), 1);
-    let candidates =
-        related_test_candidates(&owner, &other_module, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &other_module,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     assert!(candidates.is_empty(), "{candidates:?}");
 
     // A test that mocks the owner module does not consume the real value.
@@ -2897,7 +2973,14 @@ test("mocked owner module", () => {
 "#,
     );
     assert_eq!(mocked.len(), 1);
-    let candidates = related_test_candidates(&owner, &mocked, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &mocked,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     assert!(candidates.is_empty(), "{candidates:?}");
 }
 
@@ -2914,8 +2997,14 @@ test("namespace member used as a value", () => {
 "#,
     );
     assert_eq!(positive.len(), 1);
-    let candidates =
-        related_test_candidates(&owner, &positive, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &positive,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     assert_eq!(candidates.len(), 1, "{candidates:?}");
     assert_eq!(
         candidates[0].relation,
@@ -2942,8 +3031,14 @@ test("block comment and template literal mentions", () => {
 "#,
     );
     assert_eq!(negatives.len(), 3);
-    let candidates =
-        related_test_candidates(&owner, &negatives, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &negatives,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     assert!(candidates.is_empty(), "{candidates:?}");
 
     let mocked = extract_tests(
@@ -2957,7 +3052,14 @@ test("mocked namespace", () => {
 "#,
     );
     assert_eq!(mocked.len(), 1);
-    let candidates = related_test_candidates(&owner, &mocked, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &mocked,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     assert!(candidates.is_empty(), "{candidates:?}");
 }
 
@@ -2983,7 +3085,14 @@ test("plain third mention", () => {
 "#,
     );
     assert_eq!(tests.len(), 3);
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     assert!(candidates.is_empty(), "{candidates:?}");
 
     let type_only = extract_tests(
@@ -2997,8 +3106,14 @@ test("type-only import never binds the runtime value", () => {
 "#,
     );
     assert_eq!(type_only.len(), 1);
-    let candidates =
-        related_test_candidates(&owner, &type_only, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &type_only,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     assert!(candidates.is_empty(), "{candidates:?}");
 }
 
@@ -3027,7 +3142,14 @@ test("multi-line template literal", () => {
 "#,
     );
     assert_eq!(tests.len(), 3);
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     assert!(candidates.is_empty(), "{candidates:?}");
 }
 
@@ -3052,7 +3174,14 @@ it.each([1, 2])("parameter named stop", (stop) => {
 "#,
     );
     assert_eq!(tests.len(), 2);
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     assert!(candidates.is_empty(), "{candidates:?}");
 
     let namespace = extract_tests(
@@ -3069,8 +3198,14 @@ describe("suite with a describe-level ns", () => {
 "#,
     );
     assert_eq!(namespace.len(), 1);
-    let candidates =
-        related_test_candidates(&owner, &namespace, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &namespace,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     assert!(candidates.is_empty(), "{candidates:?}");
 }
 
@@ -3103,7 +3238,14 @@ test("template second line", () => {
 "#,
     );
     assert_eq!(tests.len(), 4);
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     assert!(candidates.is_empty(), "{candidates:?}");
 }
 
@@ -3139,7 +3281,14 @@ test("alias import observes threshold", () => {
 "#,
     );
 
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     let related = find_related_tests(&owner, &tests, None, &ReExportIndex::empty(), None);
 
     // RIPR-SPEC-0102: alias-rename import must produce ImportAliasOwnerCall,
@@ -3197,7 +3346,14 @@ test("wrong-name alias", () => {
 "#,
     );
 
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
 
     assert!(
         candidates
@@ -3243,7 +3399,14 @@ test("shadow guard", () => {
 "#,
     );
 
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
 
     assert!(
         candidates
@@ -3287,7 +3450,14 @@ test("non-alias direct call", () => {
 "#,
     );
 
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     let related = find_related_tests(&owner, &tests, None, &ReExportIndex::empty(), None);
 
     assert_eq!(candidates.len(), 1);
@@ -3340,7 +3510,14 @@ test("namespace import member call", () => {
 "#,
     );
 
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     let related = find_related_tests(&owner, &tests, None, &ReExportIndex::empty(), None);
 
     assert_eq!(candidates.len(), 1);
@@ -3622,7 +3799,14 @@ fn related_test_candidates_use_name_and_proximity_links_as_uncertain_relations()
 "#,
     ));
 
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     let relations: Vec<_> = candidates
         .iter()
         .map(|candidate| candidate.relation)
@@ -3683,7 +3867,14 @@ fn related_test_name_proximity_ignores_partial_tokens() {
 "#,
     );
 
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
 
     assert!(candidates.is_empty());
 }
@@ -7141,7 +7332,14 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
             }],
         },
     ];
-    let paths = collect_related_mock_paths(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let paths = collect_related_mock_paths(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     assert_eq!(paths, vec!["./api".to_string()]);
 }
 
@@ -7189,7 +7387,14 @@ fn collect_related_mock_paths_ignores_unrelated_tests() {
         setup_hook_bodies: Vec::new(),
         imports_in_file: Vec::new(),
     }];
-    let paths = collect_related_mock_paths(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let paths = collect_related_mock_paths(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     assert!(paths.is_empty());
 }
 
@@ -7237,7 +7442,14 @@ fn collect_related_mock_paths_ignores_object_method_mentions() {
         setup_hook_bodies: Vec::new(),
         imports_in_file: Vec::new(),
     }];
-    let paths = collect_related_mock_paths(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let paths = collect_related_mock_paths(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     assert!(paths.is_empty());
 }
 
@@ -8775,14 +8987,21 @@ fn package_local_filter_selects_same_package_test() {
         Some(&root),
         &ReExportIndex::empty(),
         None,
+        &RelationIndex::empty(),
     );
     // The package-local filter must NOT exclude same-package tests.
     // (candidates may still be empty if body_text has no call — that's tested
     // elsewhere; here we only verify the package filter is not the bottleneck.)
     // Use workspace_root=None to check the unfiltered count equals
     // workspace_root=Some count (filter didn't discard it).
-    let candidates_no_filter =
-        related_test_candidates(&owner, &tests_slice, None, &ReExportIndex::empty(), None);
+    let candidates_no_filter = related_test_candidates(
+        &owner,
+        &tests_slice,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     assert_eq!(
         candidates.len(),
         candidates_no_filter.len(),
@@ -8857,6 +9076,7 @@ fn package_local_filter_rejects_cross_package_test() {
         Some(&root),
         &ReExportIndex::empty(),
         None,
+        &RelationIndex::empty(),
     );
     assert!(
         candidates.is_empty(),
@@ -8911,6 +9131,7 @@ fn package_local_filter_admits_cross_package_test_importing_owner_file() -> Resu
         Some(&root),
         &ReExportIndex::empty(),
         None,
+        &RelationIndex::empty(),
     );
     assert_eq!(candidates.len(), 1, "got {candidates:?}");
     assert_eq!(
@@ -8928,6 +9149,7 @@ fn package_local_filter_admits_cross_package_test_importing_owner_file() -> Resu
         Some(&root),
         &ReExportIndex::empty(),
         None,
+        &RelationIndex::empty(),
     );
     assert!(candidates.is_empty(), "got {candidates:?}");
     Ok(())
@@ -8979,6 +9201,7 @@ fn cross_package_constructor_requires_owner_class_import() -> Result<(), String>
         Some(&root),
         &ReExportIndex::empty(),
         None,
+        &RelationIndex::empty(),
     );
     assert!(
         !candidates
@@ -8995,6 +9218,7 @@ fn cross_package_constructor_requires_owner_class_import() -> Result<(), String>
         Some(&root),
         &ReExportIndex::empty(),
         None,
+        &RelationIndex::empty(),
     );
     assert_eq!(candidates.len(), 1, "got {candidates:?}");
     assert_eq!(
@@ -9282,6 +9506,7 @@ fn unresolved_ownership_import_branch_with_relative_paths() -> Result<(), String
         Some(&root),
         &ReExportIndex::empty(),
         None,
+        &RelationIndex::empty(),
     );
     assert_eq!(
         admitted.len(),
@@ -9296,6 +9521,7 @@ fn unresolved_ownership_import_branch_with_relative_paths() -> Result<(), String
         named_limitations_for_unresolved_ownership(
             &owner,
             std::slice::from_ref(&test),
+            &RelationIndex::empty(),
             &root,
             &admitted
         )
@@ -9306,8 +9532,13 @@ fn unresolved_ownership_import_branch_with_relative_paths() -> Result<(), String
     // Without the relation layer's admission (the pre-#4552 view), the same
     // reference is what the limitation reports: the producer still reads the
     // import branch with workspace-relative spellings.
-    let limitations =
-        named_limitations_for_unresolved_ownership(&owner, std::slice::from_ref(&test), &root, &[]);
+    let limitations = named_limitations_for_unresolved_ownership(
+        &owner,
+        std::slice::from_ref(&test),
+        &RelationIndex::empty(),
+        &root,
+        &[],
+    );
     assert_eq!(limitations.len(), 1);
     assert_eq!(limitations[0].name, "typescript_target_unresolved");
     assert_eq!(
@@ -9324,6 +9555,7 @@ fn unresolved_ownership_import_branch_with_relative_paths() -> Result<(), String
         Some(&root),
         &ReExportIndex::empty(),
         None,
+        &RelationIndex::empty(),
     );
     assert!(
         bare_admitted.is_empty(),
@@ -9332,6 +9564,7 @@ fn unresolved_ownership_import_branch_with_relative_paths() -> Result<(), String
     let bare_limitations = named_limitations_for_unresolved_ownership(
         &owner,
         std::slice::from_ref(&bare_call),
+        &RelationIndex::empty(),
         &root,
         &bare_admitted,
     );
@@ -9341,16 +9574,39 @@ fn unresolved_ownership_import_branch_with_relative_paths() -> Result<(), String
     let mut wrong_import = test.clone();
     wrong_import.imports_in_file[0].source = "../../a/src/other.js".into();
     assert!(
-        named_limitations_for_unresolved_ownership(&owner, &[wrong_import], &root, &[]).is_empty()
+        named_limitations_for_unresolved_ownership(
+            &owner,
+            &[wrong_import],
+            &RelationIndex::empty(),
+            &root,
+            &[]
+        )
+        .is_empty()
     );
     let mut no_call = test.clone();
     no_call.body_text = "const value = 1;".into();
-    assert!(named_limitations_for_unresolved_ownership(&owner, &[no_call], &root, &[]).is_empty());
+    assert!(
+        named_limitations_for_unresolved_ownership(
+            &owner,
+            &[no_call],
+            &RelationIndex::empty(),
+            &root,
+            &[]
+        )
+        .is_empty()
+    );
     let mut same_package = test;
     same_package.file = "packages/a/tests/cart.test.ts".into();
     same_package.imports_in_file[0].source = "../src/cart.js".into();
     assert!(
-        named_limitations_for_unresolved_ownership(&owner, &[same_package], &root, &[]).is_empty()
+        named_limitations_for_unresolved_ownership(
+            &owner,
+            &[same_package],
+            &RelationIndex::empty(),
+            &root,
+            &[]
+        )
+        .is_empty()
     );
     Ok(())
 }
@@ -15773,7 +16029,14 @@ fn owner_names_in_titles_comments_strings_and_keys_are_not_references() {
     let tests = extract_tests(Path::new("test/pricing.test.ts"), source);
     assert_eq!(tests.len(), 1);
 
-    let candidates = related_test_candidates(owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
 
     assert!(
         candidates.is_empty(),
@@ -15830,7 +16093,14 @@ it("tiers", () => {
         ("locally shadowed", &shadowed, false),
     ] {
         assert_eq!(tests.len(), 1, "{label}: fixture must parse one test");
-        let candidates = related_test_candidates(owner, tests, None, &ReExportIndex::empty(), None);
+        let candidates = related_test_candidates(
+            owner,
+            tests,
+            None,
+            &ReExportIndex::empty(),
+            None,
+            &RelationIndex::empty(),
+        );
         assert_eq!(
             !candidates.is_empty(),
             related,
@@ -17441,7 +17711,14 @@ describe("tiers", () => {
 });
 "#,
     );
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     assert_eq!(
         candidates.len(),
         1,
@@ -17466,7 +17743,14 @@ describe("tiers", () => {
 });
 "#,
     );
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     assert_eq!(
         candidates.len(),
         1,
@@ -17488,7 +17772,14 @@ describe("tiers", () => {
 });
 "#,
     );
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     assert_eq!(candidates.len(), 1, "optional direct call must credit");
     assert_eq!(
         candidates[0].relation,
@@ -17528,7 +17819,14 @@ describe("pricing", () => {
 });
 "#,
     );
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     assert_eq!(
         candidates.len(),
         1,
@@ -17551,7 +17849,14 @@ fn undercredit_4103_dynamic_import_spaced_specifier_is_credited() {
 });
 "#,
     );
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     assert_eq!(
         candidates.len(),
         1,
@@ -17613,7 +17918,14 @@ describe("money", () => {
 });
 "#,
     );
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     assert_eq!(
         candidates.len(),
         1,
@@ -17664,7 +17976,8 @@ describe("slugify", () => {
 });
 "#,
     );
-    let candidates = related_test_candidates(&owner, &tests, None, &index, None);
+    let candidates =
+        related_test_candidates(&owner, &tests, None, &index, None, &RelationIndex::empty());
     assert_eq!(candidates.len(), 1, "star barrel import must credit");
     assert_eq!(
         candidates[0].relation,
@@ -17719,7 +18032,8 @@ describe("formatPrice", () => {
 });
 "#,
     );
-    let candidates = related_test_candidates(&owner, &tests, None, &index, None);
+    let candidates =
+        related_test_candidates(&owner, &tests, None, &index, None, &RelationIndex::empty());
     assert_eq!(
         candidates.len(),
         1,

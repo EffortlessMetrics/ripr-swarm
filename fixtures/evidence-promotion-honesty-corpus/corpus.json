@@ -11772,6 +11772,54 @@
       ]
     },
     {
+      "id": "rust_closure_callback_benign_macro_operand_credited",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-closure-callback-benign-macro-operand.json",
+      "vector": "closure_callback_helper_assertion_credited_with_benign_transparent_macro_operand",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::greet",
+          "expression": "format!(\"hello {name}\")",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
+        }
+      ]
+    },
+    {
+      "id": "rust_closure_callback_macro_operand_return_not_credited",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-closure-callback-macro-operand-return.json",
+      "vector": "closure_callback_helper_assertion_not_credited_when_macro_operand_hides_a_return",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::greet",
+          "expression": "format!(\"hello {name}\")",
+          "grip_class": "reachable_unrevealed",
+          "reach": "yes"
+        }
+      ]
+    },
+    {
+      "id": "rust_closure_callback_macro_preceding_return_not_credited",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-closure-callback-macro-preceding-return.json",
+      "vector": "closure_callback_helper_assertion_not_credited_when_preceding_macro_hides_a_return",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::greet",
+          "expression": "format!(\"hello {name}\")",
+          "grip_class": "reachable_unrevealed",
+          "reach": "yes"
+        }
+      ]
+    },
+    {
       "id": "rust_out_parameter_name_mention_on_unrelated_line",
       "language": "rust",
       "tier": "pure",
