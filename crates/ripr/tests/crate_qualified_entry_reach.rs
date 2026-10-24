@@ -1066,6 +1066,31 @@ fn an_imported_suffix_must_spell_the_entrys_module_path() -> Result<(), String> 
     Ok(())
 }
 
+/// An entry defined in a PRIVATE inline module and re-exported at the crate
+/// root: the bare import of the re-export links (see the root re-export
+/// control above); the fully qualified spelling of the re-export path is a
+/// shorter path than the entry's own module path and is refused (a conservative
+/// loss, named in RIPR-SPEC-0159). Module visibility is not
+/// proven: a spelling through a private module would not compile, and is a named
+/// limit rather than asserted here.
+#[test]
+fn an_inline_module_entry_reexported_at_the_root_links_only_by_import() -> Result<(), String> {
+    let lib = "mod inner {\n    fn is_bulk(qty: u32) -> bool {\n        10 <= qty\n    }\n\n    pub fn order_discount(qty: u32) -> u32 {\n        if is_bulk(qty) { 5 } else { 0 }\n    }\n}\npub use inner::order_discount;\n";
+    let bare = format!("use qual_reach::order_discount;\n{}", test_file(BARE));
+    assert_eq!(
+        Package::root(lib, &bare).relation()?.as_deref(),
+        LINKED,
+        "bare import of the root re-export"
+    );
+    let qualified_reexport = spelled("qual_reach::order_discount");
+    assert_eq!(
+        Package::root(lib, &qualified_reexport).relation()?,
+        None,
+        "qualified re-export spelling is a conservative refusal"
+    );
+    Ok(())
+}
+
 /// The imported route proves the library binds the module path to the
 /// entry's file: a cfg-selected alternate or a `#[path]` remap that rebinds
 /// the module to a std re-export refuses (rendered non-promotion), while a
