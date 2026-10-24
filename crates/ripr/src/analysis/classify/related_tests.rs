@@ -11342,6 +11342,70 @@ try_parse_summary(raw).map_err(Into::into)"
         assert_eq!(related[0].1, RelationReason::AssertionTargetAffinity);
     }
 
+    /// #9171 review: every strict or reserved Rust keyword long enough to pass
+    /// `ASSERTION_TOKEN_MIN_LEN` is refused as an affinity seed.
+    #[test]
+    fn every_long_rust_keyword_is_refused_as_assertion_affinity_seed() {
+        let keywords = [
+            "abstract", "async", "await", "become", "break", "const", "continue", "crate",
+            "extern", "final", "macro", "match", "override", "return", "static", "struct", "super",
+            "trait", "typeof", "unsafe", "unsized", "virtual", "where", "while", "yield",
+        ];
+        for keyword in keywords {
+            assert!(
+                keyword.len() >= ASSERTION_TOKEN_MIN_LEN,
+                "{keyword} is below the gate"
+            );
+            let assertion_text = format!("assert_eq!({keyword} + 1, 2);");
+            let unrelated = test_with_assertions(
+                "tests/other.rs",
+                "checks_result",
+                &assertion_text,
+                vec![oracle_fact(
+                    &assertion_text,
+                    OracleKind::ExactValue,
+                    OracleStrength::Strong,
+                )],
+            );
+            assert!(
+                unrelated.assertions[0]
+                    .observed_tokens
+                    .iter()
+                    .any(|token| token == keyword),
+                "fixture must observe `{keyword}`: {:?}",
+                unrelated.assertions[0].observed_tokens
+            );
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                tests: vec![unrelated],
+                ..Default::default()
+            });
+            let probe = probe("src/lib.rs", &format!("pub const LIMIT: u32 = {keyword};"));
+            let indexed = find_related_tests_with_candidate_index(
+                &probe,
+                None,
+                &index,
+                true,
+                None,
+                None,
+                &RelatedTestCandidateIndex::new(&index),
+            );
+            let full_scan = find_related_tests_with_candidates(
+                &probe,
+                None,
+                &index,
+                true,
+                None,
+                None,
+                RelatedTestCandidates::FullScan,
+            );
+            assert!(
+                indexed.is_empty(),
+                "indexed related for {keyword}: {indexed:?}"
+            );
+            assert!(full_scan.is_empty(), "full scan related for {keyword}");
+        }
+    }
+
     /// #9171 review: `union` and `macro_rules` are not reserved words, but as
     /// declaration introducers they are syntax shared by unrelated code. They
     /// must not relate an assertion that merely declares its own item, in both

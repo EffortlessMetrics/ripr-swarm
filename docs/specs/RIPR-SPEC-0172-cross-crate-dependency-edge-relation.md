@@ -269,8 +269,9 @@ call.
 An owner-less probe (an import, a `const`, a struct or field line) relates a
 test through `assertion_target_affinity` when a long identifier of the changed
 expression appears in the test's assertion tokens. Rust keywords are syntax,
-not names for the changed behavior: `crate` is five bytes, so
-`pub(crate) use ..` or `crate::seed() + 2` used to relate every test that
+not names for the changed behavior: a keyword at least as long as the
+assertion-token minimum length (`ASSERTION_TOKEN_MIN_LEN`, five bytes; `crate`
+qualifies) passed the length gate, so `pub(crate) use ..` or `crate::seed() + 2` used to relate every test that
 asserts on any `crate::..` path and credit its oracle to the change. Keywords
 (`crate`, `super`, `where`, `const`, `static`, `match`, ...) no longer count as
 probe tokens for this signal. `union` and `macro_rules` are not reserved words,
