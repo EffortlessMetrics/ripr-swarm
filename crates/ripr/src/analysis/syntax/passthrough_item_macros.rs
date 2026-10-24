@@ -699,12 +699,8 @@ mod tests {
             format!("{second}suite! {{ {test} }}\nsecond! {{ use other::r#gate; }}\n"),
             format!("{second}suite! {{ {test} }}\nsecond! {{ use other::x as r#gate; }}\n"),
             // A hand-written module-level test fn named like the callee.
-            format!(
-                "#[test] fn gate() {{}}\nsuite! {{ #[test] fn a() {{ let _n = 10; assert_eq!(gate(), ()); }} }}\n"
-            ),
-            format!(
-                "#[test] fn gate() {{}}\nsuite! {{ #[test] fn a() {{ let _x = gate; assert_eq!(10u32 >= 10, true); }} }}\n"
-            ),
+            "#[test] fn gate() {}\nsuite! { #[test] fn a() { let _n = 10; assert_eq!(gate(), ()); } }\n".to_string(),
+            "#[test] fn gate() {}\nsuite! { #[test] fn a() { let _x = gate; assert_eq!(10u32 >= 10, true); } }\n".to_string(),
             // A test fn named like the callee rebinds it.
             format!("{second}suite! {{ {test} }}\nsecond! {{ #[test] fn gate() {{}} }}\n"),
             // Nested item macros stay opaque.
