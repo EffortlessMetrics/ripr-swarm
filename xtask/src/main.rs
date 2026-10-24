@@ -10504,6 +10504,10 @@ struct RepoExposureCacheFamilyStore {
     store_errors: usize,
     store_failures: Vec<RepoExposureStoreFailure>,
     store_failures_dropped: usize,
+    /// Producer-observed subject of the run (cache key identity and file
+    /// disclosure digests); `None` from a producer that does not report one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    subject: Option<Value>,
 }
 
 /// Whether cache-served output equals a cold recomputation, per format.
@@ -10516,6 +10520,9 @@ struct RepoExposureOutputParity {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RepoExposureParityCheck {
+    /// Named diagnostics from the comparison legs' receipts (store errors,
+    /// unobserved or invalid receipts); any makes the report non-`pass`.
+    diagnostics: Vec<String>,
     format: String,
     /// `pass`, `mismatch`, `fail` (the served run failed after a passing cold
     /// run) or `not_checked`.
@@ -10896,13 +10903,18 @@ enum RepoExposureParityPhase {
     Served,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 struct RepoExposureParityRun {
     /// `pass`, `fail` or `timeout`, as for a latency run.
     status: String,
     stdout: String,
     /// Final `cache_load` trace status (`hit`, `miss`, `corrupt_ignored`).
     cache_load: Option<String>,
+    /// Producer-observed subject identity from the leg's family receipt.
+    subject: Option<Value>,
+    /// Named store-failure / limitation diagnostics from the leg's
+    /// authenticated receipts.
+    diagnostics: Vec<String>,
 }
 
 fn repo_exposure_private_cache_dir(kind: &str, format: &str) -> Result<PathBuf, String> {
@@ -10967,10 +10979,13 @@ fn repo_exposure_parity_run(
         "killed"
     };
     let cache_load = repo_exposure_authenticated_cache_load(&output.stderr);
+    let (subject, diagnostics) = repo_exposure_parity_leg_receipts(&output.stderr, phase);
     Ok(RepoExposureParityRun {
         status: status.to_string(),
         stdout: output.stdout,
         cache_load,
+        subject,
+        diagnostics,
     })
 }
 
@@ -11015,11 +11030,16 @@ where
     ) -> Result<RepoExposureParityRun, String>,
 {
     let format = run.format.as_str();
-    let not_checked = |reason: String| RepoExposureParityCheck {
+    // Diagnostics from the comparison legs' own authenticated receipts; they
+    // ride on every outcome so a store failure on a leg can never be dropped.
+    let diagnostics = std::cell::RefCell::new(Vec::<String>::new());
+    let finish = |status: &'static str, reason: Option<String>| RepoExposureParityCheck {
         format: format.to_string(),
-        status: "not_checked",
-        reason: Some(reason),
+        status,
+        reason,
+        diagnostics: diagnostics.borrow().clone(),
     };
+    let not_checked = |reason: String| finish("not_checked", Some(reason));
     if run.status != "pass" {
         return not_checked(format!("primary_run_{}", run.status));
     }
@@ -11027,6 +11047,9 @@ where
         Ok(cold) => cold,
         Err(err) => return not_checked(format!("cold_run_error: {err}")),
     };
+    diagnostics
+        .borrow_mut()
+        .extend(cold.diagnostics.iter().map(|d| format!("cold_{d}")));
     if cold.status != "pass" {
         return not_checked(format!("cold_run_{}", cold.status));
     }
@@ -11037,23 +11060,35 @@ where
     // served run that exits with a nonzero code is the cache path failing: it
     // is a `fail`, not a quiet `not_checked`. A spawn/reader error, a signal
     // kill or a timeout is not evidence about the cache and stays unverified.
-    let failed = |reason: String| RepoExposureParityCheck {
-        format: format.to_string(),
-        status: "fail",
-        reason: Some(reason),
-    };
     let served = match run_parity(binary, format, RepoExposureParityPhase::Served, timeout) {
         Ok(served) => served,
         Err(err) => return not_checked(format!("served_run_error: {err}")),
     };
+    diagnostics
+        .borrow_mut()
+        .extend(served.diagnostics.iter().map(|d| format!("served_{d}")));
     if served.status == "fail" {
-        return failed("served_run_fail".to_string());
+        return finish("fail", Some("served_run_fail".to_string()));
     }
     if served.status != "pass" {
         return not_checked(format!("served_run_{}", served.status));
     }
     if served.cache_load.as_deref() != Some("hit") {
         return not_checked("served_run_not_cache_hit".to_string());
+    }
+    // One repository state: the producer's own account of each leg's source,
+    // config and generated-disclosure subject must agree before outputs are
+    // compared. Movement between the legs is not evidence about the cache.
+    match (
+        repo_exposure_leg_subject(format, &cold),
+        repo_exposure_leg_subject(format, &served),
+    ) {
+        (Some(cold_subject), Some(served_subject)) => {
+            if cold_subject != served_subject {
+                return not_checked("comparison_subject_moved".to_string());
+            }
+        }
+        _ => return not_checked("comparison_subject_unobserved".to_string()),
     }
     // Equality of nothing, or of text that is not the expected document, is
     // not parity.
@@ -11064,11 +11099,82 @@ where
         return not_checked("output_unparseable".to_string());
     };
     let equal = cold_text == served_text;
-    RepoExposureParityCheck {
-        format: format.to_string(),
-        status: if equal { "pass" } else { "mismatch" },
-        reason: (!equal).then(|| "served_output_differs_from_cold".to_string()),
+    finish(
+        if equal { "pass" } else { "mismatch" },
+        (!equal).then(|| "served_output_differs_from_cold".to_string()),
+    )
+}
+
+/// The subject a comparison leg was produced for, from the producer's own
+/// output: its cache-family receipt `subject` (cache key identity and the
+/// generated/naming-only/declined file disclosure) and, for JSON, the
+/// artifact's input and snapshot identity and source subject. `None` when the
+/// producer did not report one.
+fn repo_exposure_leg_subject(format: &str, leg: &RepoExposureParityRun) -> Option<Value> {
+    let receipt = leg.subject.clone()?;
+    if format != "repo-exposure-json" {
+        return Some(serde_json::json!({ "receipt": receipt }));
     }
+    // Unparseable output is not a subject problem; the output comparison
+    // reports it as `output_unparseable`.
+    let document = serde_json::from_str::<Value>(&leg.stdout).unwrap_or(Value::Null);
+    Some(serde_json::json!({
+        "receipt": receipt,
+        "input_identity": document.pointer("/artifact/analysis/input_identity"),
+        "snapshot_identity": document.pointer("/artifact/snapshot_identity"),
+        "source_subject": document.get("source_subject"),
+    }))
+}
+
+/// Named diagnostics for one comparison leg's authenticated receipts, and the
+/// leg's subject. The cold leg must show both receipts; the served leg hits
+/// the classified-seam cache and so legitimately has no file-fact receipt.
+fn repo_exposure_parity_leg_receipts(
+    stderr: &str,
+    phase: RepoExposureParityPhase,
+) -> (Option<Value>, Vec<String>) {
+    let mut diagnostics = Vec::new();
+    let (family, family_limitation) = repo_exposure_cache_family_store_from_stderr(stderr);
+    let subject = match &family {
+        Some(store) => {
+            if store.store_errors > 0 {
+                diagnostics.push(format!("cache_family_store_errors={}", store.store_errors));
+            }
+            store.subject.clone()
+        }
+        None => {
+            diagnostics.push(
+                family_limitation.unwrap_or_else(|| "cache_family_store_not_observed".to_string()),
+            );
+            None
+        }
+    };
+    let (file_fact, file_fact_limitation) = repo_exposure_file_fact_cache_from_stderr(stderr);
+    match file_fact {
+        Some(cache) => {
+            if cache.store_errors > 0 {
+                diagnostics.push(format!(
+                    "file_fact_cache_store_errors={}",
+                    cache.store_errors
+                ));
+            }
+            if cache.corrupt_ignored > 0 {
+                diagnostics.push(format!(
+                    "file_fact_cache_corrupt_ignored={}",
+                    cache.corrupt_ignored
+                ));
+            }
+        }
+        // Absent on a served (cache-hit) leg is expected; any other limitation
+        // (malformed, duplicate, invalid, untrusted) is named.
+        None => {
+            let limitation = file_fact_limitation.unwrap_or_default();
+            if phase == RepoExposureParityPhase::Cold || limitation != "cache_phase_not_observed" {
+                diagnostics.push(format!("file_fact_cache_{limitation}"));
+            }
+        }
+    }
+    (subject, diagnostics)
 }
 
 /// The comparable form of a format's stdout. The JSON artifact envelope stamps
@@ -11349,6 +11455,9 @@ fn repo_exposure_latency_status_reasons(
         reasons.push(format!("output_parity_not_checked_{gap}"));
     }
     for check in &parity.checks {
+        for diagnostic in &check.diagnostics {
+            reasons.push(format!("{}: parity_{diagnostic}", check.format));
+        }
         match check.status {
             "pass" => {}
             "mismatch" => reasons.push(format!("{}: output_parity_mismatch", check.format)),
@@ -11448,6 +11557,7 @@ fn repo_exposure_latency_json(report: &RepoExposureLatencyReport) -> String {
                 "format": check.format,
                 "status": check.status,
                 "reason": check.reason,
+                "diagnostics": check.diagnostics,
             })
         })
         .collect();

@@ -187,7 +187,7 @@ use super::{
     repo_exposure_latency_json, repo_exposure_latency_markdown, repo_exposure_latency_run,
     repo_exposure_latency_run_from_output, repo_exposure_latency_status,
     repo_exposure_latency_status_reasons, repo_exposure_latency_trace,
-    repo_exposure_normalized_output, repo_exposure_parity_run,
+    repo_exposure_normalized_output, repo_exposure_parity_leg_receipts, repo_exposure_parity_run,
     repo_exposure_resource_cost_from_stderr, repo_exposure_summary_report_timeout_ms_from_env,
     repo_root, repo_seam_inventory_command_args_for_root, report_index_lane1_overall_status,
     report_index_lane1_readiness_packets, report_index_missing_artifact_count,
@@ -51995,6 +51995,7 @@ fn parity_pass() -> RepoExposureOutputParity {
         checks: ["repo-exposure-json", "repo-exposure-md"]
             .into_iter()
             .map(|format| RepoExposureParityCheck {
+                diagnostics: Vec::new(),
                 format: format.to_string(),
                 status: "pass",
                 reason: None,
@@ -52009,6 +52010,7 @@ fn clean_family_store() -> RepoExposureCacheFamilyStore {
         store_errors: 0,
         store_failures: Vec::new(),
         store_failures_dropped: 0,
+        subject: None,
     }
 }
 
@@ -56183,11 +56185,15 @@ fn parity_runner<'a>(
                 status: "pass".to_string(),
                 stdout: cold_stdout.to_string(),
                 cache_load: Some("miss".to_string()),
+                subject: Some(serde_json::json!({"cache_key": "k"})),
+                ..Default::default()
             },
             RepoExposureParityPhase::Served => RepoExposureParityRun {
                 status: "pass".to_string(),
                 stdout: served_stdout.to_string(),
                 cache_load: served_cache_load.map(str::to_string),
+                subject: Some(serde_json::json!({"cache_key": "k"})),
+                ..Default::default()
             },
         })
     }
@@ -56296,6 +56302,8 @@ fn repo_exposure_output_parity_unverified_comparisons_stay_not_checked() -> Resu
             .to_string(),
             stdout: String::new(),
             cache_load: Some("miss".to_string()),
+            subject: Some(serde_json::json!({"cache_key": "k"})),
+            ..Default::default()
         })
     })?;
     assert_eq!(timed_out.output_parity.label(), "not_checked");
@@ -56309,6 +56317,8 @@ fn repo_exposure_output_parity_unverified_comparisons_stay_not_checked() -> Resu
             status: "pass".to_string(),
             stdout: PARITY_JSON_A.to_string(),
             cache_load: Some("hit".to_string()),
+            subject: Some(serde_json::json!({"cache_key": "k"})),
+            ..Default::default()
         })
     })?;
     assert_eq!(
@@ -56379,6 +56389,7 @@ fn repo_exposure_normalized_output_ignores_only_the_per_run_envelope_stamps() {
 #[test]
 fn repo_exposure_output_parity_requires_both_formats_exactly_once() {
     let check = |format: &str| RepoExposureParityCheck {
+        diagnostics: Vec::new(),
         format: format.to_string(),
         status: "pass",
         reason: None,
@@ -56417,6 +56428,192 @@ fn repo_exposure_output_parity_requires_both_formats_exactly_once() {
     );
 }
 
+/// JSON legs carry the document; markdown legs a fixed body.
+fn fmt_body(format: &str, json: &str) -> String {
+    if format == "repo-exposure-json" {
+        json.to_string()
+    } else {
+        "# repo exposure\n".to_string()
+    }
+}
+
+fn leg(
+    stdout: &str,
+    cache_load: &str,
+    subject: Option<&str>,
+    diagnostics: &[&str],
+) -> RepoExposureParityRun {
+    RepoExposureParityRun {
+        status: "pass".to_string(),
+        stdout: stdout.to_string(),
+        cache_load: Some(cache_load.to_string()),
+        subject: subject.map(|key| serde_json::json!({"cache_key": key})),
+        diagnostics: diagnostics.iter().map(|d| d.to_string()).collect(),
+    }
+}
+
+/// #9633 (maintainer review P1): the comparison legs must describe one
+/// repository state. Movement of source, config or generated disclosure
+/// between the cold and served child is `not_checked`, decided before the
+/// outputs are compared, so it can never become a mismatch or a required
+/// readiness failure; the same subject with differing output stays a mismatch.
+#[test]
+fn repo_exposure_output_parity_refuses_a_moved_or_unobserved_subject() -> Result<(), String> {
+    let run = |cold: RepoExposureParityRun, served: RepoExposureParityRun| {
+        build_with_parity(move |_, _, phase, _| {
+            Ok(match phase {
+                RepoExposureParityPhase::Cold => cold.clone(),
+                RepoExposureParityPhase::Served => served.clone(),
+            })
+        })
+    };
+    // Subject moved, outputs differ: not a mismatch, not a fail.
+    let moved = run(
+        leg(PARITY_JSON_A, "miss", Some("a"), &[]),
+        leg(PARITY_JSON_C_FINDING, "hit", Some("b"), &[]),
+    )?;
+    assert_eq!(moved.output_parity.label(), "not_checked");
+    assert_eq!(moved.status, "warn");
+    assert_eq!(
+        moved.output_parity.checks[0].reason.as_deref(),
+        Some("comparison_subject_moved")
+    );
+    // Subject moved, outputs equal: still not a pass (A/B/A shapes).
+    let moved_equal = run(
+        leg(PARITY_JSON_A, "miss", Some("a"), &[]),
+        leg(PARITY_JSON_B_TIME_ONLY, "hit", Some("b"), &[]),
+    )?;
+    assert_eq!(moved_equal.output_parity.label(), "not_checked");
+    // No producer-reported subject on a leg: unverifiable, not a pass.
+    let unobserved = run(
+        leg(PARITY_JSON_A, "miss", None, &[]),
+        leg(PARITY_JSON_B_TIME_ONLY, "hit", Some("a"), &[]),
+    )?;
+    assert_eq!(unobserved.output_parity.label(), "not_checked");
+    assert_eq!(
+        unobserved.output_parity.checks[0].reason.as_deref(),
+        Some("comparison_subject_unobserved")
+    );
+    // The JSON artifact's own identity moving is also a moved subject.
+    let identity = |value: &str| {
+        PARITY_JSON_A.replace(
+            "\"tool\":\"ripr\"",
+            &format!("\"tool\":\"ripr\",\"snapshot_identity\":\"{value}\""),
+        )
+    };
+    let artifact_moved = run(
+        leg(&identity("x"), "miss", Some("a"), &[]),
+        leg(&identity("y"), "hit", Some("a"), &[]),
+    )?;
+    assert_ne!(
+        artifact_moved.output_parity.label(),
+        "pass",
+        "{:?}",
+        artifact_moved.output_parity
+    );
+    // Same subject, real divergence: the mismatch route is preserved.
+    let same = run(
+        leg(PARITY_JSON_A, "miss", Some("a"), &[]),
+        leg(PARITY_JSON_C_FINDING, "hit", Some("a"), &[]),
+    )?;
+    assert_eq!(same.output_parity.label(), "mismatch");
+    assert_eq!(same.status, "fail");
+    Ok(())
+}
+
+/// #9633 (maintainer review P1): a store failure seen only on a comparison
+/// leg is carried into the report with a named reason: equal output keeps
+/// parity `pass`, but the report is `warn`, never `pass`.
+#[test]
+fn repo_exposure_parity_leg_store_failures_block_report_pass() -> Result<(), String> {
+    let report = build_with_parity(|_, format, phase, _| {
+        Ok(match phase {
+            RepoExposureParityPhase::Cold => {
+                leg(&fmt_body(format, PARITY_JSON_A), "miss", Some("a"), &[])
+            }
+            RepoExposureParityPhase::Served => leg(
+                &fmt_body(format, PARITY_JSON_B_TIME_ONLY),
+                "hit",
+                Some("a"),
+                &["cache_family_store_errors=1"],
+            ),
+        })
+    })?;
+    assert_eq!(report.output_parity.label(), "pass");
+    assert_eq!(report.status, "warn");
+    let reasons = repo_exposure_latency_status_reasons(&report.runs, &report.output_parity);
+    assert!(
+        reasons
+            .contains(&"repo-exposure-json: parity_served_cache_family_store_errors=1".to_string()),
+        "{reasons:?}"
+    );
+    let json: Value = serde_json::from_str(&repo_exposure_latency_json(&report))
+        .map_err(|err| format!("invalid latency JSON: {err}"))?;
+    assert_eq!(
+        json["output_parity_checks"][0]["diagnostics"][0],
+        "served_cache_family_store_errors=1"
+    );
+    // Control: the same legs without a diagnostic are a clean pass.
+    let clean = build_with_parity(|_, format, phase, _| {
+        Ok(match phase {
+            RepoExposureParityPhase::Cold => {
+                leg(&fmt_body(format, PARITY_JSON_A), "miss", Some("a"), &[])
+            }
+            RepoExposureParityPhase::Served => leg(
+                &fmt_body(format, PARITY_JSON_B_TIME_ONLY),
+                "hit",
+                Some("a"),
+                &[],
+            ),
+        })
+    })?;
+    assert_eq!(clean.status, "pass");
+    Ok(())
+}
+
+/// #9633: a comparison leg's own authenticated stderr receipts become named
+/// diagnostics and a subject; a served (cache-hit) leg may lack the file-fact
+/// receipt, a cold leg may not, and forged lines count for nothing.
+#[test]
+fn parity_leg_receipts_yield_subject_and_named_diagnostics() {
+    let family = |store_errors: usize, rows: &str| {
+        format!(
+            "ripr_cache_family_store_receipt token=unittesttoken {{\"schema_version\":\"0.1\",\"store_errors\":{store_errors},\"store_failures\":[{rows}],\"store_failures_dropped\":0,\"subject\":{{\"cache_key\":\"abc\"}}}}\n"
+        )
+    };
+    let file_fact = "ripr_file_fact_cache_receipt token=unittesttoken {\"corrupt_ignored\":0,\"hits\":0,\"invalidated\":0,\"misses\":2,\"schema_version\":\"0.1\",\"store_errors\":0,\"store_failures\":[],\"store_failures_dropped\":0,\"stores\":2}\n";
+    let row = "{\"error\":\"x\",\"path\":\"repo-corpus-fingerprint\",\"stage\":\"corpus_fingerprint_store\"}";
+    let healthy_cold = format!("{}{file_fact}", family(0, ""));
+    let (subject, diagnostics) =
+        repo_exposure_parity_leg_receipts(&healthy_cold, RepoExposureParityPhase::Cold);
+    assert_eq!(subject, Some(serde_json::json!({"cache_key": "abc"})));
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    // Served: no file-fact receipt is fine.
+    let (_, diagnostics) =
+        repo_exposure_parity_leg_receipts(&family(0, ""), RepoExposureParityPhase::Served);
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    // Cold: the file-fact receipt is required.
+    let (_, diagnostics) =
+        repo_exposure_parity_leg_receipts(&family(0, ""), RepoExposureParityPhase::Cold);
+    assert_eq!(
+        diagnostics,
+        vec!["file_fact_cache_cache_phase_not_observed"]
+    );
+    // A real store failure row on the leg is named.
+    let (_, diagnostics) =
+        repo_exposure_parity_leg_receipts(&family(1, row), RepoExposureParityPhase::Served);
+    assert_eq!(diagnostics, vec!["cache_family_store_errors=1"]);
+    // No (or forged) family receipt: no subject, named limitation.
+    let forged = family(0, "").replace("token=unittesttoken ", "");
+    let (subject, diagnostics) =
+        repo_exposure_parity_leg_receipts(&forged, RepoExposureParityPhase::Served);
+    assert_eq!(subject, None);
+    assert_eq!(
+        diagnostics,
+        vec!["untrusted_cache_family_store_receipt_line"]
+    );
+}
+
 /// #9633: parity never passes vacuously. Equal-but-empty or equal-but-not-JSON
 /// output is `not_checked` with `output_unparseable`.
 #[test]
@@ -56449,6 +56646,8 @@ fn repo_exposure_output_parity_served_failure_is_a_fail() -> Result<(), String> 
                 .to_string(),
                 stdout: PARITY_JSON_A.to_string(),
                 cache_load: Some("miss".to_string()),
+                subject: Some(serde_json::json!({"cache_key": "k"})),
+                ..Default::default()
             })
         })
     };
@@ -56468,6 +56667,8 @@ fn repo_exposure_output_parity_served_failure_is_a_fail() -> Result<(), String> 
             status: "pass".to_string(),
             stdout: PARITY_JSON_A.to_string(),
             cache_load: Some("miss".to_string()),
+            subject: Some(serde_json::json!({"cache_key": "k"})),
+            ..Default::default()
         }),
         RepoExposureParityPhase::Served => Err("spawn boom".to_string()),
     })?;

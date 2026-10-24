@@ -233,7 +233,7 @@ fn inventory_classified_seams_report_inner(
         changed_paths,
         &mut family_store_failures,
     );
-    trace_cache_family_store_failures(&family_store_failures);
+    trace_cache_family_store_failures(&family_store_failures, result.as_ref().ok());
     result
 }
 
@@ -513,15 +513,36 @@ const CACHE_FAMILY_STORE_RECEIPT_PREFIX: &str = "ripr_cache_family_store_receipt
 /// on the opt-in trace channel: the same bounded `{path, stage, error}` rows
 /// and dropped count as the file-fact receipt, always present (an empty row
 /// list is the healthy state, so a consumer can tell it from a missing line).
-fn trace_cache_family_store_failures(stats: &FileFactCacheStats) {
+fn trace_cache_family_store_failures(
+    stats: &FileFactCacheStats,
+    report: Option<&ClassifiedSeamsReport>,
+) {
     if !latency_trace::latency_trace_enabled() {
         return;
     }
+    let mut receipt = cache_family_store_receipt(stats);
+    receipt["subject"] = report.map_or(serde_json::Value::Null, run_subject);
     eprintln!(
         "{}{}",
         latency_trace::authenticated_receipt_prefix(CACHE_FAMILY_STORE_RECEIPT_PREFIX),
-        cache_family_store_receipt(stats)
+        receipt
     );
+}
+
+/// What this run analyzed, as the producer saw it: the cache key identity
+/// (sources, config, manifests, toolchain, seam limit) and digests of the
+/// generated, naming-only and declined file disclosures. A harness comparing
+/// two runs uses it to refuse to compare runs over different subjects.
+/// `cache_key` is `null` when the run had no reusable key.
+fn run_subject(report: &ClassifiedSeamsReport) -> serde_json::Value {
+    let digest = |text: String| super::seam_cache::stable_input_hash(text.as_bytes());
+    serde_json::json!({
+        "cache_key": report.corpus_key.as_ref().map(|key| digest(key.filename())),
+        "skipped_generated": digest(format!("{:?}", report.skipped_generated)),
+        "naming_only_skips": digest(format!("{:?}", report.naming_only_skips)),
+        "declined_rust_files": digest(format!("{:?}", report.declined_rust_files)),
+        "diff_bound_corpus": report.diff_bound_corpus,
+    })
 }
 
 fn cache_family_store_receipt(stats: &FileFactCacheStats) -> serde_json::Value {

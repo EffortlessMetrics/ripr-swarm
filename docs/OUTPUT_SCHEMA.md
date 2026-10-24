@@ -7921,7 +7921,12 @@ Field contract:
   `primary_run_<status>`, `cold_run_error: <text>`, `cold_run_<status>`,
   `cold_run_served_from_cache`, `served_run_error: <text>`,
   `served_run_killed`, `served_run_timeout`,
-  `served_run_not_cache_hit`, `output_unparseable`).
+  `served_run_not_cache_hit`, `comparison_subject_moved` (the producer's own
+  subject receipt for the cold and served legs differ: source, config or
+  generated-disclosure movement, decided before outputs are compared),
+  `comparison_subject_unobserved`, `output_unparseable`) and `diagnostics`
+  (named store failures or receipt limitations from the two comparison legs'
+  own authenticated receipts, e.g. `served_cache_family_store_errors=1`).
 - `status_reasons` - the named, per-run reasons `status` is not `pass`
   (`<format>: file_fact_cache_store_errors=N`,
   `<format>: file_fact_cache_corrupt_ignored=N`,
@@ -7930,7 +7935,8 @@ Field contract:
   `<format>: <cache_family_store limitation>`,
   `<format>: output_parity_mismatch`,
   `<format>: output_parity_fail_<reason>`,
-  `<format>: output_parity_not_checked_<reason>`, or
+  `<format>: output_parity_not_checked_<reason>`,
+  `<format>: parity_<cold|served>_<leg diagnostic>`, or
   `output_parity_not_checked` when no check ran).
 - `timeout_ms` - timeout budget per repo-exposure format. Override with
   `RIPR_REPO_EXPOSURE_LATENCY_TIMEOUT_MS`.

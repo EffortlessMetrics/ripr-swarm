@@ -15,3 +15,8 @@
 - The latency report no longer trusts any stderr line that starts with a
   receipt prefix: receipts must carry a per-run token passed in
   `RIPR_REPO_EXPOSURE_LATENCY_RECEIPT_TOKEN`; forged lines are ignored (#9633).
+- Parity legs are compared only when the producer's own subject receipt (cache
+  key and generated-disclosure digests) agrees across the cold and served runs;
+  movement is `not_checked` (`comparison_subject_moved`), not a mismatch. A
+  store failure on a parity leg now names a `parity_*` status reason and keeps
+  the report from `pass` (#9633).
