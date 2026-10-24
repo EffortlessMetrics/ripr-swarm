@@ -4989,6 +4989,71 @@ fn perl_changed_file_count_ignores_packet_changes_in_untouched_files() -> Result
     Ok(())
 }
 
+/// RIPR-SPEC-0235 rule 21 through `analyze_diff`: the unowned-line finding is
+/// appended to the packet's own findings, only for lines the diff adds.
+#[test]
+fn analyze_diff_appends_the_unowned_top_level_finding() -> Result<(), String> {
+    let boundary = r#""dynamic_boundaries": [
+    {
+      "boundary_id": "boundary:lib/My/App.pm:symbol_table_mutation:1",
+      "kind": "symbol_table_mutation",
+      "file_id": "file:lib/My/App.pm",
+      "owner_id": null,
+      "range": {"start_line": 28, "start_column": 1, "end_line": 28, "end_column": 20},
+      "confidence": "high",
+      "provenance_refs": []
+    }
+  ],"#;
+    let packet = EXACT_RETURN_PACKET.replace("\"dynamic_boundaries\": [],", boundary);
+    assert_ne!(packet, EXACT_RETURN_PACKET);
+    let packet_path = std::env::temp_dir().join(format!(
+        "ripr-perl-unowned-append-{}.json",
+        std::process::id()
+    ));
+    std::fs::write(&packet_path, bless_fingerprint(&packet)).map_err(|error| error.to_string())?;
+    struct TempPacketGuard(std::path::PathBuf);
+    impl Drop for TempPacketGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+    let _guard = TempPacketGuard(packet_path.clone());
+    let mut options = packet_test_options();
+    options.perl_facts_path = Some(packet_path);
+    let classes = |changed: &[ChangedFile]| -> Result<Vec<(usize, String)>, String> {
+        let result = PerlAdapter.analyze_diff(&options, &OraclePolicy::default(), changed)?;
+        Ok(result
+            .findings
+            .iter()
+            .map(|f| (f.probe.location.line, f.id.clone()))
+            .collect())
+    };
+    // The packet's change on line 15 plus an uncovered added line 30.
+    let mut with_top_level = diff_adding("lib/My/App.pm", &[15]);
+    with_top_level
+        .added_lines
+        .push(crate::analysis::diff::ChangedLine {
+            line: 30,
+            text: "my %M = (a => 3);".to_string(),
+            new_side_line: 30,
+        });
+    let both = classes(&[with_top_level])?;
+    assert!(
+        both.iter()
+            .any(|(line, id)| *line == 30 && id.ends_with(":perl-unowned")),
+        "the unowned finding is appended: {both:?}"
+    );
+    assert!(
+        both.iter()
+            .any(|(line, id)| *line == 15 && !id.ends_with(":perl-unowned")),
+        "the packet's own finding stays: {both:?}"
+    );
+    // Control: without the added top-level line there is no unowned finding.
+    let only = classes(&[diff_adding("lib/My/App.pm", &[15])])?;
+    assert!(only.iter().all(|(_, id)| !id.ends_with(":perl-unowned")));
+    Ok(())
+}
+
 #[test]
 fn perl_rows_without_an_established_defect_keep_no_miss() -> Result<(), String> {
     use crate::domain::ExposureClass;
