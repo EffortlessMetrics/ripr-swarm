@@ -148,6 +148,20 @@ assertion reads the call's out-parameter; it grants no strength or reach.
   `write_all`, `write_fmt` or `write`; otherwise a user trait could resolve
   the call to a no-op. Inherent `push`/`push_str`/`insert`/`extend` are not
   affected.
+- `write!`/`writeln!` credit needs the parameter as the whole first argument
+  (`write!(out, ..)`); `write!(out.clone(), ..)`, `out.to_string()` and
+  similar destinations that merely start with the name refuse.
+- Calls whose callee is not a plain identifier or path (turbofish `f::<T>()`,
+  parenthesised `(f)()`, chained `f()()`) refuse in the owner statements at
+  or before the last write, in test setup and assertions, and in the owner
+  call statement itself, whose receiver and arguments are scanned too; the
+  only callees allowed there beyond the test-side allowlist are the owner
+  method, `unwrap` and `expect`.
+- Named non-blocking limits (#10058): data-dependent empties (a named
+  identifier or width-padded placeholder may format to empty or whitespace),
+  width padding on a user `Display`, traits from external crates, and a std
+  `Write` import anywhere in the owner file's scope counting as in scope for
+  every function in the file.
 - A format template containing `$` or `*` (`{:1$}`, `{:.*}`) is never treated
   as certainly non-empty, and a string literal with a backslash-newline
   continuation or any escape other than `\n \t \\ \" \'` is not a non-empty

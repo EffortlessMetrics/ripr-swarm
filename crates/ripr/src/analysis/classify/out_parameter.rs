@@ -584,10 +584,18 @@ fn classify_statement(
                     .filter_map(|element| element.into_token())
                     .filter(|token| !token.kind().is_trivia())
                     .collect();
-                let first = tokens
+                let first_at = tokens
                     .iter()
-                    .find(|token| token.kind() == SyntaxKind::IDENT)?;
-                if strip_raw(first.text()) != name {
+                    .position(|token| token.kind() == SyntaxKind::IDENT)?;
+                let first = &tokens[first_at];
+                // The destination is exactly the bare identifier: the first
+                // argument is `name` alone, followed by a comma, so `out.clone()`, `out.to_string()`
+                // and `&mut other` are not writes through the parameter.
+                if strip_raw(first.text()) != name
+                    || tokens
+                        .get(2)
+                        .is_none_or(|next| next.kind() != SyntaxKind::COMMA)
+                {
                     return None;
                 }
                 // `writeln!` always adds a newline; `write!` needs a template
@@ -782,6 +790,9 @@ fn straight_line(node: &SyntaxNode, macro_names: &[String]) -> bool {
         .filter_map(|element| element.into_token())
         .filter(|token| !token.kind().is_trivia())
         .collect();
+    if has_unnamed_call(&tokens) {
+        return false;
+    }
     // A trailing `?` ends the statement; any other `?` can leave the owner.
     let mut end = tokens.len();
     while end > 0 && tokens[end - 1].kind() == SyntaxKind::SEMICOLON {
@@ -1040,7 +1051,7 @@ fn owner_item_context_is_inert(
 /// A `let` of a plain value or an assertion macro; nothing else may sit
 /// between the test's start and its assertion.
 fn simple_test_statement(node: &SyntaxNode, macro_names: &[String], local: &str) -> bool {
-    if !straight_line(node, macro_names) || !calls_are_plain(node, local) {
+    if !straight_line(node, macro_names) || !calls_are_plain(node, local, &[]) {
         return false;
     }
     match ast::Stmt::cast(node.clone()) {
@@ -1060,12 +1071,31 @@ fn simple_test_statement(node: &SyntaxNode, macro_names: &[String], local: &str)
 /// Every call in `node` (macro arguments included) is `String::from`,
 /// `String::new`, `Vec::new`, `VecDeque::new`, `Some`/`Ok`/`Err`, or a pure
 /// std method (`len`, `is_empty`, `as_str`, `to_string`) directly on `local`.
-fn calls_are_plain(node: &SyntaxNode, local: &str) -> bool {
+/// A `(` that follows `>` (a turbofish call such as `f::<u8>()`), `)`, `]` or
+/// `?` is a call whose callee is not a plain identifier or path; it cannot be
+/// checked against the allowlists, so it refuses.
+fn has_unnamed_call(tokens: &[ra_ap_syntax::SyntaxToken]) -> bool {
+    tokens.windows(2).any(|pair| {
+        pair[1].kind() == SyntaxKind::L_PAREN
+            && matches!(
+                pair[0].kind(),
+                SyntaxKind::R_ANGLE
+                    | SyntaxKind::R_PAREN
+                    | SyntaxKind::R_BRACK
+                    | SyntaxKind::QUESTION
+            )
+    })
+}
+
+fn calls_are_plain(node: &SyntaxNode, local: &str, extra_methods: &[&str]) -> bool {
     let tokens: Vec<_> = node
         .descendants_with_tokens()
         .filter_map(|element| element.into_token())
         .filter(|token| !token.kind().is_trivia())
         .collect();
+    if has_unnamed_call(&tokens) {
+        return false;
+    }
     for (at, token) in tokens.iter().enumerate() {
         if token.kind() != SyntaxKind::IDENT
             || tokens
@@ -1078,10 +1108,12 @@ fn calls_are_plain(node: &SyntaxNode, local: &str) -> bool {
         let before = |back: usize| at.checked_sub(back).and_then(|index| tokens.get(index));
         let allowed = match before(1).map(|token| token.kind()) {
             Some(SyntaxKind::DOT) => {
-                matches!(name, "len" | "is_empty" | "as_str" | "to_string")
-                    && before(2).is_some_and(|receiver| {
-                        receiver.kind() == SyntaxKind::IDENT && strip_raw(receiver.text()) == local
-                    })
+                extra_methods.contains(&name)
+                    || (matches!(name, "len" | "is_empty" | "as_str" | "to_string")
+                        && before(2).is_some_and(|receiver| {
+                            receiver.kind() == SyntaxKind::IDENT
+                                && strip_raw(receiver.text()) == local
+                        }))
             }
             Some(SyntaxKind::COLON2) => {
                 before(2).is_some_and(|owner| {
@@ -1267,6 +1299,14 @@ fn local_written_by_owner_call(
         || call
             .descendants()
             .any(|node| node.kind() == SyntaxKind::ATTR)
+    {
+        return None;
+    }
+    // The call statement's receiver and arguments are scanned like any other
+    // setup statement; only the owner method, `unwrap` and `expect` are
+    // additional allowed callees.
+    if !straight_line(call, macro_names)
+        || !calls_are_plain(call, local, &[owner.name.as_str(), "unwrap", "expect"])
     {
         return None;
     }

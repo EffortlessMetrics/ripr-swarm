@@ -974,3 +974,64 @@ fn positional_width_and_escaped_literals_do_not_prove_a_write() -> Result<(), St
     }
     Ok(())
 }
+
+fn assert_not_confirmed(finding: &Value, what: &str) {
+    assert_ne!(finding["classification"], "exposed", "{what}: {finding}");
+    assert_ne!(discriminate_state(finding), "yes", "{what}: {finding}");
+}
+
+#[test]
+fn a_write_macro_into_an_expression_starting_with_the_parameter_is_not_credited()
+-> Result<(), String> {
+    let test = format!("{BUILD}        assert_eq!(s, \"+570\");");
+    for changed in [
+        "        write!(out.clone(), \"+\").unwrap();",
+        "        write!(out.to_string(), \"+\").unwrap();",
+        "        writeln!(out.clone()).unwrap();",
+        "        write!(&mut out, \"+\").unwrap();",
+    ] {
+        let owner = owner_with(&["        use std::fmt::Write;", changed]);
+        let finding = finding_custom(&owner, "        // old", changed, &test)?;
+        assert_not_confirmed(&finding, changed);
+    }
+    // The bare parameter as destination keeps the credit.
+    let changed = "        write!(out, \"+\").unwrap();";
+    let owner = owner_with(&["        use std::fmt::Write;", changed]);
+    let kept = finding_custom(&owner, "        // old", changed, &test)?;
+    assert_eq!(kept["classification"], "exposed", "{kept}");
+    assert_eq!(discriminate_state(&kept), "yes", "{kept}");
+    Ok(())
+}
+
+#[test]
+fn turbofish_parenthesised_and_argument_calls_are_not_followed() -> Result<(), String> {
+    let assertion = "        assert_eq!(s, \"+570\");";
+    for body in [
+        format!("{BUILD}        assert!(bye::<u8>());\n{assertion}"),
+        format!(
+            "        let mut s = String::new();\n        OffsetFormat.format(&mut s, util::go());\n{assertion}"
+        ),
+        format!("{BUILD}        assert!((bye)());\n{assertion}"),
+        format!(
+            "        let mut s = String::new();\n        OffsetFormat.format(&mut s, std::process::exit(0));\n{assertion}"
+        ),
+        format!(
+            "        let mut s = String::new();\n        OffsetFormat.format(&mut s, bye::<i32>());\n{assertion}"
+        ),
+        format!(
+            "        let mut s = String::new();\n        OffsetFormat.format(&mut s, 570).wrap::<u8>();\n{assertion}"
+        ),
+    ] {
+        let finding = finding(&body)?;
+        assert_not_confirmed(&finding, &body);
+    }
+    // The same shape in the owner, before the changed write.
+    let changed = "        out.push('+');";
+    let test = format!("{BUILD}{assertion}");
+    for before in ["        bye::<u8>();", "        (bye)();"] {
+        let owner = owner_with(&[before, changed]);
+        let finding = finding_custom(&owner, "        // old", changed, &test)?;
+        assert_not_confirmed(&finding, before);
+    }
+    Ok(())
+}
