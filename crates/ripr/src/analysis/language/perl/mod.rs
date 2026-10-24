@@ -579,7 +579,9 @@ fn unowned_change_findings(
             let line = added.line;
             // The producer wrote zero-based lines (#3221) and SPEC-0064 reads
             // one-based ones, so a range covers both readings of its lines.
-            let covers = |range: &RangeFact| range.start_line <= line && line <= range.end_line.saturating_add(1);
+            let covers = |range: &RangeFact| {
+                range.start_line <= line && line <= range.end_line.saturating_add(1)
+            };
             let covered = packet
                 .changes
                 .iter()
