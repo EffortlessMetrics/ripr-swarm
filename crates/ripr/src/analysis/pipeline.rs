@@ -2078,6 +2078,9 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
     // outcomes as the public `language_runs`, which stays the
     // non-success-only projection.
     let mut repo_language_aggregate = LanguageAggregate::new_repo();
+    // The shared TypeScript adapter serves both ids; merge its result once
+    // per family while recording an outcome per label (#10013).
+    let mut typescript_family_merged = false;
     for language in languages {
         cancellation::checkpoint()?;
         // Non-abort contract (see the diff loop above): preview-language
@@ -2131,8 +2134,13 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
                 let outcome = LanguageAnalysisOutcomeV1::from_repo_result(*language, &result, None);
                 language_runs.extend(outcome.compat_run());
                 repo_language_aggregate.record(outcome);
-                findings.extend(result.findings);
-                files_by_language.push((*language, result.production_files));
+                let repeat_typescript_pass =
+                    matches!(language, LanguageId::TypeScript | LanguageId::JavaScript)
+                        && std::mem::replace(&mut typescript_family_merged, true);
+                if !repeat_typescript_pass {
+                    findings.extend(result.findings);
+                    files_by_language.push((*language, result.production_files));
+                }
             }
             Err(reason) => {
                 let status = perl_run_status_for_err(&reason);
@@ -5554,6 +5562,53 @@ mod tests {
             "{:?}",
             analysis.language_runs
         );
+        Ok(())
+    }
+
+    /// #10013: both TypeScript-family ids run the shared repo adapter, but its
+    /// findings and file counts are retained once, as in a single-id run.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn repo_pipeline_both_typescript_ids_retain_findings_once() -> Result<(), String> {
+        let files = [
+            (
+                "src/price.ts",
+                "export function price(amount: number): number {\n  return amount > 10 ? 1 : 2;\n}\n",
+            ),
+            (
+                "src/price.test.ts",
+                "import { price } from './price';\ntest('p', () => { expect(price(20)).toBe(1); });\n",
+            ),
+        ];
+        let (single, _) = run_repo_aggregate("repo-ts-single", &files, &[LanguageId::TypeScript])?;
+        let (both, both_aggregate) = run_repo_aggregate(
+            "repo-ts-both",
+            &files,
+            &[LanguageId::TypeScript, LanguageId::JavaScript],
+        )?;
+        let (single_js, _) =
+            run_repo_aggregate("repo-js-single", &files, &[LanguageId::JavaScript])?;
+        let (reversed, reversed_aggregate) = run_repo_aggregate(
+            "repo-ts-reversed",
+            &files,
+            &[LanguageId::JavaScript, LanguageId::TypeScript],
+        )?;
+        assert!(!single.findings.is_empty(), "fixture must yield findings");
+        // The file count is labelled by the first TypeScript-family id, so each
+        // order is compared with the single-id run of that first id.
+        for (label, run, aggregate, first) in [
+            ("both", &both, &both_aggregate, &single),
+            ("reversed", &reversed, &reversed_aggregate, &single_js),
+        ] {
+            assert_eq!(run.findings, single.findings, "{label}: finding vector");
+            assert_eq!(run.summary.findings, single.summary.findings, "{label}");
+            assert_eq!(
+                run.summary.changed_files_by_language, first.summary.changed_files_by_language,
+                "{label}: files by language"
+            );
+            assert!(aggregate.outcomes.contains_key("typescript"), "{label}");
+            assert!(aggregate.outcomes.contains_key("javascript"), "{label}");
+        }
         Ok(())
     }
 

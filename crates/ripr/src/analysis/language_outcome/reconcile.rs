@@ -9,7 +9,7 @@
 //! `AnalysisOutcome.kind`. An adapter that is not compiled in is recorded as an
 //! aggregate-only disposition by design (#6468), with no top-level limitation.
 
-use super::{LanguageAggregate, LanguageOutcomeStatus};
+use super::{LanguageAggregate, LanguageOutcomeStatus, OutcomeMode};
 use crate::analysis_outcome::{AnalysisLimitationKind, AnalysisOutcome};
 use crate::domain::{Finding, LanguageId};
 
@@ -35,22 +35,30 @@ pub(crate) fn reconcile(
     aggregate.validate()?;
     aggregate.validate_selected(selected)?;
 
-    let child_findings: usize = aggregate
+    let mut child_findings: usize = aggregate
         .outcomes
         .values()
         .map(|child| child.finding_count())
         .sum();
-    // When both TypeScript ids are selected the pipeline runs the one adapter
-    // per id and retains both runs' findings, while the aggregate keeps one
-    // child per label (#6468). That pre-existing duplication makes the
-    // retained list longer, never shorter, so only that case is relaxed.
+    // When both TypeScript ids are selected the one adapter runs per id and
+    // the aggregate keeps one child per label (#6468). Repo mode retains the
+    // adapter's findings once, while each label's child carries the adapter's
+    // whole count, so the family counts once there (#10013): the larger child
+    // replaces the sum of the two. Diff mode attributes findings to a label by
+    // the finding's own language, so its children already sum to the retained
+    // findings.
     let both_typescript_ids =
         selected.contains(&LanguageId::TypeScript) && selected.contains(&LanguageId::JavaScript);
-    let counts_agree = if both_typescript_ids {
-        findings.len() >= child_findings
-    } else {
-        findings.len() == child_findings
-    };
+    if both_typescript_ids && aggregate.mode == OutcomeMode::Repo {
+        let family = ["typescript", "javascript"].map(|label| {
+            aggregate
+                .outcomes
+                .get(label)
+                .map_or(0, |child| child.finding_count())
+        });
+        child_findings = child_findings - family[0] - family[1] + family[0].max(family[1]);
+    }
+    let counts_agree = findings.len() == child_findings;
     if !counts_agree {
         return Err(format!(
             "language reconcile: children carry {child_findings} finding(s), retained findings are {}",
