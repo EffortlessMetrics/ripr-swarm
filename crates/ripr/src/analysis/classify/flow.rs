@@ -573,16 +573,33 @@ fn tail_if_branch_value(
     // because masking blanks string and char literals that are valid values.
     let raw_line = function.body.lines().nth(offset).unwrap_or(changed_line);
     let (then_range, after_then) = braced_block_range(changed_line)?;
-    let rest_after_then = &changed_line[after_then..];
-    let trimmed = rest_after_then.trim_start();
-    if !trimmed.starts_with("else") || trimmed[4..].trim_start().starts_with("if ") {
-        return None;
-    }
-    let else_start = after_then + (rest_after_then.len() - trimmed.len()) + 4;
-    let (else_rel, after_else) = braced_block_range(&changed_line[else_start..])?;
-    let else_range = else_start + else_rel.start..else_start + else_rel.end;
-    if !changed_line[else_start + after_else..].trim().is_empty() {
-        return None;
+    // A one-line `else if` ladder is the same tail expression with more arms:
+    // each continuation is `else if <cond> { .. }` until the final
+    // `else { .. }` closes the line. The probe is the first condition, so the
+    // first arm's value is the sink the condition decides.
+    let mut arms = vec![then_range];
+    let mut cursor = after_then;
+    loop {
+        let rest_after = &changed_line[cursor..];
+        let trimmed = rest_after.trim_start();
+        if !trimmed.starts_with("else") {
+            return None;
+        }
+        let after_else = cursor + (rest_after.len() - trimmed.len()) + 4;
+        let following = changed_line[after_else..].trim_start();
+        let following_start = after_else + (changed_line[after_else..].len() - following.len());
+        if following.starts_with("if ") {
+            let (arm_rel, arm_end) = braced_block_range(&changed_line[following_start..])?;
+            arms.push(following_start + arm_rel.start..following_start + arm_rel.end);
+            cursor = following_start + arm_end;
+        } else {
+            let (arm_rel, arm_end) = braced_block_range(&changed_line[after_else..])?;
+            arms.push(after_else + arm_rel.start..after_else + arm_rel.end);
+            if !changed_line[after_else + arm_end..].trim().is_empty() {
+                return None;
+            }
+            break;
+        }
     }
     let branch_text = |range: std::ops::Range<usize>| {
         raw_line
@@ -591,12 +608,12 @@ fn tail_if_branch_value(
             .trim()
             .to_string()
     };
-    let then_text = branch_text(then_range.clone());
-    let else_text = branch_text(else_range.clone());
-    for (masked_branch, raw_branch) in [
-        (&changed_line[then_range], &then_text),
-        (&changed_line[else_range], &else_text),
-    ] {
+    let texts = arms
+        .iter()
+        .map(|range| branch_text(range.clone()))
+        .collect::<Vec<_>>();
+    for (range, raw_branch) in arms.iter().zip(&texts) {
+        let masked_branch = &changed_line[range.clone()];
         if masked_branch.contains(';') || masked_branch.contains('{') || masked_branch.contains('}')
         {
             return None;
@@ -613,14 +630,22 @@ fn tail_if_branch_value(
         }
     }
     // A diverging branch never produces the returned value; the other branch
-    // is the sink when exactly one diverges, and neither is when both do.
-    let sink_text = match (
-        branch_is_diverging(&then_text),
-        branch_is_diverging(&else_text),
-    ) {
-        (true, true) => return None,
-        (true, false) => else_text,
-        _ => then_text,
+    // is the sink when exactly one diverges, and neither is when both do. A
+    // ladder keeps only a non-diverging first arm: what a diverging first arm
+    // leaves to the later arms is not read here.
+    let sink_text = match texts.as_slice() {
+        [then_text, else_text] => {
+            match (
+                branch_is_diverging(then_text),
+                branch_is_diverging(else_text),
+            ) {
+                (true, true) => return None,
+                (true, false) => else_text.clone(),
+                _ => then_text.clone(),
+            }
+        }
+        [then_text, ..] if !branch_is_diverging(then_text) => then_text.clone(),
+        _ => return None,
     };
     Some(LocalTextFact {
         line: probe.location.line,
@@ -1614,6 +1639,66 @@ mod tests {
         assert_eq!(sinks.len(), 1);
         assert_eq!(sinks[0].kind, FlowSinkKind::ReturnValue);
         assert_eq!(sinks[0].text, "0");
+    }
+
+    #[test]
+    fn one_line_else_if_ladder_flows_the_first_arm_to_the_returned_value() {
+        let owner = tail_owner(
+            "pub fn tier(units: u32) -> &'static str {\n    if 100 <= units { \"bulk\" } else if units >= 10 { \"pack\" } else { \"single\" }\n}",
+        );
+        let probe = probe(ProbeFamily::Predicate, "100 <= units", 2);
+
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+
+        assert_eq!(sinks.len(), 1);
+        assert_eq!(sinks[0].kind, FlowSinkKind::ReturnValue);
+        assert_eq!(sinks[0].text, "\"bulk\"");
+        assert_eq!(sinks[0].line, 2);
+    }
+
+    #[test]
+    fn one_line_else_if_ladder_with_several_continuations_keeps_the_first_arm() {
+        let owner = tail_owner(
+            "pub fn tier(units: u32) -> &'static str {\n    if units >= 100 { \"bulk\" } else if units >= 10 { \"pack\" } else if units > 1 { \"few\" } else { \"single\" }\n}",
+        );
+        let first = probe(ProbeFamily::Predicate, "units >= 100", 2);
+        let rival = probe(ProbeFamily::Predicate, "units >= 10", 2);
+
+        let sinks = local_flow_sinks(&first, Some(&owner));
+
+        assert_eq!(sinks.len(), 1);
+        assert_eq!(sinks[0].kind, FlowSinkKind::ReturnValue);
+        assert_eq!(sinks[0].text, "\"bulk\"");
+        // A later arm's condition is not the first condition, so it has no sink.
+        assert!(local_flow_sinks(&rival, Some(&owner)).is_empty());
+    }
+
+    #[test]
+    fn one_line_else_if_ladder_fails_closed_off_plain_value_arms() {
+        for body in [
+            // A statement inside a later arm is not a plain branch value.
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 { 3 } else if x > 0 { log(); 2 } else { 1 }\n}",
+            // The ladder never closes with a final `else`.
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 { 3 } else if x > 0 { 2 }\n}",
+            // Text after the closing `else` arm is not part of the tail.
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 { 3 } else if x > 0 { 2 } else { 1 } + 1\n}",
+            // A diverging first arm leaves the later arms unread.
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 { panic!() } else if x > 0 { 2 } else { 1 }\n}",
+            // A nested block arm is not a plain branch value.
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 { 3 } else if x > 0 { { 2 } } else { 1 }\n}",
+        ] {
+            let owner = tail_owner(body);
+            let probe = probe(ProbeFamily::Predicate, "x > 1", 2);
+
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+
+            assert!(
+                !sinks
+                    .iter()
+                    .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
+                "`{body}` must not produce a return-value sink: {sinks:?}"
+            );
+        }
     }
 
     #[test]
