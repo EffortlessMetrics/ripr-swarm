@@ -9705,6 +9705,12 @@ fn allow_attribute_detection_sees_suppressions_after_char_literals() {
         "'\\\\'",
         "'\\u{29}'",
         "'🦀'",
+        "'é'",
+        "'€'",
+        "'\\n'",
+        "'\\x41'",
+        "b'('",
+        "'\\u{1F980}'",
     ] {
         for text in [
             format!(
@@ -9735,21 +9741,42 @@ fn allow_attribute_detection_sees_suppressions_after_char_literals() {
             );
         }
     }
-    // A lifetime tick is not a char literal and must not hide a suppression.
-    let text = concat!(
-        "#",
-        "[cfg_attr(test, allow(dead_code), expect(warnings), x = 'a)]"
-    );
-    assert_eq!(
-        guarded_allow_attributes_in_text(text, &guarded)
-            .into_iter()
-            .map(|(_, f)| f)
-            .collect::<Vec<_>>(),
-        vec![
-            "allow(dead_code)".to_string(),
-            "expect(warnings)".to_string()
-        ],
-    );
+    // A lifetime tick is not a char literal: it must not swallow a following
+    // suppression (tick first), nor a real char literal after it, and a char
+    // literal comma must not split the attribute (split-only discriminator).
+    for (body, expected) in [
+        (
+            "x = &'a T, allow(dead_code), y = ')', expect(warnings)",
+            vec!["allow(dead_code)", "expect(warnings)"],
+        ),
+        (
+            "x = &'a T, allow(dead_code), expect(warnings)",
+            vec!["allow(dead_code)", "expect(warnings)"],
+        ),
+        ("x = ',', allow(dead_code)", vec!["allow(dead_code)"]),
+        (
+            "x = ',', allow(dead_code), y = ',', expect(warnings)",
+            vec!["allow(dead_code)", "expect(warnings)"],
+        ),
+        (
+            "allow(dead_code), x = 'a, expect(warnings)",
+            vec!["allow(dead_code)", "expect(warnings)"],
+        ),
+        (
+            "allow(dead_code), expect(warnings), x = 'a",
+            vec!["allow(dead_code)", "expect(warnings)"],
+        ),
+    ] {
+        let text = format!(concat!("#", "[cfg_attr(test, {})]"), body);
+        assert_eq!(
+            guarded_allow_attributes_in_text(&text, &guarded)
+                .into_iter()
+                .map(|(_, f)| f)
+                .collect::<Vec<_>>(),
+            expected,
+            "lifetime/char mix must retain suppressions: {text}",
+        );
+    }
 }
 
 #[test]
