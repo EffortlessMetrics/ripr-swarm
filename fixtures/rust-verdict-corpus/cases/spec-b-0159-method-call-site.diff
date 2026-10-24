@@ -1,0 +1,12 @@
+diff --git a/src/h_method.rs b/src/h_method.rs
+--- a/src/h_method.rs
++++ b/src/h_method.rs
+@@ -4,7 +4,7 @@
+ 
+ impl Gauge {
+     pub fn wide_m(&self, input: &str) -> bool {
+-        input.len() > 3
++        3 < input.len()
+     }
+ }
+ 

@@ -1353,6 +1353,8 @@ fn apply_probe_and_oracle_limits(
     // tail is a closure, a returned-receiver effect or a let-else exit is a
     // shape the owner pin does not read, not a missing assertion.
     classify::withhold_pinned_shape_gap(finding, index);
+    // #9490: an `Err(..)` pin never reaches the `Ok` path of a `Result` collect.
+    classify::withhold_result_collect_err_pin(finding, index);
     // RIPR-SPEC-0240: an operator, `Drop`, iterator or dyn call a test makes
     // may run the owner without naming it.
     classify::withhold_implicit_call_gap(finding, index);
@@ -1412,6 +1414,7 @@ fn apply_rust_no_static_path_limit(
     index: &RustIndex,
     property_macro_mentions: &oracles::PropertyMacroMentionIndex<'_>,
     transitive_reach: &classify::TransitiveReachIndex<'_>,
+    dependency_edges: Option<&classify::DependencyEdgeContext<'_>>,
 ) {
     if needs_proximity_reach_limit(finding) {
         apply_rust_proximity_reach_limit(finding, probe, transitive_reach);
@@ -1465,7 +1468,43 @@ fn apply_rust_no_static_path_limit(
         // specific witness (#8047).
         replace_witnessed_no_path_infection_summary(finding);
         apply_rust_transitive_reach_limit(finding, &owner_name, &witness);
+    } else if let Some(context) = dependency_edges
+        && let Some(owner) = probe
+            .owner
+            .as_ref()
+            .and_then(|id| index.functions().iter().find(|function| function.id == *id))
+        && let Some(witness) = classify::facade_reach_witness(index, context, owner)
+    {
+        // #9982: after every other witness, so a traced path is never
+        // displaced by this broader structural one.
+        replace_witnessed_no_path_infection_summary(finding);
+        apply_rust_facade_reach_limit(finding, &owner_name, &witness);
     }
+}
+
+/// #9982: the same named limitation a traced integration-test witness gets,
+/// for a facade crate whose re-export of the owner's crate ripr does not
+/// resolve. No reach credit, no related-test relation, no class change.
+fn apply_rust_facade_reach_limit(
+    finding: &mut Finding,
+    owner_name: &str,
+    witness: &classify::FacadeReachWitness,
+) {
+    finding.static_limit_kind = Some(classify::transitive_reach_limit_kind(&witness.test_file));
+    finding
+        .stop_reasons
+        .push(StopReason::TransitiveReachUnresolved);
+    finding
+        .evidence
+        .push(classify::RUST_FACADE_REACH_MESSAGE.to_string());
+    finding
+        .evidence
+        .push(classify::facade_reach_witness_pointer(witness));
+    finding
+        .evidence
+        .extend(classify::facade_reach_limitation_detail_lines(
+            witness, owner_name,
+        ));
 }
 
 /// RIPR-SPEC-0114/0117 for a proximity-only `weakly_exposed` finding: the
@@ -2296,6 +2335,7 @@ impl RustAdapter {
                     manifest_dir_prefixes: &manifest_dir_prefixes,
                     index: &index,
                     unindexed_manifests: &unindexed_manifests,
+                    root: &options.root,
                 });
 
         // #4722: a changed file the reference parser refused was indexed
@@ -2511,6 +2551,7 @@ impl RustAdapter {
                         &index,
                         &property_macro_mentions,
                         &transitive_reach,
+                        dependency_edges.as_ref(),
                     ),
                     dependent_scope::ReachIndex::Shared => {
                         if let Some(shared) = dependent_scope
@@ -2530,6 +2571,7 @@ impl RustAdapter {
                                 shared,
                                 mentions,
                                 reach,
+                                dependency_edges.as_ref(),
                             );
                         } else {
                             return Err("shared reach index reported but not held".to_string());
@@ -2546,6 +2588,7 @@ impl RustAdapter {
                             reach_index,
                             &reach_property_macro_mentions,
                             &classify::TransitiveReachIndex::new(reach_index),
+                            dependency_edges.as_ref(),
                         );
                     }
                     dependent_scope::ReachIndex::OverLimit { files, limit } => {
@@ -2558,6 +2601,7 @@ impl RustAdapter {
                             &index,
                             &property_macro_mentions,
                             &transitive_reach,
+                            dependency_edges.as_ref(),
                         );
                         let mixed = needs_mixed_macro_reach_limit(&finding);
                         if needs_no_static_path_limit(&finding) || mixed {
@@ -3063,6 +3107,7 @@ impl RustAdapter {
             manifest_dir_prefixes: &manifest_dir_prefixes,
             index: &index,
             unindexed_manifests: &unindexed_manifests,
+            root: &options.root,
         };
 
         for path in &production_files {
@@ -3098,6 +3143,7 @@ impl RustAdapter {
                     &index,
                     &property_macro_mentions,
                     &transitive_reach,
+                    Some(&dependency_edges),
                 );
                 classifier::withhold_proc_macro_no_path_as_unknown(&mut finding, &index);
                 apply_probe_and_oracle_limits(&mut finding, &probe, &index, None);
@@ -7027,6 +7073,7 @@ fn absent_delimiter_boundary_returns_head() {
     fn no_path_finding_with_infection_summary(summary: &str, evidence: Vec<String>) -> Finding {
         let stage = |state| StageEvidence::new(state, Confidence::Low, "stage");
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_lib.rs:predicate:test".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -9123,6 +9170,8 @@ fn absent_delimiter_boundary_returns_head() {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }];
 
         let rust_owner = FunctionSummary {
@@ -9174,6 +9223,8 @@ fn absent_delimiter_boundary_returns_head() {
     }
 }
 
+#[cfg(test)]
+mod facade_reach_tests;
 #[cfg(test)]
 mod handwritten_files_tests;
 #[cfg(test)]

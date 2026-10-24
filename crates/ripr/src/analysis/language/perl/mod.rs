@@ -600,6 +600,8 @@ fn packet_to_findings_with_currentness(
                     relation_reason: perl_relation_reason,
                     relation_confidence: perl_relation_confidence,
                     miss: None,
+                    miss_support: None,
+                    role: crate::domain::RelatedTestRole::Contributing,
                 }
             })
             .collect();
@@ -895,6 +897,7 @@ fn packet_to_findings_with_currentness(
         );
 
         findings.push(crate::domain::Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: probe_id,
             canonical_gap,
             probe,
@@ -3917,6 +3920,8 @@ fn stable_repo_path_arg(path: String, field: &str) -> Result<String, String> {
     Ok(path)
 }
 
+#[cfg(test)]
+mod capability_disposition_tests;
 #[cfg(test)]
 mod fact_index_projection_tests;
 #[cfg(test)]
