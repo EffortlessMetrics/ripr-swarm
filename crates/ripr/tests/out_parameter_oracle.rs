@@ -882,7 +882,7 @@ fn turbofish_parenthesised_and_argument_calls_are_not_followed() -> Result<(), S
 
 #[test]
 fn a_workspace_macro_shadowing_a_pure_macro_in_test_setup_is_not_credited() -> Result<(), String> {
-    // The owner body has no `!`, so only the test-side scan can see the macro.
+    // Final-state coverage: an earlier admission route also refuses this.
     for (name, setup) in [
         ("format", "let _m = format!(\"{}\", 1);"),
         ("vec", "let _m = vec![1];"),

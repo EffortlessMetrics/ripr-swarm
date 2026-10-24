@@ -152,10 +152,12 @@ assertion reads the call's out-parameter; it grants no strength or reach.
   defines a macro whose name starts with `write`.
 - Between the test's start and its assertion, every statement other than the
   setup definition and the owner call must be a `let` of a plain value or an
-  assertion macro. The only calls allowed, including inside assertion,
-  `format!` and `vec!` macros, are pure `len`/`is_empty`/`as_str`/`to_string`
-  on the local, `String::from`/`String::new`/`Vec::new`/`VecDeque::new`, and
-  `Some`/`Ok`/`Err`.
+  assertion macro. In those intervening statements (and the owner call
+  statement), the only calls allowed, including inside assertion, `format!`
+  and `vec!` macros, are pure `len`/`is_empty`/`as_str`/`to_string` on the
+  local, `String::from`/`String::new`/`Vec::new`/`VecDeque::new`, and
+  `Some`/`Ok`/`Err`. The asserting statement's expected operand is checked
+  separately by the non-empty expected-value rule above.
 - The parameter type must be a concrete `&mut String`, `&mut Vec<..>` or
   `&mut VecDeque<..>`; generic, `impl Trait` and `dyn Trait` outputs refuse.
 - Only `assert_eq!` and a bare local operand are recognised. Out-parameters
