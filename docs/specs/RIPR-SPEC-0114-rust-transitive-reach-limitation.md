@@ -154,8 +154,7 @@ which ripr does not follow.
 - A `static_unknown` finding that still carries a ruled-out `reach no` (an
   unmodelled-syntax probe classified `static_unknown` without passing through
   `no_static_path`: its owner may be reached unseen, i.e. named elsewhere in
-  the workspace outside its own fn line or a std-trait impl method, or it has
-  no owner function, as for a const/static probe; #10088) gets the
+  the workspace outside its own fn line or a std-trait impl method; #10088) gets the
   same reach/stage/evidence/next-step rewrite; its class is already the unknown.
 - Never promotes: only `no_static_path` and a `static_unknown` with ruled-out
   reach are rewritten, only to `static_unknown`.

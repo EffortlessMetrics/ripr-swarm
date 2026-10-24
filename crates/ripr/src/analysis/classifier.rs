@@ -183,9 +183,8 @@ pub(in crate::analysis) fn withhold_proc_macro_no_path_as_unknown(
     // #10088: an unmodelled-syntax probe (`let mut n = 0;`, `n += 1;`) is
     // classified `static_unknown` directly, without passing through
     // `no_static_path`, when its owner may be reached unseen (named elsewhere
-    // in the workspace outside its own fn line, or a std-trait impl method) or
-    // when it has no owner function (a const/static probe). It still carries
-    // the ruled-out `reach no` and its "no static test path" wording: the same
+    // in the workspace outside its own fn line, or a std-trait impl method).
+    // It still carries the ruled-out `reach no` and its "no static test path" wording: the same
     // unsupported claim, so it is rewritten the same way.
     let reach_ruled_out = match finding.class {
         ExposureClass::NoStaticPath => true,
