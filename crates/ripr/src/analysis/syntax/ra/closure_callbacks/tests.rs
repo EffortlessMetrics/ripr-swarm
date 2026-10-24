@@ -87,8 +87,18 @@ fn closure_literal_positions_require_a_call_that_runs_with_the_closure()
             vec![1],
         ),
         (
-            "closure return in an argument",
+            "a closure-owned return in an argument is refused too (shared escape authority)",
             "run((|| { return 1; })(), || gate(1));",
+            vec![],
+        ),
+        (
+            "return written in the callback literal itself",
+            "run(true, || { return gate(1); });",
+            vec![],
+        ),
+        (
+            "question mark written in the callback literal itself",
+            "run(true, || { gate(1)?; true });",
             vec![],
         ),
         (

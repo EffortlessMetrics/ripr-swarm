@@ -6,7 +6,8 @@
   test is no longer reported as "has no assertion". Invocations under
   `if`/`match`/loops, after an early exit or an unrecognized macro, in a
   nested closure or macro
-  argument, helpers that invoke two or more closure parameters, boxed or
+  argument, a `return`, `?` or `yield` hidden in a macro operand or written
+  inside the callback closure itself, helpers that invoke two or more closure parameters, boxed or
   by-reference closures and forwarded callbacks (the
   tracing `with_default(subscriber, fun)` shape) are not credited by this
   change. A helper that never invokes the parameter is still credited by the

@@ -1078,6 +1078,16 @@ fn closure_callback_helpers_that_may_not_observe_the_closure_grant_nothing()
             "        run_test({ return; true }, || gate(11))\n",
         ),
         (
+            "return written in the callback literal itself",
+            CALLBACK_HELPER,
+            "        run_test(true, || { return gate(11); });\n",
+        ),
+        (
+            "question mark written in the callback literal itself",
+            CALLBACK_HELPER,
+            "        run_test(true, || { gate(11)?; true });\n",
+        ),
+        (
             "exit hidden in a format argument of the helper call",
             CALLBACK_HELPER,
             "        run_test(format!(\"{}\", { return; 1 }).is_empty(), || gate(11));\n",

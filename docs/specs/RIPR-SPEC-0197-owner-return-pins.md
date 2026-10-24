@@ -1840,7 +1840,14 @@ analysis:
   statement the test body reaches unconditionally and in order (`call;`, a
   tail call, or `let PAT = call;` without `else`), after only statements
   whose parsed syntax holds no `return`, `?`, `break`, `continue` or loop and
-  no macro other than the assertion and formatting macros. Macro arguments
+  no macro outside the trusted set (`TRUSTED_MACRO_NAMES` in `owner_pin.rs`:
+  the assertion, formatting, printing, `vec!`, `matches!` and `panic!`-family
+  macros and similar, none of which can `return` from the enclosing function
+  on its own; not only assertion and formatting macros) and no
+  closure-owned `return`, `?` or `yield` anywhere in the statement, including
+  inside the callback literal itself (`|| { gate()?; true }` earns no credit;
+  fail-closed, a deliberate narrowing relative to the raw early-exit scan).
+  Macro arguments
   are token trees the parser does not read as expressions, so a hidden exit
   (`format!("{}", { return; x })`, `format!("{}", x?)`) is refused through the
   same trusted-macro operand escape authority the owner-pin path uses
@@ -2346,7 +2353,11 @@ assertions. This repair shares the existing callback without that larger migrati
   loop, early exit, opaque macro, reassignment, async closure, boxed and
   by-reference closures, same-line pre-invocation and repeated spelling,
   cross-module helper negatives) and the unit controls in
-  `crates/ripr/src/analysis/syntax/ra/closure_callbacks/tests.rs` pin
+  `crates/ripr/src/analysis/syntax/ra/closure_callbacks/tests.rs` (including
+  the hidden-macro-exit negatives: a `return` or `?` inside a transparent
+  macro's operand of the current call, of a preceding statement or of a tail,
+  a return or `?` written in the callback literal, and the benign
+  `format!("hi {}", "bob")` operand positive) pin
   observation-fact admission, not a changed-sink or owner-return claim.
 - Unit (`crates/ripr/src/analysis/classify/owner_pin/tests.rs`): the bytes
   shape; trait scope; competing definitions (override, inherent twin,
