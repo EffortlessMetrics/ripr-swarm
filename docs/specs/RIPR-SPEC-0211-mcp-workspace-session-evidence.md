@@ -120,6 +120,18 @@ official SDK transport:
   the committed
   snapshot's typed `AnalysisOutcome`, and profile/support facts. No
   evidence detail is returned.
+- The session block additively carries `language_completeness`
+  (`[{language, status}]`, #6475): one row per language the committed
+  snapshot's analysis recorded, in canonical label order, with the closed
+  status spelling the producer's aggregate owns (`complete`,
+  `complete_zero`, `partial`, `unavailable`, `invalid`, `failed`,
+  `unsupported`, `not_selected`, `no_current_scope`). It is read from the
+  producer's crate-private completeness view bound at commit time, not
+  re-derived from limitation kinds. It is emitted only when a committed
+  snapshot carries a view, so a status without it (no snapshot) keeps the
+  unchanged `ripr-mcp-session-v1` shape; the output schema declares it
+  optional. It is not part of the snapshot identity, and no existing field
+  changes. Consumers that ignore the field are unaffected.
 - `ripr_refresh` runs one bounded static analysis through the shared
   `app::check_workspace` authority on the committed default-branch diff
   and commits the completed snapshot. Initialize/discover instructions,
@@ -442,6 +454,14 @@ unknown route into a recognized one.
 
 ## Test Mapping
 
+- `crates/ripr/src/mcp/workspace.rs::tests::status_serves_per_language_completeness_from_the_view`,
+  `status_without_a_view_keeps_the_unchanged_shape` and
+  `every_emitted_session_key_is_declared_by_the_status_schema` — literal
+  `language_completeness` rows, absence without a view, and schema
+  declaration (optional, closed status enum). Dropping the commit-time view
+  binding in `run_check` fails
+  `crates/ripr/tests/mcp_stdio.rs::refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation`,
+  which asserts the real-refresh rows for both feature profiles.
 - `crates/ripr/tests/mcp_stdio.rs::rejection_arms_survive_the_stdio_transport`
   — literal complete recovery prose and arrays, retained recognized-route
   refusal, then valid status recovery on the same session.

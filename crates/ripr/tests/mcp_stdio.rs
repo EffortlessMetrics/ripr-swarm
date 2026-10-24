@@ -2951,6 +2951,22 @@ fn refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation() -> Re
             "filter reads changed the completed snapshot: {status}"
         ));
     }
+    // #6475: the status session serves the producer's per-language
+    // completeness. Rust (and Python when compiled and enabled) each ran
+    // and produced gaps, so each row is literally `complete`.
+    let expected_languages = if cfg!(feature = "lang-python") {
+        json!([
+            {"language": "python", "status": "complete"},
+            {"language": "rust", "status": "complete"}
+        ])
+    } else {
+        json!([{"language": "rust", "status": "complete"}])
+    };
+    if status.pointer("/session/language_completeness") != Some(&expected_languages) {
+        return Err(format!(
+            "status must serve per-language completeness from the producer view: {status}"
+        ));
+    }
     // A different committed input replaces the snapshot. Replay the actual
     // old continuation unchanged; no fabricated stale identity is supplied.
     std::fs::write(
