@@ -112,6 +112,13 @@ assertion reads the call's out-parameter; it grants no strength or reach.
   execute it. The changed expression must itself be such a write with no
   branch, loop, closure or early exit inside it, so a changed token on an
   unexercised conditional side is not credited.
+- Any attribute in the owner body (`#[cfg(..)]` and kin) refuses, since it
+  can remove the write. Every statement at or before the last write may use
+  only a small pure macro list (`format!`, `vec!`, `assert*`, `matches!`,
+  `write!`, ...) that the workspace does not redefine, and no
+  `exit`/`abort`/`panic`-family call; a macro that expands to `return` is
+  refused because it is not on the list. Calls to workspace functions that
+  themselves exit are not followed.
 - `write!`/`writeln!` resolve by exact std path; a workspace file that
   defines a macro whose name starts with `write` refuses every owner that
   mentions `write`. Macros imported from other crates are not inspected.

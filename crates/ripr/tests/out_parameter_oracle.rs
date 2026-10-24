@@ -59,6 +59,14 @@ fn finding_in(source: String, diff: String) -> Result<Value, String> {
 }
 
 fn finding_at(source: String, diff: String, line: u64) -> Result<Value, String> {
+    let all = all_findings(source, diff)?;
+    all.iter()
+        .find(|finding| finding["probe"]["line"] == line)
+        .cloned()
+        .ok_or_else(|| format!("no finding on line {line}: {all:?}"))
+}
+
+fn all_findings(source: String, diff: String) -> Result<Vec<Value>, String> {
     let scratch = Scratch::create()?;
     std::fs::write(scratch.0.join("Cargo.toml"), MANIFEST).map_err(|error| error.to_string())?;
     std::fs::write(scratch.0.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
@@ -76,11 +84,8 @@ fn finding_at(source: String, diff: String, line: u64) -> Result<Value, String> 
         .map_err(|error| error.to_string())?;
     json["findings"]
         .as_array()
-        .ok_or("missing findings")?
-        .iter()
-        .find(|finding| finding["probe"]["line"] == line)
         .cloned()
-        .ok_or_else(|| format!("no finding on line {line}: {json}"))
+        .ok_or_else(|| "missing findings".to_string())
 }
 
 /// A negative must be uncredited, not merely unconfirmed. The changed line
@@ -298,8 +303,18 @@ fn finding_custom(
     new_line: &str,
     test_body: &str,
 ) -> Result<Value, String> {
+    finding_custom_in("", owner_fn, old_line, new_line, test_body)
+}
+
+fn finding_custom_in(
+    prelude: &str,
+    owner_fn: &str,
+    old_line: &str,
+    new_line: &str,
+    test_body: &str,
+) -> Result<Value, String> {
     let src = format!(
-        "pub struct OffsetFormat;\n\nimpl OffsetFormat {{\n{owner_fn}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn formats() {{\n{test_body}\n    }}\n}}\n"
+        "{prelude}pub struct OffsetFormat;\n\nimpl OffsetFormat {{\n{owner_fn}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn formats() {{\n{test_body}\n    }}\n}}\n"
     );
     let changed = src
         .lines()
@@ -579,5 +594,105 @@ fn a_user_defined_write_macro_is_not_a_writer() -> Result<(), String> {
     );
     let finding = finding_custom(&owner, old, new, &test)?;
     assert_uncredited(&finding, "user write! macro");
+    Ok(())
+}
+
+#[test]
+fn an_attribute_on_the_changed_write_is_not_credited() -> Result<(), String> {
+    let test = format!("{BUILD}        assert_eq!(s, \"570\");");
+    let tail = "        out.push_str(&format!(\"{:02}\", minutes.abs()));";
+    for attribute in [
+        "        #[cfg(feature = \"nope\")]",
+        "        #[cfg(not(test))]",
+        "        #[cfg(windows)]",
+        "        #[cfg(any())]",
+    ] {
+        let owner = owner_with(&[attribute, NEW, tail]);
+        let finding = finding_custom(&owner, OLD, NEW, &test)?;
+        assert_uncredited(&finding, attribute);
+    }
+    Ok(())
+}
+
+#[test]
+fn divergence_hidden_in_a_macro_or_exit_before_the_changed_write_is_not_credited()
+-> Result<(), String> {
+    let test = format!("{BUILD}        assert_eq!(s, \"570\");");
+    let first = "        out.push_str(\"570\");";
+    let quit = "macro_rules! quit { () => { return }; }\n";
+    for (prelude, lines) in [
+        (quit, vec![first, "        quit!();", NEW]),
+        (
+            quit,
+            vec![
+                first,
+                "        if minutes == 570 {",
+                "            quit!();",
+                "        }",
+                NEW,
+            ],
+        ),
+        (
+            "",
+            vec![
+                first,
+                "        if minutes == 570 {",
+                "            std::process::exit(0);",
+                "        }",
+                NEW,
+            ],
+        ),
+        (
+            "",
+            vec![
+                first,
+                "        if minutes == 570 {",
+                "            panic!(\"stop\");",
+                "        }",
+                NEW,
+            ],
+        ),
+    ] {
+        let owner = owner_with(&lines);
+        let finding = finding_custom_in(prelude, &owner, OLD, NEW, &test)?;
+        assert_uncredited(&finding, &owner);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_constant_conditional_sign_row_does_not_come_from_the_out_parameter_route() -> Result<(), String>
+{
+    let new = "        out.push(if minutes < 0 { '+' } else { '+' });";
+    let old = "        out.push(if minutes < 0 { '~' } else { '+' });";
+    let owner = owner_with(&[new, "        out.push_str(\"570\");"]);
+    let rows = |test: &str| -> Result<Vec<(String, String, String)>, String> {
+        let src = format!(
+            "pub struct OffsetFormat;\n\nimpl OffsetFormat {{\n{owner}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn formats() {{\n{test}\n    }}\n}}\n"
+        );
+        let changed = src.lines().position(|text| text == new).ok_or("missing")? + 1;
+        let diff = format!(
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{changed},1 +{changed},1 @@\n-{old}\n+{new}\n"
+        );
+        let mut rows: Vec<_> = all_findings(src, diff)?
+            .iter()
+            .map(|row| {
+                (
+                    row["probe"]["expression"].to_string(),
+                    row["classification"].to_string(),
+                    row["ripr"]["discriminate"]["state"].to_string(),
+                )
+            })
+            .collect();
+        rows.sort();
+        Ok(rows)
+    };
+    // The same call asserted on the out-parameter local, and on a local the
+    // route can never credit: the rows must not differ.
+    let credited_shape = rows(&format!("{BUILD}        assert_eq!(s, \"+570\");"))?;
+    let route_disabled = rows(
+        "        let mut s = String::new();\n        let mut t = String::new();\n        OffsetFormat.format(&mut s, 570);\n        t.push_str(\"+570\");\n        assert_eq!(t, \"+570\");",
+    )?;
+    assert_eq!(credited_shape, route_disabled);
     Ok(())
 }

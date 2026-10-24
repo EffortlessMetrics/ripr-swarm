@@ -58,8 +58,12 @@ pub(in crate::analysis) fn assertion_out_parameter(
     {
         return None;
     }
-    let write_macro_shadowed = owner.body.contains("write") && workspace_shadows_write_macro(index);
-    let out_parameters = owner_out_parameters(owner, write_macro_shadowed)?;
+    let macro_names = if owner.body.contains('!') {
+        workspace_macro_names(index)
+    } else {
+        Vec::new()
+    };
+    let out_parameters = owner_out_parameters(owner, &macro_names)?;
     let impl_type = impl_self_type_name(&owner.id.0)?;
     let impl_trait = owner_dispatch_trait(owner);
     let [left, right] = assertion_comparison_operands(&assertion.text)?;
@@ -97,7 +101,7 @@ pub(in crate::analysis) fn assertion_out_parameter(
 /// plain method (no receiver, async, unparseable).
 fn owner_out_parameters(
     owner: &FunctionSummary,
-    write_macro_shadowed: bool,
+    macro_names: &[String],
 ) -> Option<Vec<(usize, String)>> {
     if !owner.item.has_self_param {
         return None;
@@ -125,7 +129,7 @@ fn owner_out_parameters(
                 && pattern.name().is_some_and(|name| {
                     mentions_token(body.syntax(), name.text())
                         && !name_rebound_in(body.syntax(), name.text())
-                        && owner_allows_out_parameter(&body, name.text(), write_macro_shadowed)
+                        && owner_allows_out_parameter(&body, name.text(), macro_names)
                 })
         })
         .filter_map(|(at, parameter)| match parameter.pat() {
@@ -453,7 +457,18 @@ fn top_level_statements(body: &ast::BlockExpr) -> Option<Vec<SyntaxNode>> {
 /// methods, other macros) refuses. The writes are straight-line top-level
 /// statements with no `return`, `break`, `continue` or `?` before the last
 /// one, so the credited write executes for any input.
-fn owner_allows_out_parameter(body: &ast::BlockExpr, name: &str, shadowed: bool) -> bool {
+fn owner_allows_out_parameter(body: &ast::BlockExpr, name: &str, macro_names: &[String]) -> bool {
+    // Any attribute (`#[cfg(..)]` and kin) can remove a statement.
+    if body
+        .syntax()
+        .descendants()
+        .any(|node| node.kind() == SyntaxKind::ATTR)
+    {
+        return false;
+    }
+    let shadowed = macro_names
+        .iter()
+        .any(|macro_name| matches!(macro_name.as_str(), "write" | "writeln"));
     let Some(statements) = top_level_statements(body) else {
         return false;
     };
@@ -491,6 +506,9 @@ fn owner_allows_out_parameter(body: &ast::BlockExpr, name: &str, shadowed: bool)
             return false;
         }
         if at <= last_write {
+            if !straight_line(node, macro_names) {
+                return false;
+            }
             let diverges = node.descendants().any(|inner| {
                 matches!(
                     inner.kind(),
@@ -523,16 +541,89 @@ fn is_read_only_use(token: &ra_ap_syntax::SyntaxToken) -> bool {
             .is_some_and(|method| READ_ONLY_METHODS.contains(&strip_raw(method.text())))
 }
 
-/// Whether some workspace file defines its own `write`/`writeln` macro,
-/// which would change what `write!(out, ..)` does. Conservative: any
-/// `macro_rules!`/`macro` item whose name starts with `write` counts.
-fn workspace_shadows_write_macro(index: &RustIndex) -> bool {
-    index.files().iter().any(|(_, facts)| {
-        (facts.source.contains("macro_rules") || facts.source.contains("macro ")) && {
-            let text = compact(&mask_comments_and_strings(&facts.source));
-            text.contains("macro_rules!write") || text.contains("macrowrite")
+/// Names of the workspace's `macro_rules!` macros (any file).
+fn workspace_macro_names(index: &RustIndex) -> Vec<String> {
+    let mut names = Vec::new();
+    for (_, facts) in index.files().iter() {
+        if !facts.source.contains("macro_rules") {
+            continue;
         }
-    })
+        let text = mask_comments_and_strings(&facts.source);
+        let mut rest = text.as_str();
+        while let Some(at) = rest.find("macro_rules") {
+            rest = &rest[at + "macro_rules".len()..];
+            let after = rest.trim_start();
+            let Some(after) = after.strip_prefix('!') else {
+                continue;
+            };
+            let name: String = after
+                .trim_start()
+                .chars()
+                .take_while(|ch| *ch == '_' || ch.is_ascii_alphanumeric())
+                .collect();
+            if !name.is_empty() {
+                names.push(name);
+            }
+        }
+    }
+    names
+}
+
+const PURE_MACROS: &[&str] = &[
+    "format",
+    "vec",
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "matches",
+    "stringify",
+    "concat",
+    "write",
+    "writeln",
+];
+
+/// A statement that cannot attach a condition or an early exit to the writes
+/// after it: no attribute, no macro outside a small pure std list (and none
+/// the workspace redefines), no `exit`/`abort`/`panic`-family call. Macro
+/// calls inside other macros' arguments are read from the tokens.
+fn straight_line(node: &SyntaxNode, macro_names: &[String]) -> bool {
+    if node
+        .descendants()
+        .any(|inner| inner.kind() == SyntaxKind::ATTR)
+    {
+        return false;
+    }
+    let tokens: Vec<_> = node
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .collect();
+    for (at, token) in tokens.iter().enumerate() {
+        if token.kind() == SyntaxKind::IDENT
+            && matches!(
+                strip_raw(token.text()),
+                "exit" | "abort" | "panic_any" | "resume_unwind"
+            )
+        {
+            return false;
+        }
+        if token.kind() == SyntaxKind::BANG {
+            let Some(previous) = at.checked_sub(1).and_then(|before| tokens.get(before)) else {
+                return false;
+            };
+            let leaf = strip_raw(previous.text());
+            if previous.kind() != SyntaxKind::IDENT
+                || !PURE_MACROS.contains(&leaf)
+                || macro_names.iter().any(|name| name == leaf)
+            {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 fn local_written_by_owner_call(
