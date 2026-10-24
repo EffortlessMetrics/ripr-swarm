@@ -15,7 +15,7 @@ use super::{
 };
 use crate::domain::OwnerKind;
 use rustpython_parser::{
-    ast::{self, Expr, Ranged, Stmt},
+    ast::{self, Constant, Expr, Ranged, Stmt},
     text_size::TextRange,
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -1274,90 +1274,49 @@ fn collect_static_route_methods(source: &str, decorators: &[Expr]) -> Vec<Vec<St
                 "post" | "put" | "patch" | "delete" | "options" | "head" => {
                     vec![verb.to_string()]
                 }
-                "route" | "api_route" => {
-                    route_decorator_literal_methods(&text_for_range(source, decorator.range()))
-                }
+                "route" | "api_route" => route_decorator_literal_methods(decorator),
                 _ => Vec::new(),
             })
         })
         .collect()
 }
 
-/// The text after `methods=` where `methods` is a standalone keyword outside
-/// any string literal, so a path such as `"/methods"` cannot hide the real
-/// keyword argument behind it.
-fn route_decorator_methods_value(text: &str) -> Option<&str> {
-    let bytes = text.as_bytes();
-    let is_ident_byte = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_' || byte >= 0x80;
-    let keyword = "methods";
-    let mut quote: Option<u8> = None;
-    let mut at = 0;
-    while at < bytes.len() {
-        let byte = bytes[at];
-        if let Some(open) = quote {
-            if byte == b'\\' {
-                at += 2;
-                continue;
-            }
-            if byte == open {
-                quote = None;
-            }
-            at += 1;
-            continue;
-        }
-        if byte == b'"' || byte == b'\'' {
-            quote = Some(byte);
-            at += 1;
-            continue;
-        }
-        if bytes[at..].starts_with(keyword.as_bytes()) {
-            let end = at + keyword.len();
-            let standalone = (at == 0 || !is_ident_byte(bytes[at - 1]))
-                && bytes.get(end).is_none_or(|next| !is_ident_byte(*next));
-            if standalone
-                && let Some(value) = text[end..].trim_start().strip_prefix('=')
-                && !value.starts_with('=')
-            {
-                return Some(value);
-            }
-        }
-        at += 1;
-    }
-    None
-}
-
-/// Lowercase verbs from a literal `methods=[...]` / `methods=(...)` keyword;
-/// empty when absent or when any element is not a plain string literal.
-fn route_decorator_literal_methods(text: &str) -> Vec<String> {
-    let Some(rest) = route_decorator_methods_value(text) else {
+/// Lowercase verbs from the decorator call's own `methods=[...]` /
+/// `methods=(...)` keyword, read from the parsed arguments so a `methods`
+/// inside another call's keywords, a string, or a comment is never mistaken
+/// for it. Empty (unknown) when the keyword is absent, when the call forwards
+/// `**kwargs`, or when the value is anything but a plain list or tuple of
+/// string constants.
+fn route_decorator_literal_methods(decorator: &Expr) -> Vec<String> {
+    let Expr::Call(call) = decorator else {
         return Vec::new();
     };
-    let rest = rest.trim_start();
-    let close = match rest.chars().next() {
-        Some('[') => ']',
-        Some('(') => ')',
+    if call.keywords.iter().any(|keyword| keyword.arg.is_none()) {
+        return Vec::new();
+    }
+    let Some(keyword) = call
+        .keywords
+        .iter()
+        .find(|keyword| keyword.arg.as_ref().is_some_and(|arg| arg.as_str() == "methods"))
+    else {
+        return Vec::new();
+    };
+    let elements = match &keyword.value {
+        Expr::List(list) => &list.elts,
+        Expr::Tuple(tuple) => &tuple.elts,
         _ => return Vec::new(),
     };
-    let Some(end) = rest.find(close) else {
-        return Vec::new();
-    };
     let mut verbs = Vec::new();
-    for item in rest[1..end].split(',') {
-        let item = item.trim();
-        if item.is_empty() {
-            continue;
-        }
-        let unquoted = item
-            .strip_prefix('"')
-            .and_then(|value| value.strip_suffix('"'))
-            .or_else(|| {
-                item.strip_prefix('\'')
-                    .and_then(|value| value.strip_suffix('\''))
-            });
-        match unquoted {
-            Some(verb) if verb.bytes().all(|byte| byte.is_ascii_alphabetic()) => {
-                verbs.push(verb.to_ascii_lowercase());
-            }
+    for element in elements {
+        match element {
+            Expr::Constant(constant) => match &constant.value {
+                Constant::Str(verb)
+                    if !verb.is_empty() && verb.bytes().all(|byte| byte.is_ascii_alphabetic()) =>
+                {
+                    verbs.push(verb.to_ascii_lowercase());
+                }
+                _ => return Vec::new(),
+            },
             _ => return Vec::new(),
         }
     }

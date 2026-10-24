@@ -4660,6 +4660,20 @@ fn api_client_route_relation_requires_the_decorator_verb() -> Result<(), String>
     let tricky = "@api.route(\"/api/methods/list\", methods=[\"POST\"])";
     assert!(route_relation_for(tricky, "post(\"/api/methods/list\")")?);
     assert!(!route_relation_for(tricky, "get(\"/api/methods/list\")")?);
+    // Only the decorator's own `methods` keyword names verbs: another call's
+    // `methods=` keyword nested in its arguments is not the route's.
+    let nested = "@api.api_route(\"/items\", openapi_extra=dict(methods=[\"POST\"]), methods=[\"GET\"])";
+    assert!(route_relation_for(nested, "get(\"/items\")")?);
+    assert!(!route_relation_for(nested, "post(\"/items\")")?);
+    // A comment inside a plain literal list does not make it unknown.
+    let commented = "@api.api_route(\"/items\", methods=[\n    \"POST\",  # create\n    \"PUT\",\n])";
+    assert!(route_relation_for(commented, "put(\"/items\")")?);
+    assert!(!route_relation_for(commented, "get(\"/items\")")?);
+    // A concatenated list is not a plain literal, so the verb stays unknown
+    // rather than being truncated to its first half.
+    let joined = "@api.api_route(\"/items\", methods=[\"POST\"] + [\"PUT\"])";
+    assert!(route_relation_for(joined, "put(\"/items\")")?);
+    assert!(route_relation_for(joined, "get(\"/items\")")?);
     // An unknown verb keeps the path-only relation instead of dropping it.
     assert!(route_relation_for(
         "@api.route(\"/items\")",
