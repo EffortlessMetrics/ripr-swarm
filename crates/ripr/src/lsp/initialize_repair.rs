@@ -383,7 +383,7 @@ mod tests {
         let out = settle_frame(input.clone());
         assert_ne!(out, input);
         let text =
-            String::from_utf8(out).map_err(|_| "repaired frame must be utf-8".to_string())?;
+            String::from_utf8(out).map_err(|err| format!("repaired frame must be utf-8: {err}"))?;
         assert!(text.contains("caf%C3%A9-repo"), "repaired frame: {text}");
         let length_line = text.lines().next().ok_or("missing header line")?;
         let declared: usize = length_line
@@ -392,7 +392,7 @@ mod tests {
             .ok_or("missing length value")?
             .trim()
             .parse()
-            .map_err(|_| "length must be numeric".to_string())?;
+            .map_err(|err| format!("length must be numeric: {err}"))?;
         let body_start = text.find("\r\n\r\n").ok_or("missing terminator")? + 4;
         assert_eq!(declared, text.len() - body_start);
         Ok(())
@@ -403,7 +403,7 @@ mod tests {
         let body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"workspaceFolders":[{"uri":"file:///c:/用户/proj","name":"proj"}],"capabilities":{}}}"#;
         let out = settle_frame(frame(body));
         let text =
-            String::from_utf8(out).map_err(|_| "repaired frame must be utf-8".to_string())?;
+            String::from_utf8(out).map_err(|err| format!("repaired frame must be utf-8: {err}"))?;
         assert!(
             text.contains("%E7%94%A8%E6%88%B7"),
             "repaired frame: {text}"
@@ -445,12 +445,12 @@ mod tests {
             .read_to_end(&mut out)
             .await
             .map_err(|err| format!("read failed: {err}"))?;
-        let text = String::from_utf8(out).map_err(|_| "output must be utf-8".to_string())?;
+        let text = String::from_utf8(out).map_err(|err| format!("output must be utf-8: {err}"))?;
         assert!(text.contains("caf%C3%A9-repo"), "repaired: {text}");
         // The frame after initialize is byte-identical, including its own
         // Content-Length line.
         let next_frame =
-            String::from_utf8(frame(next)).map_err(|_| "frame must be utf-8".to_string())?;
+            String::from_utf8(frame(next)).map_err(|err| format!("frame must be utf-8: {err}"))?;
         assert!(text.contains(&next_frame));
         Ok(())
     }
@@ -467,9 +467,9 @@ mod tests {
             reader.read_to_end(&mut out),
         )
         .await
-        .map_err(|_| "read_to_end must terminate at EOF".to_string())?
+        .map_err(|err| format!("read_to_end must terminate at EOF: {err}"))?
         .map_err(|err| format!("read failed: {err}"))?;
-        let text = String::from_utf8(out).map_err(|_| "output must be utf-8".to_string())?;
+        let text = String::from_utf8(out).map_err(|err| format!("output must be utf-8: {err}"))?;
         assert!(text.contains("caf%C3%A9-repo"), "repaired: {text}");
         assert!(
             text.contains("exit"),
@@ -495,9 +495,9 @@ mod tests {
             reader.read_to_end(&mut out),
         )
         .await
-        .map_err(|_| "read_to_end must terminate on a truncated frame".to_string())?
+        .map_err(|err| format!("read_to_end must terminate on a truncated frame: {err}"))?
         .map_err(|err| format!("read failed: {err}"))?;
-        let text = String::from_utf8(out).map_err(|_| "output must be utf-8".to_string())?;
+        let text = String::from_utf8(out).map_err(|err| format!("output must be utf-8: {err}"))?;
         assert!(
             text.contains("café-repo"),
             "truncated frame must pass through unrepaired: {text}"
