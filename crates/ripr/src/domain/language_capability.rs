@@ -474,6 +474,30 @@ pub(crate) fn cell_id(cell: &CapabilityCell) -> String {
     )
 }
 
+pub(crate) const REGISTRY_BEGIN: &str = "<!-- capability-registry:begin (generated from domain::language_capability::CAPABILITY_CELLS; do not edit) -->";
+pub(crate) const REGISTRY_END: &str = "<!-- capability-registry:end -->";
+
+/// The generated registry projection, markers included. This is the single
+/// renderer: `ripr capabilities --markdown` prints it and the drift test and
+/// `cargo xtask capability-docs` compare/write exactly this text. One row per cell, in
+/// table order; state and ceiling come straight from the cell.
+pub(crate) fn render_registry_block(cells: &[CapabilityCell]) -> String {
+    let mut out = String::new();
+    out.push_str(REGISTRY_BEGIN);
+    out.push_str("\n\n| Cell (language/framework/mode/family) | Support state | Tier ceiling |\n| --- | --- | --- |\n");
+    for cell in cells {
+        out.push_str(&format!(
+            "| `{}` | `{}` | `{}` |\n",
+            cell_id(cell),
+            cell.state.as_str(),
+            cell.tier_ceiling.as_str()
+        ));
+    }
+    out.push('\n');
+    out.push_str(REGISTRY_END);
+    out
+}
+
 /// Digest of the semantic content, independent of row order, so a consumer can
 /// tell whether anything it cached about capability support moved.
 pub(crate) fn semantic_digest(cells: &[CapabilityCell]) -> String {
