@@ -360,7 +360,10 @@ pub(super) fn weakness_lines(finding: &Finding) -> Vec<String> {
                 && !is_preview_actionability_missing_summary(missing)
                 && !restates_no_static_path_evidence(finding, missing)
         })
-        .cloned()
+        // #9929: the Python adapter's reason text carries the producer marker
+        // `(observation_unverified)`; the human list drops it, JSON `missing`
+        // keeps it.
+        .map(|missing| plain_observation_wording(missing))
         .collect::<Vec<_>>();
     for discriminator in &finding.activation.missing_discriminators {
         lines.push(format!(

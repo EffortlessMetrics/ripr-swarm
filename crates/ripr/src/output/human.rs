@@ -7540,6 +7540,34 @@ mod tests {
         );
     }
 
+    // #9929: the human Weakness list drops the producer marker from the
+    // Python adapter's reason text, the JSON `missing` list keeps it, and an
+    // entry that merely embeds the token as source text is left alone.
+    #[test]
+    fn weakness_list_drops_producer_marker_but_keeps_embedded_token_and_json() -> Result<(), String>
+    {
+        let producer = "A strong Python oracle reaches `kind`, but static evidence does not place a related test input inside the guarding arm `case _`; every observed input leaves the changed line unexecuted (observation_unverified). Add a test input that satisfies the guarding condition.";
+        let embedded = "missing proof: `raise ValueError(\"observation_unverified\")`.";
+        let mut finding = sample_finding();
+        finding.activation.missing_discriminators.clear();
+        finding.missing = vec![producer.to_string(), embedded.to_string()];
+        let lines = super::evidence_lines::weakness_lines(&finding);
+        let expected_producer = "A strong Python oracle reaches `kind`, but static evidence does not place a related test input inside the guarding arm `case _`; every observed input leaves the changed line unexecuted. Add a test input that satisfies the guarding condition.";
+        assert_eq!(
+            lines,
+            vec![expected_producer.to_string(), embedded.to_string()],
+            "{lines:?}"
+        );
+        let full = render_finding(&finding);
+        if full.contains("(observation_unverified)") {
+            return Err(format!("rendered Weakness kept the marker:\n{full}"));
+        }
+        if finding.missing[0] != producer {
+            return Err("the structured missing list must keep the machine marker".to_string());
+        }
+        Ok(())
+    }
+
     #[test]
     fn plain_observation_wording_never_modifies_embedded_source_text() {
         use super::evidence_lines::plain_observation_wording;

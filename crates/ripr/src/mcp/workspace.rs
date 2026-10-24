@@ -1664,6 +1664,86 @@ mod tests {
         }
     }
 
+    /// #6475: MCP carries no per-language state of its own. What it commits
+    /// and serves (the typed outcome and its limitations) must agree with
+    /// the aggregate-owned view on every shared mixed-language fixture.
+    /// Expectations are literal and independent of the view code.
+    #[test]
+    fn committed_snapshot_agrees_with_the_language_completeness_view() -> Result<(), String> {
+        use crate::analysis::language_outcome::{DiffCompleteness, LanguageCompletenessView};
+        use crate::output::language_view_agreement_tests as shared;
+        // (fixture, committed limitation kinds); `None` = refused as unsupported.
+        let expected: [(&str, Option<&[&str]>); 9] = [
+            ("complete", Some(&[])),
+            ("complete_zero", Some(&[])),
+            ("partial", Some(&["producer_failure"])),
+            ("unavailable", Some(&["language_adapter_unavailable"])),
+            ("invalid", Some(&["language_adapter_unavailable"])),
+            ("failed", Some(&["producer_failure"])),
+            ("unsupported", None),
+            (
+                "repo_partial_with_not_selected",
+                Some(&["language_adapter_unavailable"]),
+            ),
+            (
+                "configured_uncompiled_perl_dual_row",
+                Some(&["language_adapter_unavailable"]),
+            ),
+        ];
+        let fixtures = shared::fixtures()?;
+        assert_eq!(fixtures.len(), expected.len());
+        for (name, kinds) in expected {
+            let fixture = fixtures
+                .iter()
+                .find(|fixture| fixture.name == name)
+                .ok_or_else(|| format!("missing fixture {name}"))?;
+            let aggregate = shared::aggregate_for(fixture);
+            let view = LanguageCompletenessView::from_aggregate(&aggregate);
+            let produced = view.total_findings;
+            let findings = (0..produced)
+                .map(|_| shared::rust_finding())
+                .collect::<Result<Vec<_>, _>>()?;
+            let outcome = shared::analysis_outcome(fixture, produced as u64)?;
+            let output = shared::check_output(findings, view.public_runs.clone(), outcome);
+            let committed = Snapshot::from_output(&output, Some("root:sha256:test"));
+            match (kinds, committed) {
+                (None, Err(failure)) => {
+                    assert_eq!(failure.code, CODE_UNSUPPORTED_PROFILE, "{name}");
+                    assert!(
+                        failure.detail.contains("language_scope_unsupported"),
+                        "{name}: {}",
+                        failure.detail
+                    );
+                }
+                (Some(kinds), Ok(snapshot)) => {
+                    let served: Vec<String> = serde_json::to_value(&snapshot.outcome)
+                        .map_err(|error| format!("{name}: {error}"))?["limitations"]
+                        .as_array()
+                        .map(|limitations| {
+                            limitations
+                                .iter()
+                                .filter_map(|item| item["kind"].as_str().map(str::to_string))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    assert_eq!(served, kinds, "{name}");
+                    // The view calls a run incomplete exactly when MCP serves
+                    // a non-complete outcome.
+                    assert_eq!(
+                        view.completeness == DiffCompleteness::Incomplete,
+                        !snapshot.outcome.kind.is_complete(),
+                        "{name}"
+                    );
+                }
+                (None, Ok(_)) => return Err(format!("{name}: unsupported input was committed")),
+                (Some(_), Err(failure)) => {
+                    return Err(format!("{name}: refused: {}", failure.detail));
+                }
+            }
+        }
+        Ok(())
+    }
+
     #[test]
     fn complete_zero_and_incomplete_zero_stay_distinct() -> Result<(), String> {
         let complete = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
