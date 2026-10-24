@@ -21,7 +21,6 @@ mod literal_json_output;
 #[path = "owner_pin_execution/operand_callee_identity.rs"]
 mod operand_callee_identity;
 
-
 #[path = "owner_pin_execution/effect_assertion_sweep.rs"]
 mod effect_assertion_sweep;
 #[path = "owner_pin_execution/effect_assertions.rs"]
