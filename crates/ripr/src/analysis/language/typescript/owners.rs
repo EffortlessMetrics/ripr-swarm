@@ -3,6 +3,13 @@
 use super::*;
 use oxc_ast::ast::{AssignmentOperator, AssignmentTarget, PropertyKind, StaticMemberExpression};
 
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "unit-test extraction surface; production parses through owners_from_program since #10071"
+    )
+)]
 pub(crate) fn extract_owners(file: &Path, source: &str) -> Vec<TypeScriptOwner> {
     // Parse (and walk) on the dedicated large-stack worker behind the
     // nesting budget (#4101): a refused source or a failed worker yields no
@@ -13,44 +20,57 @@ pub(crate) fn extract_owners(file: &Path, source: &str) -> Vec<TypeScriptOwner> 
         if !ret.errors.is_empty() {
             return Vec::new();
         }
-        let imports = extract_imports_from_statements(&ret.program.body);
-        // One line index per source; every owner line below is a binary
-        // search against it rather than a rescan from byte 0.
-        let source = &SourceText::new(source);
-        // `(owner, is a CommonJS assignment export)`, in source order.
-        let mut owners = Vec::new();
-        for stmt in &ret.program.body {
-            let commonjs = matches!(stmt, Statement::ExpressionStatement(_));
-            owners.extend(
-                owners_from_statement(stmt, file, source, &imports)
-                    .into_iter()
-                    .map(|owner| (owner, commonjs)),
-            );
-        }
-        let mut owners = without_reassigned_commonjs_exports(owners);
-        mark_default_exported_bindings(&ret.program.body, &mut owners);
-        mark_commonjs_default_binding(&ret.program, &mut owners);
-        mark_default_object_members(&ret.program.body, &mut owners);
-        // #7507: a `let`/function owner rebound before its `export default`
-        // carries dead code at the declaration site — drop it so no finding
-        // can credit a test with observing it.
-        // #7812: keep the original owner when `export default ident`
-        // snapshots the binding before that reassignment.
-        owners = without_reassigned_esm_bindings(&ret.program.body, owners);
-        let entries = module_entries_by_owner(&ret.program.body, source);
-        for owner in &mut owners {
-            if owner.class_name.is_none()
-                && owner.owner_kind != OwnerKind::ModuleFunction
-                && let Some(owner_entries) = entries.get(&owner.name)
-            {
-                owner.module_entries = owner_entries.clone();
-            }
-        }
-        assign_class_entries(&mut owners, &class_instance_field_names(&ret.program));
-        owners
+        owners_from_program(&ret.program, file, source)
     }) else {
         return Vec::new();
     };
+    owners
+}
+
+/// Owners from an already-parsed program (#10071): the post-parse half of
+/// [`extract_owners`], so the combined per-file facts cache can derive
+/// owners, export facts, and phase-2 facts from ONE parse. Builds its own
+/// line index from `source`; behavior is identical to the dedicated
+/// extraction.
+pub(crate) fn owners_from_program(
+    program: &oxc_ast::ast::Program<'_>,
+    file: &Path,
+    source: &str,
+) -> Vec<TypeScriptOwner> {
+    let imports = extract_imports_from_statements(&program.body);
+    // One line index per source; every owner line below is a binary
+    // search against it rather than a rescan from byte 0.
+    let source = &SourceText::new(source);
+    // `(owner, is a CommonJS assignment export)`, in source order.
+    let mut owners = Vec::new();
+    for stmt in &program.body {
+        let commonjs = matches!(stmt, Statement::ExpressionStatement(_));
+        owners.extend(
+            owners_from_statement(stmt, file, source, &imports)
+                .into_iter()
+                .map(|owner| (owner, commonjs)),
+        );
+    }
+    let mut owners = without_reassigned_commonjs_exports(owners);
+    mark_default_exported_bindings(&program.body, &mut owners);
+    mark_commonjs_default_binding(program, &mut owners);
+    mark_default_object_members(&program.body, &mut owners);
+    // #7507: a `let`/function owner rebound before its `export default`
+    // carries dead code at the declaration site — drop it so no finding
+    // can credit a test with observing it.
+    // #7812: keep the original owner when `export default ident`
+    // snapshots the binding before that reassignment.
+    owners = without_reassigned_esm_bindings(&program.body, owners);
+    let entries = module_entries_by_owner(&program.body, source);
+    for owner in &mut owners {
+        if owner.class_name.is_none()
+            && owner.owner_kind != OwnerKind::ModuleFunction
+            && let Some(owner_entries) = entries.get(&owner.name)
+        {
+            owner.module_entries = owner_entries.clone();
+        }
+    }
+    assign_class_entries(&mut owners, &class_instance_field_names(program));
     owners
 }
 
@@ -1577,6 +1597,8 @@ pub(crate) fn detect_owner_extraction_gap(
     file: &Path,
     source: &str,
     changed_lines: &[usize],
+    workspace_root: &Path,
+    alias_map: Option<&super::tsconfig::TsAliasMap>,
 ) -> Option<TypeScriptOwnerExtractionGap> {
     if changed_lines.is_empty() {
         return None;
@@ -1584,7 +1606,8 @@ pub(crate) fn detect_owner_extraction_gap(
     let changed: std::collections::HashSet<usize> = changed_lines.iter().copied().collect();
     // Parse-error content yields default (empty) facts, which correctly
     // produces no gap — parse-error disclosure owns that case.
-    let facts = super::phase_two_cache::phase_two_facts_cached(file, source)?;
+    let facts =
+        super::extraction_cache::phase_two_facts_cached(file, source, workspace_root, alias_map)?;
     for shape in &facts.gap_shapes {
         if let Some(sample_line) =
             (shape.lines.0..=shape.lines.1).find(|line| changed.contains(line))
@@ -1610,6 +1633,8 @@ pub(crate) fn changed_enum_member_lines(
     file: &Path,
     source: &str,
     changed_lines: &[usize],
+    workspace_root: &Path,
+    alias_map: Option<&super::tsconfig::TsAliasMap>,
 ) -> std::collections::BTreeMap<usize, String> {
     // A file without the keyword has no enum; skip the facts lookup.
     if changed_lines.is_empty() || !source.contains("enum") {
@@ -1618,7 +1643,9 @@ pub(crate) fn changed_enum_member_lines(
     let changed: std::collections::HashSet<usize> = changed_lines.iter().copied().collect();
     // Parse-error content yields default (empty) facts, matching the
     // parse-error disclosure owning that case.
-    let Some(facts) = super::phase_two_cache::phase_two_facts_cached(file, source) else {
+    let Some(facts) =
+        super::extraction_cache::phase_two_facts_cached(file, source, workspace_root, alias_map)
+    else {
         return std::collections::BTreeMap::new();
     };
     let mut lines = std::collections::BTreeMap::new();
@@ -1636,10 +1663,15 @@ pub(crate) fn changed_enum_member_lines(
 /// and erased at compile time, so a changed line inside one has no runtime
 /// behavior to probe. A file that does not parse yields no ranges, so its
 /// lines stay probed.
-pub(crate) fn ambient_declaration_lines(file: &Path, source: &str) -> Vec<(usize, usize)> {
+pub(crate) fn ambient_declaration_lines(
+    file: &Path,
+    source: &str,
+    workspace_root: &Path,
+    alias_map: Option<&super::tsconfig::TsAliasMap>,
+) -> Vec<(usize, usize)> {
     // Parse-error content yields default (empty) facts, so its lines stay
     // probed — exactly the previous contract.
-    super::phase_two_cache::phase_two_facts_cached(file, source)
+    super::extraction_cache::phase_two_facts_cached(file, source, workspace_root, alias_map)
         .map(|facts| facts.ambient_ranges)
         .unwrap_or_default()
 }
@@ -1680,25 +1712,23 @@ pub(crate) struct EnumMember {
     pub(crate) identity: String,
 }
 
-/// Extract every phase-2 fact from one parse. `None` mirrors the previous
-/// worker-failure behavior (all three consumers degrade to "no facts");
-/// parse errors yield `Some` with default (empty) facts, matching the
-/// previous per-consumer parse-error contracts (parse-error disclosure owns
-/// those files).
-pub(crate) fn extract_phase_two_facts(file: &Path, source: &str) -> Option<PhaseTwoFacts> {
-    parse_on_worker(file, source, |file, source, allocator| {
-        let ret = Parser::new(allocator, source, source_type_for(file)).parse();
-        let mut facts = PhaseTwoFacts::default();
-        if !ret.errors.is_empty() {
-            return facts;
-        }
-        let text = SourceText::new(source);
-        collect_gap_shapes(&ret.program.body, &text, &mut facts.gap_shapes);
-        collect_enum_members(&ret.program.body, source, &text, &mut facts.enum_members);
-        collect_ambient_ranges(&ret.program.body, &text, &mut facts.ambient_ranges);
-        facts
-    })
-    .ok()
+/// Extract every phase-2 fact from one already-parsed program (#10071):
+/// the parse-free half of the former `extract_phase_two_facts`, so the
+/// combined per-file facts cache can derive owners, export facts, and
+/// phase-2 facts from ONE parse. Parse errors never reach this fn (the
+/// caller substitutes the default facts); every fact is a pure function of
+/// the source bytes, and the per-diff `changed_lines` filtering happens at
+/// call time, so one extraction serves every diff of the same content.
+pub(crate) fn phase_two_facts_from_program(
+    program: &oxc_ast::ast::Program<'_>,
+    source: &str,
+) -> PhaseTwoFacts {
+    let text = SourceText::new(source);
+    let mut facts = PhaseTwoFacts::default();
+    collect_gap_shapes(&program.body, &text, &mut facts.gap_shapes);
+    collect_enum_members(&program.body, source, &text, &mut facts.enum_members);
+    collect_ambient_ranges(&program.body, &text, &mut facts.ambient_ranges);
+    facts
 }
 
 /// Walk top-level statements for unsupported owner shapes, collecting every

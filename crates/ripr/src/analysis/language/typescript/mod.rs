@@ -76,7 +76,6 @@ mod discovery;
 mod dropped_term_guard;
 mod enum_member_guard;
 mod error_payload_guard;
-mod export_facts_cache;
 mod extraction_cache;
 mod field_update_guard;
 mod guard_entry_guard;
@@ -102,7 +101,6 @@ mod oracle;
 mod owner_path_tests;
 mod owners;
 mod package;
-mod phase_two_cache;
 #[cfg(test)]
 mod predicate_activation_tests;
 mod value_hiding_guard;
@@ -482,25 +480,82 @@ impl TypeScriptAdapter {
             skipped_files += 1;
             read_failures.push(TypeScriptReadFailure { file, error });
         }
+        // Build tsconfig.json alias map unless explicitly opted out (RIPR-SPEC-0099).
+        // fail-closed: None when the flag is explicitly set false, when tsconfig is absent, when extends/
+        // references are present, or when any other parse/resolution failure occurs.
+        // A capped-read size limit on the config itself is surfaced below as a
+        // named limitation rather than failing silently closed.
+        let (alias_map, alias_read_limit, alias_load_gap): (Option<TsAliasMap>, _, _) =
+            if options.resolve_tsconfig_paths {
+                load_alias_map_with_read_error(&options.root)
+            } else {
+                // Flag explicitly false: no gap — the MapUnavailable cause carries the
+                // honest "set the flag back to true" advice for this path (#4106-B).
+                (None, None, None)
+            };
+        // In-workspace package names resolve whether or not the tsconfig
+        // flag is on (#4554): `import ... from '@scope/pkg/sub'` in a sibling
+        // package's test names that package's source when its manifest says
+        // so unambiguously. The load gap is kept, so alias advice is as before.
+        let workspace_packages =
+            workspace_packages::WorkspacePackages::discover(&options.root, &workspace_files);
+        let alias_map = if workspace_packages.is_empty() {
+            alias_map
+        } else {
+            Some(match alias_map {
+                Some(map) => map.with_workspace_packages(workspace_packages),
+                None => TsAliasMap::workspace_packages_only(&options.root, workspace_packages),
+            })
+        };
+        let alias_map_ref: Option<&TsAliasMap> = alias_map.as_ref();
+
         for relative in &workspace_files {
             let Some(source) = source_cache.get(relative) else {
                 continue;
             };
-            if let Some(reason) = parse_error_reason(relative, source) {
-                // Disclose parse failures for CHANGED files of either role:
-                // a changed production file's added lines are never
-                // classified, and a changed test file's tests silently vanish
-                // from `all_tests` (which can flip owners to false
-                // `no_static_path`). Unchanged-file parse errors stay out of
-                // the diff-scoped limitation set; the per-file index effect is
-                // bounded to owners this diff touches.
+            // #10071: ONE combined parse per file yields the parse status
+            // plus owners, export facts, and phase-2 facts; the re-export
+            // index and phase 2 then reuse the cached entry instead of
+            // re-parsing. A refused/failed parse (`Err`) and a parse error
+            // (`Some(parse_error)`) disclose exactly like the previous
+            // dedicated parse-error pass.
+            let facts = match extraction_cache::file_facts_cached(
+                relative,
+                source,
+                &options.root,
+                alias_map_ref,
+            ) {
+                Ok(facts) => facts,
+                Err(reason) => {
+                    // Disclose parse failures for CHANGED files of either role:
+                    // a changed production file's added lines are never
+                    // classified, and a changed test file's tests silently
+                    // vanish from `all_tests` (which can flip owners to false
+                    // `no_static_path`). Unchanged-file parse errors stay out
+                    // of the diff-scoped limitation set; the per-file index
+                    // effect is bounded to owners this diff touches.
+                    if changed_paths
+                        .iter()
+                        .any(|changed| changed == &normalized_path(relative))
+                    {
+                        parse_limits.push(TypeScriptParseLimit {
+                            file: relative.clone(),
+                            reason,
+                        });
+                    }
+                    continue;
+                }
+            };
+            if let Some(reason) = &facts.parse_error {
+                // Same changed-file disclosure contract as the `Err` arm:
+                // parse-error files are owned by the parse-limit lane.
                 if changed_paths
                     .iter()
                     .any(|changed| changed == &normalized_path(relative))
                 {
                     parse_limits.push(TypeScriptParseLimit {
                         file: relative.clone(),
-                        reason,
+                        reason: reason.clone(),
                     });
                 }
                 continue;
@@ -544,42 +599,14 @@ impl TypeScriptAdapter {
                 }
                 all_tests.extend(tests);
             } else {
-                // #10044: owner extraction is a pure function of (path,
-                // source); the process-lifetime cache lets an LSP session
-                // re-save without re-parsing the whole workspace. Test
-                // extraction stays uncached because committed snapshots
+                // #10071/#10044: owners came out of the same single parse as
+                // the parse check; the process-lifetime cache lets an LSP
+                // session re-save without re-parsing the whole workspace.
+                // Test extraction stays uncached because committed snapshots
                 // read the filesystem.
-                all_owners.extend(extraction_cache::extract_owners_cached(relative, source));
+                all_owners.extend(facts.owners);
             }
         }
-        // Build tsconfig.json alias map unless explicitly opted out (RIPR-SPEC-0099).
-        // fail-closed: None when the flag is explicitly set false, when tsconfig is absent, when extends/
-        // references are present, or when any other parse/resolution failure occurs.
-        // A capped-read size limit on the config itself is surfaced below as a
-        // named limitation rather than failing silently closed.
-        let (alias_map, alias_read_limit, alias_load_gap): (Option<TsAliasMap>, _, _) =
-            if options.resolve_tsconfig_paths {
-                load_alias_map_with_read_error(&options.root)
-            } else {
-                // Flag explicitly false: no gap — the MapUnavailable cause carries the
-                // honest "set the flag back to true" advice for this path (#4106-B).
-                (None, None, None)
-            };
-        // In-workspace package names resolve whether or not the tsconfig
-        // flag is on (#4554): `import ... from '@scope/pkg/sub'` in a sibling
-        // package's test names that package's source when its manifest says
-        // so unambiguously. The load gap is kept, so alias advice is as before.
-        let workspace_packages =
-            workspace_packages::WorkspacePackages::discover(&options.root, &workspace_files);
-        let alias_map = if workspace_packages.is_empty() {
-            alias_map
-        } else {
-            Some(match alias_map {
-                Some(map) => map.with_workspace_packages(workspace_packages),
-                None => TsAliasMap::workspace_packages_only(&options.root, workspace_packages),
-            })
-        };
-        let alias_map_ref: Option<&TsAliasMap> = alias_map.as_ref();
 
         // Build the bounded re-export index from all non-test workspace files
         // (RIPR-SPEC-0095). The index enables crediting tests that reach the owner
@@ -664,9 +691,13 @@ impl TypeScriptAdapter {
             if let Some(source) = source_by_normalized.get(&normalized_path(&changed.path)) {
                 let changed_lines: Vec<usize> =
                     changed.added_lines.iter().map(|added| added.line).collect();
-                if let Some(gap) =
-                    detect_owner_extraction_gap(&changed.path, source, &changed_lines)
-                {
+                if let Some(gap) = detect_owner_extraction_gap(
+                    &changed.path,
+                    source,
+                    &changed_lines,
+                    &options.root,
+                    alias_map_ref,
+                ) {
                     owner_extraction_gaps.push(gap);
                 }
             }
@@ -678,7 +709,13 @@ impl TypeScriptAdapter {
                 .map(|source| {
                     let changed_lines: Vec<usize> =
                         changed.added_lines.iter().map(|added| added.line).collect();
-                    changed_enum_member_lines(&changed.path, source, &changed_lines)
+                    changed_enum_member_lines(
+                        &changed.path,
+                        source,
+                        &changed_lines,
+                        &options.root,
+                        alias_map_ref,
+                    )
                 })
                 .unwrap_or_default();
 
@@ -714,7 +751,9 @@ impl TypeScriptAdapter {
             // identifier and can start a line inside a template literal.
             let ambient = source_by_normalized
                 .get(&normalized_path(&changed.path))
-                .map(|source| ambient_declaration_lines(&changed.path, source))
+                .map(|source| {
+                    ambient_declaration_lines(&changed.path, source, &options.root, alias_map_ref)
+                })
                 .unwrap_or_default();
             let is_probe_candidate = |line: usize, text: &str| {
                 !should_ignore_typescript_changed_line(text)
