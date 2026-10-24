@@ -1,0 +1,22 @@
+{
+  "case_id": "unnum-0027-ex3-dynamic-dispatch",
+  "subject_id": "authored-ts-vitest-unnum",
+  "origin": "authored",
+  "anchor": "src/dispatch.ts:2",
+  "behavior_family": "side_effect",
+  "test_shape": "vitest_expect_toequal_call_log",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}
