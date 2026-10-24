@@ -1366,4 +1366,99 @@ fn closure_callback_credit_does_not_reach_helper_callbacks_in_another_module()
     Ok(())
 }
 
+const UNUSED_CLOSURE_HELPER: &str = "    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        assert_eq!(want, true);\n    }\n";
+
+#[test]
+fn plain_helper_that_never_invokes_a_closure_parameter_lends_nothing() -> Result<(), Box<dyn Error>>
+{
+    // Negative (#9997): the assertion cannot observe what `gate` returned.
+    let index = index_for(&callback_source(
+        UNUSED_CLOSURE_HELPER,
+        "        run_test(true, || gate(11));\n",
+    ))?;
+
+    let test = test_named(&index, "boundary")?;
+
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
+    Ok(())
+}
+
+#[test]
+fn plain_helper_that_only_forwards_a_closure_parameter_lends_nothing() -> Result<(), Box<dyn Error>>
+{
+    // Negative (#9997): forwarding is indistinguishable from never calling it
+    // until the receiving call is resolved, so no credit.
+    let index = index_for(&callback_source(
+        "    fn with_default(f: impl FnOnce() -> bool) -> bool {\n        f()\n    }\n    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        let _ = with_default(f);\n        assert_eq!(want, true);\n    }\n",
+        "        run_test(true, || gate(11));\n",
+    ))?;
+
+    let test = test_named(&index, "boundary")?;
+
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
+    Ok(())
+}
+
+#[test]
+fn plain_helper_withheld_for_a_closure_at_any_position_or_reach() -> Result<(), Box<dyn Error>> {
+    for (shape, helper, body) in [
+        (
+            "closure at a later position",
+            "    fn run_test(f: impl FnOnce() -> bool, want: bool) {\n        assert_eq!(want, true);\n    }\n",
+            "        run_test(|| gate(11), true);\n",
+        ),
+        (
+            "helper call under a test branch",
+            UNUSED_CLOSURE_HELPER,
+            "        if gate(0) == false {\n            run_test(true, || gate(11));\n        }\n",
+        ),
+    ] {
+        let index = index_for(&callback_source(helper, body))?;
+        let test = test_named(&index, "boundary")?;
+        assert!(
+            test.assertions.is_empty(),
+            "{shape}: {:?}",
+            assertion_texts(test)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn plain_helper_keeps_credit_when_no_call_making_closure_is_passed() -> Result<(), Box<dyn Error>> {
+    // Controls: the plain path is unchanged for ordinary arguments and for a
+    // closure literal that makes no call.
+    for body in [
+        "        run_test(gate(11), true);\n",
+        "        run_test(true, || true);\n",
+    ] {
+        let index = index_for(&callback_source(
+            "    fn run_test(a: impl Copy, want: bool) {\n        assert_eq!(want, true);\n    }\n",
+            body,
+        ))?;
+        let test = test_named(&index, "boundary")?;
+        assert_eq!(
+            assertion_texts(test),
+            vec!["assert_eq!(want, true);"],
+            "{body}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn invoked_closure_parameter_is_still_credited_after_the_plain_path_tightening()
+-> Result<(), Box<dyn Error>> {
+    // Positive control (#9981 unchanged): the closure is invoked eagerly.
+    let index = index_for(&callback_source(
+        CALLBACK_HELPER,
+        "        run_test(true, || gate(11));\n",
+    ))?;
+
+    let test = test_named(&index, "boundary")?;
+
+    assert_eq!(assertion_texts(test), vec!["assert_eq!(got, want);"]);
+    Ok(())
+}
+
 mod assertion_macros;

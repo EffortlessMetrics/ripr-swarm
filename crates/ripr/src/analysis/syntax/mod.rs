@@ -47,4 +47,5 @@ pub(crate) use ra::{
     GovernedCfgTestModule, InvokedCallbackParam, ModuleItemScopes, closure_argument_positions,
     fn_name_binding_count, governed_cfg_test_modules, has_test_attribute,
     inline_unit_module_layout, invoked_callback_params, macro_call_columns, module_item_scopes,
+    passes_call_making_closure,
 };
