@@ -1,0 +1,22 @@
+{
+  "case_id": "unnum-0028-ex5-override-marker",
+  "subject_id": "authored-py-pytest-unnum",
+  "origin": "authored",
+  "anchor": "unnum/child_rate.py:12",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "pytest_assert_eq_typing_override",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

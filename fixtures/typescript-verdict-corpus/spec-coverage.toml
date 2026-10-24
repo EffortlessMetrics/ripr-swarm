@@ -479,6 +479,12 @@ id = "RIPR-SPEC-0238"
 scope = "out"
 reason = "Python analyzer rules; a TypeScript case cannot label them"
 
+# Python Preview Static Facts
+[[spec]]
+id = "RIPR-SPEC-0028"
+scope = "out"
+reason = "Python analyzer rules; a TypeScript case cannot label them"
+
 # `ripr plus` last-good receipt
 [[spec]]
 id = "RIPR-SPEC-0239"

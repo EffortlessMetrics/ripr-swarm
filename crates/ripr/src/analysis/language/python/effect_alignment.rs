@@ -13,7 +13,8 @@
 use super::no_behavior::{call_arglists_with_offsets, split_top_level_args};
 use super::related_tests::{
     is_python_identifier_char, owner_class_locals, owner_method_bound_locals, owner_module_callees,
-    owner_result_locals, python_text_hides_code, with_entry,
+    owner_result_locals, python_text_hides_code, test_rebinds_import_alias, with_entry,
+    import_source_module_matches_owner,
 };
 use super::{PythonOwner, PythonTest};
 use crate::domain::OwnerKind;
@@ -38,6 +39,10 @@ pub(super) enum ChangedEffect {
     },
     /// `self.attr = ...` (or an augmented assignment) in a method owner.
     SelfField { attr: String },
+    /// `obj.attr = ...` in a module-level function, where `obj` is a
+    /// module-scope object (`response = SimpleNamespace(...)`) the test
+    /// imports from the owner's module and reads back.
+    ModuleField { object: String, attr: String },
 }
 
 impl ChangedEffect {
@@ -79,6 +84,18 @@ impl ChangedEffect {
             && direct
         {
             return Some(Self::SelfField {
+                attr: attr.to_string(),
+            });
+        }
+        if matches!(owner.owner_kind, Some(OwnerKind::Function))
+            && direct
+            && let Some((object, attr)) = object_attribute_write(line)
+            && owner.class_facts.module_objects.iter().any(|name| name == object)
+            // A parameter of the same name shadows the module object.
+            && !owner.parameters.iter().any(|parameter| parameter.name == object)
+        {
+            return Some(Self::ModuleField {
+                object: object.to_string(),
                 attr: attr.to_string(),
             });
         }
@@ -203,6 +220,18 @@ impl EffectReads {
                     .collect();
             }
             ChangedEffect::CallOnParameter { .. } => {}
+            ChangedEffect::ModuleField { object, attr } => {
+                reads.operands = test
+                    .imports
+                    .iter()
+                    .filter(|import| {
+                        import.imported == *object
+                            && import_source_module_matches_owner(import, owner, &test.file)
+                            && !test_rebinds_import_alias(test, &import.alias)
+                    })
+                    .map(|import| format!("{}.{attr}", import.alias))
+                    .collect();
+            }
             ChangedEffect::SelfField { attr } => {
                 if let Some((class, _)) = owner.qualified_name.rsplit_once('.') {
                     reads.operands = owner_method_bound_locals(test, owner, class, &owner.name)
@@ -280,7 +309,21 @@ fn self_attribute_mutation(line: &str) -> Option<&str> {
 
 /// `self.attr = value` or `self.attr op= value`: the written attribute.
 fn self_attribute_write(line: &str) -> Option<&str> {
-    let rest = line.strip_prefix("self.")?;
+    attribute_write_after(line.strip_prefix("self.")?)
+}
+
+/// `object.attr = value` or `object.attr op= value`: the written object and
+/// attribute, for a plain identifier `object`.
+fn object_attribute_write(line: &str) -> Option<(&str, &str)> {
+    let (object, rest) = line.split_once('.')?;
+    (!object.is_empty()
+        && !object.starts_with(|ch: char| ch.is_ascii_digit())
+        && object.chars().all(is_python_identifier_char))
+    .then_some(())?;
+    Some((object, attribute_write_after(rest)?))
+}
+
+fn attribute_write_after(rest: &str) -> Option<&str> {
     let attr_len = rest
         .find(|ch: char| !is_python_identifier_char(ch))
         .unwrap_or(rest.len());

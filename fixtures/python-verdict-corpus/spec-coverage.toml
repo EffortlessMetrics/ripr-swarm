@@ -15,7 +15,7 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 51
+floor = 57
 
 # Operator grid and false-credit traps (verdict_corpus_grid.rs). `cell_floor`
 # is the count of covered operator-by-truth cells (7 operators x credited,
@@ -604,7 +604,7 @@ reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a 
 # Test Efficiency and Vacuity Signals
 [[unmeasured]]
 id = "RIPR-SPEC-0004"
-reason = "acceptance examples are prose, not numbered; Python corpus cases cite the spec without an example number"
+reason = "acceptance examples are prose, not numbered, and describe the test-efficiency report (smoke_only, useful_but_broad, duplicative), which a corpus row does not carry; the diff verdicts that report grades are measured through their owning specs"
 
 # Evidence Quality Benchmark Corpus
 [[unmeasured]]
@@ -612,9 +612,9 @@ id = "RIPR-SPEC-0035"
 reason = "acceptance examples are prose, not numbered; Python corpus cases cite the spec without an example number"
 
 # Python Preview Static Facts
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0028"
-reason = "acceptance examples are prose and code blocks, not numbered; Python corpus cases cite the spec in their reasoning"
+scope = "in"
 
 # Owner call shape projection for drill-in surfaces
 [[spec]]

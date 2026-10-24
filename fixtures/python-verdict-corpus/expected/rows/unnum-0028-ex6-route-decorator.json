@@ -1,0 +1,22 @@
+{
+  "case_id": "unnum-0028-ex6-route-decorator",
+  "subject_id": "authored-py-pytest-unnum",
+  "origin": "authored",
+  "anchor": "unnum/checkout_route.py:18",
+  "behavior_family": "side_effect_field_write",
+  "test_shape": "pytest_assert_eq_response_status_after_route_call",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}
