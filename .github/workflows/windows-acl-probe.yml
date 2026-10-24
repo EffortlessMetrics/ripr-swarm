@@ -51,3 +51,13 @@ jobs:
           "== after disable (this process)"; Try-Deny "disabled"
           "== child process of the disabled process"
           pwsh -NoProfile -Command "whoami /priv | Select-String 'Restore|Backup'"
+
+      - name: Probe from bash (Git for Windows)
+        shell: bash
+        run: |
+          echo "== whoami /priv (bash)"; whoami /priv | grep -E "Restore|Backup|TakeOwn"
+          d="$RUNNER_TEMP/acl-bash-$$"; mkdir -p "$d"
+          icacls "$(cygpath -w "$d")" /deny "$USERNAME:(AD)" > /dev/null
+          if cmd //c "mkdir \"$(cygpath -w "$d")\\cmdchild\"" > /dev/null 2>&1; then echo "bash : cmd mkdir SUCCEEDED (deny not enforced)"; else echo "bash : cmd mkdir DENIED"; fi
+          echo "== pwsh child of bash"
+          pwsh -NoProfile -Command "whoami /priv | Select-String 'Restore|Backup'; try { [IO.Directory]::CreateDirectory('$(cygpath -w "$d")\netchild') | Out-Null; 'pwsh-from-bash : SUCCEEDED (deny not enforced)' } catch { 'pwsh-from-bash : DENIED' }"
