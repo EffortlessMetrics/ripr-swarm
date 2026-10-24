@@ -1071,7 +1071,7 @@ fn an_imported_suffix_must_spell_the_entrys_module_path() -> Result<(), String> 
 /// control above); the fully qualified spelling of the re-export path is a
 /// shorter path than the entry's own module path and is refused (a conservative
 /// loss, named in RIPR-SPEC-0159). Module visibility is not
-/// proven: a spelling through a private module would not compile, and is a named
+/// checked: a spelling through a private module would not compile, and is a named
 /// limit rather than asserted here.
 #[test]
 fn an_inline_module_entry_reexported_at_the_root_links_only_by_import() -> Result<(), String> {

@@ -360,7 +360,7 @@ can only hint that a caller "may lead here" without changing anything.
   (`qual_reach::entry(..)` for `mod inner { pub fn entry }` plus
   `pub use inner::entry;`) is refused because the spelled path is shorter than
   the entry's module path (the bare `use qual_reach::entry;` import links); and
-  module visibility is not proven, so a spelling through a private module
+  module visibility is not checked, so a spelling through a private module
   (which would not compile) is credited like a public one; and
   the library-binding proof reparses every non-test source file once per module
   segment, a coarse cost boundary left unmemoized.
