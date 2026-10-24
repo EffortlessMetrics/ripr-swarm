@@ -1402,6 +1402,7 @@ const USER: &str = "#[crate::test]\nasync fn aliased() { assert_eq!(crate::value
 
 fn alias_test_names(files: &[(&str, &str)]) -> Result<Vec<String>, String> {
     let mut index = RustIndex::default();
+    index.package_names.insert("my_macros".to_string());
     for (file, source) in files {
         let facts = RaRustSyntaxAdapter.summarize_file(Path::new(file), source)?;
         index.insert_file(PathBuf::from(file), facts, true);
@@ -1423,6 +1424,48 @@ fn crate_test_alias_to_workspace_test_wrapper_macro_is_a_test() -> Result<(), St
     // Only the exact `crate::test` spelling is credited: neither the
     // `crate::tests` lookalike nor an arbitrary `other::test` is.
     assert_eq!(names, ["aliased"]);
+    Ok(())
+}
+
+#[test]
+fn alias_to_a_foreign_crate_with_a_workspace_namesake_macro_is_not_a_test() -> Result<(), String> {
+    let names = alias_test_names(&[
+        (
+            "app/src/lib.rs",
+            "use external_macros::wrapped_test as test;\npub fn value() -> i32 { 3 }\n",
+        ),
+        ("app/src/user.rs", USER),
+        ("macros/src/lib.rs", WRAPPER_MACRO),
+    ])?;
+    assert!(names.is_empty(), "foreign import credited: {names:?}");
+    Ok(())
+}
+
+#[test]
+fn a_test_attribute_only_in_a_string_or_comment_does_not_make_a_wrapper() -> Result<(), String> {
+    let macro_source = "#[proc_macro_attribute]\npub fn wrapped_test(attr: TokenStream, item: TokenStream) -> TokenStream { item }\n// uses #[test] elsewhere\nconst HELP: &str = \"tokio::test\";\n";
+    let names = alias_test_names(&[
+        ("app/src/lib.rs", ALIAS_ROOT),
+        ("app/src/user.rs", USER),
+        ("macros/src/lib.rs", macro_source),
+    ])?;
+    assert!(names.is_empty(), "prose credited: {names:?}");
+    Ok(())
+}
+
+#[test]
+fn an_alias_split_across_lines_or_grouped_is_still_recognized() -> Result<(), String> {
+    for root in [
+        "use my_macros::wrapped_test as\n    test;\npub fn value() -> i32 { 3 }\n",
+        "use my_macros::{wrapped_test as test};\npub fn value() -> i32 { 3 }\n",
+    ] {
+        let names = alias_test_names(&[
+            ("app/src/lib.rs", root),
+            ("app/src/user.rs", USER),
+            ("macros/src/lib.rs", WRAPPER_MACRO),
+        ])?;
+        assert_eq!(names, ["aliased"], "root: {root}");
+    }
     Ok(())
 }
 
@@ -1454,7 +1497,7 @@ fn crate_test_alias_gated_on_a_test_build_is_credited() -> Result<(), String> {
         "#[cfg(any(test, feature = \"x\"))]",
         "#[cfg(feature = \"x\")]",
         "#[cfg(all(not(test), feature = \"x\"))]",
-        "#[cfg_attr(test, allow(unused_imports))]",
+        "#[cfg_attr(test, derive(Debug))]",
     ] {
         let root = format!("{gate}\nuse my_macros::wrapped_test as test;\n");
         let names = alias_test_names(&[

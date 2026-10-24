@@ -22,22 +22,31 @@
 //!   `cfg(all(test, <anything>))`, stacked gates); the extra `all(..)`
 //!   conjuncts are accepted by design, since a `#[crate::test]` user
 //!   implies the alias is compiled;
+//! - the import path starts at a workspace member crate (`crate`, `self`
+//!   and `super` stay local), so a foreign crate's namesake macro is never
+//!   mistaken for a workspace one;
 //! - the aliased name resolves to exactly one `#[proc_macro_attribute]` fn
 //!   in the analyzed index; and
 //! - source of that macro's package names a known test attribute
-//!   (`tokio::test`, `async_std::test` or `#[test]`) outside line comments.
+//!   (`tokio::test`, `async_std::test` or `#[test]`) in code tokens, not in
+//!   comments or string literals.
 //!
-//! The target is matched by its last path segment, so a same-named macro in
-//! another crate is not told apart; two candidates refuse. Anything
-//! unresolved (an external crate, a non-test-gated or repeated import, a macro that
+//! The target is matched by its last path segment, so a workspace macro of
+//! the same name in a different member crate is not told apart from the
+//! named one; two candidates refuse. The test attribute is searched in the
+//! macro's package, not traced through its expansion. Anything unresolved
+//! (an external crate, a non-test-gated or repeated import, a macro that
 //! never names a test attribute) credits nothing. Arbitrary `#[x::test]`
-//! paths are untouched.
+//! paths are untouched. Draft and Fast scans index the changed package and
+//! its dependents, so a wrapper macro in an unchanged dependency is not
+//! seen there and nothing is credited (#10141).
 
 use super::index::{FactArena, IndexedFileFacts};
 use super::model::FunctionFact;
 use crate::analysis::syntax::parse_clean_source_file;
 use ra_ap_syntax::AstNode;
 use ra_ap_syntax::ast::{self, HasAttrs, HasModuleItem, HasName};
+use ra_ap_syntax::{NodeOrToken, SyntaxKind};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -72,13 +81,18 @@ impl LocalTestAliases {
     pub(super) fn collect(
         files: &BTreeMap<PathBuf, IndexedFileFacts>,
         function_facts: &FactArena<FunctionFact>,
+        workspace_crates: &BTreeSet<String>,
     ) -> Self {
         let mut aliased = BTreeSet::new();
         let mut proc_macros: Option<BTreeMap<String, Vec<PathBuf>>> = None;
         for (path, facts) in files {
-            let Some(name) = test_alias_target(&facts.source) else {
+            let Some(target) = test_alias_target(&facts.source) else {
                 continue;
             };
+            if !target.names_workspace_crate(workspace_crates) {
+                continue;
+            }
+            let name = target.name;
             let macros = proc_macros.get_or_insert_with(|| proc_macro_files(files, function_facts));
             let Some([macro_file]) = macros.get(&name).map(Vec::as_slice) else {
                 continue;
@@ -137,11 +151,45 @@ fn proc_macro_files(
     proc_macros
 }
 
-/// The last path segment of the single top-level `use ... as test`, ungated
-/// or whose cfg attributes require a test build (extra `all(test, ..)`
-/// conjuncts are accepted by design).
-fn test_alias_target(source: &str) -> Option<String> {
-    if !source.contains("as test") && !source.contains("as r#test") {
+/// What a `use ... as test` import names: the leading and last path segments.
+struct AliasTarget {
+    first: String,
+    name: String,
+}
+
+impl AliasTarget {
+    /// `crate::`, `self::` and `super::` paths stay inside the importing
+    /// crate; any other leading segment must be one of the workspace's own
+    /// crates, so an external crate's namesake macro earns no credit.
+    fn names_workspace_crate(&self, workspace_crates: &BTreeSet<String>) -> bool {
+        matches!(self.first.as_str(), "crate" | "self" | "super")
+            || workspace_crates.contains(&self.first)
+    }
+}
+
+/// Whether `as` is followed, across any whitespace, by `test` or `r#test`.
+fn spells_test_alias(source: &str) -> bool {
+    source.match_indices("as").any(|(at, _)| {
+        let before = source[..at].chars().next_back();
+        if before.is_some_and(|ch| ch.is_alphanumeric() || ch == '_') {
+            return false;
+        }
+        let rest = source[at + 2..].trim_start();
+        let rest = rest.strip_prefix("r#").unwrap_or(rest);
+        rest.strip_prefix("test").is_some_and(|after| {
+            !after
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
+        })
+    })
+}
+
+/// The single top-level `use ... as test`, ungated or whose cfg attributes
+/// require a test build (extra `all(test, ..)` conjuncts are accepted by
+/// design).
+fn test_alias_target(source: &str) -> Option<AliasTarget> {
+    if !spells_test_alias(source) {
         return None;
     }
     let parse = parse_clean_source_file(source)?;
@@ -168,18 +216,38 @@ fn test_alias_target(source: &str) -> Option<String> {
             if alias.text().trim_start_matches("r#") != "test" {
                 continue;
             }
-            let target = tree
-                .path()
-                .and_then(|path| path.segment())
-                .and_then(|segment| segment.name_ref())
-                .map(|name| name.text().to_string());
+            let target = tree.path().and_then(|path| {
+                let name = path.segment()?.name_ref()?.text().to_string();
+                let first = use_prefix(&tree).or_else(|| {
+                    path.first_segment()?
+                        .name_ref()
+                        .map(|n| n.text().to_string())
+                })?;
+                Some(AliasTarget { first, name })
+            });
             found.push((gated, target));
         }
     }
     match found.as_slice() {
-        [(false, Some(target))] if !target.is_empty() => Some(target.clone()),
+        [(false, Some(target))] if !target.name.is_empty() => Some(AliasTarget {
+            first: target.first.clone(),
+            name: target.name.clone(),
+        }),
         _ => None,
     }
+}
+
+/// The leading path segment contributed by enclosing use-tree prefixes, for
+/// grouped imports such as `use macros::{wrapped_test as test};`.
+fn use_prefix(tree: &ast::UseTree) -> Option<String> {
+    let outer = tree
+        .syntax()
+        .ancestors()
+        .skip(1)
+        .filter_map(ast::UseTree::cast)
+        .last()?;
+    let path = outer.path()?;
+    Some(path.first_segment()?.name_ref()?.text().to_string())
 }
 
 fn src_dir(file: &Path) -> Option<&Path> {
@@ -198,16 +266,39 @@ fn package_names_test_attribute(
         .iter()
         .filter(|(path, _)| src_dir(path) == Some(src))
         .any(|(_, facts)| {
-            let code = facts
-                .source
-                .lines()
-                .filter(|line| !line.trim_start().starts_with("//"))
-                .map(compact)
-                .collect::<String>();
+            let code = code_tokens(&facts.source);
             TEST_ATTRIBUTE_NEEDLES
                 .iter()
                 .any(|needle| code.contains(needle))
         })
+}
+
+/// The source's tokens with whitespace removed, leaving out comments and
+/// string literals so prose or a message that merely mentions a test
+/// attribute is not read as one. An unparseable file contributes nothing.
+fn code_tokens(source: &str) -> String {
+    let Some(parse) = parse_clean_source_file(source) else {
+        return String::new();
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| match element {
+            NodeOrToken::Token(token) => Some(token),
+            NodeOrToken::Node(_) => None,
+        })
+        .filter(|token| {
+            !matches!(
+                token.kind(),
+                SyntaxKind::COMMENT
+                    | SyntaxKind::STRING
+                    | SyntaxKind::BYTE_STRING
+                    | SyntaxKind::C_STRING
+            )
+        })
+        .map(|token| compact(token.text()))
+        .collect()
 }
 
 /// The crate-root files `file` could belong to: `src/lib.rs` and

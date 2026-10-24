@@ -6,4 +6,4 @@
   tokio-rs/axum. Unresolved, external, feature-gated or ambiguous aliases and
   arbitrary `#[x::test]` paths stay non-tests, so tests added in a diff no
   longer read as missing and probes no longer fall to `weakly_exposed` for
-  want of them (#9001).
+  want of them (#9001). The alias must name a workspace member crate, and the test attribute is read from code tokens, not comments or strings. Draft/Fast scans do not see a wrapper in an unchanged dependency crate yet (#10141).

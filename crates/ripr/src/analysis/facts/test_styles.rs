@@ -43,7 +43,11 @@ impl<'a> FunctionKey<'a> {
 /// every index consumer sees the same executable-test role regardless of
 /// which syntax producer handled the file.
 pub(super) fn normalize_index_test_styles(index: &mut RustIndex) -> Result<(), String> {
-    let aliases = LocalTestAliases::collect(&index.files, &index.function_facts);
+    let aliases = LocalTestAliases::collect(
+        &index.files,
+        &index.function_facts,
+        index.workspace_member_crates(),
+    );
     for facts in index.files.values_mut() {
         cancellation::checkpoint()?;
         let alias_credit = aliases.credit_for(&facts.path);
