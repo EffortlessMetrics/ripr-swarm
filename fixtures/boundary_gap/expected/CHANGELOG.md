@@ -1204,3 +1204,13 @@ Updated:
 The same snapshots follow corpus cache generation 1.98 to 1.99 for the
 one-line `else if` ladder tail (#9630), with the same scope: generation,
 content commitment, dependent verify commitments and receipt byte hashes only.
+
+### local-executor async owner limit classified-cache generation parity
+
+The unchanged-after-attempt portable snapshots follow corpus cache generation
+1.99 to 1.100 for the local-executor async owner limit (RIPR-SPEC-0240,
+#9443). Only the generation and its content commitment changed; the dependent
+verify commitments and receipt byte hashes bind those exact updated bytes.
+Semantic evidence, unchanged movement, incomplete receipt routing and all
+tamper controls remain unchanged. This is a portable negative-control input
+update, not a new execution receipt.

@@ -419,6 +419,16 @@ non-ignored related test matches one of these shapes:
   read or a comparison before the call keep the finding. The recorded value
   reaches the assertion through the double's own method, which ripr does not
   follow.
+- **local executor** (#9443): a `return_value` probe on an `async fn` owner,
+  and a `direct_owner_call` test with a strong assertion: an `assert_eq!` with
+  a literal on one side and `helper(owner(..))` on the other, where `helper`
+  is a function of the test's own file other than the owner and the owner call
+  is its only argument (a hand-written `block_on`). The owner's bare call is a
+  future, so the compared value comes out of the helper, which ripr does not
+  read. A sync owner, a helper defined elsewhere, a second argument and a
+  non-literal expectation keep the finding. Whether a bounded rule can credit a
+  single-argument local executor is left open; until then the gap is withheld,
+  never credited.
 
 Any one matching related test withholds the finding: a weaker sibling test
 reads as evidence ripr gathered, not as the oracle that decides, and the

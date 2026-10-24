@@ -1,6 +1,6 @@
 //! RIPR-SPEC-0240: a test-framework oracle ripr does not evaluate is not a gap.
 //!
-//! Six test idioms check a changed value through machinery ripr reads only
+//! Seven test idioms check a changed value through machinery ripr reads only
 //! at the surface. Each leaves a related test whose oracle is real and whose
 //! reading here is `weakly_exposed`, a certain "assertion too weak" claim:
 //!
@@ -20,7 +20,11 @@
 //! - **recording double**: the changed line calls a method on a `&mut`
 //!   parameter, and the test passes a local double (`&mut rec`) and compares
 //!   one of its fields exactly, so the recorded value reaches the assertion
-//!   through the double's own code, not the owner's return.
+//!   through the double's own code, not the owner's return;
+//! - **local executor**: the owner is an `async fn`, and the test pins
+//!   `block_on(owner(..))` to a literal, where `block_on` is a function of
+//!   the test's own file that drives the future, so the owner's return
+//!   reaches the assertion through a helper ripr does not read.
 //!
 //! ripr cannot tell whether those oracles notice the change, so it withholds
 //! the gap under `rust_framework_oracle_unresolved` and credits nothing. Like
@@ -54,6 +58,7 @@ enum Idiom {
     InstaSnapshot,
     FixtureReceiver,
     RecordingDouble,
+    LocalExecutor,
 }
 
 impl Idiom {
@@ -76,6 +81,9 @@ impl Idiom {
             }
             Idiom::RecordingDouble => {
                 "passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field"
+            }
+            Idiom::LocalExecutor => {
+                "drives the async owner with an executor helper defined in the test's file and asserts an exact value, and ripr does not read what that helper returns"
             }
         }
     }
@@ -157,6 +165,12 @@ pub(in crate::analysis) fn withhold_framework_oracle_gap(
                 && recording_double_pin(test, owner, changed_text)
             {
                 Idiom::RecordingDouble
+            } else if strong
+                && direct
+                && family == ProbeFamily::ReturnValue
+                && local_executor_pin(test, owner, index)
+            {
+                Idiom::LocalExecutor
             } else {
                 return None;
             };
@@ -446,6 +460,53 @@ fn fixture_receiver_pin(
                         .and_then(|rest| rest.trim().strip_suffix("();"))
                         .is_some_and(|helper| is_ident(helper.trim()) && is_helper(helper.trim()))
                 })
+        })
+    })
+}
+
+/// The owner is an `async fn`, and a related test pins `helper(owner(..))` to
+/// a literal with `assert_eq!`, where `helper` is a function of the test's own
+/// file other than the owner (a hand-written `block_on`). The owner's bare
+/// call is a future, so the value the assertion compares comes out of the
+/// helper, which ripr does not read (#9443).
+fn local_executor_pin(test: &TestFact, owner: &FunctionFact, index: &RustIndex) -> bool {
+    if !super::owner_pin::declares_async(owner, index) {
+        return false;
+    }
+    let raw: &str = &test.body;
+    let code = masked(raw);
+    let is_helper = |name: &str| {
+        name != owner.name
+            && index
+                .functions()
+                .iter()
+                .any(|function| function.name == name && function.file == test.file)
+    };
+    assert_eq_operands(&code).into_iter().any(|(_, operands)| {
+        let [(a_from, a_to), (b_from, b_to)] = operands.as_slice() else {
+            return false;
+        };
+        [
+            ((a_from, a_to), (b_from, b_to)),
+            ((b_from, b_to), (a_from, a_to)),
+        ]
+        .into_iter()
+        .any(|((call_from, call_to), (lit_from, lit_to))| {
+            if !is_literal(&raw[*lit_from..*lit_to]) {
+                return false;
+            }
+            let operand = code[*call_from..*call_to].trim();
+            let Some((helper, rest)) = operand.split_once('(') else {
+                return false;
+            };
+            let Some(argument) = rest.strip_suffix(')') else {
+                return false;
+            };
+            let helper = helper.trim();
+            is_ident(helper)
+                && is_helper(helper)
+                && split_arguments(argument).len() == 1
+                && calls(argument, &owner.name)
         })
     })
 }

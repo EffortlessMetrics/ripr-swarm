@@ -1204,3 +1204,78 @@ mod tests {
         "vec push",
     )
 }
+
+// An `async` owner driven by a hand-written executor helper of the test's own
+// file: the value the assertion compares comes out of the helper (#9443).
+fn executor_source(owner_decl: &str, assertion: &str) -> String {
+    format!(
+        "{owner_decl} {{
+    p + p / 5
+}}
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    fn block_on<T>(value: T) -> T {{
+        value
+    }}
+
+    #[test]
+    fn tax_is_added() {{
+        {assertion}
+    }}
+}}
+"
+    )
+}
+
+fn executor_edit() -> String {
+    diff(2, "    p + p / 10", "    p + p / 5")
+}
+
+#[test]
+fn an_async_owner_driven_by_a_local_executor_helper_is_withheld() -> Result<(), String> {
+    withheld(
+        &executor_source(
+            "pub async fn add_tax(p: u32) -> u32",
+            "assert_eq!(block_on(add_tax(100)), 110);",
+        ),
+        &executor_edit(),
+        2,
+        "local block_on",
+    )
+}
+
+#[test]
+fn an_executor_shape_that_differs_keeps_the_gap() -> Result<(), String> {
+    for (label, owner_decl, assertion) in [
+        (
+            "the owner is not async",
+            "pub fn add_tax(p: u32) -> u32",
+            "assert_eq!(block_on(add_tax(100)), 110);",
+        ),
+        (
+            "the helper is not defined in the test's file",
+            "pub async fn add_tax(p: u32) -> u32",
+            "assert_eq!(other_executor(add_tax(100)), 110);",
+        ),
+        (
+            "the helper takes more than the owner call",
+            "pub async fn add_tax(p: u32) -> u32",
+            "assert_eq!(block_on(add_tax(100), 1), 110);",
+        ),
+        (
+            "the expected side is not a literal",
+            "pub async fn add_tax(p: u32) -> u32",
+            "assert_eq!(block_on(add_tax(100)), add_tax_expected());",
+        ),
+    ] {
+        keeps_gap(
+            &executor_source(owner_decl, assertion),
+            &executor_edit(),
+            2,
+            label,
+        )?;
+    }
+    Ok(())
+}
