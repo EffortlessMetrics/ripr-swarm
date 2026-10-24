@@ -36,3 +36,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_module_generator_test (4)
+
+Reason:
+RIPR-SPEC-0028: human output regenerated after merging main's summary-terms lines
+
+Command:
+`cargo xtask goldens bless python_module_generator_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

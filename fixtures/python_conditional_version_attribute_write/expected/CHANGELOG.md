@@ -48,3 +48,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_conditional_version_attribute_write (5)
+
+Reason:
+RIPR-SPEC-0028: human output regenerated after merging main's summary-terms lines
+
+Command:
+`cargo xtask goldens bless python_conditional_version_attribute_write --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
