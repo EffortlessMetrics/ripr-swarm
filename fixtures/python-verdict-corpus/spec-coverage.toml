@@ -752,3 +752,21 @@ reason = "Rust source-role layout rules over Cargo targets; a Python case cannot
 id = "RIPR-SPEC-0169"
 scope = "out"
 reason = "Rust source-role composition over cfg(test) module edges; a Python case cannot label it"
+
+# Rust unsafe boundary probes
+[[spec]]
+id = "RIPR-SPEC-0168"
+scope = "out"
+reason = "Rust/Cargo analyzer behavior; a Python case cannot label it"
+
+# Cargo path-dependency diff scope
+[[spec]]
+id = "RIPR-SPEC-0171"
+scope = "out"
+reason = "Rust/Cargo analyzer behavior; a Python case cannot label it"
+
+# Cargo cross-crate dependency edges
+[[spec]]
+id = "RIPR-SPEC-0172"
+scope = "out"
+reason = "Rust/Cargo analyzer behavior; a Python case cannot label it"
