@@ -268,7 +268,11 @@ fn resolve_symbols(iterable: &str, inputs: &ExactInputs) -> Option<Vec<char>> {
 /// substituting the current state).
 fn transition(arms: &[TransitionArm], state: &str, symbol: char) -> Option<String> {
     for arm in arms {
-        if arm.state.as_deref().is_some_and(|expected| expected != state) {
+        if arm
+            .state
+            .as_deref()
+            .is_some_and(|expected| expected != state)
+        {
             continue;
         }
         if arm.symbol.is_none_or(|expected| expected == symbol) {
