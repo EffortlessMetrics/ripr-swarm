@@ -6,12 +6,14 @@ index 0000000..1111111 100644
 -pub(crate) use std::collections::BTreeMap;
 +pub(crate) use std::collections::BTreeSet;
  
- pub union ChangedItem {
+-pub union OldItem {
++pub union ChangedItem {
 -    pub changed_slot: u32,
 +    pub changed_slot: u64,
  }
  
- macro_rules! changed_item {
+-macro_rules! old_item {
++macro_rules! changed_item {
      () => {
 -        2
 +        3

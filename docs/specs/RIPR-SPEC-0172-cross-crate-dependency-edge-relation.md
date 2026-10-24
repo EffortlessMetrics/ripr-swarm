@@ -280,9 +280,17 @@ signal. `union` and `macro_rules` are not reserved words, so they are judged
 by use: an occurrence that declares an item (`union Name {`, `union Name<T>`,
 `macro_rules!`) is syntax and is refused on the probe side and on the
 assertion side alike, while an occurrence used as an identifier (`a.union(&b)`)
-still counts. The scan is textual: a declaration spelled inside a comment or
-string literal is read as a declaration. A real identifier shared with the
-assertion still relates. Fixture: `fixtures/rust_path_keyword_affinity`.
+still counts. The scan is textual in both directions. A declaration spelled inside a
+comment or string literal is read as a declaration (lost relation). Prose that
+is not a declaration, such as `/// the union of A and B` or the string
+`"union of sets"`, reads as an identifier use and still seeds affinity (lost
+precision, not a safety issue: the relation stays a medium-confidence
+`assertion_target_affinity` that does not claim a discriminator). A `where`
+after the name counts only as a whole word (`union Name wherever` is not a
+declaration). A real identifier shared with the assertion still relates.
+The `pub(crate) use ..` reach fix is owned by #9172 (keyword tokens dropped
+when probe tokens are built) and #9205; this section's #9171 change adds the
+`union` / `macro_rules` declaration-introducer refusal. Fixture: `fixtures/rust_path_keyword_affinity`.
 
 ## Root build scripts relate no test by name (#9173)
 
