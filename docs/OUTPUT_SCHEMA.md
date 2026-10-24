@@ -1594,6 +1594,14 @@ The evidence-first fields are additive in schema `0.2`:
   examined row (one per matched assertion, one per test that supplied none).
   Rows listed only as `assertion_not_observing` take only window slots the
   oracle rows leave free, so the oracle rows and their order are unchanged.
+- `related_tests[].role` — (optional, additive, #5563) the row's decision
+  role, a controlled `related_test_role` value, independent of `miss`.
+  `examined_only` marks a row retained only to show an examined test whose
+  assertions matched nothing (RIPR-SPEC-0224); decision paths skip it.
+  `contributing` is the default and is omitted from output; an artifact
+  without the field reads every row as `contributing`. `miss` never changes
+  which decision paths consume a row, and the role is not runtime execution
+  evidence.
 - `oracle_kind` and `oracle_strength` summarize the strongest related oracle
   currently visible to the finding.
 - `suggested_next_action` mirrors `recommended_next_step` for action-oriented
@@ -3019,6 +3027,11 @@ while `call_effect` remains the fallback for other observable calls.
 - `missing_input`
 - `missing_exact_assertion`
 - `observation_unconfirmed`
+
+`related_test_role` values:
+
+- `contributing`
+- `examined_only`
 
 `next_action_class` values:
 

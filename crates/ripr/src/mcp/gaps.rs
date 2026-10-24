@@ -740,6 +740,7 @@ pub(crate) fn test_finding() -> Result<Finding, String> {
             relation_confidence: Some(crate::domain::RelationConfidence::High),
             miss: None,
             miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }],
         recommended_next_step: Some("add a boundary assertion for 10000".to_string()),
         language: Some(crate::domain::LanguageId::Rust),

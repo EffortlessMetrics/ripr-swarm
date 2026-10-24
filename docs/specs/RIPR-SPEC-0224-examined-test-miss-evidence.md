@@ -153,7 +153,7 @@ unsupported state as unknown and fabricates no reason conforms.
 | --- | --- | --- | --- | --- |
 | `no_call_path` | yes | pending (blocked on #6657-class blind spots) | no (absence unprovable from one file) | no |
 | `no_assertion` | yes | no (#6657) | no (admission blind spots) | no |
-| `assertion_not_observing` | yes | no (credit-only alignment; `is_unmatched` coupling) | no (decision input via `is_unmatched`) | no (#3223) |
+| `assertion_not_observing` | yes | no (credit-only alignment; withheld pending #5491) | no (withheld pending #5495) | no (#3223) |
 | `assertion_not_credited` | yes, unsplit until #5446 | no (#5446) | no (#5446) | no |
 | `weak_assertion` | yes | yes (weak and smoke only) | yes (weak and smoke only) | no |
 | `missing_input` | yes | yes (predicate boundary, row-owned) | no (shared prose over-claims) | no (#4061, perl-lsp-swarm#17237, #5562) |
@@ -175,8 +175,8 @@ unproven. Four reasons are withheld on purpose: `no_call_path` (a single-file
 reading cannot prove a call path absent: a heuristic-only row may reach the
 owner through an alias, callback or table, and a shadow or unrelated-import
 rejection refutes only the apparent call, not hooks, helpers or re-exports),
-`assertion_not_observing` (`RelatedTest::is_unmatched` reads it as a decision
-input), `no_assertion` (the single-file admission scan cannot see project setup
+`assertion_not_observing` (withheld pending #5495; row eligibility is the
+explicit role, not this value), `no_assertion` (the single-file admission scan cannot see project setup
 files or runner plugins) and `missing_input` (its shared prose says no test
 input reaches the boundary, stronger than a single-file reading supports). Rows
 with unresolved admission, static-limited findings, `exposed`, `static_unknown`
@@ -245,14 +245,25 @@ Python does not yet write:
   fixtures, plugins, ini `filterwarnings`, bare sibling imports) are
   unaccounted for.
 - `assertion_not_observing`: alignment cannot separate an affirmative sibling
-  sink from an unresolved one, and the value marks a row examined-only
-  (`RelatedTest::is_unmatched`), which `oracle_related_tests` and its
-  decisional consumers read; emitting it would move ordering and witnesses.
+  sink from an unresolved one, so the value stays withheld here until
+  alignment can make the affirmative claim. It does not mark a row
+  examined-only: that is the explicit `role` (#5563), so emitting it later
+  cannot move ordering or witnesses.
 - `missing_exact_assertion`: `missing_discriminators` is finding-wide and no
   row-owned observed-surface fact exists; no `miss_support` is attached.
 - `assertion_not_credited`: no typed refusal (#5446). Skipped, xfail and
   expected-failure tests keep the classifier's `static_unknown` and no oracle
   credit.
+
+### Row facts are separate
+
+Three different facts describe a listed row and none derives from another:
+why the row is listed (`relation_reason`), whether it belonged to the
+legacy/matched decision set (`role`) and why it misses the changed behavior
+(`miss`). Only `role` is read by decision paths (gates, actionability,
+fix-site selection, repair routing); `miss` is explanation only and may be
+attached to a row of either role without changing any decision. `role` is not
+runtime execution evidence.
 
 ### Projection law
 
@@ -263,7 +274,12 @@ cards or packets. No transport defines its own miss semantics.
 
 ### Compatibility
 
-`miss` is optional; artifacts that predate it read as no miss. The enum is
+`miss` is optional; artifacts that predate it read as no miss.
+
+`role` (`contributing` | `examined_only`, #5563) is optional and additive and
+is omitted when `contributing`. Artifacts that predate it read every row as
+`contributing`, because every row in an old artifact was part of that
+artifact's decision set; the field is never inferred from `miss`. The enum is
 controlled in `policy/output_contracts.txt`. Additions are additive and bump
 the schema only as `docs/OUTPUT_SCHEMA.md` requires. Explanatory prose is
 excluded from deterministic identity.
@@ -273,15 +289,18 @@ excluded from deterministic identity.
 The contract above is the target. The Rust slice described under Behavior does
 not yet satisfy all of it, and these gaps are tracked rather than claimed away:
 
-- Decision independence (#5563): `RelatedTest::is_unmatched()` is derived from
-  `miss == assertion_not_observing`, and `Finding::oracle_related_tests`,
-  `exact_oracle_gap_next_step` and the diagnostic witness read it, and
-  `exact_oracle_gap_next_step` also branches directly on
-  `miss == missing_exact_assertion`, and the Rust oracle pass reads
-  `assertion_not_credited` when choosing the macro-wrapped-assertion limit and
-  its next step. Changing a row's miss can therefore change triage ordering,
-  next step, limit kind or fix-site selection. These readers are examples, not
-  a complete inventory; #5563 owns the inventory and the decoupling.
+- Decision independence (#5563): resolved for the `RelatedTest::miss` field.
+  `RelatedTest::role` is the one producer-owned fact that remembers whether a
+  row belonged to the legacy decision set; `RelatedTest::is_contributing()`,
+  `is_examined_only()` and `Finding::oracle_related_tests` read it and never
+  `miss`. The Rust reveal pass marks rows retained only for an examined test
+  whose assertions matched nothing `examined_only`; every other row keeps the
+  `contributing` default. A source-text test fails if a decision helper
+  branches on `RelatedTestMiss`. Two readers still branch on a miss directly
+  and are tracked separately: `exact_oracle_gap_next_step` on
+  `missing_exact_assertion`, and the Rust oracle pass on
+  `assertion_not_credited` when choosing the macro-wrapped-assertion limit
+  and its next step.
 - Row-owned support (#5564): the Rust annotation pass still computes boundary
   and exact-assertion presence once from the finding-wide
   `missing_discriminators` list and assigns `missing_input` or

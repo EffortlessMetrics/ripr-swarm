@@ -112,6 +112,7 @@ impl FindingSpec {
             relation_reason: reason,
             miss: None,
             miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         });
         self
     }

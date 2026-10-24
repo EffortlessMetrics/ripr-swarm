@@ -563,7 +563,7 @@ fn non_witness_predicate_row_is_observation_unconfirmed() -> Result<(), String> 
     Ok(())
 }
 
-/// The miss is non-decisional: no row is `is_unmatched`, and the decision
+/// The miss is non-decisional: no row is examined-only, and the decision
 /// readers (gap next step, witness) give the same answer with the misses
 /// stripped. Row order is the candidate order and is compared too.
 #[test]
@@ -587,7 +587,12 @@ fn stripping_the_miss_changes_no_decision_surface() -> Result<(), String> {
             "fixture must carry a miss: {:?}",
             finding.related_tests
         );
-        assert!(finding.related_tests.iter().all(|row| !row.is_unmatched()));
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .all(|row| row.is_contributing())
+        );
         let mut stripped = finding.clone();
         for row in &mut stripped.related_tests {
             row.miss = None;
