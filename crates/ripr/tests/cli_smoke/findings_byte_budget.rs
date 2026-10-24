@@ -85,9 +85,23 @@ fn check_findings_byte_budget_bounds_array_with_disclosed_totals() -> Result<(),
             "budget 1 must render exactly the first finding, got {}",
             bounded_findings.len()
         );
+        // #10093: the budget keeps the highest-priority finding, which is an
+        // analyzed finding and is stable across runs (not necessarily the
+        // sort-order first).
+        let kept_id = bounded_findings[0]["id"]
+            .as_str()
+            .ok_or("bounded finding must carry an id")?
+            .to_string();
+        assert!(
+            baseline_findings
+                .iter()
+                .any(|row| row["id"] == kept_id.as_str()),
+            "bounded finding {kept_id} must be an analyzed finding (first was {first_id})"
+        );
+        let again = run_ripr_with_env(&args, &[("RIPR_CHECK_FINDINGS_BYTES", "1")]);
         assert_eq!(
-            bounded_findings[0]["id"], first_id,
-            "bounded prefix must be the deterministic first finding"
+            again.stdout, bounded.stdout,
+            "the budgeted document must be deterministic"
         );
         assert_eq!(
             bounded_report["summary"]["findings"], total,
@@ -109,6 +123,10 @@ fn check_findings_byte_budget_bounds_array_with_disclosed_totals() -> Result<(),
         assert!(
             message.contains("RIPR_CHECK_FINDINGS_BYTES"),
             "message must name the applied limit: {message}"
+        );
+        assert!(
+            message.contains("omitted") && message.contains("by class"),
+            "message must name what was dropped: {message}"
         );
         assert_eq!(entry["repair_route"], "output/check-findings-budget");
         // #9010: the analysis outcome discloses the bounded document too,

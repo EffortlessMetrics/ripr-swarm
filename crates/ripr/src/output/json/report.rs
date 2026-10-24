@@ -24,6 +24,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use super::finding_alignment;
+use super::findings_priority;
 use super::{array_field, escape, field, float_field, number_field};
 
 /// Cap on `related_tests` serialized per finding in the diff-check JSON output.
@@ -104,6 +105,8 @@ pub(crate) struct FindingsBoundInfo {
     pub(crate) total: usize,
     pub(crate) budget: usize,
     pub(crate) source: FindingsBudgetSource,
+    /// Counts per class and file of what the budget dropped (#10093).
+    pub(crate) omitted: String,
 }
 
 impl FindingsBoundInfo {
@@ -119,8 +122,11 @@ impl FindingsBoundInfo {
             ),
         };
         format!(
-            "rendered {} of {} findings within the findings-array byte budget ({setting})",
-            self.rendered, self.total
+            "rendered {} of {} findings within the findings-array byte budget ({setting}); \
+             kept the highest-priority findings (candidate-current first, then \
+             reachable_unrevealed, weakly_exposed, no_static_path, the unknown classes, \
+             exposed last) in sort order; {}",
+            self.rendered, self.total, self.omitted
         )
     }
 }
@@ -240,7 +246,6 @@ pub(crate) fn render_with_config(
         out.push_str("\n  },\n");
     }
     out.push_str("  \"findings\": [\n");
-    let findings_array_start = out.len();
     // Full-set group totals: `canonical_gap_group_size` describes the analyzed
     // group (like `related_tests_total`), not the rendered prefix (#5203).
     let canonical_gap_counts = canonical_gap_counts(&output.findings);
@@ -262,28 +267,40 @@ pub(crate) fn render_with_config(
     // finding. Unbounded (`None`) renders everything. The cutoff is evaluated
     // after each finding so separators stay exactly as before when the
     // budget does not engage.
-    let mut rendered_findings = 0usize;
-    for (idx, finding) in output.findings.iter().enumerate() {
+    // #10093: findings render in priority order (see `findings_priority`) so
+    // the budget keeps the most actionable ones; the kept set is then emitted
+    // in the unchanged sort order. Without an engaged budget every finding
+    // renders and the output is byte-identical to the sort-order stream.
+    let mut kept: Vec<(usize, String)> = Vec::new();
+    let mut array_bytes = 0usize;
+    for idx in findings_priority::priority_order(&output.findings) {
+        let mut payload = String::new();
         finding_json_with_config_and_counts(
-            &mut out,
-            finding,
+            &mut payload,
+            &output.findings[idx],
             2,
             config,
             &canonical_gap_counts,
-            suppressed_selectors.get(finding.id.as_str()).copied(),
+            suppressed_selectors
+                .get(output.findings[idx].id.as_str())
+                .copied(),
             &output.root,
         );
-        rendered_findings += 1;
-        let last_analysis_finding = idx + 1 == output.findings.len();
-        let over_budget =
-            findings_budget.is_some_and(|(budget, _)| out.len() - findings_array_start > budget);
-        if !last_analysis_finding && !over_budget {
+        // Payload plus the `,\n` separator that precedes every later finding.
+        array_bytes += payload.len() + if kept.is_empty() { 0 } else { 2 };
+        kept.push((idx, payload));
+        if findings_budget.is_some_and(|(budget, _)| array_bytes > budget) {
+            break;
+        }
+    }
+    kept.sort_by_key(|(idx, _)| *idx);
+    let rendered_findings = kept.len();
+    for (position, (_, payload)) in kept.iter().enumerate() {
+        out.push_str(payload);
+        if position + 1 != rendered_findings {
             out.push(',');
         }
         out.push('\n');
-        if over_budget {
-            break;
-        }
     }
     out.push_str("  ]");
     let findings_bound = if rendered_findings < output.findings.len() {
@@ -292,6 +309,10 @@ pub(crate) fn render_with_config(
             total: output.findings.len(),
             budget,
             source,
+            omitted: findings_priority::omitted_summary(
+                &output.findings,
+                &kept.iter().map(|(idx, _)| *idx).collect::<Vec<_>>(),
+            ),
         })
     } else {
         None
@@ -603,8 +624,17 @@ pub(crate) fn render_with_config(
     // Alignment rows must resolve inside the document: compute over the
     // rendered prefix so a bounded run never references omitted findings.
     // Unbounded runs pass the full set, exactly as before.
-    let finding_alignment =
-        finding_alignment::report_for_findings(&output.findings[..rendered_findings]);
+    let kept_findings: Vec<Finding>;
+    let aligned_findings: &[Finding] = if findings_bound.is_some() {
+        kept_findings = kept
+            .iter()
+            .map(|(idx, _)| output.findings[*idx].clone())
+            .collect();
+        &kept_findings
+    } else {
+        &output.findings
+    };
+    let finding_alignment = finding_alignment::report_for_findings(aligned_findings);
     if let Some(report) = finding_alignment.as_ref() {
         out.push_str(",\n");
         out.push_str("  \"finding_alignment\": ");
