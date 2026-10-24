@@ -771,6 +771,9 @@ fn builtin_member_is_assertion_like(root: &str, member: &str) -> bool {
 /// Methods that wrap or replace unittest's own test execution; an override
 /// can assert around `super().run(...)`.
 const CLASS_LIFECYCLE_HOOKS: &[&str] = &[
+    "__init__",
+    "__init_subclass__",
+    "doCleanups",
     "run",
     "debug",
     "__call__",

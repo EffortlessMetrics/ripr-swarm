@@ -3456,6 +3456,11 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             unresolved,
         ),
         (
+            "testdir member",
+            "def test_x(testdir):\n    apply_discount(20)\n    testdir.runpytest()\n",
+            unresolved,
+        ),
+        (
             "pytester member",
             "def test_x(pytester):\n    apply_discount(20)\n    pytester.runpytest().assert_outcomes(passed=1)\n",
             unresolved,
@@ -3473,6 +3478,41 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
         (
             "unittest _callTestMethod override asserts",
             "import unittest\nclass T(unittest.TestCase):\n    def _callTestMethod(self, method):\n        method()\n        assert self.ok\n    def test_x(self):\n        apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "unittest __init__ override",
+            "import unittest\nclass T(unittest.TestCase):\n    def __init__(self, *a):\n        self.addCleanup(self.assertTrue, False)\n    def test_x(self):\n        apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "unittest doCleanups override",
+            "import unittest\nclass T(unittest.TestCase):\n    def doCleanups(self):\n        self.assertTrue(False)\n    def test_x(self):\n        apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "unittest __init_subclass__ override",
+            "import unittest\nclass T(unittest.TestCase):\n    def __init_subclass__(cls, **kw):\n        cls.check_all()\n    def test_x(self):\n        apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "unittest debug override",
+            "import unittest\nclass T(unittest.TestCase):\n    def debug(self):\n        self.assertTrue(False)\n    def test_x(self):\n        apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "unittest __call__ override",
+            "import unittest\nclass T(unittest.TestCase):\n    def __call__(self, *a):\n        self.assertTrue(False)\n    def test_x(self):\n        apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "unittest _callSetUp override",
+            "import unittest\nclass T(unittest.TestCase):\n    def _callSetUp(self):\n        self.assertTrue(False)\n    def test_x(self):\n        apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "unittest _callTearDown override",
+            "import unittest\nclass T(unittest.TestCase):\n    def _callTearDown(self):\n        self.assertTrue(False)\n    def test_x(self):\n        apply_discount(20)\n",
             unresolved,
         ),
         (

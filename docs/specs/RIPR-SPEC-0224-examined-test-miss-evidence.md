@@ -247,8 +247,9 @@ static limit, one row at a time, in `python/row_miss.rs`:
     `importlib.import_module` and `runpy`;
   - fixtures and hooks: a same-module autouse fixture, `usefixtures`,
     `pytestmark`, an opaque fixture parameter, an asserting setup hook or an
-    asserting override of `run`, `debug`, `__call__` or `_callTestMethod`/
-    `_callSetUp`/`_callTearDown` in any class, and `pytest_plugins`;
+    asserting override of `__init__`, `__init_subclass__`, `doCleanups`, `run`,
+    `debug`, `__call__` or `_callTestMethod`/`_callSetUp`/`_callTearDown`/
+    `_callCleanup`/`_callAsync` in any class, and `pytest_plugins`;
   - module-level effects in the test module itself: a call RIPR cannot
     resolve (`warnings.filterwarnings("error")`, `pytest.skip(...,
     allow_module_level=True)`, `pytest.importorskip`), a module-level `assert`

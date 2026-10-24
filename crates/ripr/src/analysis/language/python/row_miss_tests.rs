@@ -350,6 +350,56 @@ const SHAPE_PAIRS: &[(&str, &str, &str)] = &[
         "import importlib\n\ndef test_shape():\n    load = importlib.import_module\n    load('plugin_a')\n    score(0)\n",
         "def test_shape():\n    load = len\n    load('plugin_a')\n    score(0)\n",
     ),
+    (
+        "unittest __init__ registers an asserting cleanup",
+        "import unittest\n\nclass T(unittest.TestCase):\n    def __init__(self, *a):\n        self.addCleanup(self.assertTrue, False)\n    def test_shape(self):\n        score(0)\n",
+        "import unittest\n\nclass T(unittest.TestCase):\n    def __init__(self, *a):\n        self.x = 1\n    def test_shape(self):\n        score(0)\n",
+    ),
+    (
+        "unittest doCleanups override",
+        "import unittest\n\nclass T(unittest.TestCase):\n    def doCleanups(self):\n        self.assertTrue(False)\n    def test_shape(self):\n        score(0)\n",
+        "import unittest\n\nclass T(unittest.TestCase):\n    def doCleanups(self):\n        self.x = 1\n    def test_shape(self):\n        score(0)\n",
+    ),
+    (
+        "unittest __init_subclass__",
+        "import unittest\n\nclass T(unittest.TestCase):\n    def __init_subclass__(cls, **kw):\n        cls.check_all()\n    def test_shape(self):\n        score(0)\n",
+        "import unittest\n\nclass T(unittest.TestCase):\n    def __init_subclass__(cls, **kw):\n        cls.x = 1\n    def test_shape(self):\n        score(0)\n",
+    ),
+    (
+        "unittest debug override",
+        "import unittest\n\nclass T(unittest.TestCase):\n    def debug(self):\n        self.assertTrue(False)\n    def test_shape(self):\n        score(0)\n",
+        "import unittest\n\nclass T(unittest.TestCase):\n    def debug(self):\n        self.x = 1\n    def test_shape(self):\n        score(0)\n",
+    ),
+    (
+        "unittest __call__ override",
+        "import unittest\n\nclass T(unittest.TestCase):\n    def __call__(self, *a):\n        self.assertTrue(False)\n    def test_shape(self):\n        score(0)\n",
+        "import unittest\n\nclass T(unittest.TestCase):\n    def __call__(self, *a):\n        self.x = 1\n    def test_shape(self):\n        score(0)\n",
+    ),
+    (
+        "unittest _callSetUp override",
+        "import unittest\n\nclass T(unittest.TestCase):\n    def _callSetUp(self):\n        self.assertTrue(False)\n    def test_shape(self):\n        score(0)\n",
+        "import unittest\n\nclass T(unittest.TestCase):\n    def _callSetUp(self):\n        self.x = 1\n    def test_shape(self):\n        score(0)\n",
+    ),
+    (
+        "unittest _callTearDown override",
+        "import unittest\n\nclass T(unittest.TestCase):\n    def _callTearDown(self):\n        self.assertTrue(False)\n    def test_shape(self):\n        score(0)\n",
+        "import unittest\n\nclass T(unittest.TestCase):\n    def _callTearDown(self):\n        self.x = 1\n    def test_shape(self):\n        score(0)\n",
+    ),
+    (
+        "unittest run override",
+        "import unittest\n\nclass T(unittest.TestCase):\n    def run(self, result=None):\n        self.assertTrue(False)\n    def test_shape(self):\n        score(0)\n",
+        "import unittest\n\nclass T(unittest.TestCase):\n    def run(self, result=None):\n        self.x = 1\n    def test_shape(self):\n        score(0)\n",
+    ),
+    (
+        "testdir member",
+        "def test_shape(testdir):\n    score(0)\n    testdir.runpytest()\n",
+        "def test_shape(testdir):\n    score(0)\n",
+    ),
+    (
+        "recwarn.pop",
+        "def test_shape(recwarn):\n    score(0)\n    recwarn.pop(UserWarning)\n",
+        "def test_shape(recwarn):\n    score(0)\n",
+    ),
 ];
 
 #[test]

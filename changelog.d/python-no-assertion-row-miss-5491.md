@@ -8,6 +8,6 @@
   on the directory chain that declares a fixture or hook, has top-level calls,
   or cannot be read. Admission now also treats names imported from assertion libraries
   (`nose`, `pytest_check`, `pytest_assume`, `hamcrest`, `pytest_*` plugins),
-  imported decorators and context managers, `pytest.param(..., marks=...)`, `request.applymarker`, any `recwarn`/`pytester` member, unittest `run`/`_callTestMethod` overrides, `subprocess.run`, `unittest.main`, `doctest` and `importlib.import_module` as assertion-like.
+  imported decorators and context managers, `pytest.param(..., marks=...)`, `request.applymarker`, any `recwarn`/`pytester`/`testdir` member, unittest `__init__`/`doCleanups`/`run`/`_callTestMethod` overrides, `subprocess.run`, `unittest.main`, `doctest` and `importlib.import_module` as assertion-like.
   Plugins or `filterwarnings` set in ini files, `-p` and `addopts` stay
   invisible limits; the reason is explanation only and changes no class.
