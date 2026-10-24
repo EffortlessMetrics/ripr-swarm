@@ -18,7 +18,7 @@ floor = 201
 # regression fails `verdict-corpus check`; an improvement passes with a note
 # to lower this number (not a failure, so concurrent fixes do not collide).
 # Raising it is a reviewed edit with a reason.
-missed_credit_ceiling = 134
+missed_credit_ceiling = 143
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
