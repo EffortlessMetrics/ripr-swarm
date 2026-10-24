@@ -3545,7 +3545,7 @@ mod tests {
         std::fs::create_dir_all(&dir).map_err(|err| format!("create dir: {err}"))?;
         let file = dir.join("a-file");
         std::fs::write(&file, "x").map_err(|err| format!("write file: {err}"))?;
-        let mut cases: Vec<(&str, PathBuf, Option<&str>)> = vec![
+        let mut cases = vec![
             ("directory", dir.clone(), None),
             (
                 "missing",
@@ -3554,25 +3554,7 @@ mod tests {
             ),
             ("file", file, Some("the root is not a directory")),
         ];
-        #[cfg(unix)]
-        {
-            let dangling = dir.join("dangling");
-            std::os::unix::fs::symlink(dir.join("no-such-target"), &dangling)
-                .map_err(|err| format!("dangling symlink: {err}"))?;
-            cases.push((
-                "dangling symlink",
-                dangling,
-                Some("the root is not a directory"),
-            ));
-            let looped = dir.join("looped");
-            std::os::unix::fs::symlink(&looped, &looped)
-                .map_err(|err| format!("self symlink: {err}"))?;
-            cases.push((
-                "self-referencing symlink",
-                looped,
-                Some("the root directory cannot be read"),
-            ));
-        }
+        push_symlink_root_cases(&dir, &mut cases)?;
         let failures: Vec<String> = cases
             .iter()
             .filter_map(|(name, root, expected)| {
@@ -3586,6 +3568,43 @@ mod tests {
         } else {
             Err(failures.join("; "))
         }
+    }
+
+    /// Symlinked roots are unix-only. The unconditional call plus the
+    /// `not(unix)` stub keep `cases` mutably borrowed on every platform, so
+    /// the shared vec needs no lint suppression to stay clippy-clean on
+    /// Windows (`unused_mut` fired when the pushes were an inline
+    /// `#[cfg(unix)]` block, #9926 follow-up).
+    #[cfg(unix)]
+    fn push_symlink_root_cases(
+        dir: &Path,
+        cases: &mut Vec<(&'static str, PathBuf, Option<&'static str>)>,
+    ) -> Result<(), String> {
+        let dangling = dir.join("dangling");
+        std::os::unix::fs::symlink(dir.join("no-such-target"), &dangling)
+            .map_err(|err| format!("dangling symlink: {err}"))?;
+        cases.push((
+            "dangling symlink",
+            dangling,
+            Some("the root is not a directory"),
+        ));
+        let looped = dir.join("looped");
+        std::os::unix::fs::symlink(&looped, &looped)
+            .map_err(|err| format!("self symlink: {err}"))?;
+        cases.push((
+            "self-referencing symlink",
+            looped,
+            Some("the root directory cannot be read"),
+        ));
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    fn push_symlink_root_cases(
+        _dir: &Path,
+        _cases: &mut Vec<(&'static str, PathBuf, Option<&'static str>)>,
+    ) -> Result<(), String> {
+        Ok(())
     }
 
     #[cfg(unix)]
