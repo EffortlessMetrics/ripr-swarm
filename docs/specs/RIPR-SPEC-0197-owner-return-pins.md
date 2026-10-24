@@ -15,6 +15,8 @@ Linked plan:
 Linked issues:
 
 - #4478 (confirm a return value pinned by `assert_eq!` on the owner's own call)
+- #9478 (bounded typed function-pointer calls; iterator, macro and executor
+  credit remain separate work)
 - #5027 (share bounded equality execution admission with ErrorPath and Predicate)
 - #5040 (typed async-harness execution provenance; explicit unsupported boundary)
 - #3727 (parser-backed call identity; this spec adds the owner's item
@@ -403,6 +405,49 @@ wrong credits.
    unrelated `let (want, _) = (12, 0);` keeps the pin. Residual, shared with
    the bare call on main: an item `const` or `static` initialized from a
    `const fn` owner (`const W: u32 = crate::weight(4);`) is not followed.
+   A sync free function returning a primitive scalar may also be pinned through
+   `let f: fn(..) -> Scalar = owner_path; assert_eq!(f(args), literal)`
+   (#9478), with either operand order. The shared local-alias reader requires
+   one unattributed immutable ASCII identifier binding in the test's root
+   statement list, a safe Rust `fn` type (no ABI,
+   `unsafe`, type alias or cast), a plain function path, and only direct calls
+   of the binding after its definition. A bare target is admitted only when
+   the parsed test body binds no value of that name; the existing import,
+   module, rival-owner and cfg gates still resolve its identity. No other
+   declaration may bind the pointer's name (raw spellings count as the same
+   name), and body-local glob imports refuse the alias. The original assertion
+   must immediately follow that binding in the same root statement list,
+   matched by both source text and line. Calls must
+   close on one line and the existing 64-alias/body cap applies. The resolved
+   call supplies reach and its own arguments, and the pin checks it under the
+   existing owner and assertion gates. The original assertion's exact text,
+   location and execution context are preserved. The changed tail must have
+   the ordinary unconditional return-path gate, and the expected operand must
+   be a literal. A blind comparison, a value computed from the pointer, any
+   mutation, shadow, capture or forwarding of the pointer, and a deferred
+   assertion supply no pointer pin. A `fn(..)` type is not a nested function
+   declaration; actual nested `fn` items retain the existing refusal. Async,
+   associated, iterator and macro-generated owner credit is outside this rule.
+   For a masked integer-cast tail, the selected pointer call must itself pass
+   one unsigned literal that sets every nonzero mask bit the cast keeps. The
+   mask, parameter and unique owner must be readable by the existing mask
+   rules. The original parameter must reach the mask unchanged under the
+   existing operand-rebinding refusal: an owner binding, assignment, closure
+   or control-flow construct supplies no masked pointer pin. A call argument
+   that sets every mask bit cannot certify a different operand produced by
+   shadowing that parameter. Partial inputs are not combined across indirect calls, and an
+   unread mask, zero kept bits or nonliteral input supplies no pointer pin.
+   The ordinary direct-call mask guard retains its existing collective rule.
+   A selected pointer call also supplies no pin when the existing integer fold
+   proves its arguments give the same result before and after the change, and
+   the existing bounded input grid finds another input that separates them.
+   Thus `n.min(5)` changed to `n.min(6)` is not pinned by `f(3) == 3`, while
+   `f(9) == 6` may pin it. Either equality order and a qualified binding have
+   the same rule. The separating-input preparation is lazy and reused per pin;
+   unknown folds and equivalent rewrites retain today's reading. This veto
+   reads only the selected call's arguments and leaves ordinary direct-call
+   infection and owner-identity rules unchanged.
+
 2. Call identity, from the parser's item-container fact on the owner
    (`FunctionFact.item`: free, local, inherent, trait impl, or trait, with
    the `self`-receiver and body flags; the lexical fallback leaves it
@@ -2286,6 +2331,32 @@ assertions. This repair shares the existing callback without that larger migrati
 
 ## Test Mapping
 
+- `crates/ripr/tests/owner_pin_execution/function_pointer.rs`:
+  `function_pointer_pins_only_the_observed_owner_value` and
+  `function_pointer_runtime_controls_observe_the_same_value` (#9478) compare
+  the same admitted and blind/rebound/rival/dead subjects through the public
+  API and compiled neutral/wrong-value runs. Every runtime subject must
+  compile, enumerate one test and execute it before its outcome is checked.
+  The scope-escape, raw-shadow, glob-shadow and cfg-disabled-binding controls
+  also live in `fixtures/owner_return_pin_pointer_*` and the evidence-promotion
+  honesty corpus, where none may promote the changed return.
+  `function_pointer_mask_pins_require_an_individually_discriminating_input`
+  and `function_pointer_mask_runtime_controls_match_the_selected_input`
+  keep partial-bit inputs uncredited while an all-bit input catches a narrower
+  mask, including qualified/reversed calls and additional unread aliases.
+  `function_pointer_rebound_mask_inputs_do_not_pin_the_changed_mask` and
+  `function_pointer_rebound_mask_runtime_controls_miss_the_narrower_mask`
+  retain owner-side constant and partial-bit shadows: an all-bit argument
+  cannot pin the mask when both neutral and narrower masks pass the same
+  one-test native assertion. The constant-shadow case is also retained in
+  `fixtures/owner_return_pin_pointer_mask_rebound` and the honesty corpus.
+
+  `function_pointer_invisible_inputs_withhold_exposure` and
+  `function_pointer_invisible_runtime_controls_match_the_input` retain bare,
+  qualified and reversed pointer calls, plus direct-call twins. Both versions
+  pass at a neutral input; a separating input fails the baseline. The neutral
+  pointer case is retained in `fixtures/owner_return_pin_pointer_invisible_input`.
+
 - Unit (`crates/ripr/src/analysis/classify/owner_pin/tests.rs`): the bytes
   shape; trait scope; competing definitions (override, inherent twin,
   `macro_rules!` body, forward, free twin); receiver typing; slice-method
@@ -2490,6 +2561,11 @@ assertions. This repair shares the existing callback without that larger migrati
   `spec0231-oracle-helper-assert-json-eq`.
 
 ## Implementation Mapping
+
+- `crates/ripr/src/analysis/extract/calls/function_alias.rs`: shared bounded
+  alias reader and `local_fn_pointer_call`; `extract/calls.rs` retains the
+  call-fact producer and its per-line budget. The scalar free-function pin
+  resolves the returned path through its existing identity gates (#9478).
 
 - `crates/ripr/src/analysis/syntax/ra.rs`: `function_item_fact` fills
   `FunctionFact.item`.
