@@ -83,6 +83,10 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// Exact projected mutable argument read through the shared collection observer.
     pub(in crate::analysis) collection_argument_observed:
         &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
+    /// RIPR-SPEC-0351: the owner `&mut` parameter whose call-site local the
+    /// assertion reads (`format(&mut s, ..); assert_eq!(s, ..)`), or `None`.
+    pub(in crate::analysis) out_parameter_read:
+        &'a dyn Fn(&TestSummary, &OracleFact) -> Option<String>,
     /// RIPR-SPEC-0228 getter credit: whether the owner type's method
     /// `(type, getter, field)` returns that field path itself
     /// (`builder_override::getter_plainly_reads`). Only a verified getter
@@ -143,6 +147,7 @@ fn reveal_evidence(
             effect_state_carried: &|_, _| true,
             setter_writes_field: &|_, _, _| true,
             collection_argument_observed: &|_, _| false,
+            out_parameter_read: &|_, _| None,
             getter_reads_field: &|_, _, _| false,
             getter_reads_key: &|_, _, _| None,
             owner_argument_names: &[],
@@ -183,6 +188,7 @@ fn reveal_evidence_with_exit(
             effect_state_carried: &|_, _| true,
             setter_writes_field: &|_, _, _| true,
             collection_argument_observed: &|_, _| false,
+            out_parameter_read: &|_, _| None,
             getter_reads_field: &|_, _, _| false,
             getter_reads_key: &|_, _, _| None,
             owner_argument_names: &[],
@@ -233,6 +239,7 @@ fn reveal_evidence_proximity_reach(
             owner_may_exit_before_probe: false,
             constructor_starts_empty: &|_, _, _| false,
             call_cannot_store: &|_, _, _, _| None,
+            out_parameter_read: &|_, _| None,
         },
         None,
     );
@@ -2043,6 +2050,8 @@ fn analyze_related_assertions(
                 } else {
                     RelatedTestMiss::NoAssertion
                 }),
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             });
             continue;
         }
@@ -2238,7 +2247,32 @@ fn analyze_related_assertions(
             let field_collection_read = field_collection_read || keyed_read;
             let collection_argument_read =
                 (return_admission.collection_argument_observed)(test, assertion);
-            let matched = matched || field_collection_read || collection_argument_read;
+            // RIPR-SPEC-0351: an `assert_eq!` on the local a direct owner
+            // call wrote through as `&mut` reads the call's output. It is a
+            // candidate oracle for any probe, and confirms observation only
+            // when the changed expression itself writes through that
+            // parameter (a name mention alone is not a write).
+            let out_parameter = if credits_oracle
+                && *reason == RelationReason::DirectOwnerCall
+                && !import_defeats_owner
+                && !cross_package_defeats_owner
+                && !match_context.owner_shadowed
+                && !test_is_should_panic(test)
+            {
+                (return_admission.out_parameter_read)(test, assertion)
+            } else {
+                None
+            };
+            let out_parameter_confirmed = out_parameter.as_deref().is_some_and(|parameter| {
+                contains_as_whole_word(
+                    &crate::analysis::extract::mask_comments_and_strings(&probe.expression),
+                    parameter,
+                ) && super::expression_writes_parameter(&probe.expression, parameter)
+            });
+            let matched = matched
+                || field_collection_read
+                || collection_argument_read
+                || out_parameter.is_some();
             // A bounded assertion-local implicit witness is a matching
             // observer even beside another assertion. Keep refused kind rows
             // visible without borrowing the admitted assertion's confirmation.
@@ -2375,6 +2409,8 @@ fn analyze_related_assertions(
                     relation_reason,
                     relation_confidence,
                     miss: Some(RelatedTestMiss::NoCallPath),
+                    miss_support: None,
+                    role: crate::domain::RelatedTestRole::Contributing,
                 });
             } else if matched {
                 let observation_confirmed = !self_computed
@@ -2404,6 +2440,7 @@ fn analyze_related_assertions(
                                 assertion,
                             ) || field_collection_read
                                 || collection_argument_read
+                                || out_parameter_confirmed
                                 || (direct_collection_mutation_receiver(&probe.expression)
                                     .is_none()
                                     && ((has_token_match && field_write.is_none())
@@ -2469,6 +2506,8 @@ fn analyze_related_assertions(
                         && (effect_observer_confirms(assertion)
                             || implicit_observer == Some(false)))
                     .then_some(RelatedTestMiss::ObservationUnconfirmed),
+                    miss_support: None,
+                    role: crate::domain::RelatedTestRole::Contributing,
                 });
             }
         }
@@ -2498,6 +2537,14 @@ fn analyze_related_assertions(
                 } else {
                     RelatedTestMiss::AssertionNotObserving
                 }),
+                miss_support: None,
+                // A refusal row was part of the legacy oracle-row set; only a
+                // test whose assertions matched nothing is examined-only.
+                role: if refused_here {
+                    crate::domain::RelatedTestRole::Contributing
+                } else {
+                    crate::domain::RelatedTestRole::ExaminedOnly
+                },
             });
         }
     }
@@ -4776,7 +4823,7 @@ fn finalize_related_tests_with_owner_calls(
     // listed. Downstream selection (exact-oracle alignment, fix sites, repair
     // readiness) reads this window.
     let (mut oracle_rows, unmatched): (Vec<_>, Vec<_>) =
-        related.into_iter().partition(|test| !test.is_unmatched());
+        related.into_iter().partition(|test| test.is_contributing());
     // #8386: a bare `.unwrap()`/`.expect()` setup statement is not the
     // decisive oracle when the same test also has a real matched assertion;
     // listing both rows quoted the setup as a "smoke only" miss beside the
@@ -4910,7 +4957,9 @@ fn related_test_rank(test: &RelatedTest) -> u8 {
 
 /// Which relations may supply a credited oracle: a name-only relation
 /// (`WeakTokenSubstring`, `OwnerNamedTest`) may not while any related test
-/// bears reach. Shared with the RIPR-SPEC-0240 refusal scope, which must judge
+/// bears reach, and a `WeakTokenSubstring` relation (a test whose name merely
+/// shares a token with the changed code) never may, even alone: with no
+/// reaching test its assertions belong to other functions (#9169). Shared with the RIPR-SPEC-0240 refusal scope, which must judge
 /// exactly the tests that could have credited the refused assertions.
 pub(in crate::analysis) fn oracle_crediting_relations(
     related_tests: &[(&TestSummary, RelationReason)],
@@ -4918,7 +4967,10 @@ pub(in crate::analysis) fn oracle_crediting_relations(
     let reach_bearing_related = related_tests
         .iter()
         .any(|(_, reason)| !is_name_only_relation(*reason) && !is_proximity_only(*reason));
-    move |reason| !(reach_bearing_related && is_name_only_relation(reason))
+    move |reason| {
+        reason != RelationReason::WeakTokenSubstring
+            && !(reach_bearing_related && is_name_only_relation(reason))
+    }
 }
 
 /// A relation made only by the test's name or path (a changed token, the
@@ -5716,6 +5768,7 @@ mod tests {
             setter_writes_field: &|_, _, _| false,
             getter_reads_field: &|_, _, _| false,
             collection_argument_observed: &|_, _| false,
+            out_parameter_read: &|_, _| None,
             getter_reads_key: &|_, getter, field| {
                 (getter == "on_hand" && field == "stock")
                     .then(|| KeyedFallback::Literal("0".to_string()))
@@ -6040,6 +6093,8 @@ mod tests {
             relation_reason: reason,
             relation_confidence: reason.map(RelationReason::confidence),
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }
     }
 
@@ -6328,6 +6383,7 @@ mod tests {
         let mut input: Vec<_> = (0..9)
             .map(|index| RelatedTest {
                 miss: Some(RelatedTestMiss::NoCallPath),
+                miss_support: None,
                 ..related(
                     &format!("doc_{index:02}"),
                     10 + index,
@@ -6337,6 +6393,7 @@ mod tests {
             .collect();
         input.push(RelatedTest {
             miss: Some(RelatedTestMiss::NoCallPath),
+            miss_support: None,
             ..related(
                 "truncate_to_zero",
                 40,
@@ -6433,6 +6490,7 @@ mod tests {
         let mut input: Vec<_> = (0..6)
             .map(|index| RelatedTest {
                 miss: Some(RelatedTestMiss::NoCallPath),
+                miss_support: None,
                 ..related(
                     &format!("doc_{index:02}"),
                     10 + index,
@@ -6448,6 +6506,7 @@ mod tests {
         ));
         input.push(RelatedTest {
             miss: Some(RelatedTestMiss::NoCallPath),
+            miss_support: None,
             ..related(
                 "truncate_to_zero",
                 40,
@@ -6496,6 +6555,7 @@ mod tests {
         let mut input = nine_file_location_rows_and_one_demoted_row();
         input.push(RelatedTest {
             miss: Some(RelatedTestMiss::NoCallPath),
+            miss_support: None,
             ..related(
                 "sibling_same_line",
                 40,
@@ -6517,6 +6577,7 @@ mod tests {
             input.push(RelatedTest {
                 oracle: Some(format!("assert_eq!(extra_{index}, 1);")),
                 miss: Some(RelatedTestMiss::NoCallPath),
+                miss_support: None,
                 ..related(
                     "truncate_to_zero",
                     40,
@@ -6550,6 +6611,7 @@ mod tests {
         let mut input: Vec<_> = (0..7)
             .map(|index| RelatedTest {
                 miss: Some(RelatedTestMiss::NoCallPath),
+                miss_support: None,
                 ..related(
                     &format!("doc_{index:02}"),
                     10 + index,
@@ -6565,6 +6627,7 @@ mod tests {
             input.push(RelatedTest {
                 oracle: Some(oracle.to_string()),
                 miss: Some(RelatedTestMiss::NoCallPath),
+                miss_support: None,
                 ..related(
                     "truncate_to_zero",
                     40,
@@ -6602,6 +6665,7 @@ mod tests {
         let mut input: Vec<_> = (0..6)
             .map(|index| RelatedTest {
                 miss: Some(RelatedTestMiss::NoCallPath),
+                miss_support: None,
                 ..related(
                     &format!("doc_{index:02}"),
                     10 + index,
@@ -6612,12 +6676,14 @@ mod tests {
         for (name, line) in [("demoted_a", 40), ("demoted_b", 41)] {
             input.push(RelatedTest {
                 miss: Some(RelatedTestMiss::NoCallPath),
+                miss_support: None,
                 ..related(name, line, Some(RelationReason::WeakTokenSubstring))
             });
         }
         for (name, line) in [("zz_extra_a", 90), ("zz_extra_b", 91)] {
             input.push(RelatedTest {
                 miss: Some(RelatedTestMiss::NoCallPath),
+                miss_support: None,
                 ..related(name, line, Some(RelationReason::WeakTokenSubstring))
             });
         }
@@ -6674,6 +6740,7 @@ mod tests {
         let mut input: Vec<_> = (0..5)
             .map(|index| RelatedTest {
                 miss: Some(RelatedTestMiss::NoCallPath),
+                miss_support: None,
                 ..related(
                     &format!("doc_{index:02}"),
                     10 + index,
@@ -6688,12 +6755,14 @@ mod tests {
         ] {
             input.push(RelatedTest {
                 miss: Some(RelatedTestMiss::NoCallPath),
+                miss_support: None,
                 ..related(name, line, Some(RelationReason::WeakTokenSubstring))
             });
         }
         for (name, line) in [("zz_extra_a", 90), ("zz_extra_b", 91)] {
             input.push(RelatedTest {
                 miss: Some(RelatedTestMiss::NoCallPath),
+                miss_support: None,
                 ..related(name, line, Some(RelationReason::WeakTokenSubstring))
             });
         }
@@ -6729,6 +6798,7 @@ mod tests {
         let mut input = nine_file_location_rows_and_one_demoted_row();
         input.push(RelatedTest {
             miss: Some(RelatedTestMiss::NoCallPath),
+            miss_support: None,
             ..related(
                 "second_demoted",
                 41,
@@ -6765,6 +6835,7 @@ mod tests {
         let mut input: Vec<_> = (0..9)
             .map(|index| RelatedTest {
                 miss: Some(RelatedTestMiss::NoCallPath),
+                miss_support: None,
                 ..related(
                     &format!("doc_{index:02}"),
                     10 + index,
@@ -6775,6 +6846,8 @@ mod tests {
         input.push(RelatedTest {
             oracle: None,
             miss: Some(RelatedTestMiss::AssertionNotObserving),
+            miss_support: None,
+            role: RelatedTestRole::ExaminedOnly,
             ..related(
                 "truncate_to_zero",
                 40,
@@ -6802,6 +6875,7 @@ mod tests {
             .collect();
         input.push(RelatedTest {
             miss: Some(RelatedTestMiss::NoCallPath),
+            miss_support: None,
             ..related(
                 "truncate_to_zero",
                 40,
@@ -7133,6 +7207,7 @@ mod tests {
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -7224,6 +7299,7 @@ mod tests {
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
+                    out_parameter_read: &|_, _| None,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
                     owner_argument_names: &[],
@@ -7402,6 +7478,7 @@ mod tests {
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
+                    out_parameter_read: &|_, _| None,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
                     owner_argument_names: &[],
@@ -7507,6 +7584,7 @@ mod tests {
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
+                    out_parameter_read: &|_, _| None,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
                     owner_argument_names: &[],
@@ -7623,11 +7701,7 @@ mod tests {
         // reach either, so it must not switch the rule on.
         let bystander = test_with_assertions("same_file_bystander", Vec::new());
         for related in [
-            vec![(&proximity_test, RelationReason::WeakTokenSubstring)],
-            vec![
-                (&bystander, RelationReason::SameTestFile),
-                (&proximity_test, RelationReason::WeakTokenSubstring),
-            ],
+            vec![(&proximity_test, RelationReason::OwnerNamedTest)],
             vec![
                 (&bystander, RelationReason::SameModule),
                 (&proximity_test, RelationReason::OwnerNamedTest),
@@ -7637,6 +7711,23 @@ mod tests {
             if discriminate.state != StageState::Yes {
                 return Err(format!(
                     "relation with no reach-bearing test lost its oracle reading: {discriminate:?}"
+                ));
+            }
+        }
+        // #9169: a name-token neighbour (`count_test` beside a changed
+        // `count_zero`) pins other functions, so it never credits an oracle,
+        // reach-bearing test or not.
+        for related in [
+            vec![(&proximity_test, RelationReason::WeakTokenSubstring)],
+            vec![
+                (&bystander, RelationReason::SameTestFile),
+                (&proximity_test, RelationReason::WeakTokenSubstring),
+            ],
+        ] {
+            let (_, discriminate, _) = reveal_evidence(&probe, &related);
+            if discriminate.state == StageState::Yes {
+                return Err(format!(
+                    "a name-token relation credited an oracle: {discriminate:?}"
                 ));
             }
         }
@@ -7842,7 +7933,7 @@ mod tests {
             related[0].miss,
             Some(RelatedTestMiss::AssertionNotObserving)
         );
-        assert!(related[0].is_unmatched());
+        assert!(related[0].is_examined_only());
         assert_eq!(
             related[0].oracle.as_deref(),
             Some("assert_eq!(unrelated, 3);")
@@ -7912,6 +8003,7 @@ mod tests {
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -7934,7 +8026,13 @@ mod tests {
             vec!["assert!(score > 0);", "assert_eq!(score, 3);"],
             "{related:?}"
         );
-        assert_eq!(related.iter().filter(|test| test.is_unmatched()).count(), 6);
+        assert_eq!(
+            related
+                .iter()
+                .filter(|test| test.is_examined_only())
+                .count(),
+            6
+        );
     }
 
     #[test]
@@ -7993,6 +8091,7 @@ mod tests {
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -8006,7 +8105,7 @@ mod tests {
         assert_eq!(total, 9, "every examined test is counted");
         assert_eq!(related.len(), 8);
         assert!(
-            related.iter().all(|test| !test.is_unmatched()),
+            related.iter().all(|test| test.is_contributing()),
             "the miss is outside the window: {related:?}"
         );
     }
@@ -8795,8 +8894,8 @@ return Err(\"typed pin\".into());
         );
     }
 
-    /// A name-token-only link (`WeakTokenSubstring`) is proximity too, so the
-    /// summary must not claim the test shares the file or module.
+    /// A file-only link is proximity: the summary names no assertion kind
+    /// (a name-token-only link no longer credits at all, #9169).
     #[test]
     fn name_token_proximity_error_variant_assertion_names_no_kind_or_location() {
         let probe = probe(ProbeFamily::Predicate, "should_remove_con_len");
@@ -8806,8 +8905,7 @@ return Err(\"typed pin\".into());
             OracleStrength::Strong,
         );
         let test = test_with_assertions("max_header_size", vec![exact_error]);
-        let (_, proximity, _) =
-            reveal_evidence(&probe, &[(&test, RelationReason::WeakTokenSubstring)]);
+        let (_, proximity, _) = reveal_evidence(&probe, &[(&test, RelationReason::SameTestFile)]);
         assert_eq!(proximity.state, StageState::Yes, "{proximity:?}");
         assert_eq!(
             proximity.summary,
@@ -9766,6 +9864,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -9832,6 +9931,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -9869,6 +9969,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -9925,6 +10026,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -9983,6 +10085,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -10185,6 +10288,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -10225,6 +10329,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -10632,6 +10737,7 @@ return Err(\"typed pin\".into());
                         owner_argument_names: &[],
                         getter_reads_key: &|_, _, _| None,
                         collection_argument_observed: &|_, _| false,
+                        out_parameter_read: &|_, _| None,
                         assertion_has_known_implicit_observer: &|_, _| Some(false),
                         owner_return_pin: &|_, _| false,
                         assertion_admitted: &|_, _| true,
@@ -10707,6 +10813,7 @@ return Err(\"typed pin\".into());
                     owner_argument_names: &[],
                     getter_reads_key: &|_, _, _| None,
                     collection_argument_observed: &|_, _| false,
+                    out_parameter_read: &|_, _| None,
                     owner_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|test, _| {
@@ -10804,6 +10911,7 @@ return Err(\"typed pin\".into());
                     effect_state_carried: &carried,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
+                    out_parameter_read: &|_, _| None,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
                     owner_argument_names: &[],
@@ -11090,6 +11198,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -11191,6 +11300,7 @@ return Err(\"typed pin\".into());
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
+                    out_parameter_read: &|_, _| None,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
                     owner_argument_names: &[],
@@ -11235,6 +11345,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -11730,6 +11841,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -12222,6 +12334,8 @@ return Err(\"typed pin\".into());
         let name_only = [(&named, RelationReason::OwnerNamedTest)];
         let credits = oracle_crediting_relations(&name_only);
         assert!(credits(RelationReason::OwnerNamedTest));
+        // #9169: a token-in-the-name relation never credits, even alone.
+        assert!(!credits(RelationReason::WeakTokenSubstring));
 
         let proximity_only = [
             (&direct, RelationReason::SameTestFile),
@@ -12271,6 +12385,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],

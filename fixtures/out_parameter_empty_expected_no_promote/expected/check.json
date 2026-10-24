@@ -1,0 +1,431 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/out_parameter_empty_expected_no_promote/input",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":2,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:9d213bff80f0351bd73c753be1c500ce29e353d46b3cf8cb4dc4f001290bbe59","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:call_deletion:be4c7df1",
+      "canonical_gap_id": "gap:rust:src/lib.rs:impl Formatter::format:call_deletion:call_deletion:out.push_lit2b",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:impl Formatter::format:call_deletion:call_deletion:out.push_lit2b",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "impl Formatter::format",
+        "behavior_kind": "call_deletion",
+        "probe_kind": "call_deletion",
+        "normalized_discriminator": "out.push_lit2b"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:call_deletion:be4c7df1",
+        "family": "call_deletion",
+        "delta": "effect",
+        "file": "./src/lib.rs",
+        "line": 5,
+        "expression": "out.push('+')"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach format: expects_default, expects_empty_local, expects_empty_to_string"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches state write: out.push('+')"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach format: expects_default, expects_empty_local, expects_empty_to_string", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches state write: out.push('+')", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches state write: out.push('+') (line 5)", "related test src/lib.rs:21 expects_default uses strong exact value oracle: assert_eq!(s, String::default());", "related test src/lib.rs:42 expects_empty_local uses strong exact value oracle: assert_eq!(s, e);", "related test src/lib.rs:28 expects_empty_to_string uses strong exact value oracle: assert_eq!(s, \"\".to_string());", "related test src/lib.rs:14 expects_from_empty uses strong exact value oracle: assert_eq!(s, String::from(\"\"));", "related test src/lib.rs:35 expects_with_capacity uses strong exact value oracle: assert_eq!(s, String::with_capacity(8));", "source function argument value minutes = 570 at line 16", "source assertion argument value \"\" at line 17", "source function argument value minutes = 570 at line 23", "source function argument value minutes = 570 at line 30", "source assertion argument value \"\" at line 31", "source function argument value minutes = 570 at line 37", "source assertion argument value 8 at line 38", "source function argument value minutes = 570 at line 44"],
+      "flow_sinks": [
+        {"kind":"state_write","text":"out.push('+')","line":5}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches state write: out.push('+')", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach format: expects_default, expects_empty_local, expects_empty_to_string"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "16": "Formatter.format(&mut s, 570);",
+        "17": "assert_eq!(s, String::from(\"\"));",
+        "23": "Formatter.format(&mut s, 570);",
+        "30": "Formatter.format(&mut s, 570);",
+        "31": "assert_eq!(s, \"\".to_string());",
+        "37": "Formatter.format(&mut s, 570);",
+        "38": "assert_eq!(s, String::with_capacity(8));",
+        "44": "Formatter.format(&mut s, 570);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 16,
+            "value": "minutes = 570",
+            "context": "function_argument"
+          },
+          {
+            "line": 17,
+            "value": "\"\"",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 23,
+            "value": "minutes = 570",
+            "context": "function_argument"
+          },
+          {
+            "line": 30,
+            "value": "minutes = 570",
+            "context": "function_argument"
+          },
+          {
+            "line": 31,
+            "value": "\"\"",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 37,
+            "value": "minutes = 570",
+            "context": "function_argument"
+          },
+          {
+            "line": 38,
+            "value": "8",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 44,
+            "value": "minutes = 570",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 16,
+          "value": "minutes = 570",
+          "context": "function_argument"
+        },
+        {
+          "line": 17,
+          "value": "\"\"",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 23,
+          "value": "minutes = 570",
+          "context": "function_argument"
+        },
+        {
+          "line": 30,
+          "value": "minutes = 570",
+          "context": "function_argument"
+        },
+        {
+          "line": 31,
+          "value": "\"\"",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 37,
+          "value": "minutes = 570",
+          "context": "function_argument"
+        },
+        {
+          "line": 38,
+          "value": "8",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 44,
+          "value": "minutes = 570",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 5,
+      "related_tests": [
+        {
+          "name": "expects_default",
+          "file": "src/lib.rs",
+          "line": 21,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(s, String::default());",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "expects_empty_local",
+          "file": "src/lib.rs",
+          "line": 42,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(s, e);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "expects_empty_to_string",
+          "file": "src/lib.rs",
+          "line": 28,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(s, \"\".to_string());",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "expects_from_empty",
+          "file": "src/lib.rs",
+          "line": 14,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(s, String::from(\"\"));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "expects_with_capacity",
+          "file": "src/lib.rs",
+          "line": 35,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(s, String::with_capacity(8));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "suggested_next_action": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:side_effect:a47a29e6",
+      "canonical_gap_id": "gap:rust:src/lib.rs:impl Formatter::format:side_effect:side_effect:out.push_lit2b",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:impl Formatter::format:side_effect:side_effect:out.push_lit2b",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "impl Formatter::format",
+        "behavior_kind": "side_effect",
+        "probe_kind": "side_effect",
+        "normalized_discriminator": "out.push_lit2b"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:side_effect:a47a29e6",
+        "family": "side_effect",
+        "delta": "effect",
+        "file": "./src/lib.rs",
+        "line": 5,
+        "expression": "out.push('+')"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach format: expects_default, expects_empty_local, expects_empty_to_string"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches state write: out.push('+')"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach format: expects_default, expects_empty_local, expects_empty_to_string", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches state write: out.push('+')", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches state write: out.push('+') (line 5)", "related test src/lib.rs:21 expects_default uses strong exact value oracle: assert_eq!(s, String::default());", "related test src/lib.rs:42 expects_empty_local uses strong exact value oracle: assert_eq!(s, e);", "related test src/lib.rs:28 expects_empty_to_string uses strong exact value oracle: assert_eq!(s, \"\".to_string());", "related test src/lib.rs:14 expects_from_empty uses strong exact value oracle: assert_eq!(s, String::from(\"\"));", "related test src/lib.rs:35 expects_with_capacity uses strong exact value oracle: assert_eq!(s, String::with_capacity(8));", "source function argument value minutes = 570 at line 16", "source assertion argument value \"\" at line 17", "source function argument value minutes = 570 at line 23", "source function argument value minutes = 570 at line 30", "source assertion argument value \"\" at line 31", "source function argument value minutes = 570 at line 37", "source assertion argument value 8 at line 38", "source function argument value minutes = 570 at line 44"],
+      "flow_sinks": [
+        {"kind":"state_write","text":"out.push('+')","line":5}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches state write: out.push('+')", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach format: expects_default, expects_empty_local, expects_empty_to_string"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "16": "Formatter.format(&mut s, 570);",
+        "17": "assert_eq!(s, String::from(\"\"));",
+        "23": "Formatter.format(&mut s, 570);",
+        "30": "Formatter.format(&mut s, 570);",
+        "31": "assert_eq!(s, \"\".to_string());",
+        "37": "Formatter.format(&mut s, 570);",
+        "38": "assert_eq!(s, String::with_capacity(8));",
+        "44": "Formatter.format(&mut s, 570);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 16,
+            "value": "minutes = 570",
+            "context": "function_argument"
+          },
+          {
+            "line": 17,
+            "value": "\"\"",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 23,
+            "value": "minutes = 570",
+            "context": "function_argument"
+          },
+          {
+            "line": 30,
+            "value": "minutes = 570",
+            "context": "function_argument"
+          },
+          {
+            "line": 31,
+            "value": "\"\"",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 37,
+            "value": "minutes = 570",
+            "context": "function_argument"
+          },
+          {
+            "line": 38,
+            "value": "8",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 44,
+            "value": "minutes = 570",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 16,
+          "value": "minutes = 570",
+          "context": "function_argument"
+        },
+        {
+          "line": 17,
+          "value": "\"\"",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 23,
+          "value": "minutes = 570",
+          "context": "function_argument"
+        },
+        {
+          "line": 30,
+          "value": "minutes = 570",
+          "context": "function_argument"
+        },
+        {
+          "line": 31,
+          "value": "\"\"",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 37,
+          "value": "minutes = 570",
+          "context": "function_argument"
+        },
+        {
+          "line": 38,
+          "value": "8",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 44,
+          "value": "minutes = 570",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 5,
+      "related_tests": [
+        {
+          "name": "expects_default",
+          "file": "src/lib.rs",
+          "line": 21,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(s, String::default());",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "expects_empty_local",
+          "file": "src/lib.rs",
+          "line": 42,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(s, e);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "expects_empty_to_string",
+          "file": "src/lib.rs",
+          "line": 28,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(s, \"\".to_string());",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "expects_from_empty",
+          "file": "src/lib.rs",
+          "line": 14,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(s, String::from(\"\"));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "expects_with_capacity",
+          "file": "src/lib.rs",
+          "line": 35,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(s, String::with_capacity(8));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Add a mock expectation, event receiver assertion, persisted-state check, or metric assertion for the changed effect.",
+      "suggested_next_action": "Add a mock expectation, event receiver assertion, persisted-state check, or metric assertion for the changed effect.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

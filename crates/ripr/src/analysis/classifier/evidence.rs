@@ -2,7 +2,7 @@ use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, AssertionRefusal, EffectStateCarrier,
     HELPER_RESULT_NOT_FORWARDED, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
     PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex, WrapperEntryPairing,
-    activation_and_boundary_input, assertion_observes_collection_argument,
+    activation_and_boundary_input, assertion_observes_collection_argument, assertion_out_parameter,
     body_contains_owner_call, call_parameter_names, callee_is_unique, chain_entry_pin_admits,
     chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
     confidence_score, constructor_starts_empty, contains_as_whole_word, current_path_witness_with,
@@ -841,6 +841,11 @@ impl ClassifiedProbeEvidence {
                                 pin_syntax,
                             )
                         })
+                },
+                out_parameter_read: &|test, assertion| {
+                    context.owner_fn.and_then(|owner| {
+                        assertion_out_parameter(owner, context.index, test, assertion, pin_syntax)
+                    })
                 },
                 getter_reads_field: &|impl_type, getter, field| {
                     getter_plainly_reads(context.index, impl_type, getter, field)

@@ -1594,6 +1594,14 @@ The evidence-first fields are additive in schema `0.2`:
   examined row (one per matched assertion, one per test that supplied none).
   Rows listed only as `assertion_not_observing` take only window slots the
   oracle rows leave free, so the oracle rows and their order are unchanged.
+- `related_tests[].role` — (optional, additive, #5563) the row's decision
+  role, a controlled `related_test_role` value, independent of `miss`.
+  `examined_only` marks a row retained only to show an examined test whose
+  assertions matched nothing (RIPR-SPEC-0224); decision paths skip it.
+  `contributing` is the default and is omitted from output; an artifact
+  without the field reads every row as `contributing`. `miss` never changes
+  which decision paths consume a row, and the role is not runtime execution
+  evidence.
 - `oracle_kind` and `oracle_strength` summarize the strongest related oracle
   currently visible to the finding.
 - `suggested_next_action` mirrors `recommended_next_step` for action-oriented
@@ -3019,6 +3027,11 @@ while `call_effect` remains the fallback for other observable calls.
 - `missing_input`
 - `missing_exact_assertion`
 - `observation_unconfirmed`
+
+`related_test_role` values:
+
+- `contributing`
+- `examined_only`
 
 `next_action_class` values:
 
@@ -18506,7 +18519,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.97",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.98",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -19261,7 +19274,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.45",
+    "schema_version": "1.46",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -19274,7 +19287,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.97",
+      "schema_version": "1.98",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
