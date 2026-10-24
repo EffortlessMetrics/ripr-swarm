@@ -652,6 +652,17 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
             return snapshot;
         }
     };
+    // A plain test's calls to a same-file assertion helper read as the
+    // helper's asserts (#9636); extract from the rewritten source, which keeps
+    // every line number.
+    if is_test_file(file)
+        && let Some(inlined) = super::helper_inline::inline_test_helpers(source, &module.body)
+        // Defence in depth: a rewrite that fails to parse degrades to the
+        // original source (unknown), never to a file with no tests.
+        && matches!(parse_module_result(file, &inlined), Ok(Mod::Module(_)))
+    {
+        return extract_source_facts(file, &inlined);
+    }
     // One line-start index per file; every line lookup below is a binary
     // search against it rather than a rescan from byte 0 (#4495).
     let source = &SourceText::new(source);
@@ -712,6 +723,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
     snapshot.conftest_declares_fixture_or_hook = snapshot.conftest_implicit_setup
         || (file.file_name().and_then(|name| name.to_str()) == Some("conftest.py")
             && (!snapshot.fixtures.is_empty()
+                || declares_renamed_or_any_fixture(&module.body)
                 || super::admission::module_level_effects(source, &module.body)
                 || module.body.iter().any(|statement| match statement {
                     Stmt::FunctionDef(function) => function.name.as_str().starts_with("pytest_"),
@@ -2011,5 +2023,22 @@ fn contains_word(line: &str, word: &str) -> bool {
         let after = line[start + word.len()..].chars().next();
         let is_ident = |c: char| c.is_alphanumeric() || c == '_';
         !before.is_some_and(is_ident) && !after.is_some_and(is_ident)
+    })
+}
+
+/// A top-level def decorated as a fixture of any shape. `collect_fixture_defs`
+/// records only plain fixtures, so a renamed one
+/// (`@pytest.fixture(name="tmp_path")`) would otherwise leave a conftest
+/// looking fixture-free while it overrides a built-in fixture.
+fn declares_renamed_or_any_fixture(statements: &[Stmt]) -> bool {
+    statements.iter().any(|statement| {
+        let decorators = match statement {
+            Stmt::FunctionDef(function) => &function.decorator_list,
+            Stmt::AsyncFunctionDef(function) => &function.decorator_list,
+            _ => return false,
+        };
+        super::owners_tests::decorator_names(decorators)
+            .iter()
+            .any(|name| name.ends_with("fixture"))
     })
 }
