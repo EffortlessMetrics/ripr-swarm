@@ -59,8 +59,11 @@ pub(in crate::analysis) fn assertion_out_parameter(
     {
         return None;
     }
+    // The test-side scan always sees every workspace macro name; the owner
+    // side only needs them when the owner body invokes a macro.
+    let all_macro_names: &[String] = syntax.workspace_macro_names(index);
     let macro_names: &[String] = if owner.body.contains('!') {
-        syntax.workspace_macro_names(index)
+        all_macro_names
     } else {
         &[]
     };
@@ -107,7 +110,7 @@ pub(in crate::analysis) fn assertion_out_parameter(
             local_written_by_owner_call(
                 owner,
                 &out_parameters,
-                (impl_type.as_str(), impl_trait.as_deref(), macro_names),
+                (impl_type.as_str(), impl_trait.as_deref(), all_macro_names),
                 test,
                 assertion,
                 &operand,

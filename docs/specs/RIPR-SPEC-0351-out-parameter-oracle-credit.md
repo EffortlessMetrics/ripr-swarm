@@ -162,6 +162,13 @@ assertion reads the call's out-parameter; it grants no strength or reach.
   width padding on a user `Display`, traits from external crates, and a std
   `Write` import anywhere in the owner file's scope counting as in scope for
   every function in the file.
+- User `Drop`, operator, `Index` and `Deref` impls that diverge are not
+  followed, on the owner side or the test side. Path, method and UFCS calls
+  to workspace functions that exit are likewise not followed (named above).
+- `write!(out.clone(), "+")` with expected `"+"` can still be credited by a
+  pre-existing literal-match route outside this helper; that is not a false
+  promotion, because the native test fails on the original, and it has not
+  been verified against main.
 - A format template containing `$` or `*` (`{:1$}`, `{:.*}`) is never treated
   as certainly non-empty, and a string literal with a backslash-newline
   continuation or any escape other than `\n \t \\ \" \'` is not a non-empty
