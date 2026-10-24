@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_route_verb_mismatch (3)
+
+Reason:
+RIPR-SPEC-0028: re-render after main added stage legend lines to human output; finding unchanged
+
+Command:
+`cargo xtask goldens bless python_route_verb_mismatch --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

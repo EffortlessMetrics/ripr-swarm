@@ -1299,11 +1299,12 @@ fn route_decorator_literal_methods(decorator: &Expr) -> Vec<String> {
     if call.keywords.iter().any(|keyword| keyword.arg.is_none()) {
         return Vec::new();
     }
-    let Some(keyword) = call
-        .keywords
-        .iter()
-        .find(|keyword| keyword.arg.as_ref().is_some_and(|arg| arg.as_str() == "methods"))
-    else {
+    let Some(keyword) = call.keywords.iter().find(|keyword| {
+        keyword
+            .arg
+            .as_ref()
+            .is_some_and(|arg| arg.as_str() == "methods")
+    }) else {
         return Vec::new();
     };
     let elements = match &keyword.value {
