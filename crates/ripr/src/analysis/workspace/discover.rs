@@ -200,27 +200,31 @@ pub fn discover_rust_files(root: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(out)
 }
 
-/// Discover production files in the workspace that route to a preview-language
+/// Discover files in the workspace that route to a preview-language
 /// adapter (TypeScript/JavaScript, Python, or Perl), by path extension only.
 ///
 /// Routing is `analysis::language::route`, the same predicate adapter dispatch
 /// uses. This does not require the adapter to be enabled; it is used so the
 /// repo pipeline can disclose preview-language files in scope even when the
-/// adapter is not enabled (RIPR-SPEC-0082, #1111). Test files and excluded
-/// directories are skipped the same way as Rust discovery.
+/// adapter is not enabled (RIPR-SPEC-0082, #1111). Only `DEFAULT_IGNORED_DIRS` are skipped; test,
+/// vendor, example and generated files are counted, so a result is a presence
+/// signal and may include non-production files (fail-closed).
 pub(crate) fn discover_preview_language_files(root: &Path) -> Vec<(LanguageId, PathBuf)> {
+    let mut out = discover_routed_language_files(root);
+    out.retain(|(language, _)| *language != LanguageId::Rust);
+    out
+}
+
+/// Every file in the workspace that routes to any adapter language, Rust
+/// included, from one walk. [`discover_preview_language_files`] is this walk
+/// without Rust; the repo pipeline uses this form so a Rust tree the language
+/// set did not select is disclosed instead of vanishing. Only
+/// `DEFAULT_IGNORED_DIRS` are skipped: test, vendor, example and generated
+/// files (Rust included) are counted, so the Rust count is a presence signal
+/// that may include non-production files (fail-closed).
+pub(crate) fn discover_routed_language_files(root: &Path) -> Vec<(LanguageId, PathBuf)> {
     let mut out: Vec<(LanguageId, PathBuf)> = Vec::new();
-    visit_classified(root, root, &mut out, &|path| {
-        route(path).filter(|language| {
-            matches!(
-                language,
-                LanguageId::TypeScript
-                    | LanguageId::JavaScript
-                    | LanguageId::Python
-                    | LanguageId::Perl
-            )
-        })
-    });
+    visit_classified(root, root, &mut out, &route);
     out.sort_by(|a, b| a.1.cmp(&b.1));
     out
 }
@@ -366,6 +370,51 @@ pub(crate) fn discover_unanalyzed_source_files(root: &Path) -> Vec<(&'static str
     out
 }
 
+/// Whether the workspace holds any regular source file ripr reads (Rust),
+/// routes to a preview-language adapter, or names as an unanalyzed language.
+/// One short-circuiting walk with the same ignored directories as the other
+/// discovery walks; only regular files count, so a dangling link or FIFO
+/// named like a source file does not make a root look inspectable (#9922).
+pub(crate) fn has_inspectable_source_file(root: &Path) -> bool {
+    fn inspectable(path: &Path) -> bool {
+        RustAdapter.accepts_path(path)
+            || route(path).is_some_and(|language| {
+                matches!(
+                    language,
+                    LanguageId::TypeScript
+                        | LanguageId::JavaScript
+                        | LanguageId::Python
+                        | LanguageId::Perl
+                )
+            })
+            || unanalyzed_source_language(path).is_some()
+    }
+    fn walk(dir: &Path) -> bool {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return false;
+        };
+        for entry in entries.flatten() {
+            if cancellation::checkpoint().is_err() {
+                return false;
+            }
+            let path = entry.path();
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_dir() {
+                let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                if !DEFAULT_IGNORED_DIRS.contains(&name) && walk(&path) {
+                    return true;
+                }
+            } else if kind.is_file() && inspectable(&path) {
+                return true;
+            }
+        }
+        false
+    }
+    walk(root)
+}
+
 fn visit_classified<T>(
     root: &Path,
     dir: &Path,
@@ -430,6 +479,42 @@ fn visit(
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn inspectable_source_walk_admits_regular_files_in_any_read_language_only() -> Result<(), String>
+    {
+        let root = std::env::temp_dir().join(format!("ripr-inspectable-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let io = |error: std::io::Error| error.to_string();
+        for (dir, file, expected) in [
+            ("readme", "README.md", false),
+            ("rust", "src/lib.rs", true),
+            ("python", "app.py", true),
+            ("go", "main.go", true),
+            ("ignored", "node_modules/pkg/index.js", false),
+        ] {
+            let case = root.join(dir);
+            let path = case.join(file);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).map_err(io)?;
+            }
+            fs::write(&path, "x\n").map_err(io)?;
+            assert_eq!(has_inspectable_source_file(&case), expected, "{dir}");
+        }
+        #[cfg(unix)]
+        {
+            let dangling = root.join("dangling");
+            fs::create_dir_all(&dangling).map_err(io)?;
+            std::os::unix::fs::symlink("missing-target", dangling.join("app.py")).map_err(io)?;
+            std::os::unix::fs::symlink("missing-target", dangling.join("main.go")).map_err(io)?;
+            assert!(
+                !has_inspectable_source_file(&dangling),
+                "a dangling link named like a source file is not a source"
+            );
+        }
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
 
     #[test]
     fn supplement_absent_file_limitations_keeps_canonical_per_file_disclosure() -> Result<(), String>

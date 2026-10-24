@@ -6006,3 +6006,278 @@ fn gate_and_baseline_fallback_identities_normalize_paths_identically() {
         Some("a.rs:1:unknown")
     );
 }
+
+// -- fail-closed producer-disclosure and status-precedence regressions --
+
+fn guidance_only_input(
+    dir: &Path,
+    name: &str,
+    contents: &str,
+) -> Result<GateEvaluateInput, String> {
+    write_temp_json(dir, name, contents)?;
+    Ok(GateEvaluateInput {
+        root: dir.to_path_buf(),
+        repo_exposure: None,
+        pr_guidance: Some(PathBuf::from(name)),
+        gap_ledger: None,
+        sarif_policy: None,
+        labels_json: None,
+        labels: Vec::new(),
+        agent_verify: None,
+        agent_receipt: None,
+        recommendation_calibration: None,
+        mutation_calibration: None,
+        baseline: None,
+        mode: GateMode::Acknowledgeable,
+        acknowledgement_labels: Vec::new(),
+        exception_policy: None,
+    })
+}
+
+/// A producer that reports a healthy-looking `advisory` status but discloses a
+/// `tool_error` or `timeout` warning still emitted zero comments because it
+/// failed. The warning alone must fail the gate closed, not pass.
+#[test]
+fn given_advisory_status_with_failure_warning_when_gate_evaluated_then_config_error()
+-> Result<(), String> {
+    for kind in ["tool_error", "timeout"] {
+        let dir = temp_dir("gate-warning-only-producer-failure")?;
+        let doc = format!(
+            r#"{{"schema_version":"0.1","tool":"ripr","status":"advisory","comments":[],"warnings":[{{"kind":"{kind}","message":"boom"}}]}}"#
+        );
+        let input = guidance_only_input(&dir, "warn.json", &doc)?;
+        let report = build_gate_decision_report(&input)?;
+        assert_eq!(report.status, "config_error", "{kind}: must fail closed");
+        assert!(gate_decision_should_fail(&report), "{kind}: must fail");
+        assert!(
+            report.config_errors.iter().any(|error| {
+                error.contains("warn.json")
+                    && error.contains("producer warnings contain tool_error or timeout")
+            }),
+            "{kind}: reason must cite the warning signal, got {:?}",
+            report.config_errors,
+        );
+        assert!(report.decisions.is_empty(), "{kind}: no fake decisions");
+        ignore_remove_dir_all(dir);
+    }
+    Ok(())
+}
+
+/// `incomplete` and `timeout` statuses are structurally valid but disclose an
+/// unfinished producer; each must fail closed and name the status.
+#[test]
+fn given_incomplete_or_timeout_producer_status_when_gate_evaluated_then_config_error()
+-> Result<(), String> {
+    for status in ["incomplete", "timeout"] {
+        let dir = temp_dir("gate-incomplete-producer-status")?;
+        let doc = format!(
+            r#"{{"schema_version":"0.1","tool":"ripr","status":"{status}","comments":[]}}"#
+        );
+        let input = guidance_only_input(&dir, "status.json", &doc)?;
+        let report = build_gate_decision_report(&input)?;
+        assert_eq!(report.status, "config_error", "{status}: must fail closed");
+        assert!(gate_decision_should_fail(&report), "{status}: must fail");
+        assert!(
+            report.config_errors.iter().any(|error| {
+                error.contains("status.json") && error.contains(&format!("status=\"{status}\""))
+            }),
+            "{status}: reason must cite the status, got {:?}",
+            report.config_errors,
+        );
+        ignore_remove_dir_all(dir);
+    }
+    Ok(())
+}
+
+/// A warning of an unrelated kind must not be mistaken for a producer failure:
+/// the discriminating negative for the failure-warning refusal above.
+#[test]
+fn given_advisory_status_with_benign_warning_when_gate_evaluated_then_not_config_error()
+-> Result<(), String> {
+    let dir = temp_dir("gate-benign-producer-warning")?;
+    let doc = r#"{"schema_version":"0.1","tool":"ripr","status":"advisory","comments":[],"warnings":[{"kind":"note","message":"fyi"}]}"#;
+    let input = guidance_only_input(&dir, "benign.json", doc)?;
+    let report = build_gate_decision_report(&input)?;
+    assert_ne!(report.status, "config_error", "{:?}", report.config_errors);
+    assert!(report.config_errors.is_empty());
+    assert!(!gate_decision_should_fail(&report));
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+fn pr_guidance_document_defect_names_every_missing_or_malformed_field() {
+    let defect = |value: Value| pr_guidance_document_defect(&value);
+
+    // Both required fields absent: plural noun, both named.
+    let both = defect(json!({"tool": "ripr", "status": "advisory"}));
+    assert!(
+        both.as_deref().is_some_and(|text| {
+            text.starts_with("missing required fields")
+                && text.contains("`schema_version`")
+                && text.contains("`comments`")
+        }),
+        "{both:?}"
+    );
+    // Exactly one absent: singular noun.
+    let one = defect(json!({"schema_version": "0.1", "tool": "ripr", "status": "advisory"}));
+    assert!(
+        one.as_deref()
+            .is_some_and(|text| text.starts_with("missing required field `comments`")),
+        "{one:?}"
+    );
+    // An empty schema marker and a non-array `comments` are both unusable.
+    assert!(
+        defect(json!({"schema_version": "", "comments": [], "tool": "ripr", "status": "advisory"}))
+            .is_some_and(|text| text.contains("`schema_version`"))
+    );
+    assert!(
+        defect(
+            json!({"schema_version": "0.1", "comments": {}, "tool": "ripr", "status": "advisory"})
+        )
+        .is_some_and(|text| text.contains("expected a JSON array"))
+    );
+    // A non-string producer marker is rejected, not coerced.
+    assert!(
+        defect(json!({"schema_version": "0.1", "comments": [], "tool": 7, "status": "advisory"}))
+            .is_some_and(|text| text.contains("field `tool` is 7"))
+    );
+    // A null status is rejected.
+    assert!(
+        defect(json!({"schema_version": "0.1", "comments": [], "tool": "ripr", "status": null}))
+            .is_some_and(|text| text.contains("field `status` is null"))
+    );
+    // Every known status with a complete document is accepted.
+    for status in PR_GUIDANCE_KNOWN_STATUSES {
+        assert_eq!(
+            defect(
+                json!({"schema_version": "0.1", "comments": [], "tool": "ripr", "status": status})
+            ),
+            None,
+            "{status}"
+        );
+    }
+}
+
+/// A blocked ledger discloses a failed producer only when it carries warnings;
+/// a genuinely empty zero-gap ledger is `blocked` with no warnings and stays a
+/// complete zero denominator.
+#[test]
+fn blocked_producer_outcome_requires_status_blocked_and_nonempty_warnings() {
+    assert!(discloses_blocked_producer_outcome(&json!({
+        "status": "blocked", "warnings": ["no records"]
+    })));
+    assert!(!discloses_blocked_producer_outcome(&json!({
+        "status": "blocked", "warnings": []
+    })));
+    assert!(!discloses_blocked_producer_outcome(
+        &json!({"status": "blocked"})
+    ));
+    assert!(!discloses_blocked_producer_outcome(&json!({
+        "status": "complete", "warnings": ["x"]
+    })));
+    assert!(!discloses_blocked_producer_outcome(&json!({
+        "status": 1, "warnings": ["x"]
+    })));
+}
+
+#[test]
+fn blocked_producer_warnings_keeps_only_string_entries_and_defaults_empty() {
+    assert_eq!(
+        blocked_producer_warnings(&json!({"warnings": ["a", 3, null, "b", {"k": "v"}]})),
+        ["a", "b"]
+    );
+    assert!(blocked_producer_warnings(&json!({})).is_empty());
+    assert!(blocked_producer_warnings(&json!({"warnings": "not-an-array"})).is_empty());
+}
+
+#[test]
+fn incomplete_analysis_outcome_kind_prefers_typed_kind_and_defaults_to_incomplete() {
+    assert_eq!(
+        incomplete_analysis_outcome_kind(&json!({
+            "analysis_outcome": {"analysis_complete": false, "outcome": {"kind": "unsupported_input"}}
+        })),
+        "unsupported_input"
+    );
+    assert_eq!(
+        incomplete_analysis_outcome_kind(&json!({
+            "analysis_outcome": {"analysis_complete": false}
+        })),
+        "incomplete"
+    );
+    // When the analysis itself is incomplete AND the document is bounded, the
+    // analysis verdict wins over the bounded-document kind.
+    assert_eq!(
+        incomplete_analysis_outcome_kind(&json!({
+            "analysis_outcome": {
+                "analysis_complete": false,
+                "document_complete": false,
+                "outcome": {"kind": "timeout"}
+            }
+        })),
+        "timeout"
+    );
+}
+
+/// Exit-code precedence: a config error outranks a block, a block outranks
+/// acknowledgement, and only a fully clean evaluation reads `pass`.
+#[test]
+fn top_level_status_precedence_orders_config_error_blocked_acknowledged_advisory_pass() {
+    let blocking = GateSummary {
+        blocking: 1,
+        acknowledged: 1,
+        advisory: 1,
+        ..GateSummary::default()
+    };
+    let errors = vec!["bad input".to_string()];
+    let warnings = vec!["w".to_string()];
+    let clean = GateSummary::default();
+    assert_eq!(
+        top_level_status(&blocking, &warnings, &errors, GateMode::Acknowledgeable, 1),
+        GATE_STATUS_CONFIG_ERROR
+    );
+    assert_eq!(
+        top_level_status(&blocking, &[], &[], GateMode::Acknowledgeable, 0),
+        GATE_STATUS_BLOCKED
+    );
+    // An exception-policy block alone also blocks, even in visible-only mode.
+    assert_eq!(
+        top_level_status(&clean, &[], &[], GateMode::VisibleOnly, 1),
+        GATE_STATUS_BLOCKED
+    );
+    let acked = GateSummary {
+        acknowledged: 1,
+        advisory: 1,
+        ..GateSummary::default()
+    };
+    assert_eq!(
+        top_level_status(&acked, &warnings, &[], GateMode::Acknowledgeable, 0),
+        "acknowledged"
+    );
+    let suppressed = GateSummary {
+        suppressed: 1,
+        ..GateSummary::default()
+    };
+    let unknown = GateSummary {
+        unknown_confidence: 1,
+        ..GateSummary::default()
+    };
+    for summary in [&suppressed, &unknown] {
+        assert_eq!(
+            top_level_status(summary, &[], &[], GateMode::Acknowledgeable, 0),
+            "advisory"
+        );
+    }
+    assert_eq!(
+        top_level_status(&clean, &warnings, &[], GateMode::Acknowledgeable, 0),
+        "advisory"
+    );
+    assert_eq!(
+        top_level_status(&clean, &[], &[], GateMode::VisibleOnly, 0),
+        "advisory"
+    );
+    assert_eq!(
+        top_level_status(&clean, &[], &[], GateMode::Acknowledgeable, 0),
+        "pass"
+    );
+}

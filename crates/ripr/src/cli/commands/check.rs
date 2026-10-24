@@ -2104,6 +2104,34 @@ fn render_check_gap_ledger_badge(
     }
 }
 
+/// The diff-scoped check run behind a gap-bound repair start (#9103,
+/// RIPR-SPEC-0311): the analyzed output, whose findings the gap id resolves
+/// against, and its `check-findings-json` rendering.
+pub(super) struct GapCheckSnapshot {
+    pub(super) output: app::CheckOutput,
+    pub(super) rendered: String,
+}
+
+/// Run the same diff-scoped analysis `ripr check --base <base>` runs for the
+/// default human report (the live diff source selection included) and render
+/// it through the same `check-findings-json` producer `ripr check --format
+/// check-findings-json` uses, so the before snapshot of a gap-bound attempt
+/// is byte-comparable with the artifact `ripr agent verify --gap-id` reads.
+pub(super) fn gap_check_findings_snapshot(
+    root: &Path,
+    base: &str,
+) -> Result<GapCheckSnapshot, String> {
+    let config = load_for_root(root).map_err(|error| config_load_refusal(root, error))?;
+    let output = app::gap_bound_repair::default_check_output(root, Some(base), &config)?;
+    let rendered = output::render::render_check_with_config_and_progress(
+        &output,
+        &OutputFormat::CheckFindingsJson,
+        &config,
+        None,
+    )?;
+    Ok(GapCheckSnapshot { output, rendered })
+}
+
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

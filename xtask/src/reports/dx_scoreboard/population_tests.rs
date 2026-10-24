@@ -321,43 +321,116 @@ fn fixture_json(path: &Path, value: &Value) -> Result<(), String> {
     .map_err(|err| format!("write {}: {err}", path.display()))
 }
 
+/// Row counts for the committed Perl corpus, read from `expected/rows` with
+/// plain field matches rather than through `summarize`, so the expectations
+/// stay independent of the code under test as the corpus grows.
+struct PerlRowCounts {
+    total: u64,
+    producer: u64,
+    discriminated: u64,
+    not_fully: u64,
+    false_actionable: u64,
+    false_exposed: u64,
+    false_silent: u64,
+    producer_abstained: u64,
+    abstained_all: u64,
+}
+
+impl PerlRowCounts {
+    fn load(dir: &Path) -> Result<Self, String> {
+        let mut rows = Vec::new();
+        for entry in fs::read_dir(dir.join("expected/rows")).map_err(|err| err.to_string())? {
+            rows.push(read_json(&entry.map_err(|err| err.to_string())?.path())?);
+        }
+        let field = |row: &Value, key: &str| row[key].as_str().unwrap_or_default().to_string();
+        let count = |keep: &dyn Fn(&Value) -> bool| {
+            u64::try_from(rows.iter().filter(|row| keep(row)).count()).unwrap_or(u64::MAX)
+        };
+        let is_producer = |row: &Value| field(row, "packet_provenance") == "producer";
+        let producer_outcome =
+            |name: &str| count(&|row| is_producer(row) && field(row, "outcome") == name);
+        let producer = count(&is_producer);
+        let discriminated =
+            count(&|row| is_producer(row) && field(row, "truth") == "discriminated");
+        Ok(Self {
+            total: count(&|_| true),
+            producer,
+            discriminated,
+            not_fully: producer - discriminated,
+            false_actionable: producer_outcome("false_actionable"),
+            false_exposed: producer_outcome("false_exposed"),
+            false_silent: producer_outcome("false_silent"),
+            producer_abstained: producer_outcome("abstained"),
+            abstained_all: count(&|row| field(row, "outcome") == "abstained"),
+        })
+    }
+}
+
 #[test]
 fn perl_projection_keeps_producer_and_edited_contributions_separate() -> Result<(), String> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/perl-verdict-corpus");
     let records = population::Records::load(&dir)?;
-    // Independently counted committed rows: producer 27 (15 discriminated,
-    // 12 not fully), edited 33. Do not derive these expectations via summarize.
-    for (rate, expected) in [
-        ("false_verdict_rate", (1, 27)),
-        ("false_actionable_rate", (0, 15)),
-        ("false_exposed_rate", (1, 12)),
-        ("false_silent_rate", (0, 12)),
-        ("abstention_rate", (17, 27)),
+    let counts = PerlRowCounts::load(&dir)?;
+    for (rate, expected, cohort) in [
+        (
+            "false_verdict_rate",
+            (
+                counts.false_actionable + counts.false_exposed + counts.false_silent,
+                counts.producer,
+            ),
+            counts.producer,
+        ),
+        (
+            "false_actionable_rate",
+            (counts.false_actionable, counts.discriminated),
+            counts.discriminated,
+        ),
+        (
+            "false_exposed_rate",
+            (counts.false_exposed, counts.not_fully),
+            counts.not_fully,
+        ),
+        (
+            "false_silent_rate",
+            (counts.false_silent, counts.not_fully),
+            counts.not_fully,
+        ),
+        (
+            "abstention_rate",
+            (counts.producer_abstained, counts.producer),
+            counts.producer,
+        ),
     ] {
         let selected = records.population(&format!("by_packet_provenance.producer.{rate}"))?;
-        assert_eq!(selected.totals()?, expected);
-        assert_eq!(selected.cases.len(), 60);
+        assert_eq!(selected.totals()?, expected, "{rate}");
         assert_eq!(
-            selected
-                .cases
-                .iter()
-                .filter(|case| case.denominator == 0)
-                .count(),
-            if rate == "false_actionable_rate" {
-                45
-            } else if rate == "false_exposed_rate" || rate == "false_silent_rate" {
-                48
-            } else {
-                33
-            }
+            u64::try_from(selected.cases.len()).unwrap_or(u64::MAX),
+            counts.total
+        );
+        // Cases outside the rate's eligible cohort carry a zero denominator.
+        let excluded = selected
+            .cases
+            .iter()
+            .filter(|case| case.denominator == 0)
+            .count();
+        assert_eq!(
+            u64::try_from(excluded).unwrap_or(u64::MAX),
+            counts.total - cohort,
+            "{rate}"
         );
     }
-    assert_eq!(records.population("abstention_rate")?.totals()?, (22, 60));
+    assert_eq!(
+        records.population("abstention_rate")?.totals()?,
+        (counts.abstained_all, counts.total)
+    );
     assert_eq!(
         records
             .population("by_packet_provenance.edited_producer.abstention_rate")?
             .totals()?,
-        (5, 33)
+        (
+            counts.abstained_all - counts.producer_abstained,
+            counts.total - counts.producer
+        )
     );
     for invalid in [
         "by_packet_provenance.producer",
@@ -537,12 +610,21 @@ fn perl_scoreboard_measures_without_blessing_an_absent_baseline() -> Result<(), 
     );
     assert_eq!(current["gate"]["status"], "no_baseline");
     assert_eq!(current["gate"]["failed_instruments"], json!([]));
-    for (metric, n, d, status) in [
-        ("false_verdict", 1_u32, 27_u32, "meets_target"),
-        ("false_actionable", 0, 15, "meets_target"),
-        ("false_exposed", 1, 12, "below_target"),
-        ("false_silent", 0, 12, "meets_target"),
-        ("abstention", 17, 27, "below_target"),
+    let counts = PerlRowCounts::load(&root.join("fixtures/perl-verdict-corpus"))?;
+    for (metric, n, d) in [
+        (
+            "false_verdict",
+            counts.false_actionable + counts.false_exposed + counts.false_silent,
+            counts.producer,
+        ),
+        (
+            "false_actionable",
+            counts.false_actionable,
+            counts.discriminated,
+        ),
+        ("false_exposed", counts.false_exposed, counts.not_fully),
+        ("false_silent", counts.false_silent, counts.not_fully),
+        ("abstention", counts.producer_abstained, counts.producer),
     ] {
         let id = format!("trust.perl_verdict_corpus_{metric}");
         let row = current["metrics"]
@@ -551,12 +633,25 @@ fn perl_scoreboard_measures_without_blessing_an_absent_baseline() -> Result<(), 
             .iter()
             .find(|row| row["id"] == id)
             .ok_or("Perl metric missing")?;
-        assert_eq!(row["value"], json!(round(f64::from(n) / f64::from(d))));
-        assert_eq!(row["status"], status);
+        assert_eq!(row["value"], json!(round(n as f64 / d as f64)));
+        // All five metrics are lower-is-better: meeting the target means the
+        // measured rate is at or under it.
+        let target = config
+            .metric
+            .iter()
+            .find(|def| def.id == id)
+            .ok_or("Perl metric definition missing")?
+            .target;
+        let expected_status = if n as f64 / d as f64 <= target {
+            "meets_target"
+        } else {
+            "below_target"
+        };
+        assert_eq!(row["status"], expected_status, "{id}");
         let population: Population =
             serde_json::from_value(row["samples"][0]["population"].clone())
                 .map_err(|err| err.to_string())?;
-        assert_eq!(population.totals()?, (u64::from(n), u64::from(d)));
+        assert_eq!(population.totals()?, (n, d));
     }
     let baseline: Value = serde_json::from_str(include_str!(
         "../../../../benchmarks/dx_scoreboard/testdata/7552-original-baseline-with-population.json"

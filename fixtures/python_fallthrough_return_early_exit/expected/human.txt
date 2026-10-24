@@ -28,6 +28,13 @@ Start here:
   Verify command: python -m pytest tests/test_quote.py::test_bulk_order_uses_flat_quote (high)
   Next step — Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `not (total > 1000)`
   Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: 1 related Python test(s) found for owner `quote`
     - infection weak: Related tests reach the changed owner, but every strong related test call provably fails the guarding arm, so the changed line never executes under an observed…
     - 6 more detail line(s) in --format human-full

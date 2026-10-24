@@ -824,6 +824,13 @@ pub(crate) fn baseline_delta_item_count(report: &BaselineDeltaReport) -> usize {
     report.items.len()
 }
 
+/// Advisory warnings the report also carries in its JSON/Markdown bodies; the
+/// CLI echoes them to stderr (#9856) so a run that routed from missing inputs
+/// is visible in terminals and `2>&1` CI logs.
+pub(crate) fn baseline_delta_warnings(report: &BaselineDeltaReport) -> &[String] {
+    &report.warnings
+}
+
 fn parse_baseline_records(path: &str, json_text: Result<String, String>) -> BaselineParse {
     let value = match parse_required_json_input(path, "baseline", json_text) {
         Ok(value) => value,

@@ -1,19 +1,19 @@
+use super::PythonFramework;
 use super::admission::PythonAssertionAdmission;
+use super::approx_band::{PythonBandReading, parse_expression, python_band_reading};
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::related_tests::{
     PythonRelatedCandidate, PythonRelationKind, body_calls_owner, dunder_method_class,
     is_python_identifier_char, line_prefix_looks_like_comment_or_string, test_imports_owner_module,
     test_may_reach_owner_class,
 };
-use super::source_facts::parse_module_result;
 use super::source_utils::SourceText;
 use super::{
     PythonImport, PythonOracleShape, PythonOwner, PythonTest, expr_full_name,
     split_python_assignment,
 };
 use crate::domain::{OracleStrength, StaticLimitKind};
-use rustpython_parser::ast::{self, Expr, Mod, Stmt};
-use std::path::Path;
+use rustpython_parser::ast::{self, Expr};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct PythonStaticLimit {
@@ -36,7 +36,7 @@ pub(super) fn static_limit_for_change(
         line_text,
         None,
     );
-    static_limit_for_focused_change(line_text, &focus, owner, related_candidates)
+    static_limit_for_focused_change(line_text, None, &focus, owner, related_candidates)
 }
 
 /// `focus` is the one the finding's rows are selected with (#5572): only the
@@ -44,6 +44,7 @@ pub(super) fn static_limit_for_change(
 /// sibling-field or other-family assertion never hides one.
 pub(super) fn static_limit_for_focused_change(
     line_text: &str,
+    old_line_text: Option<&str>,
     focus: &PythonAssertionFocus,
     owner: &PythonOwner,
     related_candidates: &[PythonRelatedCandidate<'_>],
@@ -169,7 +170,10 @@ pub(super) fn static_limit_for_focused_change(
         });
     }
     if trimmed.chars().any(|ch| ch.is_ascii_digit())
-        && related_candidates_have_tolerance_band_limit(related_candidates, focus)
+        && matches!(
+            python_band_reading(old_line_text, trimmed, owner, related_candidates, focus),
+            PythonBandReading::Unread
+        )
     {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::UnsupportedSyntax,
@@ -687,7 +691,7 @@ fn related_candidates_have_unresolved_pytest_fixture_limit(
 }
 
 fn test_has_unresolved_pytest_fixture_inputs(test: &PythonTest, owner: &PythonOwner) -> bool {
-    test.framework == "pytest"
+    test.framework == PythonFramework::Pytest
         && !test.parametrized
         && body_calls_owner(&test.body_text, owner)
         && test
@@ -746,28 +750,7 @@ pub(super) fn has_identifier_boundary(body_text: &str, idx: usize, len: usize) -
         && after.is_none_or(|ch| !is_python_identifier_char(ch))
 }
 
-/// Whether the strong assertion a row selects compares through
-/// `approx(expected, rel=, abs=)` (RIPR-SPEC-0238 rule 12): an explicit band
-/// may admit the old value, and the band is not evaluated. Bare
-/// `approx(expected)` keeps its default tolerance and keeps crediting.
-fn related_candidates_have_tolerance_band_limit(
-    related_candidates: &[PythonRelatedCandidate<'_>],
-    focus: &PythonAssertionFocus,
-) -> bool {
-    related_candidates
-        .iter()
-        .filter(|candidate| candidate.relation.uses_oracle())
-        .any(|candidate| {
-            select_relevant_assertion(&candidate.test.assertions, Some(focus))
-                .assertion()
-                .is_some_and(|assertion| {
-                    assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
-                        && approx_call_has_band(&assertion.gate_text)
-                })
-        })
-}
-
-fn approx_call_has_band(assertion: &str) -> bool {
+pub(super) fn approx_call_has_band(assertion: &str) -> bool {
     [false, true]
         .into_iter()
         .flat_map(|attribute| {
@@ -858,15 +841,9 @@ fn related_candidates_have_log_membership_limit(
 fn caplog_membership_literals(gate_text: &str) -> Vec<String> {
     let expression = gate_text.trim_start();
     let expression = expression.strip_prefix("assert").unwrap_or(expression);
-    let source = format!("_ = (\n{expression}\n)\n");
-    let Ok(Mod::Module(module)) = parse_module_result(Path::new("t.py"), &source) else {
-        return Vec::new();
-    };
     let mut literals = Vec::new();
-    for stmt in &module.body {
-        if let Stmt::Assign(assign) = stmt {
-            collect_caplog_membership_literals(assign.value.as_ref(), &mut literals);
-        }
+    if let Some(value) = parse_expression(expression) {
+        collect_caplog_membership_literals(&value, &mut literals);
     }
     literals
 }

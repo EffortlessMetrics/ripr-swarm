@@ -32,9 +32,9 @@ pub use discover::discover_rust_files;
 pub(crate) use discover::path_enters_ignored_dir;
 pub(crate) use discover::{
     changed_source_files_absent_from_worktree, discover_preview_language_files,
-    discover_python_test_files, discover_unanalyzed_source_files,
-    limitations_for_absent_changed_files, supplement_absent_file_limitations,
-    worktree_contains_regular_source_file,
+    discover_python_test_files, discover_routed_language_files, discover_unanalyzed_source_files,
+    has_inspectable_source_file, limitations_for_absent_changed_files,
+    supplement_absent_file_limitations, worktree_contains_regular_source_file,
 };
 pub(crate) use select::{
     select_rust_files_for_mode_with_dependent_packages, with_module_context_files,
