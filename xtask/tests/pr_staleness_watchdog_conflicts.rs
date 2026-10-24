@@ -31,7 +31,7 @@ case "$all" in
   *"/check-runs"*) sha="${all#*/commits/}"; sha="${sha%%/*}"; serve "$FAKE_DIR/checks.$sha.json" '{"check_runs":[]}' ;;
   *"/workflows/routed-rust.yml/runs"*) serve "$FAKE_DIR/runs.json" '{"workflow_runs":[]}' ;;
   *"/statuses?"*) sha="${all#*/commits/}"; sha="${sha%%/*}"; serve "$FAKE_DIR/statuses.$sha.json" '[]' ;;
-  *"/comments?"*) echo "${FAKE_EXISTING_COMMENTS:-0}" ;;
+  *"/comments?"*) serve "$FAKE_DIR/comments.json" '[]' ;;
 esac
 "#;
 
@@ -42,6 +42,8 @@ struct Pr {
     repo: &'static str,
     state: &'static str,
     prior_statuses: &'static str,
+    marker_comment: bool,
+    moved: bool,
 }
 
 impl Pr {
@@ -53,6 +55,8 @@ impl Pr {
             repo: "o/r",
             state: "dirty",
             prior_statuses: "[]",
+            marker_comment: false,
+            moved: false,
         }
     }
     fn sha(&self) -> String {
@@ -65,6 +69,7 @@ struct Outcome {
     failures: usize,
     successes: usize,
     summary: String,
+    log: String,
 }
 
 fn run_block() -> Result<String, String> {
@@ -83,7 +88,7 @@ fn run_block() -> Result<String, String> {
         .join("\n"))
 }
 
-fn run(prs: &[Pr], existing_comments: &str, case: &str) -> Result<Outcome, String> {
+fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
     let dir: PathBuf =
         std::env::temp_dir().join(format!("watchdog-conflicts-{}-{case}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
@@ -111,7 +116,20 @@ fn run(prs: &[Pr], existing_comments: &str, case: &str) -> Result<Outcome, Strin
     for pr in prs {
         fs::write(
             dir.join(format!("pull.{}.json", pr.number)),
-            format!(r#"{{"mergeable_state":"{}"}}"#, pr.state),
+            // `moved` models a push between the list call and the live read.
+            format!(
+                r#"{{"mergeable_state":{},"head":{{"sha":"{}"}},"base":{{"ref":"main"}}}}"#,
+                if pr.state == "null" {
+                    "null".to_string()
+                } else {
+                    format!("\"{}\"", pr.state)
+                },
+                if pr.moved {
+                    format!("{:040x}", pr.number + 1000)
+                } else {
+                    pr.sha()
+                }
+            ),
         )
         .map_err(|e| e.to_string())?;
         fs::write(
@@ -119,6 +137,16 @@ fn run(prs: &[Pr], existing_comments: &str, case: &str) -> Result<Outcome, Strin
             pr.prior_statuses,
         )
         .map_err(|e| e.to_string())?;
+        if pr.marker_comment {
+            fs::write(
+                dir.join("comments.json"),
+                format!(
+                    r#"[{{"body":"unrelated"}},{{"body":"<!-- merge-ready-conflict:{}:main -->\nbody"}}]"#,
+                    pr.sha()
+                ),
+            )
+            .map_err(|e| e.to_string())?;
+        }
     }
     fs::write(dir.join("bin/gh"), FAKE_GH).map_err(|e| e.to_string())?;
     fs::write(dir.join("block.sh"), run_block()?).map_err(|e| e.to_string())?;
@@ -136,7 +164,6 @@ fn run(prs: &[Pr], existing_comments: &str, case: &str) -> Result<Outcome, Strin
         .arg(dir.join("block.sh"))
         .env("PATH", path)
         .env("FAKE_DIR", &dir)
-        .env("FAKE_EXISTING_COMMENTS", existing_comments)
         .env("GH_TOKEN", "unused")
         .env("REPOSITORY", "o/r")
         .env("REQUIRED_CHECK", "Ripr Rust Small Result")
@@ -157,6 +184,7 @@ fn run(prs: &[Pr], existing_comments: &str, case: &str) -> Result<Outcome, Strin
         failures: count("state=failure"),
         successes: count("state=success"),
         summary: fs::read_to_string(&summary_path).unwrap_or_default(),
+        log: log.clone(),
     };
     let _ = fs::remove_dir_all(&dir);
     Ok(outcome)
@@ -164,7 +192,7 @@ fn run(prs: &[Pr], existing_comments: &str, case: &str) -> Result<Outcome, Strin
 
 #[test]
 fn a_dirty_labeled_head_is_told_once_with_a_comment_and_a_failing_status() -> Result<(), String> {
-    let outcome = run(&[Pr::dirty(1)], "0", "dirty")?;
+    let outcome = run(&[Pr::dirty(1)], "dirty")?;
     assert_eq!(
         (outcome.comments, outcome.failures, outcome.successes),
         (1, 1, 0),
@@ -172,6 +200,21 @@ fn a_dirty_labeled_head_is_told_once_with_a_comment_and_a_failing_status() -> Re
         outcome.summary
     );
     assert!(outcome.summary.contains("conflict reported"));
+    let sha = Pr::dirty(1).sha();
+    assert!(
+        outcome.log.contains(&format!(
+            "repos/o/r/statuses/{sha} -f state=failure -f context=merge-ready conflict"
+        )),
+        "{}",
+        outcome.log
+    );
+    assert!(
+        outcome
+            .log
+            .contains(&format!("<!-- merge-ready-conflict:{sha}:main -->")),
+        "{}",
+        outcome.log
+    );
     Ok(())
 }
 
@@ -181,7 +224,7 @@ fn an_already_flagged_head_is_not_told_again_every_interval() -> Result<(), Stri
         prior_statuses: OURS_FAILURE,
         ..Pr::dirty(2)
     };
-    let outcome = run(&[flagged], "0", "flagged")?;
+    let outcome = run(&[flagged], "flagged")?;
     assert_eq!(
         (outcome.comments, outcome.failures, outcome.successes),
         (0, 0, 0),
@@ -193,7 +236,11 @@ fn an_already_flagged_head_is_not_told_again_every_interval() -> Result<(), Stri
 
 #[test]
 fn an_existing_marker_comment_is_not_duplicated_but_the_status_is_posted() -> Result<(), String> {
-    let outcome = run(&[Pr::dirty(3)], "1", "marker")?;
+    let marked = Pr {
+        marker_comment: true,
+        ..Pr::dirty(3)
+    };
+    let outcome = run(&[marked], "marker")?;
     assert_eq!(
         (outcome.comments, outcome.failures),
         (0, 1),
@@ -210,7 +257,7 @@ fn a_resolved_conflict_clears_only_the_actions_bot_failure() -> Result<(), Strin
         prior_statuses: OURS_FAILURE,
         ..Pr::dirty(4)
     };
-    let outcome = run(&[cleared], "0", "cleared")?;
+    let outcome = run(&[cleared], "cleared")?;
     assert_eq!(
         (outcome.successes, outcome.failures),
         (1, 0),
@@ -223,7 +270,7 @@ fn a_resolved_conflict_clears_only_the_actions_bot_failure() -> Result<(), Strin
         prior_statuses: r#"[{"context":"merge-ready conflict","state":"failure","creator":{"login":"someone"}}]"#,
         ..Pr::dirty(5)
     };
-    let outcome = run(&[foreign], "0", "foreign")?;
+    let outcome = run(&[foreign], "foreign")?;
     assert_eq!(
         (outcome.successes, outcome.failures),
         (0, 0),
@@ -236,7 +283,7 @@ fn a_resolved_conflict_clears_only_the_actions_bot_failure() -> Result<(), Strin
         prior_statuses: OURS_FAILURE,
         ..Pr::dirty(6)
     };
-    let outcome = run(&[unknown], "0", "unknown")?;
+    let outcome = run(&[unknown], "unknown")?;
     assert_eq!(
         (outcome.successes, outcome.failures),
         (0, 0),
@@ -270,12 +317,73 @@ fn drafts_unlabeled_forks_and_clean_heads_are_left_alone() -> Result<(), String>
             ..Pr::dirty(11)
         },
     ];
-    let outcome = run(&prs, "0", "left-alone")?;
+    let outcome = run(&prs, "left-alone")?;
     assert_eq!(
         (outcome.comments, outcome.failures, outcome.successes),
         (0, 0, 0),
         "{}",
         outcome.summary
     );
+    Ok(())
+}
+
+#[test]
+fn the_newest_status_decides_and_a_null_state_is_not_a_conflict() -> Result<(), String> {
+    // Newest first: an older failure under a newer success is already cleared.
+    let cleared_since = Pr {
+        state: "clean",
+        prior_statuses: r#"[{"context":"merge-ready conflict","state":"success","creator":{"login":"github-actions[bot]"}},{"context":"merge-ready conflict","state":"failure","creator":{"login":"github-actions[bot]"}}]"#,
+        ..Pr::dirty(12)
+    };
+    let outcome = run(&[cleared_since], "newest-success")?;
+    assert_eq!(
+        (outcome.successes, outcome.failures),
+        (0, 0),
+        "{}",
+        outcome.summary
+    );
+
+    // A newer failure above an older success is still flagged: stay quiet when dirty.
+    let flagged_since = Pr {
+        prior_statuses: r#"[{"context":"merge-ready conflict","state":"failure","creator":{"login":"github-actions[bot]"}},{"context":"merge-ready conflict","state":"success","creator":{"login":"github-actions[bot]"}}]"#,
+        ..Pr::dirty(13)
+    };
+    let outcome = run(&[flagged_since], "newest-failure")?;
+    assert_eq!(
+        (outcome.comments, outcome.failures),
+        (0, 0),
+        "{}",
+        outcome.summary
+    );
+
+    // GitHub has not computed mergeability yet: nothing is written either way.
+    let uncomputed = Pr {
+        state: "null",
+        ..Pr::dirty(14)
+    };
+    let outcome = run(&[uncomputed], "null-state")?;
+    assert_eq!(
+        (outcome.comments, outcome.failures, outcome.successes),
+        (0, 0, 0),
+        "{}",
+        outcome.summary
+    );
+    Ok(())
+}
+
+#[test]
+fn a_head_pushed_since_the_list_call_is_left_for_the_next_sweep() -> Result<(), String> {
+    let pushed = Pr {
+        moved: true,
+        ..Pr::dirty(15)
+    };
+    let outcome = run(&[pushed], "moved")?;
+    assert_eq!(
+        (outcome.comments, outcome.failures, outcome.successes),
+        (0, 0, 0),
+        "{}",
+        outcome.summary
+    );
+    assert!(outcome.summary.contains("moved"), "{}", outcome.summary);
     Ok(())
 }

@@ -124,12 +124,14 @@ jobs:
           }
           report_conflict() {
             marker="<!-- merge-ready-conflict:$2:$3 -->"
-            known="$(gh api --paginate "repos/$REPOSITORY/issues/$1/comments?per_page=100" --jq "[.[] | select(.body | contains(\"$marker\"))] | length" | awk '{s+=$1} END{print s+0}')"
+            # Match the marker as a fixed string; it embeds a branch name, which must
+            # never be spliced into a jq filter.
+            known="$(gh api --paginate "repos/$REPOSITORY/issues/$1/comments?per_page=100" --jq '.[].body' | grep -cF -- "$marker" || true)"
             if [ "$known" = "0" ]; then
               gh api "repos/$REPOSITORY/issues/$1/comments" -f body="$marker
-          \`merge-ready\` is set, but this PR conflicts with \`$3\` (head \`${2:0:8}\`), so GitHub creates no test-merge ref and no qualification run can start. Merge \`$3\` into the branch and resolve the conflicts, then remove and re-apply \`merge-ready\`." > /dev/null
+          \`merge-ready\` is set, but this PR conflicts with \`$3\` (head \`${2:0:8}\`), so GitHub creates no test-merge ref and no qualification run can start. Merge \`$3\` into the branch and resolve the conflicts, then remove and re-apply \`merge-ready\`." > /dev/null || return 1
             fi
-            gh api "repos/$REPOSITORY/statuses/$2" -f state=failure -f context="merge-ready conflict" -f description="Conflicts with $3: no qualification run can start; resolve and re-apply merge-ready" > /dev/null
+            gh api "repos/$REPOSITORY/statuses/$2" -f state=failure -f context="merge-ready conflict" -f description="Conflicts with $3: no qualification run can start; resolve and re-apply merge-ready" > /dev/null || return 1
           }
 
           scanned=0 dark=0 in_progress=0 reported=0 cleared=0
@@ -144,7 +146,8 @@ jobs:
             elif [ "$head_repo" != "$REPOSITORY" ]; then
               disposition="skip: fork/untrusted head (${head_repo:-deleted})"
             else
-              mergeable_state="$(gh api "repos/$REPOSITORY/pulls/$number" --jq '.mergeable_state // "unknown"')"
+              live="$(gh api "repos/$REPOSITORY/pulls/$number" --jq '[(.mergeable_state // "unknown"), .head.sha, .base.ref] | join(" ")')"
+              read -r mergeable_state live_head live_base <<<"$live"
               count="$(gh api --paginate "repos/$REPOSITORY/commits/$head_sha/check-runs?per_page=100" --jq "[.check_runs[] | select(.name == \"$REQUIRED_CHECK\")] | length" | awk '{s+=$1} END{print s+0}')"
               if [ "$count" != "0" ]; then
                 disposition="covered ($count required check(s) on head)"
@@ -164,14 +167,24 @@ jobs:
                 fi
               fi
               ours="$(ours_state "$head_sha")"
-              if [ "$mergeable_state" = "dirty" ] && [ "$ours" != "failure" ]; then
-                report_conflict "$number" "$head_sha" "$base_ref"
-                reported=$((reported + 1))
-                disposition="$disposition; conflict reported"
+              if [ "$live_head" != "$head_sha" ] || [ "$live_base" != "$base_ref" ]; then
+                # Pushed or retargeted since the list call: the next sweep reads the new head.
+                disposition="$disposition; head or base moved, left for the next sweep"
+              elif [ "$mergeable_state" = "dirty" ] && [ "$ours" != "failure" ]; then
+                if report_conflict "$number" "$head_sha" "$base_ref"; then
+                  reported=$((reported + 1))
+                  disposition="$disposition; conflict reported"
+                else
+                  disposition="$disposition; conflict report failed"
+                  echo "::warning title=Conflict report failed::PR #$number head ${head_sha:0:8}: a comment or status write failed; the next sweep retries."
+                fi
               elif [ "$ours" = "failure" ] && [ "$mergeable_state" != "dirty" ] && [ "$mergeable_state" != "unknown" ]; then
-                gh api "repos/$REPOSITORY/statuses/$head_sha" -f state=success -f context="merge-ready conflict" -f description="No conflict with $base_ref" > /dev/null
-                cleared=$((cleared + 1))
-                disposition="$disposition; conflict status cleared"
+                if gh api "repos/$REPOSITORY/statuses/$head_sha" -f state=success -f context="merge-ready conflict" -f description="No conflict with $base_ref" > /dev/null; then
+                  cleared=$((cleared + 1))
+                  disposition="$disposition; conflict status cleared"
+                else
+                  disposition="$disposition; conflict status clear failed"
+                fi
               fi
             fi
             echo "| #$number | \`${head_sha:0:8}\` | \`$mergeable_state\` | $disposition |" >> "$GITHUB_STEP_SUMMARY"
