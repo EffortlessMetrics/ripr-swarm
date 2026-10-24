@@ -70,23 +70,8 @@ pub(crate) fn capability_docs(args: &[String]) -> Result<(), String> {
     let rendered = validate_rendering(&rendered_text)?;
     match options.mode {
         Mode::Write => {
-            // Read and splice every doc before writing any, so a missing
-            // marker in one document leaves all of them untouched.
-            let mut updates = Vec::new();
-            for path in DOC_PATHS {
-                let doc = read_text_lossy(Path::new(path))?;
-                let updated =
-                    replace_block(&doc, &rendered).map_err(|reason| format!("{path}: {reason}"))?;
-                updates.push((*path, doc, updated));
-            }
-            for (path, doc, updated) in updates {
-                if updated == doc {
-                    println!("{path}: capability-registry block already current");
-                } else {
-                    std::fs::write(path, updated)
-                        .map_err(|err| format!("failed to write {path}: {err}"))?;
-                    println!("{path}: capability-registry block rewritten");
-                }
+            for line in write_docs(Path::new("."), DOC_PATHS, &rendered)? {
+                println!("{line}");
             }
             Ok(())
         }
@@ -125,6 +110,37 @@ pub(crate) fn capability_docs(args: &[String]) -> Result<(), String> {
             )
         }
     }
+}
+
+/// Splice `rendered` into every doc under `root`. Every doc is read and
+/// spliced in memory before any is written, so a missing marker in any doc
+/// writes nothing. An I/O error part-way through the writes can leave an
+/// earlier doc rewritten and a later one stale; a re-run converges. Returns
+/// one status line per doc, in `paths` order.
+pub(super) fn write_docs(
+    root: &Path,
+    paths: &[&str],
+    rendered: &str,
+) -> Result<Vec<String>, String> {
+    let mut updates = Vec::new();
+    for path in paths {
+        let full = root.join(path);
+        let doc = read_text_lossy(&full)?;
+        let updated =
+            replace_block(&doc, rendered).map_err(|reason| format!("{path}: {reason}"))?;
+        updates.push((*path, full, doc, updated));
+    }
+    let mut lines = Vec::new();
+    for (path, full, doc, updated) in updates {
+        if updated == doc {
+            lines.push(format!("{path}: capability-registry block already current"));
+        } else {
+            std::fs::write(&full, updated)
+                .map_err(|err| format!("failed to write {path}: {err}"))?;
+            lines.push(format!("{path}: capability-registry block rewritten"));
+        }
+    }
+    Ok(lines)
 }
 
 pub(super) fn parse_args(args: &[String]) -> Result<Options, String> {

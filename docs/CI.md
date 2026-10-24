@@ -2373,11 +2373,13 @@ one docs-only way to break a `proof_refs` entry).
 the generated `<!-- capability-registry:begin ... end -->` block in
 `docs/status/SUPPORT_TIERS.md` and in `docs/LANGUAGE_ADAPTER_PREVIEW.md` equal
 to the registry (#5531). Both documents embed the same rendering; a marker
-pair missing from either is a failure, and `--write` splices every document or
-none. The preview guide's remaining prose is checked by the
+pair missing from either is a failure, and `--write` validates and splices every
+document in memory before writing any (an I/O error mid-write can leave a
+partial state that a re-run converges). The preview guide's remaining prose is checked by the
 `language_capability_drift` test: it may not state a `usable alpha` tier (the
 block owns per-cell tiers) and may say `<cell id> is not_proven` only of a cell
-the registry lacks or holds at `not_proven`. There is one
+the registry lacks or holds at `not_proven` (backticks, emphasis, hard wraps
+and the verbs is/are/remains/stays are normalized). There is one
 renderer, in the `ripr` library; `ripr capabilities --markdown` prints it and
 the command builds `ripr`, runs that, and compares or splices the exact text.
 The in-crate `language_capability_drift` test checks the same renderer, but a

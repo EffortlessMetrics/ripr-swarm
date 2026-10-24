@@ -373,7 +373,7 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         run: |
-          changed="$(git diff --no-renames --name-only "$BASE_SHA"..."$HEAD_SHA")"
+          changed="$(git -c core.quotePath=false diff --no-renames --name-only "$BASE_SHA"..."$HEAD_SHA")"
           if printf '%s\n' "$changed" | grep -Eq '^(docs/status/SUPPORT_TIERS\.md|docs/LANGUAGE_ADAPTER_PREVIEW\.md|docs/specs/.*)$'; then
             cargo xtask capability-docs --check
             cargo xtask check-capability-producers

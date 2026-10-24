@@ -346,7 +346,8 @@ analysis. Repo-mode analysis differs per adapter:
 
 Consumption boundary: the repo-scoped CLI formats (`repo-exposure-*`,
 `repo-seams-*`, `repo-badge-*`, `agent-seam-packets-json`) render the
-Rust/Perl seam inventory and do not render preview-language findings, so a
+Rust seam inventory (and Perl only in an opt-in `lang-perl` build, whose
+registry cells are `not_proven`) and do not render preview-language findings, so a
 Python-only or TypeScript-only workspace still shows zero seams in those
 formats — a known limitation, not a clean result. Repo-exposure emits a
 `typescript_diff_first` limitation entry for TS/JS-only workspaces and a
@@ -368,7 +369,7 @@ result, never silent skips.
 
 | Format | Rust repo | Perl repo | TypeScript repo | Python repo |
 | --- | --- | --- | --- | --- |
-| `repo-exposure-json` / `repo-exposure-md` / `repo-sarif` | full | opt-in `lang-perl` build only |  seams: none rendered; `typescript_diff_first` limitation | seams: none rendered; `python_diff_first` limitation |
+| `repo-exposure-json` / `repo-exposure-md` / `repo-sarif` | full | opt-in `lang-perl` build only; registry `not_proven` | seams: none rendered; `typescript_diff_first` limitation | seams: none rendered; `python_diff_first` limitation |
 | `repo-seams-json` / `repo-seams-md` | full | opt-in `lang-perl` build only; registry `not_proven` | seams: none rendered; evidence via repo analysis result | seams: none rendered; evidence via repo analysis result |
 | `repo-badge-json` / `repo-badge-shields` | full | opt-in `lang-perl` build only; registry `not_proven` | seams: none rendered; evidence via repo analysis result | seams: none rendered; capped/partial runs never badge-eligible |
 | `agent-seam-packets-json` | full | opt-in `lang-perl` build only; registry `not_proven` | seams: none rendered; evidence via repo analysis result | seams: none rendered; evidence via repo analysis result |

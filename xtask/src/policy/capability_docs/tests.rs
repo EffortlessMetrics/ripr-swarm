@@ -1,4 +1,6 @@
-use super::{Mode, block_violations, locate_block, parse_args, replace_block, validate_rendering};
+use super::{
+    Mode, block_violations, locate_block, parse_args, replace_block, validate_rendering, write_docs,
+};
 
 const BEGIN: &str = "<!-- capability-registry:begin (generated; do not edit) -->";
 const END: &str = "<!-- capability-registry:end -->";
@@ -154,5 +156,61 @@ fn every_bound_doc_has_one_locatable_block_and_a_hand_edit_is_caught() -> Result
         blocks.windows(2).all(|pair| pair[0] == pair[1]),
         "bound docs embed the same registry rendering"
     );
+    Ok(())
+}
+
+fn temp_root(name: &str) -> Result<std::path::PathBuf, String> {
+    let root = std::env::temp_dir().join(format!("ripr-capdocs-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    Ok(root)
+}
+
+fn put(root: &std::path::Path, name: &str, text: &str) -> Result<(), String> {
+    std::fs::write(root.join(name), text).map_err(|e| e.to_string())
+}
+
+fn get(root: &std::path::Path, name: &str) -> Result<String, String> {
+    std::fs::read_to_string(root.join(name)).map_err(|e| e.to_string())
+}
+
+#[test]
+fn write_docs_rewrites_every_doc_in_order_and_is_idempotent() -> Result<(), String> {
+    let root = temp_root("both")?;
+    put(&root, "a.md", &doc_with(&rendering("state_b")))?;
+    put(&root, "b.md", &doc_with(&rendering("state_c")))?;
+    let fresh = rendering("state_a");
+    let first = write_docs(&root, &["a.md", "b.md"], &fresh)?;
+    assert_eq!(
+        first,
+        vec![
+            "a.md: capability-registry block rewritten".to_string(),
+            "b.md: capability-registry block rewritten".to_string()
+        ]
+    );
+    assert_eq!(get(&root, "a.md")?, doc_with(&fresh));
+    assert_eq!(get(&root, "b.md")?, doc_with(&fresh));
+    let second = write_docs(&root, &["a.md", "b.md"], &fresh)?;
+    assert!(
+        second.iter().all(|l| l.ends_with("already current")),
+        "{second:?}"
+    );
+    assert_eq!(get(&root, "a.md")?, doc_with(&fresh));
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+fn write_docs_with_a_bad_marker_in_the_second_doc_leaves_the_first_untouched() -> Result<(), String>
+{
+    let root = temp_root("bad")?;
+    let stale = doc_with(&rendering("state_b"));
+    put(&root, "a.md", &stale)?;
+    put(&root, "b.md", "# no markers\n")?;
+    let result = write_docs(&root, &["a.md", "b.md"], &rendering("state_a"));
+    assert!(result.is_err_and(|e| e.starts_with("b.md:")));
+    assert_eq!(get(&root, "a.md")?, stale);
+    assert_eq!(get(&root, "b.md")?, "# no markers\n");
+    let _ = std::fs::remove_dir_all(&root);
     Ok(())
 }

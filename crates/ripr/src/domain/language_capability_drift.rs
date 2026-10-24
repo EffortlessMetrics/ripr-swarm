@@ -196,20 +196,40 @@ fn registry_block_violations(doc: &str, cells: &[CapabilityCell], path: &str) ->
     }
 }
 
-/// Cell identities the preview guide's prose says are `not_proven`, as
-/// `<cell id> is not_proven`. The prose may only say this of a cell the
-/// registry lacks or holds at `not_proven`.
+/// Cell identities the preview guide's prose says are `not_proven`, in the
+/// form `<cell id> is|are|remains|stays not_proven`. Backticks and emphasis
+/// markers are ignored and whitespace (hard wraps) is collapsed first, so
+/// neither can hide a claim. Every cell id earlier in the same sentence
+/// ("`a` and `b` are not_proven") is a claimed subject. The prose may only say
+/// this of a cell the registry lacks or holds at `not_proven`. Narrow by
+/// design: statements without a cell-id subject are not inspected.
 fn prose_not_proven_claims(prose: &str) -> Vec<String> {
-    const CLAIM: &str = " is not_proven";
+    let plain: String = prose
+        .chars()
+        .filter(|c| !matches!(c, '`' | '*'))
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     let mut claims = Vec::new();
-    for (at, _) in prose.match_indices(CLAIM) {
-        let head = prose.get(..at).unwrap_or_default();
-        let start = head
-            .rfind(|c: char| {
-                !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '/')
-            })
-            .map_or(0, |i| i + 1);
-        claims.push(head.get(start..).unwrap_or_default().to_string());
+    for (at, _) in plain.match_indices("not_proven") {
+        let head = plain.get(..at).unwrap_or_default().trim_end();
+        let Some((before, verb)) = head.rsplit_once(' ') else {
+            continue;
+        };
+        if !matches!(verb, "is" | "are" | "remains" | "stays") {
+            continue;
+        }
+        let sentence = before
+            .rfind(['.', ';', ':'])
+            .map_or(before, |i| before.get(i + 1..).unwrap_or_default());
+        for word in sentence.split(|c: char| {
+            !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '/')
+        }) {
+            if word.matches('/').count() == 3 {
+                claims.push(word.to_string());
+            }
+        }
     }
     claims
 }
@@ -227,7 +247,7 @@ fn preview_guide_violations(doc: &str, cells: &[CapabilityCell]) -> Vec<String> 
     else {
         return violations;
     };
-    // Hard-wrapped prose must not hide a claim across a line break.
+    // Hard-wrapped prose must not hide a tier word across a line break.
     let prose = prose.split_whitespace().collect::<Vec<_>>().join(" ");
     let lowered = prose.to_ascii_lowercase();
     if lowered.contains("usable alpha") || lowered.contains("usable_alpha") {
@@ -335,7 +355,7 @@ mod tests {
     #[test]
     fn the_preview_guide_not_proven_claims_are_read() {
         let doc = current_preview_guide();
-        let claims = prose_not_proven_claims(&doc.split_whitespace().collect::<Vec<_>>().join(" "));
+        let claims = prose_not_proven_claims(&doc);
         assert!(
             claims.contains(&"python/any/repo/repair_routing".to_string())
                 && claims.contains(&"typescript/any/repo/repair_routing".to_string()),
@@ -400,6 +420,53 @@ mod tests {
                 .iter()
                 .any(|v| v.contains("is not_proven"))
         );
+    }
+
+    #[test]
+    fn not_proven_claims_survive_backticks_emphasis_verbs_lists_and_wraps() {
+        let held = "perl/any/diff/static_facts";
+        for text in [
+            "`perl/any/diff/static_facts` is not_proven",
+            "perl/any/diff/static_facts is **not_proven**",
+            "perl/any/diff/static_facts are `not_proven`",
+            "perl/any/diff/static_facts remains not_proven",
+            "perl/any/diff/static_facts stays *not_proven*",
+            "perl/any/diff/static_facts\nis\n  not_proven",
+            "`perl/any/diff/static_facts` and `perl/any/repo/static_facts` are not_proven",
+        ] {
+            assert!(
+                prose_not_proven_claims(text).contains(&held.to_string()),
+                "{text:?}"
+            );
+        }
+        // Not claims: no verb, no cell-id subject, or a different sentence.
+        for text in [
+            "absent = `not_proven`, #5531",
+            "registry `not_proven`",
+            "the Perl cells are `not_proven` in the registry",
+            "perl/any/diff/static_facts. Elsewhere it is not_proven",
+        ] {
+            assert!(prose_not_proven_claims(text).is_empty(), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_decorated_false_not_proven_claim_is_drift() {
+        let doc = current_preview_guide();
+        for claim in [
+            "`python/pytest/diff/repair_routing` is not_proven",
+            "python/pytest/diff/repair_routing is **not_proven**",
+            "python/pytest/diff/repair_routing remains `not_proven`",
+            "python/pytest/diff/repair_routing\nare not_proven",
+        ] {
+            let edited = format!("{doc}\n{claim}\n");
+            assert!(
+                preview_guide_violations(&edited, CAPABILITY_CELLS)
+                    .iter()
+                    .any(|v| v.contains("python/pytest/diff/repair_routing")),
+                "{claim:?}"
+            );
+        }
     }
 
     #[test]

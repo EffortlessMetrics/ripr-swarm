@@ -56108,6 +56108,7 @@ fn routed_rust_docs_gate_runs_capability_registry_checks() -> Result<(), String>
         "cargo xtask check-capability-producers",
         "docs/status/SUPPORT_TIERS\\.md",
         "docs/LANGUAGE_ADAPTER_PREVIEW\\.md",
+        "core.quotePath=false",
         "docs/specs/",
     ] {
         if !docs_gate.contains(needle) {
