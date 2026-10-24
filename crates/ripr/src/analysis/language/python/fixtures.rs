@@ -200,7 +200,7 @@ pub(super) fn taint_admission_by_conftest_declarations(
 /// directory pytest puts on `sys.path` for it (#5491): the test file's own
 /// directory and, while a directory is a package (`__init__.py`), each parent
 /// up to and including the first directory that is not (the rootdir pytest's
-/// prepend import mode inserts). `is_present` answers for a
+/// prepend import mode inserts), and always the repository root. `is_present` answers for a
 /// workspace-relative path. Single-file modules are recorded by file and
 /// packages by directory; the row pass exempts only the owner's own module
 /// or package.
@@ -225,6 +225,12 @@ pub(super) fn record_bare_sibling_imports(
                         break;
                     }
                     dir = dir.parent().unwrap_or(Path::new("")).to_path_buf();
+                }
+                // The repository root is on `sys.path` through a root
+                // conftest, `python -m pytest` or an editable install, so a
+                // root-level module is bare-importable too (fail-closed).
+                if !dirs.iter().any(|dir| dir.as_os_str().is_empty()) {
+                    dirs.push(PathBuf::new());
                 }
                 dirs
             })

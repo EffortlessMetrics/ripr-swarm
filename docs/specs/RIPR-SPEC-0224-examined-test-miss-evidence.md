@@ -235,7 +235,9 @@ static limit, one row at a time, in `python/row_miss.rs`:
   - calls RIPR cannot resolve: helper, `self.` and same-module callees, unittest
     and mock assertions, `pytest.raises`/`warns`/`fail`, `raise`, nested defs,
     lambdas, comprehensions, dynamic callees, `request.getfixturevalue`,
-    `applymarker`, `node.add_marker` and `addfinalizer`;
+    `applymarker`, `node.add_marker` and `addfinalizer`, and any member of
+    `recwarn`, `pytester` or `testdir` (`recwarn.pop` raises `AssertionError`);
+    `capsys.readouterr` and `caplog.clear` stay inert;
   - context managers and decorators imported from anywhere other than a short
     standard-library or pytest list (`responses.RequestsMock()`, `respx.mock`,
     `freeze_time`, a project guard), and a `pytest.param` carrying `marks=`;
@@ -244,8 +246,9 @@ static limit, one row at a time, in `python/row_miss.rs`:
     other `pytest_*` plugins), `subprocess.run`, `sys.exit`, `unittest.main`,
     `importlib.import_module` and `runpy`;
   - fixtures and hooks: a same-module autouse fixture, `usefixtures`,
-    `pytestmark`, an opaque fixture parameter, an asserting setup hook, and
-    `pytest_plugins`;
+    `pytestmark`, an opaque fixture parameter, an asserting setup hook or an
+    asserting override of `run`, `debug`, `__call__` or `_callTestMethod`/
+    `_callSetUp`/`_callTearDown` in any class, and `pytest_plugins`;
   - module-level effects in the test module itself: a call RIPR cannot
     resolve (`warnings.filterwarnings("error")`, `pytest.skip(...,
     allow_module_level=True)`, `pytest.importorskip`), a module-level `assert`
@@ -255,9 +258,10 @@ static limit, one row at a time, in `python/row_miss.rs`:
     could not be read (this covers a built-in fixture override, including a
     `name=` rename, `pytest_configure` adding `filterwarnings`, and
     `pytest_generate_tests`, whether or not the test names it);
-  - a bare-importable module: a module or package beside the test file, or in
+  - a bare-importable module: a module or package beside the test file, in
     a parent while each directory is a package up to the first one that is not
-    (pytest's rootdir insertion), is test support RIPR cannot read. The module
+    (pytest's rootdir insertion), or at the repository root (root conftest,
+    `python -m pytest`), is test support RIPR cannot read. The module
     or package that contains the changed owner is exempt, so a flat layout
     keeps the reason.
   Residual limits that stay invisible, so the reason is explanation only and
@@ -265,7 +269,8 @@ static limit, one row at a time, in `python/row_miss.rs`:
   points or `filterwarnings = error` in an ini file, plugins registered
   dynamically, an autouse fixture imported by name into the test module, a
   helper in a path-configured (`pythonpath`) source root, a helper inside the
-  owner's own package, an assertion helper in a third-party library not named
+  owner's own package, import-time effects in `__init__.py` files of the
+  package chain (not scanned), an assertion helper in a third-party library not named
   above and not assertion-like by name, assertions raised inside an imported
   project module, and a test that fails only by crashing the process.
 - `observation_unconfirmed`: a strong family-selected assertion that the row,

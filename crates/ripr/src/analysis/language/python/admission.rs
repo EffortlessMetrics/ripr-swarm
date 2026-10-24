@@ -275,6 +275,20 @@ impl PythonAdmissionContext {
                             })
                             .map(std::slice::from_ref),
                     );
+                    for member in &class.body {
+                        let (name, body) = match member {
+                            Stmt::FunctionDef(function) => {
+                                (function.name.as_str(), &function.body)
+                            }
+                            Stmt::AsyncFunctionDef(function) => {
+                                (function.name.as_str(), &function.body)
+                            }
+                            _ => continue,
+                        };
+                        if CLASS_LIFECYCLE_HOOKS.contains(&name) {
+                            lifecycle.push(body);
+                        }
+                    }
                     self.collect(&class.body, lifecycle);
                 }
                 Stmt::Assign(assign)
@@ -745,6 +759,26 @@ const REQUEST_ESCAPES: &[&str] = &[
     "applymarker",
     "getfixturevalue",
     "getfuncargvalue",
+];
+
+/// A call on a built-in fixture that can assert or run arbitrary code:
+/// `request` escapes, and any member of `recwarn` (`pop` raises
+/// `AssertionError`) or `pytester`/`testdir` (`runpytest`, `assert_outcomes`).
+fn builtin_member_is_assertion_like(root: &str, member: &str) -> bool {
+    REQUEST_ESCAPES.contains(&member) || matches!(root, "recwarn" | "pytester" | "testdir")
+}
+
+/// Methods that wrap or replace unittest's own test execution; an override
+/// can assert around `super().run(...)`.
+const CLASS_LIFECYCLE_HOOKS: &[&str] = &[
+    "run",
+    "debug",
+    "__call__",
+    "_callTestMethod",
+    "_callSetUp",
+    "_callTearDown",
+    "_callCleanup",
+    "_callAsync",
 ];
 
 /// Modules whose context managers do not assert on exit. A `with` callee
@@ -1773,7 +1807,7 @@ impl BodyScan<'_> {
             return true;
         }
         if self.scope.builtin_fixtures.contains(root) {
-            return REQUEST_ESCAPES.contains(&last);
+            return builtin_member_is_assertion_like(root, last);
         }
         if self.context.root_relative_aliases.contains(root) {
             // `from . import checks` in a root-level test file (#6657).
@@ -1821,7 +1855,7 @@ impl BodyScan<'_> {
             // `request.getfixturevalue("name")` pulls in any fixture and
             // `request.applymarker(...)` / `request.node.add_marker(...)`
             // attach marks (`xfail`, `usefixtures`) after collection.
-            return REQUEST_ESCAPES.contains(&last);
+            return builtin_member_is_assertion_like(root, last);
         }
         if self.scope.argnames.contains(root) {
             // Calling a parameter runs whatever the case supplies.

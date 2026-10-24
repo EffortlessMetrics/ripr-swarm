@@ -613,9 +613,10 @@ mod workspace {
         );
         assert_eq!(
             bare_miss(&[], &[], &["runner.py"], root_helper)?,
-            Some(RelatedTestMiss::NoAssertion),
-            "without a package test dir the root is not on sys.path"
+            None,
+            "the repository root is bare-importable (conftest, python -m pytest)"
         );
+
         let production_package =
             "from src.subject import score as s\n\ndef test_bare():\n    s(0)\n";
         let rows = row_misses_at(
@@ -630,6 +631,21 @@ mod workspace {
             rows.iter().map(|(_, miss)| *miss).collect::<Vec<_>>(),
             vec![Some(RelatedTestMiss::NoAssertion)],
             "the owner's package is exempt: {rows:?}"
+        );
+        // Package containment is component-wise: package `sr` does not
+        // contain `src/subject.py`, so it still withholds.
+        let rows = row_misses_at(
+            "tests/test_subject.py",
+            "",
+            &[],
+            &[],
+            &["tests/__init__.py", "sr"],
+            "from sr import score as s\n\ndef test_bare():\n    s(0)\n",
+        )?;
+        assert_eq!(
+            rows.iter().map(|(_, miss)| *miss).collect::<Vec<_>>(),
+            vec![None],
+            "{rows:?}"
         );
         // The module under test beside its test is not test support.
         let rows = row_misses_at(

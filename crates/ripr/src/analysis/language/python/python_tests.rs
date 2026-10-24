@@ -3446,6 +3446,36 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             unresolved,
         ),
         (
+            "capsys.readouterr and caplog.clear stay inert (control)",
+            "def test_x(capsys, caplog):\n    apply_discount(20)\n    capsys.readouterr()\n    caplog.clear()\n",
+            none,
+        ),
+        (
+            "recwarn.pop raises AssertionError",
+            "def test_x(recwarn):\n    apply_discount(20)\n    recwarn.pop(UserWarning)\n",
+            unresolved,
+        ),
+        (
+            "pytester member",
+            "def test_x(pytester):\n    apply_discount(20)\n    pytester.runpytest().assert_outcomes(passed=1)\n",
+            unresolved,
+        ),
+        (
+            "unittest class without run override (control)",
+            "import unittest\nclass T(unittest.TestCase):\n    def helper(self):\n        return 1\n    def test_x(self):\n        apply_discount(20)\n",
+            none,
+        ),
+        (
+            "unittest run override asserts",
+            "import unittest\nclass T(unittest.TestCase):\n    def run(self, result=None):\n        super().run(result)\n        assert result.wasSuccessful()\n    def test_x(self):\n        apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "unittest _callTestMethod override asserts",
+            "import unittest\nclass T(unittest.TestCase):\n    def _callTestMethod(self, method):\n        method()\n        assert self.ok\n    def test_x(self):\n        apply_discount(20)\n",
+            unresolved,
+        ),
+        (
             "assertion-like match guard",
             "def test_x():\n    match apply_discount(20):\n        case 10 if verify(10):\n            pass\n",
             unresolved,
