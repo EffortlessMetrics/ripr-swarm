@@ -1,0 +1,28 @@
+//! A comparison operand that is a unique helper call, returned through a
+//! binding tail.
+
+fn width_of(input: &str) -> usize {
+    let w = input.len();
+    w
+}
+
+pub fn is_triple(input: &str) -> bool {
+    let n = width_of(input);
+    n == 3
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn three_bytes_is_a_triple_h_binding_tail() {
+        assert!(is_triple("abc"));
+    }
+
+    #[test]
+    fn other_widths_are_not_h_binding_tail() {
+        assert!(!is_triple("ab"));
+        assert!(!is_triple("abcd"));
+    }
+}

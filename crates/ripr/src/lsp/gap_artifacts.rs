@@ -2256,6 +2256,7 @@ fn known_static_limit_kind(kind: &str) -> bool {
         StaticLimitKind::RustDebugAssertionProfileUnresolved,
         StaticLimitKind::RustCallFactBudget,
         StaticLimitKind::RustFrameworkOracleUnresolved,
+        StaticLimitKind::RustPinnedShapeUnresolved,
         StaticLimitKind::RustImplicitCallUnresolved,
         StaticLimitKind::RustCallerLoopSelectorUnresolved,
     ]
@@ -2273,10 +2274,10 @@ mod tests {
 
     /// Windows consumer regression for the URI/identity owner, kept in this
     /// module because the Windows advisory subset runs `lsp::gap_artifacts`
-    /// (#9504): `\` separates only here, and the owner folds ASCII case.
+    /// (#9504): `\` separates only here, and the owner folds case.
     #[cfg(windows)]
     #[test]
-    fn windows_uri_identity_uses_backslash_separator_and_ascii_fold() -> Result<(), String> {
+    fn windows_uri_identity_uses_backslash_separator_and_case_fold() -> Result<(), String> {
         let native = ["C:", "Work", "Proj", "a.rs"].join("\\");
         let slash_lower = ["c:", "work", "proj", "a.rs"].join("/");
         let native_uri = super::super::uri::file_uri_for_path(Path::new(&native))?;

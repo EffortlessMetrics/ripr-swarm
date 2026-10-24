@@ -1859,7 +1859,20 @@ fn missing_boundary_discriminator(
             if matches!(resolved, ResolvedOperand::Expression(..)) {
                 call_values.iter().all(row_evaluates)
             } else {
+                // A local some row evaluates is still unresolved when
+                // another row's chain is refused outright (an absent `rfind`
+                // whose `map_or` default is a computed local): that row may
+                // sit on the boundary, so the evaluated rows cannot support
+                // "no test uses it" (RIPR-SPEC-0158).
                 call_values.iter().any(row_evaluates)
+                    && call_values.iter().all(|row| {
+                        let inputs: super::value_transfer::ExactInputs = row
+                            .iter()
+                            .map(|cell| (cell.parameter.clone(), cell.value.clone()))
+                            .collect();
+                        exact_operand_for_row(resolved, row, &inputs, index, workspace_complete)
+                            .is_some()
+                    })
             }
         })
     };
@@ -3143,6 +3156,12 @@ fn constructed_field_name(expression: &str) -> Option<&str> {
     (starts_ident && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')).then_some(name)
 }
 
+/// Whether `ch` continues a Rust identifier: Unicode `XID_Continue` (which
+/// includes combining marks, so decomposed `a\u{301}r` is one name) plus `_`.
+fn is_ident_char(ch: char) -> bool {
+    ch == '_' || unicode_ident::is_xid_continue(ch)
+}
+
 /// Whether `assertion` reads `read` (`.field`) on a value the test got from
 /// calling `owner`: a direct `owner(..).field` chain, or a receiver the test
 /// body binds with `let [mut] recv = ..owner(..)..;`.
@@ -3155,7 +3174,7 @@ fn constructed_field_name(expression: &str) -> Option<&str> {
 /// an `assert_eq!`/`assert_ne!` operand whose other operand is the whole
 /// result (`assert_eq!(c, Config::new(c.retries))`).
 fn reads_owner_result_field(body: &str, assertion: &str, read: &str, owner: &str) -> bool {
-    let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let is_ident = is_ident_char;
     let owner_call = format!("{owner}(");
     let masked = crate::analysis::extract::mask_comments_and_strings(assertion);
     assertion.match_indices(read).any(|(start, matched)| {
@@ -3176,9 +3195,14 @@ fn reads_owner_result_field(body: &str, assertion: &str, read: &str, owner: &str
         if before.ends_with(')') {
             return call_before_is_owner(before, owner);
         }
+        // Step past the whole non-identifier character: `index + 1` lands
+        // inside a multi-byte one (a CJK path in a preceding string) and
+        // panics the slice.
         let receiver_start = before
-            .rfind(|ch: char| !is_ident(ch))
-            .map_or(0, |index| index + 1);
+            .char_indices()
+            .rev()
+            .find(|(_, ch)| !is_ident(*ch))
+            .map_or(0, |(index, ch)| index + ch.len_utf8());
         let receiver = &before[receiver_start..];
         !receiver.is_empty()
             && binds_from_owner_call(body, receiver, &owner_call)
@@ -3247,7 +3271,7 @@ fn field_overwritten_before(
 /// `t = q.total;`, `let base = bundle(3);`): a value built from them may be
 /// the owner's own field value.
 fn receiver_derived_bindings(body: &str, receiver: &str, owner_call: &str) -> Vec<String> {
-    let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let is_ident = is_ident_char;
     fn binding(statement: &str) -> Option<(&str, &str)> {
         let statement = statement.trim();
         let statement = statement.strip_prefix("let ").unwrap_or(statement);
@@ -3314,7 +3338,7 @@ fn visible_at(prefix: &str, start: usize) -> bool {
 }
 
 fn mentions_ident(text: &str, name: &str) -> bool {
-    let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let is_ident = is_ident_char;
     text.match_indices(name).any(|(start, matched)| {
         !text[..start].chars().next_back().is_some_and(is_ident)
             && !text[start + matched.len()..].starts_with(is_ident)
@@ -3343,7 +3367,7 @@ fn statement_semicolon(text: &str) -> usize {
 /// The `let [mut] receiver [: Type] = initializer;` statements in `body`, in
 /// order, as (statement start, initializer).
 fn receiver_lets<'a>(body: &'a str, receiver: &str) -> Vec<(usize, &'a str)> {
-    let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let is_ident = is_ident_char;
     body.match_indices("let ")
         .filter(|(start, _)| !body[..*start].chars().next_back().is_some_and(is_ident))
         .filter_map(|(start, _)| {
@@ -3399,9 +3423,7 @@ fn struct_literal_fields(initializer: &str) -> Option<StructLiteral<'_>> {
     let type_name = path.rsplit("::").next().unwrap_or_default();
     if path.is_empty()
         || !type_name.starts_with(|ch: char| ch.is_ascii_uppercase())
-        || !path
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == ':')
+        || !path.chars().all(|ch| is_ident_char(ch) || ch == ':')
     {
         return None;
     }
@@ -3450,9 +3472,9 @@ fn field_assigned(
             let before_ok = !prefix[..start]
                 .chars()
                 .next_back()
-                .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.');
+                .is_some_and(|ch| is_ident_char(ch) || ch == '.');
             let rest = &prefix[start + matched.len()..];
-            if rest.starts_with(|ch: char| ch.is_ascii_alphanumeric() || ch == '_') {
+            if rest.starts_with(is_ident_char) {
                 return false;
             }
             let rest = rest.trim_start();
@@ -3536,9 +3558,7 @@ fn read_feeds_whole_result_comparison(
         return call_before_is_owner(other, owner);
     }
     !other.is_empty()
-        && other
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        && other.chars().all(is_ident_char)
         && binds_from_owner_call(body, other, &format!("{owner}("))
 }
 
@@ -3594,23 +3614,16 @@ fn call_before_is_owner(before: &str, owner: &str) -> bool {
     let Some(callee) = open.map(|index| &before[..index]) else {
         return false;
     };
-    callee.strip_suffix(owner).is_some_and(|prefix| {
-        !prefix
-            .chars()
-            .next_back()
-            .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-    })
+    callee
+        .strip_suffix(owner)
+        .is_some_and(|prefix| !prefix.chars().next_back().is_some_and(is_ident_char))
 }
 
 /// Whether `body` has `let [mut] receiver = ...;` whose initializer calls
 /// the owner.
 fn binds_from_owner_call(body: &str, receiver: &str, owner_call: &str) -> bool {
     body.match_indices("let ").any(|(start, _)| {
-        if body[..start]
-            .chars()
-            .next_back()
-            .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-        {
+        if body[..start].chars().next_back().is_some_and(is_ident_char) {
             return false;
         }
         let statement = body[start + 4..].split(';').next().unwrap_or_default();
@@ -3784,8 +3797,18 @@ fn call_values_for_owner(
     } else {
         parameters.to_vec()
     };
-    let direct =
-        owner_call_parameter_values(related_tests, &owner.name, is_free(owner), &parameters);
+    // #9218: a module-qualified call that does not resolve to the owner's
+    // module (`rival::thr(101)`) supplies no owner input row.
+    let direct = owner_call_parameter_values_where(
+        related_tests,
+        &owner.name,
+        is_free(owner),
+        &parameters,
+        |test, call| {
+            super::call_identity::qualified_owner_calls_resolve(index, owner, test, &call.text)
+        },
+        &ReceiverParameters::none(),
+    );
     if !direct.is_empty() {
         return direct;
     }
@@ -4008,40 +4031,7 @@ fn helper_transferred_rows(
     if chain.hops.iter().any(|hop| hop.through_macro) {
         return Vec::new();
     }
-    let Some(entry) = chain.hops.last() else {
-        return Vec::new();
-    };
-    let entry_parameters = function_parameters(&entry.caller);
-    // #6780 Devin review: an entry call shadowed by a test-local closure or
-    // nested fn never reaches the helper, so it binds no row (the same
-    // shadow authority that denies its `helper_owner_call` relation).
-    // #9329: the entry hop's method receiver (`b` of `b.to_string_as(si)`)
-    // is the one parameter whose cell is a constructed receiver string.
-    let receiver_reader =
-        |argument: &str| super::helper_transfer::receiver_cell_value(argument, index);
-    let receivers = ReceiverParameters {
-        names: entry.receiver.iter().cloned().collect(),
-        value: Some(&receiver_reader),
-    };
-    let mut rows = owner_call_parameter_values_where(
-        related_tests,
-        &entry.caller.name,
-        is_free(&entry.caller),
-        &entry_parameters,
-        |test, call| {
-            !super::helper_transfer::test_call_is_shadowed(
-                index,
-                test,
-                &entry.caller.name,
-                call.line,
-            ) && !constructor_names(&call.text).any(|name| {
-                // #9329 Devin review: a test-local `let Size = |n| ..` makes
-                // `Size(1024)` something other than the tuple constructor.
-                super::helper_transfer::test_body_shadows_name(index, test, name, call.line)
-            })
-        },
-        &receivers,
-    );
+    let mut rows = chain_entry_rows(chain, related_tests, index);
     if rows.is_empty() {
         return Vec::new();
     }
@@ -4114,6 +4104,103 @@ fn helper_transferred_rows(
         rows = bound_rows;
     }
     rows
+}
+
+/// #9889: the first chain-edge argument that stops row transfer, when the
+/// tests call the chain's entry with exact rows yet no row reaches the owner.
+/// A hop argument that is neither a strict literal, the caller's own
+/// parameter, nor a receiver projection (`input.trim()`, a local, a
+/// constant) cannot be bound to a value, so what the owner receives is
+/// unreadable: observation through the chain can be neither confirmed nor
+/// refuted. A macro hop, a rebound parameter and an entry with no exact rows
+/// stop elsewhere and are not named here.
+pub(in crate::analysis) fn chain_row_transfer_stop(
+    owner: &FunctionSummary,
+    related_tests: &[&TestSummary],
+    chain: &super::helper_transfer::HelperChain,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Option<String> {
+    if chain.hops.iter().any(|hop| hop.through_macro)
+        || chain_entry_rows(chain, related_tests, index).is_empty()
+        || !helper_transferred_rows(&function_parameters(owner), chain, related_tests, index)
+            .is_empty()
+    {
+        return None;
+    }
+    chain.hops.iter().rev().find_map(|hop| {
+        let caller_parameters = function_parameters(&hop.caller);
+        // Ask the binder itself, with a row that holds a value for every
+        // caller parameter, so bindability is never re-derived here. Only
+        // `self.<tuple index>` reads a receiver cell the synthetic row
+        // cannot carry; the binder admits exactly that shape.
+        let row = caller_parameters
+            .iter()
+            .map(|parameter| ParameterValue {
+                parameter: parameter.clone(),
+                value: "0".to_string(),
+                line: 0,
+                text: String::new(),
+                file: None,
+            })
+            .collect::<Vec<_>>();
+        hop.arguments.iter().find_map(|argument| {
+            let trimmed = argument.trim();
+            let receiver_index = trimmed.strip_prefix("self.").is_some_and(|field| {
+                !field.is_empty() && field.chars().all(|ch| ch.is_ascii_digit())
+            });
+            let bindable = receiver_index
+                || bind_helper_argument(argument, &caller_parameters, &row).is_some();
+            (!bindable).then(|| trimmed.to_string())
+        })
+    })
+}
+
+/// The entry function's exact rows from the tests' direct calls, before any
+/// hop binds them down the chain.
+fn chain_entry_rows(
+    chain: &super::helper_transfer::HelperChain,
+    related_tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Vec<Vec<ParameterValue>> {
+    let Some(entry) = chain.hops.last() else {
+        return Vec::new();
+    };
+    let entry_parameters = function_parameters(&entry.caller);
+    // #6780 Devin review: an entry call shadowed by a test-local closure or
+    // nested fn never reaches the helper, so it binds no row (the same
+    // shadow authority that denies its `helper_owner_call` relation).
+    // #9329: the entry hop's method receiver (`b` of `b.to_string_as(si)`)
+    // is the one parameter whose cell is a constructed receiver string.
+    let receiver_reader =
+        |argument: &str| super::helper_transfer::receiver_cell_value(argument, index);
+    let receivers = ReceiverParameters {
+        names: entry.receiver.iter().cloned().collect(),
+        value: Some(&receiver_reader),
+    };
+    owner_call_parameter_values_where(
+        related_tests,
+        &entry.caller.name,
+        is_free(&entry.caller),
+        &entry_parameters,
+        |test, call| {
+            !super::helper_transfer::test_call_is_shadowed(
+                index,
+                test,
+                &entry.caller.name,
+                call.line,
+            ) && !constructor_names(&call.text).any(|name| {
+                // #9329 Devin review: a test-local `let Size = |n| ..` makes
+                // `Size(1024)` something other than the tuple constructor.
+                super::helper_transfer::test_body_shadows_name(index, test, name, call.line)
+            }) && super::call_identity::qualified_owner_calls_resolve(
+                index,
+                &entry.caller,
+                test,
+                &call.text,
+            )
+        },
+        &receivers,
+    )
 }
 
 /// One bound argument: a literal, or the caller's own parameter
@@ -5551,6 +5638,19 @@ fn scalar_values(text: &str) -> Vec<String> {
         {
             let mut end = byte_idx + ch.len_utf8();
             let mut cursor = idx + 1;
+            // A radix-prefixed integer (`0xFF`, `0b1010`, `0o17`) is one
+            // literal, kept as spelled. Reading its leading `0` alone made
+            // every such literal the value `0`, so a test input far from a
+            // hex boundary compared equal to it (#9164).
+            if let Some(radix_end) = radix_literal_end(&chars, idx) {
+                if let Some((end_byte, end_ch)) = chars.get(radix_end - 1)
+                    && let Some(value) = text.get(byte_idx..end_byte + end_ch.len_utf8())
+                {
+                    values.push(value.to_string());
+                }
+                idx = radix_end;
+                continue;
+            }
             let mut seen_fraction = false;
             while cursor < chars.len() {
                 let (next_byte, next_ch) = chars[cursor];
@@ -5581,6 +5681,38 @@ fn scalar_values(text: &str) -> Vec<String> {
     values.sort();
     values.dedup();
     values
+}
+
+/// The index one past a radix-prefixed integer literal (`0x1F`, `-0b101`,
+/// `0o17`, with `_` separators) that starts at `start` (a digit or a leading
+/// `-`), or `None` when the text there is not one. A type suffix (`u8`) is
+/// left for the caller's identifier-digit guard.
+fn radix_literal_end(chars: &[(usize, char)], start: usize) -> Option<usize> {
+    let zero = if chars.get(start).is_some_and(|(_, ch)| *ch == '-') {
+        start + 1
+    } else {
+        start
+    };
+    if chars.get(zero).map(|(_, ch)| *ch) != Some('0') {
+        return None;
+    }
+    let radix = match chars.get(zero + 1).map(|(_, ch)| *ch)? {
+        'x' | 'X' => 16,
+        'b' | 'B' => 2,
+        'o' | 'O' => 8,
+        _ => return None,
+    };
+    let mut cursor = zero + 2;
+    let mut digits = 0usize;
+    while let Some((_, ch)) = chars.get(cursor) {
+        if ch.is_digit(radix) {
+            digits += 1;
+        } else if *ch != '_' {
+            break;
+        }
+        cursor += 1;
+    }
+    (digits > 0).then_some(cursor)
 }
 
 fn looks_like_table_row(line: &str) -> bool {
@@ -6617,6 +6749,31 @@ mod tests {
         );
     }
 
+    // RIPR-SPEC-0158 case 5: a row the evaluator refuses may sit on the
+    // boundary, so the rows it does evaluate cannot claim "no test uses it".
+    #[test]
+    fn activation_evidence_keeps_a_partially_evaluated_local_operand_unresolved() {
+        let owner = function(
+            "pub fn hit(input: &str, delim: char) -> bool {\n    let floor = input.len().min(1);\n    let end = input.rfind(delim).map_or(floor, |idx| idx);\n    let start = delim.len_utf8();\n    end >= start\n}",
+        );
+        let present = test_with_call("present_row", "hit(\"xab\", 'x');");
+        let absent = test_with_call("absent_row", "hit(\"ab\", 'x');");
+        let probe = probe(ProbeFamily::Predicate, "end >= start");
+
+        let gathered = boundary_input(&owner, &probe, &[&present, &absent]);
+
+        assert!(
+            gathered.activation.missing_discriminators.is_empty(),
+            "an unevaluated row is not a missing input; got {:?}",
+            gathered.activation.missing_discriminators
+        );
+        let reason = gathered.unresolved_boundary.unwrap_or_default();
+        assert!(
+            reason.contains("`end`"),
+            "the partially evaluated operand must stay unresolved; got {reason:?}"
+        );
+    }
+
     fn constant_boundary_activation(
         constant_source: &str,
         calls: &[&str],
@@ -7586,6 +7743,80 @@ assert_eq!(input.amount, 100);"#
         sort_value_facts(&mut facts);
 
         assert_eq!(facts.len(), 2);
+    }
+
+    #[test]
+    fn scalar_values_read_a_radix_prefixed_integer_as_one_literal() {
+        // #9164: `0xFF` was read as `0` (the leading digit), so `is_big(0x10)`
+        // against a `0xFF` boundary compared equal and read as the boundary.
+        assert_eq!(scalar_values("is_big(0xFF)"), vec!["0xFF".to_string()]);
+        assert_eq!(scalar_values("f(0b1010)"), vec!["0b1010".to_string()]);
+        assert_eq!(scalar_values("f(0o17)"), vec!["0o17".to_string()]);
+        assert_eq!(scalar_values("f(-0x10)"), vec!["-0x10".to_string()]);
+        assert_eq!(scalar_values("f(0xE000_u32)"), vec!["0xE000_".to_string()]);
+        assert_eq!(
+            scalar_values("f(0xE000, 0xD7FF)"),
+            vec!["0xD7FF".to_string(), "0xE000".to_string()]
+        );
+        for spelled in ["f(0xFF)", "f(0b1010)", "f(0o17)", "f(-0x10)"] {
+            assert!(
+                !scalar_values(spelled).contains(&"0".to_string()),
+                "{spelled} must not read as the value 0"
+            );
+        }
+        // Two different hex inputs stay different values.
+        assert_ne!(scalar_values("f(0x10)"), scalar_values("f(0xFF)"));
+        assert_eq!(literal_operand_value("0xFF"), Some("0xFF".to_string()));
+    }
+
+    #[test]
+    fn scalar_values_leave_non_radix_zero_prefixed_text_alone() {
+        // Negative controls: a plain zero, a range, a float and an
+        // identifier that merely contains `0b`/`0x` keep their old reading.
+        assert_eq!(scalar_values("f(0)"), vec!["0".to_string()]);
+        assert_eq!(scalar_values("f(0.5)"), vec!["0.5".to_string()]);
+        assert!(scalar_values("f(x0b1, y0x1F)").is_empty());
+        assert_eq!(
+            scalar_values("f(0..5)"),
+            vec!["0".to_string(), "5".to_string()]
+        );
+        // A radix marker with no digits after it is not a radix literal.
+        assert_eq!(scalar_values("f(0x)"), vec!["0".to_string()]);
+    }
+
+    #[test]
+    fn scalar_values_radix_literal_spellings_never_collapse_to_zero() {
+        // #9164 adversarial spellings: suffixes, separators, case, sign.
+        let cases = [
+            ("f(0xFFu8)", "0xFF"),
+            ("f(0b1010_1010)", "0b1010_1010"),
+            ("f(0o77)", "0o77"),
+            ("f(0XFF)", "0XFF"),
+            ("f(0B101)", "0B101"),
+            ("f(0O17)", "0O17"),
+            ("f(0xdead_beef)", "0xdead_beef"),
+            ("f(-0b11)", "-0b11"),
+            ("f(0b1010u8)", "0b1010"),
+        ];
+        for (text, expected) in cases {
+            assert_eq!(scalar_values(text), vec![expected.to_string()], "{text}");
+        }
+        // The suffix digits are not a separate value that could read as a boundary.
+        assert!(!scalar_values("f(0xFFu8)").contains(&"8".to_string()));
+        // Distinct spellings stay distinct.
+        assert_ne!(scalar_values("f(0b1010)"), scalar_values("f(0b1011)"));
+        // Decimal, float and exponent reading is unchanged.
+        assert_eq!(scalar_values("f(100)"), vec!["100".to_string()]);
+        assert_eq!(scalar_values("f(1_000)"), vec!["1_000".to_string()]);
+        assert_eq!(scalar_values("f(-5)"), vec!["-5".to_string()]);
+        assert_eq!(scalar_values("f(0.5f32)"), vec!["0.5".to_string()]);
+        assert_eq!(scalar_values("f(1e5)"), vec!["1".to_string()]);
+        assert_eq!(scalar_values("f(99u32)"), vec!["99".to_string()]);
+        assert!(scalar_values("f(a0, b1x, c0o7)").is_empty());
+        // Non-radix letter after a zero is not a radix literal.
+        assert_eq!(scalar_values("f(0xg)"), vec!["0".to_string()]);
+        assert_eq!(scalar_values("f(0b2)"), vec!["0".to_string()]);
+        assert_eq!(scalar_values("f(0o8)"), vec!["0".to_string()]);
     }
 
     fn probe(family: ProbeFamily, expression: &str) -> Probe {
@@ -9217,6 +9448,43 @@ assert_eq!(input.amount, 100);"#
         assert!(!has_observed_boundary_equality(&after_false.activation));
         let decides = adaptor_boundary(all, "d > 30", &["assert!(!score(&[40, 30]));"]);
         assert!(has_observed_boundary_equality(&decides.activation));
+    }
+
+    #[test]
+    fn owner_result_field_read_after_a_multibyte_character_does_not_panic() {
+        let assertion = "assert_eq!(\n    \"before with spaces/前\".len() , r.total)";
+        // The read follows a multi-byte character; it must classify, not panic.
+        let _ = reads_owner_result_field(assertion, assertion, ".total", "price");
+        let tight = "assert_eq!(前.total, 1)";
+        let _ = reads_owner_result_field(tight, tight, ".total", "price");
+    }
+
+    #[test]
+    fn unicode_identifier_boundaries_on_the_owner_result_read_path() {
+        let reads = |body: &str, assertion: &str| {
+            reads_owner_result_field(body, assertion, ".total", "price")
+        };
+        // A Unicode-prefixed name is one identifier: `前r` is not `r`.
+        let unrelated = "let r = price();
+ let 前r = Quote { total: 7 };
+ let _ = r;";
+        assert!(!reads(unrelated, "assert_eq!(前r.total, 7);"));
+        assert!(!reads(unrelated, "assert_eq!(r前.total, 7);"));
+        // The same shape in ASCII is the control.
+        let ascii = "let r = price();
+ let q = Quote { total: 7 };
+ let _ = r;";
+        assert!(!reads(ascii, "assert_eq!(q.total, 7);"));
+        // A Unicode-named receiver bound from the owner credits like ASCII.
+        let bound = "let 前r = price();";
+        assert!(reads(bound, "assert_eq!(前r.total, 101);"));
+        assert!(reads("let r = price();", "assert_eq!(r.total, 101);"));
+        // `let` boundary and mention checks use the same identifier rule.
+        assert!(!reads("let 前r = price();", "assert_eq!(r.total, 101);"));
+        assert!(!reads("let r前 = price();", "assert_eq!(r.total, 101);"));
+        // CJK adjacent text does not panic.
+        let cjk = "assert_eq!(\"前\".len() + 後.total, 1)";
+        let _ = reads(cjk, cjk);
     }
 
     #[test]

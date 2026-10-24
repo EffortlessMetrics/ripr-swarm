@@ -31,7 +31,9 @@ Linked issues:
 - #9150 (bare non-throwing exit first in a try block makes its catch unreachable)
 - #8959 (lexically bound runner registrations)
 - #9496 (chai throw forms, anchored `assert.match`, substring rejection
-  regex, counted removed call)
+  regex)
+- #9181 (CommonJS function export reached through `require()`)
+- #9182 (`var`/`let` CommonJS runner bindings)
 - #9435 (exact oracle ignored on five changed-line shapes)
 - #9497 (skipped or unexercised tests credited as exposed; rules 17 and 18)
 
@@ -115,7 +117,7 @@ contradicting limitation. The rest is either correct but unstated
 ## Behavior
 
 Paths are relative to `crates/ripr/src/analysis/language/typescript/`.
-Paragraphs headed Rule 1 to Rule 18 mark behavior changes. Rules 1 to 8
+Paragraphs headed Rule 1 to Rule 19 mark behavior changes. Rules 1 to 8
 are numbered in reading order; rules 9 to 11 were added later. Every other statement below is current behavior and is
 normative.
 
@@ -253,7 +255,14 @@ bindings in modules and strict scripts do not shadow a sibling registration.
 A sibling suite's
 helper is outside this lexical scope. Re-exports do not create local runner
 bindings, and an ESM namespace object is not a callable registration root.
-The CommonJS exemption requires an immutable runner declaration and
+The CommonJS exemption requires an immutable runner declaration (a `const`,
+or a `var`/`let` whose binding the file never writes outside its own
+initializer: no assignment, update, `for` target or redeclaration, and no
+`eval`/`with`/`\u` opacity, #9182; every occurrence must be a plain read or
+call, so a parenthesised, non-null, cast or destructuring assignment target,
+a `function`/`class` re-declaration and a `globalThis`/`this` member write all
+refuse. A nested-scope shadow such as a `test` parameter is refused too,
+fail-closed) and
 either ambient `require` syntax or an immutable loader created by a locally
 imported `node:module`/`module` `createRequire(import.meta.url)`. Mutable loaders
 or runner bindings and same-spelled helper factories remain uncredited.
@@ -576,21 +585,6 @@ class may set any `name`, so it does not credit. Otherwise each reads
 class argument, an unanchored regex, an identifier and a template literal
 stay `broad_error` / weak, as do `doesNotThrow` and `doesNotReject`.
 
-**Rule 19. A method call replaced by `void local;` is a call deletion
-when a `node:test` mock counts it (2026-10-22, #9496).** The pair
-`receiver.method(...);` (optionally awaited, one two-segment call) to
-`void local;` has no probe shape of its own and reads as an unrecognised
-line. It reads as a call deletion, and the existing observation guard then
-judges it, only when all of these hold: an oracle-eligible related test
-binds `const spy = mock.method(receiver, "method", ...)` (or
-`t.mock.method`) and asserts a strong equality of `spy.mock.callCount()` or
-`spy.mock.calls.length` to a positive literal, and the owner has no loop and
-runs the changed line once (the `MockCallFacts` condition of RIPR-SPEC-0247
-rule 1). A spy on another method or receiver, an unbound spy and a count of
-zero leave the line unrecognised. The receiver and method match by
-identifier name only (an alias of `sink` is not followed), and a lower
-bound such as `callCount() >= 1` is not a pin.
-
 **Rule 20. A plain substring regex in `assert.throws` / `assert.rejects`
 pins the error only when the change separates it (2026-10-22, #9496).** A
 regex literal with no flags but `u` and no metacharacter or escape
@@ -637,7 +631,21 @@ Candidates come from the first non-empty tier:
      only when the owner is the default export, or
      `const m = await import("<owner module>")` with `m.owner(`); and
      `ReExportChainFollowed` (RIPR-SPEC-0095, at most 4 hops).
-2. **Module-entry relations** when tier 1 is empty, package-filtered.
+2. **Module-entry relations** when tier 1 is empty, package-filtered. For
+   an instance method this tier also holds the sibling methods of the same
+   class that reach it through at most 3 `this.method(...)` calls (#8567):
+   a test that calls such a sibling on a receiver it built relates through
+   `ModuleEntryCall`, which reads `weakly_exposed` at most and discloses the
+   reach as "only through same-class callers". The call graph is
+   syntax-only and fail-closed: a caller whose body declares a nested
+   `function` or `class` or an object/class method shorthand (keywords inside
+   strings, templates and comments do not count), a name defined twice in the
+   class, a name some method assigns, deletes or defines on `this`, a name an
+   instance field of the class defines (a computed field defines any name),
+   an arrow body that is not a call argument (`const later = () =>
+   this.helper()` is created, not run), and static methods contribute no
+   edge. An arrow passed to a call is read as invoked; the relation stays weak
+   and never reads `exposed`.
 3. **Heuristic relations** when tiers 1 and 2 are empty, package-filtered,
    for function, arrow and component owners, when the test body
    references the owner name and does not import that name from an
@@ -921,6 +929,43 @@ method head, since a nested parameter can shadow the owner's), the observed
 value may call nothing but the owner directly, and `0` versus `-0` counts
 as different values.
 
+**Rule 19. A same-file assertion helper called with literals is its asserts
+(2026-10-22, #9636).** Extends decision 19(b) for literal-argument call-site
+rewrites of helpers that decision 19's pass leaves untouched (multi-statement
+bodies, string, boolean, `null` and negative-number arguments); decision 19's
+own pass runs first and a call it rewrites is never rewritten again. `function checkPass(score, want) { assert.equal(passes(score), want); }`
+called as `checkPass(50, true);` from a test reads as the helper's assertion
+statements with each parameter replaced by its literal argument, as if written
+out at that point (the rewrite keeps every line number). It is credit or
+unknown only: the rewritten assertions pass through the ordinary oracle
+admission, so a weak or unrecognised assertion is no stronger than when
+written inline; no new finding kind or repair rule is added and the ordinary
+classifier applies. It applies only when all
+of these hold, and otherwise the call reads as before:
+
+- the helper is a top-level, non-exported, non-async, non-generator function
+  declaration, declared once, whose parameters are plain identifiers (no
+  default, rest or destructuring, none named `assert` or `expect`) and whose
+  body is only call statements rooted at `assert` or `expect`, one per line,
+  with no `this` or `arguments`;
+- the file mentions the helper only at its declaration and at direct calls,
+  and holds no `eval`, `with` or `\u` escape;
+- the call is a top-level expression statement, alone on its line, of a
+  top-level `test`/`it` callback that is a synchronous function with no
+  parameters and holds only expression statements, with exactly one argument
+  per parameter, each a string, number, boolean or `null` literal (a negative
+  number is parenthesised);
+- a parameter is used in the assertions only as a plain value: not as a member
+  name, assigned (including `<<=` and `>>=`) or incremented, inside a string, template or comment, or as
+  the object of a member access or call when the argument is a number; the
+  assertions hold no closure, template or backslash, and no `{` (every one is
+  refused). A rewrite that does not parse is discarded and the original source
+  is read.
+
+A helper in another file, a call under a
+condition or loop, a nested `describe` test, a computed argument, or a helper
+with control flow stays `no_static_path` exactly as before.
+
 ### Static limits
 
 `static_limit_for_change` picks at most one limit, in order:
@@ -932,6 +977,41 @@ is appended to `missing` after the class is chosen. Actionability reads
 `gap_state: static_limitation` before the `already_observed` branch
 (RIPR-SPEC-0087 F10); RIPR-SPEC-0087 orders actionability only and says
 nothing about the class.
+
+**Rule 19. A `require()` of a CommonJS function export is that function
+(#9181).** `module.exports = function (...) {}`, `module.exports = function
+name(...) {}`, `module.exports = (...) => ...` and `module.exports = name;`
+(a plain reference to one top-level function declaration) make the module's
+whole export the owner, as `export default` does. A literal
+`const f = require("<owner module>")` in a test file then binds `f` to the
+owner, so a bare `f(...)` is an `ImportedOwnerCall` (or a `DirectOwnerCall`
+when `f` is the owner's own name), and the observation guard reads `f` as the
+owner (rule 7). The relation uses the same identity gates as the default-import
+arm of rule 5: the specifier must resolve to the owner module, a body-local
+declaration or enclosing binding of `f` shadows it, and a mock of the owner
+module blocks it. One file-level gate covers both the inline and the
+`module.exports = name;` forms: the masked file must assign `module.exports`
+exactly once and use the identifier `module` in no other way (no alias,
+`module?.exports`, `module[...]`, compound or update write, spaced or
+line-broken `module . exports =`, `Object.assign(module, ...)`), and must not
+be an `eval`/`with` file; a second, conditional or non-function assignment
+therefore marks nothing. The `name` form also needs exactly one top-level
+function declaration of the name that the file never writes. A test binding
+declared with `let`/`var` that the test file writes again is not a
+`require()` of the owner. `require()` of an ES module's `export default` stays
+a namespace object, not a call. Files that read the module object
+another way are refused on purpose: `require.main === module`, UMD
+`typeof module` guards, `require.main.exports`, `require.cache` and
+`process.mainModule` all make `module.exports` unknowable, as do
+`arguments`, a `require` that is not called directly (`const r = require`,
+`require['main']`), bracket access on `process` and the string `'module'`.
+The gate must hold on two masks, the regex-aware one and a division-only one,
+so a `/` the regex heuristic misreads (`t! / 2`, `a = {} / 2`) cannot hide a
+write. A named import or member of a function export (`const { triple } =
+require(...)`, `k.triple`) is a property of the function, not the owner.
+The gate text keeps strings, templates and regex literals visible beside the
+two masks, so a string spelling `module.exports = x` refuses the file (fail
+closed). Known limits: a default binding of a function export (`const { default: f } = require(...)`, and an ES `import f from` of the same module, which the adapter cannot tell apart) is refused rather than credited; overload-style repeated `function name` declarations and any `require.resolve` use refuse the file.
 
 **Rule 8. A mocked dependency on the changed line is `static_unknown`.**
 When the changed line calls a symbol imported (`imported_symbol_call`)
@@ -1118,7 +1198,9 @@ rejected alternative. Any can be reversed later without touching the rest.
     renamed assertion then passes every ordinary gate (binding, oracle kind,
     pinned expected side, field-update rules). Rejected: helpers with more than
     one statement, defaults, async or generator helpers, aliases and exports,
-    computed arguments, strings, and calls inside expressions.
+    computed arguments, strings, and calls inside expressions. Rule 19 reads
+    the multi-statement, string and negative-argument shapes this list rejects,
+    as a literal-argument rewrite of helpers this pass leaves untouched.
 20. **Failures a handler rethrows (2026-10-22, #9685).** Adopted. (a) A
     `try` whose handler is exactly `catch (e) { throw e; }` (one statement,
     throwing the very binding it caught, no `finally` that can replace the
@@ -1143,6 +1225,20 @@ rejected alternative. Any can be reversed later without touching the rest.
     accessor body (it can compute anything), and `accessor <field>` auto-
     accessors, which the owner index does not record yet.
 
+Known limits of the textual write scan (#9182): the literal/comment masker
+reads `</div>` in `.tsx` text and a backtick inside a regex literal wrongly, so
+a write hidden by either is not seen; a postfix `++`/`--` before `/` is
+division, not a regex. These are fail-open only for files that already defeat
+the masker.
+21. **CommonJS function exports (#9181).** Adopted: rule 19, because
+    minimist exports one function and reads `no_static_path` while its
+    own suite fails every mutant of the line, and the ESM twin already relates. The gate is a bounded refusal
+    corpus, not a proof that the export is known: it refuses the module-object
+    routes it can name, and the claim is limited to shapes where the exported
+    value is the declared function.
+    Rejected: crediting `require()` of an ES module's default export
+    (runtime namespace object) and an arbitrary `module.exports = expr`.
+
 ## Required Evidence
 
 - Each Problem table row reads as the acceptance examples state, in JSON
@@ -1152,11 +1248,10 @@ rejected alternative. Any can be reversed later without touching the rest.
   fixture `typescript_tothrow_exact_oracle` does not move: its change
   (`input === ""` to `input.trim() === ""`) is not message-only, so its
   class, string and object payloads all stay `exact_error_variant`.
-- Rules 1, 7, 10, 11, 19 and 20 move a finding to a stronger class only for an
+- Rules 1, 7, 10, 11 and 20 move a finding to a stronger class only for an
   awaited root (rule 1), an alias-rename local (rule 7; via
   RIPR-SPEC-0251, also a renamed default import), a literal
-  chai or `node:assert` message check (rule 10), a counted removed call
-  (rule 19), a substring rejection regex the change separates (rule 20)
+  chai or `node:assert` message check (rule 10), a substring rejection regex the change separates (rule 20)
   or an inline literal table row (rule 11).
 - Rule 8 is the only path to a TypeScript `static_unknown`, and an
   `exposed` finding never carries `typescript_mock_only_observer`.
@@ -1402,7 +1497,11 @@ to `amount - 20`, and `tests/lib.test.ts` has
     boundary: `exact_value` / strong, `exposed` through the rows 4999 and
     5000 (today `weakly_exposed`: the loop variable names no literal).
     Rows that sit on one side of the boundary, or a loop whose body can
-    `break`, stay `weakly_exposed` (rule 11).
+    `break`, stay `weakly_exposed` (rule 11). A loop over an empty `const`
+    table (`const rows: Array<[number, number, number]> = []`) runs no
+    iterations and holds no assertions, so a change is not `exposed` through
+    it (#9683); a `let` table or one read elsewhere keeps the loop's own
+    assertion.
 38. `src/parse.ts` throws `` new Error(`not a number: ${text}`) `` where it
     threw `` `not a count: ${text}` ``, and the Playwright spec runs
     `expect(() => parseCount("x")).toThrow(/^not a count: x$/)`:
@@ -1448,19 +1547,17 @@ to `amount - 20`, and `tests/lib.test.ts` has
     World"), /^hello-world$/)`: `exact_value` / strong, `exposed` (today
     `relational_check` / weak). With `/hello-world/`, `/^hello.world$/` or
     `/^HELLO-WORLD$/i`: `relational_check` / weak (unchanged).
-45. `record` changed from `sink.write(line);` to `void line;` (corpus case
-    `node-mock-method-call-removed`); the test binds `const write =
-    mock.method(sink, "write", ...)` and asserts `write.mock.callCount()`
-    equals `1`: `exposed` (rule 19; today `weakly_exposed` with an
-    unrecognised-shape discriminator). With a spy on `"flush"` instead, or a
-    count of `0`: unchanged.
-46. `withRetry` ends `throw lastError;` changed to `throw new Error("other")`
+45. `withRetry` ends `throw lastError;` changed to `throw new Error("other")`
     (corpus case `node-retry-last-error`); `await assert.rejects(withRetry(fn,
     2), /down/)`: `exact_error_variant` / strong, `exposed` (rule 20; today
     `broad_error` / weak). With `/other/`, or with a second `throw` in the
     owner: `broad_error` / weak.
 
 ## Test Mapping
+
+- #9683 (rule 11, empty table): `tests/table_loop_tests.rs` pins that an empty
+  `const` table holds no assertions and a `let` table does not. Corpus row
+  `ts-trap-empty-table` moves from credited to gap.
 
 - #9533 (rule 11, loop form): `crates/ripr/src/analysis/language/typescript/tests/table_loop_tests.rs`
   pins the per-row assertions and the fail-closed fallbacks (a non-literal
@@ -1529,13 +1626,11 @@ to `amount - 20`, and `tests/lib.test.ts` has
   evidence pointer of an expanded call. The corpus case
   `jest-mined-suite-factory` reads `credited`.
 - #9496: `crates/ripr/src/analysis/language/typescript/assertion_form_tests.rs`
-  pins rules 10, 19 and 20 end to end (chai class and message, anchored
-  `assert.match`, substring `rejects` regex, `void local;` call removal)
-  with a discriminating negative each; `call_removal_guard.rs` and
-  `error_payload_guard.rs` unit tests pin the readers. The corpus cases
+  pins rules 10 and 20 end to end (chai class and message, anchored
+  `assert.match`, substring `rejects` regex)
+  with a discriminating negative each; `error_payload_guard.rs` unit tests pin the readers. The corpus cases
   `mocha-throw-class-changed`, `mocha-throw-message-reworded`,
-  `node-match-anchored-slug`, `node-mock-method-call-removed` and
-  `node-retry-last-error` read `credited`.
+  `node-match-anchored-slug` and `node-retry-last-error` read `credited`.
 - Existing: `crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs`
   and the `tests/` modules beside it: `mock_form_tests.rs`,
   `scope_receiver_tests.rs`, `reexport_chain_tests.rs`.
@@ -1639,6 +1734,8 @@ to `amount - 20`, and `tests/lib.test.ts` has
 - `crates/ripr/src/analysis/language/typescript/suite_factory.rs`
   (`expand_suite_factories`, rule 13) and the rerun in `tests_extract.rs`
   (`extract_tests_expanding_suite_factories`).
+- `crates/ripr/src/analysis/language/typescript/helper_inline.rs`
+  (`inline_test_helpers`, rule 19), reached from the same rerun.
 - `crates/ripr/src/analysis/language/typescript/tests_extract.rs`: rule 12
   (`referenced_callback_function`, `function_used_only_as_test_callback`);
   rule 1 (`test_from_statement`, `describe_body_from_statement`) and the
@@ -1652,6 +1749,12 @@ to `amount - 20`, and `tests/lib.test.ts` has
   (`direct_owner_call_has_declaration_anchor`,
   `owner_name_shadowed_by_unrelated_import`) and the owner bindings
   rule 7 reads.
+- #8567: `crates/ripr/src/analysis/language/typescript/class_entries.rs`
+  (`assign_class_entries`) records the same-class entries on each instance
+  method owner; `related_tests.rs` `module_entry_owner` turns an entry into
+  the receiver-call stand-in that tier 2 checks, and
+  `tests/class_entry_tests.rs` pins the credited chains against each shape
+  that records no edge.
 - `crates/ripr/src/analysis/language/typescript/classifier.rs`: rules 6
   and 7 (`ts_changed_value_is_observed`,
   `ts_observed_local_aliases_owner`), and rule 8's `static_unknown` arm
