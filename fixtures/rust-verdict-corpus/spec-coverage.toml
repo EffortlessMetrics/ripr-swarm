@@ -12,7 +12,13 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 182
+floor = 190
+
+# Most abstained rows whose tests do catch the change (missed credit). A
+# regression fails `verdict-corpus check`; an improvement passes with a note
+# to lower this number (not a failure, so concurrent fixes do not collide).
+# Raising it is a reviewed edit with a reason.
+missed_credit_ceiling = 135
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
@@ -791,9 +797,9 @@ id = "RIPR-SPEC-0165"
 reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
 
 # Unsafe execution boundary probes
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0168"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+scope = "in"
 
 # Contextual source-role composition
 [[unmeasured]]
@@ -801,14 +807,34 @@ id = "RIPR-SPEC-0169"
 reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
 
 # path-dependency diff-scope expansion
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0171"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+scope = "in"
+
+[[spec.waived]]
+example = 2
+reason = "without the dependency edge no test in `b` can reach `a`, so there is no runtime truth to label"
+
+[[spec.waived]]
+example = 3
+reason = "manifest-graph `limited` disclosure; the classification is unchanged, so a verdict case cannot label it"
+
+[[spec.waived]]
+example = 4
+reason = "a directory with no Cargo.toml has no cargo workspace to run; graph `unavailable` is disclosure only"
+
+[[spec.waived]]
+example = 6
+reason = "a deleted dependency directory breaks the dependent's build, so no runtime mutant truth exists"
 
 # cross-crate test relation through dependency edges
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0172"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+scope = "in"
+
+[[spec.waived]]
+example = 5
+reason = "graph `limited`/`unavailable` fallback is disclosure of the #2971 filter; the classification is unchanged, so a verdict case cannot label it"
 
 # guarded Result match observations
 [[spec]]
