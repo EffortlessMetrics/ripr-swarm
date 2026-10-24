@@ -1148,7 +1148,7 @@ hashes only.
 
 ### macro_rules! test tables classified-cache generation parity
 
-The same snapshots follow corpus cache generation 1.98 to 1.99 for same-file
+The same snapshots follow corpus cache generation 1.99 to 1.100 for same-file
 `macro_rules!` test tables that index one generated test per row
 (RIPR-SPEC-0117, #6925), with the same scope: generation, content commitment,
 dependent verify commitments and receipt byte hashes only.
@@ -1205,3 +1205,9 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+### one-line else-if ladder classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.98 to 1.99 for the
+one-line `else if` ladder tail (#9630), with the same scope: generation,
+content commitment, dependent verify commitments and receipt byte hashes only.

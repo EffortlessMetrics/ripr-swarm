@@ -86,6 +86,13 @@ An implementation may also mirror those files under
 `target/ripr/first-pr/` for local pilot ergonomics, but
 `target/ripr/reports/start-here.*` is the reviewer-facing packet location.
 
+Each start-here file and each gap-ledger file derived from `--check-output`
+must publish only after its complete write succeeds. A returned write failure
+must preserve the exact previous file bytes, or leave a new destination absent.
+Retrying the same command after repairing the write fault must publish the
+complete file. Publication applies to each file independently; earlier files
+may already contain their complete replacement when a later write fails.
+
 The packet must answer these reviewer questions in stable, user-facing terms:
 
 | Question | Required answer |
