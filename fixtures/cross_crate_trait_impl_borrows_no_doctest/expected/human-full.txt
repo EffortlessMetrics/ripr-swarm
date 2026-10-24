@@ -12,7 +12,7 @@ Shared evidence and guidance
   E2 [findings 1, 2]: observation no: No test reaches the changed owner, so no test can observe this change
   E3 [findings 1, 2]: discriminator no: No test reaches the changed owner, so no test can discriminate this change
   E4 [findings 1, 2]: local flow reaches returned value: Some(x) if x <= self.remaining => Some(x) (line 10)
-  E5 [findings 1, 2]: related test util/src/io/take.rs:6 util/src/io/take.rs - limit (line 6) uses strong exact value oracle: assert_eq!(t.limit(), 4); misses: no call to the changed code found; linked by file location only
+  E5 [findings 1, 2]: related test util/src/io/take.rs:6 util/src/io/take.rs - limit (line 6) uses strong exact value oracle: assert_eq!(t.limit(), 4); misses: no established call path to the changed code; linked by file location only
   E6 [findings 1, 2]: source assertion argument value 4 at line 8
   N1 [findings 1, 2]: ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists
 
