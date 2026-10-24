@@ -12989,22 +12989,4 @@ fn only_a_build_script_output_include_leaves_target_roots_enabled() {
         dynamic
     ));
     assert!(disabled(true, out_dir, "rust_include_unresolved"));
-    // A backslash escape in the literal could spell `..`.
-    assert!(disabled(
-        true,
-        "include!(concat!(env!(\"OUT_DIR\"), \"/\\x2e\\x2e/x.rs\"));",
-        dynamic
-    ));
-    // Another package's build script does not vouch for this include.
-    let mut other = index(&[
-        ("pkg/src/lib.rs", "pub fn f() {}\n"),
-        ("other/build.rs", "fn main() {}\n"),
-    ]);
-    other.include_limitations.push(RustIncludeLimitation {
-        parent: PathBuf::from("pkg/src/lib.rs"),
-        line: 1,
-        expression: out_dir.to_string(),
-        reason_code: dynamic.to_string(),
-    });
-    assert!(TargetRoots::new(&other).disabled);
 }

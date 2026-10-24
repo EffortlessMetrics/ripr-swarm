@@ -1619,9 +1619,11 @@ fn is_build_output_include(limitation: &RustIncludeLimitation, index: &RustIndex
             .parent
             .ancestors()
             .skip(1)
-            .find(|directory| directory.file_name().is_some_and(|name| name == "src"))
-            .and_then(Path::parent)
-            .is_some_and(|package| index.files().get(&package.join("build.rs")).is_some())
+            .filter(|directory| directory.file_name().is_some_and(|name| name == "src"))
+            .any(|src| {
+                src.parent()
+                    .is_some_and(|package| index.files().get(&package.join("build.rs")).is_some())
+            })
 }
 
 impl TargetRoots {
