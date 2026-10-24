@@ -6,8 +6,11 @@ Spec: RIPR-SPEC-0108
 
 The foreign-trait control of `cross_crate_trait_impl_borrows_no_doctest`:
 `rutil::stream::take::Take` implements `Display` imported as
-`use rmid::Display;`, where the workspace member `rmid` only re-exports
-`std::fmt::Display`. No workspace member declares a trait named `Display`.
+`use rmid::{Display, FmtResult, Formatter};`, where the workspace member
+`rmid` only re-exports `std::fmt::{Display, Formatter, Result as FmtResult}`.
+The `fmt` signature uses only re-exported names, so no other identifier named
+`fmt` appears outside the method's own `fn` line and the result is decided by
+the trait rule alone. No workspace member declares a trait named `Display`.
 The `fmt` guard changes from `<` to `<=` and no test names `fmt`.
 
 ## When

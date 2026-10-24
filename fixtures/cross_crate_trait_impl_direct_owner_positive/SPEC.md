@@ -16,6 +16,13 @@ and asserts the returned bound.
 cargo xtask fixtures cross_crate_trait_impl_direct_owner_positive
 ```
 
+## Role
+
+This is an over-refusal guard, not a discriminator of the sibling-crate trait
+rule: a test that names the owner reaches it before the unseen-reach allowance
+is consulted. `cross_crate_trait_impl_borrows_no_doctest` is the discriminator
+for the refusal.
+
 ## Then
 
 The direct owner call keeps its supported evidence: the finding is not
