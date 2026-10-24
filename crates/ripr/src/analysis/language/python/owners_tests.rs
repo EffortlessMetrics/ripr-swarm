@@ -178,6 +178,7 @@ fn owner_from_function(
         .map(|class| format!("{}.{name}", innermost_class(class)))
         .unwrap_or_else(|| name.to_string());
     let route_paths = collect_static_route_paths(context.source, decorators);
+    let route_methods = collect_static_route_methods(context.source, decorators);
     let dynamic_route_decorators = collect_dynamic_route_decorators(context.source, decorators);
     let unplain_decorators = called_decorator_names(decorators);
     let decorator_lines = decorators
@@ -226,6 +227,7 @@ fn owner_from_function(
         imports: context.imports.to_vec(),
         cli_receiver_names: collect_static_cli_receiver_names(context.source, context.imports),
         route_paths,
+        route_methods,
         dynamic_route_decorators,
         unplain_decorators,
         decorator_lines,
@@ -333,6 +335,7 @@ fn owner_from_class(
         imports: context.imports.to_vec(),
         cli_receiver_names: collect_static_cli_receiver_names(context.source, context.imports),
         route_paths: collect_static_route_paths(context.source, decorators),
+        route_methods: collect_static_route_methods(context.source, decorators),
         dynamic_route_decorators: collect_dynamic_route_decorators(context.source, decorators),
         unplain_decorators: called_decorator_names(decorators),
         decorator_lines: None,
@@ -367,6 +370,7 @@ pub(super) fn module_owner(
         imports: imports.to_vec(),
         cli_receiver_names: collect_static_cli_receiver_names(source, imports),
         route_paths: Vec::new(),
+        route_methods: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         unplain_decorators: Vec::new(),
         decorator_lines: None,
@@ -1253,6 +1257,120 @@ fn collect_static_route_paths(source: &str, decorators: &[Expr]) -> Vec<String> 
             route_decorator_literal_argument(source, decorator, &name)
         })
         .collect()
+}
+
+/// The HTTP verbs each static route decorator accepts, index-aligned with
+/// `collect_static_route_paths`. A verb decorator (`@app.post`) names its own
+/// verb; a GET route also serves HEAD. `route` and `api_route` name verbs only
+/// through a literal `methods=[...]`; without one, or with a non-literal one,
+/// the entry is empty and the verb is unknown rather than guessed.
+fn collect_static_route_methods(source: &str, decorators: &[Expr]) -> Vec<Vec<String>> {
+    decorators
+        .iter()
+        .filter_map(|decorator| {
+            let name = expr_full_name(decorator)?;
+            if !is_static_route_decorator(&name) {
+                return None;
+            }
+            route_decorator_literal_argument(source, decorator, &name)?;
+            let verb = name.rsplit('.').next().unwrap_or_default();
+            Some(match verb {
+                "get" => vec!["get".to_string(), "head".to_string()],
+                "post" | "put" | "patch" | "delete" | "options" | "head" => {
+                    vec![verb.to_string()]
+                }
+                "route" | "api_route" => {
+                    route_decorator_literal_methods(&text_for_range(source, decorator.range()))
+                }
+                _ => Vec::new(),
+            })
+        })
+        .collect()
+}
+
+/// The text after `methods=` where `methods` is a standalone keyword outside
+/// any string literal, so a path such as `"/methods"` cannot hide the real
+/// keyword argument behind it.
+fn route_decorator_methods_value(text: &str) -> Option<&str> {
+    let bytes = text.as_bytes();
+    let is_ident_byte = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_' || byte >= 0x80;
+    let keyword = "methods";
+    let mut quote: Option<u8> = None;
+    let mut at = 0;
+    while at < bytes.len() {
+        let byte = bytes[at];
+        if let Some(open) = quote {
+            if byte == b'\\' {
+                at += 2;
+                continue;
+            }
+            if byte == open {
+                quote = None;
+            }
+            at += 1;
+            continue;
+        }
+        if byte == b'"' || byte == b'\'' {
+            quote = Some(byte);
+            at += 1;
+            continue;
+        }
+        if bytes[at..].starts_with(keyword.as_bytes()) {
+            let end = at + keyword.len();
+            let standalone = (at == 0 || !is_ident_byte(bytes[at - 1]))
+                && bytes.get(end).is_none_or(|next| !is_ident_byte(*next));
+            if standalone
+                && let Some(value) = text[end..].trim_start().strip_prefix('=')
+                && !value.starts_with('=')
+            {
+                return Some(value);
+            }
+        }
+        at += 1;
+    }
+    None
+}
+
+/// Lowercase verbs from a literal `methods=[...]` / `methods=(...)` keyword;
+/// empty when absent or when any element is not a plain string literal.
+fn route_decorator_literal_methods(text: &str) -> Vec<String> {
+    let Some(rest) = route_decorator_methods_value(text) else {
+        return Vec::new();
+    };
+    let rest = rest.trim_start();
+    let close = match rest.chars().next() {
+        Some('[') => ']',
+        Some('(') => ')',
+        _ => return Vec::new(),
+    };
+    let Some(end) = rest.find(close) else {
+        return Vec::new();
+    };
+    let mut verbs = Vec::new();
+    for item in rest[1..end].split(',') {
+        let item = item.trim();
+        if item.is_empty() {
+            continue;
+        }
+        let unquoted = item
+            .strip_prefix('"')
+            .and_then(|value| value.strip_suffix('"'))
+            .or_else(|| {
+                item.strip_prefix('\'')
+                    .and_then(|value| value.strip_suffix('\''))
+            });
+        match unquoted {
+            Some(verb) if verb.bytes().all(|byte| byte.is_ascii_alphabetic()) => {
+                verbs.push(verb.to_ascii_lowercase());
+            }
+            _ => return Vec::new(),
+        }
+    }
+    // A GET route also serves HEAD (Flask and Starlette add it).
+    if verbs.iter().any(|verb| verb == "get") && !verbs.iter().any(|verb| verb == "head") {
+        verbs.push("head".to_string());
+    }
+    verbs
 }
 
 fn collect_dynamic_route_decorators(source: &str, decorators: &[Expr]) -> Vec<String> {
