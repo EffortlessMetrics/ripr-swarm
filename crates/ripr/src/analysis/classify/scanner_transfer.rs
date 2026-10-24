@@ -54,12 +54,11 @@ struct ScannerShape {
     arms: Vec<TransitionArm>,
 }
 
-/// The `_` state pattern, which no plain-literal or path-qualified
-/// state token can spell.
-const WILDCARD_STATE: &str = "_";
-
 struct TransitionArm {
-    state: String,
+    /// `None` is the bare `_` state pattern, the catch-all Rust needs for
+    /// an exhaustive match over `&str` states. A quoted `"_"` is a literal
+    /// state and stays `Some`.
+    state: Option<String>,
     /// `None` is the `_` wildcard arm; `Some(ch)` is an exact char
     /// literal. A quoted `'_'` is a literal underscore, never the
     /// wildcard.
@@ -179,9 +178,9 @@ fn parse_arm(line: &str) -> Option<TransitionArm> {
     // exhaustive match over `&str` states; it matches any current
     // state, in source order like every other arm.
     let state = if raw_state == "_" {
-        WILDCARD_STATE.to_string()
+        None
     } else {
-        normalize_state_token(raw_state)?
+        Some(normalize_state_token(raw_state)?)
     };
     let raw_symbol = parts.next()?.trim();
     let symbol = if raw_symbol == "_" {
@@ -269,7 +268,7 @@ fn resolve_symbols(iterable: &str, inputs: &ExactInputs) -> Option<Vec<char>> {
 /// substituting the current state).
 fn transition(arms: &[TransitionArm], state: &str, symbol: char) -> Option<String> {
     for arm in arms {
-        if arm.state != WILDCARD_STATE && arm.state != state {
+        if arm.state.as_deref().is_some_and(|expected| expected != state) {
             continue;
         }
         if arm.symbol.is_none_or(|expected| expected == symbol) {
@@ -438,6 +437,26 @@ mod tests {
         assert_ne!(early, BODY, "the early catch-all substitution must apply");
         let early_helper = scanner_fn("scan", &early);
         assert_eq!(final_state(&early_helper, "\"ab\"")?, "State::Text");
+        Ok(())
+    }
+
+    #[test]
+    fn quoted_underscore_state_is_a_literal_not_the_catch_all() -> Result<(), String> {
+        // `("_", ' ')` matches only the literal state `_`; it must not
+        // take the `"text"` state the way a bare `_` pattern would.
+        let body = "pub fn scan(input: &str) -> &'static str {
+    let mut state = \"text\";
+    for symbol in input.chars() {
+        state = match (state, symbol) {
+            (\"_\", ' ') => \"word\",
+            (\"text\", _) => \"text\",
+            (_, _) => \"text\",
+        };
+    }
+    state
+}";
+        let helper = scanner_fn("scan", body);
+        assert_eq!(final_state(&helper, "\" \"")?, "text");
         Ok(())
     }
 

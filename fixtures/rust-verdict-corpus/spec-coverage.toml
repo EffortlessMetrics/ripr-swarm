@@ -752,7 +752,7 @@ scope = "in"
 
 [[spec.waived]]
 example = 2
-reason = "a compiling path-qualified scanner compares against an enum variant path, and an enum variant is not an exact operand (path_value_is_constant refuses it), so the finding abstains instead of exposing; spec-b-0163-path-qualified-states records the abstention and the unit tests pin the qualified-state evaluation"
+reason = "a compiling path-qualified scanner compares against an enum variant path, and an enum variant is not an exact operand (path_value_is_constant refuses it), so the finding abstains instead of exposing; spec-b-0163-path-qualified-states records the abstention (#10108) and the unit tests pin the qualified-state evaluation"
 
 # Bounded literal match-arm transfer
 [[unmeasured]]

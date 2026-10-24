@@ -102,7 +102,10 @@ even when every related test row pins the exact state.
    (`"ab"` -> `"word"`, `"ab "` -> `"text"`), the boundary equality is
    observed, and the finding exposes with the hop in the provenance.
 2. Accept: `Scan::Text`/`Scan::Word` qualified-path states evaluate
-   identically to string states.
+   identically to string states
+   Limitation (#10108): the scanner resolves the qualified state, but a
+   compared enum variant path is not yet an exact operand, so the
+   boundary finding abstains.
 3. Reject: a computed argument (`scan_state(input.trim())`) keeps the
    operand unknown and the finding at its fail-closed class.
 4. Reject: a computed next state (`=> next_for(input)`) keeps the operand
