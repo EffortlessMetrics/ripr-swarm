@@ -92,7 +92,14 @@ fn parse_source_file_uncached(text: &str) -> Parse<SourceFile> {
     }
     let legacy = SourceFile::parse(text, Edition::Edition2021);
     if legacy.errors().is_empty() {
-        legacy
+        return legacy;
+    }
+    // A Rust 2015 crate may still use the `try!(..)` macro, which 2018+
+    // reserves as a keyword; both newer editions reject the whole file and
+    // it would fall to the lexical fallback (#10054).
+    let oldest = SourceFile::parse(text, Edition::Edition2015);
+    if oldest.errors().is_empty() {
+        oldest
     } else {
         parse
     }
@@ -517,6 +524,27 @@ mod tests {
         assert!(parse_clean_source_file("fn f( {").is_none());
         // An error under both editions keeps the current edition's errors.
         assert!(!parse_source_file("fn gen( {").errors().is_empty());
+    }
+
+    #[test]
+    fn a_rust_2015_try_macro_parses_clean_and_real_errors_do_not() {
+        // regex-syntax 2016: `try!(..)` is a keyword in 2018+, so both newer
+        // editions rejected the whole file (#10054).
+        let legacy = "fn f(x: Result<u8, ()>) -> Result<u8, ()> { let v = try!(x); Ok(v) }";
+        assert!(
+            !SourceFile::parse(legacy, Edition::CURRENT)
+                .errors()
+                .is_empty(),
+            "control: the current edition must reject `try!`"
+        );
+        assert!(
+            !SourceFile::parse(legacy, Edition::Edition2021)
+                .errors()
+                .is_empty(),
+            "control: 2021 must reject `try!`"
+        );
+        assert!(parse_clean_source_file(legacy).is_some());
+        assert!(!parse_source_file("fn f( { try!(x)").errors().is_empty());
     }
 
     fn nested(open: &str, close: &str, levels: usize) -> String {
