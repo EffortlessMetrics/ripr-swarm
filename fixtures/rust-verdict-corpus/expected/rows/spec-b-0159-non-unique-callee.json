@@ -1,0 +1,23 @@
+{
+  "case_id": "spec-b-0159-non-unique-callee",
+  "subject_id": "authored-spec-b-value",
+  "origin": "authored",
+  "anchor": "src/h_nonunique.rs:4",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "helper_chain_non_unique_callee",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "infection_unknown",
+    "weakly_exposed"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

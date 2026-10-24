@@ -1,0 +1,12 @@
+diff --git a/src/v_dynamic.rs b/src/v_dynamic.rs
+--- a/src/v_dynamic.rs
++++ b/src/v_dynamic.rs
+@@ -4,7 +4,7 @@
+     let floor = input.len().min(1);
+     let end = input.rfind(delim).map_or(floor, |idx| idx);
+     let start = delim.len_utf8();
+-    end == start
++    end >= start
+ }
+ 
+ #[cfg(test)]

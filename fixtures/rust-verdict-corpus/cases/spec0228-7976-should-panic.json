@@ -39,7 +39,7 @@
       "limited"
     ]
   },
-  "reasoning": "The test expects a panic and compares entries() with &[99]. Original [3], changed [4], and absent [] values all trigger the expected panic, so both mutants pass tests::observes_entries. This assertion cannot confirm the write. RIPR-SPEC-0228 argument-free collection read guard; exact expected classification is weakly_exposed.",
+  "reasoning": "The test expects a panic and compares entries() with &[99]. Original [3], changed [4], and absent [] values all trigger the expected panic, so both mutants pass tests::observes_entries. This assertion cannot confirm the write. RIPR-SPEC-0228 argument-free collection read guard. Current static classification is reachable_unrevealed: effect-family assertions require established execution admission (#8927), and the assertion in a #[should_panic] test is not credited because ripr cannot establish that it runs (it was weakly_exposed when labeled). Either way the verdict stays gap.",
   "labeling_observation": {
     "ripr_commit": "ffe737fd4636c57b48b5049f98284d3c67019877",
     "full_checkout_verdict": "gap",

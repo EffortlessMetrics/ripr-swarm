@@ -464,7 +464,7 @@ fn run_refusing(mut options: RerunOptions) -> Result<(), String> {
     if let Some(out) = options.out {
         let out = resolve_output_path(&input.root, &out);
         write_text_file(&out, &rendered).map_err(|err| refuse(CoreError::from(err)))?;
-        println!("Wrote {}", out.display());
+        println!("Wrote {}", crate::output::path::human_path(&out));
     } else {
         println!("{rendered}");
     }
@@ -1970,7 +1970,7 @@ fn resolve_output_path(root: &Path, out: &Path) -> PathBuf {
 }
 
 fn display_path(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
+    crate::output::path::fold_verbatim_on_host(path.to_string_lossy().replace('\\', "/"))
 }
 
 fn write_text_file(path: &Path, rendered: &str) -> Result<(), String> {

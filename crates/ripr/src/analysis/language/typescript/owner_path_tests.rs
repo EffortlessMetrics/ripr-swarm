@@ -74,7 +74,8 @@ fn check(case: &Case) -> Result<(), String> {
     let owner = pick_owner(case.owner)?;
     let tests = parse_single_test(case.test_file, case.test_source)?;
     let index = (case.reexport_index)();
-    let candidates = related_test_candidates(&owner, &tests, None, &index, None);
+    let candidates =
+        related_test_candidates(&owner, &tests, None, &index, None, &RelationIndex::empty());
     let [candidate] = candidates.as_slice() else {
         return Err(format!(
             "{}: expected one candidate, got {}",
@@ -247,7 +248,14 @@ fn owner_path_unrelated_import_is_rejected_at_the_gate() -> Result<(), String> {
         "tests/pricing.test.ts",
         "import { applyDiscount } from '../src/factory';\ntest('discounts', () => {\n  expect(applyDiscount(100)).toBe(90);\n});\n",
     )?;
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     assert!(
         candidates.is_empty(),
         "an unrelated import is refused before a candidate exists: {:?}",
@@ -388,7 +396,15 @@ fn owner_path_unresolved_alias_import_is_unknown_at_the_gate() -> Result<(), Str
         "import { applyDiscount } from '@app/pricing';\ntest('discounts', () => {\n  expect(applyDiscount(100)).toBe(90);\n});\n",
     )?;
     assert!(
-        related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None).is_empty(),
+        related_test_candidates(
+            &owner,
+            &tests,
+            None,
+            &ReExportIndex::empty(),
+            None,
+            &RelationIndex::empty()
+        )
+        .is_empty(),
         "an unresolved alias import is refused before a candidate exists"
     );
     let test = tests.first().ok_or("parsed test missing")?;
