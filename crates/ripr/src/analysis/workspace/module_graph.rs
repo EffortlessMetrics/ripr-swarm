@@ -1153,7 +1153,7 @@ fn child_bases(file: &Path, directory: &Path, anchor: ChildAnchor) -> Vec<PathBu
 /// scans every module file it reaches, which is most of a warm check's parse
 /// work; a scan is a pure function of the text, so one found under the
 /// text's content key replaces the parse. New scans are written back once
-/// per evidence pass, and the bundle keeps what this run used first.
+/// per evidence pass; the bundle is capped, favoring the newest scans.
 struct ScanStore {
     cache: RepoModuleTreeScanCache,
     state: Mutex<ScanStoreState>,
@@ -1194,17 +1194,19 @@ impl ScanStore {
     fn scan(&self, text: &str) -> RustModuleTreeScan {
         let key = module_tree_scan_key(text);
         {
-            let mut state = self.state();
+            let state = self.state();
             if let Some(found) = state.used.get(&key).or_else(|| state.loaded.get(&key)) {
-                let found = found.clone();
-                state.used.entry(key).or_insert_with(|| found.clone());
-                return found;
+                return found.clone();
             }
         }
         let scan = rust_module_tree_scan(text);
         let mut state = self.state();
-        state.used.insert(key, scan.clone());
-        state.dirty = true;
+        // A write that keeps failing must not let this run's scans grow
+        // without bound; past the cap the scan is simply not kept.
+        if state.used.len() < MODULE_TREE_SCAN_CACHE_MAX_ENTRIES {
+            state.used.insert(key, scan.clone());
+            state.dirty = true;
+        }
         scan
     }
 
@@ -1230,7 +1232,11 @@ impl ScanStore {
             merged
         };
         if self.cache.store(&merged).is_ok() {
-            self.state().loaded = merged;
+            // Everything now lives in `loaded`; the next pass starts a fresh
+            // `used`, so a long-lived process holds each scan once.
+            let mut state = self.state();
+            state.loaded = merged;
+            state.used.clear();
         }
     }
 }
