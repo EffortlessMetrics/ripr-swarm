@@ -3351,6 +3351,29 @@
       ]
     },
     {
+      "id": "rust_cross_crate_trait_impl_borrows_no_doctest",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/cross_crate_trait_impl_borrows_no_doctest",
+      "vector": "same_leaf_file_doctest_never_lends_a_sibling_crate_trait_impl_its_oracle",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
       "id": "rust_split_test_boundary_oracle",
       "language": "rust",
       "tier": "pure",
