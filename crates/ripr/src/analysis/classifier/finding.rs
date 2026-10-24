@@ -1160,8 +1160,16 @@ mod tests {
             "a demoted row beside a reaching test must not align"
         );
         assert!(
-            aligns(RelationReason::WeakTokenSubstring, false),
-            "with no reaching test the existing credit rule is unchanged"
+            !aligns(RelationReason::WeakTokenSubstring, false),
+            "a name-token row never aligns, even alone (#9169)"
+        );
+        assert!(
+            !aligns(RelationReason::OwnerNamedTest, true),
+            "an owner-named row beside a reaching test must not align"
+        );
+        assert!(
+            aligns(RelationReason::OwnerNamedTest, false),
+            "with no reaching test the owner-named credit rule is unchanged"
         );
     }
 
