@@ -96,48 +96,114 @@ pub(crate) fn closure_argument_positions(test_text: &str, helper: &str) -> Optio
 }
 
 /// Whether any call to `helper` in `test_text`, reached or not, passes an
-/// argument that contains a closure literal whose body holds a call. The plain-helper path asks this of
+/// argument that contains a closure literal whose body holds a call, or a bare
+/// name the test bound earlier to one. The plain-helper path asks this of
 /// a helper that never invokes a parameter directly (#9997): such a helper
 /// either never runs the closure or only forwards it, so its assertions cannot
 /// be shown to observe what the closure called. Deliberately broader than
 /// [`closure_argument_positions`]: no eager-reach, `async` or nested-call
-/// exemption applies, because this only withholds credit. Text that does not
+/// exemption applies, because this only withholds. Text that does not
 /// parse cleanly answers `true`.
+///
+/// A named argument (`c`, `&c`, `(c)`) is withheld when a `let c = <closure
+/// literal with a call>` (the literal bare, `&`-borrowed or parenthesized)
+/// precedes the helper call in a block that encloses it. Rebinding, `mut` and
+/// shadowing do not exempt it: any such earlier binding withholds, so a later
+/// `let c = 5` is a missed advisory rather than a guess about which binding the
+/// name reaches. A binding in a block that does not enclose the call is another
+/// name and does not count. Function items passed by name are not recognized.
 pub(crate) fn passes_call_making_closure(test_text: &str, helper: &str) -> bool {
     let Some(parse) = parse_clean_source_file(test_text) else {
         return true;
     };
-    parse
-        .tree()
-        .syntax()
-        .descendants()
+    let root = parse.tree().syntax().clone();
+    root.descendants()
         .filter_map(ast::CallExpr::cast)
         .filter(|call| single_segment_callee(call).as_deref() == Some(helper))
-        .filter_map(|call| call.arg_list())
-        .flat_map(|arguments| arguments.args())
-        .any(|argument| {
-            // Any closure literal inside the argument, so `&|| ..`, `(|| ..)`
-            // and `Box::new(|| ..)` count; one inside a nested `fn` item does not.
-            argument
-                .syntax()
-                .descendants()
-                .filter_map(ast::ClosureExpr::cast)
-                .filter(|closure| {
-                    !closure
-                        .syntax()
-                        .ancestors()
-                        .take_while(|ancestor| ancestor != argument.syntax())
-                        .any(|ancestor| ast::Fn::can_cast(ancestor.kind()))
+        .any(|call| {
+            call.arg_list().is_some_and(|arguments| {
+                arguments.args().any(|argument| {
+                    holds_call_making_closure(argument.syntax())
+                        || bare_name(argument)
+                            .is_some_and(|name| bound_to_call_making_closure(&call, &name))
                 })
-                .any(|closure| {
-                    closure.body().is_some_and(|body| {
-                        body.syntax().descendants().any(|node| {
-                            ast::CallExpr::can_cast(node.kind())
-                                || ast::MethodCallExpr::can_cast(node.kind())
-                        })
-                    })
-                })
+            })
         })
+}
+
+/// Whether `node` holds a closure literal whose body has a call or method call.
+/// Any closure inside it counts, so `&|| ..`, `(|| ..)` and `Box::new(|| ..)`
+/// do; one inside a nested `fn` item within `node` does not.
+fn holds_call_making_closure(node: &ra_ap_syntax::SyntaxNode) -> bool {
+    node.descendants()
+        .filter_map(ast::ClosureExpr::cast)
+        .filter(|closure| {
+            !closure
+                .syntax()
+                .ancestors()
+                .take_while(|ancestor| ancestor != node)
+                .any(|ancestor| ast::Fn::can_cast(ancestor.kind()))
+        })
+        .any(|closure| {
+            closure.body().is_some_and(|body| {
+                body.syntax().descendants().any(|inner| {
+                    ast::CallExpr::can_cast(inner.kind())
+                        || ast::MethodCallExpr::can_cast(inner.kind())
+                })
+            })
+        })
+}
+
+/// The identifier of an argument that is exactly a single-segment name, through
+/// parentheses and borrows (`c`, `(c)`, `&c`, `&mut c`).
+fn bare_name(argument: ast::Expr) -> Option<String> {
+    match argument {
+        ast::Expr::ParenExpr(paren) => bare_name(paren.expr()?),
+        ast::Expr::RefExpr(borrow) => bare_name(borrow.expr()?),
+        ast::Expr::PathExpr(path) => {
+            let path = path.path()?;
+            if path.qualifier().is_some() {
+                return None;
+            }
+            Some(path.segment()?.name_ref()?.text().to_string())
+        }
+        _ => None,
+    }
+}
+
+/// Whether `call` sits after a `let NAME = <call-making closure literal>` in a
+/// block that encloses it. The initializer is a closure literal, possibly
+/// parenthesized or borrowed; any other initializer does not count.
+fn bound_to_call_making_closure(call: &ast::CallExpr, name: &str) -> bool {
+    let call_start = call.syntax().text_range().start();
+    call.syntax()
+        .ancestors()
+        .filter_map(ast::StmtList::cast)
+        .flat_map(|list| list.statements())
+        .filter_map(|statement| match statement {
+            ast::Stmt::LetStmt(binding) => Some(binding),
+            _ => None,
+        })
+        .filter(|binding| binding.syntax().text_range().end() <= call_start)
+        .filter(|binding| {
+            matches!(binding.pat(), Some(ast::Pat::IdentPat(pattern))
+                if pattern.name().is_some_and(|bound| bound.text() == name))
+        })
+        .filter_map(|binding| binding.initializer())
+        .any(|initializer| closure_literal(initializer).is_some_and(closure_makes_call))
+}
+
+fn closure_literal(expression: ast::Expr) -> Option<ast::ClosureExpr> {
+    match expression {
+        ast::Expr::ParenExpr(paren) => closure_literal(paren.expr()?),
+        ast::Expr::RefExpr(borrow) => closure_literal(borrow.expr()?),
+        ast::Expr::ClosureExpr(closure) => Some(closure),
+        _ => None,
+    }
+}
+
+fn closure_makes_call(closure: ast::ClosureExpr) -> bool {
+    holds_call_making_closure(closure.syntax())
 }
 
 /// End of the statement that eagerly invokes `name`, when the function body
