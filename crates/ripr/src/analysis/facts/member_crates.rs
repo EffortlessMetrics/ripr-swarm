@@ -806,22 +806,27 @@ fn is_default_library_root(package: &Package, owner_root: &Path) -> bool {
 }
 
 /// Whether `owner_root` is the root file of `package`'s library: the file
-/// `[lib] path` names, else `src/lib.rs`, with `autolib` on. A `[lib] path`
+/// `[lib] path` names, else `src/lib.rs` while `autolib` is on. A `[lib] path`
 /// that is not a plain relative string, or that leaves the package, names no
 /// root (RIPR-SPEC-0171 example 5: a custom `[lib] path` is a crate root as
 /// much as `src/lib.rs`, and a dependent imports it by the library name).
 fn is_library_root(package: &Package, owner_root: &Path) -> bool {
     let manifest = &package.manifest;
-    let autolib_off = manifest
-        .get("package")
-        .and_then(|package| package.get("autolib"))
-        .and_then(toml::Value::as_bool)
-        == Some(false);
-    if autolib_off {
-        return false;
-    }
+    // `autolib = false` disables only the implicit `src/lib.rs` target; an
+    // explicit `[lib] path` is still a configured target (Cargo's
+    // `normalize_lib` keeps it in both discovery modes).
     let relative = match manifest.get("lib").and_then(|lib| lib.get("path")) {
-        None => Path::new("src").join("lib.rs"),
+        None => {
+            let autolib_off = manifest
+                .get("package")
+                .and_then(|package| package.get("autolib"))
+                .and_then(toml::Value::as_bool)
+                == Some(false);
+            if autolib_off {
+                return false;
+            }
+            Path::new("src").join("lib.rs")
+        }
         Some(path) => match path.as_str() {
             Some(text) => lexical(Path::new(text)),
             None => return false,
@@ -1259,6 +1264,7 @@ mod tests {
         let escaping = format!("{PRICING}[lib]\npath = \"../pricing2/lib.rs\"\n");
         let dotted = format!("{PRICING}[lib]\npath = \"./lib/core.rs\"\n");
         let autolib_off = format!("{PRICING}autolib = false\n[lib]\npath = \"lib/core.rs\"\n");
+        let autolib_implicit_off = format!("{PRICING}autolib = false\n");
         let probe = |manifest: &str, file: &str| -> Result<bool, String> {
             let root = temp_workspace(
                 "custom-lib-root",
@@ -1278,7 +1284,9 @@ mod tests {
         assert!(!probe(PRICING, "pricing/src/lib.rs")?);
         assert!(!probe(&escaping, "pricing2/lib.rs")?);
         assert!(probe(&dotted, "pricing/lib/core.rs")?);
-        assert!(!probe(&autolib_off, "pricing/lib/core.rs")?);
+        // `autolib = false` turns off only the implicit target, not a `[lib] path`.
+        assert!(probe(&autolib_off, "pricing/lib/core.rs")?);
+        assert!(!probe(&autolib_implicit_off, "pricing/src/lib.rs")?);
         // A nested package owns its own files, whatever the outer manifest says.
         assert!(!probe(&custom, "pricing/inner/lib/core.rs")?);
         Ok(())
