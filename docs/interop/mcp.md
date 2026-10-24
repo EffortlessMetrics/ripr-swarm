@@ -194,7 +194,9 @@ document, schema `ripr-mcp-workspace-status-v1`. It wraps:
   `stale_after_failed_attempt` once a later attempt fails),
   the committed snapshot's typed `AnalysisOutcome`, an additive
   `language_completeness` list of `{language, status}` rows from the same
-  analysis run (present only once a snapshot is committed; ignorable), and
+  analysis run (present only once a snapshot is committed, on the status tool
+  and the status resource; supported readers use the advertised `outputSchema`
+  or tolerate unknown keys), and
   profile and support facts. Complete-zero and incomplete-zero outcomes stay distinct
   through the typed outcome; a partial outcome keeps its typed limitations;
 - the transport, tool, resource, resource-template, and byte bounds under

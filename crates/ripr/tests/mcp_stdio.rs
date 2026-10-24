@@ -2967,6 +2967,18 @@ fn refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation() -> Re
             "status must serve per-language completeness from the producer view: {status}"
         ));
     }
+    // The status resource renders the same session block.
+    let resource = read_resource_document(
+        &mut session,
+        "filter-status-resource",
+        "ripr://workspace/status",
+        timeout,
+    )?;
+    if resource.pointer("/session/language_completeness") != Some(&expected_languages) {
+        return Err(format!(
+            "the status resource must carry the same per-language completeness: {resource}"
+        ));
+    }
     // A different committed input replaces the snapshot. Replay the actual
     // old continuation unchanged; no fabricated stale identity is supplied.
     std::fs::write(
