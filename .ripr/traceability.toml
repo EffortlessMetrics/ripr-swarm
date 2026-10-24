@@ -8518,6 +8518,8 @@ tests = [
   "crates/ripr/src/analysis/classify/reach.rs::tests::trait_identity_follows_the_path_and_the_files_foreign_imports",
   "crates/ripr/src/analysis/classify/reach.rs::tests::a_workspace_trait_impl_method_keeps_the_name_and_external_docs_allowances",
   "crates/ripr/src/analysis/classify/reach.rs::tests::foreign_imports_are_read_from_use_items_not_from_text",
+  "crates/ripr/src/analysis/classify/reach.rs::tests::foreign_imports_survive_comment_markers_inside_literals",
+  "crates/ripr/src/analysis/classify/reach.rs::tests::a_literal_before_a_foreign_import_does_not_hide_it_from_either_path",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::name_only_test_cannot_supply_the_oracle_for_reach_from_another_test",
   "crates/ripr/tests/snapshot_field_admission.rs::snapshot_of_another_receiver_cannot_close_the_owner_field",
   "crates/ripr/tests/snapshot_field_admission.rs::snapshot_without_an_expected_file_cannot_close_the_owner_field",
