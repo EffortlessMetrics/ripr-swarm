@@ -434,6 +434,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }],
             recommended_next_step: Some("Add a focused Perl assertion.".to_string()),
             language: Some(LanguageId::Perl),

@@ -214,8 +214,9 @@ fn an_applied_returned_closure_pin_is_no_longer_withheld() -> Result<(), String>
 
 #[test]
 fn a_collected_iterator_chain_reads_as_a_shape_limit() -> Result<(), String> {
-    // `Result` collection: the closure runs per element and the test pins
-    // the whole collected value.
+    // `Result` collection: RIPR-SPEC-0265 reads this adaptor tail (#9490), so
+    // the exact pin of a non-empty literal input credits it instead of
+    // reaching this rule.
     let results = owner_with_test(
         "pub fn parse_all(xs: &[&str]) -> Result<Vec<u32>, std::num::ParseIntError> {
     xs.iter().map(|s| s.parse::<u32>()).collect::<Result<Vec<_>, _>>()
@@ -230,8 +231,8 @@ fn a_collected_iterator_chain_reads_as_a_shape_limit() -> Result<(), String> {
         "    xs.iter().map(|s| s.parse::<u32>()).collect::<Result<Vec<_>, _>>()",
         ProbeFamily::ReturnValue,
     )?;
-    assert_eq!(finding_a.class, ExposureClass::StaticUnknown);
-    assert_eq!(limit(&finding_a), Some("rust_pinned_shape_unresolved"));
+    assert_eq!(finding_a.class, ExposureClass::Exposed);
+    assert_eq!(limit(&finding_a), None);
     // An opaque iterator return the test collects.
     let opaque = owner_with_test(
         "pub fn evens(limit: u32) -> impl Iterator<Item = u32> {

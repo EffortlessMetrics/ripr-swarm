@@ -131,7 +131,7 @@ map is:
 | `ripr agent card --json` and the `RepairCardV1` DTO (RIPR-SPEC-0192, RIPR-SPEC-0194; `ripr agent card` is the default CLI handoff, #4667) | `schema_version` | `repair_card.v1` |
 | `RepairCardV1` detail references and overflow disclosure (RIPR-SPEC-0193, #4666) | `budget_version` | `repair-card-budget-v1` |
 | `ripr agent card --json` refusal stdout envelope (`agent_card_refusal`; RIPR-SPEC-0202, #5007) | `schema_version` | `0.1` |
-| `ripr agent stub --json` document and its refusal stdout envelope (`kind: rust_test_stub`, `state: ready` or `refused`; #7762) | `schema_version` | `0.2` |
+| `ripr agent stub --json` document and its refusal stdout envelope (`kind: rust_test_stub`, `state: ready` or `refused`; #7762; ready-document `next_repair` is additive on `0.3`, #8727) | `schema_version` | `0.3` |
 
 The MCP tool envelopes carry the schema-versioned document as
 `structuredContent` in every successful response; a result whose complete
@@ -307,7 +307,7 @@ no witness-producing finding still renders its card with the `unavailable`
 instruction (RIPR-SPEC-0194 acceptance) — that in-band card state is typed
 already and is not a refusal.
 
-## Agent stub (`rust_test_stub`, schema `0.2`)
+## Agent stub (`rust_test_stub`, schema `0.3`)
 
 `ripr agent stub --json` emits one `rust_test_stub` document on stdout when
 the producer yields a stub (`state: ready`, exit 0). A producer refusal
@@ -325,9 +325,23 @@ stay `null` and `warnings` stays `[]`. Both selector refusals keep exit 3,
 the JSON on stdout, and the human decision prose on stderr. If the stdout
 write itself fails, no document was delivered and the command exits `2`.
 
+Schema `0.3` is additive on `0.2` (#8727): the ready document may carry a
+`next_repair` block naming the repair journey the stub feeds — the
+`ripr agent repair --seam-id <id> --phase before` start command and the repair
+packet's `allowed_edit_surface` file the stub's test must land in. When the
+stub's chosen placement differs from the packet's admitted surface (the stub
+producer routes by owner shape; the packet by its recommended-test authority),
+`placement_divergence` names both files so the divergence is stated at
+generation time instead of refusing later at the repair before phase's
+dirty-premise gate. The block is present only when the classified seam
+establishes the repair route (the same fail-closed flip the pilot's offered
+repair start uses); otherwise the key stays absent rather than inventing a
+route — notably for `--at --kind` file-parse selections, which carry no
+classified entry. The `0.2` field set is unchanged; refused envelopes keep it.
+
 Schema `0.2` replaces `0.1` for all ready and refused stub documents (#7762).
-The field set is unchanged; the new refusal-kind spelling requires the new
-version. Consumers must recognize `0.2`, dispatch on `state`, and distinguish
+Ready stub documents add `already_present`; the new refusal-kind spelling
+requires the new version. Consumers must recognize `0.2`, dispatch on `state`, and distinguish
 `selector_ambiguous` (choose a specific path or seam ID) from `seam_not_found`
 (correct or re-list the selector). Legacy `0.1` did not distinguish ambiguity
 from absence. The disclosure fields introduced in `0.1` (#7290) remain:
@@ -340,13 +354,24 @@ from absence. The disclosure fields introduced in `0.1` (#7290) remain:
   from the shared grip-to-exposure table (`strongly_gripped` → `exposed`,
   `weakly_gripped` → `weakly_exposed`, `ungripped` → `no_static_path`, …),
   else `null`. No per-surface translation fork.
-- `warnings` — when the class is omitted from agent packet/repair results,
-  one string reusing that omission reason, for example
-  `seam <id> is configured off for strongly_gripped seams and is not included in agent results`.
-  Empty when the class is included in agent results or the grip is unknown.
+- `warnings` — one string naming why the class carries omission prose. A
+  `strongly_gripped` seam is exposed because its tests already discriminate
+  it, so the warning says exactly that (`seam <id> is strongly_gripped:
+  existing tests already discriminate it, so a stub would add nothing`); the
+  default `Off` severity for the class is the agent-brief rendering policy,
+  not user configuration, so the packet/brief "configured off" wording is not
+  reused here (#8891). A class a user severity actually disables keeps the
+  packet wording, for example `seam <id> is configured off for
+  weakly_gripped seams and is not included in agent results`. Empty when the
+  class is included in agent results or the grip is unknown.
   Human output prints the same strings. Serving a strongly_gripped seam as
   a scaffold remains `state: ready` / exit 0; the warning is disclosure,
   not a refusal.
+- `already_present` — `true` when the placement already holds the identical
+  test function ripr would write (a second run for the same seam recomputes
+  byte-identical text). A repeated `--write` then reports the stub as already
+  written instead of appending a `_2`-suffixed duplicate; `written` stays
+  `false` for that run (#8891).
 
 Existing fields (`placement`, `test_name`, `text`, `fill_ins`,
 `derived_inputs`, `written`, `run_command`, and the refusal `refusal`
@@ -1569,6 +1594,14 @@ The evidence-first fields are additive in schema `0.2`:
   examined row (one per matched assertion, one per test that supplied none).
   Rows listed only as `assertion_not_observing` take only window slots the
   oracle rows leave free, so the oracle rows and their order are unchanged.
+- `related_tests[].role` — (optional, additive, #5563) the row's decision
+  role, a controlled `related_test_role` value, independent of `miss`.
+  `examined_only` marks a row retained only to show an examined test whose
+  assertions matched nothing (RIPR-SPEC-0224); decision paths skip it.
+  `contributing` is the default and is omitted from output; an artifact
+  without the field reads every row as `contributing`. `miss` never changes
+  which decision paths consume a row, and the role is not runtime execution
+  evidence.
 - `oracle_kind` and `oracle_strength` summarize the strongest related oracle
   currently visible to the finding.
 - `suggested_next_action` mirrors `recommended_next_step` for action-oriented
@@ -2660,6 +2693,13 @@ Expired entries are not applied; expired and unmatched selectors surface as
 warnings. A missing or malformed policy fails the run (fail-closed): the run
 never silently emits unfiltered counts as if a policy had been applied.
 
+`findings[].analysis_scope` (#5531) is distinct from the top-level
+`analysis_scope` object (partial/limited scope disclosure). It is the typed
+per-finding scope, emitted as the single value `"repo"` for findings produced
+by a repo-mode run and omitted for diff-scoped findings (diff bytes are
+unchanged). Consumers such as the gap ledger read it instead of the legacy
+`analysis_scope: repo` evidence line; any other value is rejected by the schema.
+
 Three surfaces change when the flag is present:
 
 - `summary.suppressed_by_policy` — count of suppressed findings. The
@@ -2987,6 +3027,11 @@ while `call_effect` remains the fallback for other observable calls.
 - `missing_input`
 - `missing_exact_assertion`
 - `observation_unconfirmed`
+
+`related_test_role` values:
+
+- `contributing`
+- `examined_only`
 
 `next_action_class` values:
 
@@ -18474,7 +18519,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.97",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.98",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -19229,7 +19274,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.45",
+    "schema_version": "1.46",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -19242,8 +19287,8 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.97",
-      "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
+      "schema_version": "1.98",
+      "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
       "cfg_features_hash": "…",
@@ -19325,16 +19370,26 @@ targeted-rerun receipt shape:
 }
 ```
 
-`input_fingerprint.analyzer_version` names the build, not only the package
-version: `<version>+<commit>` for a clean build, with `-dirty+src:<digest>`
-appended for a build with uncommitted source changes, or `<version>+unknown+src:<digest>`
-when no commit is recorded. Two builds of one version therefore report
-`input_changed:analyzer_version` against each other's receipts.
+`input_fingerprint.analyzer_version` names the source build and its compiled
+language features, not only the package version. Its source prefix is
+`<version>+<commit>` for a clean build,
+`<version>+<commit>-dirty+src:<digest>` for uncommitted source changes, or
+`<version>+unknown+src:<digest>` when no commit is recorded. If a dirty or
+commit-less build has no source digest, `process:<pid>:<nanos>` replaces
+`src:<digest>` so persisted entries are not reused across processes.
+Every form ends with
+`+languages:rust=<bit>,typescript=<bit>,python=<bit>,perl=<bit>`, in that order,
+where each bit is exactly `0` or `1`. These are the analyzer's compiled Cargo
+features; `cfg_features_hash` separately identifies the analyzed workspace's
+feature configuration. Different source or language-feature identities report
+`input_changed:analyzer_version` against each other's receipts, even when the
+package version and cache generations match. Treat the complete identity as
+opaque when comparing receipts.
 
 `cache.schema_version` and `cache.input_fingerprint.schema_version` version
-the file-fact cache and its input identity, not this report. They move
-whenever cache identity changes, so a consumer dispatches on the top-level
-`schema_version` and treats the nested values as opaque. Nested
+the file-fact cache and its input identity, not this report. They change with
+those cache contracts, independently of analyzer identity. A consumer dispatches
+on the top-level `schema_version` and treats the nested values as opaque. Nested
 `analyzer_version` is the producing build identity described above and also
 moves.
 

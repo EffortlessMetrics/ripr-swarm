@@ -759,6 +759,36 @@ fn optional_integer_argument_for_platform(
     })
 }
 
+/// Protocol-level list pagination (#9895): these catalog lists are static and
+/// small, so the server returns the complete list in one response and never
+/// issues a `nextCursor`. A client-supplied cursor can only be stale or
+/// fabricated; ignoring it would let an agent believe paging worked, so the
+/// request fails closed with the recovery spelled out.
+fn reject_pagination_cursor(
+    params: Option<PaginatedRequestParams>,
+    method: &str,
+) -> Result<(), ErrorData> {
+    if params
+        .as_ref()
+        .is_some_and(|params| params.cursor.is_some())
+    {
+        return Err(pagination_cursor_error(method));
+    }
+    Ok(())
+}
+
+fn pagination_cursor_error(method: &str) -> ErrorData {
+    ErrorData::invalid_params(
+        format!(
+            "{method} does not paginate: this server returns the complete list in one response and never issues a nextCursor; drop the cursor argument"
+        ),
+        Some(serde_json::json!({
+            "argument": "cursor",
+            "expected": "omit; the complete list fits one page",
+        })),
+    )
+}
+
 /// A paging limit with a typed row cap: a JSON integer `>= 1` and `<= max`.
 /// A request above the cap stays invalid params at the dispatch edge instead
 /// of being silently clamped, so the typed `page.limit` echo always names a
@@ -910,6 +940,17 @@ impl ServerHandler for McpServer {
         request: CustomRequest,
         _: RequestContext<RoleServer>,
     ) -> Result<CustomResult, ErrorData> {
+        if matches!(
+            request.method.as_str(),
+            "tools/list" | "prompts/list" | "resources/list" | "resources/templates/list"
+        ) && request
+            .params
+            .as_ref()
+            .and_then(|params| params.get("cursor"))
+            .is_some_and(|cursor| !cursor.is_null() && !cursor.is_string())
+        {
+            return Err(pagination_cursor_error(&request.method));
+        }
         const SERVED_METHODS: [&str; 9] = [
             "initialize",
             "server/discover",
@@ -941,23 +982,37 @@ impl ServerHandler for McpServer {
     }
     async fn list_tools(
         &self,
-        _: Option<PaginatedRequestParams>,
+        params: Option<PaginatedRequestParams>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
+        reject_pagination_cursor(params, "tools/list")?;
         Ok(self.tools.clone())
+    }
+    async fn list_prompts(
+        &self,
+        params: Option<PaginatedRequestParams>,
+        _: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, ErrorData> {
+        // #9895: the SDK default returns an empty catalog and would silently
+        // ignore a client-supplied cursor; the static catalog rule is the
+        // same one tools/list and resources/list enforce.
+        reject_pagination_cursor(params, "prompts/list")?;
+        Ok(ListPromptsResult::default())
     }
     async fn list_resources(
         &self,
-        _: Option<PaginatedRequestParams>,
+        params: Option<PaginatedRequestParams>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
+        reject_pagination_cursor(params, "resources/list")?;
         Ok(self.resources.clone())
     }
     async fn list_resource_templates(
         &self,
-        _: Option<PaginatedRequestParams>,
+        params: Option<PaginatedRequestParams>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListResourceTemplatesResult, ErrorData> {
+        reject_pagination_cursor(params, "resources/templates/list")?;
         Ok(self.resource_templates.clone())
     }
     async fn call_tool(
@@ -1044,7 +1099,11 @@ impl ServerHandler for McpServer {
         // The same id-aware budget the tool path uses (#7768): a resource
         // read answers one request whose echoed id rides the same wire cap.
         let max_envelope_bytes = super::outer_envelope_budget(&context.id);
-        if request.uri == protocol::STATUS_RESOURCE_URI {
+        // The well-known status resource gets the same one-trailing-slash
+        // tolerance the id routes normalize (#9895); the id parsers trim
+        // their own captures, so `uri` is used only for this exact match.
+        let uri = gaps::trim_one_trailing_slash(&request.uri);
+        if uri == protocol::STATUS_RESOURCE_URI {
             let session = self.session.lock().await;
             let result = protocol::status_resource_result(
                 &self.status,

@@ -589,6 +589,7 @@ fn mixed_macro_limit_preserves_confirmed_discrimination_and_examined_misses() ->
         if test.relation_reason == Some(RelationReason::DirectOwnerCall) {
             direct_count += 1;
             test.miss = Some(crate::domain::RelatedTestMiss::AssertionNotObserving);
+            test.role = crate::domain::RelatedTestRole::ExaminedOnly;
         }
     }
     assert_eq!(direct_count, 1);

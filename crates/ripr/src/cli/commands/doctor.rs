@@ -650,6 +650,10 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
     if config.is_ok() {
         if let Some(defaults) = environment.facts.config_defaults.as_ref() {
             match &defaults.source_path {
+                // A root that is not a directory is already reported as the
+                // failure; a parent `ripr.toml` found by upward discovery must
+                // not read as a healthy loaded workspace config.
+                _ if !root.is_dir() => {}
                 Some(path) => {
                     workspace.push(format!("Config: loaded {CONFIG_FILE_NAME}"));
                     lines.push(format!("- Config path: {}", display_text(path)));
@@ -664,10 +668,6 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
                         defaults.lsp_seam_diagnostics
                     ));
                 }
-                // A missing root cannot have a config; reporting "using
-                // built-in defaults" under a passing Workspace line would
-                // read as a healthy root.
-                None if !root.is_dir() => {}
                 None => workspace.push("Config: not found; using built-in defaults".to_string()),
             }
         } else {

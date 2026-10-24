@@ -21,6 +21,7 @@ Finding 1: WARNING ./src/lib.rs:6
 Changed
   before: None => 0,
   after:  None =>
+          (arm head only; open the arm at ./src/lib.rs:6 to read its new body)
 Probe
   family: match_arm
   delta:  control
