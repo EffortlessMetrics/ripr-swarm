@@ -726,22 +726,48 @@ mutant calibrates the rule; ripr reports only the static shape.
     (relative) of the band edge, a non-literal argument, a positional
     band, `**`, a longer body, a method or decorated owner, and a run
     without the old line (repo mode).
-22. **A `caplog.text` membership check on a changed log call abstains.**
-    When the changed line is a logging call (`<receiver>.debug`, `.info`,
-    `.warning`, `.warn`, `.error`, `.critical` or `.exception` with a
-    string literal) and the selected assertion is `<text> in caplog.text`
-    sharing a word of three or more characters with that literal, the
-    finding is `static_unknown` with `unsupported_syntax`. The check
-    compares against `%`-formatted text and a runtime level filter, neither
-    of which the adapter evaluates, so a message edit
-    (`py-idioms-caplog-message`) and a level edit (`py-idioms-caplog-level`)
-    both abstain instead of reading a weak gap. An assertion about unrelated
-    text keeps its verdict. `caplog.messages` and `caplog.records` are not
-    read by this rule. The membership is read from the parsed assertion, not
-    its text layout: extra spacing, parentheses, line breaks, implicit
-    literal concatenation, an assertion message and a membership joined by
-    `and` all abstain the same way, while a membership against any receiver
-    other than `caplog.text` is not read.
+22. **A `caplog.text` membership check on a changed log call is
+    evaluated where it is decidable, else abstains.** When the changed
+    line is a logging call (`<receiver>.debug`, `.info`, `.warning`,
+    `.warn`, `.error`, `.critical` or `.exception` with a string literal)
+    and the selected assertion is `<text> in caplog.text` sharing a word
+    of three or more characters with that literal, the finding is
+    `static_unknown` with `unsupported_syntax`, unless the formatted
+    message can be evaluated. It can when all of these hold: the old and
+    new lines are logging calls on the same receiver with a literal
+    message and no keyword arguments, whose arguments are string or
+    integer literals or owner parameters the test's own calls bind to
+    such literals, formatted with `%s`, `%d`, `%i` and `%%` (no
+    arguments: the message as written); the owner is an undecorated
+    function whose lines between its `def` and the changed line are only
+    plain `if <comparison>:` blocks, with nothing after the line but
+    `return` or `pass`; every owner call of the test has a readable guard
+    outcome; the test pins the capture level with exactly one
+    `caplog.at_level(<level>)` block around its owner calls or one
+    `caplog.set_level(<level>)` before them and makes no other call, no
+    `caplog.clear`, no patching; the module configures no logger
+    (`setLevel`, `propagate`, filters, handlers, `logging` configuration);
+    and the asserted text holds a space after a character other than an
+    upper-case letter, a digit or a space, so it is read from the message
+    and not from the record header. A record is captured when its level is
+    at least the pinned level. The asserted text in the old message and
+    not in the new one (`py-idioms-caplog-message`, and a level lowered
+    below the pin, `py-idioms-caplog-level`) is `exposed`; in both is a
+    weak gap; a test that did not log the text before the edit, or any
+    shape outside these bounds, abstains. A custom `log_format` is not
+    read. The asserted literals are only those the assertion requires: a
+    single membership or an `and` chain, never a literal under `or`. The
+    receiver is `logging` or a module-level `name = logging.getLogger(...)`
+    (a detached `logging.Logger(...)` or any other object abstains), the
+    method is not `exception` (its traceback can hold the asserted text),
+    and the test never rebinds `caplog`. An assertion about unrelated text
+    keeps its verdict.
+    `caplog.messages` and `caplog.records` are not read by this rule. The
+    membership is read from the parsed assertion, not its text layout:
+    extra spacing, parentheses, line breaks, implicit literal
+    concatenation, an assertion message and a membership joined by `and`
+    all read the same way, while a membership against any receiver other
+    than `caplog.text` is not read.
 23. **An assertion that cannot run or cannot fail is not read.** The
     assertion collector skips the dead arm of an `if` or `while` whose
     condition is a literal (`if False:`, `if 0:`, `if None:`, `while False:`;
