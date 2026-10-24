@@ -643,6 +643,7 @@ Fixture coverage:
 - `structural_delimiter_lines_are_recognized`
 - `probes_for_file_skips_brace_and_else_lines_of_new_function`
 - `probes_for_file_keeps_lone_structural_line_hunks`
+- `an_item_level_closing_brace_seeds_no_probe_but_one_inside_a_function_does`
 - `probes_for_file_keeps_structural_line_closing_outside_block_in_mixed_run`
 - `lone_else_split_hunk_is_not_no_behavioral_candidates`
 - `an_identical_line_inside_a_replacement_block_seeds_no_probe`
@@ -658,6 +659,12 @@ the substring fallback applies the same generic/common-word gate as the
 word-boundary path (#9172), so a test named `ready_return` or `wait_while` does
 not make an uncalled owner read `weakly_exposed`. Words inside string literals
 remain name tokens; that residual is tracked in #9172.
+
+A changed line of only closing braces (`}`, `};`, `},`) outside every indexed
+function closes a `trait`, `impl`, `mod` or `struct` body and seeds no probe
+(#10090): diff alignment reports an existing item's closer as added when items
+are appended after it. A closer inside a function body keeps its probe (#4216),
+and so does any file with no indexed function.
 
 ## Implementation Mapping
 
