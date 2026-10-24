@@ -624,7 +624,8 @@ not rewrite pilot output or the agent packet routes, which remain tracked in
 
 The LSP hover (finding hover, line hover and classified-seam hover) is prose for
 a person and applies the same anchored rewrite to its stage lines, the
-discriminator line's related-oracle summary and its Weakness list; the
+discriminator line's related-oracle summary, its Weakness list, and the seam
+hover's Strong/Weak evidence lists and missing-discriminator reasons; the
 structured finding and JSON keep the machine value (#9929).
 
 ### Next step for an unmapped infection input (#9244)
@@ -719,6 +720,7 @@ not a head-only row and prints no note.
 - `crates/ripr/src/output/human.rs::tests::shared_evidence_rows_spell_the_unconfirmed_observation_in_words`
 - `crates/ripr/src/output/human.rs::tests::weakness_list_drops_producer_marker_but_keeps_embedded_token_and_json`
 - `crates/ripr/src/lsp/tests.rs::finding_hover_spells_the_unconfirmed_observation_in_words`
+- `crates/ripr/src/lsp/hover.rs::seam_hover_tests::seam_hover_spells_the_unconfirmed_observation_in_words`
 - `crates/ripr/src/output/human.rs::tests::plain_wording_leaves_backticked_source_literals_alone`
 - `crates/ripr/src/output/human.rs::tests::plain_observation_wording_never_modifies_embedded_source_text`
 - `crates/ripr/tests/observation_wording_python_literals.rs::single_backtick_before_the_token_prints_as_written`

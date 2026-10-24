@@ -719,7 +719,8 @@ fn push_diagnostic_witness(lines: &mut Vec<String>, witness: &DiagnosticWitness)
     for missing in &witness.missing_discriminators {
         lines.push(format!(
             "- missing discriminator: `{}` — {}",
-            missing.value, missing.reason
+            missing.value,
+            plain_observation_wording(&missing.reason)
         ));
     }
     if let Some(fix_site) = &witness.fix_site {
@@ -999,7 +1000,11 @@ fn classified_seam_hover_markdown(
         lines.push(String::new());
         lines.push("## Missing discriminator".to_string());
         for missing in &evidence.missing_discriminators {
-            lines.push(format!("- `{}` — {}", missing.value, missing.reason));
+            lines.push(format!(
+                "- `{}` — {}",
+                missing.value,
+                plain_observation_wording(&missing.reason)
+            ));
         }
     }
 
@@ -1350,7 +1355,10 @@ fn push_classification_explanation(
     for (name, stage) in stages {
         if stage.state == StageState::Yes {
             has_strong_evidence = true;
-            lines.push(format!("- {name} yes: {}", stage.summary));
+            lines.push(format!(
+                "- {name} yes: {}",
+                plain_observation_wording(&stage.summary)
+            ));
         }
     }
     if !has_strong_evidence {
@@ -1366,7 +1374,7 @@ fn push_classification_explanation(
             lines.push(format!(
                 "- {name} {}: {}",
                 stage.state.as_str(),
-                stage.summary
+                plain_observation_wording(&stage.summary)
             ));
         }
     }
@@ -1374,7 +1382,8 @@ fn push_classification_explanation(
         has_gap_evidence = true;
         lines.push(format!(
             "- missing discriminator `{}`: {}",
-            missing.value, missing.reason
+            missing.value,
+            plain_observation_wording(&missing.reason)
         ));
     }
     if !has_gap_evidence {
@@ -1897,6 +1906,52 @@ mod seam_hover_tests {
             HoverContents::Markup(content) => Ok(content.value.as_str()),
             other => Err(format!("expected MarkupContent, got {other:?}")),
         }
+    }
+
+    // #9929: the seam hover's Strong/Weak evidence lists, evidence stage lines
+    // and missing-discriminator reasons spell the producer marker in words;
+    // embedded source text with the token is left alone.
+    #[test]
+    fn seam_hover_spells_the_unconfirmed_observation_in_words() -> Result<(), String> {
+        let mut seam = weakly_gripped_classified();
+        seam.evidence.observe = stage(
+            StageState::Yes,
+            "assertion reads the value (observation_unverified)",
+        );
+        seam.evidence.discriminate = stage(
+            StageState::Weak,
+            "changed value never named (observation_unverified)",
+        );
+        seam.evidence.missing_discriminators = vec![
+            MissingDiscriminatorFact {
+                value: "a".to_string(),
+                reason: "input unexecuted (observation_unverified)".to_string(),
+                flow_sink: None,
+            },
+            MissingDiscriminatorFact {
+                value: "b".to_string(),
+                reason: "missing proof: `raise ValueError(\"observation_unverified\")`."
+                    .to_string(),
+                flow_sink: None,
+            },
+        ];
+        let hover = classified_seam_hover_response(&seam, &sample_diagnostic(), None);
+        let md = extract_markup(&hover)?;
+        if md.contains("(observation_unverified)") {
+            return Err(format!("seam hover kept the producer marker:\n{md}"));
+        }
+        for needle in [
+            "- observation yes: assertion reads the value\n",
+            "- discrimination weak: changed value never named\n",
+            "* observation yes: assertion reads the value\n",
+            "- missing discriminator `a`: input unexecuted\n",
+            "`raise ValueError(\"observation_unverified\")`.",
+        ] {
+            if !md.contains(needle) {
+                return Err(format!("missing {needle:?} in:\n{md}"));
+            }
+        }
+        Ok(())
     }
 
     #[test]
