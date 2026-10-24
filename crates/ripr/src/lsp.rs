@@ -14,6 +14,7 @@ mod dollar_requests;
 mod gap_artifacts;
 mod git_inputs;
 mod hover;
+mod initialize_repair;
 mod input_identity;
 mod lens;
 mod payload_bounds;
@@ -107,6 +108,9 @@ where
     O: tokio::io::AsyncWrite + Unpin,
 {
     let (stdin, stdout) = bounds.wrap(stdin, stdout);
+    // #10016: repair raw non-ASCII URIs in the first initialize frame before
+    // tower-lsp-server's strict RFC 3986 Uri parser rejects the whole request.
+    let stdin = initialize_repair::InitializeRepairReader::new(stdin);
     let (service, socket) = build_service(root.clone(), bounds.client_request_timeout);
     let order = ShutdownExitOrder::default();
 
