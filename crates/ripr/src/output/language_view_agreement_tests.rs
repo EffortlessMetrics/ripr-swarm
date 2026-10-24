@@ -568,3 +568,61 @@ fn a_duplicate_perl_label_is_order_independent_and_never_hides_a_blocker() {
     assert_eq!(view.reconcile_public_runs(&[pipeline_run]), Ok(()));
     assert_eq!(view.completeness, DiffCompleteness::Incomplete);
 }
+
+/// The preview advisory's `analyzed` readiness claim (used by the JSON check
+/// report and the GitHub annotations) is derived independently from
+/// `language_runs`. It must agree with the aggregate-owned view, except for
+/// the one documented divergence below. Expectations are literal.
+#[test]
+fn preview_advisory_readiness_agrees_with_the_view() -> Result<(), String> {
+    use crate::analysis::PreviewLanguageAdvisory;
+    // (fixture, language, advisory enabled, expected `analyzed`, view status)
+    let cases: [(&str, &str, bool, bool, &str); 7] = [
+        ("complete", "python", true, true, "complete_zero"),
+        // Documented divergence: a diff-mode partial adapter keeps its
+        // limitation in the typed outcome and owns no `language_runs` row, so
+        // the advisory still reads `analyzed` while the view says `partial`.
+        // The incompleteness stays disclosed by the outcome's limitations.
+        ("partial", "python", true, true, "partial"),
+        ("unavailable", "python", true, false, "unavailable"),
+        ("invalid", "python", true, false, "invalid"),
+        ("failed", "python", true, false, "failed"),
+        (
+            "repo_partial_with_not_selected",
+            "python",
+            true,
+            false,
+            "partial",
+        ),
+        (
+            "configured_uncompiled_perl_dual_row",
+            "perl",
+            false,
+            false,
+            "not_selected",
+        ),
+    ];
+    let fixtures = fixtures()?;
+    for (name, language, enabled, analyzed, status) in cases {
+        let fixture = fixtures
+            .iter()
+            .find(|fixture| fixture.name == name)
+            .ok_or_else(|| format!("missing fixture {name}"))?;
+        let view = LanguageCompletenessView::from_aggregate(&aggregate_for(fixture));
+        let row = view
+            .rows
+            .iter()
+            .find(|row| row.label == language)
+            .ok_or_else(|| format!("{name}: no {language} row"))?;
+        assert_eq!(row.status.as_str(), status, "{name}");
+        let advisory = PreviewLanguageAdvisory {
+            language: language.to_string(),
+            file_count: 1,
+            sample_paths: Vec::new(),
+            javascript_file_count: 0,
+            enabled,
+        };
+        assert_eq!(advisory.analyzed(&view.public_runs), analyzed, "{name}");
+    }
+    Ok(())
+}
