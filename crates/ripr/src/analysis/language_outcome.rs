@@ -27,12 +27,20 @@ use std::fmt::Write as _;
 
 mod diff_aggregate;
 mod reconcile;
-#[cfg(test)]
+mod view;
 pub(crate) use diff_aggregate::DiffCompleteness;
 pub(crate) use diff_aggregate::DiffLanguageAggregate;
 pub(crate) use diff_aggregate::LanguageAggregate;
 use diff_aggregate::repo_static_facts_limit;
 pub(crate) use reconcile::reconcile;
+pub(crate) use view::LanguageCompletenessView;
+#[cfg(test)]
+pub(crate) use view::LanguageDisclosure;
+// Fixture inputs for the cross-surface agreement tests in `output`.
+#[cfg(test)]
+pub(crate) use crate::analysis::language::{
+    LanguageDiffResult as FixtureDiffResult, LanguageRepoResult as FixtureRepoResult,
+};
 
 pub(crate) const LANGUAGE_ANALYSIS_OUTCOME_SCHEMA_VERSION: &str = "1";
 

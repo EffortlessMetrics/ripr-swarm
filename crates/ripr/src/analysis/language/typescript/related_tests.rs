@@ -2,7 +2,7 @@
 
 use super::tsconfig::{TsAliasMap, TsOutDirMap, load_out_dir_map};
 use super::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 // ── Re-export index ───────────────────────────────────────────────────────────
 
@@ -502,6 +502,44 @@ impl ReExportIndex {
             }
         }
         names
+    }
+
+    /// Map each declaration name to every exported name that resolves to it
+    /// through the bounded re-export graph (#10028). An owner named `foo` can
+    /// be imported — and thus credited — through any export name whose chain
+    /// lands on a `foo` declaration, so the relation index widens an owner's
+    /// name candidates with these aliases. Keyed by name only: owners sharing
+    /// a declaration name receive the union of their exposure aliases, which
+    /// is sound because the index is a pre-filter and every identity guard
+    /// still runs on each candidate.
+    pub(crate) fn exposed_names_by_owner(&self) -> HashMap<String, HashSet<String>> {
+        let mut candidates: HashSet<(String, String)> = HashSet::new();
+        for (module, names) in &self.local_exports {
+            for name in names {
+                candidates.insert((module.clone(), name.clone()));
+            }
+        }
+        for (module, exported) in self.entries.keys() {
+            candidates.insert((module.clone(), exported.clone()));
+        }
+        // A star edge forwards every named export of its source; enumerate
+        // those (already bounded by MAX_REEXPORT_HOPS) so a barrel-only
+        // export still reaches its declaration.
+        for (module, source) in &self.star_edges {
+            for name in self.enum_exported_names(source) {
+                candidates.insert((module.clone(), name.to_string()));
+            }
+        }
+        let mut exposed: HashMap<String, HashSet<String>> = HashMap::new();
+        for (module, name) in candidates {
+            let mut stack = Vec::new();
+            if let ExportResolution::Found(_, local_name) =
+                self.resolve_export(&module, &name, 0, &mut stack, &|_| false)
+            {
+                exposed.entry(local_name).or_default().insert(name);
+            }
+        }
+        exposed
     }
 
     /// Resolve a normalized module specifier path to the workspace module it
@@ -1087,12 +1125,21 @@ pub(crate) fn same_package_root(
 ///
 /// `alias_map` enables tsconfig.json path alias resolution for non-relative
 /// specifiers.  Pass `None` when `resolve_tsconfig_paths` is `false` (explicit opt-out).
+///
+/// `relation_index` pre-filters pass 1 to the tests that can possibly relate
+/// to the owner (body-name, import-shape, or re-export-exposure keys;
+/// #10028). Every identity guard still runs on each survivor, so this is a
+/// scan restriction, not a semantic change; the module-entry and heuristic
+/// fallback passes only run when pass 1 found nothing and keep their
+/// previous scans.  Pass `&RelationIndex::empty()` (test-only) to preserve
+/// the unindexed full scan.
 pub(crate) fn related_test_candidates<'a>(
     owner: &TypeScriptOwner,
     all_tests: &'a [TypeScriptTest],
     workspace_root: Option<&Path>,
     reexport_index: &ReExportIndex,
     alias_map: Option<&TsAliasMap>,
+    relation_index: &RelationIndex,
 ) -> Vec<TypeScriptRelatedCandidate<'a>> {
     let package_scope = workspace_root.map(|root| OwnerPackageScope::new(&owner.file, root));
     let in_owner_package = |test: &&TypeScriptTest| {
@@ -1100,8 +1147,9 @@ pub(crate) fn related_test_candidates<'a>(
             .as_ref()
             .is_none_or(|scope| scope.contains(&test.file))
     };
-    let mut candidates: Vec<TypeScriptRelatedCandidate<'a>> = all_tests
-        .iter()
+    let mut candidates: Vec<TypeScriptRelatedCandidate<'a>> = relation_index
+        .candidates(owner, all_tests)
+        .into_iter()
         .filter_map(|test| {
             owner_call_relation(test, owner, reexport_index, alias_map, workspace_root)
                 .map(|relation| related_candidate(test, relation, owner, alias_map, workspace_root))
@@ -1110,9 +1158,20 @@ pub(crate) fn related_test_candidates<'a>(
     // Same-module entry reach is admitted only when no test calls the owner
     // itself, so a direct relation's oracle alone decides exposure.
     if candidates.is_empty() && !owner.module_entries.is_empty() {
-        candidates = all_tests
+        // Each entry's stand-in owner has its own name/import keys; union the
+        // indexed candidates so a name-less entry test is still reachable
+        // without rescanning the whole corpus.
+        let entry_indices: BTreeSet<u32> = owner
+            .module_entries
             .iter()
-            .filter(in_owner_package)
+            .flat_map(|entry| {
+                relation_index.candidate_indices(&module_entry_owner(owner, entry), all_tests.len())
+            })
+            .collect();
+        candidates = entry_indices
+            .into_iter()
+            .map(|index| &all_tests[index as usize])
+            .filter(|test| in_owner_package(test))
             .filter(|test| {
                 module_entry_relation(test, owner, reexport_index, alias_map, workspace_root)
             })
@@ -2678,8 +2737,14 @@ pub(crate) fn find_related_tests(
     reexport_index: &ReExportIndex,
     alias_map: Option<&TsAliasMap>,
 ) -> Vec<RelatedTest> {
-    let candidates =
-        related_test_candidates(owner, all_tests, workspace_root, reexport_index, alias_map);
+    let candidates = related_test_candidates(
+        owner,
+        all_tests,
+        workspace_root,
+        reexport_index,
+        alias_map,
+        &RelationIndex::empty(),
+    );
     related_tests_for_candidates(&candidates, None)
 }
 
@@ -2728,6 +2793,7 @@ pub(crate) fn related_tests_for_candidates(
                 relation_reason,
                 relation_confidence,
                 miss: None,
+                miss_support: None,
             }
         })
         .collect()

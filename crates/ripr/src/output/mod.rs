@@ -37,6 +37,8 @@ pub mod human;
 pub(crate) mod intervention_study;
 pub mod json;
 pub(crate) mod language_capabilities;
+#[cfg(test)]
+mod language_view_agreement_tests;
 pub(crate) mod limited_check;
 pub(crate) mod markdown;
 pub(crate) mod mutation_calibration;

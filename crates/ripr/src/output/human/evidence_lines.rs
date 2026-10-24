@@ -187,10 +187,8 @@ fn evidence_path<T>(
     }
 
     for test in finding.related_tests.iter().take(MAX_RELATED_TESTS_SHOWN) {
-        let why = crate::output::related_test_miss::related_test_miss_reason(
-            test,
-            &finding.activation.missing_discriminators,
-        );
+        let why =
+            crate::output::related_test_miss::related_test_miss_reason(test, &finding.probe.family);
         if let Some(why) = why.as_deref().filter(|_| test.is_unmatched()) {
             // #5344: an examined test with no matched oracle says why it
             // misses, then shows the assertion it was judged by, so the

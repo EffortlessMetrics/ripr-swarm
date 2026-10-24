@@ -1482,6 +1482,7 @@ mod helper_origin_tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
             };
             let units = alignment_units(
                 &[&related],

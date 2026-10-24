@@ -375,7 +375,14 @@ test.only("discount boundary", () => {
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
 
     assert_eq!(candidates.len(), 1);
     assert_eq!(

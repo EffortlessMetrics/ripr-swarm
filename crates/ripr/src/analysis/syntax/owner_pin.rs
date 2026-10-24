@@ -3939,6 +3939,19 @@ fn has_escape(
     })
 }
 
+/// Whether `node` holds anything the shared owner-pin escape authority
+/// ([`has_escape`]) refuses with the full [`TRUSTED_MACRO_NAMES`] set and no
+/// recorded bindings: a macro outside that set, a trusted macro whose operand
+/// tokens hide an exit (`return`, `break`, `continue`, `yield`, `?`) or a
+/// nested expansion, and any `return`/`?`/`yield` owned by a closure inside
+/// `node`. The closure part is stricter than a plain early-exit scan: a
+/// closure's own exit also refuses. The same-file callback-helper producer
+/// (#9981) gates its credit on this before copying any facts, so diff output
+/// and the repo-exposure consumer agree on what may have exited.
+pub(crate) fn node_has_macro_escape(node: &SyntaxNode) -> bool {
+    has_escape(node, TRUSTED_MACRO_NAMES, &BTreeMap::new(), &[]).is_some()
+}
+
 fn opaque_macro_operand(tree: &ast::TokenTree) -> bool {
     opaque_macro_operand_with_json(tree, false)
 }
