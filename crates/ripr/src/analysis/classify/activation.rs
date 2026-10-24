@@ -1329,7 +1329,24 @@ fn owner_rebinds_operand(owner: &FunctionSummary, operand: &str, predicate_line:
         // earlier arm's result (`Some(v) => x, None =>`) is not a binding. An
         // arm that re-binds the scrutinee's own name is declined too (no
         // attempt to tie it to its match).
-        let match_arm_pattern = in_match_arm_pattern(before);
+        // The one exemption is a bare first-arm binder of the scrutinee's own
+        // name (`match n { n if 0 > n => .. }`): it binds the same value the
+        // match reads, so it is not a different `n`. Any other arm pattern
+        // naming it, or a scrutinee that is more than the bare name, is declined.
+        let binds_scrutinee_itself = {
+            let opening = before_trimmed.strip_suffix('{').map(str::trim_end);
+            opening
+                .and_then(|head| head.strip_suffix(operand))
+                .is_some_and(|head| {
+                    let head = head.trim_end();
+                    head.strip_suffix("match")
+                        .is_some_and(|rest| !rest.ends_with(is_word))
+                })
+                && (after_trimmed.starts_with("if ")
+                    || after_trimmed.starts_with("=>")
+                    || after_trimmed.starts_with(','))
+        };
+        let match_arm_pattern = !binds_scrutinee_itself && in_match_arm_pattern(before);
         // A destructuring assignment `(x, y) = (y, x);` or `[x, ..] = ..;`:
         // the bracket group holding the name is followed by a bare `=`.
         let destructuring_assignment = {
@@ -4173,6 +4190,9 @@ pub(super) fn is_constant_like(name: &str) -> bool {
 pub(super) fn free_identifiers(text: &str) -> Vec<String> {
     let masked = crate::analysis::language::mask_rust_comments_and_strings(text);
     let chars: Vec<char> = masked.chars().collect();
+    // Byte offset of each masked char: the mask blanks a char literal, so a
+    // byte-literal prefix is recognised against the original text.
+    let offsets: Vec<usize> = masked.char_indices().map(|(offset, _)| offset).collect();
     let mut names = Vec::new();
     let mut previous: Option<char> = None;
     let mut after_as = false;
@@ -4206,7 +4226,11 @@ pub(super) fn free_identifiers(text: &str) -> Vec<String> {
             let name: String = chars[start..idx].iter().collect();
             let next = chars[idx..].iter().find(|ch| !ch.is_whitespace()).copied();
             let path_next = chars.get(idx) == Some(&':') && chars.get(idx + 1) == Some(&':');
-            let byte_literal = name == "b" && chars.get(idx) == Some(&'\'');
+            let byte_literal = name == "b"
+                && offsets
+                    .get(idx)
+                    .and_then(|offset| text.as_bytes().get(*offset))
+                    == Some(&b'\'');
             let skip = after_as
                 || byte_literal
                 || name == "as"
@@ -9894,7 +9918,6 @@ assert_eq!(input.amount, 100);"#
             "    let _ = match y {\n        x\n        => {\n            x > 101\n        }\n    };",
             "    let _q = '\"';\n    let x = x + 5;",
             "    [x, ..] = [1, 2];",
-            "    let _ = match x {\n        x if 0 > x => -1,\n        _ => 1,\n    };",
             "    let _ = match x { 0 => 1, _ => 2 };\n    let _ = match o {\n        x => x > 101,\n    };",
         ] {
             assert_eq!(rebound(prelude), None, "{prelude}");
@@ -9902,6 +9925,8 @@ assert_eq!(input.amount, 100);"#
         // Controls: unrelated names, fields, comparisons and a path segment
         // do not decline the parameter.
         for prelude in [
+            // A bare first-arm binder of the scrutinee's own name binds the same value.
+            "    let _ = match x {\n        x if 0 > x => -1,\n        _ => 1,\n    };",
             "    let y = 7;",
             "    let point = (1, 2);\n    let _ = point.0 <= 3 && x <= 3;",
             "    let _ = self.x;",
