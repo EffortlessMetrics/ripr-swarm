@@ -732,6 +732,18 @@ id = "RIPR-SPEC-0159"
 scope = "out"
 reason = "Rust analyzer transfer rule over Rust syntax; a TypeScript case cannot label it"
 
+# Rust spec 0164
+[[spec]]
+id = "RIPR-SPEC-0164"
+scope = "out"
+reason = "Rust analyzer transfer rule over Rust syntax; a TypeScript case cannot label it"
+
+# Rust spec 0165
+[[spec]]
+id = "RIPR-SPEC-0165"
+scope = "out"
+reason = "Rust analyzer transfer rule over Rust syntax; a TypeScript case cannot label it"
+
 # Rust unsafe boundary probes
 [[spec]]
 id = "RIPR-SPEC-0168"
