@@ -7,7 +7,9 @@
 //! exactly one documented row, so a new cell cannot appear without an explicit
 //! documented disposition. It never promotes a tier.
 
-use super::language_capability::{CAPABILITY_CELLS, CapabilityCell, TierCeiling, cell_id};
+use super::language_capability::{
+    CAPABILITY_CELLS, CapabilityCell, REGISTRY_END, TierCeiling, cell_id, render_registry_block,
+};
 
 /// One support-map row and the explicit cell identities it governs. A cell is
 /// never bound by pattern, so a new cell needs a deliberate documented row.
@@ -158,28 +160,6 @@ fn drift_violations(doc: &str, cells: &[CapabilityCell], bindings: &[&Binding]) 
         }
     }
     violations
-}
-
-const REGISTRY_BEGIN: &str = "<!-- capability-registry:begin (generated from domain::language_capability::CAPABILITY_CELLS; do not edit) -->";
-const REGISTRY_END: &str = "<!-- capability-registry:end -->";
-
-/// The generated registry projection, markers included. One row per cell, in
-/// table order; state and ceiling come straight from the cell.
-fn render_registry_block(cells: &[CapabilityCell]) -> String {
-    let mut out = String::new();
-    out.push_str(REGISTRY_BEGIN);
-    out.push_str("\n\n| Cell (language/framework/mode/family) | Support state | Tier ceiling |\n| --- | --- | --- |\n");
-    for cell in cells {
-        out.push_str(&format!(
-            "| `{}` | `{}` | `{}` |\n",
-            cell_id(cell),
-            cell.state.as_str(),
-            cell.tier_ceiling.as_str()
-        ));
-    }
-    out.push('\n');
-    out.push_str(REGISTRY_END);
-    out
 }
 
 /// The marker block as written in the doc, or why it cannot be read.
