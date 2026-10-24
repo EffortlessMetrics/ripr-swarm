@@ -1082,6 +1082,13 @@ assertion execution admission (RIPR-SPEC-0197, #8927), with the same scope:
 generation, content commitment, dependent verify commitments and receipt byte
 hashes only.
 
+### macro_rules! test tables classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.97 to 1.98 for same-file
+`macro_rules!` test tables that index one generated test per row
+(RIPR-SPEC-0117, #6925), with the same scope: generation, content commitment,
+dependent verify commitments and receipt byte hashes only.
+
 ## Pending — boundary_gap (25)
 
 Reason:
