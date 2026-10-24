@@ -55,6 +55,8 @@ pub(in crate::analysis) struct DependencyEdgeContext<'a> {
     /// admit needs; every other admit keeps the whole-workspace
     /// precondition.
     pub(in crate::analysis) unindexed_manifests: &'a BTreeSet<String>,
+    /// The scan root, for reading a manifest's package and library name.
+    pub(in crate::analysis) root: &'a std::path::Path,
 }
 
 /// #6617: the nearest-manifest identity of every package that has an
@@ -927,6 +929,7 @@ fn find_related_tests_with_candidates<'a>(
         .iter()
         .filter(|t| t.len() >= ASSERTION_TOKEN_MIN_LEN)
         .filter(|t| !GENERIC_PROBE_TOKENS.contains(&t.as_str()))
+        .filter(|t| !is_declaration_only_token(&probe.expression, t))
         .filter(|t| !common_tokens.assertion_tokens.contains(t.as_str()))
         .map(String::as_str)
         .collect();
@@ -1208,6 +1211,7 @@ fn find_related_tests_with_candidates<'a>(
                 oracle.observed_tokens.iter().any(|obs_tok| {
                     obs_tok.len() >= ASSERTION_TOKEN_MIN_LEN
                         && long_probe_tokens.contains(&obs_tok.as_str())
+                        && !is_declaration_only_token(&oracle.text, obs_tok)
                 })
             });
 
@@ -1225,6 +1229,22 @@ fn find_related_tests_with_candidates<'a>(
             .any(|word| test_name_has_word(&test_name, word));
         let same_file_or_named =
             same_test_file || file_path_token_matches || owner_name_in_test || token_in_test_name;
+
+        // #9982: a doctest is named for the item it documents and runs only
+        // that item's example. Sharing a name token (`ready` from
+        // `Poll::Ready`) with the changed expression relates it to nothing;
+        // outside the owner's own file only a call, a helper or seam route,
+        // or an equality dispatch may. Every other relation is unchanged.
+        if !same_test_file
+            && !calls_owner
+            && !equality_asserts_owner
+            && !assertions_reference_owner
+            && !calls_helper_entry
+            && !calls_seam_callee
+            && index.doctest_source(test).is_some()
+        {
+            continue;
+        }
 
         // #3296 helper transfer: a test that calls a resolved hop's
         // caller directly reaches the owner through the bounded chain
@@ -2018,7 +2038,10 @@ fn use_path_names_owner(rest: &str, owner_name: &str) -> bool {
 /// adjacency manifest identity. The scan root's own manifest is the empty
 /// prefix. `None` when no discovered manifest directory covers the file:
 /// the identity is unattributable and the admit fails closed.
-fn nearest_manifest_identity(manifest_dir_prefixes: &[String], file: &Path) -> Option<String> {
+pub(super) fn nearest_manifest_identity(
+    manifest_dir_prefixes: &[String],
+    file: &Path,
+) -> Option<String> {
     let normalized = normalize_path(file);
     manifest_dir_prefixes
         .iter()
@@ -2071,7 +2094,7 @@ fn body_binds_owner_name(body: &str, owner_name: &str) -> bool {
 /// or call evidence can never be fabricated from comment or string text
 /// (#2972 review). Every ambiguity strips MORE: a lost evidence site only
 /// suppresses the admit.
-fn strip_comments_and_strings(source: &str) -> String {
+pub(super) fn strip_comments_and_strings(source: &str) -> String {
     let mut out = String::with_capacity(source.len());
     let mut chars = source.chars().peekable();
     let mut in_string = false;
@@ -2709,6 +2732,51 @@ fn literal_ids(masked: &str) -> impl Iterator<Item = usize> + '_ {
         .skip(1)
         .step_by(2)
         .filter_map(|id| id.parse().ok())
+}
+
+/// Weak declaration introducers that are not reserved words: `union` and
+/// `macro_rules` are legal identifiers outside a declaration, so they cannot
+/// live in `RUST_KEYWORDS`. A token whose every occurrence in `text` is the
+/// declaration form (`union Name {`, `union Name<T>`, `macro_rules!`) is syntax
+/// shared by unrelated code and must not seed assertion-target affinity
+/// (#9171); an occurrence used as an identifier (`a.union(b)`, `let union`)
+/// keeps the token.
+fn is_declaration_only_token(text: &str, token: &str) -> bool {
+    if token != "union" && token != "macro_rules" {
+        return false;
+    }
+    let bytes = text.as_bytes();
+    let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut declaration_seen = false;
+    let mut start = 0;
+    while let Some(found) = text[start..].find(token) {
+        let at = start + found;
+        let end = at + token.len();
+        start = end;
+        let bounded =
+            (at == 0 || !is_ident(bytes[at - 1])) && (end >= bytes.len() || !is_ident(bytes[end]));
+        if !bounded {
+            continue;
+        }
+        let rest = text[end..].trim_start();
+        let is_declaration = if token == "macro_rules" {
+            rest.starts_with('!')
+        } else {
+            let after_gap = text[end..].len() > rest.len();
+            let name_len = rest.bytes().take_while(|b| is_ident(*b)).count();
+            let tail = rest[name_len..].trim_start();
+            after_gap
+                && name_len > 0
+                && !rest.as_bytes()[0].is_ascii_digit()
+                && (tail.starts_with('{') || tail.starts_with('<') || tail.starts_with("where"))
+        };
+        if !is_declaration {
+            // A genuine identifier use keeps the token.
+            return false;
+        }
+        declaration_seen = true;
+    }
+    declaration_seen
 }
 
 /// Whether a test file is named for the probe's source stem: the stem is a
@@ -4238,6 +4306,11 @@ const PRIMITIVE_TYPE_QUALIFIERS: &[&str] = &[
     "bool", "char", "f32", "f64", "i8", "i16", "i32", "i64", "i128", "isize", "str", "u8", "u16",
     "u32", "u64", "u128", "usize",
 ];
+
+/// Whether `qualifier` is a primitive type's name (`u64::max(`).
+pub(super) fn is_primitive_type_qualifier(qualifier: &str) -> bool {
+    PRIMITIVE_TYPE_QUALIFIERS.contains(&qualifier)
+}
 
 /// Whether a call's `(` follows a name ending at `after_name`, across
 /// whitespace and an optional turbofish (`name::<T>(`).
@@ -7728,6 +7801,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             manifest_dir_prefixes,
             index,
             unindexed_manifests: &NONE_UNINDEXED,
+            root: std::path::Path::new("."),
         }
     }
 
@@ -9819,6 +9893,7 @@ fn crate_c_score_test() {
             manifest_dir_prefixes: &prefixes,
             index: &index,
             unindexed_manifests: &unindexed_manifests,
+            root: std::path::Path::new("."),
         };
         let probe = probe("crates/crate_a/src/lib.rs", "42");
         find_related_tests(
@@ -11268,6 +11343,260 @@ try_parse_summary(raw).map_err(Into::into)"
         assert_eq!(related_for(&nested, "a/build.rs"), 0);
         assert!(related_for(&nested, "a/b/build.rs") > 0);
         Ok(())
+    }
+
+    /// #9171: a path keyword in an owner-less probe (`pub(crate) use ..`,
+    /// `crate::seed()`) is syntax, not a name for the changed behavior. A test
+    /// whose assertion merely spells `crate::helper::pick(1)` must not relate.
+    #[test]
+    fn path_keyword_in_owner_less_probe_relates_no_assertion_test() {
+        let assertion_text = "assert_eq!(crate::helper::pick(1), 2);";
+        let unrelated = test_with_assertions(
+            "tests/other.rs",
+            "picks_two",
+            assertion_text,
+            vec![oracle_fact(
+                assertion_text,
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        // The fixture really does carry the keyword as an assertion token.
+        assert!(
+            unrelated.assertions[0]
+                .observed_tokens
+                .iter()
+                .any(|token| token == "crate"),
+            "fixture must observe the `crate` token: {:?}",
+            unrelated.assertions[0].observed_tokens
+        );
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            tests: vec![unrelated],
+            ..Default::default()
+        });
+
+        for expression in [
+            "pub(crate) use std::collections::BTreeSet;",
+            "pub const LIMIT: u32 = crate::seed() + 2;",
+        ] {
+            let probe = probe("src/lib.rs", expression);
+            let indexed = find_related_tests_with_candidate_index(
+                &probe,
+                None,
+                &index,
+                true,
+                None,
+                None,
+                &RelatedTestCandidateIndex::new(&index),
+            );
+            let full_scan = find_related_tests_with_candidates(
+                &probe,
+                None,
+                &index,
+                true,
+                None,
+                None,
+                RelatedTestCandidates::FullScan,
+            );
+            assert!(
+                indexed.is_empty(),
+                "indexed related for {expression}: {indexed:?}"
+            );
+            assert!(full_scan.is_empty(), "full scan related for {expression}");
+        }
+
+        // Discriminating control: a real identifier shared with the assertion
+        // still relates through the same signal.
+        let probe = probe("src/lib.rs", "pub const PICKED: u32 = pick_seed;");
+        let helper_assertion = "assert_eq!(pick_seed, 2);";
+        let related_test = test_with_assertions(
+            "tests/other.rs",
+            "picks_seed",
+            helper_assertion,
+            vec![oracle_fact(
+                helper_assertion,
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            tests: vec![related_test],
+            ..Default::default()
+        });
+        let related = find_related_tests(&probe, None, &index, true, None, None);
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::AssertionTargetAffinity);
+    }
+
+    /// #9171 review: every strict or reserved Rust keyword long enough to pass
+    /// `ASSERTION_TOKEN_MIN_LEN` is refused as an affinity seed.
+    #[test]
+    fn every_long_rust_keyword_is_refused_as_assertion_affinity_seed() {
+        // `false` is dropped by the tokenizer's noise filter before this gate.
+        let keywords = RUST_KEYWORDS
+            .iter()
+            .copied()
+            .filter(|keyword| keyword.len() >= ASSERTION_TOKEN_MIN_LEN && *keyword != "false");
+        for keyword in keywords {
+            assert!(
+                keyword.len() >= ASSERTION_TOKEN_MIN_LEN,
+                "{keyword} is below the gate"
+            );
+            let assertion_text = format!("assert_eq!({keyword} + 1, 2);");
+            let unrelated = test_with_assertions(
+                "tests/other.rs",
+                "checks_result",
+                &assertion_text,
+                vec![oracle_fact(
+                    &assertion_text,
+                    OracleKind::ExactValue,
+                    OracleStrength::Strong,
+                )],
+            );
+            assert!(
+                unrelated.assertions[0]
+                    .observed_tokens
+                    .iter()
+                    .any(|token| token == keyword),
+                "fixture must observe `{keyword}`: {:?}",
+                unrelated.assertions[0].observed_tokens
+            );
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                tests: vec![unrelated],
+                ..Default::default()
+            });
+            let probe = probe("src/lib.rs", &format!("pub const LIMIT: u32 = {keyword};"));
+            let indexed = find_related_tests_with_candidate_index(
+                &probe,
+                None,
+                &index,
+                true,
+                None,
+                None,
+                &RelatedTestCandidateIndex::new(&index),
+            );
+            let full_scan = find_related_tests_with_candidates(
+                &probe,
+                None,
+                &index,
+                true,
+                None,
+                None,
+                RelatedTestCandidates::FullScan,
+            );
+            assert!(
+                indexed.is_empty(),
+                "indexed related for {keyword}: {indexed:?}"
+            );
+            assert!(full_scan.is_empty(), "full scan related for {keyword}");
+        }
+    }
+
+    /// #9171 review: `union` and `macro_rules` are not reserved words, but as
+    /// declaration introducers they are syntax shared by unrelated code. They
+    /// must not relate an assertion that merely declares its own item, in both
+    /// selection paths, while a genuine identifier use still relates.
+    #[test]
+    fn declaration_introducer_in_probe_relates_no_assertion_test() {
+        fn related_counts(probe_text: &str, assertion_text: &str) -> (usize, usize, bool) {
+            let test = test_with_assertions(
+                "tests/other.rs",
+                "checks_result",
+                assertion_text,
+                vec![oracle_fact(
+                    assertion_text,
+                    OracleKind::ExactValue,
+                    OracleStrength::Strong,
+                )],
+            );
+            let observed_declaration_token = test.assertions[0]
+                .observed_tokens
+                .iter()
+                .any(|token| token == "union" || token == "macro_rules");
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                tests: vec![test],
+                ..Default::default()
+            });
+            let probe = probe("src/lib.rs", probe_text);
+            let indexed = find_related_tests_with_candidate_index(
+                &probe,
+                None,
+                &index,
+                true,
+                None,
+                None,
+                &RelatedTestCandidateIndex::new(&index),
+            );
+            let full_scan = find_related_tests_with_candidates(
+                &probe,
+                None,
+                &index,
+                true,
+                None,
+                None,
+                RelatedTestCandidates::FullScan,
+            );
+            (indexed.len(), full_scan.len(), observed_declaration_token)
+        }
+
+        // Negatives: declaration introducers on both sides.
+        for (probe_text, assertion_text) in [
+            (
+                "pub union ChangedItem { pub changed_slot: u64 }",
+                "assert_eq!({ union OtherItem { sibling_slot: u32 } 2 }, 2);",
+            ),
+            (
+                "pub union ChangedItem<T: Copy> { pub changed_slot: T }",
+                "assert_eq!({ union OtherItem<T: Copy> { sibling_slot: T } 2 }, 2);",
+            ),
+            (
+                "macro_rules! changed_item { () => { 3 } }",
+                "assert_eq!({ macro_rules! other_item { () => { 3 } } other_item!() }, 3);",
+            ),
+        ] {
+            let (indexed, full_scan, observed) = related_counts(probe_text, assertion_text);
+            assert!(
+                observed,
+                "fixture must observe the introducer token: {assertion_text}"
+            );
+            assert_eq!(indexed, 0, "indexed related for {probe_text}");
+            assert_eq!(full_scan, 0, "full scan related for {probe_text}");
+        }
+
+        // Positives: a real identifier `union` / `macro_rules` still relates,
+        // whichever side spells it as an identifier.
+        for (probe_text, assertion_text) in [
+            (
+                "pub const MERGED: usize = left.union(&right).count();",
+                "assert_eq!(left.union(&right).count(), 2);",
+            ),
+            (
+                "pub const MERGED: usize = left.union(&right).count();",
+                "assert_eq!({ union OtherItem { sibling_slot: u32 } left.union(&right).count() }, 2);",
+            ),
+            (
+                "pub const COUNT: usize = macro_rules.len();",
+                "assert_eq!(macro_rules.len(), 2);",
+            ),
+        ] {
+            let (indexed, full_scan, _) = related_counts(probe_text, assertion_text);
+            assert_eq!(
+                indexed, 1,
+                "indexed related for {probe_text} / {assertion_text}"
+            );
+            assert_eq!(
+                full_scan, 1,
+                "full scan related for {probe_text} / {assertion_text}"
+            );
+        }
+
+        // Mixed: the assertion declares a `union` item only, the probe uses
+        // the identifier; the declaration side must not satisfy the match.
+        let (indexed, full_scan, _) = related_counts(
+            "pub const MERGED: usize = left.union(&right).count();",
+            "assert_eq!({ union OtherItem { sibling_slot: u32 } 2 }, 2);",
+        );
+        assert_eq!((indexed, full_scan), (0, 0));
     }
 
     /// Another crate's common assertion token does not silence the only
