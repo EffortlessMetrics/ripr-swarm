@@ -1208,3 +1208,9 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+### one-line else-if ladder classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.98 to 1.99 for the
+one-line `else if` ladder tail (#9630), with the same scope: generation,
+content commitment, dependent verify commitments and receipt byte hashes only.

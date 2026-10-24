@@ -1,0 +1,11 @@
+diff --git a/src/auditedFlat.ts b/src/auditedFlat.ts
+--- a/src/auditedFlat.ts
++++ b/src/auditedFlat.ts
+@@ -1,6 +1,6 @@
+ export function chargeFlat(amount: number, threshold: number): number {
+   if (amount >= threshold) {
+-    return amount - 10;
++    return amount - 12;
+   }
+   return amount;
+ }
