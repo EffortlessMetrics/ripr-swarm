@@ -35,6 +35,10 @@ pub(super) struct PythonSourceFacts {
     /// tests in its scope (#6657). A conftest that failed to parse is not
     /// flagged here; the workspace pass treats any limitation as unreadable.
     pub(super) conftest_implicit_setup: bool,
+    /// The file is a `conftest.py` declaring any fixture or `pytest_*` hook
+    /// (or installing implicit setup): a test below it may reach project code
+    /// through it (#5491 `missing_input` fails closed on its existence).
+    pub(super) conftest_declares_fixture_or_hook: bool,
     pub(super) facts: Vec<PythonSourceFact>,
     pub(super) limitations: Vec<PythonSourceLimitation>,
     pub(super) docstring_line_ranges: Vec<RangeInclusive<usize>>,
@@ -622,6 +626,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         fixtures: Vec::new(),
         helper_module: super::helper_assertions::PythonHelperModule::default(),
         conftest_implicit_setup: false,
+        conftest_declares_fixture_or_hook: false,
         facts: Vec::new(),
         limitations: Vec::new(),
         docstring_line_ranges: Vec::new(),
@@ -647,6 +652,17 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
             return snapshot;
         }
     };
+    // A plain test's calls to a same-file assertion helper read as the
+    // helper's asserts (#9636); extract from the rewritten source, which keeps
+    // every line number.
+    if is_test_file(file)
+        && let Some(inlined) = super::helper_inline::inline_test_helpers(source, &module.body)
+        // Defence in depth: a rewrite that fails to parse degrades to the
+        // original source (unknown), never to a file with no tests.
+        && matches!(parse_module_result(file, &inlined), Ok(Mod::Module(_)))
+    {
+        return extract_source_facts(file, &inlined);
+    }
     // One line-start index per file; every line lookup below is a binary
     // search against it rather than a rescan from byte 0 (#4495).
     let source = &SourceText::new(source);
@@ -704,8 +720,23 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
     snapshot.conftest_implicit_setup = file.file_name().and_then(|name| name.to_str())
         == Some("conftest.py")
         && super::admission::conftest_installs_implicit_setup(&module.body);
+    snapshot.conftest_declares_fixture_or_hook = snapshot.conftest_implicit_setup
+        || (file.file_name().and_then(|name| name.to_str()) == Some("conftest.py")
+            && (!snapshot.fixtures.is_empty()
+                || super::admission::module_level_effects(source, &module.body)
+                || module.body.iter().any(|statement| match statement {
+                    Stmt::FunctionDef(function) => function.name.as_str().starts_with("pytest_"),
+                    Stmt::AsyncFunctionDef(function) => {
+                        function.name.as_str().starts_with("pytest_")
+                    }
+                    _ => false,
+                })));
     with_module_rebinding(source, &module.body, &mut snapshot.tests);
     super::test_activation::apply_module_controls(&module.body, &imports, &mut snapshot.tests);
+    let implicit_reach = super::admission::module_implicit_reach(source, &module.body, &imports);
+    for test in &mut snapshot.tests {
+        test.constant_rebinding.implicit_reach |= implicit_reach;
+    }
     super::oracles::unittest_list::withhold_modified_oracles(&mut snapshot.tests);
     collect_source_facts_from_statements(
         file,

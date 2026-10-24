@@ -171,6 +171,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         });
 
         let mut out = String::new();
@@ -945,6 +947,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         };
         let output = CheckOutput {
             harness_projections: Vec::new(),
@@ -1085,6 +1089,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         };
         let output = CheckOutput {
             harness_projections: Vec::new(),
@@ -1264,6 +1270,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             },
             RelatedTest {
                 name: "strict_check".to_string(),
@@ -1275,6 +1283,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             },
         ];
 
@@ -1327,6 +1337,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             })
             .collect();
         let mut out = String::new();
@@ -1357,6 +1369,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             })
             .collect();
         let mut out = String::new();
@@ -1420,6 +1434,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             })
             .collect();
         let mut out = String::new();
@@ -1449,6 +1465,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             })
             .collect();
         assert_eq!(finding.related_tests_total(), 2);
@@ -1494,6 +1512,8 @@ mod tests {
                     relation_reason: None,
                     relation_confidence: None,
                     miss: None,
+                    miss_support: None,
+                    role: crate::domain::RelatedTestRole::Contributing,
                 })
                 .collect();
             finding.related_tests_matched_total = Some(count);
@@ -1535,6 +1555,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             })
             .collect();
         finding.related_tests_matched_total = Some(9);
@@ -1912,6 +1934,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }];
         finding.recommended_next_step = Some("Add a focused Perl assertion.".to_string());
         finding.language = Some(LanguageId::Perl);
