@@ -50,6 +50,24 @@ pub(crate) fn related_test_miss_reason(test: &RelatedTest, family: &ProbeFamily)
                 .miss_support
                 .as_ref()
                 .map(|support| one_line(&support.value));
+            // A TypeScript or JavaScript row is read from one file's text, so
+            // its input reading is "seen", never the absolute "no test input"
+            // the Rust and Python producers can stand behind (#10040).
+            if is_script_file(&test.file) {
+                return Some(match (family, value) {
+                    (ProbeFamily::SideEffect | ProbeFamily::CallDeletion, Some(value)) => {
+                        format!("no input this test passes was seen entering `{value}`")
+                    }
+                    (ProbeFamily::Predicate | ProbeFamily::ReturnValue, Some(value)) => {
+                        format!("no input this test passes was seen reaching `{value}`")
+                    }
+                    (ProbeFamily::MatchArm, Some(value)) => {
+                        format!("no input this test passes was seen selecting arm `{value} =>`")
+                    }
+                    _ => "no input this test passes was seen reaching the changed boundary"
+                        .to_string(),
+                });
+            }
             match (family, value) {
                 (ProbeFamily::SideEffect | ProbeFamily::CallDeletion, Some(value)) => {
                     format!("no test input enters `{value}`")
@@ -68,6 +86,19 @@ pub(crate) fn related_test_miss_reason(test: &RelatedTest, family: &ProbeFamily)
             None => "no assertion pins the exact changed value".to_string(),
         },
     })
+}
+
+/// Whether a row's test file is TypeScript or JavaScript, which read a test
+/// from a single file's text.
+fn is_script_file(file: &std::path::Path) -> bool {
+    file.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| {
+            matches!(
+                ext.to_ascii_lowercase().as_str(),
+                "ts" | "tsx" | "mts" | "cts" | "js" | "jsx" | "mjs" | "cjs"
+            )
+        })
 }
 
 /// The oracle phrase of a related-test row, after "uses". A strength of
@@ -305,6 +336,62 @@ mod tests {
                 Some(expected),
                 "{miss:?}"
             );
+        }
+    }
+
+    /// #10040: a TypeScript or JavaScript row renders the hedged "seen"
+    /// wording for every family, while the same miss on a Rust or Python row
+    /// keeps the absolute wording byte for byte.
+    #[test]
+    fn missing_input_wording_is_language_aware() {
+        let cases = [
+            (
+                ProbeFamily::Predicate,
+                Some("len == 0"),
+                "no input this test passes was seen reaching `len == 0`",
+                "no test input reaches `len == 0`",
+            ),
+            (
+                ProbeFamily::ReturnValue,
+                Some("len == 0"),
+                "no input this test passes was seen reaching `len == 0`",
+                "no test input reaches `len == 0`",
+            ),
+            (
+                ProbeFamily::SideEffect,
+                Some("save()"),
+                "no input this test passes was seen entering `save()`",
+                "no test input enters `save()`",
+            ),
+            (
+                ProbeFamily::MatchArm,
+                Some("Op::Ge"),
+                "no input this test passes was seen selecting arm `Op::Ge =>`",
+                "no test input selects arm `Op::Ge =>`",
+            ),
+            (
+                ProbeFamily::Predicate,
+                None,
+                "no input this test passes was seen reaching the changed boundary",
+                "no test input reaches the changed boundary",
+            ),
+        ];
+        for (family, value, script, absolute) in cases {
+            for (file, expected) in [
+                ("test/parse.test.ts", script),
+                ("src/__tests__/parse.spec.tsx", script),
+                ("tests/parse.test.js", script),
+                ("tests/test_parse.py", absolute),
+                ("tests/parse.rs", absolute),
+            ] {
+                let mut row = row_named("t", RelatedTestMiss::MissingInput, value.map(support));
+                row.file = PathBuf::from(file);
+                assert_eq!(
+                    reason(&row, &family).as_deref(),
+                    Some(expected),
+                    "{file} {family:?}"
+                );
+            }
         }
     }
 

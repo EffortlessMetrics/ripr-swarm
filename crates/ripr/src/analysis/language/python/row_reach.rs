@@ -105,6 +105,15 @@ pub(super) fn row_reaches_owner_only_by_direct_calls(
     test: &PythonTest,
     call_names: &[String],
 ) -> bool {
+    closed_body_scan(owner, test, call_names, false)
+}
+
+fn closed_body_scan(
+    owner: &PythonOwner,
+    test: &PythonTest,
+    call_names: &[String],
+    inert_owner_references: bool,
+) -> bool {
     // Code outside the test function (autouse fixture, `pytestmark`, setup or
     // teardown hook, module-level call, conftest fixture or hook) can reach the
     // owner implicitly; existence alone withholds the claim. A name the test
@@ -159,6 +168,14 @@ pub(super) fn row_reaches_owner_only_by_direct_calls(
     }
     let Some(code) = code_only(&test.body_text) else {
         return false;
+    };
+    let code = if inert_owner_references {
+        match blank_inert_owner_references(&code, owner, test) {
+            Some(blanked) => blanked,
+            None => return false,
+        }
+    } else {
+        code
     };
     let plain_locals = plain_locals(&code, test);
     if DYNAMIC_WORDS.iter().any(|word| contains_word(&code, word)) {
@@ -254,6 +271,144 @@ pub(super) fn row_reaches_owner_only_by_direct_calls(
         }
     }
     true
+}
+
+/// Whether one related test provably has no call path to the owner (#10040,
+/// RIPR-SPEC-0224 `no_call_path`). A name-only row references the owner
+/// without a recognized call, so the fact is the closed-body reading of
+/// [`row_reaches_owner_only_by_direct_calls`] plus a closed set of inert
+/// owner references: every call in the test is a vouched builtin or
+/// `unittest`/`pytest` API with closed arguments, nothing outside the test
+/// function (fixtures, hooks, `pytestmark`, module effects, star imports,
+/// conftest declarations, an unreadable conftest) can run code at it, no
+/// dynamic construct appears, and every textual mention of the owner (strings
+/// and comments included) is one of `callable(owner)`, `owner is [not] None`,
+/// `owner.__name__`/`__qualname__`/`__module__`/`__doc__` or a bare
+/// `assert owner`. Only a function owner is claimed: a method is reached
+/// through an instance and a constant by a read, which this reading cannot
+/// rule out. Invisible limits (ini/`addopts` plugins, `sitecustomize`, import
+/// side effects) stay documented in the spec.
+pub(super) fn row_cannot_reach_owner(owner: &PythonOwner, test: &PythonTest) -> bool {
+    if owner.owner_kind != Some(OwnerKind::Function)
+        || owner.is_module_owner()
+        || test
+            .decorators
+            .iter()
+            .any(|decorator| contains_word(decorator, &owner.name))
+    {
+        return false;
+    }
+    closed_body_scan(owner, test, &[], true)
+}
+
+/// `code` (comments removed, strings blanked) with each inert reference to the
+/// owner replaced by `0`; `None` when any other mention of the owner exists,
+/// in code, strings or comments.
+fn blank_inert_owner_references(
+    code: &str,
+    owner: &PythonOwner,
+    test: &PythonTest,
+) -> Option<String> {
+    let name = owner.name.as_str();
+    let mut out = String::with_capacity(code.len());
+    let mut inert = 0usize;
+    let mut cursor = 0usize;
+    let mut from = 0usize;
+    while let Some(rel) = code[from..].find(name) {
+        let start = from + rel;
+        let end = start + name.len();
+        from = end;
+        if code[..start].chars().next_back().is_some_and(is_word_char)
+            || code[end..].chars().next().is_some_and(is_word_char)
+        {
+            continue;
+        }
+        if code[..start].trim_end().ends_with('.') {
+            return None;
+        }
+        let before = code[..start].trim_end();
+        let after = code[end..].trim_start();
+        let after_at = code.len() - after.len();
+        let (span_start, span_end) = if before.ends_with('(')
+            && before[..before.len() - 1].trim_end().ends_with("callable")
+            && after.starts_with(')')
+            && !builtin_is_shadowed(test, "callable")
+        {
+            let paren = before.len() - 1;
+            let word = before[..paren].trim_end();
+            let word_start = word.len() - "callable".len();
+            if word[..word_start]
+                .chars()
+                .next_back()
+                .is_some_and(is_word_char)
+                || word[..word_start].ends_with('.')
+            {
+                return None;
+            }
+            (word_start, after_at + 1)
+        } else if let Some(rest) = after
+            .strip_prefix("is not None")
+            .or_else(|| after.strip_prefix("is None"))
+            .filter(|rest| !rest.chars().next().is_some_and(is_word_char))
+        {
+            (start, code.len() - rest.len())
+        } else if let Some(rest) = ["__name__", "__qualname__", "__module__", "__doc__"]
+            .iter()
+            .find_map(|attr| {
+                after
+                    .strip_prefix('.')
+                    .and_then(|tail| tail.strip_prefix(attr))
+                    .filter(|rest| !rest.chars().next().is_some_and(is_word_char))
+            })
+        {
+            (start, code.len() - rest.len())
+        } else if before.ends_with("assert")
+            && !before[..before.len() - "assert".len()]
+                .chars()
+                .next_back()
+                .is_some_and(is_word_char)
+            && code[end..]
+                .split('\n')
+                .next()
+                .map(str::trim)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with(','))
+        {
+            (start, end)
+        } else {
+            return None;
+        };
+        if span_start < cursor {
+            return None;
+        }
+        out.push_str(&code[cursor..span_start]);
+        out.push('0');
+        cursor = span_end;
+        inert += 1;
+    }
+    out.push_str(&code[cursor..]);
+    // Every mention in the raw text, strings and comments included, must be
+    // one of the inert references counted above.
+    (count_word(&test.body_text, name) == inert).then_some(out)
+}
+
+fn is_word_char(ch: char) -> bool {
+    ch == '_' || ch.is_alphanumeric()
+}
+
+fn count_word(text: &str, word: &str) -> usize {
+    let mut count = 0usize;
+    let mut from = 0usize;
+    while let Some(rel) = text[from..].find(word) {
+        let start = from + rel;
+        let end = start + word.len();
+        if !text[..start].chars().next_back().is_some_and(is_word_char)
+            && !text[end..].chars().next().is_some_and(is_word_char)
+        {
+            count += 1;
+        }
+        from = end;
+    }
+    count
 }
 
 /// The argument text of the call whose name ends at `name_end`, up to its
