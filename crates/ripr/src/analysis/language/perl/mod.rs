@@ -1816,9 +1816,10 @@ impl PerlFactPacket {
     fn test_asserts_through_code_reference(&self, test_id: &str) -> bool {
         self.oracles.iter().any(|oracle| {
             oracle.test_id == test_id
-                && oracle.expression.as_deref().is_some_and(|text| {
-                    text.contains("->(") || text.contains("&$") || text.contains("&{")
-                })
+                && oracle
+                    .expression
+                    .as_deref()
+                    .is_some_and(|text| text.contains("->(") || has_ampersand_call(text))
         })
     }
 
@@ -4162,3 +4163,14 @@ pub(crate) use tests::{
     EXACT_RETURN_PACKET, only_finding, perl_direct_and_advisory_finding, perl_miss_matrix_findings,
     with_concrete_discriminator,
 };
+
+/// `&$code(...)` or `&{...}(...)`, but not the logical-and operator written
+/// without spaces (`$a&&$b`, `$ok &&{...}`): a `&` that follows or precedes
+/// another `&` is part of `&&`.
+fn has_ampersand_call(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    text.match_indices('&').any(|(index, _)| {
+        let after_amp = index > 0 && bytes.get(index - 1) == Some(&b'&');
+        !after_amp && matches!(bytes.get(index + 1), Some(b'$') | Some(b'{'))
+    })
+}

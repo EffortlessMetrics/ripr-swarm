@@ -3054,7 +3054,19 @@ fn closure_oracle_beside_an_unlinked_owner_call_is_unknown_not_a_gap() -> Result
         );
     }
 
-    // Controls: no code reference, or an oracle that is linked to the owner.
+    // Controls: no code reference, `&&` written without spaces, or an oracle
+    // that is linked to the owner.
+    for logical_and in [
+        "ok($got&&$ready, 'counter starts')",
+        "ok($got &&{ready => 1}, 'counter starts')",
+    ] {
+        let finding = first(&unlinked(logical_and))?;
+        assert_eq!(
+            finding.class,
+            crate::domain::ExposureClass::ReachableUnrevealed,
+            "{logical_and}"
+        );
+    }
     let plain = first(&unlinked("is($got, 10, 'discount threshold')"))?;
     assert_eq!(
         plain.class,
