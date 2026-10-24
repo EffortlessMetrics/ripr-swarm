@@ -240,7 +240,7 @@ struct PythonOwner {
     /// an empty entry means the verb is not statically known.
     route_methods: Vec<Vec<String>>,
     /// Receiver of each route decorator (`app` in `@app.get`), index-aligned
-    /// with `route_paths`; empty for a bare-name decorator.
+    /// with `route_paths`.
     route_receivers: Vec<String>,
     dynamic_route_decorators: Vec<String>,
     /// Decorator names whose binding is not the plain name they spell: a

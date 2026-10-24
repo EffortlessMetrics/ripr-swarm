@@ -107,3 +107,87 @@ fn the_verb_narrowing_still_applies_through_an_alias() -> Result<(), String> {
     assert!(!related("app/a.py", post, test)?);
     Ok(())
 }
+
+#[test]
+fn a_shared_app_imported_by_owner_and_test_relates() -> Result<(), String> {
+    // The owner's file imports the application it decorates with; the test
+    // imports the same name from the same module, so it is one object.
+    let routes = "from app.main import app\n\n@app.get(\"/items\")\ndef items():\n    return []\n";
+    let test = "from starlette.testclient import TestClient\nfrom app.main import app\n\ndef test_items():\n    client = TestClient(app)\n    assert client.get(\"/items\")\n";
+    assert!(related("app/routes.py", routes, test)?);
+    // The same owner against an application from yet another module is a rival.
+    let other = "from starlette.testclient import TestClient\nfrom app.other import app\n\ndef test_items():\n    client = TestClient(app)\n    assert client.get(\"/items\")\n";
+    assert!(!related("app/routes.py", routes, other)?);
+    Ok(())
+}
+
+#[test]
+fn a_package_that_re_exports_the_owners_app_relates() -> Result<(), String> {
+    // `pkg/main.py` defines `app`; the test imports it from the package.
+    let test = "from starlette.testclient import TestClient\nfrom pkg import app\n\ndef test_items():\n    client = TestClient(app)\n    assert client.get(\"/items\")\n";
+    assert!(related("pkg/main.py", OWN_APP, test)?);
+    // A sibling package is not a parent of the owner's module.
+    let sibling = "from starlette.testclient import TestClient\nfrom other import app\n\ndef test_items():\n    client = TestClient(app)\n    assert client.get(\"/items\")\n";
+    assert!(!related("pkg/main.py", OWN_APP, sibling)?);
+    Ok(())
+}
+
+#[test]
+fn a_with_bound_client_over_a_rival_app_does_not_relate() -> Result<(), String> {
+    let rival = "from starlette.testclient import TestClient\nfrom app.b import app\n\ndef test_items():\n    with TestClient(app) as client:\n        assert client.get(\"/items\")\n";
+    assert!(!related("app/a.py", OWN_APP, rival)?);
+    let own = "from starlette.testclient import TestClient\nfrom app.a import app\n\ndef test_items():\n    with TestClient(app) as http:\n        assert http.get(\"/items\")\n";
+    assert!(related("app/a.py", OWN_APP, own)?);
+    Ok(())
+}
+
+#[test]
+fn an_async_client_is_a_route_client_only_over_an_application() -> Result<(), String> {
+    let external = "from httpx import AsyncClient\n\nasync def test_items():\n    http = AsyncClient(base_url=\"https://payments.example\")\n    assert await http.get(\"/items\")\n";
+    assert!(!related("app/a.py", OWN_APP, external)?);
+    let over_app = "from httpx import AsyncClient\nfrom app.a import app\n\nasync def test_items():\n    http = AsyncClient(app=app, base_url=\"http://test\")\n    assert await http.get(\"/items\")\n";
+    assert!(related("app/a.py", OWN_APP, over_app)?);
+    let rival = "from httpx import AsyncClient\nfrom app.b import app\n\nasync def test_items():\n    http = AsyncClient(base_url=\"http://test\", app=app)\n    assert await http.get(\"/items\")\n";
+    assert!(!related("app/a.py", OWN_APP, rival)?);
+    Ok(())
+}
+
+#[test]
+fn a_response_is_not_a_client_receiver() -> Result<(), String> {
+    let test = "from starlette.testclient import TestClient\nfrom app.a import app\n\ndef test_items():\n    reply = TestClient(app).get(\"/other\")\n    assert reply.get(\"/items\")\n";
+    assert!(!related("app/a.py", OWN_APP, test)?);
+    Ok(())
+}
+
+#[test]
+fn a_client_rebound_before_the_call_is_not_identified_by_its_first_binding() -> Result<(), String> {
+    // `client` is constructed over a rival app, then reassigned; the first
+    // binding no longer decides, so the relation stays unidentified.
+    let test = "from starlette.testclient import TestClient\nfrom app.b import app\n\ndef test_items(make):\n    client = TestClient(app)\n    client = make()\n    assert client.get(\"/items\")\n";
+    assert!(related("app/a.py", OWN_APP, test)?);
+    Ok(())
+}
+
+#[test]
+fn mixed_route_decorators_keep_their_own_receiver_and_path() -> Result<(), String> {
+    // One handler registered on two receivers with different paths; each
+    // path is judged against its own decorator's receiver.
+    let routes = "from app.a import app, ops_app\n\n@app.get(\"/items\")\n@ops_app.get(\"/admin/items\")\ndef items():\n    return []\n";
+    let ops_app = "from starlette.testclient import TestClient\nfrom app.a import ops_app\n\ndef test_items():\n    client = TestClient(ops_app)\n    assert client.get(\"/admin/items\")\n";
+    assert!(related("app/routes.py", routes, ops_app)?);
+    let rival_on_ops_app_path = "from starlette.testclient import TestClient\nfrom app.b import ops_app\n\ndef test_items():\n    client = TestClient(ops_app)\n    assert client.get(\"/admin/items\")\n";
+    assert!(!related("app/routes.py", routes, rival_on_ops_app_path)?);
+    // The other receiver's path is still not withheld by an unrelated `ops_app`.
+    let app_path = "from starlette.testclient import TestClient\nfrom app.b import ops_app\n\ndef test_items():\n    client = TestClient(ops_app)\n    assert client.get(\"/items\")\n";
+    assert!(related("app/routes.py", routes, app_path)?);
+    Ok(())
+}
+
+#[test]
+fn a_comment_after_the_path_literal_keeps_the_route() -> Result<(), String> {
+    let routes =
+        "app = object()\n\n@app.get(\"/items\"  # listing\n)\ndef items():\n    return []\n";
+    let test = "def test_items(client):\n    assert client.get(\"/items\"  # list\n    )\n";
+    assert!(related("app/a.py", routes, test)?);
+    Ok(())
+}

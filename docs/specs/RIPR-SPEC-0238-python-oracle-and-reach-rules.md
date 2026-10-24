@@ -333,15 +333,19 @@ Relations, first match wins (rank, oracle-eligible):
   the value, and `path` or any unknown converter stays unmatched. The
   literal must be the whole first argument (`"/items" + x`, `"/items" % x`,
   `"/items".format(..)` and adjacent literals name another path), in the test
-  call and in the route decorator alike. The receiver is `client`, or a name
-  assigned once from `client` or from a `TestClient(...)` / `AsyncClient(...)`
-  construction (`api = client`). A client built over an application name
-  imported from another module than the owner's, where that name is the
-  decorator's own receiver (`from app.b import app` against `@app.get` in
-  `app/a.py`), is a rival application and does not relate. A client built
-  elsewhere (a fixture, an unresolved name, a router an application includes
-  under another name) is unidentified and keeps the path-and-verb match
-  (#10110);
+  call and in the route decorator alike (a decorator whose path is not a
+  whole literal is a dynamic route registration, a static limit). The
+  receiver is `client`, or a name bound once by assignment or `with ... as`
+  from `client` or from a `TestClient(...)` construction, or an
+  `AsyncClient(...)` built over an application (`app=` or an
+  `ASGITransport`). A client built over an application name imported from a
+  module that is not where the owner's application comes from is a rival and
+  does not relate: the owner's file imports the receiver from a module (the
+  test must import it from that module), or defines it itself (the test must
+  import it from that module or a package above it). A client built
+  elsewhere (a fixture, an unresolved or dotted name, a multi-line
+  construction, a rebound name, a router an application includes under
+  another name) is unidentified and keeps the path-and-verb match (#10110);
 - R4: `construct_call` (4, eligible): a `__call__` owner invoked as
   `Class(...)(...)`;
 - R5: `local_binding` (4, eligible): a `__call__` owner invoked through

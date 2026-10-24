@@ -2126,23 +2126,49 @@ fn api_client_route_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool 
 /// alias cannot point at a different object by the time it is called.
 fn api_client_receivers(body_text: &str) -> Vec<String> {
     let mut receivers = vec!["client".to_string()];
+    let bindings = client_bindings(body_text);
     // Two passes so `a = client; b = a` resolves in either order of the lines.
     for _ in 0..2 {
-        for line in body_text.lines() {
-            let Some((name, value)) = simple_assignment(line) else {
-                continue;
-            };
-            if receivers.iter().any(|known| known == name) || assignment_count(body_text, name) != 1
-            {
+        for (name, value) in &bindings {
+            if receivers.iter().any(|known| known == name) || binding_count(body_text, name) != 1 {
                 continue;
             }
             if receivers.iter().any(|known| known == value) || client_construction(value).is_some()
             {
-                receivers.push(name.to_string());
+                receivers.push((*name).to_string());
             }
         }
     }
     receivers
+}
+
+/// Every `name = value` assignment and `with value as name:` binding line.
+fn client_bindings(body_text: &str) -> Vec<(&str, &str)> {
+    body_text
+        .lines()
+        .filter_map(|line| simple_assignment(line).or_else(|| with_binding(line)))
+        .collect()
+}
+
+/// `with value as name:` (or `async with`) binding one plain name.
+fn with_binding(line: &str) -> Option<(&str, &str)> {
+    let rest = line.trim();
+    let rest = rest.strip_prefix("async ").unwrap_or(rest);
+    let rest = rest.strip_prefix("with ")?.strip_suffix(':')?;
+    let (value, name) = rest.rsplit_once(" as ")?;
+    let name = name.trim();
+    (!name.is_empty() && name.chars().all(is_python_identifier_char))
+        .then_some((name, value.trim()))
+}
+
+/// How often a name is bound by assignment or `with ... as`; an alias is only
+/// tracked when it is bound exactly once.
+fn binding_count(body_text: &str, name: &str) -> usize {
+    assignment_count(body_text, name)
+        + body_text
+            .lines()
+            .filter(|line| with_binding(line).is_some_and(|(bound, _)| bound == name))
+            .count()
 }
 
 /// `name = value` on one line: a plain identifier target, not `==`, an
@@ -2164,7 +2190,31 @@ fn client_construction(value: &str) -> Option<&str> {
     let open = value.find('(')?;
     let callee = value.get(..open)?.trim();
     let class = callee.rsplit('.').next()?;
-    matches!(class, "TestClient" | "AsyncClient").then(|| value.get(open + 1..).unwrap_or_default())
+    if !matches!(class, "TestClient" | "AsyncClient") {
+        return None;
+    }
+    // An `AsyncClient` is a route client only when it is built over an
+    // application; `AsyncClient(base_url=...)` calls an external service.
+    if class == "AsyncClient" && !value.contains("app=") && !value.contains("ASGITransport(") {
+        return None;
+    }
+    // The construction must be the whole value: `TestClient(app).get(..)` is a
+    // response, not a client.
+    let mut depth = 0usize;
+    for (offset, ch) in value.get(open..)?.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    let end = open + offset + 1;
+                    return (end == value.len()).then(|| value.get(open + 1..end - 1))?;
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Whether the request client demonstrably targets a different application
@@ -2187,34 +2237,71 @@ fn client_targets_rival_app(
     let Some(app_name) = client_app_name(&test.body_text, receiver) else {
         return false;
     };
+    // Where the owner's file itself got the receiver: a shared application
+    // imported from a third module is the same object the test imports from there.
+    let owner_origin = owner
+        .imports
+        .iter()
+        .find(|import| import_bound_name(import) == owner_receiver)
+        .map(|import| import.source_module.as_str());
     test.imports.iter().any(|import| {
-        let bound = if import.alias.is_empty() {
-            import.imported.as_str()
-        } else {
-            import.alias.as_str()
-        };
-        bound == app_name
-            && import.imported == owner_receiver
-            && !import.source_module.is_empty()
-            && !import_source_module_matches_owner(import, owner, &test.file)
+        if import_bound_name(import) != app_name
+            || import.imported != owner_receiver
+            || import.source_module.is_empty()
+        {
+            return false;
+        }
+        match owner_origin {
+            Some(origin) => import.source_module != origin,
+            // Defined in the owner's own module: the test's import must name that
+            // module or a package above it (`from pkg import app` re-exports
+            // `pkg/main.py`'s `app`).
+            None => {
+                !import_source_module_matches_owner(import, owner, &test.file)
+                    && !owner_module_paths(&owner.file)
+                        .iter()
+                        .any(|path| path.starts_with(&format!("{}.", import.source_module)))
+            }
+        }
     })
+}
+
+fn import_bound_name(import: &PythonImport) -> &str {
+    if import.alias.is_empty() {
+        import.imported.as_str()
+    } else {
+        import.alias.as_str()
+    }
 }
 
 /// The application name a receiver's `TestClient(app)` (or `app=app`)
 /// construction passes, following aliases of the client to their construction.
 fn client_app_name(body_text: &str, receiver: &str) -> Option<String> {
     let mut target = receiver;
+    let bindings = client_bindings(body_text);
     for _ in 0..3 {
-        let value = body_text
-            .lines()
-            .filter_map(simple_assignment)
+        // A name bound more than once may point anywhere by the call.
+        if binding_count(body_text, target) != 1 {
+            return None;
+        }
+        let value = bindings
+            .iter()
             .find(|(name, _)| *name == target)
-            .map(|(_, value)| value)?;
+            .map(|(_, value)| *value)?;
         if let Some(arguments) = client_construction(value) {
-            let first = arguments.split([',', ')']).next()?.trim();
-            let first = first.strip_prefix("app=").unwrap_or(first).trim();
-            return (!first.is_empty() && first.chars().all(is_python_identifier_char))
-                .then(|| first.to_string());
+            let argument = arguments
+                .split(',')
+                .map(str::trim)
+                .find_map(|argument| argument.strip_prefix("app=").map(str::trim))
+                .or_else(|| {
+                    arguments
+                        .split(',')
+                        .map(str::trim)
+                        .next()
+                        .filter(|argument| !argument.contains('='))
+                })?;
+            return (!argument.is_empty() && argument.chars().all(is_python_identifier_char))
+                .then(|| argument.to_string());
         }
         target = value;
     }
@@ -2347,10 +2434,15 @@ pub(super) fn first_parenthesized_string_argument(text: &str) -> Option<String> 
     let literal = first_python_string_literal(body)?;
     // The literal must be the whole argument: `"/items" + suffix`, `"/x" % v`,
     // `"/x".format(..)` and adjacent literals name a different path.
-    let whole_argument = body
-        .strip_prefix(&literal)?
-        .trim_start()
-        .starts_with([',', ')']);
+    let mut after = body.strip_prefix(&literal)?.trim_start();
+    // A comment between the literal and the delimiter does not extend it.
+    while after.starts_with('#') {
+        after = after
+            .split_once('\n')
+            .map_or("", |(_, rest)| rest)
+            .trim_start();
+    }
+    let whole_argument = after.starts_with([',', ')']);
     whole_argument
         .then(|| python_string_literal_value(&literal))
         .flatten()

@@ -1266,8 +1266,7 @@ fn collect_static_route_paths(source: &str, decorators: &[Expr]) -> Vec<String> 
 }
 
 /// The receiver each static route decorator hangs off (`app` in `@app.get`),
-/// index-aligned with `collect_static_route_paths`; empty when the decorator
-/// is a bare name.
+/// index-aligned with `collect_static_route_paths`.
 fn collect_static_route_receivers(source: &str, decorators: &[Expr]) -> Vec<String> {
     decorators
         .iter()
