@@ -32,12 +32,12 @@ impl Drop for Scratch {
 
 const MANIFEST: &str = "[package]\nname = \"out_parameter\"\nversion = \"0.1.0\"\nedition = \"2021\"\npublish = false\n";
 
-const DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -4,3 +4,3 @@ impl OffsetFormat {\n     pub fn format(&self, out: &mut String, minutes: i32) {\n-        out.push(if minutes < 0 { '-' } else { '~' });\n+        out.push(if minutes < 0 { '-' } else { '+' });\n         out.push_str(&format!(\"{:02}\", minutes.abs()));\n";
+const DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -4,3 +4,3 @@ impl OffsetFormat {\n     pub fn format(&self, out: &mut String, minutes: i32) {\n-        out.push('~');\n+        out.push('+');\n         out.push_str(&format!(\"{:02}\", minutes.abs()));\n";
 
 /// The changed line is always line 5; `body` is the test body.
 fn source(body: &str) -> String {
     format!(
-        "pub struct OffsetFormat;\n\nimpl OffsetFormat {{\n    pub fn format(&self, out: &mut String, minutes: i32) {{\n        out.push(if minutes < 0 {{ '-' }} else {{ '+' }});\n        out.push_str(&format!(\"{{:02}}\", minutes.abs()));\n    }}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn formats() {{\n{body}\n    }}\n}}\n"
+        "pub struct OffsetFormat;\n\nimpl OffsetFormat {{\n    pub fn format(&self, out: &mut String, minutes: i32) {{\n        out.push('+');\n        out.push_str(&format!(\"{{:02}}\", minutes.abs()));\n    }}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn formats() {{\n{body}\n    }}\n}}\n"
     )
 }
 
@@ -203,11 +203,7 @@ fn discriminate_state(finding: &Value) -> String {
 /// Source whose owner body is `owner_body`; the changed line is the one that
 /// pushes the sign, wherever it falls in the body.
 fn finding_with_owner(owner_body: &str, test_body: &str) -> Result<Value, String> {
-    finding_with_owner_changed(
-        owner_body,
-        "        out.push(if minutes < 0 { '-' } else { '+' });",
-        test_body,
-    )
+    finding_with_owner_changed(owner_body, "        out.push('+');", test_body)
 }
 
 fn finding_with_owner_changed(
@@ -216,7 +212,7 @@ fn finding_with_owner_changed(
     test_body: &str,
 ) -> Result<Value, String> {
     let rest = "        out.push_str(&format!(\"{:02}\", minutes.abs()));";
-    let original = "        out.push(if minutes < 0 { '-' } else { '+' });";
+    let original = "        out.push('+');";
     let src =
         source(test_body).replace(&format!("{original}\n{rest}\n"), &format!("{owner_body}\n"));
     let changed = src
@@ -240,11 +236,11 @@ fn a_callee_local_shadow_of_the_out_parameter_gets_no_credit() -> Result<(), Str
     assert_eq!(discriminate_state(&ordinary), "yes", "{ordinary}");
     for owner in [
         // changed line writes a shadow that is then discarded
-        "        let mut out = String::new();\n        out.push(if minutes < 0 { '-' } else { '+' });\n        let _ = out;",
+        "        let mut out = String::new();\n        out.push('+');\n        let _ = out;",
         // shadow introduced before the changed line
-        "        let mut out = String::from(\"x\");\n        out.push(if minutes < 0 { '-' } else { '+' });",
+        "        let mut out = String::from(\"x\");\n        out.push('+');",
         // parameter reassigned to another buffer
-        "        out = &mut String::new();\n        out.push(if minutes < 0 { '-' } else { '+' });",
+        "        out = &mut String::new();\n        out.push('+');",
     ] {
         let src_owner = owner.to_string();
         let finding = finding_with_owner(&src_owner, &test)?;
@@ -353,9 +349,9 @@ fn string_expectations_that_may_equal_the_initial_state_are_not_credited() -> Re
 
 #[test]
 fn vec_expectations_that_may_equal_the_initial_state_are_not_credited() -> Result<(), String> {
-    let owner = "    pub fn format(&self, out: &mut Vec<u8>, minutes: i32) {\n        out.push(if minutes < 0 { b'-' } else { b'+' });\n    }";
-    let old = "        out.push(if minutes < 0 { b'-' } else { b'~' });";
-    let new = "        out.push(if minutes < 0 { b'-' } else { b'+' });";
+    let owner = "    pub fn format(&self, out: &mut Vec<u8>, minutes: i32) {\n        out.push(b'+');\n    }";
+    let old = "        out.push(b'~');";
+    let new = "        out.push(b'+');";
     let build = "        let mut s = Vec::new();\n        OffsetFormat.format(&mut s, 570);\n";
     let credited = finding_custom(
         owner,
@@ -413,8 +409,8 @@ fn no_op_writers_are_not_credited() -> Result<(), String> {
 
 #[test]
 fn a_callee_overwrite_of_the_changed_output_is_not_confirmed() -> Result<(), String> {
-    let old = "        out.push(if minutes < 0 { '-' } else { '~' });";
-    let new = "        out.push(if minutes < 0 { '-' } else { '+' });";
+    let old = "        out.push('~');";
+    let new = "        out.push('+');";
     let test = format!("{BUILD}        assert_eq!(s, \"fixed\");");
     for tail in [
         "        out.clear();\n        out.push_str(\"fixed\");",
@@ -432,8 +428,8 @@ fn a_callee_overwrite_of_the_changed_output_is_not_confirmed() -> Result<(), Str
 
 #[test]
 fn a_fmt_write_owner_and_a_non_empty_initial_local_behave_as_specified() -> Result<(), String> {
-    let old = "        write!(out, \"{}\", if minutes < 0 { '-' } else { '~' }).unwrap();";
-    let new = "        write!(out, \"{}\", if minutes < 0 { '-' } else { '+' }).unwrap();";
+    let old = "        write!(out, \"~\").unwrap();";
+    let new = "        write!(out, \"+\").unwrap();";
     let owner = format!(
         "    pub fn format(&self, out: &mut String, minutes: i32) {{\n        use std::fmt::Write;\n{new}\n    }}"
     );
@@ -458,8 +454,8 @@ fn a_fmt_write_owner_and_a_non_empty_initial_local_behave_as_specified() -> Resu
 
 #[test]
 fn a_clear_before_the_changed_write_stays_credited() -> Result<(), String> {
-    let old = "        out.push(if minutes < 0 { '-' } else { '~' });";
-    let new = "        out.push(if minutes < 0 { '-' } else { '+' });";
+    let old = "        out.push('~');";
+    let new = "        out.push('+');";
     let owner = format!(
         "    pub fn format(&self, out: &mut String, minutes: i32) {{\n        out.clear();\n{new}\n    }}"
     );
@@ -471,5 +467,117 @@ fn a_clear_before_the_changed_write_stays_credited() -> Result<(), String> {
     )?;
     assert_eq!(finding["classification"], "exposed", "{finding}");
     assert_eq!(finding["ripr"]["discriminate"]["state"], "yes", "{finding}");
+    Ok(())
+}
+
+const OLD: &str = "        out.push('~');";
+const NEW: &str = "        out.push('+');";
+
+fn owner_with(lines: &[&str]) -> String {
+    format!(
+        "    pub fn format(&self, out: &mut String, minutes: i32) {{\n{}\n    }}",
+        lines.join("\n")
+    )
+}
+
+#[test]
+fn a_later_use_of_the_output_other_than_a_plain_write_is_not_credited() -> Result<(), String> {
+    let test = format!("{BUILD}        assert_eq!(s, \"fixed\");");
+    for tail in [
+        // the output is passed onward
+        "        wipe(out);",
+        // parenthesized deref receiver
+        "        (*out).clear();\n        (*out).push_str(\"fixed\");",
+        "        out.clone_from(&String::from(\"fixed\"));",
+        "        let _ = out.split_off(0);\n        out.push_str(\"fixed\");",
+        "        let wipe = |s: &mut String| { s.clear(); s.push_str(\"fixed\"); };\n        wipe(out);",
+        "        let r: &mut String = out;\n        r.clear();\n        r.push_str(\"fixed\");",
+        "        out.deref_mut().clear();\n        out.push_str(\"fixed\");",
+    ] {
+        let owner = owner_with(&[NEW, tail]);
+        let finding = finding_custom(&owner, OLD, NEW, &test)?;
+        assert_uncredited(&finding, tail);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_later_use_of_a_vec_output_other_than_a_plain_write_is_not_credited() -> Result<(), String> {
+    let build = "        let mut s = Vec::new();\n        OffsetFormat.format(&mut s, 570);\n";
+    let new = "        out.push(b'+');";
+    let old = "        out.push(b'~');";
+    for tail in [
+        "        out.clone_from(&vec![9u8]);",
+        "        let _ = out.split_off(0);\n        out.push(9u8);",
+        "        out.splice(.., [9u8]);",
+    ] {
+        let owner = format!(
+            "    pub fn format(&self, out: &mut Vec<u8>, minutes: i32) {{\n{new}\n{tail}\n    }}"
+        );
+        let finding = finding_custom(
+            &owner,
+            old,
+            new,
+            &format!("{build}        assert_eq!(s, vec![9u8]);"),
+        )?;
+        assert_uncredited(&finding, tail);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_changed_write_that_may_not_execute_is_not_credited() -> Result<(), String> {
+    let test = format!("{BUILD}        assert_eq!(s, \"570\");");
+    let tail = "        out.push_str(\"570\");";
+    for lines in [
+        vec!["        if minutes < 0 {", NEW, "        }", tail],
+        vec!["        for _ in 0..0 {", NEW, "        }", tail],
+        vec![tail, "        return;", NEW],
+        vec![
+            tail,
+            "        if minutes > 0 {",
+            "            return;",
+            "        }",
+            NEW,
+        ],
+    ] {
+        let owner = owner_with(&lines);
+        let finding = finding_custom(&owner, OLD, NEW, &test)?;
+        assert_uncredited(&finding, &owner);
+    }
+    // The changed token sits on the unexercised side of a conditional.
+    let new = "        out.push(if minutes < 0 { '-' } else { '+' });";
+    let old = "        out.push(if minutes < 0 { '~' } else { '+' });";
+    let owner = owner_with(&[new, tail]);
+    let finding = finding_custom(
+        &owner,
+        old,
+        new,
+        &format!("{BUILD}        assert_eq!(s, \"+570\");"),
+    )?;
+    assert_uncredited(&finding, "unexercised branch");
+    // The changed write may write the empty branch.
+    let new = "        out.push_str(if minutes < 0 { \"-\" } else { \"\" });";
+    let old = "        out.push_str(if minutes < 0 { \"~\" } else { \"\" });";
+    let owner = owner_with(&[new, tail]);
+    let finding = finding_custom(&owner, old, new, &test)?;
+    assert_uncredited(&finding, "empty branch");
+    Ok(())
+}
+
+#[test]
+fn a_user_defined_write_macro_is_not_a_writer() -> Result<(), String> {
+    let new = "        write!(out, \"+\").unwrap();";
+    let old = "        write!(out, \"~\").unwrap();";
+    let owner = owner_with(&[
+        "        use std::fmt::Write;",
+        new,
+        "        out.push_str(\"fixed\");",
+    ]);
+    let test = format!(
+        "        macro_rules! write {{ ($o:expr, $($t:tt)*) => {{ $o.clear() }}; }}\n{BUILD}        assert_eq!(s, \"fixed\");"
+    );
+    let finding = finding_custom(&owner, old, new, &test)?;
+    assert_uncredited(&finding, "user write! macro");
     Ok(())
 }

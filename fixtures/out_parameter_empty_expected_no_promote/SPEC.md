@@ -21,7 +21,8 @@ cargo xtask fixtures out_parameter_empty_expected_no_promote
 
 No finding is `exposed`: an expected value that may equal the local's
 initial state cannot notice the write, so the out-parameter assertion earns
-no oracle credit.
+no oracle credit. The blessed `check.json` pins the changed write's
+`ripr.discriminate.state` as `weak`.
 
 ## Must Not
 

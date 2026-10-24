@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — out_parameter_unrelated_write_no_promote (3)
+
+Reason:
+RIPR-SPEC-0351 allowlist owner shapes; fixture uses a plain write (#8999)
+
+Command:
+`cargo xtask goldens bless out_parameter_unrelated_write_no_promote --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

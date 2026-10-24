@@ -2,7 +2,7 @@ pub struct Formatter;
 
 impl Formatter {
     pub fn format(&self, out: &mut String, minutes: i32) {
-        out.push(if minutes < 0 { '-' } else { '+' });
+        out.push('+');
     }
 }
 

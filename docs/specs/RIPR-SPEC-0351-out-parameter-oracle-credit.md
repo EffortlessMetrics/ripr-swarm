@@ -52,9 +52,9 @@ wrote.
 An `assert_eq!` is admitted as an oracle for a direct call of the changed
 method when every link is syntactic and exact:
 
-1. The changed method has a receiver and a `&mut` parameter its body visibly writes (a mutating
-   method on it, `write!`/`writeln!` into it, or an assignment through a
-   dereference, field or index) and never rebinds, shadows or reassigns.
+1. The changed method has a receiver and a `&mut` parameter that its body
+   uses only through the allowlist in Known Limits (top-level additive writes,
+   a leading `clear()`, read-only calls) and never rebinds or shadows.
 2. One operand of the assertion is a bare local. The other operand does not
    mention it.
 3. In the same test body, that local is bound exactly once by
@@ -69,9 +69,9 @@ method when every link is syntactic and exact:
    order, and the call's receiver resolves to the owner's impl type by the
    existing relation-layer receiver rules. No new receiver type inference is
    added.
-6. When the changed expression itself writes through that parameter (the
-   same write rule as item 1) and no destructive overwrite of it follows the
-   first write in the owner, the assertion also confirms observation;
+6. When the changed expression is itself an unconditional additive write
+   through that parameter (the same allowlist as item 1), the assertion also
+   confirms observation;
    otherwise it is only a candidate oracle.
 
 Anything else (a rebinding or shadow, a second pass of the local, a use
@@ -97,21 +97,27 @@ assertion reads the call's out-parameter; it grants no strength or reach.
   Other expected values are not evaluated for correctness: like every
   exact-value oracle, the helper decides that a discriminator exists, not
   that the test passes.
-- Only additive writers count (`push`, `push_str`, `insert`, `extend`,
-  `append`, `write_*`, `write!`, deref/field/index assignment). `clear`,
-  `truncate`, `drain`, `retain` and similar are not writers, and a writer
-  called with only empty arguments is not a write. A writer given an empty
-  value held in a local (`out.extend(empty_local)`) is not detected.
-- An out-parameter overwritten after a write (`clear`, `truncate`,
-  `drain`, `retain`, a deref/field/index assignment, `mem::take`/`replace`/
-  `swap`) in straight source order is refused: the written value may never
-  reach the caller.
-- Observation is confirmed only when the changed expression itself writes
-  through the parameter; a mention of its name on an unrelated line is not
-  confirmation.
-- A write after an early `return` in the callee, or behind an unreachable
-  branch, is still seen as a write. Two same-named callees under
-  `#[cfg(test)]` and `#[cfg(not(test))]` are not distinguished.
+- The owner is accepted by an allowlist, not a blocklist. Every use of the
+  out-parameter in the owner body must be a top-level additive write
+  statement (`push`, `push_str`, `insert`, `extend`, `append`, `write_*`, or
+  a std `write!`/`writeln!`), a `clear()` before the first write, or a
+  read-only method call (`len`, `is_empty`, ...) on the bare identifier. Any
+  other use (passing it onward, reborrowing, aliasing, a deref or
+  parenthesized receiver, closure capture, an unknown method such as
+  `clone_from` or `split_off`, any other macro) refuses, as does a write with
+  only empty arguments.
+- The writes must be straight-line top-level statements with no `return`,
+  `break`, `continue` or `?` before the last one. A write inside an
+  `if`/`match` arm, loop or closure refuses, because the test input may not
+  execute it. The changed expression must itself be such a write with no
+  branch, loop, closure or early exit inside it, so a changed token on an
+  unexercised conditional side is not credited.
+- `write!`/`writeln!` resolve by exact std path; a workspace file that
+  defines a macro whose name starts with `write` refuses every owner that
+  mentions `write`. Macros imported from other crates are not inspected.
+- A write after an early `return` in a callee branch the owner scan cannot
+  see (a helper the owner calls) is outside this check, and two same-named
+  callees under `#[cfg(test)]` and `#[cfg(not(test))]` are not distinguished.
 - Only `assert_eq!` and only a bare local operand are recognised.
 - Out-parameters reached through fields, helper wrappers or returned
   references are not followed.

@@ -58,7 +58,8 @@ pub(in crate::analysis) fn assertion_out_parameter(
     {
         return None;
     }
-    let out_parameters = owner_out_parameters(owner)?;
+    let write_macro_shadowed = owner.body.contains("write") && workspace_shadows_write_macro(index);
+    let out_parameters = owner_out_parameters(owner, write_macro_shadowed)?;
     let impl_type = impl_self_type_name(&owner.id.0)?;
     let impl_trait = owner_dispatch_trait(owner);
     let [left, right] = assertion_comparison_operands(&assertion.text)?;
@@ -94,7 +95,10 @@ pub(in crate::analysis) fn assertion_out_parameter(
 /// Positions (call-argument indexes, receiver excluded) of the owner's
 /// `&mut` parameters that its body uses, or `None` when the owner is not a
 /// plain method (no receiver, async, unparseable).
-fn owner_out_parameters(owner: &FunctionSummary) -> Option<Vec<(usize, String)>> {
+fn owner_out_parameters(
+    owner: &FunctionSummary,
+    write_macro_shadowed: bool,
+) -> Option<Vec<(usize, String)>> {
     if !owner.item.has_self_param {
         return None;
     }
@@ -121,8 +125,7 @@ fn owner_out_parameters(owner: &FunctionSummary) -> Option<Vec<(usize, String)>>
                 && pattern.name().is_some_and(|name| {
                     mentions_token(body.syntax(), name.text())
                         && !name_rebound_in(body.syntax(), name.text())
-                        && name_written_in(body.syntax(), name.text())
-                        && !name_overwritten_after_write(body.syntax(), name.text())
+                        && owner_allows_out_parameter(&body, name.text(), write_macro_shadowed)
                 })
         })
         .filter_map(|(at, parameter)| match parameter.pat() {
@@ -168,8 +171,38 @@ fn name_rebound_in(body: &SyntaxNode, name: &str) -> bool {
 /// unrelated expression is not confirmation.
 pub(in crate::analysis) fn expression_writes_parameter(expression: &str, parameter: &str) -> bool {
     let source = format!("fn __probe() {{ {expression}; }}");
-    parse_clean_source_file(&source)
-        .is_some_and(|parse| name_written_in(parse.tree().syntax(), parameter))
+    let Some(parse) = parse_clean_source_file(&source) else {
+        return false;
+    };
+    let tree = parse.tree();
+    let Some(body) = tree
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)
+        .and_then(|function| function.body())
+    else {
+        return false;
+    };
+    let Some(statements) = top_level_statements(&body) else {
+        return false;
+    };
+    let [statement] = statements.as_slice() else {
+        return false;
+    };
+    // The changed write must execute unconditionally: no branch, loop,
+    // closure or early exit anywhere in it, macro arguments included.
+    let conditional = statement
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .any(|token| {
+            matches!(
+                token.text(),
+                "if" | "match" | "for" | "while" | "loop" | "return" | "break" | "|" | "||" | "?"
+            )
+        });
+    !conditional
+        && classify_statement(statement, parameter, false)
+            .is_some_and(|(kind, _)| kind == StatementKind::Write)
 }
 
 /// Whether `expected` is clearly a non-empty value (a non-empty string or
@@ -292,132 +325,214 @@ fn arguments_are_empty(call: &ast::MethodCallExpr) -> bool {
             .all(|argument| EMPTY.contains(&argument.as_str()))
 }
 
-/// Whether the owner body visibly writes through `name`: a mutating method
-/// called on it, a `write!`/`writeln!` into it, or an assignment through a
-/// dereference, field or index of it. Passing it onward or only reading it is
-/// not a write (fail closed).
-fn name_written_in(body: &SyntaxNode, name: &str) -> bool {
-    !write_offsets(body, name).is_empty()
+const ADDITIVE_WRITERS: &[&str] = &[
+    "push",
+    "push_str",
+    "push_back",
+    "push_front",
+    "insert",
+    "extend",
+    "extend_from_slice",
+    "append",
+    "write_str",
+    "write_char",
+    "write_fmt",
+    "write_all",
+];
+
+const READ_ONLY_METHODS: &[&str] = &[
+    "len",
+    "is_empty",
+    "capacity",
+    "as_str",
+    "as_bytes",
+    "chars",
+    "bytes",
+    "iter",
+    "contains",
+    "starts_with",
+    "ends_with",
+    "get",
+    "first",
+    "last",
+    "to_string",
+    "to_owned",
+    "clone",
+];
+
+#[derive(Clone, Copy, PartialEq)]
+enum StatementKind {
+    Write,
+    Clear,
 }
 
-/// Whether a destructive operation on `name` (`clear`, `truncate`, `drain`,
-/// `retain`, a deref/field/index assignment, `mem::take`/`replace`/`swap`)
-/// follows an earlier write in straight source order, so the written value
-/// may never reach the caller. Conservative: any such order refuses.
-fn name_overwritten_after_write(body: &SyntaxNode, name: &str) -> bool {
-    const KILLERS: &[&str] = &[
-        "clear",
-        "truncate",
-        "drain",
-        "retain",
-        "remove",
-        "pop",
-        "resize",
-        "replace_range",
-        "take",
-        "swap",
-        "fill",
-        "sort",
-    ];
-    let Some(first_write) = write_offsets(body, name).into_iter().min() else {
+/// A top-level statement that is exactly an additive write (or a `clear()`)
+/// on the bare identifier `name`, plus the text range of that identifier.
+fn classify_statement(
+    node: &SyntaxNode,
+    name: &str,
+    write_macro_shadowed: bool,
+) -> Option<(StatementKind, ra_ap_syntax::TextRange)> {
+    let mut expression = match ast::ExprStmt::cast(node.clone()) {
+        Some(statement) => statement.expr()?,
+        None => ast::Expr::cast(node.clone())?,
+    };
+    loop {
+        match expression {
+            ast::Expr::TryExpr(inner) => expression = inner.expr()?,
+            ast::Expr::MethodCallExpr(call) => {
+                let method = call.name_ref()?;
+                let method = strip_raw(method.text());
+                if let Some(receiver) = bare_name_receiver(&call, name) {
+                    if ADDITIVE_WRITERS.contains(&method) && !arguments_are_empty(&call) {
+                        return Some((StatementKind::Write, receiver));
+                    }
+                    if method == "clear" && call.arg_list()?.args().next().is_none() {
+                        return Some((StatementKind::Clear, receiver));
+                    }
+                    return None;
+                }
+                if !matches!(method, "unwrap" | "expect") {
+                    return None;
+                }
+                expression = call.receiver()?;
+            }
+            ast::Expr::MacroExpr(mac) => {
+                if write_macro_shadowed {
+                    return None;
+                }
+                let mac = mac.macro_call()?;
+                let path = compact(&mac.path()?.syntax().text().to_string());
+                if !matches!(
+                    path.as_str(),
+                    "write"
+                        | "writeln"
+                        | "std::write"
+                        | "std::writeln"
+                        | "core::write"
+                        | "core::writeln"
+                ) {
+                    return None;
+                }
+                let tree = mac.token_tree()?;
+                let first = tree
+                    .syntax()
+                    .children_with_tokens()
+                    .filter_map(|element| element.into_token())
+                    .find(|token| token.kind() == SyntaxKind::IDENT)?;
+                return (strip_raw(first.text()) == name)
+                    .then_some((StatementKind::Write, first.text_range()));
+            }
+            _ => return None,
+        }
+    }
+}
+
+fn bare_name_receiver(call: &ast::MethodCallExpr, name: &str) -> Option<ra_ap_syntax::TextRange> {
+    let ast::Expr::PathExpr(path) = call.receiver()? else {
+        return None;
+    };
+    (compact(&path.syntax().text().to_string()) == name).then(|| path.syntax().text_range())
+}
+
+fn top_level_statements(body: &ast::BlockExpr) -> Option<Vec<SyntaxNode>> {
+    let list = body.stmt_list()?;
+    Some(
+        list.statements()
+            .map(|statement| statement.syntax().clone())
+            .chain(list.tail_expr().map(|tail| tail.syntax().clone()))
+            .collect(),
+    )
+}
+
+/// Fail-closed allowlist for an owner `&mut` parameter `name`: every use of
+/// the bare identifier is either a top-level additive write statement (or a
+/// `clear()` before the first write), a std `write!`/`writeln!` into it, or a
+/// read-only method call; any other use (passing it onward, reborrowing,
+/// aliasing, deref or parenthesized receivers, closure capture, unknown
+/// methods, other macros) refuses. The writes are straight-line top-level
+/// statements with no `return`, `break`, `continue` or `?` before the last
+/// one, so the credited write executes for any input.
+fn owner_allows_out_parameter(body: &ast::BlockExpr, name: &str, shadowed: bool) -> bool {
+    let Some(statements) = top_level_statements(body) else {
         return false;
     };
-    let is_name = |text: String| strip_raw(&compact(&text)) == name;
-    let writes = write_offsets(body, name);
-    body.descendants().any(|node| {
-        let at = usize::from(node.text_range().start());
-        if at <= first_write {
+    let kinds: Vec<Option<(StatementKind, ra_ap_syntax::TextRange)>> = statements
+        .iter()
+        .map(|node| classify_statement(node, name, shadowed))
+        .collect();
+    let Some(first_write) = kinds
+        .iter()
+        .position(|kind| matches!(kind, Some((StatementKind::Write, _))))
+    else {
+        return false;
+    };
+    let last_write = kinds
+        .iter()
+        .rposition(|kind| matches!(kind, Some((StatementKind::Write, _))))
+        .unwrap_or(first_write);
+    if kinds
+        .iter()
+        .enumerate()
+        .any(|(at, kind)| matches!(kind, Some((StatementKind::Clear, _))) && at > first_write)
+    {
+        return false;
+    }
+    for (at, node) in statements.iter().enumerate() {
+        let accounted = kinds[at].map(|(_, range)| range);
+        for token in node
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .filter(|token| token.kind() == SyntaxKind::IDENT && strip_raw(token.text()) == name)
+        {
+            if accounted == Some(token.text_range()) || is_read_only_use(&token) {
+                continue;
+            }
             return false;
         }
-        if let Some(call) = ast::MethodCallExpr::cast(node.clone()) {
-            return call
-                .name_ref()
-                .is_some_and(|method| KILLERS.contains(&strip_raw(method.text())))
-                && call
-                    .receiver()
-                    .is_some_and(|receiver| is_name(receiver.syntax().text().to_string()));
+        if at <= last_write {
+            let diverges = node.descendants().any(|inner| {
+                matches!(
+                    inner.kind(),
+                    SyntaxKind::RETURN_EXPR | SyntaxKind::BREAK_EXPR | SyntaxKind::CONTINUE_EXPR
+                ) || (at < last_write && inner.kind() == SyntaxKind::TRY_EXPR)
+            });
+            if diverges {
+                return false;
+            }
         }
-        if let Some(call) = ast::CallExpr::cast(node.clone()) {
-            let callee = call
-                .expr()
-                .map(|callee| compact(&callee.syntax().text().to_string()))
-                .unwrap_or_default();
-            let leaf = callee.rsplit("::").next().unwrap_or_default().to_string();
-            return matches!(leaf.as_str(), "take" | "replace" | "swap")
-                && call.arg_list().is_some_and(|args| {
-                    args.args().any(|argument| {
-                        let text = compact(&argument.syntax().text().to_string());
-                        let text = text.trim_start_matches("&mut").trim_start_matches('*');
-                        strip_raw(text) == name
-                    })
-                });
-        }
-        // A later deref/field/index assignment is itself a write offset.
-        writes.contains(&at) && ast::BinExpr::can_cast(node.kind())
-    })
+    }
+    true
 }
 
-fn write_offsets(body: &SyntaxNode, name: &str) -> Vec<usize> {
-    const WRITERS: &[&str] = &[
-        "push",
-        "push_str",
-        "push_back",
-        "push_front",
-        "insert",
-        "extend",
-        "extend_from_slice",
-        "append",
-        "write_str",
-        "write_char",
-        "write_fmt",
-        "write_all",
-        "write",
-    ];
-    let is_name = |text: String| strip_raw(&compact(&text)) == name;
-    let is_write = |node: &SyntaxNode| -> bool {
-        let node = node.clone();
-        if let Some(call) = ast::MethodCallExpr::cast(node.clone()) {
-            return call
-                .name_ref()
-                .is_some_and(|method| WRITERS.contains(&strip_raw(method.text())))
-                && !arguments_are_empty(&call)
-                && call
-                    .receiver()
-                    .is_some_and(|receiver| is_name(receiver.syntax().text().to_string()));
-        }
-        if let Some(binary) = ast::BinExpr::cast(node.clone()) {
-            return matches!(binary.op_kind(), Some(ast::BinaryOp::Assignment { .. }))
-                && binary.lhs().is_some_and(|lhs| {
-                    let text = compact(&lhs.syntax().text().to_string());
-                    let root = text
-                        .trim_start_matches('*')
-                        .split(['.', '['])
-                        .next()
-                        .unwrap_or_default();
-                    (text.starts_with('*') || text.contains('.') || text.contains('['))
-                        && strip_raw(root) == name
-                });
-        }
-        if let Some(mac) = ast::MacroCall::cast(node) {
-            let is_write = mac.path().is_some_and(|path| {
-                matches!(path.syntax().text().to_string().trim(), "write" | "writeln")
-            });
-            return is_write
-                && mac.token_tree().is_some_and(|tree| {
-                    let text = compact(&tree.syntax().text().to_string());
-                    let inner = text.trim_start_matches(['(', '[', '{']);
-                    inner
-                        .split(',')
-                        .next()
-                        .is_some_and(|first| strip_raw(first) == name)
-                });
-        }
-        false
+fn is_read_only_use(token: &ra_ap_syntax::SyntaxToken) -> bool {
+    let Some(path_expr) = token.parent_ancestors().find_map(ast::PathExpr::cast) else {
+        return false;
     };
-    body.descendants()
-        .filter(|node| is_write(node))
-        .map(|node| usize::from(node.text_range().start()))
-        .collect()
+    let Some(call) = path_expr
+        .syntax()
+        .parent()
+        .and_then(ast::MethodCallExpr::cast)
+    else {
+        return false;
+    };
+    call.receiver()
+        .is_some_and(|receiver| receiver.syntax() == path_expr.syntax())
+        && call
+            .name_ref()
+            .is_some_and(|method| READ_ONLY_METHODS.contains(&strip_raw(method.text())))
+}
+
+/// Whether some workspace file defines its own `write`/`writeln` macro,
+/// which would change what `write!(out, ..)` does. Conservative: any
+/// `macro_rules!`/`macro` item whose name starts with `write` counts.
+fn workspace_shadows_write_macro(index: &RustIndex) -> bool {
+    index.files().iter().any(|(_, facts)| {
+        (facts.source.contains("macro_rules") || facts.source.contains("macro ")) && {
+            let text = compact(&mask_comments_and_strings(&facts.source));
+            text.contains("macro_rules!write") || text.contains("macrowrite")
+        }
+    })
 }
 
 fn local_written_by_owner_call(

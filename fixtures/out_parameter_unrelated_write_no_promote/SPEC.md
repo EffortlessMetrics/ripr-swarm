@@ -19,7 +19,8 @@ cargo xtask fixtures out_parameter_unrelated_write_no_promote
 ## Then
 
 The finding is not `exposed` and its discriminator is not `yes`: mentioning
-the out-parameter name on the changed line is not a write through it.
+the out-parameter name on the changed line is not a write through it. The blessed `check.json` pins the finding's
+`ripr.discriminate.state` as `weak`.
 
 ## Must Not
 
