@@ -20,6 +20,19 @@
 //! (non-UTF-8 body, non-JSON body, missing Content-Length, oversized header)
 //! falls through with the original bytes, preserving the pre-existing error
 //! behavior exactly.
+//!
+//! Framing interpretation is pinned to the transport: the governing
+//! `Content-Length` is the LAST header occurrence, exactly as
+//! `transport_bounds::declared_content_length` and the tower-lsp codec read
+//! it, so the inspected frame always ends where the codec will slice it
+//! (#10034 review). Frame-end arithmetic is checked; an anomalous length
+//! fails closed into pass-through instead of overflowing.
+//!
+//! Envelope admission is pinned to the codec too: the body must deserialize
+//! as `tower_lsp_server::jsonrpc::Request` BEFORE any repair, so duplicate
+//! JSON-RPC fields keep the rejection the original bytes would receive. A
+//! lossy `serde_json::Value` round trip would collapse duplicate keys and
+//! reserialize an invalid envelope into an acceptable one.
 
 use std::io;
 use std::pin::Pin;
@@ -40,11 +53,38 @@ struct FrameScan {
     /// Everything read so far: header bytes, then body bytes once
     /// `content_length` is known.
     buf: Vec<u8>,
-    /// Parsed Content-Length, set once the header terminator is seen.
+    /// Parsed Content-Length, set once the header terminator is seen. Always
+    /// the transport's governing (last) occurrence.
     content_length: Option<usize>,
     /// How far `buf` has already been searched for the header terminator, so
     /// the per-chunk search only inspects the new tail.
     header_scanned: usize,
+}
+
+impl FrameScan {
+    /// End offset of the header block (just past the terminator) in the
+    /// current buffer, if the terminator has arrived.
+    fn header_len(&self) -> Option<usize> {
+        self.buf
+            .windows(HEADER_TERMINATOR.len())
+            .position(|window| window == HEADER_TERMINATOR)
+            .map(|at| at + HEADER_TERMINATOR.len())
+    }
+
+    /// Checked end offset of the framed message per the governing
+    /// `Content-Length`. `None` when the header is incomplete or the
+    /// frame-end arithmetic would overflow (an anomalous admitted length):
+    /// both fail closed into pass-through.
+    fn frame_end(&self) -> Option<usize> {
+        self.header_len()?
+            .checked_add(self.content_length?)
+    }
+
+    /// Whether the buffer already holds the complete framed message.
+    fn frame_complete(&self) -> bool {
+        self.frame_end()
+            .is_some_and(|end| end <= self.buf.len())
+    }
 }
 
 /// Wraps the ingress reader: repairs the first `initialize` frame, then
@@ -140,16 +180,8 @@ impl<R: AsyncRead + Unpin> AsyncRead for InitializeRepairReader<R> {
             if this.initialize_settled {
                 return Pin::new(&mut this.inner).poll_read(cx, buf);
             }
-            if let Some(content_length) = this.scan.content_length {
-                let header_len = this
-                    .scan
-                    .buf
-                    .windows(HEADER_TERMINATOR.len())
-                    .position(|window| window == HEADER_TERMINATOR)
-                    .map(|at| at + HEADER_TERMINATOR.len())
-                    .unwrap_or(0);
-                if this.scan.buf.len() >= header_len + content_length {
-                    let frame_end = header_len + content_length;
+            if this.scan.content_length.is_some() {
+                if let Some(frame_end) = this.scan.frame_end().filter(|end| *end <= this.scan.buf.len()) {
                     // Settle exactly one frame: a single chunk read can carry
                     // the following frames too, and those must pass through
                     // untouched behind the inspected one.
@@ -163,14 +195,16 @@ impl<R: AsyncRead + Unpin> AsyncRead for InitializeRepairReader<R> {
                     continue;
                 }
             } else if let Some(at) = this.header_terminator_at() {
-                match parse_content_length(&this.scan.buf[..at]) {
+                match super::transport_bounds::declared_content_length(&this.scan.buf[..at]) {
                     Some(content_length) => {
                         this.scan.content_length = Some(content_length);
                         // Re-loop: the frame may already be complete in the
                         // buffer (a chunk read carries header and body).
                         continue;
                     }
-                    // Unparseable header: forward what we have unchanged.
+                    // Unparseable or ambiguous header: forward what we have
+                    // unchanged; the codec rejects the frame deterministically
+                    // downstream either way.
                     None => {
                         this.pending = std::mem::take(&mut this.scan.buf);
                         this.pending_pos = 0;
@@ -189,17 +223,8 @@ impl<R: AsyncRead + Unpin> AsyncRead for InitializeRepairReader<R> {
                     // here when the terminator arrived with the last chunk).
                     // A truncated frame must not loop: it falls through and
                     // is flushed unchanged in pass-through mode.
-                    if let Some(content_length) = this.scan.content_length {
-                        let header_len = this
-                            .scan
-                            .buf
-                            .windows(HEADER_TERMINATOR.len())
-                            .position(|window| window == HEADER_TERMINATOR)
-                            .map(|at| at + HEADER_TERMINATOR.len())
-                            .unwrap_or(0);
-                        if header_len + content_length <= this.scan.buf.len() {
-                            continue;
-                        }
+                    if this.scan.frame_complete() {
+                        continue;
                     }
                     // Forward the partial bytes unchanged and switch to
                     // pass-through.
@@ -227,6 +252,13 @@ fn settle_frame(frame: Vec<u8>) -> Vec<u8> {
     let Ok(text) = std::str::from_utf8(body) else {
         return frame;
     };
+    // Envelope admission BEFORE the lossy Value round trip: the codec's
+    // Request deserializer rejects duplicate JSON-RPC fields, and a
+    // serde_json::Value parse would collapse those duplicates and reserialize
+    // an envelope the original bytes would have rejected (#10034 review).
+    if serde_json::from_str::<tower_lsp_server::jsonrpc::Request>(text).is_err() {
+        return frame;
+    }
     let Ok(mut value) = serde_json::from_str::<serde_json::Value>(text) else {
         return frame;
     };
@@ -244,8 +276,7 @@ fn settle_frame(frame: Vec<u8>) -> Vec<u8> {
 
 /// Rebuilds a framed message, rewriting or appending Content-Length and
 /// keeping every other header line as received.
-fn build_frame(original_header: &[u8], body: &[u8]) -> Vec<u8> {
-    let header_text = String::from_utf8_lossy(original_header);
+fn build_frame(original_header: &[u8], body: &[u8]) -> Vec<u8> {    let header_text = String::from_utf8_lossy(original_header);
     let mut out = String::with_capacity(header_text.len() + 32);
     let mut found = false;
     for line in header_text.split("\r\n") {
@@ -274,22 +305,6 @@ fn build_frame(original_header: &[u8], body: &[u8]) -> Vec<u8> {
     let mut frame = out.into_bytes();
     frame.extend_from_slice(body);
     frame
-}
-
-/// Extracts Content-Length from a header block (which may still carry its
-/// trailing terminator).
-fn parse_content_length(header: &[u8]) -> Option<usize> {
-    let text = std::str::from_utf8(header).ok()?;
-    for line in text.split("\r\n") {
-        // A colon-less header line (or the empty terminator) must not abort
-        // the search for a later Content-Length.
-        if let Some((name, value)) = line.split_once(':')
-            && name.trim().eq_ignore_ascii_case("content-length")
-        {
-            return value.trim().parse().ok();
-        }
-    }
-    None
 }
 
 /// Percent-encodes raw non-ASCII bytes, leaving every ASCII byte — including
@@ -520,6 +535,89 @@ mod tests {
             .await
             .map_err(|err| format!("read failed: {err}"))?;
         assert_eq!(out, frame(other));
+        Ok(())
+    }
+
+    /// #10034 review P1: the governing Content-Length is the LAST occurrence
+    /// (tower-lsp codec and transport_bounds agree). A first header of
+    /// usize::MAX must not overflow the frame-end arithmetic; the last, valid
+    /// length governs and the frame is repaired normally.
+    #[tokio::test]
+    async fn reader_treats_last_content_length_as_governing() -> Result<(), String> {
+        let init = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"processId":null,"rootUri":"file:///tmp/café-repo","capabilities":{}}}"#;
+        let framed = format!(
+            "Content-Length: {}\r\nContent-Length: {}\r\n\r\n{}",
+            usize::MAX,
+            init.len(),
+            init
+        );
+        let mut stream = framed.clone().into_bytes();
+        stream.extend_from_slice(&frame(r#"{"jsonrpc":"2.0","method":"exit"}"#));
+        let mut reader = InitializeRepairReader::new(stream.as_slice());
+        let mut out = Vec::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            reader.read_to_end(&mut out),
+        )
+        .await
+        .map_err(|err| format!("read_to_end must terminate with a duplicate-length header: {err}"))?
+        .map_err(|err| format!("read failed: {err}"))?;
+        let text = String::from_utf8(out).map_err(|err| format!("output must be utf-8: {err}"))?;
+        assert!(
+            text.contains("caf%C3%A9-repo"),
+            "the governed frame is repaired: {text}"
+        );
+        assert!(text.contains("exit"), "trailing frame passes through: {text}");
+        Ok(())
+    }
+
+    /// #10034 review P1: when the LAST (governing) length is the anomalous
+    /// one, checked frame-end arithmetic fails closed — the reader flushes the
+    /// buffered bytes unchanged at EOF instead of overflowing or looping.
+    #[tokio::test]
+    async fn reader_fails_closed_when_governing_length_overflows() -> Result<(), String> {
+        let init = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"rootUri":"file:///tmp/plain","capabilities":{}}}"#;
+        let framed = format!(
+            "Content-Length: {}\r\nContent-Length: {}\r\n\r\n{}",
+            init.len(),
+            usize::MAX,
+            init
+        );
+        let mut reader = InitializeRepairReader::new(framed.as_bytes());
+        let mut out = Vec::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            reader.read_to_end(&mut out),
+        )
+        .await
+        .map_err(|err| format!("read_to_end must terminate with an overflowing length: {err}"))?
+        .map_err(|err| format!("read failed: {err}"))?;
+        assert_eq!(
+            out, framed.as_bytes(),
+            "an anomalous governing length must pass through byte-identical"
+        );
+        Ok(())
+    }
+
+    /// #10034 review P1: a duplicate JSON-RPC envelope field makes the whole
+    /// request invalid; the codec's Request deserializer rejects it. The
+    /// repair reader must NOT collapse the duplicate through a lossy Value
+    /// round trip and reserialize an acceptable request — the frame passes
+    /// through unchanged.
+    #[tokio::test]
+    async fn duplicate_envelope_fields_pass_through_unrepaired() -> Result<(), String> {
+        let params = r#""params":{"processId":null,"rootUri":"file:///tmp/café-repo","capabilities":{}}"#;
+        for (name, body) in [
+            ("id", format!(r#"{{"jsonrpc":"2.0","id":0,"id":1,"method":"initialize",{params}}}"#)),
+            ("method", format!(r#"{{"jsonrpc":"2.0","method":"other","method":"initialize",{params}}}"#)),
+        ] {
+            let input = frame(&body);
+            let out = settle_frame(input.clone());
+            assert_eq!(
+                out, input,
+                "duplicate {name} must survive unrepaired so the codec rejects it"
+            );
+        }
         Ok(())
     }
 }
