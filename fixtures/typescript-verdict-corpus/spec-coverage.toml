@@ -101,6 +101,18 @@ id = "RIPR-SPEC-0091"
 scope = "out"
 reason = "CLI, command or receipt contract, not an analyzer verdict"
 
+# Error-Seam unwrap_err / expect_err Variant Binding
+[[spec]]
+id = "RIPR-SPEC-0106"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
+# ErrorPath Requires a Variant-Observing Oracle
+[[spec]]
+id = "RIPR-SPEC-0107"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
 # Disclose Unanalyzed Working Tree When Using `--base`
 [[spec]]
 id = "RIPR-SPEC-0112"
@@ -202,6 +214,12 @@ reason = "output wording or disclosure; the classification is unchanged, so a ve
 id = "RIPR-SPEC-0170"
 scope = "out"
 reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# guarded Result match observations
+[[spec]]
+id = "RIPR-SPEC-0175"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
 
 # Rust repair-trust route-yield ladder
 [[spec]]
@@ -624,6 +642,11 @@ id = "RIPR-SPEC-0291"
 reason = "acceptance examples are prose, not numbered; agent-brief start-command root rendering is not an exposure-verdict example a corpus case labels"
 
 [[spec]]
+id = "RIPR-SPEC-0289"
+scope = "out"
+reason = "edit-cage refusal narration wording; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
 id = "RIPR-SPEC-0290"
 scope = "out"
 reason = "pilot start-command root rendering; not an exposure-verdict example a corpus case labels"
@@ -658,11 +681,31 @@ id = "RIPR-SPEC-0310"
 scope = "out"
 reason = "check-findings-json verify artifact contract; not an exposure-verdict example a corpus case labels"
 
+[[spec]]
+id = "RIPR-SPEC-0311"
+scope = "out"
+reason = "gap-bound TypeScript repair start from a complete packet; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0318"
+scope = "out"
+reason = "pilot next-step text for an uncommitted inline-module target; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0347"
+scope = "out"
+reason = "stderr disclosure of changed trybuild fixtures; not an exposure-verdict example a corpus case labels"
+
 # Release ledger direct-main contract
 [[spec]]
 id = "RIPR-SPEC-0301"
 scope = "out"
 reason = "release-process tooling (xtask release-ledger); its examples validate a commit ledger, not an exposure verdict a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0351"
+scope = "out"
+reason = "Rust-only out-parameter oracle credit; not a typescript verdict example"
 
 # Every false verdict the corpus still scores, with its owning issue.
 # `verdict-corpus check` fails when a false row is not listed here and when a
@@ -670,3 +713,15 @@ reason = "release-process tooling (xtask release-ledger); its examples validate 
 # and a fixed row leaves this list and cannot silently return. Adding an entry
 # is a reviewed edit that names the owner; the fix belongs in the case, the
 # spec or the analyzer, never in an exclusion.
+
+# Rust bounded value transfer
+[[spec]]
+id = "RIPR-SPEC-0158"
+scope = "out"
+reason = "Rust analyzer transfer rule over Rust syntax; a TypeScript case cannot label it"
+
+# Rust bounded helper-call transfer
+[[spec]]
+id = "RIPR-SPEC-0159"
+scope = "out"
+reason = "Rust analyzer transfer rule over Rust syntax; a TypeScript case cannot label it"

@@ -116,7 +116,7 @@ pub(crate) fn render_verdict_explanation(
 
 /// What ripr concluded about one assertion row.
 fn row_verdict(row: &RelatedTest, finding: &Finding) -> String {
-    match related_test_miss_reason(row, &finding.activation.missing_discriminators) {
+    match related_test_miss_reason(row, &finding.probe.family) {
         Some(why) => format!(
             "{}: {why}",
             crate::output::related_test_miss::related_test_miss_label(row)
@@ -318,6 +318,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: Some(miss),
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }
     }
 
@@ -343,6 +345,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }
     }
 
@@ -375,17 +379,24 @@ mod tests {
             reason: "no related test passes an empty input".to_string(),
             flow_sink: None,
         }];
+        finding.probe.family = crate::domain::ProbeFamily::Predicate;
+        let mut strong = row(
+            "assert_eq!(parse(\"a\"), Ok(1));",
+            OracleStrength::Strong,
+            RelatedTestMiss::MissingInput,
+        );
+        // #5564: the boundary is the row's own support, not the finding list.
+        strong.miss_support = Some(crate::domain::RelatedTestMissSupport {
+            value: "len == 0".to_string(),
+            flow_sink: None,
+        });
         finding.related_tests = vec![
             row(
                 "assert!(parse(\"a\").is_ok());",
                 OracleStrength::Weak,
                 RelatedTestMiss::WeakAssertion,
             ),
-            row(
-                "assert_eq!(parse(\"a\"), Ok(1));",
-                OracleStrength::Strong,
-                RelatedTestMiss::MissingInput,
-            ),
+            strong,
         ];
         let text = render_verdict_explanation(&finding, None);
         assert!(

@@ -1,0 +1,12 @@
+diff --git a/src/v_closure.rs b/src/v_closure.rs
+--- a/src/v_closure.rs
++++ b/src/v_closure.rs
+@@ -3,7 +3,7 @@
+ pub fn closure_boundary_hit(input: &str, delim: char) -> bool {
+     let end = input.rfind(delim).map_or(1, |idx| idx + 0);
+     let start = delim.len_utf8();
+-    end == start
++    end >= start
+ }
+ 
+ #[cfg(test)]
