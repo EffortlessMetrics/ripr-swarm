@@ -187,8 +187,19 @@ impl<R: AsyncRead + Unpin> AsyncRead for InitializeRepairReader<R> {
                     // EOF or header cap mid-frame. A complete frame still
                     // settles (an EOF exactly at the frame boundary reaches
                     // here when the terminator arrived with the last chunk).
-                    if this.scan.content_length.is_some() {
-                        continue;
+                    // A truncated frame must not loop: it falls through and
+                    // is flushed unchanged in pass-through mode.
+                    if let Some(content_length) = this.scan.content_length {
+                        let header_len = this
+                            .scan
+                            .buf
+                            .windows(HEADER_TERMINATOR.len())
+                            .position(|window| window == HEADER_TERMINATOR)
+                            .map(|at| at + HEADER_TERMINATOR.len())
+                            .unwrap_or(0);
+                        if header_len + content_length <= this.scan.buf.len() {
+                            continue;
+                        }
                     }
                     // Forward the partial bytes unchanged and switch to
                     // pass-through.
@@ -460,6 +471,37 @@ mod tests {
         .map_err(|err| format!("read failed: {err}"))?;
         let text = String::from_utf8(out).map_err(|_| "output must be utf-8".to_string())?;
         assert!(text.contains("caf%C3%A9-repo"), "repaired: {text}");
+        assert!(
+            text.contains("exit"),
+            "trailing frame passes through: {text}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reader_flushes_truncated_frame_at_eof_without_looping() -> Result<(), String> {
+        // Declared length exceeds the bytes actually sent: the client
+        // disconnected mid-`initialize`. The reader must terminate (no
+        // busy-spin), forward the truncated frame unchanged, and settle into
+        // pass-through so a trailing complete frame still arrives intact.
+        let init = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"rootUri":"file:///tmp/café-repo","capabilities":{}}}"#;
+        let truncated = format!("Content-Length: {}\r\n\r\n{}", init.len() + 64, init);
+        let mut stream = truncated.clone().into_bytes();
+        stream.extend_from_slice(&frame(r#"{"jsonrpc":"2.0","method":"exit"}"#));
+        let mut reader = InitializeRepairReader::new(stream.as_slice());
+        let mut out = Vec::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            reader.read_to_end(&mut out),
+        )
+        .await
+        .map_err(|_| "read_to_end must terminate on a truncated frame".to_string())?
+        .map_err(|err| format!("read failed: {err}"))?;
+        let text = String::from_utf8(out).map_err(|_| "output must be utf-8".to_string())?;
+        assert!(
+            text.contains("café-repo"),
+            "truncated frame must pass through unrepaired: {text}"
+        );
         assert!(
             text.contains("exit"),
             "trailing frame passes through: {text}"
