@@ -85,6 +85,7 @@ package-lock.json linguist-generated
 Cargo.lock linguist-generated
 fixtures/**/expected/** linguist-generated
 metrics/public-proof/** linguist-generated
+fixtures/perl-verdict-corpus/packets/** linguist-generated
 
 # The CRLF hostile-input case stores carriage returns on purpose; the subject
 # file and the diff that edits it must reach the working tree byte for byte.

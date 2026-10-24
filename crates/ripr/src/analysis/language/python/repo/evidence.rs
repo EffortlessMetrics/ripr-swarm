@@ -355,6 +355,14 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
         &reach_conftests,
         |conftest| !read_conftests.contains(conftest) && root.join(conftest).is_file(),
     );
+    super::super::fixtures::taint_admission_by_conftest_declarations(
+        &mut all_tests,
+        &reach_conftests,
+        |conftest| !read_conftests.contains(conftest) && root.join(conftest).is_file(),
+    );
+    super::super::fixtures::record_bare_sibling_imports(&mut all_tests, |path| {
+        root.join(path).exists()
+    });
 
     // Production subjects: owners + behavior items, related against the
     // evidence pool built above. The public Finding projection is built in
