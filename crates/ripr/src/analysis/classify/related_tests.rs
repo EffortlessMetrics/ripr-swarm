@@ -4181,6 +4181,22 @@ fn method_call_resolves_to_impl_in(
     })
 }
 
+/// Whether the last call of `method` in `prefix` (masked test source cut at
+/// the end of one statement, with earlier calls of the same name blanked by
+/// the caller) has a receiver bound to `impl_type`, under the same receiver
+/// rules as [`method_call_resolves_to_impl`].
+pub(in crate::analysis) fn resolves_method_in_prefix(
+    prefix: &str,
+    method: &str,
+    impl_type: &str,
+    impl_trait: Option<&str>,
+) -> bool {
+    if method.is_empty() || impl_type.is_empty() {
+        return false;
+    }
+    text_resolves_method_to_type(prefix, method, impl_type, impl_trait, prefix, true)
+}
+
 /// A bounded, test-local dispatch witness for an indexed trait impl. Naming
 /// its type elsewhere, an unknown method, or a same-name free/inherent function
 /// is not a witness. Reuse the established receiver binding rules (#4760).
