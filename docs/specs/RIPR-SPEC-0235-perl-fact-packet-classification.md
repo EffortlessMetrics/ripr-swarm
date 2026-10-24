@@ -357,7 +357,8 @@ For each change, the first match wins:
 19. **A changed pattern is not observed by equal sink text (#9418).** Rule 9
     never aligns a change whose `changed_observable` applies a pattern: a
     `=~` or `!~` binding, or a `qr`, `m`, `s`, `tr`, `y` or `split` word
-    that opens a delimited pattern (a word after a sigil or `->`, or
+    that opens a delimited pattern (one of `/ { [ ( < | ! # ' " ,`, after
+    optional whitespace for `split` only; a word after `$ @ % &` or `>`, or
     before `=>`, is a name, not an operator). An exact oracle on one input
     observes what the pattern does with that input, not which inputs it
     accepts, so the change reads as rule 8 gives it (`weakly_exposed` for a
@@ -381,8 +382,10 @@ For each change, the first match wins:
     (#9420).** An added line of a `source` file that no packet change covers
     and no non-`package` owner covers (each range read one- or zero-based),
     that is not blank or a `#` comment, reads `static_unknown` with the
-    strongest static limit named by the file's owner-less
-    `dynamic_boundaries`, and no repair-shaped output. The producer emits no
+    strongest static limit that any of the file's owner-less
+    `dynamic_boundaries` maps to (generated subs, symbol-table writes and
+    string eval among them), and no gap or repair target; the next step
+    only says to check whether a test calls what the line defines. The producer emits no
     change for top-level code, such as a table a glob assignment turns into
     subs, so the line was silent and silence reads as "nothing to check". A
     file with no owner-less boundary that names a limit, and a line a

@@ -2979,9 +2979,9 @@ fn h2_changed_pattern_is_not_observed_by_equal_sink_text() -> Result<(), String>
         "$s =~ s/a/b/r",
         "$s =~ tr/a/b/r",
     ] {
-        assert_ne!(
+        assert_eq!(
             class_for(pattern)?,
-            crate::domain::ExposureClass::Exposed,
+            crate::domain::ExposureClass::WeaklyExposed,
             "a changed pattern must not align by equal text: {pattern}"
         );
     }
@@ -3108,21 +3108,29 @@ fn uncovered_top_level_line_beside_file_boundaries_is_a_stated_limit() -> Result
         ))
     };
 
-    // Line 30 sits past the only owner (12 to 20) and change (15); line 16 is
-    // inside the owner; 31 and 32 are a comment and a blank line.
+    // Line 30 sits past the only owner (12 to 20) and change (15); 19 is
+    // covered by the owner alone and 21 by the one-line tolerance after it
+    // (the producer's lines are zero-based, SPEC-0064's one-based); 22 is the
+    // first line past that tolerance; 31 and 32 are a comment and a blank line.
     let file = diff_of(
         "lib/My/App.pm",
         &[
             (30, "my %M = (a => 3);"),
-            (16, "return 1;"),
+            (19, "return 2;"),
+            (21, "return 3;"),
+            (22, "my $z = 1;"),
             (31, "# note"),
             (32, "  "),
         ],
     );
     let findings = unowned(&with_boundary, &file)?;
-    assert_eq!(findings.len(), 1, "only the uncovered code line");
-    let finding = &findings[0];
-    assert_eq!(finding.probe.location.line, 30);
+    let mut lines: Vec<usize> = findings.iter().map(|f| f.probe.location.line).collect();
+    lines.sort_unstable();
+    assert_eq!(lines, vec![22, 30], "only the uncovered code lines");
+    let finding = findings
+        .iter()
+        .find(|f| f.probe.location.line == 30)
+        .ok_or("finding on line 30")?;
     assert_eq!(finding.class, crate::domain::ExposureClass::StaticUnknown);
     assert_eq!(
         finding.static_limit_kind,
