@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -75,7 +75,7 @@
+     if total > 100 {
+         return Err(ParseError::InvalidData);
+     }
+-    Ok(total)
++    Ok(total.min(100))
+ }
+ 
+ /// Same sum as `tally_pinned`, observed by a different test.

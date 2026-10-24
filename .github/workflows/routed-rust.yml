@@ -353,12 +353,33 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: ripr-docs-gate
+      - name: Prepare locked owner-return fixture dependencies
+        run: |
+          cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
+          cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
       - name: Doc/spec gates (full precommit table)
         env:
           RIPR_POLICY_PREFLIGHT_RECEIPT: target/ripr/reports/policy-preflight.json
         run: |
           cargo policy preflight
           cargo xtask precommit
+      # #5531: a Markdown-only PR can hand-edit the generated registry block in
+      # docs/status/SUPPORT_TIERS.md or docs/LANGUAGE_ADAPTER_PREVIEW.md, or rename a spec a registry cell cites. Both
+      # checks need a `ripr` build, so they run only when such a file changed;
+      # other docs-only PRs build nothing extra. Same runner, token and trust
+      # boundary as the precommit step above.
+      - name: Capability registry checks (SUPPORT_TIERS.md, preview guide or spec change)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+        run: |
+          changed="$(git -c core.quotePath=false diff --no-renames --name-only "$BASE_SHA"..."$HEAD_SHA")"
+          if printf '%s\n' "$changed" | grep -Eq '^(docs/status/SUPPORT_TIERS\.md|docs/LANGUAGE_ADAPTER_PREVIEW\.md|docs/specs/.*)$'; then
+            cargo xtask capability-docs --check
+            cargo xtask check-capability-producers
+          else
+            echo "No SUPPORT_TIERS.md, LANGUAGE_ADAPTER_PREVIEW.md or docs/specs change; capability registry checks not needed."
+          fi
       - name: Upload docs-gate reports
         if: always()
         uses: actions/upload-artifact@v7
