@@ -28897,12 +28897,9 @@ fn perl_packet_backed_rows_agree_in_hover_related_information_and_data() -> Resu
     Ok(())
 }
 
-/// #6475 end to end: the real refresh path (git diff, pipeline, aggregate,
-/// sidecar view) with Python changed and the default Rust-only language set.
-/// The opened changed Python document must read `not_analyzed`, which only
-/// holds when `diagnostics.rs` hands the producer's view to the snapshot.
-#[tokio::test]
-async fn real_refresh_binds_a_disabled_language_document_not_analyzed() -> Result<(), String> {
+/// A real git fixture with Python and Rust both changed, refreshed through
+/// the real analysis path under the default Rust-only language set.
+fn real_refresh_with_python_changed() -> Result<(TempLspRoot, WorkspaceDiagnostics), String> {
     let root = unique_lsp_test_root("disabled-language-real-refresh")?;
     write_lsp_scope_fixture(root.path())?;
     fs::create_dir_all(root.path().join("zpy")).map_err(|err| format!("create zpy: {err}"))?;
@@ -28946,6 +28943,10 @@ async fn real_refresh_binds_a_disabled_language_document_not_analyzed() -> Resul
         ..LspAnalysisConfig::default()
     };
     let diagnostics = workspace_diagnostics_with_config(root.path(), &config, true)?;
+    Ok((root, diagnostics))
+}
+
+fn assert_python_recorded_not_selected(diagnostics: &WorkspaceDiagnostics) -> Result<(), String> {
     // Independent literal expectation: python is a changed, unselected
     // language, so the producer's view must carry it as such.
     let view = diagnostics
@@ -28958,6 +28959,17 @@ async fn real_refresh_binds_a_disabled_language_document_not_analyzed() -> Resul
             && row.status == crate::analysis::language_outcome::LanguageOutcomeStatus::NotSelected),
         "{view:?}"
     );
+    Ok(())
+}
+
+/// #6475 end to end: with the Python adapter compiled in but not enabled,
+/// the opened changed Python document must read `not_analyzed`, which only
+/// holds when `diagnostics.rs` hands the producer's view to the snapshot.
+#[cfg(feature = "lang-python")]
+#[tokio::test]
+async fn real_refresh_binds_a_disabled_language_document_not_analyzed() -> Result<(), String> {
+    let (root, diagnostics) = real_refresh_with_python_changed()?;
+    assert_python_recorded_not_selected(&diagnostics)?;
 
     let python_uri = file_uri_for_path(&root.path().join("zpy/pricing.py"))?;
     let (service, socket) =
@@ -28981,4 +28993,15 @@ async fn real_refresh_binds_a_disabled_language_document_not_analyzed() -> Resul
         ));
     }
     Ok(())
+}
+
+/// Without the Python adapter compiled in, the producer still records the
+/// changed Python files as not selected in the aggregate (aggregate-only: no
+/// preview advisory exists for an uncompiled adapter, so no per-document
+/// binding is claimed in this build). The view must still reach the snapshot.
+#[cfg(not(feature = "lang-python"))]
+#[test]
+fn real_refresh_records_an_uncompiled_language_as_not_selected() -> Result<(), String> {
+    let (_root, diagnostics) = real_refresh_with_python_changed()?;
+    assert_python_recorded_not_selected(&diagnostics)
 }
