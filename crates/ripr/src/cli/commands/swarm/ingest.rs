@@ -94,8 +94,8 @@ fn validate_result_path(root: &Path, path: &Path) -> Result<PathBuf, String> {
     if !candidate.starts_with(root) {
         return Err(format!(
             "swarm ingest --result {} must stay under root {}",
-            path.display(),
-            root.display()
+            crate::output::path::human_path(path),
+            crate::output::path::human_path(root)
         ));
     }
 

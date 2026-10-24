@@ -267,7 +267,7 @@ pub(crate) fn build_diff_report(
         kind: "ripr_diff".to_string(),
         tool: output.tool.clone(),
         run_status: run_status.to_string(),
-        root: output.root.display().to_string(),
+        root: crate::output::path::display_path(&output.root),
         base: base.to_string(),
         head: head.to_string(),
         mode: output.mode.as_str().to_string(),

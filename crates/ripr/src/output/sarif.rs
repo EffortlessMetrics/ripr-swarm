@@ -277,7 +277,10 @@ pub(crate) fn render_refusal_sarif(
     properties.insert("run_status".to_string(), json!("refused"));
     properties.insert("refusal_identity".to_string(), json!(notice.identity));
     properties.insert("repair_route".to_string(), json!(notice.repair_route));
-    properties.insert("root".to_string(), json!(root.display().to_string()));
+    properties.insert(
+        "root".to_string(),
+        json!(crate::output::path::display_path(root)),
+    );
     if let Some(base) = base {
         properties.insert("base".to_string(), json!(base));
     }

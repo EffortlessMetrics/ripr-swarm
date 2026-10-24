@@ -38,7 +38,7 @@ pub(crate) fn render_diff_scope_limited_check_json(
         "schema_version": CHECK_OUTPUT_SCHEMA_VERSION,
         "tool": "ripr",
         "mode": input.mode.as_str(),
-        "root": input.root.display().to_string(),
+        "root": crate::output::path::display_path(&input.root),
         "summary": {
             "changed_rust_files": 0,
             "probes": 0,
@@ -125,7 +125,7 @@ pub(crate) fn render_refusal_envelope(
     let mut value = json!({
         "schema_version": context.schema_version,
         "tool": "ripr",
-        "root": context.root.display().to_string(),
+        "root": crate::output::path::display_path(context.root),
         "summary": {
             "changed_rust_files": 0,
             "probes": 0,

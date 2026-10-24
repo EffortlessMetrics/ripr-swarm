@@ -1889,8 +1889,17 @@ fn repair_human_path_identity_journey(name: &str, sibling: &str) -> Result<(), S
             .map_err(|e| e.to_string())?,
         canonical
     );
+    // Windows persists the plain spelling of the canonical root (#9660): the
+    // verbatim `\\?\` prefix folds away, and only separators change.
     let expected_persisted = if cfg!(windows) {
-        canonical.to_string_lossy().replace('\\', "/")
+        let unified = canonical.to_string_lossy().replace('\\', "/");
+        match unified.strip_prefix("//?/UNC/") {
+            Some(share) => format!("//{share}"),
+            None => unified
+                .strip_prefix("//?/")
+                .map(str::to_string)
+                .unwrap_or(unified),
+        }
     } else {
         canonical.to_string_lossy().into_owned()
     };
@@ -2529,9 +2538,15 @@ fn repeated_repair_resumes_the_awaiting_attempt_instead_of_duplicating() -> Resu
         stderr.contains(&ids[0]) && stderr.contains("already awaiting"),
         "must name the resumed attempt:\n{stderr}"
     );
+    // Printed commands use `/` on Windows, like every other command path.
+    let printed_root = if cfg!(windows) {
+        root_arg.replace('\\', "/")
+    } else {
+        root_arg.clone()
+    };
     assert!(
         stderr.contains(&format!(
-            "ripr continue --root {root_arg} --attempt {}",
+            "ripr continue --root {printed_root} --attempt {}",
             ids[0]
         )),
         "must print the continue command for the existing attempt:\n{stderr}"

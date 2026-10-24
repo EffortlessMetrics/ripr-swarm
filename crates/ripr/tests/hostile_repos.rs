@@ -250,9 +250,15 @@ fn option_shaped_base_is_rejected_without_side_effects() -> Result<(), String> {
 fn shell_metacharacter_root_name_does_not_execute() -> Result<(), String> {
     let scratch = Scratch::new("meta")?;
     let marker = "PWNED";
-    let root = scratch
-        .path
-        .join("d$(touch PWNED)`touch PWNED`;touch PWNED&|");
+    // `|` cannot appear in a Windows file name (os error 123), so Windows
+    // carries the cmd/PowerShell metacharacters it does allow instead; the
+    // injection oracle is the same marker check on both hosts.
+    let name = if cfg!(windows) {
+        "d$(touch PWNED)`touch PWNED`;touch PWNED&%COMSPEC%"
+    } else {
+        "d$(touch PWNED)`touch PWNED`;touch PWNED&|"
+    };
+    let root = scratch.path.join(name);
     repo(&root, change_lib)?;
     assert_found_change(&ripr(&root, &["check"], &[])?, "metacharacter root")?;
     let ran = ripr(&root, &["pilot", "--root", ".", "--quiet"], &[])?;

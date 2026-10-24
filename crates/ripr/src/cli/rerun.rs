@@ -692,7 +692,7 @@ fn rerun_gap(
                 "stale_gap_ledger",
                 format!(
                     "gap ledger root `{ledger_root}` does not match rerun root `{}`",
-                    root.display()
+                    crate::output::path::human_path(root)
                 ),
             ));
         }
@@ -1936,8 +1936,8 @@ fn normalize_changed_test(root: &Path, changed_test: &Path) -> Result<PathBuf, S
             .map_err(|err| {
                 format!(
                     "rerun changed test {} is outside root {}: {err}",
-                    changed_test.display(),
-                    root.display()
+                    crate::output::path::human_path(changed_test),
+                    crate::output::path::human_path(root)
                 )
             });
     }

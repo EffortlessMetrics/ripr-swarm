@@ -766,7 +766,7 @@ impl PerlProducerStaging {
                 Err(error) => {
                     return Err(format!(
                         "failed to create Perl exporter staging `{}`: {error}",
-                        directory.display()
+                        crate::output::path::human_path(&directory)
                     ));
                 }
             }
@@ -784,8 +784,8 @@ impl PerlProducerStaging {
             }
             Err(error) => Err(format!(
                 "partial packet cleanup failed at `{}`: {error}; staging retained at `{}`",
-                self.packet.display(),
-                self.directory.display()
+                crate::output::path::human_path(&self.packet),
+                crate::output::path::human_path(&self.directory)
             )),
         };
         match cleanup {
@@ -812,14 +812,14 @@ impl PerlProducerStaging {
             {
                 return Err(format!(
                     "Perl exporter staging cleanup failed at `{}`: {error}; staging retained",
-                    scratch.display()
+                    crate::output::path::human_path(scratch)
                 ));
             }
         }
         std::fs::remove_dir(&self.directory).map_err(|error| {
             format!(
                 "Perl exporter staging cleanup failed at `{}`: {error}; staging retained",
-                self.directory.display()
+                crate::output::path::human_path(&self.directory)
             )
         })
     }
@@ -827,7 +827,7 @@ impl PerlProducerStaging {
     fn retained_failure(&self, reason: impl std::fmt::Display) -> String {
         format!(
             "{reason}; unpublished Perl exporter staging retained at `{}`",
-            self.directory.display()
+            crate::output::path::human_path(&self.directory)
         )
     }
 }
@@ -950,7 +950,7 @@ fn invoke_perl_lsp_producer(
         std::fs::write(&staging.diff, diff_text).map_err(|e| {
             staging.settled_failure(format!(
                 "failed to stage the diff for the Perl exporter at `{}`: {e}",
-                staging.diff.display()
+                crate::output::path::human_path(&staging.diff)
             ))
         })?;
         diff_arg = Some(
@@ -973,7 +973,7 @@ fn invoke_perl_lsp_producer(
     let stderr_file = std::fs::File::create(&staging.stderr).map_err(|e| {
         staging.settled_failure(format!(
             "failed to create Perl exporter stderr capture `{}`: {e}",
-            staging.stderr.display()
+            crate::output::path::human_path(&staging.stderr)
         ))
     })?;
     let mut command = Command::new(&executable);
@@ -1026,7 +1026,7 @@ fn invoke_perl_lsp_producer(
                 std::fs::rename(tmp_path, &packet_path).map_err(|e| {
                     staging.retained_failure(format!(
                         "failed to finalize Perl facts packet `{}`: {e}",
-                        packet_path.display()
+                        crate::output::path::human_path(&packet_path)
                     ))
                 })?;
                 // Publication already committed. A retained sidecar or a
@@ -1037,7 +1037,7 @@ fn invoke_perl_lsp_producer(
                         "{}",
                         terminal_safe(format!(
                             "warning: Perl facts packet published at `{}`; {cleanup}",
-                            packet_path.display()
+                            crate::output::path::human_path(&packet_path)
                         ))
                     );
                 }
@@ -1045,7 +1045,7 @@ fn invoke_perl_lsp_producer(
             }
             Err(staging.settled_failure(format!(
                 "Perl facts exporter exited successfully but wrote no packet at `{}`",
-                tmp_path.display()
+                crate::output::path::human_path(tmp_path)
             )))
         }
         crate::git::ChildWait::TimedOut(_) => {
@@ -1082,8 +1082,8 @@ fn root_relative_arg(root: &Path, path: &Path) -> Result<String, String> {
     let relative = path.strip_prefix(root).map_err(|error| {
         format!(
             "Perl exporter staging path `{}` is outside the analysis root `{}`: {error}",
-            path.display(),
-            root.display()
+            crate::output::path::human_path(path),
+            crate::output::path::human_path(root)
         )
     })?;
     let text = relative.to_string_lossy().replace('\\', "/");

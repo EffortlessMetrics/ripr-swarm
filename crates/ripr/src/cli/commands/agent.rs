@@ -1663,7 +1663,7 @@ fn run_agent_repair_phase(
                 "{}",
                 terminal_safe(format!(
                     "ripr: agent repair --phase before for seam `{seam_id}` at {}",
-                    root.display()
+                    crate::output::path::human_path(&root)
                 ))
             );
 
@@ -1822,7 +1822,7 @@ fn run_agent_repair_phase(
                 "ripr: agent repair --phase after for attempt `{}` (seam `{}`) at {}",
                 attempt.attempt_id.as_str(),
                 attempt.seam_id,
-                root.display()
+                crate::output::path::human_path(&root)
             );
             // A C2a-era gap marker recorded only the symbolic base. It is not
             // re-resolved as if it were the original immutable base: the
@@ -1922,7 +1922,7 @@ fn run_agent_repair_phase(
             let packet_bytes = crate::bounded_input::read(&packet_path).map_err(|error| {
                 format!(
                     "read retained repair packet {} failed: {error}",
-                    packet_path.display()
+                    crate::output::path::human_path(&packet_path)
                 )
             })?;
             let packet_text = String::from_utf8(packet_bytes.clone())
@@ -2294,7 +2294,7 @@ fn run_agent_repair_phase(
                             Ok(apply_record_path) => {
                                 eprintln!(
                                     "ripr: python repair-trust apply record: {}",
-                                    apply_record_path.display()
+                                    crate::output::path::human_path(&apply_record_path)
                                 );
                             }
                             Err(error) => {
@@ -2429,7 +2429,7 @@ fn run_agent_repair_phase(
             }
             eprintln!(
                 "ripr: after phase complete. Receipt: {}",
-                receipt_path.display()
+                crate::output::path::human_path(&receipt_path)
             );
             Ok(())
         }
@@ -2440,7 +2440,7 @@ fn run_agent_repair_phase(
             })?;
             eprintln!(
                 "ripr: agent repair --phase verify for attempt `{attempt_id}` at {}",
-                root.display()
+                crate::output::path::human_path(&root)
             );
             let receipt_path = app::python_repair_verification::run_verification_phase(
                 app::python_repair_verification::VerificationOptions {
@@ -2457,7 +2457,7 @@ fn run_agent_repair_phase(
             let rendered = std::fs::read_to_string(&receipt_path).map_err(|error| {
                 format!(
                     "read verification receipt {} failed: {error}",
-                    receipt_path.display()
+                    crate::output::path::human_path(&receipt_path)
                 )
             })?;
             if json {
@@ -2470,7 +2470,7 @@ fn run_agent_repair_phase(
             }
             eprintln!(
                 "ripr: verification receipt: {} (immutable; execution and static movement are separate observations)",
-                receipt_path.display()
+                crate::output::path::human_path(&receipt_path)
             );
             Ok(())
         }
@@ -2585,7 +2585,7 @@ fn repair_after_summary_lines(receipt_path: &Path) -> Vec<String> {
         Ok(receipt) => repair_receipt_summary_lines(&receipt),
         Err(error) => vec![format!(
             "could not read {} to summarize the result: {error}",
-            receipt_path.display()
+            crate::output::path::human_path(receipt_path)
         )],
     }
 }
