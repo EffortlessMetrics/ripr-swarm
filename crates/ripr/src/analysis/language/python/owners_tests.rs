@@ -1,3 +1,4 @@
+use super::PythonFramework;
 use super::admission::{PythonAdmissionContext, PythonTestFunction, assertion_admission};
 use super::module_constants::{
     PythonModuleConstant, constants_visible_in_function, python_test_rebinding,
@@ -200,7 +201,11 @@ fn owner_from_function(
         &text_for_range(context.source, range),
         !decorators.is_empty() || is_async,
         binding_only,
-    );
+    )
+    .with_calls_own_name(super::module_callees::calls_own_name(
+        &text_for_range(context.source, range),
+        name,
+    ));
     let same_class_callees = super::same_class_callees::same_class_callees_from_body(
         body,
         super::same_class_callees::method_receiver_name(&parameters, &decorators),
@@ -442,16 +447,16 @@ pub(super) fn collect_tests_from_statements(
         match stmt {
             Stmt::FunctionDef(function) if function.name.as_str().starts_with("test") => {
                 let framework = if in_unittest_class {
-                    "unittest"
+                    PythonFramework::Unittest
                 } else {
-                    "pytest"
+                    PythonFramework::Pytest
                 };
                 let name = function.name.to_string();
                 let generated_inputs = super::hypothesis::given_parameter_names(
                     &function.args,
                     &function.decorator_list,
                 );
-                let direct_parametrized = if framework == "pytest" {
+                let direct_parametrized = if framework == PythonFramework::Pytest {
                     super::parametrize::direct_argnames(&function.decorator_list)
                 } else {
                     Vec::new()
@@ -471,7 +476,7 @@ pub(super) fn collect_tests_from_statements(
                 );
                 // pytest does not parametrize unittest methods; Hypothesis
                 // `@example` rows run under either framework.
-                let parametrize = (framework == "pytest")
+                let parametrize = (framework == PythonFramework::Pytest)
                     .then(|| parametrize_cases(source, &function.decorator_list))
                     .flatten()
                     .or_else(|| {
@@ -532,16 +537,16 @@ pub(super) fn collect_tests_from_statements(
             }
             Stmt::AsyncFunctionDef(function) if function.name.as_str().starts_with("test") => {
                 let framework = if in_unittest_class {
-                    "unittest"
+                    PythonFramework::Unittest
                 } else {
-                    "pytest"
+                    PythonFramework::Pytest
                 };
                 let name = function.name.to_string();
                 let generated_inputs = super::hypothesis::given_parameter_names(
                     &function.args,
                     &function.decorator_list,
                 );
-                let direct_parametrized = if framework == "pytest" {
+                let direct_parametrized = if framework == PythonFramework::Pytest {
                     super::parametrize::direct_argnames(&function.decorator_list)
                 } else {
                     Vec::new()
@@ -553,7 +558,7 @@ pub(super) fn collect_tests_from_statements(
                 let assertions = collect_assertions_from_statements(&function.body, source, false);
                 // pytest does not parametrize unittest methods; Hypothesis
                 // `@example` rows run under either framework.
-                let parametrize = (framework == "pytest")
+                let parametrize = (framework == PythonFramework::Pytest)
                     .then(|| parametrize_cases(source, &function.decorator_list))
                     .flatten()
                     .or_else(|| {
@@ -759,7 +764,7 @@ fn qualified_test_name(class_context: Option<&str>, name: &str) -> String {
         .unwrap_or_else(|| name.to_string())
 }
 
-fn fixture_parameter_names(args: &ast::Arguments, framework: &str) -> Vec<String> {
+fn fixture_parameter_names(args: &ast::Arguments, framework: PythonFramework) -> Vec<String> {
     let mut names: Vec<String> = args
         .posonlyargs
         .iter()
@@ -776,7 +781,7 @@ fn fixture_parameter_names(args: &ast::Arguments, framework: &str) -> Vec<String
     names.retain(|name| {
         name != "self"
             && name != "cls"
-            && (framework == "pytest" || !matches!(name.as_str(), "subTest"))
+            && (framework == PythonFramework::Pytest || !matches!(name.as_str(), "subTest"))
     });
     names.sort();
     names.dedup();

@@ -196,7 +196,7 @@ fn a_path_value_in_an_argument_is_a_limit_not_a_gap() -> Result<(), String> {
 }
 
 #[test]
-fn a_function_pointer_binding_is_a_limit_not_a_gap() -> Result<(), String> {
+fn a_typed_function_pointer_binding_is_credited_by_the_pointer_pin() -> Result<(), String> {
     let lib = values(
         "    #[test]
     fn through_pointer() {
@@ -205,7 +205,22 @@ fn a_function_pointer_binding_is_a_limit_not_a_gap() -> Result<(), String> {
     }
 ",
     );
-    withheld(&lib, BEFORE, AFTER, "pointer binding")
+    // #9478 reads a safe typed function-pointer call as a pin on the owner's
+    // return, so the limit never needs to apply.
+    credited(&lib, BEFORE, AFTER, "typed pointer binding")
+}
+
+#[test]
+fn an_untyped_function_value_binding_is_a_limit_not_a_gap() -> Result<(), String> {
+    let lib = values(
+        "    #[test]
+    fn through_value() {
+        let f = inc;
+        assert!(f(2) > 0);
+    }
+",
+    );
+    withheld(&lib, BEFORE, AFTER, "untyped value binding")
 }
 
 #[test]
@@ -253,6 +268,51 @@ fn a_direct_weak_assertion_keeps_the_gap() -> Result<(), String> {
 ",
     );
     keeps_gap(&lib, BEFORE, AFTER, "direct weak assertion")
+}
+
+fn with_other_module(lib: &str) -> String {
+    lib.replacen(
+        "#[cfg(test)]",
+        "pub mod other {
+    pub fn inc(x: u32) -> u32 {
+        x + 9
+    }
+}
+
+#[cfg(test)]",
+        1,
+    )
+}
+
+#[test]
+fn an_unrelated_qualified_value_beside_a_direct_call_keeps_the_gap() -> Result<(), String> {
+    let lib = with_other_module(&values(
+        "    #[test]
+    fn positive() {
+        assert!(inc(1) > 0);
+        assert_eq!([1, 2].map(other::inc), [10, 11]);
+    }
+",
+    ));
+    keeps_gap(
+        &lib,
+        BEFORE,
+        AFTER,
+        "value of a different same-leaf function",
+    )
+}
+
+#[test]
+fn the_owners_own_qualified_value_beside_a_direct_call_is_a_limit() -> Result<(), String> {
+    let lib = with_other_module(&values(
+        "    #[test]
+    fn positive() {
+        assert!(inc(1) > 0);
+        assert_eq!([1, 2].map(super::inc), [2, 3]);
+    }
+",
+    ));
+    withheld(&lib, BEFORE, AFTER, "value of the owner through super::")
 }
 
 #[test]

@@ -262,7 +262,11 @@ mod tests {
 
     #[test]
     fn wiring_fails_an_unlisted_false_row_and_keeps_the_earlier_failure() -> Result<(), String> {
-        let (_, rows) = committed_rust_rows()?;
+        let (_, mut rows) = committed_rust_rows()?;
+        // The committed corpus can have no false row left; the negative control
+        // must not depend on one, so it makes a committed row false itself.
+        let row = rows.first_mut().ok_or("the committed corpus has no rows")?;
+        row.outcome = Outcome::FalseActionable;
         let empty = crate::tests::temp_dir("known-false-empty-ledger");
         std::fs::create_dir_all(&empty).map_err(|err| err.to_string())?;
         std::fs::write(

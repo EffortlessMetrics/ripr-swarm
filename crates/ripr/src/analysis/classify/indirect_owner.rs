@@ -21,7 +21,7 @@
 
 use super::gap_admission::{is_ignored, withhold_gap};
 use crate::analysis::extract::mask_comments_and_strings;
-use crate::analysis::facts::{FunctionFact, TestFact};
+use crate::analysis::facts::{FunctionContainer, FunctionFact, TestFact};
 use crate::analysis::rust_index::{RustIndex, is_test_file};
 use crate::domain::*;
 
@@ -150,9 +150,7 @@ fn judged_for_owner(
         // A test that names the owner as a value is a candidate only where it
         // can see the owner: its own file, or an integration test.
         let sees_owner = test.file == owner.file || is_test_file(&test.file);
-        if sees_owner
-            && (!called || is_related(test, false))
-            && names_owner_as_value(&code, &owner.name)
+        if sees_owner && (!called || is_related(test, false)) && names_owner_as_value(&code, owner)
         {
             judged.push((label(test), Form::FunctionValue));
             continue;
@@ -230,9 +228,13 @@ fn identifier_offsets<'a>(code: &'a str, name: &'a str) -> impl Iterator<Item = 
 }
 
 /// The test's code names `name` as a value: not called, not a macro, not a
-/// method, field label or definition, and the test binds no local of that
-/// name.
-fn names_owner_as_value(code: &str, name: &str) -> bool {
+/// method, field label or definition, the test binds no local of that name,
+/// and a qualifying path (`other::inc`) can still name the owner.
+fn names_owner_as_value(code: &str, owner: &FunctionFact) -> bool {
+    names_value(code, &owner.name, &owner_path_names(owner))
+}
+
+fn names_value(code: &str, name: &str, owner_names: &[String]) -> bool {
     if is_bound_locally(code, name) {
         return false;
     }
@@ -244,8 +246,71 @@ fn names_owner_as_value(code: &str, name: &str) -> bool {
         let imported = line_starts_with_use(code, at);
         let called = after.starts_with(['(', '!']) || after.starts_with("::<");
         let field_label = after.starts_with(':') && !after.starts_with("::");
-        !(defined || method || imported || called || field_label)
+        !(defined
+            || method
+            || imported
+            || called
+            || field_label
+            || !qualifier_may_name_owner(&code[..at], owner_names))
     })
+}
+
+/// Path segments that identify where the owner lives: `self`, `super` and
+/// `crate`, the components of its file path (module and crate directory names,
+/// `-` read as `_`), and the self type and trait of an impl it sits in.
+fn owner_path_names(owner: &FunctionFact) -> Vec<String> {
+    let mut names: Vec<String> = ["self", "super", "crate", "Self"]
+        .into_iter()
+        .map(String::from)
+        .collect();
+    for component in owner.file.components() {
+        if let Some(text) = component.as_os_str().to_str() {
+            let stem = text.strip_suffix(".rs").unwrap_or(text);
+            names.push(stem.replace('-', "_"));
+        }
+    }
+    let mut add_path = |path: &str| {
+        names.extend(
+            path.split(|ch: char| !is_ident_char(ch))
+                .filter(|segment| !segment.is_empty())
+                .map(String::from),
+        );
+    };
+    match &owner.item.container {
+        FunctionContainer::Inherent { self_ty } => add_path(self_ty),
+        FunctionContainer::TraitImpl {
+            trait_path,
+            self_ty,
+        } => {
+            add_path(trait_path);
+            add_path(self_ty);
+        }
+        _ => {}
+    }
+    names
+}
+
+/// Whether the path written before the owner's name (`other::` in
+/// `other::inc`) can still be the owner's: no qualifier, or one whose first or
+/// last segment is among the names that locate the owner. A qualifier that
+/// names neither is a different entity with the same leaf name.
+fn qualifier_may_name_owner(before: &str, owner_names: &[String]) -> bool {
+    let Some(path) = before.strip_suffix("::") else {
+        return true;
+    };
+    let start = path
+        .rfind(|ch: char| !(is_ident_char(ch) || ch == ':'))
+        .map_or(0, |at| at + 1);
+    let segments: Vec<&str> = path[start..]
+        .split("::")
+        .filter(|segment| !segment.is_empty())
+        .collect();
+    let known = |segment: &&str| owner_names.iter().any(|name| name == segment);
+    match (segments.first(), segments.last()) {
+        (Some(first), Some(last)) => known(first) || known(last),
+        // A leading `::` or a generic qualifier (`<T as Trait>::inc`) is not read.
+        _ => false,
+    }
 }
 
 fn ends_at_boundary(text: &str) -> bool {
@@ -392,36 +457,57 @@ fn call_end(code: &str, open: usize) -> Option<usize> {
 mod tests {
     use super::*;
 
+    fn owner_names() -> Vec<String> {
+        ["self", "super", "crate", "Self", "src", "lib"]
+            .into_iter()
+            .map(String::from)
+            .collect()
+    }
+
+    fn value(code: &str, name: &str) -> bool {
+        names_value(code, name, &owner_names())
+    }
+
     #[test]
     fn a_path_value_is_named_and_a_call_is_not() {
         let code = "assert_eq!(v.into_iter().map(inc).collect::<Vec<_>>(), w);";
-        assert!(names_owner_as_value(code, "inc"));
-        assert!(!names_owner_as_value("assert_eq!(inc(1), 2);", "inc"));
-        assert!(!names_owner_as_value("assert_eq!(inc (1), 2);", "inc"));
-        assert!(!names_owner_as_value("inc!(1);", "inc"));
-        assert!(!names_owner_as_value("x.inc;", "inc"));
-        assert!(!names_owner_as_value("let inc = 3; use_it(inc);", "inc"));
-        assert!(!names_owner_as_value("use super::inc;\n", "inc"));
-        assert!(!names_owner_as_value("S { inc: 1 };", "inc"));
-        assert!(!names_owner_as_value("let increment = 3;", "inc"));
+        assert!(value(code, "inc"));
+        assert!(!value("assert_eq!(inc(1), 2);", "inc"));
+        assert!(!value("assert_eq!(inc (1), 2);", "inc"));
+        assert!(!value("inc!(1);", "inc"));
+        assert!(!value("x.inc;", "inc"));
+        assert!(!value("let inc = 3; use_it(inc);", "inc"));
+        assert!(!value("use super::inc;\n", "inc"));
+        assert!(!value("S { inc: 1 };", "inc"));
+        assert!(!value("let increment = 3;", "inc"));
+    }
+
+    #[test]
+    fn a_qualified_path_names_the_owner_only_when_it_locates_the_owner() {
+        // A same-leaf function in another module is a different entity.
+        assert!(!value("assert_eq!([1, 2].map(other::inc), w);", "inc"));
+        assert!(!value("f(a::b::inc);", "inc"));
+        assert!(!value("f(<T as Tr>::inc);", "inc"));
+        assert!(!value("f(::inc);", "inc"));
+        // The owner's own module, `super`, `self`, `crate` and the owner's file stem.
+        assert!(value("assert_eq!([1, 2].map(super::inc), w);", "inc"));
+        assert!(value("assert_eq!([1, 2].map(self::inc), w);", "inc"));
+        assert!(value("assert_eq!([1, 2].map(crate::lib::inc), w);", "inc"));
+        assert!(value("assert_eq!([1, 2].map(lib::inc), w);", "inc"));
+        // One qualified other-module mention does not hide a bare value mention.
+        assert!(value("f(other::inc); g(inc);", "inc"));
     }
 
     #[test]
     fn a_function_pointer_binding_is_a_value() {
         let code = "let f: fn(u32) -> u32 = call_through_pointer; assert_eq!(f(2), 6);";
-        assert!(names_owner_as_value(code, "call_through_pointer"));
+        assert!(value(code, "call_through_pointer"));
     }
 
     #[test]
     fn a_local_with_the_owner_name_is_not_the_owner() {
-        assert!(!names_owner_as_value(
-            "let mut inc = 1; inc += 1; keep(inc);",
-            "inc"
-        ));
-        assert!(!names_owner_as_value(
-            "let go = |inc: u32| inc + 1; go(1);",
-            "inc"
-        ));
+        assert!(!value("let mut inc = 1; inc += 1; keep(inc);", "inc"));
+        assert!(!value("let go = |inc: u32| inc + 1; go(1);", "inc"));
     }
 
     #[test]
@@ -433,9 +519,9 @@ mod tests {
             "let go = |total| total + 1; go(1);",
             "match r { Ok(total) => keep(total), Err(_) => {} }",
         ] {
-            assert!(!names_owner_as_value(code, "total"), "{code}");
+            assert!(!value(code, "total"), "{code}");
         }
-        assert!(names_owner_as_value("rows.map(total).count();", "total"));
+        assert!(value("rows.map(total).count();", "total"));
     }
 
     #[test]

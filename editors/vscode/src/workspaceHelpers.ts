@@ -33,6 +33,14 @@ export function riprDocumentSelectorsForWorkspace(
   }));
 }
 
+// The server reads gitTimeoutMs / refreshDeadlineMs as unsigned integers and
+// rejects the whole workspace/configuration pull when one is a fractional
+// JSON number, discarding every other ripr setting from that response. A
+// non-integer is sent as undefined so the server default applies.
+export function integerSetting(value: number | undefined): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined;
+}
+
 export function extensionVersion(context: vscode.ExtensionContext): string {
   const version = context.extension?.packageJSON?.version;
   return typeof version === 'string' && version.trim() !== '' ? version.replace(/^v/, '') : '0.8.0';

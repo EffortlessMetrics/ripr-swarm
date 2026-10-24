@@ -124,8 +124,11 @@ second stage vocabulary.
    stderr.
 3. `--format sarif` and `--format github` with and without `--quiet` produce
    identical stdout.
-4. `--diff` pointing at a missing file exits non-zero, projects
-   `ripr progress: failed [diff]`, and never `completed`.
+4. `--diff` pointing at a missing file exits non-zero, prints the real error,
+   projects no `failed` line (the path is input the user can fix, #9922), and
+   never `completed`. An unresolvable base, unusable root, or invalid config
+   or suppression policy behaves the same; genuine internal failures still
+   project `ripr progress: failed`.
 5. A TTY run that finishes under 250ms emits no stage spray.
 6. A blocked analyzing stage keeps emitting heartbeats at most one per 8
    seconds of stage time; no 10s window of a minutes-long stage is silent.

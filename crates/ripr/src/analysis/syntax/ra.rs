@@ -5,10 +5,15 @@ use ra_ap_syntax::{
     AstNode, SourceFile, TextSize,
     ast::{self, HasAttrs, HasGenericArgs, HasGenericParams, HasName},
 };
+mod closure_callbacks;
 #[cfg(test)]
 mod module_scope_walk_tests;
 mod probe_shapes;
 mod property_macros;
+pub(crate) use closure_callbacks::{
+    InvokedCallbackParam, closure_argument_positions, invoked_callback_params, macro_call_columns,
+    passes_call_making_closure,
+};
 use probe_shapes::extract_parser_probe_shapes;
 #[cfg(test)]
 mod probe_shape_walk_tests;
@@ -1147,7 +1152,10 @@ fn disambiguate_duplicate_symbol_ids(functions: &mut [FunctionFact]) {
     }
 }
 
-fn has_test_attribute(function: &ast::Fn) -> bool {
+/// Whether a function carries a test-framework attribute (`#[test]`,
+/// `#[tokio::test]`, `#[async_std::test]`, `#[rstest]`). Parser-backed, so
+/// commented-out or string-embedded lookalikes never count.
+pub(crate) fn has_test_attribute(function: &ast::Fn) -> bool {
     function.attrs().any(|attr| {
         if cfg_predicates::attribute_introduces_only_test(&attr.syntax().text().to_string()) {
             return true;
