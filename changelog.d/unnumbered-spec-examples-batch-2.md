@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- Numbered the acceptance examples of RIPR-SPEC-0168, 0171 and 0172 and mapped them in the Rust verdict corpus: four new runtime-labeled cases (loop body in `unsafe {}`, custom `[lib] path` dependent, import with the call only in a comment and string, nested-package owner), four existing cases cited, five examples waived with reasons; the custom `[lib] path` row reads as a gap and is tracked as known false (#10101).
