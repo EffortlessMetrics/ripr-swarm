@@ -13407,7 +13407,12 @@ fn check_rust_source_role_authority() -> Result<(), String> {
     /// the reason it is not a role authority. New entries need the reason in
     /// the surrounding code and a review that the check stays display- or
     /// identity-scoped.
-    const ALLOWED_SITE_PATTERNS: [(&str, &str, &str); 8] = [
+    const ALLOWED_SITE_PATTERNS: [(&str, &str, &str); 9] = [
+        (
+            "crates/ripr/src/output/related_test_role_tests.rs",
+            "\"#[cfg(test)]\"",
+            "#5563 source-text guard strips test modules from production text it scans for miss-based eligibility; it decides no analysis role",
+        ),
         (
             "crates/ripr/src/output/review_comments.rs",
             "starts_with(\"tests",

@@ -221,9 +221,57 @@ const ELIGIBILITY_CALLS: [&str; 11] = [
     ".is_some_and(",
 ];
 
-/// Production text of a source file: everything before its first test module.
-fn production_text(source: &str) -> &str {
-    source.split("\n#[cfg(test)]").next().unwrap_or(source)
+/// Source with every `#[cfg(test)] mod name { .. }` block (and `mod name;`
+/// declaration) removed. A `#[cfg(test)]` on any other item (a helper `fn`, a
+/// `use`) is kept: only real test modules are the boundary.
+fn production_text(source: &str) -> String {
+    const MARK: &str = "#[cfg(test)]";
+    let mut out = String::new();
+    let mut rest = source;
+    while let Some(at) = rest.find(MARK) {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + MARK.len()..];
+        let mut item = after.trim_start();
+        while item.starts_with("#[") {
+            let close = item.find(']').map_or(item.len(), |i| i + 1);
+            item = item[close..].trim_start();
+        }
+        let item = item
+            .strip_prefix("pub(crate)")
+            .or_else(|| item.strip_prefix("pub(super)"))
+            .or_else(|| item.strip_prefix("pub"))
+            .unwrap_or(item)
+            .trim_start();
+        let is_mod = item.strip_prefix("mod ").is_some();
+        if !is_mod {
+            out.push_str(MARK);
+            rest = after;
+            continue;
+        }
+        let header_end = item.find(['{', ';']).unwrap_or(item.len());
+        if item[header_end..].starts_with(';') {
+            rest = &item[header_end + 1..];
+        } else {
+            let mut depth = 0usize;
+            let mut end = item.len();
+            for (offset, ch) in item[header_end..].char_indices() {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = header_end + offset + 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            rest = &item[end..];
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 fn reads_miss(text: &str) -> bool {
@@ -273,7 +321,7 @@ fn miss_reading_closures(source: &str) -> Vec<String> {
 
 /// Documented explanation-only readers and producers allowed to name the miss
 /// inside such a closure: `(path suffix, snippet fragment)`.
-const MISS_CLOSURE_ALLOWLIST: [(&str, &str); 3] = [
+const MISS_CLOSURE_ALLOWLIST: [(&str, &str); 4] = [
     // Tracked RIPR-SPEC-0224 gap: the exact-oracle next step still excludes
     // `missing_exact_assertion` rows after the role check; eligibility itself
     // is the role.
@@ -291,28 +339,68 @@ const MISS_CLOSURE_ALLOWLIST: [(&str, &str); 3] = [
         "analysis/classifier/finding.rs",
         ".filter(|test| test.miss.is_none())",
     ),
+    // Producers rewriting a miss value (an `Option<RelatedTestMiss>` filter,
+    // not a row filter): proc-macro strip and `restore_reveal_misses`.
+    (
+        "analysis/classifier.rs",
+        ".filter(|miss| *miss != RelatedTestMiss::NoCallPath)",
+    ),
 ];
 
-fn production_sources(
-    dir: &std::path::Path,
-    out: &mut Vec<(String, String)>,
-) -> Result<(), String> {
+/// Names of modules a parent declares as `#[cfg(test)] mod name;`.
+fn declared_test_modules(texts: &[(String, String)]) -> std::collections::BTreeSet<String> {
+    let mut names = std::collections::BTreeSet::new();
+    for (_, text) in texts {
+        for (at, _) in text.match_indices("#[cfg(test)]") {
+            let item = text[at + "#[cfg(test)]".len()..].trim_start();
+            let item = item
+                .strip_prefix("pub(crate)")
+                .or_else(|| item.strip_prefix("pub(super)"))
+                .or_else(|| item.strip_prefix("pub"))
+                .unwrap_or(item)
+                .trim_start();
+            if let Some((name, _)) = item
+                .strip_prefix("mod ")
+                .and_then(|decl| decl.split_once(';'))
+                .filter(|(name, _)| !name.contains('{'))
+            {
+                names.insert(name.trim().to_string());
+            }
+        }
+    }
+    names
+}
+
+fn collect_files(dir: &std::path::Path, out: &mut Vec<(String, String)>) -> Result<(), String> {
     for entry in std::fs::read_dir(dir).map_err(|error| error.to_string())? {
         let path = entry.map_err(|error| error.to_string())?.path();
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         if path.is_dir() {
-            if name != "tests" {
-                production_sources(&path, out)?;
-            }
-        } else if name.ends_with(".rs") && !name.contains("tests") {
+            collect_files(&path, out)?;
+        } else if path.extension().is_some_and(|ext| ext == "rs") {
             let text = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
-            out.push((
-                path.display().to_string(),
-                production_text(&text).to_string(),
-            ));
+            out.push((path.display().to_string(), text));
         }
     }
     Ok(())
+}
+
+/// Production sources: every file except real test-module files (declared
+/// `#[cfg(test)] mod name;` by a parent, or under a `tests` directory), with
+/// inline test modules stripped.
+fn production_sources(dir: &std::path::Path) -> Result<Vec<(String, String)>, String> {
+    let mut all = Vec::new();
+    collect_files(dir, &mut all)?;
+    let test_modules = declared_test_modules(&all);
+    Ok(all
+        .into_iter()
+        .filter(|(path, _)| {
+            let path = std::path::Path::new(path);
+            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            let in_tests_dir = path.components().any(|c| c.as_os_str() == "tests");
+            !in_tests_dir && !test_modules.contains(stem)
+        })
+        .map(|(path, text)| (path, production_text(&text)))
+        .collect())
 }
 
 /// Control 7: the eligibility helpers never name the miss, and no production
@@ -336,16 +424,31 @@ fn decision_helpers_never_branch_on_the_miss() -> Result<(), String> {
             "helper `{name}` reads the miss"
         );
     }
-    let mut sources = Vec::new();
-    production_sources(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
-        &mut sources,
-    )?;
+    let sources =
+        production_sources(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"))?;
     assert!(
         sources.len() > 100,
         "scan found only {} files",
         sources.len()
     );
+    // Known consumers must be scanned substantially, not cut at an early
+    // `#[cfg(test)]` helper.
+    for (suffix, minimum_lines) in [
+        ("analysis/classify/reveal.rs", 5000),
+        ("analysis/classifier.rs", 300),
+        ("analysis/language/rust/lexical_test_grip.rs", 100),
+        ("analysis/language/rust/oracles.rs", 500),
+    ] {
+        let (_, text) = sources
+            .iter()
+            .find(|(path, _)| path.ends_with(suffix))
+            .ok_or_else(|| format!("{suffix} was not scanned"))?;
+        assert!(
+            text.lines().count() >= minimum_lines,
+            "{suffix} scanned only {} lines",
+            text.lines().count()
+        );
+    }
     let mut violations = Vec::new();
     for (path, source) in &sources {
         assert!(
@@ -378,5 +481,11 @@ fn the_miss_closure_scan_catches_multi_line_and_helper_shapes() {
     let clean = "rows.iter().filter(|t| t.is_contributing() && t.miss_support.is_none())";
     assert!(miss_reading_closures(clean).is_empty());
     let test_tail = "fn a() {}\n#[cfg(test)]\nmod tests { fn b(r: &[RelatedTest]) { r.iter().any(|t| t.miss.is_some()); } }";
-    assert!(miss_reading_closures(production_text(test_tail)).is_empty());
+    assert!(miss_reading_closures(&production_text(test_tail)).is_empty());
+    // An early `#[cfg(test)]` helper is not a test-module boundary.
+    let early_helper = "#[cfg(test)]\nfn helper() {}\nfn production(rows: &[RelatedTest]) -> usize {\n    rows.iter()\n        .filter(|row| {\n            row.line > 0\n                && row.miss.is_none()\n        })\n        .count()\n}\n#[cfg(test)]\nmod tests {\n    fn t() {}\n}\nfn after_tests(r: &[RelatedTest]) { r.iter().any(|t| t.is_unmatched()); }\n";
+    let text = production_text(early_helper);
+    assert!(text.contains("fn production") && text.contains("fn after_tests"));
+    assert!(!text.contains("fn t()"));
+    assert_eq!(miss_reading_closures(&text).len(), 2);
 }
