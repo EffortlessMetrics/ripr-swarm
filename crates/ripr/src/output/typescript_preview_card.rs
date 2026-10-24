@@ -1821,6 +1821,7 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
             }],
             recommended_next_step: None,
             language: Some(LanguageId::TypeScript),

@@ -2360,15 +2360,26 @@ the registry. Limits: it does not check cell states, tier ceilings or docs text
 per-language disposition tests), the registry's relation to
 `metrics/capabilities.toml`, or non-default feature builds. `--registry-json`
 reads a saved registry without building and can be stale; the report says so.
-It is not part of `precommit`, `check-pr` or any required lane (it requires a
-`ripr` build), so it reports failures only when run; hosted wiring is a
-follow-up on #5531.
+It is not part of `precommit` or `check-pr` (it requires a `ripr` build, which
+`precommit` must not force). It is hosted: `rust-gates.yml` runs it as the
+unconditional `capability_producers` step after `fixtures` (the `ripr` build is
+already warm), and the `routed-rust.yml` docs-gate runs it when a docs-only PR
+changes `docs/specs/**` or `docs/status/SUPPORT_TIERS.md` (a renamed spec is the
+one docs-only way to break a `proof_refs` entry).
 
 ## Capability Registry Docs Block
 
 `cargo xtask capability-docs [--check | --write] [--markdown-file <path>]` keeps
 the generated `<!-- capability-registry:begin ... end -->` block in
-`docs/status/SUPPORT_TIERS.md` equal to the registry (#5531). There is one
+`docs/status/SUPPORT_TIERS.md` and in `docs/LANGUAGE_ADAPTER_PREVIEW.md` equal
+to the registry (#5531). Both documents embed the same rendering; a marker
+pair missing from either is a failure, and `--write` validates and splices every
+document in memory before writing any (an I/O error mid-write can leave a
+partial state that a re-run converges). The preview guide's remaining prose is checked by the
+`language_capability_drift` test: it may not state a `usable alpha` tier (the
+block owns per-cell tiers) and may say `<cell id> is not_proven` only of a cell
+the registry lacks or holds at `not_proven` (backticks, emphasis, hard wraps
+and the verbs is/are/remains/stays are normalized). There is one
 renderer, in the `ripr` library; `ripr capabilities --markdown` prints it and
 the command builds `ripr`, runs that, and compares or splices the exact text.
 The in-crate `language_capability_drift` test checks the same renderer, but a
@@ -2384,13 +2395,21 @@ run.
 - `--markdown-file` reads a saved rendering instead of building (offline, can be
   stale; the report says so).
 
-Limits and remaining gap: it is `ci_enforced=false` and is not part of
-`precommit`, `check-pr` or any required lane. Producing the rendering needs a
-`ripr` build, which `precommit` must not force, and the docs-only route does not
-build Rust. Until a hosted lane or a docs-gate step runs it (a follow-up on
-#5531), run it by hand after editing `domain/language_capability.rs` or the
-block. It does not check tier prose or row bindings (`check-support-tiers` and
-the drift test).
+Hosted wiring (#5531): `rust-gates.yml` runs `capability-docs --check` as the
+unconditional `capability_docs` step after `fixtures` on every non-docs-only
+lane, so registry drift (an edit to `domain/language_capability.rs`) fails the
+required `Ripr Rust Small Result`. For a docs-only PR the `routed-rust.yml`
+docs-gate runs it only when the PR changes `docs/status/SUPPORT_TIERS.md`,
+`docs/LANGUAGE_ADAPTER_PREVIEW.md` or `docs/specs/**`, so a hand edit of the block fails the same required result
+while other docs-only PRs build nothing extra. Both are existing jobs of the
+existing `pull_request`/`merge_group` workflow: no new trigger, permission,
+secret or `pull_request_target`, and candidate code runs only where
+`cargo xtask precommit` already ran it. A hosted run of the new step is not
+proof the wiring works; the local negative experiment is (hand-edit the block,
+`cargo xtask capability-docs --check` exits non-zero), and the workflow
+contract tests pin the step shape. It stays out of `precommit` and `check-pr`
+because producing the rendering needs a `ripr` build. It does not check tier
+prose or row bindings (`check-support-tiers` and the drift test).
 
 ## Principles
 

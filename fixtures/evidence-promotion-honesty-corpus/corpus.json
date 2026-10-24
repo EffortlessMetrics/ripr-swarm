@@ -5,6 +5,146 @@
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
   "cases": [
     {
+      "id": "rust_pointer_owner_invisible_input",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_return_pin_pointer_invisible_input",
+      "vector": "typed_pointer_must_not_credit_an_input_equal_before_and_after",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
+      "id": "rust_pointer_owner_mask_rebound",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_return_pin_pointer_mask_rebound",
+      "vector": "typed_pointer_must_not_credit_an_overwritten_mask_operand",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
+      "id": "rust_pointer_owner_mask_unexercised",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_return_pin_pointer_mask_unexercised",
+      "vector": "typed_pointer_must_not_credit_unexercised_mask_bits",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
+      "id": "rust_pointer_owner_cfg_binding",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_return_pin_pointer_cfg_binding",
+      "vector": "typed_pointer_must_not_lend_owner_identity_cfg_binding",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
+      "id": "rust_pointer_owner_glob_shadow",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_return_pin_pointer_glob_shadow",
+      "vector": "typed_pointer_must_not_lend_owner_identity_glob_shadow",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
+      "id": "rust_pointer_owner_raw_shadow",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_return_pin_pointer_raw_shadow",
+      "vector": "typed_pointer_must_not_lend_owner_identity_raw_shadow",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
+      "id": "rust_pointer_owner_scope_escape",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_return_pin_pointer_scope_escape",
+      "vector": "typed_pointer_must_not_lend_owner_identity_scope_escape",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
       "id": "rust_competing_reverse_effect_oracle_side_effect",
       "language": "rust",
       "tier": "pure",
@@ -3179,11 +3319,34 @@
         },
         {
           "type": "expected_class",
-          "class": "weakly_exposed"
+          "class": "reachable_unrevealed"
         },
         {
           "type": "maximum_class",
           "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_unreached_workspace_trait_impl_borrows_no_oracle",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/unreached_workspace_trait_impl_borrows_no_oracle",
+      "vector": "same_file_test_of_another_function_never_lends_a_workspace_trait_impl_its_oracle",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
         }
       ]
     },
@@ -7872,7 +8035,7 @@
         },
         {
           "type": "expected_class",
-          "class": "weakly_exposed"
+          "class": "reachable_unrevealed"
         },
         {
           "type": "expected_oracle",
@@ -7914,7 +8077,7 @@
         },
         {
           "type": "expected_class",
-          "class": "weakly_exposed"
+          "class": "reachable_unrevealed"
         },
         {
           "type": "expected_oracle",
@@ -7956,7 +8119,7 @@
         },
         {
           "type": "expected_class",
-          "class": "weakly_exposed"
+          "class": "reachable_unrevealed"
         },
         {
           "type": "expected_oracle",
@@ -8208,7 +8371,7 @@
         },
         {
           "type": "expected_class",
-          "class": "weakly_exposed"
+          "class": "reachable_unrevealed"
         },
         {
           "type": "maximum_class",
@@ -8385,7 +8548,7 @@
         },
         {
           "type": "expected_class",
-          "class": "weakly_exposed"
+          "class": "reachable_unrevealed"
         },
         {
           "type": "expected_related_test",
@@ -8451,7 +8614,7 @@
         },
         {
           "type": "expected_class",
-          "class": "weakly_exposed"
+          "class": "reachable_unrevealed"
         },
         {
           "type": "expected_related_test",
@@ -8517,7 +8680,7 @@
         },
         {
           "type": "expected_class",
-          "class": "weakly_exposed"
+          "class": "reachable_unrevealed"
         },
         {
           "type": "expected_related_test",
@@ -11607,6 +11770,79 @@
           "class": "reachable_unrevealed"
         }
       ]
+    },
+    {
+      "id": "rust_closure_callback_benign_macro_operand_credited",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-closure-callback-benign-macro-operand.json",
+      "vector": "closure_callback_helper_assertion_credited_with_benign_transparent_macro_operand",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::greet",
+          "expression": "format!(\"hello {name}\")",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
+        }
+      ]
+    },
+    {
+      "id": "rust_closure_callback_macro_operand_return_not_credited",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-closure-callback-macro-operand-return.json",
+      "vector": "closure_callback_helper_assertion_not_credited_when_macro_operand_hides_a_return",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::greet",
+          "expression": "format!(\"hello {name}\")",
+          "grip_class": "reachable_unrevealed",
+          "reach": "yes"
+        }
+      ]
+    },
+    {
+      "id": "rust_closure_callback_macro_preceding_return_not_credited",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-closure-callback-macro-preceding-return.json",
+      "vector": "closure_callback_helper_assertion_not_credited_when_preceding_macro_hides_a_return",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::greet",
+          "expression": "format!(\"hello {name}\")",
+          "grip_class": "reachable_unrevealed",
+          "reach": "yes"
+        }
+      ]
+    },
+    {
+      "id": "rust_macro_passthrough_sibling_binding_not_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/macro_passthrough_sibling_item_macro_binding",
+      "vector": "identity_item_macro_wrapped_test_with_sibling_binding_macro_never_promoted",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        }
+      ],
+      "control": "must_stay_no_static_path"
     },
     {
       "id": "rust_module_reach_control_qualified",

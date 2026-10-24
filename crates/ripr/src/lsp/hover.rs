@@ -628,7 +628,7 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
             // listing a `none` oracle grade.
             let why = crate::output::related_test_miss::related_test_miss_reason(
                 test,
-                &finding.activation.missing_discriminators,
+                &finding.probe.family,
             );
             // #5927: only an unmatched row uses the `misses/checked` form, as
             // in human output; a matched row keeps its oracle kind and
@@ -1626,6 +1626,7 @@ mod seam_hover_tests {
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: super::super::state::UnavailableAdapterCoverage::default(),
+            language_view: None,
         }
     }
 

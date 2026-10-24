@@ -2420,6 +2420,7 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
             }];
         } else {
             finding.activation.missing_discriminators.clear();
@@ -4765,6 +4766,7 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
             });
         }
         finding
@@ -5613,6 +5615,7 @@ mod tests {
             relation_reason: Some(reason),
             relation_confidence: Some(reason.confidence()),
             miss: Some(RelatedTestMiss::NoCallPath),
+            miss_support: None,
             ..template.clone()
         };
         finding.related_tests = vec![
@@ -5679,7 +5682,8 @@ mod tests {
             Some(Some(crate::domain::RelationReason::WeakTokenSubstring))
         );
         assert!(
-            retained[0].contains("no call to the changed code found; linked by name only"),
+            retained[0]
+                .contains("no established call path to the changed code; linked by name only"),
             "disclosure stays visible: {}",
             retained[0]
         );
@@ -5838,6 +5842,7 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
             });
         }
         assert_eq!(finding.related_tests.len(), 9);
@@ -5984,6 +5989,7 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
             });
         }
         for index in 0..13 {
@@ -6134,6 +6140,7 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
         });
 
         let digest = super::sections::render_finding_digest_with_config(
@@ -6179,6 +6186,7 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
             })
             .collect();
         finding.related_tests_matched_total = Some(81);
@@ -7380,6 +7388,7 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
         }];
         finding.recommended_next_step = Some("Add a focused Perl assertion.".to_string());
         finding.language = Some(LanguageId::Perl);
@@ -7675,6 +7684,7 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
             }],
             recommended_next_step: Some("Add assertion for disabled path result.".to_string()),
             language: None,
@@ -8674,6 +8684,7 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
         };
         finding.related_tests.push(related_test.clone());
         let mut duplicate_finding = unknown_finding();
@@ -8730,6 +8741,7 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
         };
         let packed = |lines: std::ops::Range<usize>, total: usize| {
             let mut finding = unknown_finding();
@@ -9269,10 +9281,10 @@ mod tests {
         let [direct, advisory] = finding.related_tests.as_slice() else {
             return Err(format!("expected two rows: {:?}", finding.related_tests));
         };
-        let why = related_test_miss_reason(direct, &finding.activation.missing_discriminators)
+        let why = related_test_miss_reason(direct, &finding.probe.family)
             .ok_or("the direct row should have a reason")?;
         assert_eq!(
-            related_test_miss_reason(advisory, &finding.activation.missing_discriminators),
+            related_test_miss_reason(advisory, &finding.probe.family),
             None
         );
         let config = crate::config::RiprConfig::default();

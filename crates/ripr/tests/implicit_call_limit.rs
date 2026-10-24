@@ -130,6 +130,28 @@ fn kept(lib: &str, diff: &str, line: usize, label: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// No finding carries the limit and every finding has no static path: the
+/// method belongs to a trait this workspace declares and nothing names it, so
+/// nothing reaches it unseen (#9169), which is also not an implicit call.
+fn unreached(lib: &str, diff: &str, line: usize, label: &str) -> Result<(), String> {
+    let findings = findings_on(lib, diff, line)?;
+    if findings.iter().any(limited)
+        || findings.is_empty()
+        || findings
+            .iter()
+            .any(|f| f.class != ExposureClass::NoStaticPath)
+    {
+        return Err(format!(
+            "{label}: expected no_static_path without the limit, got {:?}",
+            findings
+                .iter()
+                .map(|f| (f.class.as_str(), f.static_limit_kind))
+                .collect::<Vec<_>>()
+        ));
+    }
+    Ok(())
+}
+
 /// 1-based line of the first line of `lib` containing `needle`.
 fn line_of(lib: &str, needle: &str) -> Result<usize, String> {
     lib.lines()
@@ -425,10 +447,12 @@ fn a_dispatch_shape_that_differs_keeps_its_class() -> Result<(), String> {
             diff(line, "        self.0 + self.0", "        self.0 * self.0"),
         ))
     };
-    // The test names the type but never calls a method named `area`.
+    // The test names the type but never calls a method named `area`. `Shape` is
+    // declared in this workspace, so nothing reaches `area` unseen (#9169): no
+    // static path, and certainly not the implicit-call limit.
     let lib = dispatch_source("let _square = Square(3);\n        assert_eq!(9, 9);");
     let (line, patch) = edit(&lib)?;
-    kept(&lib, &patch, line, "never calls area")?;
+    unreached(&lib, &patch, line, "never calls area")?;
     // The test calls `area` but never names `Square`.
     let lib = dispatch_source("let tile = Tile(3);\n        assert_eq!(tile.area(), 9);");
     let (line, patch) = edit(&lib)?;
@@ -514,5 +538,5 @@ mod tests {
 ";
     let line = line_of(lib, "self.0 + 1")?;
     let edit = diff(line, "        self.0 + 2", "        self.0 + 1");
-    kept(lib, &edit, line, "local trait named Add")
+    unreached(lib, &edit, line, "local trait named Add")
 }
