@@ -385,7 +385,8 @@ This order is the existing behavior and is normative:
   custom helper assertion and no eligible candidate has a strong assertion;
 - L10: `missing_import_graph` for a changed line that uses a name the
   owner's own module imports (mock constructors and the click, typer and
-  `sys` output calls are exempt);
+  `sys` output calls are exempt, including `print(..., file=sys.stderr)`
+  and `file=sys.stdout`, `py-fixtures-warning-stderr`);
 - L11: `unsupported_syntax` for `lambda`;
 - L12: the implicit dunder dispatch limit (RIPR-SPEC-0028), then
   `python_transitive_reach_unresolved` on `no_static_path`
