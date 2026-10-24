@@ -1,0 +1,2 @@
+<!-- section: Added -->
+- `ripr agent repair --phase after` for a gap-bound TypeScript attempt now issues a receipt bound to the closed gap (`bound_gap`, attempt and base commit), retained as terminal evidence and read by `ripr agent status`; the receipt is refused unless the verify document closed that gap on positive evidence (open before, `exposed` after), and carries static exposure evidence only (#9103).

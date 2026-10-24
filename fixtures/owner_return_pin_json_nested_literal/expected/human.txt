@@ -17,10 +17,18 @@ Start here:
   Changed behavior: Ok(())
   Missing discriminator: No strong discriminator was detected
   Related test: tests/save.rs:4 checks (ripr could not confirm that this assertion observes the changed behavior)
-  Next step: The related test `checks` already asserts an exact value; the gap is not the assertion
-    shape. Add a test input where the changed branch behaves differently and keep the exact
-    assertion
+  Next step: The related test `checks` already has an exact assertion; this does not establish
+    observation of the returned value. Check whether the change can affect the returned value. If it
+    can, add a separating input and assert the exact returned value. If it cannot, test the changed
+    effect separately; another input cannot distinguish unchanged returns
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: Related tests appear to reach did_save_params: checks
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 6 more detail line(s) in --format human-full

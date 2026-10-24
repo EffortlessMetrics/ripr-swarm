@@ -1,0 +1,13 @@
+diff --git a/lib/Toolkit.pm b/lib/Toolkit.pm
+index 7f429bd..447ef7e 100644
+--- a/lib/Toolkit.pm
++++ b/lib/Toolkit.pm
+@@ -27,7 +27,7 @@ sub join_local {
+ 
+ sub parse_version {
+     my ($s) = @_;
+-    return $s =~ /^v?(\d+)\.(\d+)$/ ? [$1, $2] : undef;
++    return $s =~ /^v?(\d+)[.](\d+)$/ ? [$1, $2] : undef;
+ }
+ 
+ sub safe_div {

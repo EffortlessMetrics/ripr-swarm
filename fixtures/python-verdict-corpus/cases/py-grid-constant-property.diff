@@ -1,0 +1,12 @@
+diff --git a/grid_constant/core.py b/grid_constant/core.py
+--- a/grid_constant/core.py
++++ b/grid_constant/core.py
+@@ -10,7 +10,7 @@
+ 
+ 
+ def commission(sale):
+-    return sale * 3 // 100
++    return 3 * sale // 100
+ 
+ 
+ def handling(weight):

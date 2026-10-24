@@ -1,0 +1,48 @@
+{
+  "case_id": "method-hop-field-read-name-collision",
+  "subject_id": "authored-method-hop",
+  "diff": "cases/method-hop-field-read-name-collision.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 90
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "helper_wrapped_assert",
+  "hard_case": "The owner is named `to_string` and the helper also calls `expected.to_string()`, a std method call that must not relate the test by name.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "bytes <= unit",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests::collide_formats_one_binary_unit",
+        "equivalence_review": "the edit itself: exactly one unit formats as the raw byte count instead of one unit"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Mirrors the real bytesize shape: `check_collide` compares `expected.to_string()` with `size.collide_as(si)`, which calls the free `to_string(self.0, si)`. The receiver-only `.to_string()` is not a call of the free owner, so the expected side is not computed through the owner, the test is related through the chain entry, and the exact pin pairs with the boundary row: exposed, not a weak gap on a discriminated edit. 1 of 1 listed mutants fails cargo test. Spec cells: RIPR-SPEC-0158, RIPR-SPEC-0159.",
+  "labeling_observation": {
+    "ripr_commit": "581975f",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0158#13"
+  ]
+}

@@ -13,14 +13,32 @@ import type { RiprConfig } from './config';
 import type { RiprWorkspaceRootState } from './client';
 import { RIPR_DOCUMENT_SELECTORS } from './client';
 
+// VS Code matches `pattern` as a glob, so glob metacharacters in the workspace
+// path would otherwise change what it matches (`[a]` as a class, `{a,b}` as
+// alternation, `*`/`?` as wildcards) and the client would stop seeing events
+// for that folder's files. Wrapping each in a bracket class matches it
+// literally in VS Code's glob (including `}` outside braces, which would
+// otherwise match the empty string).
+export function escapeGlobLiteral(text: string): string {
+  return text.replace(/[\[\]{}*?]/g, (char) => `[${char}]`);
+}
+
 export function riprDocumentSelectorsForWorkspace(
   workspaceRoot: string
 ): Array<{ language: string; scheme: 'file'; pattern: string }> {
-  const workspacePattern = `${workspaceRoot.replace(/\\/g, '/')}/**/*`;
+  const workspacePattern = `${escapeGlobLiteral(workspaceRoot.replace(/\\/g, '/'))}/**/*`;
   return RIPR_DOCUMENT_SELECTORS.map((selector) => ({
     ...selector,
     pattern: workspacePattern
   }));
+}
+
+// The server reads gitTimeoutMs / refreshDeadlineMs as unsigned integers and
+// rejects the whole workspace/configuration pull when one is a fractional
+// JSON number, discarding every other ripr setting from that response. A
+// non-integer is sent as undefined so the server default applies.
+export function integerSetting(value: number | undefined): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
 export function extensionVersion(context: vscode.ExtensionContext): string {

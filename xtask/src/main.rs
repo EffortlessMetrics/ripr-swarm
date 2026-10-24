@@ -299,8 +299,8 @@ use repo_readiness::{
 };
 #[cfg(test)]
 pub(crate) use reports::release_server::{
-    ReleaseServerAsset, normalize_release_version, release_server_archive, release_server_assets,
-    release_server_manifest, release_server_readme, required_release_arg,
+    ReleaseServerAsset, bound_descriptor_source, normalize_release_version, release_server_archive,
+    release_server_assets, release_server_manifest, release_server_readme, required_release_arg,
 };
 use reports::release_server::{create_zip_archive, sha256_file};
 #[cfg(test)]
@@ -10774,7 +10774,7 @@ fn repo_exposure_file_fact_cache_from_stderr(
                             .split('/')
                             .any(|part| part == "." || part == ".." || part.is_empty())
                         || path.contains('\\')
-                        || path.contains(':')
+                        || has_windows_drive_prefix(path)
                         || path.chars().any(char::is_control)
                 })
         })
@@ -10784,7 +10784,66 @@ fn repo_exposure_file_fact_cache_from_stderr(
     (Some(value), None)
 }
 
+/// A Windows drive-qualified path (letter, colon, slash) is an absolute, non-portable
+/// receipt identity. A `:` elsewhere is an ordinary Unix file-name character
+/// (`a:b.rs`) and must not invalidate the whole receipt (#9503).
+fn has_windows_drive_prefix(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'/'
+}
+
+/// Output parity (cache-served output equal to a cold recomputation) is not
+/// observed by this report: it runs each format once. Until a cold-vs-served
+/// comparison exists, no run set can earn `pass` (#9503).
+const REPO_EXPOSURE_OUTPUT_PARITY: &str = "not_checked";
+const REPO_EXPOSURE_OUTPUT_PARITY_CHECKED: bool = false;
+
+/// Named reasons a completed run set cannot be called `pass`. Empty means
+/// every completed run carried a clean cache receipt and parity was checked.
+fn repo_exposure_latency_status_reasons(
+    runs: &[RepoExposureLatencyRun],
+    parity_checked: bool,
+) -> Vec<String> {
+    let mut reasons = Vec::new();
+    for run in runs {
+        match &run.file_fact_cache {
+            Some(cache) => {
+                if cache.store_errors > 0 {
+                    reasons.push(format!(
+                        "{}: file_fact_cache_store_errors={}",
+                        run.format, cache.store_errors
+                    ));
+                }
+                if cache.corrupt_ignored > 0 {
+                    reasons.push(format!(
+                        "{}: file_fact_cache_corrupt_ignored={}",
+                        run.format, cache.corrupt_ignored
+                    ));
+                }
+            }
+            None => reasons.push(format!(
+                "{}: file_fact_cache_{}",
+                run.format,
+                run.file_fact_cache_limitation
+                    .as_deref()
+                    .unwrap_or("not_observed")
+            )),
+        }
+    }
+    if !parity_checked {
+        reasons.push("output_parity_not_checked".to_string());
+    }
+    reasons
+}
+
 fn repo_exposure_latency_status(runs: &[RepoExposureLatencyRun]) -> String {
+    repo_exposure_latency_status_with_parity(runs, REPO_EXPOSURE_OUTPUT_PARITY_CHECKED)
+}
+
+fn repo_exposure_latency_status_with_parity(
+    runs: &[RepoExposureLatencyRun],
+    parity_checked: bool,
+) -> String {
     if runs.iter().any(|run| run.status == "fail") {
         return "fail".to_string();
     }
@@ -10792,6 +10851,12 @@ fn repo_exposure_latency_status(runs: &[RepoExposureLatencyRun]) -> String {
         .iter()
         .any(|run| run.status == "timeout" || run.status == "skipped_after_json_timeout")
     {
+        return "warn".to_string();
+    }
+    // `pass` is evidence about the cache path and output, not only exit codes:
+    // cache store errors, ignored corrupt entries, an unobserved cache phase
+    // or unchecked output parity are all `warn`.
+    if !repo_exposure_latency_status_reasons(runs, parity_checked).is_empty() {
         return "warn".to_string();
     }
     "pass".to_string()
@@ -10828,13 +10893,24 @@ fn repo_exposure_latency_json(report: &RepoExposureLatencyReport) -> String {
     body.push_str("{\n");
     // 0.3 adds the analyzer's own `resource_cost` block (#5213). The bump is
     // because the JSON gained fields a 0.2 reader does not know; nothing in
-    // the 0.2 shape changed.
-    body.push_str("  \"schema_version\": \"0.3\",\n");
+    // the 0.2 shape changed. 0.4 adds `output_parity` and `status_reasons`
+    // (#9503); no 0.3 field changed.
+    body.push_str("  \"schema_version\": \"0.4\",\n");
     body.push_str("  \"tool\": \"ripr\",\n");
     body.push_str("  \"report\": \"repo-exposure-latency\",\n");
     body.push_str(&format!(
         "  \"status\": \"{}\",\n",
         json_escape(&report.status)
+    ));
+    body.push_str(&format!(
+        "  \"output_parity\": \"{REPO_EXPOSURE_OUTPUT_PARITY}\",\n"
+    ));
+    body.push_str(&format!(
+        "  \"status_reasons\": {},\n",
+        serde_json::json!(repo_exposure_latency_status_reasons(
+            &report.runs,
+            REPO_EXPOSURE_OUTPUT_PARITY_CHECKED
+        ))
     ));
     body.push_str(&format!("  \"timeout_ms\": {},\n", report.timeout_ms));
     body.push_str(&format!(
@@ -10908,6 +10984,18 @@ fn repo_exposure_latency_markdown(report: &RepoExposureLatencyReport) -> String 
     let mut body = String::new();
     body.push_str("# Repo Exposure Latency Report\n\n");
     body.push_str(&format!("Status: `{}`\n\n", report.status));
+    body.push_str(&format!(
+        "Output parity: `{REPO_EXPOSURE_OUTPUT_PARITY}`\n\n"
+    ));
+    let reasons =
+        repo_exposure_latency_status_reasons(&report.runs, REPO_EXPOSURE_OUTPUT_PARITY_CHECKED);
+    if !reasons.is_empty() {
+        body.push_str("Status reasons (`pass` requires none):\n\n");
+        for reason in &reasons {
+            body.push_str(&format!("- `{reason}`\n"));
+        }
+        body.push('\n');
+    }
     body.push_str(&format!(
         "Timeout: `{}` ms per format\n\n",
         report.timeout_ms
@@ -13319,7 +13407,12 @@ fn check_rust_source_role_authority() -> Result<(), String> {
     /// the reason it is not a role authority. New entries need the reason in
     /// the surrounding code and a review that the check stays display- or
     /// identity-scoped.
-    const ALLOWED_SITE_PATTERNS: [(&str, &str, &str); 8] = [
+    const ALLOWED_SITE_PATTERNS: [(&str, &str, &str); 9] = [
+        (
+            "crates/ripr/src/output/related_test_role_tests.rs",
+            "\"#[cfg(test)]\"",
+            "#5563 source-text guard strips test modules from production text it scans for miss-based eligibility; it decides no analysis role",
+        ),
         (
             "crates/ripr/src/output/review_comments.rs",
             "starts_with(\"tests",
@@ -13389,7 +13482,7 @@ fn check_rust_source_role_authority() -> Result<(), String> {
     /// authority may be consumed only by this inventoried set; new consumers
     /// extend the inventory here with a reason so role consumers stay
     /// reviewable.
-    const IS_TEST_FILE_CONSUMERS: [&str; 12] = [
+    const IS_TEST_FILE_CONSUMERS: [&str; 13] = [
         "crates/ripr/src/analysis/classify/owner_shape.rs",
         "crates/ripr/src/analysis/test_grip_evidence.rs",
         "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
@@ -13418,6 +13511,10 @@ fn check_rust_source_role_authority() -> Result<(), String> {
         // modules never name the owner's; the layout authority stays
         // `is_test_file` and the module decides no role of its own.
         "crates/ripr/src/analysis/classify/call_identity.rs",
+        // #9982: a facade crate's integration test is a file under `tests/**`
+        // of the facade package; the layout authority stays `is_test_file`
+        // and the module decides no role of its own.
+        "crates/ripr/src/analysis/classify/facade_reach.rs",
     ];
 
     let files = tracked_files()?;
@@ -13896,6 +13993,7 @@ fn check_output_contracts() -> Result<(), String> {
             | "value_context"
             | "oracle_alignment"
             | "related_test_miss"
+            | "related_test_role"
             | "source_currentness"
             | "static_limit_kind"
             | "agent_card_refusal_kind"
@@ -21491,7 +21589,7 @@ fn guarded_allow_attributes_in_text(
             cursor += 1;
         }
         let kind = &text[ident_start..cursor];
-        if kind != "allow" && kind != "expect" {
+        if kind != "allow" && kind != "expect" && kind != "cfg_attr" {
             index += 1;
             continue;
         }
@@ -21506,6 +21604,20 @@ fn guarded_allow_attributes_in_text(
             index += 1;
             continue;
         };
+        if kind == "cfg_attr" {
+            // #9501: `#[cfg_attr(<predicate>, allow(..), expect(..))]` is the
+            // same suppression under a condition; it spends the same budget
+            // as the plain attribute.
+            let mut line = None;
+            for (wrapped, lint) in cfg_attr_suppressed_lints(&text[content_start..content_end]) {
+                if guarded.contains(lint.as_str()) {
+                    let line = *line.get_or_insert_with(|| byte_line_number(text, index));
+                    findings.push((line, format!("{wrapped}({lint})")));
+                }
+            }
+            index = next_index;
+            continue;
+        }
         let mut line = None;
         for lint in attribute_lints(&text[content_start..content_end]) {
             if guarded.contains(lint.as_str()) {
@@ -21519,11 +21631,135 @@ fn guarded_allow_attributes_in_text(
     findings
 }
 
+/// `allow`/`expect` lints named by the attributes a `cfg_attr(<predicate>, ..)`
+/// conditionally applies, including nested `cfg_attr` wrappers. Splitting is
+/// parenthesis- and string-aware so predicates such as `all(a, b)` and reason
+/// strings do not shift the attribute boundaries.
+fn cfg_attr_suppressed_lints(content: &str) -> Vec<(&'static str, String)> {
+    let mut found = Vec::new();
+    // The first top-level part is the predicate; the rest are attributes.
+    for part in split_top_level_commas(content).into_iter().skip(1) {
+        let part = part.trim();
+        let Some((name, rest)) = part.split_once('(') else {
+            continue;
+        };
+        let inner = rest.trim_end().strip_suffix(')').unwrap_or(rest);
+        match name.trim() {
+            "allow" => found.extend(attribute_lints(inner).into_iter().map(|l| ("allow", l))),
+            "expect" => found.extend(attribute_lints(inner).into_iter().map(|l| ("expect", l))),
+            "cfg_attr" => found.extend(cfg_attr_suppressed_lints(inner)),
+            _ => {}
+        }
+    }
+    found
+}
+
+fn split_top_level_commas(content: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let bytes = content.as_bytes();
+    let mut start = 0;
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'"' {
+            index = attribute_string_end(bytes, index);
+            continue;
+        }
+        if bytes[index] == b'\''
+            && let Some(end) = attribute_char_end(bytes, index)
+        {
+            index = end;
+            continue;
+        }
+        match bytes[index] {
+            b'(' | b'[' => depth += 1,
+            b')' | b']' => depth = depth.saturating_sub(1),
+            b',' if depth == 0 => {
+                parts.push(&content[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    parts.push(&content[start..]);
+    parts
+}
+
+/// Read a string from its opening quote. Raw strings close only at a quote
+/// followed by the opening hash suffix; backslashes escape only cooked strings.
+fn attribute_string_end(bytes: &[u8], quote: usize) -> usize {
+    let mut marker = quote;
+    while marker > 0 && bytes[marker - 1] == b'#' {
+        marker -= 1;
+    }
+    let raw_suffix = (marker > 0 && bytes[marker - 1] == b'r').then_some(&bytes[marker..quote]);
+    let mut index = quote + 1;
+    while index < bytes.len() {
+        if raw_suffix.is_none() && bytes[index] == b'\\' {
+            index = (index + 2).min(bytes.len());
+            continue;
+        }
+        if bytes[index] == b'"' {
+            let after_quote = index + 1;
+            if let Some(hashes) = raw_suffix {
+                if bytes[after_quote..].starts_with(hashes) {
+                    return after_quote + hashes.len();
+                }
+            } else {
+                return after_quote;
+            }
+        }
+        index += 1;
+    }
+    bytes.len()
+}
+
+/// End (exclusive) of a char literal starting at the opening tick, or `None`
+/// when the tick is not one (for example a lifetime), so callers keep scanning.
+fn attribute_char_end(bytes: &[u8], tick: usize) -> Option<usize> {
+    let first = *bytes.get(tick + 1)?;
+    if first == b'\\' {
+        // Escape (`'\''`, `'\n'`, `'\x41'`, `'\u{1F980}'`): the closing tick is
+        // the first one after the escaped character, within a short window.
+        let limit = (tick + 12).min(bytes.len());
+        return (tick + 3..limit)
+            .find(|&i| bytes[i] == b'\'')
+            .map(|i| i + 1);
+    }
+    if first == b'\'' || first == b'\n' {
+        return None;
+    }
+    let width = match first {
+        0x00..=0x7f => 1,
+        0xc0..=0xdf => 2,
+        0xe0..=0xef => 3,
+        _ => 4,
+    };
+    let close = tick + 1 + width;
+    (bytes.get(close) == Some(&b'\'')).then_some(close + 1)
+}
+
 fn attribute_paren_span(bytes: &[u8], open: usize) -> Option<(usize, usize, usize)> {
     let mut depth = 0usize;
     let mut index = open;
     while index < bytes.len() {
         match bytes[index] {
+            // A parenthesis inside a `reason = ")"` string is not attribute
+            // syntax; skipping the literal keeps a later suppression in the
+            // same attribute visible to the budget.
+            b'"' => {
+                index = attribute_string_end(bytes, index);
+                continue;
+            }
+            // A char literal such as `')'` or `'"'` is not attribute syntax;
+            // a lifetime tick has no closing quote and falls through.
+            b'\'' => {
+                if let Some(end) = attribute_char_end(bytes, index) {
+                    index = end;
+                    continue;
+                }
+            }
             b'(' => depth += 1,
             b')' => {
                 depth = depth.saturating_sub(1);

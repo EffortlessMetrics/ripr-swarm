@@ -43,7 +43,7 @@
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `smoke_only` (rank 2)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"Python preview adapter found no strong discriminator; missing proof: `amount == 100`."}
        },
-      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `is_priority`", "infection yes: Changed Python expression can alter preview-classified predicate behavior: `return amount >= 100`", "propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink.", "observation weak: Strongest extracted Python oracle kind: `smoke_only` (rank 2)", "discriminator weak: Python preview adapter found no strong discriminator; missing proof: `amount == 100`.", "local flow reaches unknown sink: return amount >= 100 (line 2)", "related test tests/test_priority.py:4 test_priority_amount uses smoke only oracle: assert is_priority(100)", "missing discriminator amount == 100: changed Python equality-boundary at line 2 lacks a concrete repair discriminator"],
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `is_priority`", "infection yes: Changed Python expression can alter preview-classified predicate behavior: `return amount >= 100`", "propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink.", "observation weak: Strongest extracted Python oracle kind: `smoke_only` (rank 2)", "discriminator weak: Python preview adapter found no strong discriminator; missing proof: `amount == 100`.", "local flow reaches unknown sink: return amount >= 100 (line 2)", "related test tests/test_priority.py:4 test_priority_amount uses smoke only oracle: assert is_priority(amount)", "missing discriminator amount == 100: changed Python equality-boundary at line 2 lacks a concrete repair discriminator"],
       "flow_sinks": [
         {"kind":"unknown","text":"return amount >= 100","line":2}
       ],
@@ -79,7 +79,9 @@
           "line": 4,
           "oracle_strength": "smoke",
           "oracle_kind": "smoke_only",
-          "oracle": "assert is_priority(100)"
+          "oracle": "assert is_priority(amount)",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
         }
       ],
       "repair_placement": {
@@ -99,7 +101,7 @@
         "repair_action": "strengthen_existing_test",
         "changed_owner": "is_priority",
         "changed_behavior": "predicate_boundary changed at src/priority.py:2: `return amount >= 100`",
-        "current_test_evidence": "tests/test_priority.py:4 test_priority_amount currently has oracle_strength=smoke, oracle_kind=smoke_only: assert is_priority(100)",
+        "current_test_evidence": "tests/test_priority.py:4 test_priority_amount currently has oracle_strength=smoke, oracle_kind=smoke_only: assert is_priority(amount)",
         "missing_discriminator": "amount == 100",
         "recommended_test_shape": "Strengthen the existing pytest boundary assertion for `amount == 100`. Keep the equality case as the minimum repair; optional pytest parameterization can add `99`, `100`, and `101` rows when expected values are clear.",
         "suggested_assertion": "Assert the owner result or effect at `amount == 100` first. Optional pytest shape: @pytest.mark.parametrize(\"amount, expected\", [(99, ...), (100, ...), (101, ...)]); fill expected values from domain behavior only.",
@@ -145,5 +147,5 @@
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
   ],
-  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/priority.py","digest":"sha256:92216fcc72bfe040eb0b302ece08793378b6441635b581a730f7880fd6201d47"},{"path":"tests/test_priority.py","digest":"sha256:55ee001015e129c13d7c9cdd3defc1b8bd30871a57e6fd8f3641658df6ad16cc"}]}
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/priority.py","digest":"sha256:92216fcc72bfe040eb0b302ece08793378b6441635b581a730f7880fd6201d47"},{"path":"tests/test_priority.py","digest":"sha256:a8e210b56d4b4d63af2d0fb3ba5765f0451cd29d70927556b61e330cad55a0da"}]}
 }

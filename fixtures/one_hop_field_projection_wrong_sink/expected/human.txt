@@ -23,6 +23,13 @@ Start here:
     implementations with a focused run using the project's configured test runner (`cargo test` for
     ordinary Cargo tests). Static classification may remain unknown
   Evidence: reach yes · infection yes · propagation unknown · observation yes · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: Related tests appear to reach stats: pin
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 6 more detail line(s) in --format human-full
@@ -30,7 +37,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/one_hop_field_projection_wrong_sink/input --diff <cwd>/fixtures/one_hop_field_projection_wrong_sink/diff.patch --mode fast probe:src_lib.rs:field_construction:42ec5018
   ripr context --root <cwd>/fixtures/one_hop_field_projection_wrong_sink/input --diff <cwd>/fixtures/one_hop_field_projection_wrong_sink/diff.patch --mode fast --at probe:src_lib.rs:field_construction:42ec5018
-  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:field_construction:42ec5018 --root <cwd>/fixtures/one_hop_field_projection_wrong_sink/input` for the full gate's answer
+  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: field_value; incomplete evidence stage: activation); run `ripr repair probe:src_lib.rs:field_construction:42ec5018 --root <cwd>/fixtures/one_hop_field_projection_wrong_sink/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/one_hop_field_projection_wrong_sink/input --at src/lib.rs:5 --kind field_construction
 

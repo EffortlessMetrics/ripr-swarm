@@ -91,8 +91,11 @@ placements retain a related pointer but cannot contribute an oracle or boundary
 input. Function-level unittest skip wraps the function under either runner;
 unittest class skip flags and expected-failure metadata qualify only TestCase
 tests. Those flags do not suppress ordinary pytest assertions. The relation is
-`test_activation_unestablished`. Conditions are not evaluated: even a visible
-false conditional skip remains uncertain within this bounded static contract.
+`test_activation_unestablished`. Conditions are not evaluated: a visible false
+conditional skip on a name or comparison remains uncertain within this bounded
+static contract. The exception is a condition that is the boolean literal that
+never triggers the mark (`skipif(False)`), which leaves the test active
+(RIPR-SPEC-0238 rule 24).
 Imported decorator aliases use the last explicit binding in the declaration-time
 module/class scope, before test-body imports or later imports can shadow them.
 A canonical-looking name explicitly imported from another module is not a
@@ -191,6 +194,10 @@ status-code and exit-code assertions, broad smoke assertions, reach-only tests,
 mock expectations, and custom `assert_*` helpers.
 
 - bare `assert expr` â†’ smoke oracle
+  - exception (#9542): a bare `assert f(lit, ..)` / `assert not f(lit, ..)` whose
+    single resolved workspace function owner provably returns `bool` is an
+    exact pin, read as `f(lit, ..) == True` / `== False`; any ambiguity, patching
+    or non-literal argument stays smoke
 - `assert a == b` â†’ exact-value oracle; `assert a != b` and other
   non-equality comparisons â†’ relational check, weak
 - `assert isinstance(value, SomeType)` â†’ relational check, weak
@@ -361,8 +368,13 @@ comments, strings, and docstrings:
   The entry, the `list`/`tuple` wrapper and the receiver must keep their
   bindings: a builtin shadowed by an import, a module or test-local binding
   (including tuple and annotated targets), or a receiver rebound by a chained,
-  bracketed, loop, `with`, walrus or augmented target, or not the whole bound
-  value, is not credited. Extra, keyword, starred or trailing-comma
+  bracketed (spaced or nested too: `( r), x = ...`, `((r), x) = ...`,
+  `for ((r), x) in ...`; #9178), loop, `with`, walrus or augmented target, or
+  not the whole bound value, is not credited. A `:` ends a target position only
+  when it closes a compound-statement header whose brackets balance outside
+  string literals and comments (`if ")": ( r), x = ...` rebinds, a dict value
+  `{"k": (r), 1}` does not); a header split across lines is a known limit: a
+  one-line-suite rebind after it is not seen and the receiver stays credited. Extra, keyword, starred or trailing-comma
   arguments are not the entry and fall back to `dunder_protocol`. A dunder
   owner with no related test, in a workspace whose tests import its class,
   its module, or anything from a package above it, reads `static_unknown`
@@ -444,7 +456,9 @@ values defined in RIPR-SPEC-0026:
   observed at the related-test call site)
 - `opaque_custom_assertion_helper` (e.g., a related test observes the changed
   owner only through an `assert_*(...)` helper body the adapter does not
-  inspect)
+  inspect; a same-file helper that is only `assert` statements, called with
+  literal arguments from a plain test, is not this limit: see the helper
+  inlining amendment below)
 - `property_based_test` (e.g., a related test uses Hypothesis `@given(...)`
   generated inputs whose concrete discriminator coverage is not statically
   known)
@@ -947,6 +961,44 @@ precedence. It corrects three oracle lines in place above: `!=`,
 `isinstance` and `assertNotEqual` were listed as broad, broad-type and
 exact-value oracles, but the code records all three as
 `relational_check` / weak, and no broad-type kind exists.
+
+## Helper Inlining Amendment (2026-10-22, #9636)
+
+A plain test that calls a same-file assertion helper with literal arguments
+(`check_pass(50, True)` over `def check_pass(score, want): assert passes(score) == want`)
+reads as the helper's `assert` statements with each parameter replaced by its
+literal argument, on the call's own line (every line number is unchanged). The
+rewrite is credit or unknown only: the substituted asserts pass through the
+ordinary oracle admission, so a weak or unrecognised assert is no stronger than
+when written inline; no new finding kind or repair rule is added and the
+ordinary classifier applies. It applies only to
+test files, and only when all of these hold; otherwise the call reads as before:
+
+- the helper is a module-level, undecorated, synchronous `def`, spelled
+  `def NAME` exactly once in the file (and never also a `class NAME`), with plain positional parameters (no
+  default, `*args`, keyword-only or `**kwargs`), whose body is only `assert`
+  statements (and an optional leading docstring), one per line; every mention
+  of its name is its definition or a direct call;
+- the file does not use `globals(`, `setattr(`, `exec(`, `eval(`, a star import
+  or `__getattr__`;
+- the call is a top-level expression statement, alone on its line, of a
+  module-level `test*` function with no parameters and no decorators, whose
+  body holds only expression and `assert` statements and no walrus, with
+  exactly one argument per parameter, each a string, number, boolean or `None`
+  literal (a signed number is parenthesised);
+- a parameter is used in the asserts only as a plain value: not as an
+  attribute name, keyword, inside a string, or as the object of a member access
+  or call when the argument is a number, or directly followed by a quote
+  (a string prefix); the asserts hold no `lambda`, comprehension, walrus,
+  `await`, `yield`, backslash, or any `[` or `{` (every one is refused). A
+  rewrite that does not parse is discarded and the original source is read.
+
+A helper in another file (#9419), a call under `if`/loop/`with`, a computed
+argument or a helper with control flow stays `no_static_path`.
+
+This differs from `helper_assertions` (#9419, #9711): it is a same-file,
+literal-argument, multi-assert source rewrite that runs first, so
+`helper_assertions` then sees no call to resolve.
 
 ## Metrics
 

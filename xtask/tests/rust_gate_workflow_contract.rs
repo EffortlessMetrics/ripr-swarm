@@ -25,6 +25,11 @@ const REQUIRED_GATES: &[(&str, &str)] = &[
     ("rust-tests", "cargo nextest run --workspace --profile ci"),
     ("goldens", "cargo xtask goldens check"),
     ("fixtures", "cargo xtask fixtures"),
+    (
+        "capability_producers",
+        "cargo xtask check-capability-producers",
+    ),
+    ("capability_docs", "cargo xtask capability-docs --check"),
 ];
 
 fn step_id(block: &str) -> Option<&str> {

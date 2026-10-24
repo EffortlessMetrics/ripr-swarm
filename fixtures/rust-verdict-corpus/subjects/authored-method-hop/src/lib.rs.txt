@@ -1,0 +1,272 @@
+//! Boundaries reached through a receiver method and a tuple-struct field read.
+
+pub const KB: u64 = 1_000;
+pub const KIB: u64 = 1_024;
+
+#[derive(Clone, Copy)]
+pub struct Size(pub u64);
+
+impl Size {
+    pub const fn kib(count: u64) -> Self {
+        Size(count * KIB)
+    }
+
+    pub const fn shifted(count: u64) -> Self {
+        Size(count << 10)
+    }
+
+    pub fn hit_as(&self, si: bool) -> String {
+        hit(self.0, si)
+    }
+
+    pub fn trap_as(&self, si: bool) -> String {
+        trap(self.0, si)
+    }
+
+    pub fn rebound_as(&self, si: bool) -> String {
+        rebound(self.0, si)
+    }
+
+    pub fn nonliteral_as(&self, si: bool) -> String {
+        nonliteral(self.0, si)
+    }
+
+    pub fn shifted_as(&self, si: bool) -> String {
+        shifted(self.0, si)
+    }
+
+    pub fn collide_as(&self, si: bool) -> String {
+        to_string(self.0, si)
+    }
+}
+
+pub fn hit(bytes: u64, si: bool) -> String {
+    let unit = if si { KIB } else { KB };
+    if bytes < unit {
+        format!("{bytes} B")
+    } else {
+        format!("{} big", bytes / unit)
+    }
+}
+
+pub fn trap(bytes: u64, si: bool) -> String {
+    let unit = if si { KIB } else { KB };
+    if bytes < unit {
+        format!("{bytes} B")
+    } else {
+        format!("{} big", bytes / unit)
+    }
+}
+
+pub fn rebound(bytes: u64, si: bool) -> String {
+    let unit = if si { KIB } else { KB };
+    if bytes < unit {
+        format!("{bytes} B")
+    } else {
+        format!("{} big", bytes / unit)
+    }
+}
+
+pub fn nonliteral(bytes: u64, si: bool) -> String {
+    let unit = if si { KIB } else { KB };
+    if bytes < unit {
+        format!("{bytes} B")
+    } else {
+        format!("{} big", bytes / unit)
+    }
+}
+
+pub fn shifted(bytes: u64, si: bool) -> String {
+    let unit = if si { KIB } else { KB };
+    if bytes < unit {
+        format!("{bytes} B")
+    } else {
+        format!("{} big", bytes / unit)
+    }
+}
+
+pub fn to_string(bytes: u64, si: bool) -> String {
+    let unit = if si { KIB } else { KB };
+    if bytes < unit {
+        format!("{bytes} B")
+    } else {
+        format!("{} big", bytes / unit)
+    }
+}
+
+impl Size {
+    pub fn pretty_as(&self, si: bool) -> String {
+        pretty(self.0, si)
+    }
+
+    pub fn twin_a(&self, si: bool) -> String {
+        twin(self.0, si)
+    }
+
+    pub fn twin_b(&self, si: bool) -> String {
+        twin(self.0, si)
+    }
+
+    pub fn masked_as(&self, si: bool) -> bool {
+        !masked(self.0, si).is_empty()
+    }
+
+    pub fn unseen_as(&self, si: bool) -> String {
+        unseen(self.0, si)
+    }
+}
+
+impl std::fmt::Display for Size {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.pad(&pretty(self.0, false))
+    }
+}
+
+pub fn pretty(bytes: u64, si: bool) -> String {
+    let unit = if si { KIB } else { KB };
+    if bytes < unit {
+        format!("{bytes} B")
+    } else {
+        format!("{} big", bytes / unit)
+    }
+}
+
+pub fn twin(bytes: u64, si: bool) -> String {
+    let unit = if si { KIB } else { KB };
+    if bytes < unit {
+        format!("{bytes} B")
+    } else {
+        format!("{} big", bytes / unit)
+    }
+}
+
+pub fn masked(bytes: u64, si: bool) -> String {
+    let unit = if si { KIB } else { KB };
+    if bytes < unit {
+        format!("{bytes} B")
+    } else {
+        format!("{} big", bytes / unit)
+    }
+}
+
+pub fn unseen(bytes: u64, si: bool) -> String {
+    let unit = if si { KIB } else { KB };
+    if bytes < unit {
+        format!("{bytes} B")
+    } else {
+        format!("{} big", bytes / unit)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn check_hit(expected: &str, size: Size, si: bool) {
+        assert_eq!(expected, size.hit_as(si));
+    }
+
+    fn check_trap(expected: &str, size: Size, si: bool) {
+        assert_eq!(expected, size.trap_as(si));
+    }
+
+    fn check_rebound(expected: &str, size: Size, si: bool) {
+        let size = Size(size.0);
+        assert_eq!(expected, size.rebound_as(si));
+    }
+
+    fn check_nonliteral(expected: &str, size: Size, si: bool) {
+        assert_eq!(expected, size.nonliteral_as(si));
+    }
+
+    fn check_collide(expected: &str, size: Size, si: bool) {
+        assert_eq!(expected.to_string(), size.collide_as(si));
+    }
+
+    fn check_shifted(expected: &str, size: Size, si: bool) {
+        assert_eq!(expected, size.shifted_as(si));
+    }
+
+    fn check_pretty(expected: &str, size: Size, si: bool) {
+        assert_eq!(expected.to_string(), size.pretty_as(si));
+    }
+
+    fn check_twin(expected: &str, size: Size, si: bool) {
+        assert_eq!(expected, size.twin_a(si));
+        assert_eq!(expected, size.twin_b(si));
+    }
+
+    fn check_masked(expected: bool, size: Size, si: bool) {
+        assert_eq!(expected, size.masked_as(si));
+    }
+
+    fn check_unseen(expected: &str, size: Size, si: bool) {
+        size.unseen_as(si);
+        assert!(!expected.is_empty());
+    }
+
+    #[test]
+    fn hit_formats_one_binary_unit() {
+        check_hit("215 B", Size(215), true);
+        check_hit("1 big", Size::kib(1), true);
+        check_hit("1 big", Size::kib(1), false);
+    }
+
+    #[test]
+    fn trap_never_sits_on_the_selected_unit() {
+        check_trap("215 B", Size(215), true);
+        check_trap("999 B", Size(999), false);
+        check_trap("1 big", Size::kib(1), false);
+    }
+
+    #[test]
+    fn rebound_formats_one_binary_unit() {
+        check_rebound("215 B", Size(215), true);
+        check_rebound("1 big", Size::kib(1), true);
+    }
+
+    #[test]
+    fn nonliteral_formats_one_binary_unit() {
+        let count = 1;
+        check_nonliteral("215 B", Size(215), true);
+        check_nonliteral("1 big", Size::kib(count), true);
+    }
+
+    #[test]
+    fn shifted_formats_one_binary_unit() {
+        check_shifted("215 B", Size(215), true);
+        check_shifted("1 big", Size::shifted(1), true);
+    }
+
+    #[test]
+    fn collide_formats_one_binary_unit() {
+        check_collide("215 B", Size(215), true);
+        check_collide("1 big", Size::kib(1), true);
+        check_collide("1 big", Size::kib(1), false);
+    }
+
+    #[test]
+    fn pretty_formats_one_binary_unit() {
+        check_pretty("215 B", Size(215), true);
+        check_pretty("1 big", Size::kib(1), true);
+        check_pretty("1 big", Size::kib(1), false);
+    }
+
+    #[test]
+    fn twin_formats_one_binary_unit() {
+        check_twin("215 B", Size(215), true);
+        check_twin("1 big", Size::kib(1), true);
+    }
+
+    #[test]
+    fn masked_reports_a_non_empty_label() {
+        check_masked(true, Size(215), true);
+        check_masked(true, Size::kib(1), true);
+    }
+
+    #[test]
+    fn unseen_runs_without_checking_the_label() {
+        check_unseen("215 B", Size(215), true);
+        check_unseen("1 big", Size::kib(1), true);
+    }
+}

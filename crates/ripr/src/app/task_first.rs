@@ -203,7 +203,20 @@ fn repair_refusal(
                     format!("{label}: its existing tests already grip it (exposed) on current static evidence, so no static gap remains to repair"),
                 )
             } else if reason == RepairPacketIneligibility::RouteNotReady {
-                (RefusalKind::RouteNotReady, label.to_string())
+                // Name the evidence the route still needs, not just the gate
+                // verdict: "repair route not ready" alone sends the reader
+                // hunting for what to strengthen (#9604). The parenthetical
+                // matches the agent card's readiness line so both surfaces
+                // read the same way.
+                let missing = eligibility.readiness.missing_evidence.join("; ");
+                if missing.is_empty() {
+                    (RefusalKind::RouteNotReady, label.to_string())
+                } else {
+                    (
+                        RefusalKind::RouteNotReady,
+                        format!("{label} (missing evidence: {missing})"),
+                    )
+                }
             } else {
                 (RefusalKind::Other, label.to_string())
             }
@@ -215,13 +228,18 @@ fn repair_refusal(
 }
 
 fn ineligibility_label(reason: RepairPacketIneligibility) -> &'static str {
+    // Sentence-style labels: these render directly in "none repair-eligible
+    // (...)" lists and refusal notes, so an internal-enum spelling reads as a
+    // bug to the user (#9604).
     match reason {
-        RepairPacketIneligibility::ClassNotHeadlineEligible => "not a headline repair target",
+        RepairPacketIneligibility::ClassNotHeadlineEligible => {
+            "its class is not a repair target under the current policy"
+        }
         RepairPacketIneligibility::CrossLanguageOracleVisibilityUnresolved => {
-            "cross-language oracle visibility unresolved"
+            "ripr cannot resolve which external-language observer would notice this seam"
         }
         RepairPacketIneligibility::CrossLanguageTestTargetUnresolved => {
-            "cross-language test target unresolved"
+            "ripr cannot resolve a safe external-language test target for this seam"
         }
         RepairPacketIneligibility::RouteNotReady => "repair route not ready",
     }
@@ -566,6 +584,14 @@ impl RepairStartGate {
 
     /// `None` when the gate admits a start for `seam_id`.
     pub(crate) fn check(&self, seam_id: &str) -> Option<RepairStartRefusal> {
+        // #9103 (RIPR-SPEC-0311): a gap-bound attempt's subject is a
+        // canonical TypeScript gap id, not a Rust seam, so this seam-inventory
+        // gate has no verdict to give. Its admission is decided where the
+        // start is: the shared agent-packet validator at the gap-bound before
+        // phase, which re-checks it on every restart.
+        if super::gap_bound_repair::is_gap_bound_subject(seam_id) {
+            return None;
+        }
         #[cfg(test)]
         if self.admitted.iter().any(|id| id == seam_id) {
             return None;
@@ -627,10 +653,9 @@ fn check_state(root: &Path, state: &GateState, seam_id: &str) -> Option<RepairSt
     // The explicit-subject resolver refuses every start from a truncated
     // inventory, so no seam in one can be verified as startable.
     if truncated {
-        return Some(RepairStartRefusal::unverified(
-            "the seam inventory was truncated by the seam limit, and a start from a truncated inventory is refused"
-                .to_string(),
-        ));
+        return Some(RepairStartRefusal::unverified(format!(
+            "the seam inventory was truncated by the seam limit, and a start from a truncated inventory is refused; {WIDEN_SEAM_BUDGET}"
+        )));
     }
     let Some(entry) = classified
         .iter()
@@ -772,6 +797,40 @@ pub(crate) fn repair_start_withheld_note(
     }
 }
 
+/// The gap-bound TypeScript start admission (#9103, RIPR-SPEC-0311) for one
+/// finding of a check run: a TypeScript preview finding that is not
+/// static-limited, from a run that recorded its diff base, whose GapRecord the
+/// shared agent-packet validator accepts. This is the single admission both
+/// `ripr check` (the printed start line) and `ripr agent status` (the routed
+/// warning, #10001) consult; it forks no validator and fails closed.
+fn typescript_gap_route(
+    output: &super::CheckOutput,
+    finding: &crate::domain::Finding,
+) -> Option<crate::app::GapRepairRoute> {
+    if non_rust_language(&finding.probe.location.file) != Some("TypeScript")
+        || super::gap_bound_repair::finding_is_static_limited(finding)
+    {
+        return None;
+    }
+    let base = output.base.as_deref()?;
+    let record = super::gap_bound_repair::startable_typescript_gap_record(finding)?;
+    Some(crate::app::GapRepairRoute {
+        finding_id: finding.id.clone(),
+        gap_id: record.canonical_gap_id,
+        base: base.to_string(),
+    })
+}
+
+/// The gap-bound start the default human `ripr check` would print for this
+/// run's selected finding, or `None` when check would print none (#10001).
+pub(crate) fn selected_typescript_gap_route(
+    output: &super::CheckOutput,
+    check_config: &crate::config::RiprConfig,
+) -> Option<crate::app::GapRepairRoute> {
+    let finding = crate::output::human::selected_triage_finding(output, check_config)?;
+    typescript_gap_route(output, finding)
+}
+
 /// The repair route for the one finding the default human `ripr check`
 /// selects (#8166 Slice C), or the named refusal when that finding may not
 /// be offered a repair start (#8729). The seam↔finding binding is the
@@ -827,14 +886,17 @@ pub(crate) fn check_repair_route(
     // computed refusal is named instead of silent (#8729): a static-limited
     // finding whose seam the gate refused must not read as "analysis could
     // not decide" either.
-    let static_limited = finding.static_limit_kind.is_some()
-        || matches!(
-            finding.class,
-            crate::domain::ExposureClass::NoStaticPath
-                | crate::domain::ExposureClass::InfectionUnknown
-                | crate::domain::ExposureClass::PropagationUnknown
-                | crate::domain::ExposureClass::StaticUnknown
-        );
+    let static_limited = super::gap_bound_repair::finding_is_static_limited(finding);
+    // #9103 (RIPR-SPEC-0311): a TypeScript preview finding carries no Rust
+    // canonical gap, but its GapRecord validates through the shared
+    // agent-packet validator and starts a gap-bound attempt. The canonical
+    // gap id and the base this run analyzed are the whole start. A finding
+    // that does not validate, a static-limited one, and a run without a base
+    // keep the refusals below. Python and the other routed languages are
+    // unchanged.
+    if !static_limited && let Some(route) = typescript_gap_route(output, finding) {
+        return CheckRepairRoute::GapRoute(route);
+    }
     let Some(gap) = finding.canonical_gap.as_ref() else {
         return CheckRepairRoute::Refused(RepairRouteRefusal::NoCanonicalGap);
     };
@@ -968,8 +1030,15 @@ pub(crate) fn no_seam_inventory_reason(language: &str, file: &str) -> String {
     } else {
         format!("this {language} finding in `{file}`")
     };
+    let verified_route = if language == "TypeScript" {
+        // The check-findings artifact kind makes the manual TypeScript route
+        // verifiable by gap id (#9103, RIPR-SPEC-0310).
+        "; to verify the repair by gap id, save `ripr check --base <base> --format check-findings-json` before and after the edit, then run `ripr agent verify --before <before> --after <after> --gap-id <canonical gap printed by check> --json`, which reports the gap closed only when it reads exposed in the after snapshot"
+    } else {
+        ""
+    };
     format!(
-        "the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so {subject} has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command"
+        "the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so {subject} has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command{verified_route}"
     )
 }
 
@@ -1407,7 +1476,14 @@ pub(crate) mod tests {
         );
         let refusal = repair_start_refusal_for_entry(root, &not_ready, policy)
             .ok_or("the shared gate must refuse a route that is not ready")?;
-        assert_eq!(refusal.reason, "repair route not ready");
+        // #9604: the verdict now names the evidence the route still needs.
+        assert!(
+            refusal
+                .reason
+                .starts_with("repair route not ready (missing evidence: "),
+            "{}",
+            refusal.reason
+        );
         assert_eq!(
             refusal.related_test.as_deref(),
             Some("`at_threshold_runs` (tests/pricing.rs:12)")
@@ -1525,7 +1601,13 @@ pub(crate) mod tests {
         // the unverified one.
         let refused = check_state(root, &loaded, &known).ok_or("known seam must be refused")?;
         assert_eq!(refused.kind, RefusalKind::RouteNotReady);
-        assert_eq!(refused.reason, "repair route not ready");
+        assert!(
+            refused
+                .reason
+                .starts_with("repair route not ready (missing evidence: "),
+            "{}",
+            refused.reason
+        );
         Ok(())
     }
 
@@ -1583,6 +1665,7 @@ pub(crate) mod tests {
             repository_head: head.to_string(),
             producer_version: "test".to_string(),
             seam_id: seam.to_string(),
+            gap_binding: None,
             created_unix_ms: created,
             artifacts: Vec::new(),
             next_command: format!("ripr agent repair --root . --attempt {id_tail} --phase after"),
@@ -1642,6 +1725,24 @@ pub(crate) mod tests {
             Some(within.repair_attempt_id.as_str().to_string())
         );
         Ok(())
+    }
+
+    /// RIPR-SPEC-0310: only TypeScript has a gap-bound verify route; Python
+    /// keeps the plain manual route of #9102.
+    #[test]
+    fn terminal_reason_names_gap_bound_verify_only_for_typescript() {
+        let typescript = no_seam_inventory_reason("TypeScript", "src/pricing.ts");
+        assert!(
+            typescript.contains("--format check-findings-json"),
+            "{typescript}"
+        );
+        assert!(typescript.contains("--gap-id"), "{typescript}");
+        let python = no_seam_inventory_reason("Python", "pricing/core.py");
+        assert!(!python.contains("check-findings-json"), "{python}");
+        assert!(
+            python.contains("run the printed verify command"),
+            "{python}"
+        );
     }
 
     /// #9102: a canonical gap id or preview finding id of a routed non-Rust
@@ -1890,18 +1991,20 @@ pub(crate) mod tests {
     /// Every ineligibility reason keeps its own distinct, human label.
     #[test]
     fn ineligibility_labels_are_distinct_and_exact() -> Result<(), String> {
+        // #9604: labels render verbatim in user-facing refusal lists, so they
+        // must read as sentences, not internal-enum spellings.
         let labels = [
             (
                 RepairPacketIneligibility::ClassNotHeadlineEligible,
-                "not a headline repair target",
+                "its class is not a repair target under the current policy",
             ),
             (
                 RepairPacketIneligibility::CrossLanguageOracleVisibilityUnresolved,
-                "cross-language oracle visibility unresolved",
+                "ripr cannot resolve which external-language observer would notice this seam",
             ),
             (
                 RepairPacketIneligibility::CrossLanguageTestTargetUnresolved,
-                "cross-language test target unresolved",
+                "ripr cannot resolve a safe external-language test target for this seam",
             ),
             (
                 RepairPacketIneligibility::RouteNotReady,

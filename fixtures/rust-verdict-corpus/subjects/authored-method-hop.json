@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-method-hop",
+  "origin": "authored",
+  "version_label": "authored 2026-10-22; boundaries reached through a receiver method, a tuple-struct field read and a multi-caller owner (#9329)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "1b0e6ebbac81389235a880c2b1bc247d6f8a8ec5fceeaa1e29e14e424f00643c"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "0d599623479e5013f2fe5caa0be62378a44fede44a857ed1bc456a4304b19775"
+    }
+  ]
+}

@@ -177,6 +177,7 @@ struct Projection {
     in_place: bool,
     tty_width: usize,
     hold_success: bool,
+    user_fixable_failure: bool,
     pending_success: Option<AnalysisProgressEvent>,
     now: NowFn,
 }
@@ -278,6 +279,7 @@ impl CliProgressSink {
                     in_place: false,
                     tty_width: 0,
                     hold_success: false,
+                    user_fixable_failure: false,
                     pending_success: None,
                     now,
                 }),
@@ -349,6 +351,13 @@ impl CliProgressSink {
         projection.current_stage = Some(event.stage);
         projection.current_scope = Some(event.scope);
 
+        if event.stage == AnalysisProgressStage::Failed && projection.user_fixable_failure {
+            // #9922: the caller prints the real, user-fixable error; a
+            // `failed` line beside it reads like an internal crash.
+            projection.terminal = true;
+            Self::finish_in_place(&mut projection);
+            return;
+        }
         if stage_is_terminal(event.stage) {
             if projection.hold_success && stage_is_success_terminal(event.stage) {
                 projection.pending_success = Some(event);
@@ -483,6 +492,10 @@ impl CliProgressSink {
 }
 
 impl AnalysisProgressSink for CliProgressSink {
+    fn user_fixable_failure(&self) {
+        Self::lock_state(&self.inner).user_fixable_failure = true;
+    }
+
     fn emit(&self, event: AnalysisProgressEvent) {
         self.emit_event(event);
         if stage_is_terminal(event.stage) || Self::lock_state(&self.inner).terminal {
@@ -826,6 +839,19 @@ mod tests {
             best < bound,
             "terminal stage took {best:?} to stop the heartbeat; bound {bound:?}"
         );
+    }
+
+    #[test]
+    fn user_fixable_failure_projects_no_failed_line_but_genuine_failure_still_does() {
+        let buffer = Buffer::new();
+        let sink = CliProgressSink::with_writer(Box::new(buffer.clone()), false, non_tty_policy());
+        sink.emit(event(AnalysisProgressStage::LoadingInput));
+        sink.user_fixable_failure();
+        sink.emit(event(AnalysisProgressStage::Failed));
+        let text = buffer.text();
+        assert!(text.contains("ripr progress: loading_input [diff]"));
+        assert!(!text.contains("failed"), "#9922: got {text:?}");
+        assert!(!text.contains("completed"));
     }
 
     #[test]

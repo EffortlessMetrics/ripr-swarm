@@ -1,0 +1,44 @@
+{
+  "case_id": "py-hostile-same-name-other-module",
+  "subject_id": "authored-py-pytest-hostile",
+  "diff": "cases/py-hostile-same-name-other-module.diff",
+  "anchor": {
+    "file": "hostile/beta.py",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_operator",
+  "test_shape": "pytest_same_function_name_in_untested_module",
+  "hard_case": "a name-only relation would credit alpha's test to beta",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, Hypothesis 6.168.3, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return x + 1",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: beta.compute adds"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "alpha.compute and beta.compute share a name; only alpha is imported by a test.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

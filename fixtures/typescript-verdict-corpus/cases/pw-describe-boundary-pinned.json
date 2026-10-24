@@ -1,0 +1,45 @@
+{
+  "case_id": "pw-describe-boundary-pinned",
+  "subject_id": "authored-ts-playwright-units",
+  "diff": "cases/pw-describe-boundary-pinned.diff",
+  "anchor": {
+    "file": "src/discount.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "playwright_test_describe_boundary_pinned",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx playwright test",
+    "toolchain": "Node.js v22.22.0, @playwright/test 1.62.1 (no browser launched), typescript 5.9, x86_64-linux; edit applied by hand to the whole package",
+    "mutants": [
+      {
+        "replacement": "return quantity > 10 ? 10 : 0;",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "test/discount.spec.ts > discount \u203a ten units get the bulk discount",
+        "equivalence_review": "the edit itself: test.describe holds one test at ten units and one at nine, so the boundary is pinned from both sides."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "test.describe holds one test at ten units and one at nine, so the boundary is pinned from both sides. The edited package's test command fails, so a discriminator exists and the credit is deserved.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

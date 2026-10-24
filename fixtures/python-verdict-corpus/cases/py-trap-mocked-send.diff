@@ -1,0 +1,12 @@
+diff --git a/trapkit/core.py b/trapkit/core.py
+--- a/trapkit/core.py
++++ b/trapkit/core.py
+@@ -94,7 +94,7 @@
+ 
+ 
+ def mocked_send(order_id, sender):
+-    sender.send(order_id * 2)
++    sender.send(2 * order_id)
+ 
+ 
+ def mocked_send_args(order_id, sender):
