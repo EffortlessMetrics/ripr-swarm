@@ -259,7 +259,7 @@ fn use_tree_names(tree: &ast::UseTree, names: &mut BTreeSet<String>) {
     if tree.star_token().is_some() {
         let super_only = tree
             .path()
-            .is_some_and(|path| path.syntax().text().to_string() == "super");
+            .is_some_and(|path| path.syntax().text() == "super");
         if !super_only {
             names.insert("*".to_string());
         }

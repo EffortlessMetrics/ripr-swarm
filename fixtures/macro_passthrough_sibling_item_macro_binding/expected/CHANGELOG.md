@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — macro_passthrough_sibling_item_macro_binding (3)
+
+Reason:
+RIPR-SPEC-0122 RIPR-SPEC-0117: re-bless against the current renderer legend; wrapped test stays no_static_path, not promoted
+
+Command:
+`cargo xtask goldens bless macro_passthrough_sibling_item_macro_binding --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
