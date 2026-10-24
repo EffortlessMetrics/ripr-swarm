@@ -1,0 +1,3 @@
+pub fn weight(count: u32) -> u32 {
+    count + count + count
+}
