@@ -7526,7 +7526,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
             }
             assert!(
                 crate::analysis::workspace::verified_anyhow_identity(&root).is_some(),
-                "prepare canonical fixture dependencies first: cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml (same CARGO_HOME)"
+                "environment gap, not a source regression: prepare canonical fixture dependencies first with `cargo xtask goldens prepare` (or cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml; same CARGO_HOME)"
             );
             let full = inventory_classified_seams_at(&root)?;
             let compact = inventory_compact_classified_seams_at_with_config(&root, &config)?;

@@ -1,0 +1,84 @@
+name: Merge-ready Conflict Notice
+
+# routed-rust.yml starts on `pull_request: [labeled]`, but GitHub creates no
+# `pull_request` run for a PR that conflicts with its base because there is no
+# test-merge ref (#9842, #9250). A merge-ready request on such a PR started
+# nothing and said nothing. `pull_request_target` runs from the base branch even
+# when the PR conflicts, so this workflow fires where routed-rust.yml cannot and
+# turns the silent no-run into a visible refusal.
+#
+# Security boundary (pull_request_target runs with a write-capable token):
+# - It checks out nothing and runs no PR-controlled code. The only code that
+#   runs is this file as it exists on the base branch.
+# - The only PR-derived values are the PR number, head SHA and base ref, passed through
+#   `env` and never interpolated into the script. The label name is compared
+#   in the job `if`, not in a run step.
+# - No third-party actions and no secrets beyond the job token. Permissions are
+#   job-level: pull-requests write for the one comment, statuses write for the
+#   failing status. Nothing under settings authority.
+# - Mergeable PRs get nothing from this workflow; routed-rust.yml owns the
+#   result.
+
+on:
+  pull_request_target:
+    types: [labeled]
+
+permissions: {}
+
+jobs:
+  notice:
+    name: Report conflicting merge-ready request
+    if: github.event.label.name == 'merge-ready'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+      statuses: write
+    # A repeated request supersedes the previous check; never cancel one
+    # mid-write because the comment and the status are written as a pair.
+    concurrency:
+      group: merge-ready-conflict-notice-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    steps:
+      - name: Comment and fail a status when the PR conflicts with its base
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          # GitHub computes mergeability lazily: `mergeable` is null until it does.
+          state=unknown
+          for _ in 1 2 3 4 5 6; do
+            pr="$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER" --jq '[(.mergeable | tostring), .mergeable_state, .head.sha, .base.ref] | join(" ")')"
+            read -r mergeable state current_sha current_base <<<"$pr"
+            [ "$mergeable" = "null" ] || break
+            sleep 10
+          done
+          if [ "$mergeable" = "null" ]; then
+            echo "::warning title=mergeability not computed::PR #$PR_NUMBER mergeable is still null after retries; re-apply merge-ready to re-check."
+            exit 0
+          fi
+          # A push or retarget after the label makes this request stale; the new
+          # head or base owns itself, and its own request names the right target.
+          if [ "$current_sha" != "$HEAD_SHA" ] || [ "$current_base" != "$BASE_REF" ]; then
+            echo "PR moved to $current_sha on $current_base after the request on $HEAD_SHA against $BASE_REF; nothing to report."
+            exit 0
+          fi
+          if [ "$state" != "dirty" ]; then
+            echo "mergeable_state=$state; routed-rust.yml owns the result."
+            exit 0
+          fi
+          marker="<!-- merge-ready-conflict:$HEAD_SHA:$BASE_REF -->"
+          existing="$(gh api --paginate "repos/$REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" --jq "[.[] | select(.body | contains(\"$marker\"))] | length" | awk '{s+=$1} END{print s+0}')"
+          if [ "$existing" = "0" ]; then
+            gh api "repos/$REPOSITORY/issues/$PR_NUMBER/comments" -f body="$marker
+          \`merge-ready\` was requested, but this PR conflicts with \`$BASE_REF\` (head \`${HEAD_SHA:0:8}\`), so GitHub creates no test-merge ref and no qualification run can start. Merge \`$BASE_REF\` into the branch and resolve the conflicts, then remove and re-apply \`merge-ready\`." > /dev/null
+          fi
+          gh api "repos/$REPOSITORY/statuses/$HEAD_SHA" \
+            -f state=failure \
+            -f context="merge-ready conflict" \
+            -f description="Conflicts with $BASE_REF: no qualification run can start; resolve and re-apply merge-ready" > /dev/null
+          echo "::warning title=merge-ready on a conflicting PR::PR #$PR_NUMBER conflicts with $BASE_REF; commented and failed the status."
