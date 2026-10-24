@@ -240,7 +240,11 @@ fn bound_as_parameter_or_pattern(masked: &str, operand: &str) -> bool {
             return false;
         }
         let typed = after.starts_with(':') && !after.starts_with("::");
-        let closure = before.ends_with('|') || after.starts_with('|');
+        // `a | b` is the operator itself, not a closure parameter list: a
+        // parameter sits between `|`/`,`/`mut` and `|`/`,`/`:`.
+        let opens = before.ends_with('|') || before.ends_with(',') || before.ends_with("mut");
+        let closes = after.starts_with('|') || after.starts_with(',');
+        let closure = opens && closes;
         let pattern = before.ends_with("for")
             || before.ends_with("Some(")
             || before.ends_with("Ok(")

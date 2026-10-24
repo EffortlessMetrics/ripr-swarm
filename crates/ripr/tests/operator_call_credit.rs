@@ -204,9 +204,72 @@ fn typed_operands_reach_each_operator_impl() -> Result<(), String> {
     }
 }
 
+/// Every binary and assigning operator in the dispatch table reaches its own
+/// impl, so a defect in one row's token or method name cannot hide behind the
+/// five representative cases above.
+#[test]
+fn every_binary_and_assigning_operator_reaches_its_impl() -> Result<(), String> {
+    let binary = [
+        ("Add", "+"),
+        ("Sub", "-"),
+        ("Mul", "*"),
+        ("Div", "/"),
+        ("Rem", "%"),
+        ("BitAnd", "&"),
+        ("BitOr", "|"),
+        ("BitXor", "^"),
+        ("Shl", "<<"),
+        ("Shr", ">>"),
+    ];
+    let leak = |text: String| -> &'static str { Box::leak(text.into_boxed_str()) };
+    let mut failures = Vec::new();
+    for (trait_name, token) in binary {
+        let method = trait_name.to_lowercase();
+        let plain = Case {
+            label: leak(method.clone()),
+            trait_name,
+            method: leak(method.clone()),
+            signature: leak(format!(
+                "type Output = Money;\n    fn {method}(self, other: Money) -> Money"
+            )),
+            old_line: leak(format!("        Money(self.0 {token} other.0)")),
+            new_line: leak(format!("        Money((self.0 {token} other.0) + 0)")),
+            extra_items: "",
+            test_body: leak(format!(
+                "let a = Money(6);\n        let b = Money(2);\n        let r = a {token} b;\n        assert_eq!(r, Money(0));"
+            )),
+        };
+        let assign_trait = leak(format!("{trait_name}Assign"));
+        let assign_method = format!("{method}_assign");
+        let assign = Case {
+            label: leak(assign_method.clone()),
+            trait_name: assign_trait,
+            method: leak(assign_method.clone()),
+            signature: leak(format!("fn {assign_method}(&mut self, other: Money)")),
+            old_line: leak(format!("        self.0 {token}= other.0;")),
+            new_line: leak(format!("        self.0 = self.0 {token} other.0;")),
+            extra_items: "",
+            test_body: leak(format!(
+                "let mut total = Money(6);\n        total {token}= Money(2);\n        let _ = total;"
+            )),
+        };
+        for case in [plain, assign] {
+            let direct = direct_tests(&case)?;
+            if direct != ["operator_under_test"] {
+                failures.push(format!("{} ({token}): got {direct:?}", case.label));
+            }
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}
+
 #[test]
 fn operands_that_are_not_established_as_the_impl_type_stay_unrelated() -> Result<(), String> {
-    let bodies: [(&'static str, &'static str); 11] = [
+    let bodies: [(&'static str, &'static str); 12] = [
         ("integers", "assert_eq!(1 + 2, 3);"),
         (
             "parameter of a nested fn shadows the binding",
@@ -215,6 +278,10 @@ fn operands_that_are_not_established_as_the_impl_type_stay_unrelated() -> Result
         (
             "closure parameter shadows the binding",
             "let a = Money(1);\n        let inc = |a: i64| a + 1;\n        assert_eq!(inc(1), 2);\n        let _ = a;",
+        ),
+        (
+            "untyped closure parameter shadows the binding",
+            "let a = Money(1);\n        let inc = |a| a + 1;\n        assert_eq!(inc(1), 2);\n        let _ = a;",
         ),
         (
             "reference operands select the impl for &Money",
