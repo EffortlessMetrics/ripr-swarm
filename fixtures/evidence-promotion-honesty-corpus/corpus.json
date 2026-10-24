@@ -3179,11 +3179,34 @@
         },
         {
           "type": "expected_class",
-          "class": "weakly_exposed"
+          "class": "reachable_unrevealed"
         },
         {
           "type": "maximum_class",
           "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_unreached_workspace_trait_impl_borrows_no_oracle",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/unreached_workspace_trait_impl_borrows_no_oracle",
+      "vector": "same_file_test_of_another_function_never_lends_a_workspace_trait_impl_its_oracle",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
         }
       ]
     },
@@ -7872,7 +7895,7 @@
         },
         {
           "type": "expected_class",
-          "class": "weakly_exposed"
+          "class": "reachable_unrevealed"
         },
         {
           "type": "expected_oracle",
@@ -7914,7 +7937,7 @@
         },
         {
           "type": "expected_class",
-          "class": "weakly_exposed"
+          "class": "reachable_unrevealed"
         },
         {
           "type": "expected_oracle",
@@ -7956,7 +7979,7 @@
         },
         {
           "type": "expected_class",
-          "class": "weakly_exposed"
+          "class": "reachable_unrevealed"
         },
         {
           "type": "expected_oracle",
@@ -8208,7 +8231,7 @@
         },
         {
           "type": "expected_class",
-          "class": "weakly_exposed"
+          "class": "reachable_unrevealed"
         },
         {
           "type": "maximum_class",
@@ -8385,7 +8408,7 @@
         },
         {
           "type": "expected_class",
-          "class": "weakly_exposed"
+          "class": "reachable_unrevealed"
         },
         {
           "type": "expected_related_test",
@@ -8451,7 +8474,7 @@
         },
         {
           "type": "expected_class",
-          "class": "weakly_exposed"
+          "class": "reachable_unrevealed"
         },
         {
           "type": "expected_related_test",
@@ -8517,7 +8540,7 @@
         },
         {
           "type": "expected_class",
-          "class": "weakly_exposed"
+          "class": "reachable_unrevealed"
         },
         {
           "type": "expected_related_test",
