@@ -205,3 +205,43 @@ fn a_renamed_import_passing_the_mock_is_unknown() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn trivia_after_a_member_dot_is_still_a_member_call() -> Result<(), String> {
+    let declared = "  const fn = mock.fn(async () => \"ok\");";
+    let counted = "  assert.equal(fn.mock.callCount(), 2);";
+    for (label, call) in [
+        ("loop-dot-space", "other. withRetry(fn, 2);"),
+        ("loop-dot-comment", "other./* member */withRetry(fn, 2);"),
+    ] {
+        assert_stays_a_gap(
+            label,
+            &format!(
+                "{REAL_VALUE}\n{declared}\n  const other = {{ withRetry: (f: unknown, n: number) => n }};\n  {call}\n{counted}"
+            ),
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_default_import_passing_the_mock_is_unknown() -> Result<(), String> {
+    let source = RETRY.replace("export async function", "export default async function");
+    let head = HEAD.replace("import { withRetry }", "import retry");
+    let test = format!(
+        "{head}\nit(\"x\", async () => {{\n{}\n}});\n",
+        COUNTED.replace("withRetry(fn, 2)", "retry(fn, 2)")
+    );
+    let finding = run("loop-default-import", &source, OLD, NEW, &test)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::StaticUnknown,
+        "{:?}",
+        finding.missing
+    );
+    assert_eq!(
+        finding.stop_reasons,
+        vec![StopReason::GapEvidenceUnresolved]
+    );
+    Ok(())
+}

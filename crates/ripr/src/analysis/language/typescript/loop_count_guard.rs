@@ -111,8 +111,15 @@ fn normalized_clause(clause: &str) -> String {
     out
 }
 
+/// A `/` may open a regex literal, whose spaces and brackets mean something,
+/// and the adapter does not tell it from division here, so any header holding
+/// one is compared as written and an unproven normalization is a change.
 fn normalized(clauses: [&str; 3]) -> [String; 3] {
-    clauses.map(normalized_clause)
+    if clauses.iter().any(|clause| clause.contains('/')) {
+        clauses.map(|clause| clause.trim().to_string())
+    } else {
+        clauses.map(normalized_clause)
+    }
 }
 
 /// Both the old and the new line are counted-loop headers and they differ.
@@ -171,8 +178,14 @@ fn owner_call_passes(masked: &str, call_names: &[&str], mock: &str) -> bool {
             .iter()
             .any(|needle| {
                 masked.match_indices(needle.as_str()).any(|(at, _)| {
-                    let before = masked[..at].chars().next_back();
-                    !before.is_some_and(|c| word(c) || c == '.')
+                    // The nearest code character, past whitespace and the blanks a
+                    // masked comment leaves: `other. withRetry(` and
+                    // `other./* c */withRetry(` are member calls too.
+                    let prefix = &masked[..at];
+                    let before = prefix.trim_end();
+                    let immediate = prefix.chars().next_back();
+                    !immediate.is_some_and(word)
+                        && !before.ends_with('.')
                         && call_arguments(&masked[at + needle.len()..]).contains(&mock)
                 })
             })
@@ -198,15 +211,8 @@ fn counts_mock_calls(
             )
         })
         .any(|candidate| {
-            let mut names = vec![owner.name.as_str()];
-            if candidate.relation == TypeScriptRelationKind::ImportAliasOwnerCall {
-                names = super::related_tests::import_alias_owner_locals(
-                    candidate.test,
-                    owner,
-                    alias_map,
-                    workspace_root,
-                );
-            }
+            let names =
+                super::classifier::ts_owner_call_names(candidate, owner, alias_map, workspace_root);
             let masked = ts_mask_literals_and_comments(&candidate.test.body_text);
             candidate
                 .test
@@ -291,6 +297,19 @@ mod tests {
     }
 
     #[test]
+    fn a_header_holding_a_slash_is_compared_as_written() {
+        // Regex literal bytes (spaces, brackets) change the iteration count.
+        assert!(ts_loop_header_changed(
+            "for (let i = 0; i < /a  b/.source.length; i++) {",
+            "for (let i = 0; i < /a b/.source.length; i++) {"
+        ));
+        assert!(ts_loop_header_changed(
+            "for (let i = 0; i < /a [b]/.source.length; i++) {",
+            "for (let i = 0; i < /a[b]/.source.length; i++) {"
+        ));
+    }
+
+    #[test]
     fn the_counted_mock_is_a_plain_receiver() {
         assert_eq!(counted_mock("fn.mock.callCount()"), Some("fn"));
         assert_eq!(counted_mock("send.mock.calls.length"), Some("send"));
@@ -328,6 +347,12 @@ mod tests {
             &names,
             "fn"
         ));
+        // Trivia between a member dot and its callee is still a member call.
+        assert!(!passes("other.withRetry(fn, 2);", &names, "fn"));
+        assert!(!passes("other. withRetry(fn, 2);", &names, "fn"));
+        assert!(!passes("other.\nwithRetry(fn, 2);", &names, "fn"));
+        assert!(!passes("other./* member */withRetry(fn, 2);", &names, "fn"));
+        assert!(!passes("other?.withRetry(fn, 2);", &names, "fn"));
         // A renamed import is the owner under its local name.
         assert!(passes("await retry(fn, 2);", &["retry"], "fn"));
         assert!(!passes("await retry(fn, 2);", &names, "fn"));
