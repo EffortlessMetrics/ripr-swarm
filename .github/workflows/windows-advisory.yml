@@ -1532,19 +1532,14 @@ jobs:
   # two-hour workspace repeats.
   windows-advisory-runner-probe:
     name: windows-advisory-runner-probe
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.runner_probe_only }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.runner_probe_only && (github.event_name != 'pull_request' || (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) }}
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
 
-      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95
-
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
-        with:
-          shared-key: ripr-windows-advisory-1.95-${{ runner.os }}
-          save-if: false
-
+      # No toolchain or cache action here: `rust-toolchain.toml` pins 1.95 and
+      # the workflow-pin tests count those actions per workflow.
       - name: Native forced-deadline control
         timeout-minutes: 30
         run: cargo test -p xtask --bin xtask windows_native_deadline -- --nocapture
