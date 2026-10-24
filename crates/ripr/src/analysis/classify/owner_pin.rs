@@ -13452,7 +13452,7 @@ fn is_ident_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
-fn whole_word_offsets(text: &str, word: &str) -> Vec<usize> {
+pub(super) fn whole_word_offsets(text: &str, word: &str) -> Vec<usize> {
     let bytes = text.as_bytes();
     let mut offsets = Vec::new();
     let mut search = 0usize;

@@ -3714,7 +3714,62 @@ fn factory_call_names_type(
         type_head(expr),
         Some((segments, Some(b'(')))
             if matches!(segments.as_slice(), [.., ty, name] if *ty == impl_type && factory(ty, name) == FactoryReturn::OwnSync)
+                // A bare `helper()` is asked of the free-function lookup, which
+                // takes an empty type to mean "no impl block".
+                || matches!(segments.as_slice(), [name] if factory("", name) == FactoryReturn::OwnSync)
     )
+}
+
+/// A bare `name()` call in `test_file` is a synchronous free helper that
+/// returns exactly `ty`: the only indexed free `fn name` in the workspace is
+/// declared in the same file, is not `async`, and its whole return type is
+/// `ty`. A second declaration, a local binding of the name in the file, a
+/// wrapper return type (`Result<ty>`) or an unreadable declaration fail
+/// closed, so an imported or shadowed `name` is never read as this helper.
+fn free_fn_returns_type(
+    index: &RustIndex,
+    test_file: &Path,
+    ty: &str,
+    name: &str,
+) -> FactoryReturn {
+    let mut declarations = index.functions().iter().filter(|function| {
+        function.name == name && function.item.container == FunctionContainer::Free
+    });
+    let (Some(function), None) = (declarations.next(), declarations.next()) else {
+        return FactoryReturn::Other;
+    };
+    if function.file != test_file || function.item.has_self_param || !function.item.has_body {
+        return FactoryReturn::Other;
+    }
+    let shadowed = index.files().get(test_file).is_none_or(|facts| {
+        let masked = mask_comments_and_strings(&facts.source);
+        ["let ", "let mut ", "static ", "const "]
+            .iter()
+            .any(|keyword| {
+                super::owner_pin::whole_word_offsets(&masked, name)
+                    .into_iter()
+                    .any(|offset| masked[..offset].trim_end().ends_with(keyword.trim_end()))
+            })
+    });
+    if shadowed {
+        return FactoryReturn::Other;
+    }
+    if super::owner_pin::function_declaration_is_async(function, index) != Some(false) {
+        return FactoryReturn::Future;
+    }
+    let masked = mask_comments_and_strings(&function.body);
+    let Some(signature) = masked.split('{').next() else {
+        return FactoryReturn::Other;
+    };
+    let Some((_, returned)) = signature.rsplit_once("->") else {
+        return FactoryReturn::Other;
+    };
+    let returned = returned.split("where").next().unwrap_or(returned).trim();
+    if returned == ty {
+        FactoryReturn::OwnSync
+    } else {
+        FactoryReturn::Other
+    }
 }
 
 /// The only indexed `fn name` in an inherent `impl ty` block is a synchronous
@@ -4305,7 +4360,11 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
     };
     let factory = |ty: &str, name: &str| {
         index.map_or(FactoryReturn::Other, |index| {
-            associated_fn_returns_own_type(index, ty, name)
+            if ty.is_empty() {
+                free_fn_returns_type(index, &test.file, impl_type, name)
+            } else {
+                associated_fn_returns_own_type(index, ty, name)
+            }
         })
     };
     executable_call_resolves(test, index, pin_syntax, &|node, scope| {
