@@ -1,0 +1,48 @@
+{
+  "case_id": "unnum-0098-ex3-non-owner-observer-control",
+  "subject_id": "authored-ts-vitest-unnum",
+  "diff": "cases/unnum-0098-ex3-non-owner-observer-control.diff",
+  "anchor": {
+    "file": "src/auditedObserved.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "side_effect",
+  "test_shape": "vitest_console_spy_log_array_assertion",
+  "hard_case": "control: a non-owner assertion reads the console output the changed line writes",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "Node.js v22.22.0, vitest 4.1.11, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "console.log(\"observed\", amount * 8);",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "test/auditedObserved.test.ts > charge returns the net and writes the audit entry",
+        "equivalence_review": "not equivalent: the edit changes the owner's observable behavior"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`chargeObserved` writes its audit entry to `console.log`; the test spies on the console, collects the arguments in `sideEffectLog` and asserts `[[\"observed\", 900]]`, besides pinning the return value. The edit writes `800` and fails the second assertion. RIPR-SPEC-0098 example 3 (control 2): an assertion on a variable that does not name the owner may observe the effect, so the guard must not downgrade.",
+  "labeling_observation": {
+    "ripr_commit": "2939c0d",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0098#3"
+  ]
+}
