@@ -1,0 +1,26 @@
+# Golden Output Changes
+
+## Pending — observation_verified_semicolon_effect (1)
+
+Reason:
+Conditional ReturnValue guidance when an exact assertion exists (RIPR-SPEC-0259, #8954); aligned tail-return and semicolon effect fixtures (RIPR-SPEC-0094)
+
+Command:
+`cargo xtask goldens bless observation_verified_semicolon_effect --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — observation_verified_semicolon_effect (2)
+
+Reason:
+Add human-full surface for the aligned semicolon effect fixture (#8954, RIPR-SPEC-0094)
+
+Command:
+`cargo xtask goldens bless observation_verified_semicolon_effect --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

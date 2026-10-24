@@ -1,0 +1,12 @@
+diff --git a/src/m_computed.rs b/src/m_computed.rs
+--- a/src/m_computed.rs
++++ b/src/m_computed.rs
+@@ -18,7 +18,7 @@
+ 
+ pub fn classify_mc(input: &str) -> &'static str {
+     let final_label = label_mc(input);
+-    if final_label == "alpha" {
++    if final_label == "beta" {
+         "word"
+     } else {
+         "blank"
