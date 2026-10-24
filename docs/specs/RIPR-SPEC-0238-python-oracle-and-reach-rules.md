@@ -754,7 +754,13 @@ mutant calibrates the rule; ripr reports only the static shape.
     below the pin, `py-idioms-caplog-level`) is `exposed`; in both is a
     weak gap; a test that did not log the text before the edit, or any
     shape outside these bounds, abstains. A custom `log_format` is not
-    read. An assertion about unrelated text keeps its verdict.
+    read. The asserted literals are only those the assertion requires: a
+    single membership or an `and` chain, never a literal under `or`. The
+    receiver is `logging` or a module-level `name = logging.getLogger(...)`
+    (a detached `logging.Logger(...)` or any other object abstains), the
+    method is not `exception` (its traceback can hold the asserted text),
+    and the test never rebinds `caplog`. An assertion about unrelated text
+    keeps its verdict.
     `caplog.messages` and `caplog.records` are not read by this rule. The
     membership is read from the parsed assertion, not its text layout:
     extra spacing, parentheses, line breaks, implicit literal
