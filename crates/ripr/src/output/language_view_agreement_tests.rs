@@ -8,21 +8,30 @@
 //! pipeline would pair with each fixture are stated in the fixture, not
 //! derived from the code under test.
 
-use super::view::LanguageDisclosure;
-use super::*;
-use crate::analysis::language_outcome::{DiffCompleteness, LanguageCompletenessView};
+use crate::analysis::LanguageRunStatus;
+use crate::analysis::language_outcome::{
+    DiffCompleteness, FixtureDiffResult, FixtureRepoResult, LanguageAggregate,
+    LanguageAnalysisOutcomeV1, LanguageCompletenessView, LanguageDisclosure, LanguageOutcomeStatus,
+    OutcomeMode, reconcile,
+};
 use crate::analysis_outcome::{
     AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
     AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
     AnalysisStage,
 };
 use crate::app::{CheckOutput, Mode};
+use crate::domain::{Finding, LanguageId};
 use crate::output::gate::{discloses_incomplete_analysis_outcome, discloses_limited_partial_scope};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+// Of the two blocking perl rows the aggregate keeps the not-selected one (digest
+// order), which owns no public run; the literal below states that.
+const PERL_DUAL_RUNS: &[(&str, &str)] = &[];
+
 struct Fixture {
     name: &'static str,
+    repo: bool,
     /// The language_runs rows the public surface must carry.
     runs: &'static [(&'static str, &'static str)],
     children: Vec<LanguageAnalysisOutcomeV1>,
@@ -42,10 +51,10 @@ fn diff_children(
     findings: Vec<Finding>,
     kept: &[String],
 ) -> Vec<LanguageAnalysisOutcomeV1> {
-    let result = LanguageDiffResult {
+    let result = FixtureDiffResult {
         findings,
         changed_files: 1,
-        ..LanguageDiffResult::default()
+        ..FixtureDiffResult::default()
     };
     let touched: BTreeSet<String> = BTreeSet::from([language.as_str().to_string()]);
     LanguageAnalysisOutcomeV1::from_diff_result(language, &result, kept, &touched, "full")
@@ -69,6 +78,7 @@ fn fixtures() -> Result<Vec<Fixture>, String> {
     Ok(vec![
         Fixture {
             name: "complete",
+            repo: false,
             runs: &[],
             children: with_rust(diff_children(LanguageId::Python, Vec::new(), &[]))?,
             selected: both.clone(),
@@ -77,6 +87,7 @@ fn fixtures() -> Result<Vec<Fixture>, String> {
         },
         Fixture {
             name: "complete_zero",
+            repo: false,
             runs: &[],
             children: diff_children(LanguageId::Rust, Vec::new(), &[]),
             selected: vec![LanguageId::Rust],
@@ -85,6 +96,7 @@ fn fixtures() -> Result<Vec<Fixture>, String> {
         },
         Fixture {
             name: "partial",
+            repo: false,
             runs: &[],
             children: with_rust(diff_children(
                 LanguageId::Python,
@@ -97,6 +109,7 @@ fn fixtures() -> Result<Vec<Fixture>, String> {
         },
         Fixture {
             name: "unavailable",
+            repo: false,
             runs: &[("python", "unavailable")],
             children: with_rust(vec![err_child(
                 LanguageId::Python,
@@ -108,6 +121,7 @@ fn fixtures() -> Result<Vec<Fixture>, String> {
         },
         Fixture {
             name: "invalid",
+            repo: false,
             runs: &[("python", "invalid")],
             children: with_rust(vec![err_child(
                 LanguageId::Python,
@@ -119,6 +133,7 @@ fn fixtures() -> Result<Vec<Fixture>, String> {
         },
         Fixture {
             name: "failed",
+            repo: false,
             runs: &[("python", "failed")],
             children: with_rust(vec![err_child(
                 LanguageId::Python,
@@ -130,6 +145,7 @@ fn fixtures() -> Result<Vec<Fixture>, String> {
         },
         Fixture {
             name: "unsupported",
+            repo: false,
             runs: &[],
             children: with_rust(vec![LanguageAnalysisOutcomeV1::unsupported(
                 "Go", 2, "full",
@@ -138,7 +154,69 @@ fn fixtures() -> Result<Vec<Fixture>, String> {
             kind: AnalysisOutcomeKind::UnsupportedInput,
             limitations: vec![AnalysisLimitationKind::LanguageScopeUnsupported],
         },
+        Fixture {
+            name: "repo_partial_with_not_selected",
+            repo: true,
+            runs: &[("python", "partial")],
+            children: vec![
+                LanguageAnalysisOutcomeV1::from_repo_result(
+                    LanguageId::Rust,
+                    &FixtureRepoResult {
+                        findings: vec![rust_finding()?],
+                        production_files: 1,
+                        ..FixtureRepoResult::default()
+                    },
+                    None,
+                ),
+                LanguageAnalysisOutcomeV1::from_repo_result(
+                    LanguageId::Python,
+                    &FixtureRepoResult {
+                        production_files: 1,
+                        partial_reason: Some("file cap reached".to_string()),
+                        ..FixtureRepoResult::default()
+                    },
+                    None,
+                ),
+                LanguageAnalysisOutcomeV1::repo_not_selected(
+                    "typescript",
+                    2,
+                    "language not in the effective [languages].enabled set",
+                ),
+            ],
+            selected: both.clone(),
+            kind: AnalysisOutcomeKind::PartialWithLimitations,
+            limitations: vec![AnalysisLimitationKind::LanguageAdapterUnavailable],
+        },
+        Fixture {
+            name: "configured_uncompiled_perl_dual_row",
+            repo: false,
+            runs: PERL_DUAL_RUNS,
+            children: with_rust(vec![
+                err_child(LanguageId::Perl, LanguageRunStatus::Unavailable),
+                LanguageAnalysisOutcomeV1::not_selected(
+                    "perl",
+                    1,
+                    "adapter not compiled into this ripr binary",
+                    "full",
+                ),
+            ])?,
+            selected: vec![LanguageId::Rust],
+            kind: AnalysisOutcomeKind::PartialWithLimitations,
+            limitations: vec![AnalysisLimitationKind::LanguageAdapterUnavailable],
+        },
     ])
+}
+
+fn aggregate_for(fixture: &Fixture) -> LanguageAggregate {
+    let mut aggregate = if fixture.repo {
+        LanguageAggregate::new_repo()
+    } else {
+        LanguageAggregate::new("full".to_string())
+    };
+    for child in &fixture.children {
+        aggregate.record(child.clone());
+    }
+    aggregate.finish()
 }
 
 fn aggregate_of(children: &[LanguageAnalysisOutcomeV1]) -> LanguageAggregate {
@@ -207,7 +285,7 @@ fn check_output(
 fn every_surface_discloses_what_the_view_says() -> Result<(), String> {
     for fixture in fixtures()? {
         let name = fixture.name;
-        let aggregate = aggregate_of(&fixture.children);
+        let aggregate = aggregate_for(&fixture);
         let produced = aggregate
             .outcomes
             .values()
@@ -314,12 +392,10 @@ fn every_surface_discloses_what_the_view_says() -> Result<(), String> {
 }
 
 #[test]
-fn view_rows_reconcile_selected_and_omitted_counts() -> Result<(), String> {
+fn every_selected_language_has_a_row_and_rows_mirror_the_aggregate() -> Result<(), String> {
     for fixture in fixtures()? {
-        let aggregate = aggregate_of(&fixture.children);
+        let aggregate = aggregate_for(&fixture);
         let view = LanguageCompletenessView::from_aggregate(&aggregate);
-        // Every selected language has a row; a row beyond the selection is a
-        // disposition the run recorded (unsupported source), never dropped.
         for language in &fixture.selected {
             assert!(
                 view.rows.iter().any(|row| row.label == language.as_str()),
@@ -328,9 +404,22 @@ fn view_rows_reconcile_selected_and_omitted_counts() -> Result<(), String> {
                 language.as_str()
             );
         }
+        // One row per aggregate child, with the child's own status and
+        // finding count; the view never adds, drops or strengthens one.
+        let rows: Vec<(&str, LanguageOutcomeStatus, usize)> = view
+            .rows
+            .iter()
+            .map(|row| (row.label.as_str(), row.status, row.findings))
+            .collect();
+        let children: Vec<(&str, LanguageOutcomeStatus, usize)> = aggregate
+            .outcomes
+            .iter()
+            .map(|(label, child)| (label.as_str(), child.status, child.finding_count()))
+            .collect();
+        assert_eq!(rows, children, "{}", fixture.name);
         assert_eq!(
-            view.rows.len(),
-            aggregate.outcomes.len(),
+            view.total_findings,
+            rows.iter().map(|row| row.2).sum::<usize>(),
             "{}",
             fixture.name
         );
@@ -392,4 +481,87 @@ fn partial_is_a_run_row_in_repo_mode_and_a_typed_limitation_in_diff_mode() -> Re
     assert!(view.public_runs.is_empty());
     assert_eq!(view.completeness, DiffCompleteness::Incomplete);
     Ok(())
+}
+
+#[test]
+fn an_extra_run_for_a_known_label_is_tolerated() -> Result<(), String> {
+    // An out-of-scope optional adapter failure may keep a public run over a
+    // row the view discloses silently; only an unknown label is a phantom.
+    let fixtures = fixtures()?;
+    let complete = fixtures
+        .iter()
+        .find(|fixture| fixture.name == "complete")
+        .ok_or("missing fixture")?;
+    let view = LanguageCompletenessView::from_aggregate(&aggregate_for(complete));
+    assert!(view.public_runs.is_empty());
+    let extra = vec![crate::analysis::LanguageRun {
+        language: "python".to_string(),
+        status: LanguageRunStatus::Failed,
+        reason: None,
+    }];
+    view.reconcile_public_runs(&extra)?;
+    Ok(())
+}
+
+#[test]
+fn disclosure_is_a_fixed_table_over_every_mode_and_status() {
+    use LanguageDisclosure::{AdvisoryOnly, PublicRun, Silent, TypedLimitation};
+    use LanguageOutcomeStatus as S;
+    use OutcomeMode::{Diff, Repo};
+    let table = [
+        (Diff, S::Complete, Silent),
+        (Diff, S::CompleteZero, Silent),
+        (Diff, S::Partial, TypedLimitation),
+        (Diff, S::Unavailable, PublicRun("unavailable")),
+        (Diff, S::Invalid, PublicRun("invalid")),
+        (Diff, S::Failed, PublicRun("failed")),
+        (Diff, S::Unsupported, TypedLimitation),
+        (Diff, S::NotSelected, AdvisoryOnly),
+        (Diff, S::NoCurrentScope, Silent),
+        (Repo, S::Complete, Silent),
+        (Repo, S::CompleteZero, Silent),
+        (Repo, S::Partial, PublicRun("partial")),
+        (Repo, S::Unavailable, PublicRun("unavailable")),
+        (Repo, S::Invalid, PublicRun("invalid")),
+        (Repo, S::Failed, PublicRun("failed")),
+        (Repo, S::Unsupported, TypedLimitation),
+        (Repo, S::NotSelected, AdvisoryOnly),
+        (Repo, S::NoCurrentScope, Silent),
+    ];
+    for (mode, status, expected) in table {
+        assert_eq!(
+            LanguageDisclosure::of(mode, status),
+            expected,
+            "{mode:?} {status:?}"
+        );
+    }
+}
+
+#[test]
+fn a_duplicate_perl_label_is_order_independent_and_never_hides_a_blocker() {
+    let unavailable = err_child(LanguageId::Perl, LanguageRunStatus::Unavailable);
+    let not_selected = LanguageAnalysisOutcomeV1::not_selected(
+        "perl",
+        1,
+        "adapter not compiled into this ripr binary",
+        "full",
+    );
+    let forward = aggregate_of(&[unavailable.clone(), not_selected.clone()]);
+    let backward = aggregate_of(&[not_selected, unavailable]);
+    assert_eq!(forward.semantic_digest, backward.semantic_digest);
+    let view = LanguageCompletenessView::from_aggregate(&forward);
+    assert_eq!(view.rows.len(), 1);
+    // The deterministic digest order keeps the not-selected row, so the view
+    // owns no public run for perl. The pipeline still reports the adapter's
+    // own unavailable run, which the view tolerates as an extra run of a
+    // known label (it cannot represent both rows; recorded on #6475).
+    assert_eq!(view.rows[0].status, LanguageOutcomeStatus::NotSelected);
+    assert!(view.public_runs.is_empty());
+    let pipeline_run = crate::analysis::LanguageRun {
+        language: "perl".to_string(),
+        status: LanguageRunStatus::Unavailable,
+        reason: None,
+    };
+    assert_eq!(view.reconcile_public_runs(&[pipeline_run]), Ok(()));
+    assert_eq!(view.completeness, DiffCompleteness::Incomplete);
 }
