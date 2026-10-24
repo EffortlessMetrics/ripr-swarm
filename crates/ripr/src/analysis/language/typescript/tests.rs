@@ -17946,13 +17946,21 @@ fn owner_index_for_line_matches_the_linear_scan_semantics() {
     // not the nested inner one — the semantics the changed-line ownership
     // test pins for the old scan).
     let outer_idx = owner_index_for_line(&sorted, &prefix_max, 55);
-    assert_eq!(outer_idx, Some(1));
-    assert_eq!(sorted[outer_idx.unwrap()].name, "outer");
+    assert!(outer_idx.is_some(), "line 55 must be contained");
+    let Some(outer_idx) = outer_idx else {
+        return;
+    };
+    assert_eq!(outer_idx, 1);
+    assert_eq!(sorted[outer_idx].name, "outer");
     // Same-start owners keep extraction order: the short sibling that
     // precedes the wide outer one is found first for its own lines.
     let short_idx = owner_index_for_line(&sorted, &prefix_max, 11);
-    assert_eq!(short_idx, Some(0));
-    assert_eq!(sorted[short_idx.unwrap()].name, "short_first");
+    assert!(short_idx.is_some(), "line 11 must be contained");
+    let Some(short_idx) = short_idx else {
+        return;
+    };
+    assert_eq!(short_idx, 0);
+    assert_eq!(sorted[short_idx].name, "short_first");
     // The last owner starts after the line: no containment.
     assert_eq!(owner_index_for_line(&sorted, &prefix_max, 100), Some(1));
     assert_eq!(owner_index_for_line(&sorted, &prefix_max, 150), None);
