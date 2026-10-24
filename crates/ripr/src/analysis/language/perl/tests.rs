@@ -2943,6 +2943,206 @@ fn h2_non_aligned_sink_stays_weakly_exposed() -> Result<(), String> {
     Ok(())
 }
 
+/// RIPR-SPEC-0235 rule 19 (#9418): an exact oracle on one input observes what
+/// a pattern does with that input, not which inputs it accepts, so equal sink
+/// text does not make a changed pattern `exposed`. Sinks with no pattern keep
+/// rule 9's alignment.
+#[test]
+fn h2_changed_pattern_is_not_observed_by_equal_sink_text() -> Result<(), String> {
+    let class_for = |sink: &str| -> Result<crate::domain::ExposureClass, String> {
+        let packet = EXACT_RETURN_PACKET
+            .replace(
+                "\"changed_text_digest\": \"sha256:return\",",
+                &format!(
+                    "\"changed_text_digest\": \"sha256:return\",\n      \"changed_observable\": \"{sink}\","
+                ),
+            )
+            .replace(
+                "\"expression\": \"is($got, 10, 'discount threshold')\",",
+                &format!(
+                    "\"expression\": \"is($got, 10, 'discount threshold')\",\n      \"observed_sink\": \"{sink}\","
+                ),
+            );
+        Ok(findings_from_packet(&packet)?
+            .first()
+            .ok_or_else(|| "expected one finding".to_string())?
+            .class
+            .clone())
+    };
+    for pattern in [
+        "$s =~ /^v?[0-9]+$/ ? 1 : 0",
+        "$s !~ /x/",
+        "split /,/, $s",
+        "split(/,/, $s)",
+        "$s =~ m{ab}",
+        "qr/ab/",
+        "$s =~ s/a/b/r",
+        "$s =~ tr/a/b/r",
+    ] {
+        assert_ne!(
+            class_for(pattern)?,
+            crate::domain::ExposureClass::Exposed,
+            "a changed pattern must not align by equal text: {pattern}"
+        );
+    }
+    // Controls: the words `s`, `m` and `y` as a variable, a method, a hash key
+    // or part of a longer name apply no pattern, so equal text still aligns.
+    for plain in [
+        "$amount / 2",
+        "$s * $y",
+        "$obj->s(1)",
+        "{ s => 1 }",
+        "$rate * 0.9",
+    ] {
+        assert_eq!(
+            class_for(plain)?,
+            crate::domain::ExposureClass::Exposed,
+            "a sink with no pattern keeps exact alignment: {plain}"
+        );
+    }
+    Ok(())
+}
+
+/// RIPR-SPEC-0235 rule 20 (#9416): a direct owner call no oracle is linked to,
+/// in a test that also asserts through a code reference, may be observed
+/// through a closure the owner returned, so it reads `static_unknown` with a
+/// named limit. The same call with no code reference stays a gap.
+#[test]
+fn closure_oracle_beside_an_unlinked_owner_call_is_unknown_not_a_gap() -> Result<(), String> {
+    let unlinked = |expression: &str| {
+        EXACT_RETURN_PACKET
+            .replace(
+                "\"oracle_id\": \"oracle:t/app.t:8:is\",\n      \"relation_kind\"",
+                "\"oracle_id\": null,\n      \"relation_kind\"",
+            )
+            .replace(
+                "\"target_owner_id\": \"perl:lib/My/App.pm::My::App::discount\",",
+                "\"target_owner_id\": null,",
+            )
+            .replace("is($got, 10, 'discount threshold')", expression)
+    };
+    let first = |packet: &str| -> Result<crate::domain::Finding, String> {
+        findings_from_packet(packet)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| "expected one finding".to_string())
+    };
+
+    for coderef in [
+        "is($c->(), 10, 'counter starts')",
+        "is(&$c(), 10, 'counter starts')",
+        "is(&{$c}(), 10, 'counter starts')",
+    ] {
+        let finding = first(&unlinked(coderef))?;
+        assert_eq!(
+            finding.class,
+            crate::domain::ExposureClass::StaticUnknown,
+            "{coderef}"
+        );
+        assert_eq!(
+            finding.static_limit_kind,
+            Some(crate::domain::StaticLimitKind::DynamicDispatch),
+            "{coderef}"
+        );
+        assert!(finding.canonical_gap.is_none(), "{coderef}");
+        assert!(
+            finding
+                .recommended_next_step
+                .as_deref()
+                .is_some_and(|step| step.contains("code reference")),
+            "{coderef}"
+        );
+    }
+
+    // Controls: no code reference, or an oracle that is linked to the owner.
+    let plain = first(&unlinked("is($got, 10, 'discount threshold')"))?;
+    assert_eq!(
+        plain.class,
+        crate::domain::ExposureClass::ReachableUnrevealed
+    );
+    let linked = first(&EXACT_RETURN_PACKET.replace(
+        "is($got, 10, 'discount threshold')",
+        "is($c->(), 10, 'counter starts')",
+    ))?;
+    assert_ne!(linked.class, crate::domain::ExposureClass::StaticUnknown);
+    Ok(())
+}
+
+/// RIPR-SPEC-0235 rule 21 (#9420): an added source line no change or owner
+/// covers, in a file whose owner-less boundaries name a static limit, reads
+/// `static_unknown` with that limit instead of nothing. Covered lines, blank
+/// and comment lines, files without such a boundary and test files stay as
+/// they were.
+#[test]
+fn uncovered_top_level_line_beside_file_boundaries_is_a_stated_limit() -> Result<(), String> {
+    let boundary = r#""dynamic_boundaries": [
+    {
+      "boundary_id": "boundary:lib/My/App.pm:symbol_table_mutation:1",
+      "kind": "symbol_table_mutation",
+      "file_id": "file:lib/My/App.pm",
+      "owner_id": null,
+      "range": {"start_line": 28, "start_column": 1, "end_line": 28, "end_column": 20},
+      "confidence": "high",
+      "provenance_refs": []
+    }
+  ],"#;
+    let with_boundary = EXACT_RETURN_PACKET.replace("\"dynamic_boundaries\": [],", boundary);
+    let diff_of = |path: &str, lines: &[(usize, &str)]| ChangedFile {
+        path: std::path::PathBuf::from(path),
+        added_lines: lines
+            .iter()
+            .map(|&(line, text)| crate::analysis::diff::ChangedLine {
+                line,
+                text: text.to_string(),
+                new_side_line: line,
+            })
+            .collect(),
+        removed_lines: Vec::new(),
+    };
+    let unowned = |packet_text: &str, file: &ChangedFile| -> Result<Vec<_>, String> {
+        let packet = consume(&bless_fingerprint(packet_text))?;
+        Ok(unowned_change_findings(
+            &packet,
+            std::slice::from_ref(file),
+            std::path::Path::new("."),
+        ))
+    };
+
+    // Line 30 sits past the only owner (12 to 20) and change (15); line 16 is
+    // inside the owner; 31 and 32 are a comment and a blank line.
+    let file = diff_of(
+        "lib/My/App.pm",
+        &[
+            (30, "my %M = (a => 3);"),
+            (16, "return 1;"),
+            (31, "# note"),
+            (32, "  "),
+        ],
+    );
+    let findings = unowned(&with_boundary, &file)?;
+    assert_eq!(findings.len(), 1, "only the uncovered code line");
+    let finding = &findings[0];
+    assert_eq!(finding.probe.location.line, 30);
+    assert_eq!(finding.class, crate::domain::ExposureClass::StaticUnknown);
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(crate::domain::StaticLimitKind::Metaprogramming)
+    );
+    assert!(finding.canonical_gap.is_none());
+    assert!(finding.related_tests.is_empty());
+
+    // Controls: no owner-less boundary, a boundary owned by a sub, a test file.
+    assert!(unowned(EXACT_RETURN_PACKET, &file)?.is_empty());
+    let owned = with_boundary.replace(
+        "\"owner_id\": null,\n      \"range\": {\"start_line\": 28",
+        "\"owner_id\": \"perl:lib/My/App.pm::My::App::discount\",\n      \"range\": {\"start_line\": 28",
+    );
+    assert!(unowned(&owned, &file)?.is_empty());
+    let test_file = diff_of("t/app.t", &[(30, "ok(1);")]);
+    assert!(unowned(&with_boundary, &test_file)?.is_empty());
+    Ok(())
+}
+
 /// An advisory relation (file_proximity) with a matching sink must NOT
 /// classify Exposed. The relation-kind gate holds even when sinks align —
 /// only DirectOwnerCall can prove observation.
