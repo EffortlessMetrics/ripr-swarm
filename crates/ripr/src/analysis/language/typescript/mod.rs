@@ -75,6 +75,7 @@ mod discovery;
 mod dropped_term_guard;
 mod enum_member_guard;
 mod error_payload_guard;
+mod extraction_cache;
 mod field_update_guard;
 mod guard_entry_guard;
 mod hook_owner_guard;
@@ -539,7 +540,12 @@ impl TypeScriptAdapter {
                 }
                 all_tests.extend(tests);
             } else {
-                all_owners.extend(extract_owners(relative, source));
+                // #10044: owner extraction is a pure function of (path,
+                // source); the process-lifetime cache lets an LSP session
+                // re-save without re-parsing the whole workspace. Test
+                // extraction stays uncached because committed snapshots
+                // read the filesystem.
+                all_owners.extend(extraction_cache::extract_owners_cached(relative, source));
             }
         }
         // Build tsconfig.json alias map unless explicitly opted out (RIPR-SPEC-0099).
