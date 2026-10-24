@@ -349,14 +349,21 @@ can only hint that a caller "may lead here" without changing anything.
   from the pre-existing name-only hint path (SPEC-0114/0115); that is a
   projection wording limit, not a reach promotion (tracked in #10026).
 
+  Binders inside macro token trees are not seen by the shadow veto and still
+  link (for example `assert_eq!({ let max = other as fn(u32, u32) -> u32; max(10, 5) }, 10)`,
+  a closure parameter `|max| max(10, 5)` inside `assert!`, a `match` arm
+  binding, or a block-local `fn` inside a macro argument); this is a named
+  limit tracked in #9971.
+
   Fail-open shapes kept as known limits (tracked in #9971): the bare-call
   prefix proof returns the older name-only result when the package has no
   resolvable `[lib]` name (a moved `[lib] path`), when the entry sits in a
   workspace member, and when the test file has no own-crate import at all
   (for example `mod foo { pub use std::cmp; } use self::foo::cmp::max;` in a
-  member crate). A body-local `struct`, `enum`, `union`, `type`, `trait`,
-  `fn`, `const`/`static` or `mod` of the entry's name whose block holds the
-  call refuses.
+  member crate). A body-local value item of the entry's name (`fn`, `const`, `static`,
+  tuple or unit `struct`) whose block holds the call refuses; type-namespace
+  items (`type`, `trait`, `enum`, `union`, `mod`, braced `struct`) do not
+  shadow a value call.
 
   The edge
   carries relation only: argument rows and entry pairing still read a

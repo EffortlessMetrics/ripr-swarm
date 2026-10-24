@@ -1187,7 +1187,6 @@ fn a_nearer_binding_inside_the_test_body_shadows_the_import() -> Result<(), Stri
         "    use foreign::order_discount;\n    assert_eq!(order_discount(10), 5);",
         "    let order_discount = foreign::order_discount;\n    assert_eq!(order_discount(10), 5);",
         "    let f = |order_discount: fn(u32) -> u32| order_discount(10);\n    assert_eq!(f(foreign::order_discount), 5);",
-        "    mod order_discount {}\n    assert_eq!(order_discount(10), 5);",
         "    #[allow(non_camel_case_types)]\n    struct order_discount(u32);\n    assert_eq!(order_discount(10).0, 10);",
         "    #[allow(non_camel_case_types)]\n    struct order_discount(u32);\n    let _ = order_discount(10);",
         "    fn order_discount(_: u32) -> u32 { 5 }\n    assert_eq!(order_discount(10), 5);",
@@ -1205,6 +1204,31 @@ fn a_nearer_binding_inside_the_test_body_shadows_the_import() -> Result<(), Stri
     Ok(())
 }
 
+/// Names in the type namespace (type alias, trait, enum, union, module, braced
+/// struct) cannot shadow a bare value call of the imported entry.
+#[test]
+fn type_namespace_items_do_not_shadow_the_imported_call() -> Result<(), String> {
+    let import = "use qual_reach::inner::order_discount;\n";
+    let calls = "    assert_eq!(order_discount(10), 5);\n    assert_eq!(order_discount(9), 0);";
+    for item in [
+        "    #[allow(non_camel_case_types)]\n    type order_discount = u32;\n    let _: order_discount = 0;",
+        "    #[allow(non_camel_case_types)]\n    struct order_discount { _x: u32 }",
+        "    #[allow(non_camel_case_types)]\n    trait order_discount {}",
+        "    #[allow(non_camel_case_types)]\n    enum order_discount { A }",
+        "    mod order_discount {}",
+    ] {
+        let package = module_package(
+            "src/inner.rs",
+            MODULE_LIB,
+            format!("{import}{}", test_file(&format!("{item}\n{calls}"))),
+            vec![],
+        );
+        assert_eq!(package.relation()?.as_deref(), LINKED, "{item}");
+        assert_eq!(package.classification()?, "exposed", "{item}");
+    }
+    Ok(())
+}
+
 /// A closure parameter named like the entry shadows only the calls inside the
 /// closure; outer calls (spelled with an interior comment, on their own lines)
 /// still reach the imported entry, while a plain or comment-split call inside
@@ -1212,7 +1236,7 @@ fn a_nearer_binding_inside_the_test_body_shadows_the_import() -> Result<(), Stri
 #[test]
 fn a_closure_shadow_does_not_veto_commented_outer_calls() -> Result<(), String> {
     let import = "use qual_reach::inner::order_discount;\n";
-    let outer = "    assert_eq!(order_discount /* outer */ (10), 5);\n    assert_eq!(order_discount(9), 0);";
+    let outer = "    assert_eq!(order_discount /* outer */ (10), 5);\n    assert_eq!(order_discount\n        (9), 0);\n    assert_eq!(order_discount /* again */(11), 5);";
     let closure = "    let _unused = |order_discount: fn(u32) -> u32| order_discount(10);\n";
     let package = module_package(
         "src/inner.rs",

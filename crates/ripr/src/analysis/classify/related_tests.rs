@@ -1100,7 +1100,7 @@ fn find_related_tests_with_candidates<'a>(
             test.calls.iter().any(|call| {
                 chain.hops.iter().any(|hop| {
                     hop.caller.name == call.name
-                        && ((super::helper_transfer::is_direct_call_site(
+                        && ((is_spaced_direct_call_site(
                             &masked_call_line(index, test, call.line, &call.text),
                             &hop.caller.name,
                         ) && imported_own_crate_prefix_is_bound_to_the_library(
@@ -1909,6 +1909,26 @@ fn masked_call_line(index: &RustIndex, test: &TestSummary, line: usize, text: &s
         .unwrap_or_default()
 }
 
+/// Whether the masked line holds a direct call of `name`: the name at a token
+/// boundary, not behind a receiver or path qualifier, followed by optional
+/// whitespace (comments are already masked to blanks) and `(`.
+fn is_spaced_direct_call_site(line: &str, name: &str) -> bool {
+    let mut from = 0usize;
+    while let Some(relative) = line[from..].find(name) {
+        let at = from + relative;
+        let end = at + name.len();
+        let before = line[..at].chars().next_back();
+        let boundary =
+            before.is_none_or(|c| !c.is_ascii_alphanumeric() && !matches!(c, '_' | '.' | ':'));
+        let after = line[end..].trim_start();
+        if boundary && after.starts_with('(') {
+            return true;
+        }
+        from = end;
+    }
+    false
+}
+
 /// #8999 review: a bare call of an imported entry trusts an own-looking
 /// import prefix (`use <lib>::inner::entry;`). When the test file imports a
 /// path whose first segment is the root library's name, that name must be the
@@ -2182,7 +2202,8 @@ fn declares_value_named(source: &str, name: &str) -> bool {
 }
 
 /// Whether the test body binds `name` (a `let`, a closure or function
-/// parameter, a match arm, or a nested `mod`/`struct`/`enum`/`fn`/`type` item) in a lexical scope that contains
+/// parameter, a match arm, or a nested value item: `fn`, `const`, `static`,
+/// tuple/unit `struct`) in a lexical scope that contains
 /// a direct call of `name`: only such a binding can shadow the imported entry.
 /// A binding whose scope holds no call (`let _u = |name: u32| name + 1;`) does
 /// not. An unparsable body refuses.
@@ -2276,15 +2297,15 @@ fn body_pattern_shadows_a_call(body: &str, name: &str, call_line_in_body: Option
                 .name()
                 .is_some_and(|n| n.text().trim_start_matches("r#") == name)
         } else if let Some(item) = ast::Item::cast(node.clone()) {
-            // A body-local item of the name: a module, struct (tuple
-            // constructor), enum, union, type alias, trait or fn.
+            // A body-local item that binds the VALUE namespace under the name:
+            // a fn, const, static, or a tuple/unit struct (its constructor).
+            // Types, traits, modules, enums, unions and braced structs live in
+            // the type namespace and cannot shadow a bare call.
             let item_name = match &item {
-                ast::Item::Module(i) => i.name(),
-                ast::Item::Struct(i) => i.name(),
-                ast::Item::Enum(i) => i.name(),
-                ast::Item::Union(i) => i.name(),
-                ast::Item::TypeAlias(i) => i.name(),
-                ast::Item::Trait(i) => i.name(),
+                ast::Item::Struct(i) => match i.field_list() {
+                    Some(ast::FieldList::RecordFieldList(_)) => None,
+                    _ => i.name(),
+                },
                 ast::Item::Fn(i) => i.name(),
                 ast::Item::Const(i) => i.name(),
                 ast::Item::Static(i) => i.name(),
