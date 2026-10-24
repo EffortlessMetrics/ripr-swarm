@@ -462,19 +462,36 @@ fn regeneration_guidance_for(root: &Path, program: Option<String>) -> String {
     format!("{recovery}. {binding}")
 }
 
+/// Subject label for the before snapshot retained by a repair attempt.
+pub(crate) const RETAINED_BEFORE_SUBJECT: &str = "repair attempt before";
+
+/// What to do about an unacceptable repo-exposure input. A retained before
+/// snapshot is historical evidence: regenerating at the current tree would
+/// not reproduce it and replacing it would break the attempt's commitment, so
+/// the advice is to start a new attempt instead (#9665 item 3).
+fn recovery_advice(root: &Path, subject: &str) -> String {
+    if subject == format!("agent verify {RETAINED_BEFORE_SUBJECT} artifact") {
+        return "This is the before snapshot retained by a repair attempt, so regenerating at the current tree would not reproduce it and it must not be replaced. Start a new repair attempt with the current installed RIPR executable".to_string();
+    }
+    format!(
+        "Regenerate with the current installed RIPR executable. {}. Replace this input with the regenerated artifact",
+        repo_exposure_regeneration_guidance(root)
+    )
+}
+
 fn legacy_repo_exposure_refusal(root: &Path, subject: &str) -> String {
     format!(
-        "{subject} is not a canonical repo-exposure artifact: no RIPR producer envelope (legacy or unknown producer); expected the current RIPR {} repo-exposure contract. Regenerate with the current installed RIPR executable. {}. Replace this input with the regenerated artifact; the legacy artifact was not accepted",
+        "{subject} is not a canonical repo-exposure artifact: no RIPR producer envelope (legacy or unknown producer); expected the current RIPR {} repo-exposure contract. {}; the legacy artifact was not accepted",
         env!("CARGO_PKG_VERSION"),
-        repo_exposure_regeneration_guidance(root),
+        recovery_advice(root, subject),
     )
 }
 
 fn foreign_producer_refusal(root: &Path, subject: &str, produced_by: &str) -> String {
     format!(
-        "{subject} was produced by RIPR {produced_by}, but this consumer is RIPR {}: a producer version other than the consuming executable's is not accepted as current repo-exposure evidence (a version string does not authenticate its producer; the content commitment only proves the bytes were not edited). Regenerate with the current installed RIPR executable. {}. Replace this input with the regenerated artifact; the foreign-producer artifact was not accepted",
+        "{subject} was produced by RIPR {produced_by}, but this consumer is RIPR {}: a producer version other than the consuming executable's is not accepted as current repo-exposure evidence (a version string does not authenticate its producer; the content commitment only proves the bytes were not edited). {}; the foreign-producer artifact was not accepted",
         env!("CARGO_PKG_VERSION"),
-        repo_exposure_regeneration_guidance(root),
+        recovery_advice(root, subject),
     )
 }
 
@@ -620,6 +637,86 @@ pub(crate) fn validate_check_findings_artifact(
     check_findings_run_is_whole(label, analysis_scope.as_ref(), run_limitations.as_deref())?;
     let gaps = check_findings_gaps(label, analysis_outcome, &findings)?;
     Ok(ValidatedCheckFindings { artifact, gaps })
+}
+
+/// Prefix of every typed refusal from [`evaluate_gap_closure`]; the CLI maps
+/// a message with this prefix to the decision exit code rather than a failure.
+pub(crate) const GAP_BINDING_REFUSAL_PREFIX: &str = "agent verify gap binding refused";
+
+/// The classification a gap reads when the checked test discriminates it.
+const GAP_CLOSED_CLASSIFICATION: &str = "exposed";
+
+/// One named gap, closed between a validated before and after findings
+/// artifact: open in `before_classification`, `exposed` in the after artifact.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct GapClosure {
+    pub(crate) gap_id: String,
+    pub(crate) before_classification: String,
+    pub(crate) after_classification: String,
+    pub(crate) file: String,
+    pub(crate) line: u64,
+}
+
+/// Decide whether the named gap closed between two validated findings
+/// artifacts. Closure is positive evidence only: the gap must be present and
+/// open in the before artifact and present and `exposed` in the after
+/// artifact. Absence from the after artifact is never closure, because a
+/// shrunk diff or a moved base also removes a gap (RIPR-SPEC-0310).
+pub(crate) fn evaluate_gap_closure(
+    gap_id: &str,
+    before: &[CheckFindingsGap],
+    after: &[CheckFindingsGap],
+) -> Result<GapClosure, String> {
+    let refuse = |reason: String| format!("{GAP_BINDING_REFUSAL_PREFIX}: gap `{gap_id}` {reason}");
+    let find = |gaps: &[CheckFindingsGap]| gaps.iter().find(|gap| gap.gap_id == gap_id).cloned();
+    let Some(before_gap) = find(before) else {
+        return Err(refuse("is absent from the before artifact".to_string()));
+    };
+    if before_gap.classification == GAP_CLOSED_CLASSIFICATION {
+        return Err(refuse(format!(
+            "already reads `{GAP_CLOSED_CLASSIFICATION}` in the before artifact, so there is nothing to close"
+        )));
+    }
+    let Some(after_gap) = find(after) else {
+        return Err(refuse(
+            "is absent from the after artifact; absence is not closure evidence, because a shrunk diff or a moved base also removes a gap"
+                .to_string(),
+        ));
+    };
+    if after_gap.classification != GAP_CLOSED_CLASSIFICATION {
+        return Err(refuse(format!(
+            "still reads `{}` in the after artifact",
+            after_gap.classification
+        )));
+    }
+    Ok(GapClosure {
+        gap_id: gap_id.to_string(),
+        before_classification: before_gap.classification,
+        after_classification: after_gap.classification,
+        file: after_gap.file,
+        line: after_gap.line,
+    })
+}
+
+/// The gap-bound half of `agent verify --gap-id`: both snapshots must be
+/// `check-findings-json` artifacts (a repo-exposure snapshot has no gaps to
+/// bind), validated by the same authority as the unbound path.
+pub(crate) fn verify_gap_closure(
+    root: &Path,
+    before_raw: &str,
+    after_raw: &str,
+    gap_id: &str,
+) -> Result<GapClosure, String> {
+    for (raw, label) in [(before_raw, "before"), (after_raw, "after")] {
+        if declared_artifact_kind(raw).as_deref() != Some("check_findings") {
+            return Err(format!(
+                "agent verify --gap-id requires `check-findings-json` snapshots; the {label} artifact is not one"
+            ));
+        }
+    }
+    let before = validate_check_findings_artifact(root, before_raw, "before")?;
+    let after = validate_check_findings_artifact(root, after_raw, "after")?;
+    evaluate_gap_closure(gap_id, &before.gaps, &after.gaps)
 }
 
 /// A run that analyzed only a partition of the diff, or disclosed any run
@@ -839,11 +936,7 @@ fn validate_artifact_identity(
 
     let actual_head = git_output(&expected_root, &["rev-parse", "HEAD"])?;
     let actual_head = actual_head.trim();
-    let actual_worktree_dirty = git_output(
-        &expected_root,
-        &["status", "--porcelain", "--untracked-files=no"],
-    )
-    .map(|status| !status.trim().is_empty())?;
+    let actual_worktree_dirty = git_worktree_dirty(&expected_root)?;
     // Lineage presence (#2922 PR A): a well-formed head that does not name a
     // commit held by the checked repository is rejected, not merely disclosed
     // as historical. Git liveness is established by the HEAD and status reads
@@ -1244,15 +1337,53 @@ pub(crate) fn current_git_head(root: &Path) -> Result<String, String> {
     Ok(head.to_string())
 }
 
+/// Resolve a caller-spelled revision to its full commit id (#9103). A
+/// spelling that starts with `-` is refused before it reaches the VCS, and the
+/// result must be a full lowercase commit id.
+pub(crate) fn resolve_commit_rev(root: &Path, rev: &str) -> Result<String, String> {
+    if rev.trim().is_empty() || rev.starts_with('-') {
+        return Err(format!("`{rev}` is not a revision ripr can resolve"));
+    }
+    let spec = format!("{rev}^{{commit}}");
+    let resolved =
+        git_output(root, &["rev-parse", "--verify", "--quiet", &spec]).map_err(|error| {
+            format!("revision `{rev}` does not name a commit in the selected root: {error}")
+        })?;
+    let resolved = resolved.trim();
+    if !is_full_sha(resolved) {
+        return Err(format!(
+            "revision `{rev}` resolved to an invalid commit `{resolved}`"
+        ));
+    }
+    Ok(resolved.to_string())
+}
+
 /// The artifact producer's bounded worktree probe, shared with limitation
 /// disclosure. A successful HEAD read alone does not establish this status.
 pub(crate) fn current_git_worktree_status(root: &Path) -> Result<&'static str, String> {
-    let status = git_output(root, &["status", "--porcelain", "--untracked-files=no"])?;
-    Ok(if status.trim().is_empty() {
-        "clean"
-    } else {
+    Ok(if git_worktree_dirty(root)? {
         "dirty"
+    } else {
+        "clean"
     })
+}
+
+/// Whether the worktree differs from HEAD in anything the analysis reads: a
+/// tracked change, or an untracked, non-ignored Rust source. The seam
+/// inventory walks the filesystem, so an untracked production `.rs` file is
+/// analyzed and its seams emitted even though HEAD does not contain it
+/// (#6817). Other untracked files (build output, notes) are not analyzed and
+/// stay out of this probe, so they cannot flip an artifact to dirty.
+fn git_worktree_dirty(root: &Path) -> Result<bool, String> {
+    let tracked = git_output(root, &["status", "--porcelain", "--untracked-files=no"])?;
+    if !tracked.trim().is_empty() {
+        return Ok(true);
+    }
+    let untracked_sources = git_output(
+        root,
+        &["ls-files", "--others", "--exclude-standard", "--", "*.rs"],
+    )?;
+    Ok(!untracked_sources.trim().is_empty())
 }
 
 /// A HEAD read that also detects an A-B-A swap between two reads (#5930).
@@ -1716,6 +1847,98 @@ mod tests {
         })
     }
 
+    fn gap(id: &str, classification: &str) -> CheckFindingsGap {
+        CheckFindingsGap {
+            gap_id: id.to_string(),
+            classification: classification.to_string(),
+            file: "src/pricing.ts".to_string(),
+            line: 7,
+        }
+    }
+
+    #[test]
+    fn gap_closure_requires_the_gap_open_before_and_exposed_after() -> Result<(), String> {
+        let closed = evaluate_gap_closure(
+            "gap:a",
+            &[
+                gap("gap:a", "weakly_exposed"),
+                gap("gap:b", "weakly_exposed"),
+            ],
+            &[gap("gap:a", "exposed"), gap("gap:b", "weakly_exposed")],
+        )?;
+        assert_eq!(closed.before_classification, "weakly_exposed");
+        assert_eq!(closed.after_classification, "exposed");
+        assert_eq!((closed.file.as_str(), closed.line), ("src/pricing.ts", 7));
+        Ok(())
+    }
+
+    #[test]
+    fn gap_binding_over_a_non_findings_snapshot_is_operational_not_a_typed_refusal() {
+        let error = verify_gap_closure(
+            Path::new("."),
+            r#"{"artifact":{"kind":"repo_exposure"}}"#,
+            r#"{"artifact":{"kind":"repo_exposure"}}"#,
+            "gap:a",
+        );
+        assert_eq!(
+            error.map(|closure| closure.after_classification),
+            Err("agent verify --gap-id requires `check-findings-json` snapshots; the before artifact is not one"
+                .to_string())
+        );
+        assert!(!"agent verify --gap-id requires".starts_with(GAP_BINDING_REFUSAL_PREFIX));
+    }
+
+    #[test]
+    fn resolve_commit_rev_refuses_option_shaped_and_blank_revisions() {
+        for rev in ["", "  ", "--output=x", "-1"] {
+            let error = resolve_commit_rev(Path::new("."), rev)
+                .err()
+                .unwrap_or_default();
+            assert!(error.contains("not a revision"), "{rev:?}: {error}");
+        }
+    }
+
+    #[test]
+    fn gap_closure_refuses_absence_other_gaps_and_unmoved_classes() -> Result<(), String> {
+        let open = [gap("gap:a", "weakly_exposed")];
+        let refusals = [
+            (
+                "absent before",
+                evaluate_gap_closure("gap:a", &[], &[gap("gap:a", "exposed")]),
+                "is absent from the before artifact",
+            ),
+            (
+                "already exposed before",
+                evaluate_gap_closure("gap:a", &[gap("gap:a", "exposed")], &open),
+                "nothing to close",
+            ),
+            (
+                "absent after (shrunk diff)",
+                evaluate_gap_closure("gap:a", &open, &[]),
+                "absence is not closure evidence",
+            ),
+            (
+                "a different gap closed instead",
+                evaluate_gap_closure("gap:a", &open, &[gap("gap:b", "exposed")]),
+                "is absent from the after artifact",
+            ),
+            (
+                "still open after",
+                evaluate_gap_closure("gap:a", &open, &[gap("gap:a", "reachable_unrevealed")]),
+                "still reads `reachable_unrevealed`",
+            ),
+        ];
+        for (case, result, expected) in refusals {
+            let Err(error) = result else {
+                return Err(format!("{case}: accepted"));
+            };
+            if !error.starts_with(GAP_BINDING_REFUSAL_PREFIX) || !error.contains(expected) {
+                return Err(format!("{case}: unexpected refusal `{error}`"));
+            }
+        }
+        Ok(())
+    }
+
     #[test]
     fn check_findings_gaps_key_typescript_findings_by_derived_gap_id() -> Result<(), String> {
         let (outcome, findings) = findings_fixture(serde_json::json!({
@@ -1964,13 +2187,44 @@ mod tests {
     fn legacy_recovery_binds_relative_root_and_does_not_invent_label_flags() -> Result<(), String> {
         let raw = r#"{"schema_version":"0.3","scope":"repo","seams":[]}"#;
         let expected = expected_recovery_command("selected root")?;
-        for label in ["receipt before", "repair attempt before", "packet input"] {
+        for label in ["receipt before", "packet input"] {
             let error = validate_repo_exposure_artifact(Path::new("selected root"), raw, label)
                 .err()
                 .ok_or("legacy artifact was accepted")?;
             if !error.contains(&expected) || error.contains(&format!("--{label}")) {
                 return Err(format!("invalid rooted/shared-consumer recovery: {error}"));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn retained_before_snapshot_refusal_advises_a_new_attempt_not_regeneration()
+    -> Result<(), String> {
+        let raw = r#"{"schema_version":"0.3","scope":"repo","seams":[]}"#;
+        let legacy = validate_repo_exposure_artifact(Path::new("."), raw, RETAINED_BEFORE_SUBJECT)
+            .err()
+            .ok_or("legacy retained snapshot was accepted")?;
+        let foreign = foreign_producer_refusal(
+            Path::new("."),
+            &format!("agent verify {RETAINED_BEFORE_SUBJECT} artifact"),
+            "0.10.9",
+        );
+        for (kind, error) in [("legacy", legacy), ("foreign", foreign)] {
+            if !error.contains("Start a new repair attempt")
+                || !error.contains("must not be replaced")
+                || error.contains("Regenerate with")
+                || error.contains("Replace this input")
+            {
+                return Err(format!("{kind} retained-snapshot advice is lossy: {error}"));
+            }
+        }
+        // Other subjects keep the regeneration advice.
+        let other = foreign_producer_refusal(Path::new("."), "after", "0.10.9");
+        if !other.contains("Regenerate with the current installed RIPR executable") {
+            return Err(format!(
+                "non-retained subject lost regeneration advice: {other}"
+            ));
         }
         Ok(())
     }
@@ -3714,6 +3968,61 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn untracked_rust_sources_make_the_worktree_dirty() -> Result<(), String> {
+        let root = temporary_git_root()?;
+        let result = (|| -> Result<(), String> {
+            commit_fixture_file(&root)?;
+            let raw = commit_content(&repo_exposure_raw_with_placeholder(&root)?)?;
+            let clean = |label: &str| -> Result<(), String> {
+                if current_git_worktree_status(&root)? != "clean" {
+                    return Err(format!("{label}: producer must report clean"));
+                }
+                let validated = validate_repo_exposure_artifact(&root, &raw, "test before")
+                    .map_err(|error| format!("{label}: validation failed: {error}"))?;
+                if validated.currentness != ArtifactCurrentness::Current {
+                    return Err(format!("{label}: verifier must report current"));
+                }
+                Ok(())
+            };
+            clean("baseline")?;
+            // Controls: files the analysis never reads stay clean.
+            std::fs::write(root.join("notes.txt"), "scratch\n")
+                .map_err(|error| format!("write notes: {error}"))?;
+            std::fs::write(root.join(".gitignore"), "ignored.rs\n")
+                .map_err(|error| format!("write ignore: {error}"))?;
+            run_git(&root, &["add", ".gitignore"])?;
+            run_git(&root, &["commit", "--quiet", "-m", "ignore"])?;
+            std::fs::write(root.join("ignored.rs"), "fn ignored() {}\n")
+                .map_err(|error| format!("write ignored: {error}"))?;
+            let raw_after_commit = commit_content(&repo_exposure_raw_with_placeholder(&root)?)?;
+            let still_clean = validate_repo_exposure_artifact(&root, &raw_after_commit, "t")
+                .map_err(|error| format!("control validation failed: {error}"))?;
+            if current_git_worktree_status(&root)? != "clean"
+                || still_clean.currentness != ArtifactCurrentness::Current
+            {
+                return Err("untracked non-Rust and gitignored Rust files must stay clean".into());
+            }
+            // An untracked Rust source is analyzed input, so it is dirty.
+            std::fs::write(root.join("extra.rs"), "pub fn extra() {}\n")
+                .map_err(|error| format!("write extra: {error}"))?;
+            if current_git_worktree_status(&root)? != "dirty" {
+                return Err("untracked Rust source must make the producer report dirty".into());
+            }
+            let dirty = validate_repo_exposure_artifact(&root, &raw_after_commit, "t")
+                .map_err(|error| format!("dirty validation failed: {error}"))?;
+            if dirty.currentness != ArtifactCurrentness::DirtyWorktree {
+                return Err("untracked Rust source must disclose DirtyWorktree".into());
+            }
+            Ok(())
+        })();
+        let cleanup =
+            std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"));
+        result?;
+        cleanup?;
+        Ok(())
+    }
+
     /// A temp path that does not exist yet, for `git clone` targets.
     fn fresh_temp_path(label: &str) -> Result<PathBuf, String> {
         let stamp = std::time::SystemTime::now()
@@ -4578,6 +4887,47 @@ mod tests {
                     }
                     Ok(_) => {
                         return Err(format!("forged producer version {forged} was accepted"));
+                    }
+                }
+            }
+            Ok(())
+        })();
+        let cleanup =
+            std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"));
+        result?;
+        cleanup?;
+        Ok(())
+    }
+
+    /// #9665: rewriting `producer.tool` is refused by the producer-identity
+    /// gate whether or not the version is also forged, and that gate runs
+    /// before the version-equality gate. A genuine version under a foreign
+    /// tool is therefore not accepted, and a forged version under a foreign
+    /// tool reports the identity refusal rather than the version refusal.
+    #[test]
+    fn repo_exposure_validation_rejects_rewritten_producer_tool() -> Result<(), String> {
+        let root = temporary_git_root()?;
+        let result = (|| -> Result<(), String> {
+            commit_fixture_file(&root)?;
+            let placeholder_raw = repo_exposure_raw_with_placeholder(&root)?;
+            let document: Value = serde_json::from_str(&placeholder_raw)
+                .map_err(|error| format!("parse placeholder document: {error}"))?;
+            for version in [env!("CARGO_PKG_VERSION"), "0.10.9"] {
+                let mutated = validate_mutated_identity(&root, &document, |document| {
+                    document["artifact"]["producer"]["tool"] = json!("not-ripr");
+                    document["artifact"]["producer"]["version"] = json!(version);
+                })?;
+                match mutated {
+                    Err(error) if error.contains("invalid or unknown producer identity") => {}
+                    Err(error) => {
+                        return Err(format!(
+                            "foreign tool with version {version}: unexpected rejection: {error}"
+                        ));
+                    }
+                    Ok(_) => {
+                        return Err(format!(
+                            "foreign producer tool with version {version} was accepted"
+                        ));
                     }
                 }
             }

@@ -124,6 +124,7 @@ fn an_exact_sibling_error_does_not_confirm_the_changed_question_mark() -> Result
     let facts = RaRustSyntaxAdapter.summarize_file(&path, &source)?;
     let mut index = RustIndex::default();
     index.insert_file(path.clone(), facts, true);
+    crate::analysis::facts::compose_fixture_source_roles(&mut index, Path::new(""));
     assert_eq!(index.tests().len(), 1, "the actual oracle must be indexed");
     let changed = ChangedFile {
         path,
@@ -202,6 +203,7 @@ fn changed_opening_and_closing_lines_retain_the_propagation_origin() -> Result<(
     let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
     let mut index = RustIndex::default();
     index.insert_file(path.clone(), facts, true);
+    crate::analysis::facts::compose_fixture_source_roles(&mut index, Path::new(""));
     let changed = ChangedFile {
         path,
         added_lines: [5, 7]
@@ -364,6 +366,7 @@ fn propagation_path_keeps_a_strong_oracle_without_inventing_activation() -> Resu
         RaRustSyntaxAdapter.summarize_file(&path, &source)?,
         true,
     );
+    crate::analysis::facts::compose_fixture_source_roles(&mut index, Path::new(""));
     assert_eq!(index.tests().len(), 1);
     let changed = ChangedFile {
         path,

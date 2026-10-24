@@ -1,0 +1,13 @@
+diff --git a/lib/Toolkit.pm b/lib/Toolkit.pm
+index 7f429bd..ec8dbe5 100644
+--- a/lib/Toolkit.pm
++++ b/lib/Toolkit.pm
+@@ -16,7 +16,7 @@ sub ctx_value {
+ 
+ sub ctx_count {
+     my @r = (4, 5, 6);
+-    return wantarray ? @r : @r + 0;
++    return wantarray ? @r : scalar(@r);
+ }
+ 
+ sub join_local {

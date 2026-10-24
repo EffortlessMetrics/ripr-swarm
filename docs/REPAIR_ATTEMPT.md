@@ -312,7 +312,7 @@ The original typed error stays intact. Recovery lines appear on stderr, in
 The façade keeps stdout empty on refusal, the attempt stays `awaiting_edit`, and
 no receipt is issued. A successful focused-edit retry clears the refusal.
 
-A failed, incomparable, or stale attempt is terminal: re-running its after phase or `ripr agent receipt` refuses. The recovery narration follows the verdict (#7204). When the cage refused paths, the after phase lists each refused path and the undo route: if you committed the test edit or a refused change, uncommit it first (for example `git reset --soft HEAD~1` when it is the last commit; the changes stay in the worktree); undo the refused changes and set the test edit aside, for example with `git stash`; while the gap still exists, run `ripr agent repair --root . --seam-id <seam-id> --phase before` to prepare a new attempt; restore the test edit, then run the new `--attempt` command. When the verdict is `Incomparable` with an empty violations list, nothing was refused and no undo is narrated: the narration names the incomparability cause — a before-phase baseline recorded `ambiguous: true` when the attempt's baseline artifact carries it — and routes to a fresh attempt from a clean state: set the test edit aside, run the `--phase before` command from the clean state, restore the test edit, then run the new `--attempt` command. Because an incomparable delta is never judged against the edit surface, an empty violations list is not a compliance finding: the narration also names the changed paths the cage did not evaluate and warns that a plain `git stash` leaves untracked files in place, so an outside-surface change is not silently carried into the next baseline.
+A failed, incomparable, or stale attempt is terminal: re-running its after phase or `ripr agent receipt` refuses. The recovery narration follows the verdict (#7204). When the cage refused paths, the after phase lists each refused path and the undo route: if you committed the test edit or a refused change, uncommit it first (for example `git reset --soft HEAD~1` when it is the last commit; the changes stay in the worktree); undo the refused changes and set the test edit aside, for example with `git stash`; while the gap still exists, run `ripr agent repair --root . --seam-id <seam-id> --phase before` to prepare a new attempt; restore the test edit, then run the new `--attempt` command. When the refusal is the inline test region reporting the selected file unparseable after the attempt's edit (the whole file is parsed, so the error may be in the new test or in production code beside it), the narration leads with the plain statement "`<file>` does not parse after this attempt's edit — fix the syntax error and start the attempt again." before that recovery detail (#8991). When the verdict is `Incomparable` with an empty violations list, nothing was refused and no undo is narrated: the narration names the incomparability cause — a before-phase baseline recorded `ambiguous: true` when the attempt's baseline artifact carries it — and routes to a fresh attempt from a clean state: set the test edit aside, run the `--phase before` command from the clean state, restore the test edit, then run the new `--attempt` command. Because an incomparable delta is never judged against the edit surface, an empty violations list is not a compliance finding: the narration also names the changed paths the cage did not evaluate and warns that a plain `git stash` leaves untracked files in place, so an outside-surface change is not silently carried into the next baseline.
 
 RIPR does not select “the latest” attempt, reconstruct an attempt from mutable global files, or continue on partial evidence.
 
@@ -334,12 +334,14 @@ loud and typed on every surface:
 
 - CLI: `ripr agent repair --phase before` refuses with `has no test file
   ripr can route a repair to` and names the packet field below;
-- MCP: `ripr_prepare_repair` still applies the test-surface rule alone, so
-  it refuses every inline-module seam, including the eligible single-module
-  case, with ineligibility `fix_site_not_test_surface` once the earlier
-  gates (candidate actionability, discriminator, static limits, established
-  fix site) pass, and creates nothing (MCP parity is #5516); earlier gates
-  keep their own refusal reasons;
+- MCP: `ripr_prepare_repair` takes the same admission as the CLI: when the
+  shared seam validator admits a seam whose one governed inline module is
+  the fix site, the packet is ready with `allowed_edit_surface` the
+  production file, an `inline_test_module` block naming the module, and a
+  `must_not_change` statement confining the edit to new test functions in
+  that module (#5516). Every case the CLI refuses (no candidate module, more
+  than one, out-of-line `mod tests;`) stays `fix_site_not_test_surface` and
+  creates nothing; earlier gates keep their own refusal reasons;
 - pilot: the summary ranks seams for inspection by hand with no repair
   start, and the focused-test line names the missing test target;
 - packet: `recommended_test.file` is `"not_applicable"` when no target

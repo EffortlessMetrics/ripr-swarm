@@ -147,7 +147,7 @@ jobs:
           echo "status=success" >> "$GITHUB_OUTPUT"
           echo "message=ok" >> "$GITHUB_OUTPUT"
 
-      - uses: dtolnay/rust-toolchain@v1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: 1.95.0
           components: llvm-tools-preview
@@ -157,13 +157,13 @@ jobs:
         run: cargo fmt --check
 
       - name: Install CI tools
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2
         with:
           tool: ${{ inputs.use-scratch && 'sccache,nextest' || 'nextest' }}
 
       - name: Restore hosted Rust cache
         if: ${{ !inputs.use-scratch }}
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: ripr-swarm-rust-small-${{ runner.os }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -308,6 +308,19 @@ jobs:
         id: fixtures
         run: cargo xtask fixtures
 
+      # Hosted wiring for #5531. Both commands build/run `ripr` (the fixture step
+      # above just built it, so this reuses the artifacts) and compare the
+      # binary-resident capability registry with repository inventory and with
+      # the generated block in docs/status/SUPPORT_TIERS.md. Unconditional and
+      # read-only; no new trigger, permission or secret.
+      - name: Capability producer inventory
+        id: capability_producers
+        run: cargo xtask check-capability-producers
+
+      - name: Capability registry docs block
+        id: capability_docs
+        run: cargo xtask capability-docs --check
+
       # Scores ripr's verdicts on every labeled verdict corpus
       # (fixtures/<language>-verdict-corpus) against their stored
       # runtime-mutant labels (RIPR-SPEC-0219). Its `cargo build` of ripr
@@ -371,8 +384,8 @@ jobs:
       # built binary, plus (pull requests and merge groups) the pr-evidence and review-comments
       # bytes the PR evidence step just wrote. A missing artifact file fails the
       # step, so a producer that stops writing cannot silently turn a row into
-      # `not_run`. Producer-only rows (repair-attempt, execution_result) stay
-      # unrun here by design; see docs/verification/schema-producer-audit.md.
+      # `not_run`. Producer-only rows (repair-attempt, execution_result) carry a
+      # reviewed narrower authority instead (#9561); see docs/verification/schema-producer-audit.md.
       - name: Schema producer sweep
         id: schema_producer_sweep
         env:
@@ -430,6 +443,8 @@ jobs:
           RUST_TESTS_RESULT: ${{ steps.rust-tests.outcome }}
           GOLDENS_RESULT: ${{ steps.goldens.outcome }}
           FIXTURES_RESULT: ${{ steps.fixtures.outcome }}
+          CAPABILITY_PRODUCERS_RESULT: ${{ steps.capability_producers.outcome }}
+          CAPABILITY_DOCS_RESULT: ${{ steps.capability_docs.outcome }}
           VERDICT_CORPUS_RESULT: ${{ steps.verdict_corpus.outcome }}
           PR_EVIDENCE_RESULT: ${{ steps.pr_evidence.outcome }}
           SCHEMA_SWEEP_RESULT: ${{ steps.schema_producer_sweep.outcome }}
@@ -454,6 +469,8 @@ jobs:
             printf '| rust-tests | %s |\n' "${RUST_TESTS_RESULT:-not_reported}"
             printf '| goldens | %s |\n' "${GOLDENS_RESULT:-not_reported}"
             printf '| fixtures | %s |\n' "${FIXTURES_RESULT:-not_reported}"
+            printf '| capability_producers | %s |\n' "${CAPABILITY_PRODUCERS_RESULT:-not_reported}"
+            printf '| capability_docs | %s |\n' "${CAPABILITY_DOCS_RESULT:-not_reported}"
             printf '| verdict_corpus | %s |\n' "${VERDICT_CORPUS_RESULT:-not_reported}"
             printf '| pr_evidence | %s |\n' "${PR_EVIDENCE_RESULT:-not_reported}"
             printf '| schema_producer_sweep | %s |\n' "${SCHEMA_SWEEP_RESULT:-not_reported}"

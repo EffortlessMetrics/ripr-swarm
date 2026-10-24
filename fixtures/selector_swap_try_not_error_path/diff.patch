@@ -1,0 +1,8 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -8,3 +8,3 @@
+     pub fn next(&mut self) -> Option<Task> {
+-        let idx = self.queue.iter().enumerate().max_by_key(|(_, t)| t.prio).map(|(i, _)| i)?;
++        let idx = self.queue.iter().enumerate().min_by_key(|(_, t)| t.prio).map(|(i, _)| i)?;
+         Some(self.queue.remove(idx))

@@ -130,6 +130,13 @@ pub struct RustIndex {
     /// `package_names`, because a sibling crate's function can still take a
     /// bare call meant for the owner.
     pub(crate) macro_owned_crates: BTreeSet<String>,
+    /// `package_names` plus the crate names of every workspace member, indexed
+    /// or not (#10061). Not serialized, like `macro_owned_crates`.
+    pub(crate) workspace_crates: BTreeSet<String>,
+    /// The directories of the workspace members (as read from the root
+    /// manifest), so a trait declared in a member the index does not hold can
+    /// be resolved on demand (#10061). Not serialized.
+    pub(crate) workspace_member_dirs: Vec<std::path::PathBuf>,
     /// Whether a drop-in assertion crate (`pretty_assertions`) imported by a
     /// file is the registry package. Unset for an index assembled without a
     /// manifest walk, which verifies nothing.
@@ -138,6 +145,9 @@ pub struct RustIndex {
     /// member's library, read from member manifests. Unset for an index
     /// assembled without a manifest walk, which names nothing.
     pub(crate) member_crates: super::member_crates::MemberCrates,
+    /// All module parents approved by composition, independently of its
+    /// canonical role explanation. Transient: rebuilt after file-cache reads.
+    pub(crate) execution_module_parents: Option<BTreeMap<PathBuf, Vec<SourceRoleProvenanceEdge>>>,
     pub include_parents: BTreeMap<PathBuf, ResolvedIncludeParent>,
     pub include_limitations: Vec<RustIncludeLimitation>,
     pub non_utf8_sources: BTreeSet<PathBuf>,
@@ -470,6 +480,18 @@ impl RustIndex {
 }
 
 impl RustIndex {
+    /// Crate names of the workspace's own members: `workspace_crates` when
+    /// the build computed it, else `package_names`.
+    pub(crate) fn workspace_member_crates(&self) -> &BTreeSet<String> {
+        if self.workspace_crates.is_empty() {
+            &self.package_names
+        } else {
+            &self.workspace_crates
+        }
+    }
+}
+
+impl RustIndex {
     pub fn functions(&self) -> FactSlice<'_, FunctionFact> {
         FactSlice {
             arena: &self.function_facts,
@@ -516,6 +538,7 @@ impl RustIndex {
     /// Insert each supplied occurrence once. Shared membership is explicit;
     /// equal names, coordinates and bodies never collapse two occurrences.
     pub fn insert_file(&mut self, path: PathBuf, facts: FileFacts, flat: bool) {
+        self.execution_module_parents = None;
         self.call_identity_memos.clear();
         self.bump_membership_revision();
         let FileFacts {
@@ -606,6 +629,7 @@ impl RustIndex {
             return false;
         };
         self.call_identity_memos.clear();
+        self.execution_module_parents = None;
         // Purge the flat memberships too: `finalize` keeps every record a
         // flat order names, so a removed file's tests and functions would
         // otherwise survive as evidence (and a changed file would appear

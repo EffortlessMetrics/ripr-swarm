@@ -19,6 +19,13 @@ Start here:
   Related test: src/lib.rs:20 first_element_is_the_preseeded_one (ripr could not confirm that this assertion observes the changed behavior)
   Next step: Strengthen the related assertion so it discriminates the changed behavior
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: Related tests appear to reach record: first_element_is_the_preseeded_one
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 7 more detail line(s) in --format human-full
@@ -26,7 +33,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_preseeded_first_element/input --diff <cwd>/fixtures/rust_preseeded_first_element/diff.patch --mode fast probe:src_lib.rs:call_deletion:c581181e
   ripr context --root <cwd>/fixtures/rust_preseeded_first_element/input --diff <cwd>/fixtures/rust_preseeded_first_element/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:c581181e
-  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:call_deletion:c581181e --root <cwd>/fixtures/rust_preseeded_first_element/input` for the full gate's answer
+  no repair start offered: repair route not ready (missing evidence: observable sink localization); run `ripr repair probe:src_lib.rs:call_deletion:c581181e --root <cwd>/fixtures/rust_preseeded_first_element/input` for the full gate's answer
 No test stub here: the change shows up as a side effect or call, which needs an observer or mock ripr cannot write
 
 Hidden:

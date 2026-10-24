@@ -647,6 +647,39 @@ fn the_commit_in_a_version_line_binds_a_build_manifest() -> TestResult {
 }
 
 #[test]
+fn the_candidate_manifest_reader_agrees_with_the_admitted_live_head_manifest() -> TestResult {
+    use super::candidate_manifest::{candidate_sha, parse_candidate_sha};
+    use crate::reports::release::candidate_harness::live_head::LiveHeadSnapshot;
+    use crate::reports::release::candidate_harness::live_head::tests::Fixture;
+
+    // The real #1609 DTO admits this manifest; the harness must read the same
+    // commit from the same bytes, so a schema move cannot split the two.
+    let fixture = Fixture::new()?;
+    let approved = fixture.write()?;
+    let admitted = LiveHeadSnapshot::admit(
+        &fixture.root,
+        "0.11.0",
+        std::path::Path::new("manifest.json"),
+        &approved,
+    )?;
+    let read = candidate_sha(&fixture.root.join("manifest.json"))?;
+    if read != admitted.candidate_sha()? {
+        return Err(format!(
+            "harness read {read}, admitted manifest names {}",
+            admitted.candidate_sha()?
+        ));
+    }
+
+    // The committed template selects no candidate, so it must not satisfy the
+    // harness's candidate binding.
+    let template = include_str!("../../../docs/release-candidates/0.11.0-live-head-selection.json");
+    if parse_candidate_sha(template).is_ok() {
+        return Err("the unfilled template must not name a candidate".to_string());
+    }
+    Ok(())
+}
+
+#[test]
 fn the_candidate_manifest_reader_takes_only_a_full_commit() -> TestResult {
     use super::candidate_manifest::parse_candidate_sha;
     let sha = "c7d6b397c5ea11d121800e32af890856f252d097";
@@ -1287,6 +1320,7 @@ mod unix_stubs {
             != [
                 "execution-scrubbed-path",
                 "execution-owned-cwd",
+                "execution-decoy-repository",
                 "execution-stale-artifact",
                 "execution-snapshot-isolation",
                 "execution-cleanup-failure",
@@ -1514,5 +1548,18 @@ mod unix_stubs {
             }
         }
         Ok(())
+    }
+}
+
+#[test]
+fn the_child_never_inherits_a_variable_that_redirects_git() {
+    // The parent environment cannot be set here (`unsafe` is forbidden), so this
+    // pins what `launch` hands the runner to remove, whatever the caller exports.
+    let removed = super::exec::removed_env();
+    for name in ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"] {
+        assert!(
+            removed.iter().any(|removed| removed == name),
+            "{name} must be removed from every child"
+        );
     }
 }
