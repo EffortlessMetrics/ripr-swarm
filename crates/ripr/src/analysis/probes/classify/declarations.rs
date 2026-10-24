@@ -607,8 +607,17 @@ mod tests {
             let enum_src = enum_src.replace('\n', newline);
             let lines = [removed(2, "offset: usize,"), removed(3, "a: u8, b: u8,")];
             assert_eq!(field_declaration_lines(&struct_src, &lines), [true, false]);
-            let lines = [removed(3, "x: u8,"), removed(5, "B { y: u8 },")];
-            assert_eq!(field_declaration_lines(&enum_src, &lines), [true, true]);
+            // The variant's opening line is not read as a construction, so
+            // it never takes the old-source disposition.
+            let lines = [
+                removed(2, "A {"),
+                removed(3, "x: u8,"),
+                removed(5, "B { y: u8 },"),
+            ];
+            assert_eq!(
+                field_declaration_lines(&enum_src, &lines),
+                [false, true, true]
+            );
         }
         // A candidate-side line that is not this old line, or one outside the
         // file, never borrows old-source authority.
