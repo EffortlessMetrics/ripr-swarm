@@ -577,8 +577,12 @@ mod tests {
         "        self.0.set(self.0.get() + 1);",
         "        self.0.set(self.0.get() + 2 - 1);",
     );
+    let mut with_step = 0;
     for finding in findings_on(lib, &edit, line)? {
         let step = finding.recommended_next_step.clone().unwrap_or_default();
+        if !step.is_empty() {
+            with_step += 1;
+        }
         if step.contains("do not establish a call to the changed owner") {
             return Err(format!(
                 "implicit dispatch row got the inspect step: {step}"
