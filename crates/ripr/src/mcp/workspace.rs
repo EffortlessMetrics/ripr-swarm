@@ -1438,7 +1438,12 @@ pub(crate) fn run_check(
                     interrupted,
                     native,
                 );
-            crate::analysis::cancellation::with_token(&token, || attempt(&config))
+            let result = crate::analysis::cancellation::with_token(&token, || attempt(&config));
+            // #9979 review: terminal reset. The bounded attempt consumed any
+            // in-flight signal; clear the shared flags so the next refresh
+            // starts clean instead of cancelling at its first checkpoint.
+            crate::cli::interrupt::reset_server_interrupt_flags();
+            result
         }
         None => attempt(&config),
     };

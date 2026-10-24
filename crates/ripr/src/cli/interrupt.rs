@@ -69,6 +69,25 @@ pub(crate) fn server_interrupt_flags() -> Option<InterruptFlags> {
     SERVER_FLAGS.get().cloned()
 }
 
+/// Terminal reset of the shared server flags (#9979 review). The flags are
+/// process-lifetime: every dispatched analysis observes the same pair, so
+/// a SIGTERM consumed by one bounded attempt would cancel every later
+/// refresh at its first checkpoint. The refresh path clears both flags once
+/// its attempt settles; a signal that arrives mid-attempt still cancels
+/// that attempt through its token, and a signal that arrives after the
+/// reset is observed by the next attempt's token exactly like the first.
+/// A signal landing in the narrow window between settlement and the reset
+/// is not replayed — the in-flight analysis already completed, so there is
+/// nothing to cancel, and the repeated-signal native escape remains.
+#[cfg(unix)]
+pub(crate) fn reset_server_interrupt_flags() {
+    use std::sync::atomic::Ordering;
+    if let Some((interrupted, native)) = SERVER_FLAGS.get() {
+        interrupted.store(false, Ordering::SeqCst);
+        native.store(false, Ordering::SeqCst);
+    }
+}
+
 pub(super) fn check(args: &[String]) -> Result<(), CommandError> {
     #[cfg(unix)]
     {

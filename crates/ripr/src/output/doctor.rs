@@ -3545,7 +3545,7 @@ mod tests {
         std::fs::create_dir_all(&dir).map_err(|err| format!("create dir: {err}"))?;
         let file = dir.join("a-file");
         std::fs::write(&file, "x").map_err(|err| format!("write file: {err}"))?;
-        let mut cases: Vec<(&str, PathBuf, Option<&str>)> = vec![
+        let cases: Vec<(&str, PathBuf, Option<&str>)> = vec![
             ("directory", dir.clone(), None),
             (
                 "missing",
@@ -3554,6 +3554,11 @@ mod tests {
             ),
             ("file", file, Some("the root is not a directory")),
         ];
+        // The unix-only extensions below mutate the list; a shadowed `mut`
+        // binding keeps the Windows build free of an unused-mut warning
+        // without an allow attribute.
+        #[cfg(unix)]
+        let mut cases = cases;
         #[cfg(unix)]
         {
             let dangling = dir.join("dangling");

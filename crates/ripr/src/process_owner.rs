@@ -216,19 +216,18 @@ impl OwnedProcess {
 
     /// Non-blocking exit check for the direct child.
     ///
-    /// Unix custody: a reap releases PID custody. The leader's pgid becomes
-    /// recyclable once the leader is reaped, so every later release path —
-    /// `Drop`, a repeated `terminate_tree` — stays disarmed rather than
-    /// signal a group that reused the number (#9895 review). Descendants
-    /// still running when the primary exits on its own are therefore the
-    /// caller's explicit `terminate_tree` responsibility, called before any
-    /// reap.
+    /// Unix custody: an observed reap settles the whole group, not just the
+    /// leader — [`OwnedProcess::settle_group_at_reap`] signals any
+    /// descendants the exiting primary left behind, then disarms every
+    /// later release path (`Drop`, a repeated `terminate_tree`): the reaped
+    /// leader's pgid is recyclable, so a later signal could hit an
+    /// unrelated group that reused the number (#9895 review, #9979 review).
     pub fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
         let status = self.child.try_wait()?;
         if status.is_some() {
             #[cfg(all(unix, not(windows)))]
             {
-                self.group_settled = true;
+                self.settle_group_at_reap();
             }
         }
         Ok(status)
@@ -238,22 +237,44 @@ impl OwnedProcess {
     ///
     /// This polls the child instead of blocking on a job completion port so
     /// the wait stays bounded by the caller's termination decisions and can
-    /// never hang on queued job notifications. The reap carries the same
-    /// Unix custody release as [`OwnedProcess::try_wait`]: a caller that
-    /// needs descendant containment must run `terminate_tree` first, which
-    /// signals the group before this reap.
+    /// never hang on queued job notifications. An observed reap carries the
+    /// same Unix group settlement as [`OwnedProcess::try_wait`]
+    /// (settle-then-disarm), so descendant containment survives a caller
+    /// that reaps without an explicit `terminate_tree` (#9979 review).
     pub fn wait(&mut self) -> std::io::Result<ExitStatus> {
         let mut backoff = PollBackoff::new();
         loop {
             if let Some(status) = self.child.try_wait()? {
                 #[cfg(all(unix, not(windows)))]
                 {
-                    self.group_settled = true;
+                    self.settle_group_at_reap();
                 }
                 return Ok(status);
             }
             backoff.sleep(None);
         }
+    }
+
+    /// Reap-time group settlement (#9979 review). A public reap observed
+    /// the primary's exit; any descendant still running in the owner's
+    /// process group must be signaled NOW, before custody release, or
+    /// containment is lost: every later release path (`terminate_tree`,
+    /// `Drop`) stays disarmed after a reap, so an owner settled without a
+    /// signal would leave its descendants orphaned — contradicting
+    /// `terminate_tree`'s "an already-exited child's group is still
+    /// terminated" contract. The group persists while any member lives, so
+    /// the signal reaches only this owner's tree; once the settlement is
+    /// recorded, later paths stay disarmed because the leader's reaped
+    /// pgid is recyclable. A failed request is ignored exactly like the
+    /// `Drop` arm: the direct child is already reaped, so nothing the
+    /// caller waits on remains.
+    #[cfg(all(unix, not(windows)))]
+    fn settle_group_at_reap(&mut self) {
+        if self.group_settled {
+            return;
+        }
+        let _ = self.request_kill();
+        self.group_settled = true;
     }
 
     /// Request termination of the owned primary process without waiting.
@@ -335,10 +356,13 @@ impl OwnedProcess {
                 self.group_settled = true;
                 return Err(self.failed_termination_fallback(termination_err));
             }
+            // The request above is the group settlement; record it BEFORE
+            // the reap so the reap-time settlement stays a no-op — exactly
+            // one group signal per owner lifetime (#9979 review).
+            self.group_settled = true;
             let reap = self
                 .wait()
                 .map_err(|err| format!("failed to reap owned process: {err}"));
-            self.group_settled = true;
             return reap.map(|_| ());
         }
         if let Some(status) = self
@@ -460,6 +484,10 @@ impl Drop for OwnedProcess {
             // unreaped its pgid stays pinned to this owner's tree, so the
             // signal can only reach owned descendants.
             if self.request_kill().is_ok() {
+                // The request above is the group settlement; record it
+                // BEFORE the reap so the reap-time settlement stays a no-op
+                // — exactly one group signal per owner lifetime (#9979).
+                self.group_settled = true;
                 let _ = self.wait();
             }
             self.group_settled = true;
@@ -1045,13 +1073,13 @@ mod tests {
         Ok(())
     }
 
-    /// #9895 review (PID custody): the caller's own `wait` reaps the primary
-    /// and releases custody. Every later release path — `terminate_tree`,
-    /// the scope-end `Drop` — must stay disarmed: the reaped leader's pgid
-    /// is recyclable, so a later group signal could hit an unrelated group
-    /// that reused the number. Descendants the primary left behind are the
-    /// caller's explicit responsibility (`terminate_tree` before any reap),
-    /// and this test reaps them by pid so nothing leaks.
+    /// #9895 review + #9979 review (reap-time settlement): the caller's own
+    /// `wait` reaps the primary and settles the group AT the reap — the
+    /// descendant the exiting primary left behind is signaled (exactly one
+    /// group kill) before custody releases. Every later release path —
+    /// `terminate_tree`, the scope-end `Drop` — stays disarmed: the reaped
+    /// leader's pgid is recyclable, so a later group signal could hit an
+    /// unrelated group that reused the number.
     #[cfg(all(unix, not(windows)))]
     #[test]
     fn unix_wait_releases_custody_and_later_paths_stay_disarmed() -> Result<(), String> {
@@ -1080,23 +1108,21 @@ mod tests {
             owned.group_settled,
             "the reap must settle the owner: custody is released"
         );
+        assert_eq!(
+            owned.test_group_kills, 1,
+            "the reap must settle the group: exactly one signal, issued before custody release"
+        );
+        // The reap-time settlement terminated the leftover descendant;
+        // nothing leaks and no caller-side by-pid cleanup is needed.
+        wait_for_death(descendant, "reap-time settlement left the descendant alive")?;
         owned
             .terminate_tree()
             .map_err(|err| format!("settled terminate_tree: {err}"))?;
         assert_eq!(
-            owned.test_group_kills, 0,
+            owned.test_group_kills, 1,
             "a settled owner must never signal the group again"
         );
-        // Custody release does not certify descendant containment: the
-        // leftover sleep is still alive, and the caller reaps it by pid.
-        if !unix_liveness_probe(descendant) {
-            return Err("custody release terminated the descendant: only terminate_tree before a reap certifies containment".to_string());
-        }
-        let _ = nix::sys::signal::kill(
-            nix::unistd::Pid::from_raw(descendant as i32),
-            nix::sys::signal::Signal::SIGKILL,
-        );
-        wait_for_death(descendant, "caller cleanup left the descendant alive")
+        Ok(())
     }
 
     /// #9895: a primary that already exited still leaves descendants in its
