@@ -912,6 +912,43 @@ asserted input (`Math.min(100, ...)` to `Math.min(200, ...)`, asserted at 40)
 still reads unexercised (#9436). An operator edit changes no number, so it
 keeps the boundary-witness reading.
 
+**Rule 19. A same-file assertion helper called with literals is its asserts
+(2026-10-22, #9636).** Extends decision 19(b) for literal-argument call-site
+rewrites of helpers that decision 19's pass leaves untouched (multi-statement
+bodies, string, boolean, `null` and negative-number arguments); decision 19's
+own pass runs first and a call it rewrites is never rewritten again. `function checkPass(score, want) { assert.equal(passes(score), want); }`
+called as `checkPass(50, true);` from a test reads as the helper's assertion
+statements with each parameter replaced by its literal argument, as if written
+out at that point (the rewrite keeps every line number). It is credit or
+unknown only: the rewritten assertions pass through the ordinary oracle
+admission, so a weak or unrecognised assertion is no stronger than when
+written inline; no new finding kind or repair rule is added and the ordinary
+classifier applies. It applies only when all
+of these hold, and otherwise the call reads as before:
+
+- the helper is a top-level, non-exported, non-async, non-generator function
+  declaration, declared once, whose parameters are plain identifiers (no
+  default, rest or destructuring, none named `assert` or `expect`) and whose
+  body is only call statements rooted at `assert` or `expect`, one per line,
+  with no `this` or `arguments`;
+- the file mentions the helper only at its declaration and at direct calls,
+  and holds no `eval`, `with` or `\u` escape;
+- the call is a top-level expression statement, alone on its line, of a
+  top-level `test`/`it` callback that is a synchronous function with no
+  parameters and holds only expression statements, with exactly one argument
+  per parameter, each a string, number, boolean or `null` literal (a negative
+  number is parenthesised);
+- a parameter is used in the assertions only as a plain value: not as a member
+  name, assigned (including `<<=` and `>>=`) or incremented, inside a string, template or comment, or as
+  the object of a member access or call when the argument is a number; the
+  assertions hold no closure, template or backslash, and no `{` (every one is
+  refused). A rewrite that does not parse is discarded and the original source
+  is read.
+
+A helper in another file, a call under a
+condition or loop, a nested `describe` test, a computed argument, or a helper
+with control flow stays `no_static_path` exactly as before.
+
 ### Static limits
 
 `static_limit_for_change` picks at most one limit, in order:
@@ -1144,7 +1181,9 @@ rejected alternative. Any can be reversed later without touching the rest.
     renamed assertion then passes every ordinary gate (binding, oracle kind,
     pinned expected side, field-update rules). Rejected: helpers with more than
     one statement, defaults, async or generator helpers, aliases and exports,
-    computed arguments, strings, and calls inside expressions.
+    computed arguments, strings, and calls inside expressions. Rule 19 reads
+    the multi-statement, string and negative-argument shapes this list rejects,
+    as a literal-argument rewrite of helpers this pass leaves untouched.
 20. **Failures a handler rethrows (2026-10-22, #9685).** Adopted. (a) A
     `try` whose handler is exactly `catch (e) { throw e; }` (one statement,
     throwing the very binding it caught, no `finally` that can replace the
@@ -1654,6 +1693,8 @@ to `amount - 20`, and `tests/lib.test.ts` has
 - `crates/ripr/src/analysis/language/typescript/suite_factory.rs`
   (`expand_suite_factories`, rule 13) and the rerun in `tests_extract.rs`
   (`extract_tests_expanding_suite_factories`).
+- `crates/ripr/src/analysis/language/typescript/helper_inline.rs`
+  (`inline_test_helpers`, rule 19), reached from the same rerun.
 - `crates/ripr/src/analysis/language/typescript/tests_extract.rs`: rule 12
   (`referenced_callback_function`, `function_used_only_as_test_callback`);
   rule 1 (`test_from_statement`, `describe_body_from_statement`) and the

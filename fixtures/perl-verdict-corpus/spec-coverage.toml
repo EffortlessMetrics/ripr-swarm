@@ -17,6 +17,12 @@
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
 floor = 32
 
+# Most abstained rows whose tests do catch the change (missed credit). A
+# regression fails `verdict-corpus check`; an improvement passes with a note
+# to lower this number (not a failure, so concurrent fixes do not collide).
+# Raising it is a reviewed edit with a reason.
+missed_credit_ceiling = 21
+
 # Operator grid and false-credit traps (verdict_corpus_grid.rs). `cell_floor`
 # is the count of covered operator-by-truth cells (7 operators x credited,
 # gap, partial); `trap_floor` the count of trap cases the tests cannot
@@ -24,7 +30,7 @@ floor = 32
 # Raise the floors and lower the ceiling as coverage grows and credits are
 # fixed; the opposite edit is a reviewed change with a reason.
 [grid]
-cell_floor = 8
+cell_floor = 9
 trap_floor = 0
 false_credit_ceiling = 0
 
@@ -405,6 +411,30 @@ id = "RIPR-SPEC-0243"
 scope = "out"
 reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
 
+# TypeScript Preview Static Facts
+[[spec]]
+id = "RIPR-SPEC-0027"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+# TypeScript Bounded Re-Export Test Discovery
+[[spec]]
+id = "RIPR-SPEC-0095"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+# TypeScript toThrow Exact-Payload Oracle Upgrade
+[[spec]]
+id = "RIPR-SPEC-0097"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
+# TypeScript Exposed Observation Guard
+[[spec]]
+id = "RIPR-SPEC-0098"
+scope = "out"
+reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
+
 [[spec]]
 id = "RIPR-SPEC-0246"
 scope = "out"
@@ -613,3 +643,21 @@ reason = "Rust analyzer transfer rule over Rust syntax; a Perl packet case canno
 id = "RIPR-SPEC-0159"
 scope = "out"
 reason = "Rust analyzer transfer rule over Rust syntax; a Perl packet case cannot label it"
+
+# Rust unsafe boundary probes
+[[spec]]
+id = "RIPR-SPEC-0168"
+scope = "out"
+reason = "Rust/Cargo analyzer behavior; a Perl case cannot label it"
+
+# Cargo path-dependency diff scope
+[[spec]]
+id = "RIPR-SPEC-0171"
+scope = "out"
+reason = "Rust/Cargo analyzer behavior; a Perl case cannot label it"
+
+# Cargo cross-crate dependency edges
+[[spec]]
+id = "RIPR-SPEC-0172"
+scope = "out"
+reason = "Rust/Cargo analyzer behavior; a Perl case cannot label it"
