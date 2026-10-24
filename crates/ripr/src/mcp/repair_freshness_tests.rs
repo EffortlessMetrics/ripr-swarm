@@ -592,9 +592,13 @@ fn selected_action_parity(
         // (#4287) and shell-quotes it when the spelling needs one (spaces,
         // quotes, backslashes), so compare against the rendered token, not
         // the raw path: a literal-backslash Unix root must not fail here
-        // only because its display carries quoting.
+        // only because its display carries quoting. The CLI binds the root
+        // with `root_path_display`, which on Unix renders the root exactly
+        // as the filesystem spells it (`loop_commands.rs` #4287): folding
+        // `\` to `/` here would expect a token that names the decoy
+        // slash-path directory instead of the selected repository.
         let host_root = crate::agent::loop_commands::shell_arg(
-            &crate::agent::loop_commands::display_path(root),
+            &crate::agent::loop_commands::root_path_display(root),
         );
         assert!(
             cli_rendered.contains(host_root.as_str()),
