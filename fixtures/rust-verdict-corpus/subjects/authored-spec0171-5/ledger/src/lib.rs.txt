@@ -1,0 +1,3 @@
+pub fn heavy(count: u32) -> u32 {
+    tally::weight(count)
+}

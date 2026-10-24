@@ -21669,6 +21669,12 @@ fn split_top_level_commas(content: &str) -> Vec<&str> {
             index = attribute_string_end(bytes, index);
             continue;
         }
+        if bytes[index] == b'\''
+            && let Some(end) = attribute_char_end(bytes, index)
+        {
+            index = end;
+            continue;
+        }
         match bytes[index] {
             b'(' | b'[' => depth += 1,
             b')' | b']' => depth = depth.saturating_sub(1),
@@ -21713,6 +21719,31 @@ fn attribute_string_end(bytes: &[u8], quote: usize) -> usize {
     bytes.len()
 }
 
+/// End (exclusive) of a char literal starting at the opening tick, or `None`
+/// when the tick is not one (for example a lifetime), so callers keep scanning.
+fn attribute_char_end(bytes: &[u8], tick: usize) -> Option<usize> {
+    let first = *bytes.get(tick + 1)?;
+    if first == b'\\' {
+        // Escape (`'\''`, `'\n'`, `'\x41'`, `'\u{1F980}'`): the closing tick is
+        // the first one after the escaped character, within a short window.
+        let limit = (tick + 12).min(bytes.len());
+        return (tick + 3..limit)
+            .find(|&i| bytes[i] == b'\'')
+            .map(|i| i + 1);
+    }
+    if first == b'\'' || first == b'\n' {
+        return None;
+    }
+    let width = match first {
+        0x00..=0x7f => 1,
+        0xc0..=0xdf => 2,
+        0xe0..=0xef => 3,
+        _ => 4,
+    };
+    let close = tick + 1 + width;
+    (bytes.get(close) == Some(&b'\'')).then_some(close + 1)
+}
+
 fn attribute_paren_span(bytes: &[u8], open: usize) -> Option<(usize, usize, usize)> {
     let mut depth = 0usize;
     let mut index = open;
@@ -21724,6 +21755,14 @@ fn attribute_paren_span(bytes: &[u8], open: usize) -> Option<(usize, usize, usiz
             b'"' => {
                 index = attribute_string_end(bytes, index);
                 continue;
+            }
+            // A char literal such as `')'` or `'"'` is not attribute syntax;
+            // a lifetime tick has no closing quote and falls through.
+            b'\'' => {
+                if let Some(end) = attribute_char_end(bytes, index) {
+                    index = end;
+                    continue;
+                }
             }
             b'(' => depth += 1,
             b')' => {

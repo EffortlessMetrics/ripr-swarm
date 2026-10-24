@@ -3014,16 +3014,19 @@ fn heuristic_relation_allowed(
 pub(crate) fn contains_call_name(body_text: &str, call_name: &str) -> bool {
     // `name(` and the TypeScript optional-call form `name?.(...)` are the same
     // call of the same binding (#4103 under-credit: the `?.` form was
-    // invisible to every call arm).
-    [format!("{call_name}("), format!("{call_name}?.(")]
-        .iter()
-        .any(|needle| {
-            body_text.match_indices(needle.as_str()).any(|(idx, _)| {
-                has_call_boundary(body_text, idx)
-                    && !line_prefix_looks_like_comment_or_string(body_text, idx)
-                    && !inside_block_comment(body_text, idx)
-            })
-        })
+    // invisible to every call arm). One scan over `call_name` occurrences —
+    // the old two-needle form formatted two Strings per call, which dominates
+    // helper-owner callee resolution on large modules (#10087). Occurrences
+    // the non-overlapping scan skips are always preceded by an identifier
+    // char (a border of `call_name` itself), and `has_call_boundary` rejects
+    // exactly those.
+    body_text.match_indices(call_name).any(|(idx, _)| {
+        let rest = &body_text[idx + call_name.len()..];
+        (rest.starts_with('(') || rest.starts_with("?.("))
+            && has_call_boundary(body_text, idx)
+            && !line_prefix_looks_like_comment_or_string(body_text, idx)
+            && !inside_block_comment(body_text, idx)
+    })
 }
 
 fn has_call_boundary(body_text: &str, idx: usize) -> bool {
