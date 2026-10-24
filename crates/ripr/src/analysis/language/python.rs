@@ -1198,6 +1198,9 @@ impl PythonAdapter {
 }
 
 #[cfg(test)]
+mod property_assertion_tests;
+
+#[cfg(test)]
 mod unreachable_assertion_tests;
 
 #[cfg(test)]
