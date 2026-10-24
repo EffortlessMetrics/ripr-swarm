@@ -874,6 +874,8 @@ pub(super) mod tests {
             relation_reason: Some(RelationReason::SameModule),
             relation_confidence: None,
             miss,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         };
         let mut rows = vec![
             row(Some(RelatedTestMiss::NoCallPath)),

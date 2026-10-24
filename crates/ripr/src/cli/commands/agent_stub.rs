@@ -10,9 +10,10 @@ use crate::analysis::seams::SeamGripClass;
 use crate::analysis::test_stub::TestStubPlacement;
 use crate::app::agent_brief::AgentBriefPolicy;
 use crate::app::test_stub::{
-    AlreadyPresentRevalidation, TargetLookup, TestStubError, TestStubSelector,
-    integration_target_lookup, line_of_offset, package_manifest_for, resolve_test_stub,
-    revalidate_already_present_stub, run_command, write_test_stub,
+    AlreadyPresentRevalidation, StubNextRepair, StubPlacementDivergence, TargetLookup,
+    TestStubError, TestStubSelector, integration_target_lookup, line_of_offset,
+    package_manifest_for, resolve_test_stub, revalidate_already_present_stub, run_command,
+    write_test_stub,
 };
 use crate::cli::CommandError;
 use crate::cli::agent::AgentStubOptions;
@@ -21,7 +22,7 @@ use crate::config::{RiprConfig, load_for_root};
 use crate::output::gap_vocabulary::exposure_counterpart;
 
 /// Schema version of the `rust_test_stub` JSON document.
-const RUST_TEST_STUB_SCHEMA_VERSION: &str = "0.2";
+const RUST_TEST_STUB_SCHEMA_VERSION: &str = "0.3";
 
 pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), CommandError> {
     // #8767: same implicit root `ripr check` uses; `--root .` opts out.
@@ -115,6 +116,22 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
             )));
         }
     };
+    // #8727: a divergent placement and `--write` cannot combine honestly.
+    // Writing the stub would dirty a file outside the repair packet's
+    // admitted edit surface, and the before phase's dirty-premise gate would
+    // refuse the very start command named below. Committing the stub does
+    // not repair the journey either: the packet's edit cage admits only its
+    // own surface, so the written test would still sit where the repair
+    // cannot use it. Refuse before the write, naming both files and the
+    // supported route (EXIT_CODES.md: a refused `--write` stays exit 2).
+    if options.write
+        && let Some(message) = resolution
+            .next_repair
+            .as_ref()
+            .and_then(|next| divergent_write_refusal(&resolution.seam_id, next))
+    {
+        return Err(CommandError::Failure(message));
+    }
     // #8891: when the placement already holds the identical stub, the second
     // `--write` reports "already written" instead of suffixing a `_2`
     // duplicate into the file.
@@ -152,7 +169,7 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
     });
 
     if options.json {
-        let document = serde_json::json!({
+        let mut document = serde_json::json!({
             "schema_version": RUST_TEST_STUB_SCHEMA_VERSION,
             "kind": "rust_test_stub",
             "seam_id": resolution.seam_id,
@@ -175,6 +192,12 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
             "classification": disclosure.classification,
             "warnings": disclosure.warnings,
         });
+        // #8727: the repair journey this stub feeds. The block is present
+        // only when the classified seam also establishes the repair route;
+        // otherwise the key stays absent rather than inventing a route.
+        if let Some(next_repair) = &resolution.next_repair {
+            document["next_repair"] = next_repair_json(next_repair);
+        }
         println!("{}", render(&document)?);
         return Ok(());
     }
@@ -227,6 +250,16 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
             &file
         )
     );
+    // #8727: the stub feeds a repair journey; name its start, and when the
+    // stub's placement and the repair packet's admitted surface disagree,
+    // name both files here instead of letting the before phase refuse the
+    // edit later at the dirty-premise gate.
+    if let Some(next_repair) = &resolution.next_repair {
+        println!("Next repair: {}", next_repair.start_command);
+        if let Some(divergence) = &next_repair.placement_divergence {
+            println!("{}", divergence_warning_line(divergence));
+        }
+    }
     Ok(())
 }
 
@@ -249,6 +282,50 @@ fn run_line(
         ),
         None => format!("Run it: no Cargo package owns {file}; add it to one, then run its tests."),
     }
+}
+
+/// The `next_repair` block of the ready `rust_test_stub` document (#8727).
+/// `placement_divergence` is inserted only when the placements disagree:
+/// absence, not a JSON null — consumers branch on field presence, and an
+/// agreeing stub must not read as divergent.
+fn next_repair_json(next_repair: &StubNextRepair) -> serde_json::Value {
+    let mut block = serde_json::json!({
+        "start_command": next_repair.start_command,
+        "allowed_edit_surface": next_repair.allowed_edit_surface,
+    });
+    if let Some(divergence) = &next_repair.placement_divergence {
+        block["placement_divergence"] = serde_json::json!({
+            "stub_file": divergence.stub_file,
+            "packet_file": divergence.packet_file,
+        });
+    }
+    block
+}
+
+/// The plain-language divergence warning: both files named, and the
+/// consequence stated, so the user can place the test where the repair
+/// admits it before writing anything.
+fn divergence_warning_line(divergence: &StubPlacementDivergence) -> String {
+    format!(
+        "Warning: this stub lands in {}, but the repair packet admits only {} as its edit surface. Write the test in {} instead, then run the repair; writing the stub to {} makes the repair's before phase refuse the edit.",
+        divergence.stub_file, divergence.packet_file, divergence.packet_file, divergence.stub_file,
+    )
+}
+
+/// Why a `--write` is refused when the stub's placement diverges from the
+/// packet's admitted edit surface (#8727 review): the write would dirty a
+/// file the repair's before phase refuses, so the command stops before
+/// touching anything and names the supported route. `None` when the
+/// placement agrees (or no repair route was projected), where the write is
+/// safe to apply.
+fn divergent_write_refusal(seam_id: &str, next_repair: &StubNextRepair) -> Option<String> {
+    let divergence = next_repair.placement_divergence.as_ref()?;
+    Some(format!(
+        "agent stub: the stub for seam {seam_id} lands in {stub_file}, but the repair packet admits only {packet_file} as its edit surface; --write would leave {stub_file} dirty outside that surface and the repair's before phase would refuse the start. Rerun without --write, write the test in {packet_file} instead, then start the repair: {start_command}. No file was written.",
+        stub_file = divergence.stub_file,
+        packet_file = divergence.packet_file,
+        start_command = next_repair.start_command,
+    ))
 }
 
 #[cfg(test)]
@@ -422,7 +499,7 @@ mod tests {
         .map_err(|error| format!("envelope render refused: {error:?}"))?;
         let document: serde_json::Value = serde_json::from_str(&rendered)
             .map_err(|error| format!("envelope was not parseable JSON: {error}"))?;
-        assert_eq!(document["schema_version"], "0.2");
+        assert_eq!(document["schema_version"], "0.3");
         assert_eq!(document["kind"], "rust_test_stub");
         assert_eq!(document["seam_id"], "no-such-seam");
         assert_eq!(document["state"], "refused");
@@ -432,6 +509,110 @@ mod tests {
             "seam_id no-such-seam was not found"
         );
         assert_eq!(document["warnings"], serde_json::json!([]));
+        Ok(())
+    }
+
+    /// The ready document's `next_repair` block (#8727): the repair start
+    /// command, the packet's admitted edit surface, and — when the two
+    /// independent placements disagree — both files named.
+    #[test]
+    fn next_repair_block_carries_the_start_command_and_surface() -> Result<(), String> {
+        let agreement = StubNextRepair {
+            start_command: "ripr agent repair --root . --seam-id 8f7fa8644fd12280 --phase before"
+                .to_string(),
+            allowed_edit_surface: "tests/clamp_tests.rs".to_string(),
+            placement_divergence: None,
+        };
+        let value = next_repair_json(&agreement);
+        assert_eq!(
+            value["start_command"],
+            "ripr agent repair --root . --seam-id 8f7fa8644fd12280 --phase before"
+        );
+        assert_eq!(value["allowed_edit_surface"], "tests/clamp_tests.rs");
+        assert!(
+            value.get("placement_divergence").is_none(),
+            "agreeing placements must omit the divergence key entirely: {value}"
+        );
+
+        let divergent = StubNextRepair {
+            placement_divergence: Some(StubPlacementDivergence {
+                stub_file: "src/clamp.rs".to_string(),
+                packet_file: "tests/clamp_tests.rs".to_string(),
+            }),
+            ..agreement
+        };
+        let value = next_repair_json(&divergent);
+        assert_eq!(value["placement_divergence"]["stub_file"], "src/clamp.rs");
+        assert_eq!(
+            value["placement_divergence"]["packet_file"],
+            "tests/clamp_tests.rs"
+        );
+        Ok(())
+    }
+
+    /// The divergence warning names both files and states the consequence:
+    /// writing the stub where the stub says refuses the repair's before
+    /// phase, so the user can place the test in the admitted surface first.
+    #[test]
+    fn divergence_warning_names_both_files_and_the_consequence() {
+        let divergence = StubPlacementDivergence {
+            stub_file: "src/clamp.rs".to_string(),
+            packet_file: "tests/clamp_tests.rs".to_string(),
+        };
+        let line = divergence_warning_line(&divergence);
+        assert!(line.contains("src/clamp.rs"), "{line}");
+        assert!(line.contains("tests/clamp_tests.rs"), "{line}");
+        assert!(
+            line.contains("before phase refuse"),
+            "the warning must state the refusal consequence: {line}"
+        );
+    }
+
+    /// #8727 review: `--write` with divergent placements is refused before
+    /// any file changes — the write would dirty a file outside the packet's
+    /// admitted surface and the advertised start command would meet the
+    /// before phase's dirty-premise refusal. The message names both files,
+    /// the consequence, and the supported route; an agreeing placement (or
+    /// no projected route) refuses nothing.
+    #[test]
+    fn divergent_write_refuses_before_writing_with_actionable_guidance() -> Result<(), String> {
+        let agreeing = StubNextRepair {
+            start_command: "ripr agent repair --root . --seam-id abc --phase before".to_string(),
+            allowed_edit_surface: "tests/clamp_tests.rs".to_string(),
+            placement_divergence: None,
+        };
+        if divergent_write_refusal("abc", &agreeing).is_some() {
+            return Err("an agreeing placement must not refuse the write".to_string());
+        }
+
+        let divergent = StubNextRepair {
+            placement_divergence: Some(StubPlacementDivergence {
+                stub_file: "src/clamp.rs".to_string(),
+                packet_file: "tests/clamp_tests.rs".to_string(),
+            }),
+            ..agreeing
+        };
+        let message = divergent_write_refusal("abc", &divergent)
+            .ok_or_else(|| "a divergent placement must refuse the write".to_string())?;
+        if !message.contains("src/clamp.rs") {
+            return Err(format!("refusal must name the stub file: {message}"));
+        }
+        if !message.contains("tests/clamp_tests.rs") {
+            return Err(format!("refusal must name the packet surface: {message}"));
+        }
+        if !message.contains("before phase would refuse") {
+            return Err(format!(
+                "refusal must state the dirty-premise consequence: {message}"
+            ));
+        }
+        if !message.contains("No file was written") {
+            return Err(format!("refusal must state nothing was written: {message}"));
+        }
+        if !message.contains("ripr agent repair --root . --seam-id abc --phase before") {
+            return Err(format!(
+                "refusal must name the supported repair start: {message}"
+            ));
+        }
         Ok(())
     }
 
