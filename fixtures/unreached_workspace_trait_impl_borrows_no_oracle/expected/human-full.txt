@@ -30,7 +30,7 @@ Evidence
   - observation no: No test reaches the changed owner, so no test can observe this change
   - discriminator no: No test reaches the changed owner, so no test can discriminate this change
   - local flow reaches error variant: Result::Err("overflow".to_string()) (line 11)
-  - related test src/lib.rs:29 other_test uses strong exact error variant oracle: assert_eq!(other(250), Err("big".to_string())); misses: no call to the changed code found; linked by file location only
+  - related test src/lib.rs:29 other_test uses strong exact error variant oracle: assert_eq!(other(250), Err("big".to_string())); misses: no established call path to the changed code; linked by file location only
   - source assertion argument value 1 at line 30
   - source assertion argument value "big" at line 31
   - source assertion argument value 250 at line 31
@@ -68,8 +68,8 @@ Evidence
   - observation no: No test reaches the changed owner, so no test can observe this change
   - discriminator no: No test reaches the changed owner, so no test can discriminate this change
   - local flow reaches match arm result: None => (line 11)
-  - related test src/lib.rs:29 other_test uses strong exact value oracle: assert_eq!(other(1), Ok(1)); misses: no call to the changed code found; linked by file location only
-  - related test src/lib.rs:29 other_test uses strong exact error variant oracle: assert_eq!(other(250), Err("big".to_string())); misses: no call to the changed code found; linked by file location only
+  - related test src/lib.rs:29 other_test uses strong exact value oracle: assert_eq!(other(1), Ok(1)); misses: no established call path to the changed code; linked by file location only
+  - related test src/lib.rs:29 other_test uses strong exact error variant oracle: assert_eq!(other(250), Err("big".to_string())); misses: no established call path to the changed code; linked by file location only
   - source assertion argument value 1 at line 30
   - source assertion argument value "big" at line 31
   - source assertion argument value 250 at line 31

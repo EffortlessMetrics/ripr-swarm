@@ -93,6 +93,13 @@ so changing only the explanation changes no decision field.
   decision. The `miss` wire token is unchanged; the field is additive,
   optional and skipped when absent, so artifacts that predate it read as no
   support.
+- `output::related_test_miss` renders `no_call_path` as "no established call
+  path to the changed code" (keeping the `; linked by <link> only` suffix),
+  because a producer may retain an owner-name or co-location candidate whose
+  symbol identity is unresolved; it is an unestablished-path claim, never proof
+  that no call text exists. `assertion_not_credited` renders one
+  language-neutral sentence that names no macro or language construct;
+  language-specific detail belongs in producer evidence (#5493).
 - `output::related_test_miss` renders `missing_input` and
   `missing_exact_assertion` detail from the stored `miss`, the finding's typed
   `ProbeFamily` and the row's own `miss_support`, and never reads the

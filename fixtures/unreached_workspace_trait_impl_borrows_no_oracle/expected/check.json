@@ -103,7 +103,7 @@
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
           "miss": "no_call_path",
-          "why": "no call to the changed code found; linked by file location only"
+          "why": "no established call path to the changed code; linked by file location only"
         }
       ],
       "stop_reasons": [],
@@ -208,7 +208,7 @@
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
           "miss": "no_call_path",
-          "why": "no call to the changed code found; linked by file location only"
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "other_test",
@@ -220,7 +220,7 @@
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
           "miss": "no_call_path",
-          "why": "no call to the changed code found; linked by file location only"
+          "why": "no established call path to the changed code; linked by file location only"
         }
       ],
       "stop_reasons": [],

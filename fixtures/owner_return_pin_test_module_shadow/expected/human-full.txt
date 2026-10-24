@@ -30,7 +30,7 @@ Evidence
   - observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect
   - discriminator no: No assertion found on related tests
   - local flow reaches constructed field: start: self.start (line 17)
-  - related test src/lib.rs:34 a_clone_equals_its_original uses strong exact value oracle: assert_eq!(window.clone(), window); misses: no call to the changed code found; linked by name only
+  - related test src/lib.rs:34 a_clone_equals_its_original uses strong exact value oracle: assert_eq!(window.clone(), window); misses: no established call path to the changed code; linked by name only
 
 Weakness
   - No detected assertion observes the changed value, error, field, or effect
