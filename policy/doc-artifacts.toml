@@ -1820,6 +1820,14 @@ owner = "product-xtask"
 standalone_reason = "Issue #8921 records the first-run over-budget step-occurrence contract: dx-scoreboard ingestion counts first_run.over_budget_steps per step occurrence instead of per breached metric row, aligning with the public-proof renderer and the declared steps unit, retaining both evidence entries per occurrence and keeping workflow_lines breaches separate."
 
 [[artifact]]
+id = "RIPR-SPEC-0348"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0348-pure-reformats-seed-no-probes.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #9450 records the pure-reformat contract: an uneven replacement block whose joined token stream is identical, and a 1:1 replaced pair differing only in surrounding whitespace, seed no probes under the existing prose and token-macro guards, while a token change inside a rewrap stays probed."
+
+[[artifact]]
 id = "RIPR-SPEC-0309"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0309-check-scope-filter-for-oversized-diffs.md"

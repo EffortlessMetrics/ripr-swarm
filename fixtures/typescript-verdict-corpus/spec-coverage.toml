@@ -698,6 +698,11 @@ id = "RIPR-SPEC-0301"
 scope = "out"
 reason = "release-process tooling (xtask release-ledger); its examples validate a commit ledger, not an exposure verdict a corpus case labels"
 
+[[spec]]
+id = "RIPR-SPEC-0348"
+scope = "out"
+reason = "probe-seeding hygiene for pure Rust reformats; not an exposure-verdict example a corpus case labels"
+
 # Every false verdict the corpus still scores, with its owning issue.
 # `verdict-corpus check` fails when a false row is not listed here and when a
 # listed row is no longer false, so a bless cannot absorb a new false verdict
