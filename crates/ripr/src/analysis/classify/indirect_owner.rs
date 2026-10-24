@@ -251,6 +251,7 @@ fn names_value(code: &str, name: &str, owner_names: &[String]) -> bool {
             || imported
             || called
             || field_label
+            || typed_fn_pointer_initializer(code, at)
             || !qualifier_may_name_owner(&code[..at], owner_names))
     })
 }
@@ -311,6 +312,35 @@ fn qualifier_may_name_owner(before: &str, owner_names: &[String]) -> bool {
         // A leading `::` or a generic qualifier (`<T as Trait>::inc`) is not read.
         _ => false,
     }
+}
+
+/// The mention is the initializer of a `let f: fn(..) -> .. = owner;` binding.
+/// The typed function-pointer reading follows that binding to its calls and
+/// either credits or keeps the gap on the evidence (RIPR-SPEC-0115, #9478), so
+/// this limit leaves the shape to it.
+fn typed_fn_pointer_initializer(code: &str, at: usize) -> bool {
+    let mut before = code[..at].trim_end();
+    // Drop a path prefix such as `crate::` or `self::tests::`.
+    while let Some(rest) = before.strip_suffix("::") {
+        let rest = rest.trim_end();
+        let start = rest
+            .rfind(|ch: char| !is_ident_char(ch))
+            .map_or(0, |index| index + 1);
+        before = rest[..start].trim_end();
+    }
+    let Some(before) = before.strip_suffix('=') else {
+        return false;
+    };
+    if before.ends_with(['=', '!', '<', '>']) {
+        return false;
+    }
+    let Some(let_at) = identifier_offsets(before, "let").last() else {
+        return false;
+    };
+    let binding = &before[let_at + 3..];
+    binding
+        .find(':')
+        .is_some_and(|colon| binding[colon + 1..].trim_start().starts_with("fn("))
 }
 
 fn ends_at_boundary(text: &str) -> bool {
@@ -499,9 +529,19 @@ mod tests {
     }
 
     #[test]
-    fn a_function_pointer_binding_is_a_value() {
-        let code = "let f: fn(u32) -> u32 = call_through_pointer; assert_eq!(f(2), 6);";
+    fn an_untyped_function_pointer_binding_is_a_value() {
+        let code = "let f = call_through_pointer; assert_eq!(f(2), 6);";
         assert!(value(code, "call_through_pointer"));
+    }
+
+    #[test]
+    fn a_typed_function_pointer_binding_is_left_to_the_typed_reading() {
+        for code in [
+            "let f: fn(u32) -> u32 = call_through_pointer; assert_eq!(f(2), 6);",
+            "let f: fn(u32) -> u32 = crate::call_through_pointer; assert_eq!(f(2), 6);",
+        ] {
+            assert!(!value(code, "call_through_pointer"), "{code}");
+        }
     }
 
     #[test]

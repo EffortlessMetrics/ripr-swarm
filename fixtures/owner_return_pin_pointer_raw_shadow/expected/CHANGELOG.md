@@ -55,15 +55,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — owner_return_pin_pointer_raw_shadow (5)
-
-Reason:
-A test passes the owner as a typed function pointer that the pointer pin deliberately does not credit; with rust_indirect_owner_call_unresolved (RIPR-SPEC-0240, #9442) the gap is withheld as static_unknown instead of weakly_exposed. Still not credited, and the next step names the function-value reach.
-
-Command:
-`cargo xtask goldens bless owner_return_pin_pointer_raw_shadow --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
