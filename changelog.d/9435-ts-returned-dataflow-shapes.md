@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- TypeScript changes to a declared concise arrow body (including a `reduce` seed), a compound assignment to state the owner returns (`this.balance += amount`, a loop accumulator), an edited arm of an unchanged returned conditional, and a generator loop bound now read as return-value changes, so a strong exact assertion on the owner credits them instead of leaving a false `weakly_exposed` gap (RIPR-SPEC-0243 rule 15, #9435).

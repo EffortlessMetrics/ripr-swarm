@@ -24,6 +24,9 @@ pub(crate) use value_contradiction::CONTRADICTION_DISCLOSURE;
 use value_contradiction::{
     ExactValueVerdict, contradiction_summary, exact_value_assertion_verdict_for_test,
 };
+pub(in crate::analysis) use value_contradiction::{
+    PointerReturnChange, change_is_invisible_to_every_assertion,
+};
 
 pub(crate) use related_tests::CompactGripContext;
 use related_tests::{
@@ -2084,6 +2087,9 @@ fn discriminate_evidence(
     let mut contradictions: Vec<String> = Vec::new();
     for test in related {
         for oracle in &test.assertions {
+            if !collection_assertion_admitted(seam, oracle, test, index, pin_syntax) {
+                continue;
+            }
             // A statically contradicted exact-value assertion keeps at most
             // Weak credit: it pins the mutant's value and fails at baseline,
             // so it must not grade the seam's discrimination up (#6026).
@@ -2199,6 +2205,9 @@ fn oracle_discriminates_seam_in_test(
     index: &RustIndex,
     pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
 ) -> bool {
+    if !collection_assertion_admitted(seam, oracle, test, index, pin_syntax) {
+        return false;
+    }
     // #8121: a snapshot admitted by kind for a return-value seam must also
     // observe the owner's own result, not an unrelated value in the test.
     if seam.kind() == SeamKind::ReturnValue
@@ -2217,6 +2226,18 @@ fn oracle_discriminates_seam_in_test(
                         receiver, owner, index, test, oracle, pin_syntax,
                     )
             })
+}
+
+fn collection_assertion_admitted(
+    seam: &RepoSeam,
+    oracle: &OracleFact,
+    test: &TestSummary,
+    index: &RustIndex,
+    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
+) -> bool {
+    !matches!(seam.kind(), SeamKind::SideEffect | SeamKind::CallPresence)
+        || direct_collection_mutation_receiver(seam.expression()).is_none()
+        || pin_syntax.admits_effect_assertion(test, oracle, index)
 }
 
 fn oracle_discriminates_seam(seam: &RepoSeam, oracle: &super::facts::OracleFact) -> bool {
@@ -2995,6 +3016,9 @@ fn best_oracle(
     let mut best_matching_strength = OracleStrength::None;
     let mut best_matching_contradiction = None;
     for oracle in &test.assertions {
+        if !collection_assertion_admitted(seam, oracle, test, index, pin_syntax) {
+            continue;
+        }
         let (strength, contradiction) = effective_oracle_strength(owner_fn, oracle, test);
         if strength.rank() > best_strength.rank() {
             best_strength = strength.clone();

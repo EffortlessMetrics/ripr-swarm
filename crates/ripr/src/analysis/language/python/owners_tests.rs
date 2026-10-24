@@ -1,3 +1,4 @@
+use super::PythonFramework;
 use super::admission::{PythonAdmissionContext, PythonTestFunction, assertion_admission};
 use super::module_constants::{
     PythonModuleConstant, constants_visible_in_function, python_test_rebinding,
@@ -76,6 +77,7 @@ pub(super) fn collect_owners_from_statements(
                     || class.name.to_string(),
                     |outer| format!("{outer}.{}", class.name),
                 );
+                let first = out.len();
                 collect_owners_from_statements(
                     file,
                     source,
@@ -85,6 +87,25 @@ pub(super) fn collect_owners_from_statements(
                     module_constants,
                     out,
                 );
+                // Class-level facts a dunder binding relies on (#9421): a class
+                // with decorators, a metaclass, odd body statements or a second
+                // definition of the same path may run another method than the
+                // one the owner names.
+                let duplicate = out[..first]
+                    .iter()
+                    .any(|owner| owner.class_path == class_path && owner.file == file);
+                let plain = !duplicate
+                    && class.decorator_list.is_empty()
+                    && class.keywords.is_empty()
+                    && class_body_is_plain(&class.body);
+                let no_bases = class.bases.is_empty();
+                for owner in out
+                    .iter_mut()
+                    .filter(|owner| owner.class_path == class_path && owner.file == file)
+                {
+                    owner.class_facts.plain = plain;
+                    owner.class_facts.no_bases = no_bases;
+                }
                 out.push(owner_from_class(
                     PythonOwnerContext {
                         file,
@@ -180,7 +201,11 @@ fn owner_from_function(
         &text_for_range(context.source, range),
         !decorators.is_empty() || is_async,
         binding_only,
-    );
+    )
+    .with_calls_own_name(super::module_callees::calls_own_name(
+        &text_for_range(context.source, range),
+        name,
+    ));
     let same_class_callees = super::same_class_callees::same_class_callees_from_body(
         body,
         super::same_class_callees::method_receiver_name(&parameters, &decorators),
@@ -219,7 +244,47 @@ fn owner_from_function(
         module_callees,
         class_path: context.class_context.unwrap_or_default().to_string(),
         term_facts,
+        class_facts: super::related_tests::PythonClassFacts {
+            direct_statements: direct_expression_statements(context.source, body),
+            ..Default::default()
+        },
     }
+}
+
+/// The trimmed text of each single-line expression statement written directly
+/// in a function body (not under an `if`, `try`, loop or `with`), so a changed
+/// line can be told apart from a guarded one (#9421).
+fn direct_expression_statements(source: &SourceText<'_>, body: &[Stmt]) -> Vec<String> {
+    body.iter()
+        .filter_map(|stmt| match stmt {
+            Stmt::Expr(expr) => Some(text_for_range(source, expr.range)),
+            Stmt::Assign(assign) => Some(text_for_range(source, assign.range)),
+            Stmt::AugAssign(assign) => Some(text_for_range(source, assign.range)),
+            _ => None,
+        })
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.contains('\n'))
+        .collect()
+}
+
+/// Whether the class body holds only method definitions, a docstring, `pass`
+/// and plain non-dunder attributes, so no dunder is assigned, regenerated or
+/// defined conditionally in it.
+fn class_body_is_plain(body: &[Stmt]) -> bool {
+    body.iter().all(|stmt| match stmt {
+        Stmt::FunctionDef(_) | Stmt::AsyncFunctionDef(_) | Stmt::Pass(_) | Stmt::ClassDef(_) => {
+            true
+        }
+        Stmt::Expr(expr) => matches!(expr.value.as_ref(), Expr::Constant(_)),
+        Stmt::Assign(assign) => assign
+            .targets
+            .iter()
+            .all(|target| matches!(target, Expr::Name(name) if !name.id.as_str().starts_with("__"))),
+        Stmt::AnnAssign(assign) => {
+            matches!(assign.target.as_ref(), Expr::Name(name) if !name.id.as_str().starts_with("__"))
+        }
+        _ => false,
+    })
 }
 
 /// Declared parameters in binding order: positional-only, then regular, then
@@ -281,6 +346,7 @@ fn owner_from_class(
         module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
+        class_facts: Default::default(),
     }
 }
 
@@ -314,6 +380,7 @@ pub(super) fn module_owner(
         module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
+        class_facts: Default::default(),
     }
 }
 
@@ -380,16 +447,16 @@ pub(super) fn collect_tests_from_statements(
         match stmt {
             Stmt::FunctionDef(function) if function.name.as_str().starts_with("test") => {
                 let framework = if in_unittest_class {
-                    "unittest"
+                    PythonFramework::Unittest
                 } else {
-                    "pytest"
+                    PythonFramework::Pytest
                 };
                 let name = function.name.to_string();
                 let generated_inputs = super::hypothesis::given_parameter_names(
                     &function.args,
                     &function.decorator_list,
                 );
-                let direct_parametrized = if framework == "pytest" {
+                let direct_parametrized = if framework == PythonFramework::Pytest {
                     super::parametrize::direct_argnames(&function.decorator_list)
                 } else {
                     Vec::new()
@@ -409,7 +476,7 @@ pub(super) fn collect_tests_from_statements(
                 );
                 // pytest does not parametrize unittest methods; Hypothesis
                 // `@example` rows run under either framework.
-                let parametrize = (framework == "pytest")
+                let parametrize = (framework == PythonFramework::Pytest)
                     .then(|| parametrize_cases(source, &function.decorator_list))
                     .flatten()
                     .or_else(|| {
@@ -441,10 +508,15 @@ pub(super) fn collect_tests_from_statements(
                     imports,
                     decorators: decorator_names(&function.decorator_list),
                     activation_controls: super::test_activation::activation_controls(
-                        &decorator_names(&function.decorator_list),
+                        &function.decorator_list,
                         &definition_imports,
                         super::test_activation::DeclarationSite::Function,
-                    ),
+                    )
+                    .into_iter()
+                    .chain(super::test_activation::empty_parametrize_control(
+                        &function.decorator_list,
+                    ))
+                    .collect(),
                     fixtures,
                     setup_receivers: setup_receivers.clone(),
                     fixture_defs: Vec::new(),
@@ -465,16 +537,16 @@ pub(super) fn collect_tests_from_statements(
             }
             Stmt::AsyncFunctionDef(function) if function.name.as_str().starts_with("test") => {
                 let framework = if in_unittest_class {
-                    "unittest"
+                    PythonFramework::Unittest
                 } else {
-                    "pytest"
+                    PythonFramework::Pytest
                 };
                 let name = function.name.to_string();
                 let generated_inputs = super::hypothesis::given_parameter_names(
                     &function.args,
                     &function.decorator_list,
                 );
-                let direct_parametrized = if framework == "pytest" {
+                let direct_parametrized = if framework == PythonFramework::Pytest {
                     super::parametrize::direct_argnames(&function.decorator_list)
                 } else {
                     Vec::new()
@@ -486,7 +558,7 @@ pub(super) fn collect_tests_from_statements(
                 let assertions = collect_assertions_from_statements(&function.body, source, false);
                 // pytest does not parametrize unittest methods; Hypothesis
                 // `@example` rows run under either framework.
-                let parametrize = (framework == "pytest")
+                let parametrize = (framework == PythonFramework::Pytest)
                     .then(|| parametrize_cases(source, &function.decorator_list))
                     .flatten()
                     .or_else(|| {
@@ -518,10 +590,15 @@ pub(super) fn collect_tests_from_statements(
                     imports,
                     decorators: decorator_names(&function.decorator_list),
                     activation_controls: super::test_activation::activation_controls(
-                        &decorator_names(&function.decorator_list),
+                        &function.decorator_list,
                         &definition_imports,
                         super::test_activation::DeclarationSite::Function,
-                    ),
+                    )
+                    .into_iter()
+                    .chain(super::test_activation::empty_parametrize_control(
+                        &function.decorator_list,
+                    ))
+                    .collect(),
                     fixtures,
                     setup_receivers: setup_receivers.clone(),
                     fixture_defs: Vec::new(),
@@ -687,7 +764,7 @@ fn qualified_test_name(class_context: Option<&str>, name: &str) -> String {
         .unwrap_or_else(|| name.to_string())
 }
 
-fn fixture_parameter_names(args: &ast::Arguments, framework: &str) -> Vec<String> {
+fn fixture_parameter_names(args: &ast::Arguments, framework: PythonFramework) -> Vec<String> {
     let mut names: Vec<String> = args
         .posonlyargs
         .iter()
@@ -704,7 +781,7 @@ fn fixture_parameter_names(args: &ast::Arguments, framework: &str) -> Vec<String
     names.retain(|name| {
         name != "self"
             && name != "cls"
-            && (framework == "pytest" || !matches!(name.as_str(), "subTest"))
+            && (framework == PythonFramework::Pytest || !matches!(name.as_str(), "subTest"))
     });
     names.sort();
     names.dedup();
@@ -915,7 +992,7 @@ impl<'a> LocalTestClasses<'a> {
                 })
                 .flat_map(|((_, class), imports)| {
                     super::test_activation::activation_controls(
-                        &decorator_names(&class.decorator_list),
+                        &class.decorator_list,
                         imports,
                         super::test_activation::DeclarationSite::Class,
                     )

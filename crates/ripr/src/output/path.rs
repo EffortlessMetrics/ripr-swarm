@@ -2,7 +2,31 @@ use std::path::{Component, Path, PathBuf};
 
 /// Render a path with stable slash separators for JSON and Markdown output.
 pub(crate) fn display_path(path: &Path) -> String {
-    display_path_text(&crate::analysis::stable_path_text(path))
+    display_path_for_host(&crate::analysis::stable_path_text(path), cfg!(windows))
+}
+
+/// [`display_path`] with the host explicit. A canonical Windows root is
+/// verbatim (`\\?\<drive>:\…`); slash-unifying it alone printed
+/// `//?/<drive>:/…`, a spelling no shell or editor takes and one other surfaces
+/// never printed (`artifact.repository.root` already read `<drive>:/…`). The reducible verbatim
+/// forms fold to their plain spelling, as `human_path_text` does (#9660).
+fn display_path_for_host(text: &str, windows: bool) -> String {
+    fold_verbatim_for_host(display_path_text(text), windows)
+}
+
+/// Fold an already slash-unified Windows verbatim path to its plain spelling
+/// on Windows; elsewhere the text is returned unchanged. Shared by every
+/// slash-unifying path renderer so a producer and a consumer that rebuilds
+/// the same root never disagree on `//?/` (#9660).
+pub(crate) fn fold_verbatim_on_host(unified: String) -> String {
+    fold_verbatim_for_host(unified, cfg!(windows))
+}
+
+fn fold_verbatim_for_host(unified: String, windows: bool) -> String {
+    if windows && let Some(plain) = strip_windows_verbatim_prefix(&unified) {
+        return plain;
+    }
+    unified
 }
 
 /// The part of a finding's file that CI consumers resolve from the checkout:
@@ -649,10 +673,43 @@ mod tests {
     }
 
     use super::{
-        display_path, display_path_text, human_path_text, path_identity_key_on,
-        path_identity_key_with, repository_display_path, repository_relative_path_text_on,
-        same_output_leaf,
+        display_path, display_path_for_host, display_path_text, human_path_text,
+        path_identity_key_on, path_identity_key_with, repository_display_path,
+        repository_relative_path_text_on, same_output_leaf,
     };
+
+    #[test]
+    fn display_path_folds_a_canonical_windows_root_and_keeps_unix_text() {
+        let drive = "F:";
+        let canonical = format!(r"\\?\{drive}\work\repo");
+        assert_eq!(
+            display_path_for_host(&canonical, true),
+            format!("{drive}/work/repo")
+        );
+        assert_eq!(
+            display_path_for_host(r"\\?\UNC\server\share\repo", true),
+            "//server/share/repo"
+        );
+        // No plain spelling: unified but not folded.
+        assert_eq!(
+            display_path_for_host(r"\\?\Volume{0}\repo", true),
+            "//?/Volume{0}/repo"
+        );
+        // Unix: `\` is a filename byte; text is slash-unified as before and
+        // never folded.
+        assert_eq!(
+            display_path_for_host(&canonical, false),
+            format!("//?/{drive}/work/repo")
+        );
+        assert_eq!(
+            display_path_for_host("tests/test_x.py", false),
+            "tests/test_x.py"
+        );
+        assert_eq!(
+            display_path_for_host(r"tests\test_x.py", true),
+            "tests/test_x.py"
+        );
+    }
 
     #[test]
     fn human_path_text_uses_one_separator_and_drops_verbatim_prefix_on_windows() {

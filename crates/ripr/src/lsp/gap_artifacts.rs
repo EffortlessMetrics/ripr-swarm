@@ -2256,6 +2256,7 @@ fn known_static_limit_kind(kind: &str) -> bool {
         StaticLimitKind::RustDebugAssertionProfileUnresolved,
         StaticLimitKind::RustCallFactBudget,
         StaticLimitKind::RustFrameworkOracleUnresolved,
+        StaticLimitKind::RustPinnedShapeUnresolved,
         StaticLimitKind::RustImplicitCallUnresolved,
         StaticLimitKind::RustCallerLoopSelectorUnresolved,
     ]

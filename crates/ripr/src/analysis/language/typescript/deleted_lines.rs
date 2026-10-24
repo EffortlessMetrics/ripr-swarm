@@ -30,7 +30,7 @@ pub(super) fn deleted_line_findings(
     new_source: Option<&str>,
     owners: &[TypeScriptOwner],
     findings: &[Finding],
-    classify: impl Fn(usize, &str, &TypeScriptOwner) -> Option<Finding>,
+    mut classify: impl FnMut(usize, &str, &TypeScriptOwner) -> Option<Finding>,
 ) -> Vec<Finding> {
     let paired: BTreeSet<usize> = counterparts.values().map(|removed| removed.line).collect();
     let runs = removed_runs(changed, new_source);
