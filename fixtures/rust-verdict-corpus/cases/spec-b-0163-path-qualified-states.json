@@ -1,0 +1,45 @@
+{
+  "case_id": "spec-b-0163-path-qualified-states",
+  "subject_id": "authored-spec-b-scan",
+  "diff": "cases/spec-b-0163-path-qualified-states.diff",
+  "anchor": {
+    "file": "src/s_path.rs",
+    "line": 24
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "scanner_path_qualified_states",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if final_state == Scan::Text {",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "s_path::tests::classify_reads_the_last_state_s_path",
+        "equivalence_review": "the edit itself: comparing against the text state inverts the verdict for both rows"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The same scanner over Scan::Text and Scan::Word enum states. classify_reads_the_last_state pins ab to word and the trailing-space row to blank, so comparing against the text state fails it. The compared operand is an enum variant path, which is not an exact operand, so the finding abstains (limited) rather than exposing; RIPR-SPEC-0163 example 2 is waived on that ground.",
+  "labeling_observation": {
+    "ripr_commit": "09711785",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
