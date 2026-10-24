@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- Related-test rows now carry an explicit optional `role` (`contributing` by default, omitted from output; `examined_only` for rows retained only to show an examined test whose assertions matched nothing), so row eligibility for gates, fix-site selection and repair routing no longer depends on the explanatory `miss`. Older artifacts read every row as `contributing`; no finding, stage, gate or golden output changes. (#5563)

@@ -181,7 +181,10 @@ fn parse_options(args: &[String]) -> Result<SummaryOptions, String> {
 }
 
 fn print_help() {
-    println!("{PR_SUMMARY_HELP}");
+    println!(
+        "{}",
+        crate::cli::help::render_command_help(PR_SUMMARY_HELP, &[])
+    );
 }
 
 /// Help body for `ripr pr-summary`. Also the flag source for unknown-argument
@@ -319,6 +322,319 @@ mod tests {
             other => Err(format!(
                 "expected scoped pr-summary suggestion, got {other:?}"
             )),
+        }
+    }
+
+    fn unique_dir(label: &str) -> Result<PathBuf, String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| format!("clock before epoch: {error}"))?
+            .as_nanos();
+        let parent = std::env::temp_dir();
+        fs::create_dir_all(&parent).map_err(|error| format!("create temp parent: {error}"))?;
+        Ok(parent.join(format!(
+            "ripr-pr-summary-mod-{label}-{}-{stamp}",
+            std::process::id()
+        )))
+    }
+
+    fn fixture_root(label: &str) -> Result<PathBuf, String> {
+        let root = unique_dir(label)?;
+        fs::create_dir_all(&root).map_err(|error| format!("create root: {error}"))?;
+        if !root.is_dir() {
+            return Err(format!("fixture root not created: {}", root.display()));
+        }
+        Ok(root)
+    }
+
+    fn args_for(root: &Path, extra: &[&str]) -> Vec<String> {
+        let mut args = vec!["--root".to_string(), root.display().to_string()];
+        args.extend(extra.iter().map(|arg| (*arg).to_string()));
+        args
+    }
+
+    fn read(root: &Path, relative: &str) -> Result<String, String> {
+        fs::read_to_string(root.join(relative)).map_err(|error| format!("read {relative}: {error}"))
+    }
+
+    #[test]
+    fn parse_defaults_to_current_root_without_check_or_baseline() -> Result<(), String> {
+        let options = parse_options(&[])?;
+        if options
+            != (SummaryOptions {
+                root: PathBuf::from("."),
+                check: false,
+                baseline: None,
+            })
+        {
+            return Err(format!("unexpected default options: {options:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn parse_last_root_wins_regardless_of_flag_order() -> Result<(), String> {
+        let args = ["--check", "--root", "a", "--root", "b"].map(str::to_string);
+        let options = parse_options(&args)?;
+        if options.root.as_path() != Path::new("b") || !options.check {
+            return Err(format!("unexpected options: {options:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn help_flag_short_circuits_before_root_validation_or_writes() -> Result<(), String> {
+        let missing = unique_dir("help-missing")?;
+        for flag in ["--help", "-h"] {
+            // Positive: help succeeds even beside an otherwise-refused root.
+            run_pr_summary(&args_for(&missing, &[flag]))?;
+            // Help wins over an unknown argument too.
+            run_pr_summary(&[flag.to_string(), "--bogus".to_string()])?;
+        }
+        if missing.exists() {
+            return Err("help must not create the root".to_string());
+        }
+        // Negative control: without help the same arguments refuse.
+        match run_pr_summary(&args_for(&missing, &[])) {
+            Err(error) if error.contains("is not a directory") => Ok(()),
+            other => Err(format!("missing root accepted without help: {other:?}")),
+        }
+    }
+
+    #[test]
+    fn unknown_argument_is_refused_by_run() -> Result<(), String> {
+        let root = fixture_root("unknown-arg")?;
+        match run_pr_summary(&args_for(&root, &["--bogus"])) {
+            Err(error) if error.contains("--bogus") => {}
+            other => return Err(format!("unknown argument accepted: {other:?}")),
+        }
+        if root.join(PR_SUMMARY_MD).exists() {
+            return Err("refused run must not write".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn missing_root_is_refused_without_creating_it() -> Result<(), String> {
+        let missing = unique_dir("missing-root")?;
+        if missing.exists() {
+            return Err("precondition: root must not exist".to_string());
+        }
+        let Err(error) = run_pr_summary(&args_for(&missing, &[])) else {
+            return Err("missing root accepted".to_string());
+        };
+        if !error.contains("is not a directory") || !error.contains(&missing.display().to_string())
+        {
+            return Err(format!("unexpected refusal: {error}"));
+        }
+        if missing.exists() {
+            return Err("refusal must not conjure the root".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn file_typed_root_is_refused_but_directory_root_succeeds() -> Result<(), String> {
+        let dir = fixture_root("file-root")?;
+        let file = dir.join("not-a-dir");
+        fs::write(&file, "x").map_err(|error| format!("write file root: {error}"))?;
+        if !file.is_file() {
+            return Err("precondition: file root must be a file".to_string());
+        }
+        match run_pr_summary(&args_for(&file, &[])) {
+            Err(error) if error.contains("is not a directory") => {}
+            other => return Err(format!("file root accepted: {other:?}")),
+        }
+        if !file.is_file() {
+            return Err("refusal must leave the file untouched".to_string());
+        }
+        // Positive control: the containing directory is a valid root.
+        run_pr_summary(&args_for(&dir, &[]))?;
+        if !dir.join(PR_SUMMARY_MD).is_file() {
+            return Err("valid root did not receive the summary".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn run_writes_all_three_outputs_for_an_empty_root() -> Result<(), String> {
+        let root = fixture_root("empty-root")?;
+        run_pr_summary(&args_for(&root, &[]))?;
+
+        let legacy = read(&root, PR_SUMMARY_MD)?;
+        if !legacy.starts_with("# PR Evidence Summary\n\n## Start Here\n\n")
+            || !legacy.contains("- start-here JSON: missing\n")
+            || !legacy.ends_with(
+                "\n_This summary is generated from diff-scoped artifacts. Do not copy it into public badge state._\n",
+            )
+        {
+            return Err(format!("unexpected legacy summary:\n{legacy}"));
+        }
+        let json_text = read(&root, PR_EVIDENCE_SUMMARY_JSON)?;
+        serde_json::from_str::<serde_json::Value>(&json_text)
+            .map_err(|error| format!("summary JSON invalid: {error}"))?;
+        let md = read(&root, PR_EVIDENCE_SUMMARY_MD)?;
+        if !md.starts_with("# PR Evidence Summary v1\n\n**Run Status**: ") {
+            return Err(format!("unexpected v1 markdown:\n{md}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_start_here_json_is_reported_not_treated_as_missing() -> Result<(), String> {
+        let missing_root = fixture_root("start-missing")?;
+        run_pr_summary(&args_for(&missing_root, &[]))?;
+        let missing = read(&missing_root, PR_SUMMARY_MD)?;
+
+        let root = fixture_root("start-invalid")?;
+        let start = root.join(START_HERE_JSON);
+        fs::create_dir_all(start.parent().ok_or("start-here has no parent")?)
+            .map_err(|error| format!("create reports dir: {error}"))?;
+        fs::write(&start, "{ not json").map_err(|error| format!("write start-here: {error}"))?;
+        if serde_json::from_str::<serde_json::Value>("{ not json").is_ok() {
+            return Err("precondition: fixture must be invalid JSON".to_string());
+        }
+        run_pr_summary(&args_for(&root, &[]))?;
+        let invalid = read(&root, PR_SUMMARY_MD)?;
+        if !invalid.contains("- start-here JSON: invalid: ") {
+            return Err(format!("invalid start-here not disclosed:\n{invalid}"));
+        }
+        // Negative control: the states are distinguished in both directions.
+        if missing.contains("start-here JSON: invalid")
+            || invalid.contains("- start-here JSON: missing")
+        {
+            return Err("input states are not distinguished".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn check_mode_accepts_fresh_summary_and_rejects_stale_without_rewriting() -> Result<(), String>
+    {
+        let root = fixture_root("check-stale")?;
+        run_pr_summary(&args_for(&root, &[]))?;
+        // Positive control: freshly written summary passes --check.
+        run_pr_summary(&args_for(&root, &["--check"]))?;
+
+        let path = root.join(PR_SUMMARY_MD);
+        fs::write(&path, "tampered\n").map_err(|error| format!("tamper: {error}"))?;
+        let Err(error) = run_pr_summary(&args_for(&root, &["--check"])) else {
+            return Err("stale summary passed --check".to_string());
+        };
+        if error != format!("{PR_SUMMARY_MD} is stale; run `ripr pr-summary`") {
+            return Err(format!("unexpected stale message: {error}"));
+        }
+        if read(&root, PR_SUMMARY_MD)? != "tampered\n" {
+            return Err("--check must not rewrite the summary".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn check_mode_with_missing_summary_fails_and_writes_nothing() -> Result<(), String> {
+        let root = fixture_root("check-missing")?;
+        let Err(error) = run_pr_summary(&args_for(&root, &["--check"])) else {
+            return Err("missing summary passed --check".to_string());
+        };
+        if !error.starts_with(&format!("missing or unreadable {PR_SUMMARY_MD}: ")) {
+            return Err(format!("unexpected message: {error}"));
+        }
+        for relative in [
+            PR_SUMMARY_MD,
+            PR_EVIDENCE_SUMMARY_JSON,
+            PR_EVIDENCE_SUMMARY_MD,
+        ] {
+            if root.join(relative).exists() {
+                return Err(format!("failed --check wrote {relative}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn check_summary_compares_exactly() -> Result<(), String> {
+        let root = fixture_root("check-exact")?;
+        let path = root.join("summary.md");
+        fs::write(&path, "body\n").map_err(|error| format!("write: {error}"))?;
+        check_summary(&path, "body\n")?;
+        for near in ["body", "body\n\n", "Body\n", ""] {
+            match check_summary(&path, near) {
+                Err(error) if error.contains("is stale") => {}
+                other => return Err(format!("{near:?} accepted: {other:?}")),
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unusable_baseline_degrades_to_no_baseline() -> Result<(), String> {
+        let root = fixture_root("baseline")?;
+        run_pr_summary(&args_for(&root, &[]))?;
+        let without = read(&root, PR_EVIDENCE_SUMMARY_JSON)?;
+        fs::write(root.join("before.json"), "{ not json")
+            .map_err(|error| format!("write baseline: {error}"))?;
+        run_pr_summary(&args_for(&root, &["--baseline", "before.json"]))?;
+        run_pr_summary(&args_for(&root, &["--baseline", "absent.json"]))?;
+        if read(&root, PR_EVIDENCE_SUMMARY_JSON)? != without {
+            return Err("unusable baseline changed the v1 JSON".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn repo_root_keeps_absolute_and_anchors_relative_to_cwd() -> Result<(), String> {
+        let _cwd = crate::testing::cwd_lock::hold_cwd();
+        let absolute = unique_dir("repo-root")?;
+        if repo_root(&absolute)? != absolute {
+            return Err("absolute root must be returned unchanged".to_string());
+        }
+        let cwd = std::env::current_dir().map_err(|error| format!("cwd: {error}"))?;
+        let relative = Path::new("some/relative-root");
+        if relative.is_absolute() {
+            return Err("precondition: fixture must be relative".to_string());
+        }
+        if repo_root(relative)? != cwd.join(relative) {
+            return Err("relative root must join the working directory".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn write_parented_file_creates_parents_and_refuses_blocked_parent() -> Result<(), String> {
+        let root = fixture_root("write-parented")?;
+        let nested = root.join("a/b/out.txt");
+        write_parented_file(&nested, "a/b/out.txt", "hello")?;
+        if read(&root, "a/b/out.txt")? != "hello" {
+            return Err("nested write content mismatch".to_string());
+        }
+        // Negative control: a regular file where the parent directory belongs.
+        fs::write(root.join("blocker"), "x").map_err(|error| format!("blocker: {error}"))?;
+        if !root.join("blocker").is_file() {
+            return Err("precondition: blocker must be a file".to_string());
+        }
+        match write_parented_file(&root.join("blocker/out.txt"), "blocker/out.txt", "x") {
+            Err(error)
+                if error.starts_with("failed to create parent dir for blocker/out.txt: ") =>
+            {
+                Ok(())
+            }
+            other => Err(format!("blocked parent accepted: {other:?}")),
+        }
+    }
+
+    #[test]
+    fn write_summary_failure_names_the_label() -> Result<(), String> {
+        let root = fixture_root("write-summary-dir")?;
+        let dest = root.join("dest");
+        fs::create_dir_all(&dest).map_err(|error| format!("dest dir: {error}"))?;
+        if !dest.is_dir() {
+            return Err("precondition: destination must be a directory".to_string());
+        }
+        match write_summary(&dest, "x") {
+            Err(error) if error.starts_with(&format!("failed to write {PR_SUMMARY_MD}: ")) => {
+                Ok(())
+            }
+            other => Err(format!("directory destination accepted: {other:?}")),
         }
     }
 

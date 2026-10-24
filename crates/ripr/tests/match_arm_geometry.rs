@@ -1,11 +1,12 @@
 //! Source-backed geometry and production calibration controls for #5905.
 //! These are bounded location-join inputs, not cargo-mutants run results.
 
+use ripr::app::repo_seam_inventory_input;
 use ripr::output::{
     CargoMutantsLocationJoin, CargoMutantsOutcomeRecord, CargoMutantsRuntimeSpan,
     CargoMutantsSeamLocation, join_cargo_mutants_location,
 };
-use ripr::{CheckInput, Mode, OutputFormat, check_workspace, render_check};
+use ripr::{CheckInput, Mode, OutputFormat, render_check};
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -33,12 +34,17 @@ impl Workspace {
     }
 
     fn inventory(&self, format: OutputFormat) -> Result<Value, String> {
-        let output = check_workspace(CheckInput {
+        // The CLI's production route for these repo seam inventories: no
+        // diff and no Git, so the result cannot depend on whichever checkout
+        // happens to enclose the temp directory (a shallow CI clone has no
+        // default base to resolve).
+        assert!(format.is_repo_seam_inventory());
+        let output = repo_seam_inventory_input(CheckInput {
             root: self.0.clone(),
             mode: Mode::Ready,
             format,
             ..CheckInput::default()
-        })?;
+        });
         serde_json::from_str(&render_check(&output, &format)?).map_err(|e| e.to_string())
     }
 }

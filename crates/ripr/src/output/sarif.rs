@@ -1567,6 +1567,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }];
 
         let rendered = render_findings_sarif(&output, &RiprConfig::default(), &[]);
@@ -1632,6 +1634,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }];
 
         let rendered = render_findings_sarif(&output, &RiprConfig::default(), &[]);
@@ -2382,6 +2386,8 @@ weakly_gripped = "note"
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }];
         finding.recommended_next_step = Some("Add a focused Perl assertion.".to_string());
         finding.language = Some(LanguageId::Perl);
@@ -2462,6 +2468,7 @@ weakly_gripped = "note"
 
     fn sample_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "finding:discount".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -2521,6 +2528,8 @@ weakly_gripped = "note"
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }],
             recommended_next_step: Some("Add an equality-boundary assertion".to_string()),
             language: None,

@@ -2116,7 +2116,17 @@ mod tests {
             write(
                 "app/Cargo.toml",
                 &"[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[dependencies]\nmid = { path = \"../mid\" }\nbase.workspace = true\n[dev-dependencies]\nbase = { path = \"../base\" }\n[build-dependencies]\nbase = { path = \"../base\" }\n[target.'cfg(windows)'.dependencies]\nbase = { path = \"../base\" }\n[dependencies.outside]\npath = \"{outside}\"\n"
-                    .replace("{outside}", &outside.display().to_string().replace('\\', "/")),
+                    .replace(
+                        "{outside}",
+                        // Cargo cannot read a verbatim `\\?\` path from a manifest;
+                        // only the rendered text drops it, so `root` stays canonical
+                        // for the metadata projection's `strip_prefix` (#9660).
+                        &outside
+                            .display()
+                            .to_string()
+                            .trim_start_matches(r"\\?\")
+                            .replace('\\', "/"),
+                    ),
             )?;
             write("app/src/lib.rs", "pub fn app() {}\n")?;
             write("app/build.rs", "fn main() {}\n")?;

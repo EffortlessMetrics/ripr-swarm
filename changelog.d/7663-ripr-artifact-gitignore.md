@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- `ripr doctor` now warns when ripr's own reports and caches under `target/ripr` are not covered by git ignore rules, naming the exact `/target/ripr/` `.gitignore` entry to add; once such artifacts are committed (Python `.gitignore` templates do not cover Rust-conventional `target/`), `ripr check` no longer counts ripr's own artifact files as changed scope (https://github.com/EffortlessMetrics/ripr-swarm/issues/7663).
