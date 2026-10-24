@@ -1,0 +1,12 @@
+diff --git a/src/b_else.rs b/src/b_else.rs
+--- a/src/b_else.rs
++++ b/src/b_else.rs
+@@ -1,7 +1,7 @@
+ //! map_or_else is not the map_or the limitation names.
+ 
+ pub fn ext_starts_at_else(path: &str, at: usize) -> bool {
+-    let start = path.rfind('.').map_or_else(|| 0, |i| i + 1);
++    let start = path.rfind('.').map_or_else(|| 0, |dot| dot + 1);
+     start == at
+ }
+ 

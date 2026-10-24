@@ -1,0 +1,55 @@
+{
+  "case_id": "spec-b-0157-shadowed-binding",
+  "subject_id": "authored-spec-b-bindings",
+  "diff": "cases/spec-b-0157-shadowed-binding.diff",
+  "anchor": {
+    "file": "src/b_rebound.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "binding_rebound_before_use",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "let end = text.as_bytes().len() + 1;",
+        "mutated_line": "let end = text.as_bytes().len() + 1;",
+        "outcome": "tests_failed",
+        "failing_test": "b_rebound::tests::the_length_is_compared_b_rebound",
+        "equivalence_review": "not equivalent: b_rebound::tests::the_length_is_compared_b_rebound fails on it"
+      },
+      {
+        "replacement": "let end = text.as_bytes().len() - 1;",
+        "mutated_line": "let end = text.as_bytes().len() - 1;",
+        "outcome": "tests_failed",
+        "failing_test": "b_rebound::tests::the_length_is_compared_b_rebound",
+        "equivalence_review": "not equivalent: b_rebound::tests::the_length_is_compared_b_rebound fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "end is rebound (let end = end + 0) before the equality. The abc, abcd and ab rows pin the length either side. Spec cells: RIPR-SPEC-0157#3.",
+  "labeling_observation": {
+    "ripr_commit": "371565fe",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0157#3"
+  ]
+}

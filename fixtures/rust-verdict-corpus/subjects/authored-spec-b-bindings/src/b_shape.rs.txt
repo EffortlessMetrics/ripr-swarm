@@ -1,0 +1,18 @@
+//! The changed binding is a destructuring pattern, not a simple let.
+
+pub fn ext_starts_at_pair(path: &str, at: usize) -> bool {
+    let (start, _) = (path.rfind('.').map_or(0, |i| i + 1), 0);
+    start == at
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_extension_starts_after_the_dot_b_shape() {
+        assert!(ext_starts_at_pair("a.rs", 2));
+        assert!(!ext_starts_at_pair("a.rs", 1));
+        assert!(ext_starts_at_pair("ars", 0));
+    }
+}

@@ -1,0 +1,19 @@
+//! The changed binding is shadowed before the equality.
+
+pub fn ext_starts_at_shadowed(path: &str, at: usize) -> bool {
+    let start = path.rfind('.').map_or(0, |i| i + 1);
+    let start = start + 0;
+    start == at
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_extension_starts_after_the_dot_b_shadow() {
+        assert!(ext_starts_at_shadowed("a.rs", 2));
+        assert!(!ext_starts_at_shadowed("a.rs", 1));
+        assert!(ext_starts_at_shadowed("ars", 0));
+    }
+}

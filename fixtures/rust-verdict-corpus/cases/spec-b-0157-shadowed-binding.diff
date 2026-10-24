@@ -1,0 +1,12 @@
+diff --git a/src/b_rebound.rs b/src/b_rebound.rs
+--- a/src/b_rebound.rs
++++ b/src/b_rebound.rs
+@@ -1,7 +1,7 @@
+ //! The changed binding is shadowed before the equality.
+ 
+ pub fn width_matches_rebound(text: &str, width: usize) -> bool {
+-    let end = text.len();
++    let end = text.as_bytes().len();
+     let end = end + 0;
+     end == width
+ }

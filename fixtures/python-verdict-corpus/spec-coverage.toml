@@ -716,3 +716,15 @@ reason = "Rust analyzer transfer rule over Rust syntax; a Python case cannot lab
 id = "RIPR-SPEC-0159"
 scope = "out"
 reason = "Rust analyzer transfer rule over Rust syntax; a Python case cannot label it"
+
+# Rust spec 0150
+[[spec]]
+id = "RIPR-SPEC-0150"
+scope = "out"
+reason = "Rust analyzer transfer rule over Rust syntax; a Python case cannot label it"
+
+# Rust spec 0157
+[[spec]]
+id = "RIPR-SPEC-0157"
+scope = "out"
+reason = "Rust analyzer transfer rule over Rust syntax; a Python case cannot label it"

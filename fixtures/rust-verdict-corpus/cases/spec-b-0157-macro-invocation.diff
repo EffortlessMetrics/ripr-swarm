@@ -1,0 +1,12 @@
+diff --git a/src/b_macro.rs b/src/b_macro.rs
+--- a/src/b_macro.rs
++++ b/src/b_macro.rs
+@@ -1,7 +1,7 @@
+ //! The compared use sits inside a macro invocation.
+ 
+ pub fn fits_in_macro(text: &str, width: usize) -> bool {
+-    let end = text.len();
++    let end = text.as_bytes().len();
+     format!("{}", end <= width) == "true"
+ }
+ 

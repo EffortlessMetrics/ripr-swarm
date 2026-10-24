@@ -1,0 +1,12 @@
+diff --git a/src/b_text.rs b/src/b_text.rs
+--- a/src/b_text.rs
++++ b/src/b_text.rs
+@@ -1,7 +1,7 @@
+ //! The name appears in a comparison only inside a comment and a string.
+ 
+ pub fn end_with_notes(text: &str, width: usize) -> usize {
+-    let end = text.len(); // end == width is checked by the caller
++    let end = text.as_bytes().len(); // end == width is checked by the caller
+     let _note = "end == width";
+     end + width - width
+ }

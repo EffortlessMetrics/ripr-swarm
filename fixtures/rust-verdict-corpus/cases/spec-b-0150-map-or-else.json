@@ -1,0 +1,55 @@
+{
+  "case_id": "spec-b-0150-map-or-else",
+  "subject_id": "authored-spec-b-bindings",
+  "diff": "cases/spec-b-0150-map-or-else.diff",
+  "anchor": {
+    "file": "src/b_else.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "binding_map_or_else",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "let start = path.rfind('.').map_or_else(|| 1, |dot| dot + 1);",
+        "mutated_line": "let start = path.rfind('.').map_or_else(|| 1, |dot| dot + 1);",
+        "outcome": "tests_failed",
+        "failing_test": "b_else::tests::the_extension_starts_after_the_dot_b_else",
+        "equivalence_review": "not equivalent: b_else::tests::the_extension_starts_after_the_dot_b_else fails on it"
+      },
+      {
+        "replacement": "let start = path.rfind('.').map_or_else(|| 0, |dot| dot);",
+        "mutated_line": "let start = path.rfind('.').map_or_else(|| 0, |dot| dot);",
+        "outcome": "tests_failed",
+        "failing_test": "b_else::tests::the_extension_starts_after_the_dot_b_else",
+        "equivalence_review": "not equivalent: b_else::tests::the_extension_starts_after_the_dot_b_else fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "map_or_else is outside the map_or family. The ars row pins the default and the a.rs rows pin the Some branch. Spec cells: RIPR-SPEC-0150#5.",
+  "labeling_observation": {
+    "ripr_commit": "371565fe",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "propagation_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0150#5"
+  ]
+}

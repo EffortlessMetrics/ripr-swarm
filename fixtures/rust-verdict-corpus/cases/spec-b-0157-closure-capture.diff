@@ -1,0 +1,12 @@
+diff --git a/src/b_closure.rs b/src/b_closure.rs
+--- a/src/b_closure.rs
++++ b/src/b_closure.rs
+@@ -1,7 +1,7 @@
+ //! The compared use sits inside a closure.
+ 
+ pub fn fits_in_closure(text: &str, width: usize) -> bool {
+-    let end = text.len();
++    let end = text.as_bytes().len();
+     let check = |w: usize| end <= w;
+     check(width)
+ }

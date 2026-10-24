@@ -1,0 +1,55 @@
+{
+  "case_id": "spec-b-0157-two-direct-uses",
+  "subject_id": "authored-spec-b-bindings",
+  "diff": "cases/spec-b-0157-two-direct-uses.diff",
+  "anchor": {
+    "file": "src/b_two_uses.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "binding_two_direct_uses",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "let end = text.as_bytes().len() + 1;",
+        "mutated_line": "let end = text.as_bytes().len() + 1;",
+        "outcome": "tests_failed",
+        "failing_test": "b_two_uses::tests::both_bounds_are_pinned_b_two_uses",
+        "equivalence_review": "not equivalent: b_two_uses::tests::both_bounds_are_pinned_b_two_uses fails on it"
+      },
+      {
+        "replacement": "let end = text.as_bytes().len() - 1;",
+        "mutated_line": "let end = text.as_bytes().len() - 1;",
+        "outcome": "tests_failed",
+        "failing_test": "b_two_uses::tests::both_bounds_are_pinned_b_two_uses",
+        "equivalence_review": "not equivalent: b_two_uses::tests::both_bounds_are_pinned_b_two_uses fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "end feeds two comparisons (end < lo and end <= hi); the rows on both bounds shift under either mutant. Spec cells: RIPR-SPEC-0157#2.",
+  "labeling_observation": {
+    "ripr_commit": "371565fe",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0157#2"
+  ]
+}

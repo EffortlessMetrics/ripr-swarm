@@ -1,0 +1,12 @@
+diff --git a/src/b_sibling.rs b/src/b_sibling.rs
+--- a/src/b_sibling.rs
++++ b/src/b_sibling.rs
+@@ -1,7 +1,7 @@
+ //! A sibling function binds its own end; the changed one only returns it.
+ 
+ pub fn end_of(text: &str) -> usize {
+-    let end = text.len();
++    let end = text.as_bytes().len();
+     end
+ }
+ 

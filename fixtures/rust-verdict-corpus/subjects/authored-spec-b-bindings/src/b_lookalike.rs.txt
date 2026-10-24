@@ -1,0 +1,28 @@
+//! A method that only looks like rfind.
+
+pub struct Cursor<'a> {
+    pub text: &'a str,
+}
+
+impl Cursor<'_> {
+    pub fn refind(&self, mark: char) -> Option<usize> {
+        self.text.rfind(mark)
+    }
+}
+
+pub fn ext_starts_at_cursor(cursor: &Cursor, at: usize) -> bool {
+    let start = cursor.refind('.').map_or(0, |i| i + 1);
+    start == at
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_extension_starts_after_the_dot_b_lookalike() {
+        assert!(ext_starts_at_cursor(&Cursor { text: "a.rs" }, 2));
+        assert!(!ext_starts_at_cursor(&Cursor { text: "a.rs" }, 1));
+        assert!(ext_starts_at_cursor(&Cursor { text: "ars" }, 0));
+    }
+}

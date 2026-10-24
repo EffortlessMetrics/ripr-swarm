@@ -48,11 +48,18 @@ limitation-only non-claim. The stable enum token is
 
 ## Acceptance Examples
 
-- Accept a changed `rfind(...).map_or(...)` or `len_utf8().map_or(...)`
-  binding followed by an equality on the same binding in the same owner.
-- Reject comments, string literals, `map_or_else`, member-name lookalikes,
-  shadowed bindings, missing owners, missing related tests, and unsupported
-  value shapes.
+1. Accept: a changed `rfind(...).map_or(...)` binding followed by an
+   equality on the same binding in the same owner.
+2. Accept: a changed `len_utf8().map_or(...)` binding followed by an
+   equality on the same binding in the same owner.
+3. Reject: a family name that appears only in a comment.
+4. Reject: a family name that appears only in a string literal.
+5. Reject: `map_or_else`.
+6. Reject: a member-name lookalike.
+7. Reject: a shadowed binding.
+8. Reject: a missing owner.
+9. Reject: a missing related test.
+10. Reject: an unsupported value shape.
 
 ## Test Mapping
 
