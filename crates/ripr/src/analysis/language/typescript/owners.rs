@@ -232,6 +232,13 @@ fn without_reassigned_commonjs_exports(
         .iter()
         .filter(|(owner, commonjs)| *commonjs && owner.exported_as_default)
         .count();
+    // Name multiplicity in one pass: a large CommonJS module otherwise pays
+    // an O(owners x names) scan here (#10017).
+    let mut commonjs_name_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    for name in &commonjs_names {
+        *commonjs_name_counts.entry(name.clone()).or_insert(0) += 1;
+    }
     owners
         .into_iter()
         .filter(|(owner, commonjs)| {
@@ -241,11 +248,7 @@ fn without_reassigned_commonjs_exports(
             if owner.exported_as_default && bare_default_count > 1 {
                 return false;
             }
-            commonjs_names
-                .iter()
-                .filter(|name| **name == owner.name)
-                .count()
-                == 1
+            commonjs_name_counts.get(&owner.name).copied().unwrap_or(0) == 1
         })
         .map(|(owner, _)| owner)
         .collect()
@@ -268,7 +271,8 @@ fn without_reassigned_esm_bindings(
     if owners.is_empty() {
         return owners;
     }
-    let reassigned = dead_reassigned_esm_bindings(body);
+    let reassigned: std::collections::HashSet<String> =
+        dead_reassigned_esm_bindings(body).into_iter().collect();
     if reassigned.is_empty() {
         return owners;
     }
@@ -278,7 +282,7 @@ fn without_reassigned_esm_bindings(
             // A class method shares only the binding name with a reassigned
             // top-level binding; its receiver keeps it live, so the
             // name-only drop must not take it.
-            owner.class_name.is_some() || !reassigned.iter().any(|name| name == &owner.name)
+            owner.class_name.is_some() || !reassigned.contains(&owner.name)
         })
         .collect()
 }
@@ -291,7 +295,12 @@ fn without_reassigned_esm_bindings(
 /// intersect with its owners. Live `export { ident as default }` is not a
 /// snapshot, so a later write still drops (fail-closed).
 fn dead_reassigned_esm_bindings(body: &[Statement<'_>]) -> Vec<String> {
-    let mut declared: Vec<String> = Vec::new();
+    // Membership sets, not growing scanned Vecs: a large generated module
+    // (tens of thousands of top-level bindings) turns a per-binding linear
+    // scan into quadratic wall time (#10017). Insertion order is preserved
+    // where a consumer observes it (`reassigned` iterates in statement
+    // order below); every other use is membership only.
+    let mut declared: std::collections::HashSet<String> = std::collections::HashSet::new();
     for stmt in body {
         match stmt {
             Statement::VariableDeclaration(decl)
@@ -299,17 +308,13 @@ fn dead_reassigned_esm_bindings(body: &[Statement<'_>]) -> Vec<String> {
             {
                 for declarator in &decl.declarations {
                     for identifier in declarator.id.get_binding_identifiers() {
-                        if !declared.iter().any(|name| name == identifier.name.as_str()) {
-                            declared.push(identifier.name.to_string());
-                        }
+                        declared.insert(identifier.name.to_string());
                     }
                 }
             }
             Statement::FunctionDeclaration(func) => {
-                if let Some(id) = &func.id
-                    && !declared.iter().any(|name| name == id.name.as_str())
-                {
-                    declared.push(id.name.to_string());
+                if let Some(id) = &func.id {
+                    declared.insert(id.name.to_string());
                 }
             }
             // `export let price = ...` / `export function price() ...` bind
@@ -322,17 +327,13 @@ fn dead_reassigned_esm_bindings(body: &[Statement<'_>]) -> Vec<String> {
                 {
                     for declarator in &decl.declarations {
                         for identifier in declarator.id.get_binding_identifiers() {
-                            if !declared.iter().any(|name| name == identifier.name.as_str()) {
-                                declared.push(identifier.name.to_string());
-                            }
+                            declared.insert(identifier.name.to_string());
                         }
                     }
                 }
                 Some(oxc_ast::ast::Declaration::FunctionDeclaration(func)) => {
-                    if let Some(id) = &func.id
-                        && !declared.iter().any(|name| name == id.name.as_str())
-                    {
-                        declared.push(id.name.to_string());
+                    if let Some(id) = &func.id {
+                        declared.insert(id.name.to_string());
                     }
                 }
                 _ => {}
@@ -345,9 +346,10 @@ fn dead_reassigned_esm_bindings(body: &[Statement<'_>]) -> Vec<String> {
     }
     let mut snapshot_exports: Vec<(String, u32)> = Vec::new();
     let mut reassigned: Vec<(String, u32)> = Vec::new();
+    let mut reassigned_names: std::collections::HashSet<String> = std::collections::HashSet::new();
     for stmt in body {
         if let Some(name) = snapshot_default_export_local(stmt)
-            && declared.iter().any(|bound| bound == &name)
+            && declared.contains(&name)
             && !snapshot_exports.iter().any(|(seen, _)| seen == &name)
         {
             snapshot_exports.push((name, stmt.span().start));
@@ -361,9 +363,7 @@ fn dead_reassigned_esm_bindings(body: &[Statement<'_>]) -> Vec<String> {
         }
         let offset = stmt.span().start;
         for name in assigned_identifiers_in_statement(stmt) {
-            if declared.iter().any(|bound| bound == &name)
-                && !reassigned.iter().any(|(seen, _)| seen == &name)
-            {
+            if declared.contains(&name) && reassigned_names.insert(name.clone()) {
                 reassigned.push((name, offset));
             }
         }
@@ -373,11 +373,12 @@ fn dead_reassigned_esm_bindings(body: &[Statement<'_>]) -> Vec<String> {
     // A binding that is also a named export (`export let price`, `export {
     // price }`, `export { price as alias }`) is live for named importers, who
     // observe the later write, so the snapshot cannot excuse it (fail-closed).
-    let named_exports = named_exported_locals(body);
+    let named_exports: std::collections::HashSet<String> =
+        named_exported_locals(body).into_iter().collect();
     reassigned
         .into_iter()
         .filter(|(name, reassigned_at)| {
-            named_exports.iter().any(|exported| exported == name)
+            named_exports.contains(name)
                 || !snapshot_exports.iter().any(|(exported, exported_at)| {
                     exported == name && *exported_at < *reassigned_at
                 })
