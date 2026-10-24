@@ -344,7 +344,16 @@ fn select_and_analyze(
     }
 
     Ok(RepoSelection {
-        findings: representative_findings(diff.findings),
+        findings: representative_findings(diff.findings)
+            .into_iter()
+            .map(|mut finding| {
+                // Scope stamp (#5531): consumers holding only a `Finding` look
+                // the capability cell up from this, so repo-mode evidence can
+                // never borrow the diff-mode repair-routing cell.
+                finding.mark_repo_scoped();
+                finding
+            })
+            .collect(),
         production_files: changed.len(),
         skipped_files: input.capped + diff.skipped_files,
         partial_reason: join_reasons(&reasons),

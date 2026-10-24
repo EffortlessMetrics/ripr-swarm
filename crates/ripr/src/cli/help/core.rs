@@ -22,7 +22,10 @@ Options:
                    Resolves the same preconditions as the real run, so it
                    fails the same way (existing file without --force, root
                    that is not a directory) instead of reporting success.
-  --force          Overwrite an existing ripr.toml, generated workflow, or ripr MCP entry.
+  --force          Replace what init would otherwise refuse or keep. Plain `ripr init --force`
+                   resets an existing ripr.toml. With --ci or --mcp, ripr.toml is
+                   always kept; --force then only replaces the generated workflow
+                   or the `ripr` entry in .mcp.json.
 
 Generated config:
   - uses draft analysis mode and includes unchanged tests
@@ -346,8 +349,9 @@ Options:
                            settable via RIPR_GIT_TIMEOUT env var.
   --timeout SECS           Wall-clock budget in seconds for the whole
                            diff or worktree analysis (not the repo-wide
-                           repo-exposure and seam formats). When it runs out, check stops
-                           and refuses with analysis_timeout: no findings
+                           repo-exposure and seam formats). When it runs
+                           out, check stops and refuses with
+                           analysis_timeout: no findings
                            are produced and the result is never a clean
                            pass. 0 disables the budget. Default: 600 (10
                            minutes). Also settable via RIPR_CHECK_TIMEOUT
@@ -598,12 +602,15 @@ Performance:
 "#;
 pub(super) const CAPABILITIES_HELP: &str = r#"Show what ripr can establish per language, framework and mode.
 
-Usage: ripr capabilities [--language NAME] [--json]
+Usage: ripr capabilities [--language NAME] [--json | --markdown]
 
 Options:
   --language NAME  Narrow to one language: rust, typescript, javascript,
                    python or perl.
   --json           Emit the versioned machine-readable registry.
+  --markdown       Emit the generated registry block for
+                   docs/status/SUPPORT_TIERS.md (whole table; not with
+                   --json or --language).
 
 Each cell names a language, framework, mode (diff or repo) and family
 (static_facts or repair_routing) with one closed support state, a tier

@@ -337,6 +337,7 @@ mod tests {
 
     fn complete_perl_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:lib_My_App_pm:8:perl_return".to_string(),
             canonical_gap: Some(FindingCanonicalGap {
                 id: "gap:perl:lib/My/App.pm:My::App::discount:return_value:exact_return_assertion:return_value"
@@ -433,6 +434,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }],
             recommended_next_step: Some("Add a focused Perl assertion.".to_string()),
             language: Some(LanguageId::Perl),
