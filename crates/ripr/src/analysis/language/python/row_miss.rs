@@ -35,9 +35,10 @@
 //!   `filterwarnings`, bare sibling imports); until they are accounted for the
 //!   state is not an established absence.
 //! - `assertion_not_observing`: alignment cannot tell an affirmative sibling
-//!   sink from an unresolved one, and the value also marks a row as
-//!   examined-only (`RelatedTest::is_unmatched`), which decisional consumers
-//!   (`oracle_related_tests`) read, so emitting it would move decisions.
+//!   sink from an unresolved one. Row eligibility is the explicit
+//!   `RelatedTest::role` (#5563), not this value, so emitting it no longer
+//!   moves decisions; the value stays withheld here until alignment can make
+//!   the affirmative claim.
 //! - `assertion_not_credited`: no typed established refusal exists (#5446);
 //!   skip / xfail rows stay `activation_limited` with no oracle credit.
 //! - `missing_exact_assertion`: no row-owned exact-discriminator fact exists;

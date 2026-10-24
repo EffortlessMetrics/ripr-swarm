@@ -9171,6 +9171,7 @@ fn absent_delimiter_boundary_returns_head() {
             relation_confidence: None,
             miss: None,
             miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }];
 
         let rust_owner = FunctionSummary {

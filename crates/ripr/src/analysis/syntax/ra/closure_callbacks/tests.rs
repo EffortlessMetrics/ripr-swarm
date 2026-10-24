@@ -424,3 +424,70 @@ fn macro_sites_come_from_the_parser_not_from_text() -> Result<(), Box<dyn Error>
     assert_eq!(macro_call_columns("fn h( {", 1), None);
     Ok(())
 }
+
+#[test]
+fn any_call_making_closure_literal_handed_to_the_helper_is_withheld() {
+    for (shape, test, expected) in [
+        (
+            "call-making closure",
+            "fn t() { run(1, || greet()); }",
+            true,
+        ),
+        ("method-call closure", "fn t() { run(1, || x.go()); }", true),
+        (
+            "closure at a later position",
+            "fn t() { run(|| greet(), 1); }",
+            true,
+        ),
+        (
+            "call under a branch the test may skip",
+            "fn t() { if c { run(1, || greet()); } }",
+            true,
+        ),
+        (
+            "async closure with a call",
+            "fn t() { run(1, async || greet()); }",
+            true,
+        ),
+        ("unparsable text fails closed", "fn t( {", true),
+        (
+            "boxed closure",
+            "fn t() { run(1, Box::new(|| greet())); }",
+            true,
+        ),
+        (
+            "referenced closure",
+            "fn t() { run(1, &|| greet()); }",
+            true,
+        ),
+        (
+            "parenthesized closure",
+            "fn t() { run(1, (|| greet())); }",
+            true,
+        ),
+        (
+            "closure only inside a nested fn item",
+            "fn t() { run(1, { fn n() { let _ = || greet(); } 1 }); }",
+            false,
+        ),
+        ("closure without a call", "fn t() { run(1, || 5); }", false),
+        ("no closure argument", "fn t() { run(1, 2); }", false),
+        (
+            "closure bound to a name",
+            "fn t() { let f = || greet(); run(1, f); }",
+            false,
+        ),
+        (
+            "closure handed to a different callee",
+            "fn t() { other(|| greet()); run(1, 2); }",
+            false,
+        ),
+        (
+            "path call is not the helper",
+            "fn t() { m::run(1, || greet()); }",
+            false,
+        ),
+    ] {
+        assert_eq!(passes_call_making_closure(test, "run"), expected, "{shape}");
+    }
+}

@@ -96,8 +96,10 @@
 //!   invokes two or more closure parameters earns no credit. Boxed or
 //!   by-reference closures and callbacks forwarded to another function
 //!   (tracing's `with_default(subscriber, fun)`) are not credited by this
-//!   rule. A helper that never invokes the parameter keeps the plain-helper
-//!   behavior above (#9997).
+//!   rule. A plain helper (one that invokes no parameter, so it never runs a
+//!   closure or only forwards it) lends nothing to a test that passes any
+//!   call-making closure literal to it, at any position (#9997): its
+//!   assertions cannot be shown to observe what the closure called.
 //!
 //! The credited calls sit outside the test's line span. Value resolution
 //! reads only [`TestFact::body_calls`], because a helper call's arguments
@@ -112,6 +114,7 @@ use super::{FunctionFact, FunctionSourceRole, OracleFact, RustIndex, TestFact};
 use crate::analysis::syntax::{
     InvokedCallbackParam, ModuleItemScopes, closure_argument_positions, invoked_callback_params,
     macro_call_columns, module_item_scopes, parser_oracles_for_function,
+    passes_call_making_closure,
 };
 use crate::analysis::workspace::{CargoHarnessVerdict, ManifestInventory};
 use rayon::prelude::*;
@@ -289,6 +292,11 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
                     .min()
                     .unwrap_or((usize::MAX, 0));
                 callback_names = names;
+            } else if passes_call_making_closure(&test.body, &call.name) {
+                // #9997: a plain helper invokes no parameter, so a call-making
+                // closure handed to it is never run or only forwarded, and its
+                // assertions cannot observe what the closure called.
+                continue;
             }
             // Parser-backed oracles only, as for ordinary tests: a
             // commented-out `assert_eq!` must not count.
