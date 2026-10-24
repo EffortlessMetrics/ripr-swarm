@@ -2074,7 +2074,7 @@ pub(super) fn strong_test_imports_owner_from_module(
         all_tests.matching(related_test).any(|test| {
             super::test_activation::activation_control(test).is_none()
                 && test.imports.iter().any(|import| {
-                    import_binds_owner_name(import, owner)
+                    import_binds_owner_name(import, owner, test)
                         && import_source_module_matches_owner(import, owner, &test.file)
                 })
         })
@@ -2085,10 +2085,21 @@ pub(super) fn strong_test_imports_owner_from_module(
 /// import, or `from module import *` for a public owner the module's
 /// `__all__` exports. A leading underscore keeps a name out of a star import,
 /// and a module whose `__all__` omits the name (or is unresolved) does not
-/// export it, so neither binds this way.
-fn import_binds_owner_name(import: &PythonImport, owner: &PythonOwner) -> bool {
+/// export it, so neither binds this way. A star import also fails closed when
+/// the test star-imports another module or binds the name some other way
+/// (another module, or a same-module alias of a different symbol), since
+/// Python keeps only the last binding and this reader does not order them.
+fn import_binds_owner_name(import: &PythonImport, owner: &PythonOwner, test: &PythonTest) -> bool {
     import.imported == owner.name
-        || (import.imported == "*" && !owner.name.starts_with('_') && owner.star_exported)
+        || (import.imported == "*"
+            && !owner.name.starts_with('_')
+            && owner.star_exported
+            && !test.imports.iter().any(|other| {
+                (other.source_module != import.source_module && other.imported == "*")
+                    || (other.alias == owner.name
+                        && (other.source_module != import.source_module
+                            || other.imported != owner.name))
+            }))
 }
 
 fn api_client_route_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {

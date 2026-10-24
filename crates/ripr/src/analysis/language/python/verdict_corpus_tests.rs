@@ -1969,6 +1969,57 @@ fn star_import_honors_the_module_all_declaration() -> Result<(), String> {
     Ok(())
 }
 
+/// A star import does not bind the owner when something else may win the name:
+/// the module rebinds it, or the test aliases another symbol (even from the
+/// starred module) to it.
+#[test]
+fn star_import_fails_closed_when_another_binding_may_win_the_name() -> Result<(), String> {
+    let body = "def test_fee():\n    assert fee(2) == 6\n";
+    let rebound = format!("{FEE}\n\nfee = lambda amount: amount + 4\n");
+    assert_eq!(
+        classify(
+            &rebound,
+            2,
+            FEE_OLD,
+            &test_module("from src.shop import *", body)
+        )?,
+        ExposureClass::WeaklyExposed,
+        "the module rebinds fee"
+    );
+    let conditional = format!("{FEE}\n\nif DEBUG:\n    fee = lambda amount: amount + 4\n");
+    assert_eq!(
+        classify(
+            &conditional,
+            2,
+            FEE_OLD,
+            &test_module("from src.shop import *", body)
+        )?,
+        ExposureClass::WeaklyExposed,
+        "the module conditionally rebinds fee"
+    );
+    for (import, why) in [
+        (
+            "from src.shop import *\nfrom src.shop import charge as fee",
+            "same-module alias of another symbol",
+        ),
+        (
+            "from src.shop import *\nfrom src.other import fee",
+            "named import from another module",
+        ),
+        (
+            "from src.shop import *\nfrom src.other import *",
+            "second star import",
+        ),
+    ] {
+        assert_eq!(
+            classify(FEE, 2, FEE_OLD, &test_module(import, body))?,
+            ExposureClass::WeaklyExposed,
+            "{why}"
+        );
+    }
+    Ok(())
+}
+
 const AREA: &str = "def area(a, b):\n    return b * a\n";
 const AREA_TABLE: &str = "import pytest\nfrom src.shop import area\n\n\n@pytest.mark.parametrize(\"a,b,want\", [(3, 7, 21)])\ndef test_area(a, b, want):\n    assert area(a, b) == want\n";
 
