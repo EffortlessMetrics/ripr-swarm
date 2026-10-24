@@ -14990,6 +14990,7 @@ tests = [
   "crates/ripr/src/analysis/language/python/row_miss_tests.rs::off_boundary_strong_row_is_missing_input_and_a_weak_sibling_is_not",
   "crates/ripr/src/analysis/language/python/row_miss_tests.rs::unresolved_row_inside_a_boundary_gap_does_not_borrow_a_sibling_fact",
   "crates/ripr/src/analysis/language/python/row_miss_tests.rs::missing_input_support_belongs_to_the_row_that_proved_the_omission",
+  "crates/ripr/src/analysis/language/python/row_miss_tests.rs::direct::strong_on_boundary_row_gets_no_miss_and_no_support",
   "crates/ripr/src/analysis/language/perl/tests.rs::perl_v1_never_attaches_row_support_from_a_finding_wide_discriminator",
   "crates/ripr/src/analysis/classifier/finding.rs::tests::rust_attaches_the_universal_fact_only_to_rows_it_assigns_the_miss",
   "crates/ripr/src/analysis/language/python/row_miss_tests.rs::boundary_input_row_makes_the_finding_exposed_with_no_row_miss",

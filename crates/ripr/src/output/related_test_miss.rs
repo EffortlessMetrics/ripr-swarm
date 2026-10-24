@@ -484,6 +484,46 @@ mod tests {
         Ok(())
     }
 
+    /// #5564: `from_fact` copies the fact's own sink; two rows keep their
+    /// own sinks (no donation) and the sink survives serde.
+    #[test]
+    fn support_carries_its_own_sink_per_row_and_round_trips() -> Result<(), String> {
+        use crate::domain::{FlowSinkFact, FlowSinkKind};
+        let fact = |value: &str, text: &str, line: usize| MissingDiscriminatorFact {
+            value: value.to_string(),
+            reason: "r".to_string(),
+            flow_sink: Some(FlowSinkFact {
+                kind: FlowSinkKind::ReturnValue,
+                text: text.to_string(),
+                line,
+                owner: None,
+            }),
+        };
+        let fact_a = fact("a == 1", "return a", 3);
+        let fact_b = fact("b == 2", "return b", 9);
+        let a = row_named(
+            "a",
+            RelatedTestMiss::MissingInput,
+            Some(RelatedTestMissSupport::from_fact(&fact_a)),
+        );
+        let b = row_named(
+            "b",
+            RelatedTestMiss::MissingInput,
+            Some(RelatedTestMissSupport::from_fact(&fact_b)),
+        );
+        let sink = |row: &RelatedTest| row.miss_support.as_ref().and_then(|s| s.flow_sink.clone());
+        assert_eq!(sink(&a), fact_a.flow_sink);
+        assert_eq!(sink(&b), fact_b.flow_sink);
+        assert_ne!(sink(&a), sink(&b));
+        for row in [&a, &b] {
+            let json = serde_json::to_value(row).map_err(|e| e.to_string())?;
+            assert!(json["miss_support"]["flow_sink"].is_object());
+            let back: RelatedTest = serde_json::from_value(json).map_err(|e| e.to_string())?;
+            assert_eq!(&back, row);
+        }
+        Ok(())
+    }
+
     #[test]
     fn probe_family_wire_tokens_round_trip() {
         for family in [

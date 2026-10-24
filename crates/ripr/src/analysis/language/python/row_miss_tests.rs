@@ -1404,6 +1404,55 @@ mod direct {
         Ok(())
     }
 
+    /// #5564: beside a strong row that omits the boundary, a strong row that
+    /// sits on it keeps neither the miss nor the support, even when the
+    /// pass is handed the finding's boundary fact (with its sink).
+    #[test]
+    fn strong_on_boundary_row_gets_no_miss_and_no_support() -> Result<(), String> {
+        use crate::domain::{FlowSinkFact, FlowSinkKind, MissingDiscriminatorFact};
+        let case = reserve(
+            "def test_off_boundary():\n    assert can_reserve(5, 3) == True\n\ndef test_on_boundary():\n    assert can_reserve(4, 4) == True\n",
+        )?;
+        let fact = MissingDiscriminatorFact {
+            value: "qty == on_hand".to_string(),
+            reason: "no related test passes the boundary".to_string(),
+            flow_sink: Some(FlowSinkFact {
+                kind: FlowSinkKind::ReturnValue,
+                text: "return True".to_string(),
+                line: 3,
+                owner: None,
+            }),
+        };
+        let family = classify_probe_shape(&case.after).0;
+        let focus = PythonAssertionFocus::for_change(family, &case.after, Some(&case.before));
+        let candidates = related_test_candidates(&case.owner, &case.tests);
+        let mut rows = related_tests_for_candidates(&candidates, Some(&focus));
+        annotate_row_misses(
+            &mut rows,
+            &candidates,
+            &ExposureClass::WeaklyExposed,
+            false,
+            &RowMissChange {
+                owner: &case.owner,
+                line_text: &case.after,
+                old_line_text: Some(&case.before),
+                focus: &focus,
+                boundary_fact: Some(&fact),
+            },
+            &case.tests,
+        );
+        let row = |name: &str| rows.iter().find(|row| row.name == name);
+        let off = row("test_off_boundary").ok_or("off-boundary row")?;
+        let on = row("test_on_boundary").ok_or("on-boundary row")?;
+        assert_eq!(off.miss, Some(RelatedTestMiss::MissingInput));
+        let support = off.miss_support.as_ref().ok_or("omitting row support")?;
+        assert_eq!(support.value, "qty == on_hand");
+        assert_eq!(support.flow_sink, fact.flow_sink);
+        assert_eq!(on.miss, None);
+        assert_eq!(on.miss_support, None);
+        Ok(())
+    }
+
     #[test]
     fn miss_annotation_changes_nothing_but_the_miss_field() -> Result<(), String> {
         let cases = [
