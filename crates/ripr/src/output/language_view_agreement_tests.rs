@@ -29,18 +29,18 @@ use std::path::PathBuf;
 // order), which owns no public run; the literal below states that.
 const PERL_DUAL_RUNS: &[(&str, &str)] = &[];
 
-struct Fixture {
-    name: &'static str,
-    repo: bool,
+pub(crate) struct Fixture {
+    pub(crate) name: &'static str,
+    pub(crate) repo: bool,
     /// The language_runs rows the public surface must carry.
-    runs: &'static [(&'static str, &'static str)],
-    children: Vec<LanguageAnalysisOutcomeV1>,
-    selected: Vec<LanguageId>,
-    kind: AnalysisOutcomeKind,
-    limitations: Vec<AnalysisLimitationKind>,
+    pub(crate) runs: &'static [(&'static str, &'static str)],
+    pub(crate) children: Vec<LanguageAnalysisOutcomeV1>,
+    pub(crate) selected: Vec<LanguageId>,
+    pub(crate) kind: AnalysisOutcomeKind,
+    pub(crate) limitations: Vec<AnalysisLimitationKind>,
 }
 
-fn rust_finding() -> Result<Finding, String> {
+pub(crate) fn rust_finding() -> Result<Finding, String> {
     let mut finding = crate::mcp::gaps::test_finding()?;
     finding.language = Some(LanguageId::Rust);
     Ok(finding)
@@ -68,7 +68,7 @@ fn rust_complete() -> Result<Vec<LanguageAnalysisOutcomeV1>, String> {
     Ok(diff_children(LanguageId::Rust, vec![rust_finding()?], &[]))
 }
 
-fn fixtures() -> Result<Vec<Fixture>, String> {
+pub(crate) fn fixtures() -> Result<Vec<Fixture>, String> {
     let both = vec![LanguageId::Rust, LanguageId::Python];
     let with_rust = |extra: Vec<LanguageAnalysisOutcomeV1>| -> Result<Vec<_>, String> {
         let mut children = rust_complete()?;
@@ -207,7 +207,7 @@ fn fixtures() -> Result<Vec<Fixture>, String> {
     ])
 }
 
-fn aggregate_for(fixture: &Fixture) -> LanguageAggregate {
+pub(crate) fn aggregate_for(fixture: &Fixture) -> LanguageAggregate {
     let mut aggregate = if fixture.repo {
         LanguageAggregate::new_repo()
     } else {
@@ -227,7 +227,10 @@ fn aggregate_of(children: &[LanguageAnalysisOutcomeV1]) -> LanguageAggregate {
     aggregate.finish()
 }
 
-fn analysis_outcome(fixture: &Fixture, findings: u64) -> Result<AnalysisOutcome, String> {
+pub(crate) fn analysis_outcome(
+    fixture: &Fixture,
+    findings: u64,
+) -> Result<AnalysisOutcome, String> {
     let limitations = fixture
         .limitations
         .iter()
@@ -253,7 +256,7 @@ fn analysis_outcome(fixture: &Fixture, findings: u64) -> Result<AnalysisOutcome,
     )
 }
 
-fn check_output(
+pub(crate) fn check_output(
     findings: Vec<Finding>,
     runs: Vec<crate::analysis::LanguageRun>,
     outcome: AnalysisOutcome,

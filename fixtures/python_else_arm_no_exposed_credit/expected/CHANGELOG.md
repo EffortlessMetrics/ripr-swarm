@@ -65,3 +65,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_else_arm_no_exposed_credit (6)
+
+Reason:
+RIPR-SPEC-0122: human Weakness list drops the observation_unverified token (#9929)
+
+Command:
+`cargo xtask goldens bless python_else_arm_no_exposed_credit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
