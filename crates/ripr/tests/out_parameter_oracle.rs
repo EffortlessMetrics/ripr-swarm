@@ -866,7 +866,7 @@ fn only_certainly_non_empty_write_arguments_are_credited() -> Result<(), String>
         "        out.extend(Vec::<char>::new());",
         "        out.push_str(&String::new());",
     ] {
-        let owner = owner_with(&[changed]);
+        let owner = owner_with(&["        use std::fmt::Write;", changed]);
         let finding = finding_custom(&owner, "        // old", changed, &test)?;
         assert_uncredited(&finding, changed);
     }
@@ -876,7 +876,7 @@ fn only_certainly_non_empty_write_arguments_are_credited() -> Result<(), String>
         "        out.push_str(&format!(\"{:02}\", minutes.abs()));",
         "        out.push_str(\"+\");",
     ] {
-        let owner = owner_with(&[changed]);
+        let owner = owner_with(&["        use std::fmt::Write;", changed]);
         let finding = finding_custom(&owner, "        // old", changed, &test)?;
         assert_eq!(finding["classification"], "exposed", "{changed}: {finding}");
         assert_eq!(
@@ -896,6 +896,82 @@ fn a_helper_call_between_setup_and_assertion_is_not_credited() -> Result<(), Str
     ] {
         let finding = finding(body)?;
         assert_uncredited(&finding, body);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_trait_resolved_writer_needs_a_std_write_import_and_no_user_trait() -> Result<(), String> {
+    let test = format!("{BUILD}        assert_eq!(s, \"+570\");");
+    let sink = "trait Sink { fn write_str(&mut self, s: &str); }\nimpl Sink for String { fn write_str(&mut self, _s: &str) {} }\n";
+    let write_str = "        out.write_str(\"+\").unwrap();";
+    // A user trait answers the call and no std Write is imported.
+    let owner = owner_with(&[write_str]);
+    let finding = finding_custom_in(sink, &owner, "        // old", write_str, &test)?;
+    assert_uncredited(&finding, "user trait, no import");
+    // A std Write import does not help while a user trait exists.
+    let owner = owner_with(&["        use std::fmt::Write;", write_str]);
+    let finding = finding_custom_in(sink, &owner, "        // old", write_str, &test)?;
+    assert_uncredited(&finding, "user trait with import");
+    // write! without any std Write import.
+    let write_macro = "        write!(out, \"+\").unwrap();";
+    let owner = owner_with(&[write_macro]);
+    let finding = finding_custom(&owner, "        // old", write_macro, &test)?;
+    assert_uncredited(&finding, "write! without import");
+    // The import alone keeps the credit.
+    let owner = owner_with(&["        use std::fmt::Write;", write_str]);
+    let finding = finding_custom(&owner, "        // old", write_str, &test)?;
+    assert_eq!(finding["classification"], "exposed", "{finding}");
+    assert_eq!(finding["ripr"]["discriminate"]["state"], "yes", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn a_top_level_glob_import_from_another_module_is_not_credited() -> Result<(), String> {
+    let test = format!("{BUILD}        assert_eq!(s, \"+570\");");
+    let owner = owner_with(&[NEW, "        out.push_str(\"570\");"]);
+    for prelude in ["use super::*;\n", "use crate::*;\n", "use other::*;\n"] {
+        let finding = finding_custom_in(prelude, &owner, OLD, NEW, &test)?;
+        assert_uncredited(&finding, prelude);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_call_inside_an_assertion_or_macro_between_call_and_assertion_is_not_credited()
+-> Result<(), String> {
+    for between in [
+        "        assert_eq!(util::Q.go(), 1);",
+        "        assert!(util::Q.go() == 1);",
+        "        let _x = format!(\"{}\", util::Q.go());",
+        "        let _v = vec![util::Q.go()];",
+    ] {
+        let body = format!("{BUILD}{between}\n        assert_eq!(s, \"+570\");");
+        let finding = finding(&body)?;
+        assert_uncredited(&finding, between);
+    }
+    // Plain setup and a pure std method on the local keep the credit.
+    let body = format!(
+        "{BUILD}        let _m = format!(\"{{}}\", 1);\n        assert_eq!(s, \"+570\");"
+    );
+    let kept = finding(&body)?;
+    assert_eq!(kept["classification"], "exposed", "{kept}");
+    assert_eq!(kept["ripr"]["discriminate"]["state"], "yes", "{kept}");
+    Ok(())
+}
+
+#[test]
+fn positional_width_and_escaped_literals_do_not_prove_a_write() -> Result<(), String> {
+    let test = format!("{BUILD}        assert_eq!(s, \"+570\");");
+    for lines in [
+        vec!["        out.push_str(&format!(\"{:1$}\", minutes, 0));"],
+        vec!["        write!(out, \"{:.*}\", 0, minutes).unwrap();"],
+        vec!["        out.push_str(\"\\", "            \");"],
+        vec!["        out.push_str(\"\\u{0}\");"],
+    ] {
+        let owner = owner_with(&[&["        use std::fmt::Write;"][..], &lines[..]].concat());
+        let finding = finding_custom(&owner, "        // old", lines[0], &test)?;
+        assert_uncredited(&finding, lines[0]);
     }
     Ok(())
 }

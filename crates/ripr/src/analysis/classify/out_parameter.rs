@@ -64,7 +64,15 @@ pub(in crate::analysis) fn assertion_out_parameter(
     } else {
         &[]
     };
-    let out_parameters = owner_out_parameters(owner, macro_names)?;
+    // `write_str`/`write_char`/`write_all`/`write!` resolve through a trait:
+    // credit them only when a std `Write` is imported and no workspace trait
+    // could answer the same call on the std buffers.
+    let std_write_ok = index
+        .files()
+        .get(&owner.file)
+        .is_some_and(|facts| std_write_imported(&facts.source))
+        && !syntax.user_buffer_traits(index);
+    let out_parameters = owner_out_parameters(owner, macro_names, std_write_ok)?;
     let impl_type = impl_self_type_name(&owner.id.0)?;
     if !owner_item_context_is_inert(owner, index, &impl_type) {
         return None;
@@ -116,6 +124,7 @@ pub(in crate::analysis) fn assertion_out_parameter(
 fn owner_out_parameters(
     owner: &FunctionSummary,
     macro_names: &[String],
+    std_write_ok: bool,
 ) -> Option<Vec<(usize, String)>> {
     if !owner.item.has_self_param {
         return None;
@@ -158,7 +167,7 @@ fn owner_out_parameters(
                 && pattern.name().is_some_and(|name| {
                     mentions_token(body.syntax(), name.text())
                         && !name_rebound_in(body.syntax(), name.text())
-                        && owner_allows_out_parameter(&body, name.text(), macro_names)
+                        && owner_allows_out_parameter(&body, name.text(), macro_names, std_write_ok)
                 })
         })
         .filter_map(|(at, parameter)| match parameter.pat() {
@@ -234,7 +243,7 @@ pub(in crate::analysis) fn expression_writes_parameter(expression: &str, paramet
             )
         });
     !conditional
-        && classify_statement(statement, parameter, false)
+        && classify_statement(statement, parameter, true)
             .is_some_and(|(kind, _)| kind == StatementKind::Write)
 }
 
@@ -277,8 +286,12 @@ fn is_empty_constructor(initial: &str) -> bool {
 fn nonempty_expr(expression: &ast::Expr) -> bool {
     match expression {
         ast::Expr::Literal(literal) => match literal.kind() {
-            ast::LiteralKind::String(text) => text.value().is_ok_and(|value| !value.is_empty()),
-            ast::LiteralKind::ByteString(text) => text.value().is_ok_and(|value| !value.is_empty()),
+            ast::LiteralKind::String(text) => {
+                plain_literal(text.text()) && text.value().is_ok_and(|value| !value.is_empty())
+            }
+            ast::LiteralKind::ByteString(text) => {
+                plain_literal(text.text()) && text.value().is_ok_and(|value| !value.is_empty())
+            }
             ast::LiteralKind::IntNumber(number) => number.value().is_ok_and(|value| value != 0),
             _ => false,
         },
@@ -325,6 +338,9 @@ fn nonempty_expr(expression: &ast::Expr) -> bool {
 /// Whether a `format!`-style template certainly produces text: it holds a
 /// non-placeholder character, or a placeholder with an explicit width.
 fn template_is_nonempty(template: &str) -> bool {
+    if template.contains('$') || template.contains('*') {
+        return false;
+    }
     let chars: Vec<char> = template.chars().collect();
     let mut at = 0;
     while at < chars.len() {
@@ -362,6 +378,21 @@ fn template_is_nonempty(template: &str) -> bool {
     false
 }
 
+/// A string literal whose escapes are only `\n`, `\t`, `\\`, `\"` and `\'`:
+/// a line continuation or a unicode escape may hide an empty value.
+fn plain_literal(text: &str) -> bool {
+    if text.starts_with('r') || text.starts_with("br") {
+        return true;
+    }
+    let mut chars = text.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' && !matches!(chars.next(), Some('n' | 't' | '\\' | '"' | '\'')) {
+            return false;
+        }
+    }
+    true
+}
+
 /// `lit`, `&lit` or `&format!(template, ..)` that certainly yields text, or
 /// a plain identifier (data-dependent: a named limit).
 fn nonempty_text_argument(argument: &ast::Expr) -> bool {
@@ -374,8 +405,12 @@ fn nonempty_text_argument(argument: &ast::Expr) -> bool {
     }
     match &expression {
         ast::Expr::Literal(literal) => match literal.kind() {
-            ast::LiteralKind::String(text) => text.value().is_ok_and(|value| !value.is_empty()),
-            ast::LiteralKind::ByteString(text) => text.value().is_ok_and(|value| !value.is_empty()),
+            ast::LiteralKind::String(text) => {
+                plain_literal(text.text()) && text.value().is_ok_and(|value| !value.is_empty())
+            }
+            ast::LiteralKind::ByteString(text) => {
+                plain_literal(text.text()) && text.value().is_ok_and(|value| !value.is_empty())
+            }
             _ => false,
         },
         ast::Expr::PathExpr(path) => is_plain_ident(&compact(&path.syntax().text().to_string())),
@@ -389,7 +424,11 @@ fn nonempty_text_argument(argument: &ast::Expr) -> bool {
                         .find(|token| token.kind() == SyntaxKind::STRING)
                         .and_then(ast::String::cast)
                         .and_then(|text| {
-                            text.value().ok().map(|value| template_is_nonempty(&value))
+                            plain_literal(text.text())
+                                .then(|| {
+                                    text.value().ok().map(|value| template_is_nonempty(&value))
+                                })
+                                .flatten()
                         })
                         .unwrap_or(false)
                 })
@@ -490,7 +529,7 @@ enum StatementKind {
 fn classify_statement(
     node: &SyntaxNode,
     name: &str,
-    write_macro_shadowed: bool,
+    non_inherent_ok: bool,
 ) -> Option<(StatementKind, ra_ap_syntax::TextRange)> {
     let mut expression = match ast::ExprStmt::cast(node.clone()) {
         Some(statement) => statement.expr()?,
@@ -503,6 +542,11 @@ fn classify_statement(
                 let method = call.name_ref()?;
                 let method = strip_raw(method.text());
                 if let Some(receiver) = bare_name_receiver(&call, name) {
+                    if matches!(method, "write_str" | "write_char" | "write_all")
+                        && !non_inherent_ok
+                    {
+                        return None;
+                    }
                     if ADDITIVE_WRITERS.contains(&method) && call_certainly_writes(method, &call) {
                         return Some((StatementKind::Write, receiver));
                     }
@@ -517,7 +561,7 @@ fn classify_statement(
                 expression = call.receiver()?;
             }
             ast::Expr::MacroExpr(mac) => {
-                if write_macro_shadowed {
+                if !non_inherent_ok {
                     return None;
                 }
                 let mac = mac.macro_call()?;
@@ -589,7 +633,12 @@ fn top_level_statements(body: &ast::BlockExpr) -> Option<Vec<SyntaxNode>> {
 /// methods, other macros) refuses. The writes are straight-line top-level
 /// statements with no `return`, `break`, `continue` or `?` before the last
 /// one, so the credited write executes for any input.
-fn owner_allows_out_parameter(body: &ast::BlockExpr, name: &str, macro_names: &[String]) -> bool {
+fn owner_allows_out_parameter(
+    body: &ast::BlockExpr,
+    name: &str,
+    macro_names: &[String],
+    std_write_ok: bool,
+) -> bool {
     // Any attribute (`#[cfg(..)]` and kin) can remove a statement.
     if body
         .syntax()
@@ -606,7 +655,7 @@ fn owner_allows_out_parameter(body: &ast::BlockExpr, name: &str, macro_names: &[
     };
     let kinds: Vec<Option<(StatementKind, ra_ap_syntax::TextRange)>> = statements
         .iter()
-        .map(|node| classify_statement(node, name, shadowed))
+        .map(|node| classify_statement(node, name, std_write_ok && !shadowed))
         .collect();
     let Some(first_write) = kinds
         .iter()
@@ -797,6 +846,100 @@ fn straight_line(node: &SyntaxNode, macro_names: &[String]) -> bool {
     true
 }
 
+/// Whether `source` imports a std/core/alloc `Write` trait (or its prelude).
+fn std_write_imported(source: &str) -> bool {
+    if !source.contains("Write") && !source.contains("prelude") {
+        return false;
+    }
+    let Some(parse) = parse_clean_source_file(source) else {
+        return false;
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Use::cast)
+        .any(|item| {
+            let text = compact(&item.syntax().text().to_string());
+            (text.starts_with("usestd::")
+                || text.starts_with("usecore::")
+                || text.starts_with("usealloc::"))
+                && (word_occurrences(&text, "Write") > 0 || text.contains("prelude::*"))
+        })
+}
+
+/// Whether some workspace file implements a non-std trait for `String`,
+/// `Vec` or `VecDeque`, or declares a trait with a method named like the
+/// std writers, so a trait-resolved `write_str` could be the user's.
+pub(in crate::analysis) fn workspace_has_user_buffer_traits(index: &RustIndex) -> bool {
+    const STD_TRAITS: &[&str] = &[
+        "Display",
+        "Debug",
+        "Clone",
+        "Default",
+        "From",
+        "Into",
+        "PartialEq",
+        "Eq",
+        "Hash",
+        "Ord",
+        "PartialOrd",
+        "FromIterator",
+        "Extend",
+        "IntoIterator",
+        "Write",
+        "Read",
+        "ToString",
+        "Borrow",
+        "AsRef",
+        "Deref",
+    ];
+    const WRITE_NAMES: &[&str] = &["write_str", "write_char", "write_all", "write_fmt", "write"];
+    index.files().iter().any(|(_, facts)| {
+        if !facts.source.contains("impl") && !facts.source.contains("trait") {
+            return false;
+        }
+        let Some(parse) = parse_clean_source_file(&facts.source) else {
+            return true;
+        };
+        parse.tree().syntax().descendants().any(|node| {
+            if let Some(item) = ast::Impl::cast(node.clone()) {
+                let self_ty = item
+                    .self_ty()
+                    .map(|ty| ty.syntax().text().to_string())
+                    .unwrap_or_default();
+                let on_buffer = ["String", "Vec", "VecDeque"]
+                    .iter()
+                    .any(|name| word_occurrences(&self_ty, name) > 0);
+                let trait_name = item.trait_().map(|ty| {
+                    compact(&ty.syntax().text().to_string())
+                        .split('<')
+                        .next()
+                        .unwrap_or_default()
+                        .rsplit("::")
+                        .next()
+                        .unwrap_or_default()
+                        .to_string()
+                });
+                return on_buffer
+                    && trait_name.is_some_and(|name| !STD_TRAITS.contains(&name.as_str()));
+            }
+            if let Some(item) = ast::Trait::cast(node) {
+                return item
+                    .syntax()
+                    .descendants()
+                    .filter_map(ast::Fn::cast)
+                    .any(|function| {
+                        function
+                            .name()
+                            .is_some_and(|name| WRITE_NAMES.contains(&strip_raw(name.text())))
+                    });
+            }
+            false
+        })
+    })
+}
+
 /// Attributes that cannot remove or redirect an item.
 fn attribute_is_inert(attribute: &ast::Attr) -> bool {
     attribute.meta().is_some_and(|meta| {
@@ -896,8 +1039,8 @@ fn owner_item_context_is_inert(
 
 /// A `let` of a plain value or an assertion macro; nothing else may sit
 /// between the test's start and its assertion.
-fn simple_test_statement(node: &SyntaxNode, macro_names: &[String]) -> bool {
-    if !straight_line(node, macro_names) {
+fn simple_test_statement(node: &SyntaxNode, macro_names: &[String], local: &str) -> bool {
+    if !straight_line(node, macro_names) || !calls_are_plain(node, local) {
         return false;
     }
     match ast::Stmt::cast(node.clone()) {
@@ -912,6 +1055,49 @@ fn simple_test_statement(node: &SyntaxNode, macro_names: &[String]) -> bool {
         }
         _ => false,
     }
+}
+
+/// Every call in `node` (macro arguments included) is `String::from`,
+/// `String::new`, `Vec::new`, `VecDeque::new`, `Some`/`Ok`/`Err`, or a pure
+/// std method (`len`, `is_empty`, `as_str`, `to_string`) directly on `local`.
+fn calls_are_plain(node: &SyntaxNode, local: &str) -> bool {
+    let tokens: Vec<_> = node
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .collect();
+    for (at, token) in tokens.iter().enumerate() {
+        if token.kind() != SyntaxKind::IDENT
+            || !tokens
+                .get(at + 1)
+                .is_some_and(|next| next.kind() == SyntaxKind::L_PAREN)
+        {
+            continue;
+        }
+        let name = strip_raw(token.text());
+        let before = |back: usize| at.checked_sub(back).and_then(|index| tokens.get(index));
+        let allowed = match before(1).map(|token| token.kind()) {
+            Some(SyntaxKind::DOT) => {
+                matches!(name, "len" | "is_empty" | "as_str" | "to_string")
+                    && before(2).is_some_and(|receiver| {
+                        receiver.kind() == SyntaxKind::IDENT && strip_raw(receiver.text()) == local
+                    })
+            }
+            Some(SyntaxKind::COLON2) => {
+                before(2).is_some_and(|owner| {
+                    matches!(
+                        (strip_raw(owner.text()), name),
+                        ("String", "from" | "new") | ("Vec", "new") | ("VecDeque", "new")
+                    )
+                }) && !before(3).is_some_and(|prefix| prefix.kind() == SyntaxKind::COLON2)
+            }
+            _ => matches!(name, "Some" | "Ok" | "Err"),
+        };
+        if !allowed {
+            return false;
+        }
+    }
+    true
 }
 
 fn simple_value(expression: &ast::Expr) -> bool {
@@ -965,7 +1151,13 @@ fn file_shadows_buffer_types(source: &str) -> bool {
                 || text.starts_with("usealloc::");
             let names_buffer = NAMES.iter().any(|name| word_occurrences(&text, name) > 0);
             let glob = text.contains('*');
-            let local_glob = matches!(text.as_str(), "usesuper::*;" | "useself::*;");
+            let local_glob = text == "useself::*;"
+                || (text == "usesuper::*;"
+                    && item
+                        .syntax()
+                        .ancestors()
+                        .skip(1)
+                        .any(|ancestor| ast::Module::can_cast(ancestor.kind())));
             if (!std_rooted && names_buffer) || (glob && !std_rooted && !local_glob) {
                 return true;
             }
@@ -1052,7 +1244,9 @@ fn local_written_by_owner_call(
         .enumerate()
         .take(*assertion_at)
         .any(|(at, node)| {
-            at != *definition_at && at != *call_at && !simple_test_statement(node, macro_names)
+            at != *definition_at
+                && at != *call_at
+                && !simple_test_statement(node, macro_names, local)
         })
     {
         return None;

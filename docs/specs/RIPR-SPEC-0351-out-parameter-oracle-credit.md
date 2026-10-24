@@ -134,12 +134,31 @@ assertion reads the call's out-parameter; it grants no strength or reach.
   `deprecated`), and the file may hold exactly one method of that name in
   impls of the owner's type, so a `cfg`-gated twin cannot be the active one.
   Twins in other files are not seen.
-- A user type, alias, `use` or non-`super` glob import named `String`, `Vec`
-  or `VecDeque` in the owner's file or the test's file refuses credit; a
-  std-rooted import of those names does not.
+- A user type, alias or `use` named `String`, `Vec` or `VecDeque` in the
+  owner's file or the test's file refuses credit; a std-rooted import of those
+  names does not. Any non-std glob import refuses, except `use self::*` and
+  `use super::*` inside an inline module (a top-level `use super::*`,
+  `use crate::*` or `use other::*` can bring a user `String` from another
+  file).
+- Non-inherent writers (`write_str`, `write_char`, `write_all`, `write!`,
+  `writeln!`) are credited only when the owner's file imports a std `Write`
+  trait (`std`, `core` or `alloc` path, or a std prelude glob), and only when
+  no workspace file implements a non-std trait for `String`/`Vec`/`VecDeque`
+  or declares a trait with a method named `write_str`, `write_char`,
+  `write_all`, `write_fmt` or `write`; otherwise a user trait could resolve
+  the call to a no-op. Inherent `push`/`push_str`/`insert`/`extend` are not
+  affected.
+- A format template containing `$` or `*` (`{:1$}`, `{:.*}`) is never treated
+  as certainly non-empty, and a string literal with a backslash-newline
+  continuation or any escape other than `\n \t \\ \" \'` is not a non-empty
+  literal (its value is not decided here); raw literals are plain.
 - Between the start of the test and its assertion, every statement other
   than the setup definition and the owner call must be a `let` of a plain
-  value or an assertion macro; a helper call there refuses. A helper hidden
+  value or an assertion macro; a helper call there refuses, including a
+  method call inside an assertion, `format!` or `vec!` macro. The only calls
+  allowed are pure `len`/`is_empty`/`as_str`/`to_string` directly on the
+  local, `String::from`/`String::new`/`Vec::new`/`VecDeque::new`, and
+  `Some`/`Ok`/`Err`. A helper hidden
   inside the owner call's receiver or arguments is not followed (#10058).
 - The parameter type must be a concrete `&mut String`, `&mut Vec<..>` or
   `&mut VecDeque<..>`; generic, `impl Trait` and `dyn Trait` outputs refuse.

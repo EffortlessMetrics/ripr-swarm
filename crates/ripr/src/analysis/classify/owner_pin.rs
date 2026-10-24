@@ -240,6 +240,9 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// Names of the workspace's `macro_rules!` macros, scanned once per run
     /// (RIPR-SPEC-0351 out-parameter owner scan).
     workspace_macro_names: OnceLock<Vec<String>>,
+    /// Whether a workspace trait could answer `write_str`-style calls on the
+    /// std buffers, scanned once per run.
+    user_buffer_traits: OnceLock<bool>,
     /// #6974: path-call memos. A path-shaped assertion is read once per
     /// probe, test and assertion, and each input below scans the workspace,
     /// so every answer is kept for the run under the key it depends on.
@@ -1689,6 +1692,14 @@ fn recognized_target_root(root: &Path, src_dirs: &BTreeSet<PathBuf>) -> bool {
 }
 
 impl OwnerPinSyntax {
+    /// Whether a workspace trait could answer `write_str`-style calls on
+    /// `String`/`Vec`/`VecDeque`, scanned once per run.
+    pub(in crate::analysis) fn user_buffer_traits(&self, index: &RustIndex) -> bool {
+        *self
+            .user_buffer_traits
+            .get_or_init(|| super::out_parameter::workspace_has_user_buffer_traits(index))
+    }
+
     /// The workspace's `macro_rules!` macro names, scanned once per run.
     pub(in crate::analysis) fn workspace_macro_names(&self, index: &RustIndex) -> &[String] {
         self.workspace_macro_names
