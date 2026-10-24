@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Cargo build-script output include (`include!(concat!(env!("OUT_DIR"), "/x.rs"))`) in a package with an indexed `build.rs` no longer disables target-root placement for the whole workspace, so the standard assertion macros stay verifiable beside it (serde's `serde_core`); any other dynamic include, a path leaving the output directory, or a package without a build script keeps the refusal (#10122).
