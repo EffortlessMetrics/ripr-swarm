@@ -24,6 +24,12 @@ under this repository's license, grouped by test runner:
 - vitest: `authored-ts-vitest-orders` (vitest 5) and `authored-ts-vitest-cart`
   (its older cases labeled under vitest 3.2.7; its `package.json` now pins
   4.1.11).
+- vitest spec-example cases: `authored-ts-vitest-unnum`, one module and one
+  isolated test file per example of RIPR-SPEC-0027 (1, 3, 4), 0095 (2 to 5),
+  0097 (2, 3, 5) and 0098 (1 to 3), labeled with vitest 4.1.11. Examples 0027#2,
+  0095#1 and 0097#1 and #4 are cited by cases of the subjects above. The
+  `ufo` module keeps its edited line out of a ternary on purpose: a ternary
+  arm change is RIPR-SPEC-0243 rule 15's question, not the barrel's.
 - vitest language shapes: `authored-ts-vitest-shapes`
   (class methods, getters and statics, inheritance, generics, async
   `try`/`catch` and `rejects`, enums, `export *` and `export * as` barrels,

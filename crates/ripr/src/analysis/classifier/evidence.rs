@@ -475,7 +475,12 @@ impl ClassifiedProbeEvidence {
                             &context.related_tests,
                         )
                     } else {
-                        !chain_forwards_to_observed_hops(&owner.name, chain, &context.related_tests)
+                        !chain_forwards_to_observed_hops(
+                            &owner.name,
+                            chain,
+                            &context.related_tests,
+                            context.index,
+                        )
                             && field_projection.is_none()
                     } =>
             {
@@ -970,6 +975,14 @@ impl ClassifiedProbeEvidence {
             )
             .activation
         };
+        // #9329: the asserting entry's check helper never names the owner,
+        // so only the name defeats gate it.
+        let entry_loan = |test: &TestSummary, assertion: &OracleFact| {
+            context.owner_fn.filter(|owner| {
+                !import_defeats(test, &owner.name) && !cross_package_defeats(test, &owner.name)
+            })?;
+            pin_syntax.helper_loan(test, assertion, context.index)
+        };
         let discriminate = if matches!(context.probe.family, ProbeFamily::Predicate)
             && infect.state == StageState::Yes
             && discriminate.state == StageState::Yes
@@ -1015,6 +1028,7 @@ impl ClassifiedProbeEvidence {
                     .map(|chain| WrapperEntryPairing {
                         chain,
                         test_activation: &one_test_activation,
+                        entry_loan: &entry_loan,
                     }),
                 context.index,
             ) {

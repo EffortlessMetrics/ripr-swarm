@@ -197,6 +197,8 @@ tests = [
   "crates/ripr/src/analysis/probes/diff.rs::tests::probes_for_file_keeps_lone_structural_line_hunks",
   "crates/ripr/src/analysis/probes/diff.rs::tests::probes_for_file_keeps_structural_line_closing_outside_block_in_mixed_run",
   "crates/ripr/src/analysis/pipeline.rs::tests::lone_else_split_hunk_is_not_no_behavioral_candidates",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::multi_line_attribute_entries_seed_no_probe_but_the_same_text_as_code_does",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::attribute_continuation_lines_cover_the_span_and_fail_closed",
   "crates/ripr/src/output/observed_values.rs::tests::under_the_cap_every_value_is_kept_in_order",
   "crates/ripr/src/output/observed_values.rs::tests::over_the_cap_input_values_outrank_assertion_arguments_and_keep_order",
   "crates/ripr/src/output/json/mod.rs::tests::json_caps_observed_values_on_distinct_lines_and_discloses_the_total",
@@ -3733,6 +3735,7 @@ fixtures = [
   "fixtures/python_test_placement_verify",
   "fixtures/python_api_route_decorator_repair_gap",
   "fixtures/python_api_json_field_repair_gap",
+  "fixtures/python_route_verb_mismatch",
   "fixtures/python_dynamic_route_registration_limit",
   "fixtures/python_cli_output_repair_gap",
   "fixtures/python_argparse_output_repair_gap",
@@ -5366,6 +5369,9 @@ id = "RIPR-SPEC-0051"
 name = "First successful PR UX"
 spec = "docs/specs/RIPR-SPEC-0051-first-successful-pr-ux.md"
 tests = [
+  "crates/ripr/tests/cli_smoke/first_pr_write_failure.rs::first_pr_packet_failed_write_preserves_destination_and_retries",
+  "crates/ripr/tests/cli_smoke/first_pr_write_failure.rs::first_pr_derived_ledger_failed_write_preserves_destination_and_retries",
+  "crates/ripr/src/output/file_write.rs::tests::failed_stream_keeps_success_looking_json_private_and_retry_publishes_all_bytes",
   "crates/ripr/src/output/ci_summary/tests.rs::given_ci_summary_why_markup_when_rendered_then_one_literal_span",
   "crates/ripr/src/output/ci_summary/tests.rs::given_changed_behavior_delimiters_when_rendered_then_one_literal_code_span",
   "crates/ripr/src/output/ci_summary/tests.rs::given_changed_behavior_fallback_when_rendered_then_delimiters_stay_literal",
@@ -10191,6 +10197,9 @@ tests = [
   "crates/ripr/src/edit_cage/mod.rs::tests::inline_target_uncommitted_predicate_agrees_with_the_attempt_refusal",
   "crates/ripr/src/app/task_first.rs::tests::held_inline_target_follows_the_selected_proposal_file",
   "crates/ripr/src/output/human.rs::tests::bounded_human_output_prints_repair_only_for_the_routed_top_finding",
+  "crates/ripr/src/output/json/mod.rs::tests::findings_byte_budget_keeps_actionable_findings_over_file_order",
+  "crates/ripr/src/output/json/mod.rs::tests::findings_priority_next_step_breaks_class_ties_before_sort_order",
+  "crates/ripr/src/output/json/mod.rs::tests::findings_priority_ties_keep_sort_order_and_name_extra_files",
 ]
 fixtures = ["fixtures/human_full_shared_parse_port"]
 code = [
@@ -10213,6 +10222,8 @@ code = [
   "crates/ripr/src/cli/commands/agent_stub.rs",
   "crates/ripr/src/cli/help/agent.rs",
   "crates/ripr/src/analysis/syntax/fn_signature.rs",
+  "crates/ripr/src/output/json/report.rs",
+  "crates/ripr/src/output/json/findings_priority.rs",
   "xtask/src/main.rs",
 ]
 outputs = [
