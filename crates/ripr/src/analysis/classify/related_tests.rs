@@ -2768,7 +2768,11 @@ fn is_declaration_only_token(text: &str, token: &str) -> bool {
             after_gap
                 && name_len > 0
                 && !rest.as_bytes()[0].is_ascii_digit()
-                && (tail.starts_with('{') || tail.starts_with('<') || tail.starts_with("where"))
+                && (tail.starts_with('{')
+                    || tail.starts_with('<')
+                    || tail
+                        .strip_prefix("where")
+                        .is_some_and(|after| after.bytes().next().is_none_or(|b| !is_ident(b))))
         };
         if !is_declaration {
             // A genuine identifier use keeps the token.
@@ -11438,10 +11442,6 @@ try_parse_summary(raw).map_err(Into::into)"
             .copied()
             .filter(|keyword| keyword.len() >= ASSERTION_TOKEN_MIN_LEN && *keyword != "false");
         for keyword in keywords {
-            assert!(
-                keyword.len() >= ASSERTION_TOKEN_MIN_LEN,
-                "{keyword} is below the gate"
-            );
             let assertion_text = format!("assert_eq!({keyword} + 1, 2);");
             let unrelated = test_with_assertions(
                 "tests/other.rs",
@@ -11567,12 +11567,12 @@ try_parse_summary(raw).map_err(Into::into)"
         // whichever side spells it as an identifier.
         for (probe_text, assertion_text) in [
             (
-                "pub const MERGED: usize = left.union(&right).count();",
-                "assert_eq!(left.union(&right).count(), 2);",
+                "pub const JOINED: usize = a.union(&b).len();",
+                "assert_eq!(x.union(&y).len(), 2);",
             ),
             (
-                "pub const MERGED: usize = left.union(&right).count();",
-                "assert_eq!({ union OtherItem { sibling_slot: u32 } left.union(&right).count() }, 2);",
+                "pub const JOINED: usize = a.union(&b).len();",
+                "assert_eq!({ union OtherItem { sibling_slot: u32 } x.union(&y).len() }, 2);",
             ),
             (
                 "pub const COUNT: usize = macro_rules.len();",
@@ -11590,10 +11590,18 @@ try_parse_summary(raw).map_err(Into::into)"
             );
         }
 
+        // A `where` clause counts only as a whole word: `union Name wherever`
+        // is not a declaration, so the identifier use keeps the token.
+        assert!(is_declaration_only_token(
+            "union Name where T: Copy",
+            "union"
+        ));
+        assert!(!is_declaration_only_token("union Name wherever", "union"));
+
         // Mixed: the assertion declares a `union` item only, the probe uses
         // the identifier; the declaration side must not satisfy the match.
         let (indexed, full_scan, _) = related_counts(
-            "pub const MERGED: usize = left.union(&right).count();",
+            "pub const JOINED: usize = a.union(&b).len();",
             "assert_eq!({ union OtherItem { sibling_slot: u32 } 2 }, 2);",
         );
         assert_eq!((indexed, full_scan), (0, 0));

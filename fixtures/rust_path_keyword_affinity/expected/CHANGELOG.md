@@ -11,3 +11,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_path_keyword_affinity (2)
+
+Reason:
+RIPR-SPEC-0172: fixture now changes a pub union declaration line and a macro_rules! line, with unrelated sibling tests declaring their own union/macro, so declaration introducers are exercised (#9171)
+
+Command:
+`cargo xtask goldens bless rust_path_keyword_affinity --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
