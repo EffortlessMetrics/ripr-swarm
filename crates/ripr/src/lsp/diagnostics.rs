@@ -221,7 +221,7 @@ pub(super) fn add_canonical_group_data(
                         "miss": test.miss.map(|miss| miss.as_str()),
                         "why": crate::output::related_test_miss::related_test_miss_reason(
                             test,
-                            &finding.activation.missing_discriminators,
+                            &finding.probe.family,
                         ),
                     }))
                     .collect::<Vec<_>>(),
@@ -3370,7 +3370,7 @@ fn examined_test_related_information(
         .filter_map(|test| {
             let why = crate::output::related_test_miss::related_test_miss_reason(
                 test,
-                &finding.activation.missing_discriminators,
+                &finding.probe.family,
             )?;
             related_information_row(
                 root,
@@ -5217,6 +5217,7 @@ mod seam_diagnostic_tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
         };
 
         let path = absolute_related_test_path(Path::new("/repo"), &test);
@@ -5235,6 +5236,7 @@ mod seam_diagnostic_tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
         };
 
         let path = absolute_related_test_path(Path::new("/repo"), &test);
@@ -5572,6 +5574,7 @@ mod diagnostic_policy_tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
         });
 
         let message = lsp_message(&finding);
@@ -5603,6 +5606,7 @@ mod diagnostic_policy_tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
         });
 
         let grouped = finding_diagnostics_by_uri_with_profile(
@@ -5655,6 +5659,7 @@ mod diagnostic_policy_tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
             });
             finding
         };
@@ -6530,6 +6535,7 @@ mod lsp_next_step_parity_tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
             }],
             recommended_next_step: Some(
                 "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `amount == threshold`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.".to_string(),

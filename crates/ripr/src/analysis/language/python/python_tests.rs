@@ -3933,6 +3933,7 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         relation_reason: None,
         relation_confidence: None,
         miss: None,
+        miss_support: None,
     };
 
     // Strong oracle on a wrapper's return value -> does not observe the owner.
@@ -4010,6 +4011,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         relation_reason: None,
         relation_confidence: None,
         miss: None,
+        miss_support: None,
     }];
     // Without the alias import, the oracle names neither owner nor sink.
     assert!(!strong_oracle_observes_owner(&owner, line, &related, &[]));
@@ -4089,6 +4091,7 @@ fn align_strong(oracle: &str) -> RelatedTest {
         relation_reason: None,
         relation_confidence: None,
         miss: None,
+        miss_support: None,
     }
 }
 
