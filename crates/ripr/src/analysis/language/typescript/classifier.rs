@@ -6320,8 +6320,10 @@ pub(crate) fn classify_resolved_owner(
         && super::loop_count_guard::ts_loop_count_unmodeled(
             old_line_text,
             line_text,
-            &owner.name,
+            owner,
             related_candidates,
+            alias_map,
+            workspace_root,
         );
     if loop_count_unknown {
         verdict.class = ExposureClass::StaticUnknown;

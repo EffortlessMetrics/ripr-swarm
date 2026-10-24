@@ -138,3 +138,70 @@ fn a_call_count_on_a_mock_the_owner_never_receives_is_not_made_unknown() -> Resu
     );
     Ok(())
 }
+
+const REAL_VALUE: &str = "  const real = mock.fn(async () => \"ok\");\n  assert.equal(await withRetry(real, 3), \"ok\");";
+
+fn assert_stays_a_gap(label: &str, body: &str) -> Result<(), String> {
+    let finding = run(label, RETRY, OLD, NEW, &retry_test(body))?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::StaticUnknown,
+        "{label}: {:?}",
+        finding.missing
+    );
+    Ok(())
+}
+
+#[test]
+fn a_member_argument_is_not_the_counted_mock() -> Result<(), String> {
+    assert_stays_a_gap(
+        "loop-member-arg",
+        "  const fn = mock.fn(async () => \"ok\");\n  const other = { fn: mock.fn(async () => \"ok\") };\n  assert.equal(await withRetry(other.fn, 3), \"ok\");\n  assert.equal(fn.mock.callCount(), 0);",
+    )
+}
+
+#[test]
+fn an_unrelated_member_call_or_a_comment_is_not_the_owner_call() -> Result<(), String> {
+    let counted =
+        "  const fn = mock.fn(async () => \"ok\");\n  assert.equal(fn.mock.callCount(), 2);";
+    assert_stays_a_gap(
+        "loop-member-call",
+        &format!(
+            "{REAL_VALUE}\n  const other = {{ withRetry: (f: unknown, n: number) => n }};\n  other.withRetry(fn, 2);\n{counted}"
+        ),
+    )?;
+    assert_stays_a_gap(
+        "loop-comment",
+        &format!("{REAL_VALUE}\n  // withRetry(fn, 2)\n{counted}"),
+    )
+}
+
+#[test]
+fn an_optional_call_passing_the_mock_is_unknown() -> Result<(), String> {
+    let body = COUNTED.replace("withRetry(fn, 2)", "withRetry?.(fn, 2)");
+    let finding = run("loop-optional-call", RETRY, OLD, NEW, &retry_test(&body))?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::StaticUnknown,
+        "{:?}",
+        finding.missing
+    );
+    Ok(())
+}
+
+#[test]
+fn a_renamed_import_passing_the_mock_is_unknown() -> Result<(), String> {
+    let test = format!(
+        "{}\nit(\"x\", async () => {{\n{}\n}});\n",
+        HEAD.replace("{ withRetry }", "{ withRetry as retry }"),
+        COUNTED.replace("withRetry(fn, 2)", "retry(fn, 2)")
+    );
+    let finding = run("loop-alias", RETRY, OLD, NEW, &test)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::StaticUnknown,
+        "{:?}",
+        finding.missing
+    );
+    Ok(())
+}

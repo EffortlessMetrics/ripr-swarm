@@ -321,10 +321,14 @@ discriminates the change; that credit is deferred (Decision 9).
 
 **Rule 8. A counted-loop header change read only through a mock call count is
 unknown.** (Added 2026-10-22, #9496.) When the old and the new changed line are
-both counted `for (init; test; update)` headers that differ (ignoring
-whitespace), and a related oracle-eligible test asserts the call count of a
-mock it passes as an argument of the owner call (`m.mock.callCount()` or
-`m.mock.calls.length`, `m` a plain identifier), a ladder result of
+both counted `for (init; test; update)` headers that differ (whitespace
+beside brackets, commas and comparison operators is ignored; literal contents
+and `+`/`-` spacing are not), and a related test that calls the owner
+directly, by import or through a renamed import asserts the call count of a
+mock it passes as a whole argument of that call (`m.mock.callCount()` or
+`m.mock.calls.length`, `m` a plain identifier; `owner(m)` and `owner?.(m)`
+count, `other.owner(m)`, `owner(other.m)` and text in a comment or string do
+not), a ladder result of
 `weakly_exposed` with a strong oracle reads `static_unknown` with stop reason
 `gap_evidence_unresolved`. The predicate-boundary witness does not apply to a
 loop header, and the adapter does not model how many iterations the loop

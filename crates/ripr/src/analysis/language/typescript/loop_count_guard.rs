@@ -42,15 +42,83 @@ fn for_header_clauses(line: &str) -> Option<[&str; 3]> {
     Some([init, test, update])
 }
 
-/// The clauses with all whitespace removed, so a spacing-only edit is no change.
-fn squeezed(clauses: [&str; 3]) -> [String; 3] {
-    clauses.map(|clause| clause.chars().filter(|c| !c.is_whitespace()).collect())
+/// Characters whose neighbours' whitespace carries no meaning: an operator
+/// or bracket that cannot fuse with the next token. `+` and `-` are absent on
+/// purpose (`n + ++j` and `n++ + j` stay different), as are quotes.
+fn spacing_is_trivia(c: char) -> bool {
+    matches!(
+        c,
+        '(' | ')'
+            | '['
+            | ']'
+            | '{'
+            | '}'
+            | ','
+            | ';'
+            | '<'
+            | '>'
+            | '='
+            | '!'
+            | '&'
+            | '|'
+            | '?'
+            | ':'
+            | '*'
+            | '/'
+            | '%'
+    )
+}
+
+/// A clause with each whitespace run outside a string or template literal
+/// reduced to one space, and dropped when it touches a [`spacing_is_trivia`]
+/// character. Literal contents (`counts["a b"]`) and `+`/`-` spacing keep
+/// their meaning, so a changed key or operator target is never normalized
+/// away. Any difference this keeps reads as a changed header, which only
+/// keeps today's gap.
+fn normalized_clause(clause: &str) -> String {
+    let mut out = String::new();
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut pending_space = false;
+    for c in clause.trim().chars() {
+        if let Some(open) = quote {
+            out.push(c);
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == open {
+                quote = None;
+            }
+            continue;
+        }
+        if c.is_whitespace() {
+            pending_space = true;
+            continue;
+        }
+        if pending_space
+            && !out.chars().next_back().is_some_and(spacing_is_trivia)
+            && !spacing_is_trivia(c)
+        {
+            out.push(' ');
+        }
+        pending_space = false;
+        out.push(c);
+        if matches!(c, '"' | '\'' | '`') {
+            quote = Some(c);
+        }
+    }
+    out
+}
+
+fn normalized(clauses: [&str; 3]) -> [String; 3] {
+    clauses.map(normalized_clause)
 }
 
 /// Both the old and the new line are counted-loop headers and they differ.
 pub(crate) fn ts_loop_header_changed(old_line: &str, new_line: &str) -> bool {
     match (for_header_clauses(old_line), for_header_clauses(new_line)) {
-        (Some(old), Some(new)) => squeezed(old) != squeezed(new),
+        (Some(old), Some(new)) => normalized(old) != normalized(new),
         _ => false,
     }
 }
@@ -68,47 +136,85 @@ fn counted_mock(observed: &str) -> Option<&str> {
     (!name.is_empty() && name.len() == receiver.len()).then_some(name)
 }
 
-/// `owner(` appears in `body` with `name` as a word inside its argument list.
-fn owner_call_passes(body: &str, owner_name: &str, name: &str) -> bool {
-    let word = |c: char| c.is_alphanumeric() || matches!(c, '_' | '$');
-    body.match_indices(&format!("{owner_name}("))
-        .filter(|&(at, _)| !body[..at].chars().next_back().is_some_and(word))
-        .any(|(at, _)| {
-            let args = &body[at + owner_name.len() + 1..];
-            let mut depth = 0usize;
-            let mut end = args.len();
-            for (i, ch) in args.char_indices() {
-                match ch {
-                    '(' => depth += 1,
-                    ')' if depth == 0 => {
-                        end = i;
-                        break;
-                    }
-                    ')' => depth -= 1,
-                    _ => {}
-                }
+/// The top-level arguments of the call whose `(` ends just before `after`.
+fn call_arguments(after: &str) -> Vec<&str> {
+    let mut args = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (at, ch) in after.char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' if depth == 0 => {
+                args.push(after[start..at].trim());
+                return args;
             }
-            args[..end].match_indices(name).any(|(i, _)| {
-                !args[..i].chars().next_back().is_some_and(word)
-                    && !args[i + name.len()..].chars().next().is_some_and(word)
-            })
-        })
+            ')' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                args.push(after[start..at].trim());
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    // An unclosed call is unreadable.
+    Vec::new()
 }
 
-/// Some oracle-eligible related test asserts the call count of a mock it
-/// passes to the owner.
-fn counts_mock_calls(candidates: &[TypeScriptRelatedCandidate<'_>], owner_name: &str) -> bool {
+/// Some call of one of `call_names` in `masked` (comments and literals
+/// blanked) hands the plain identifier `mock` over as a whole argument. A
+/// member call (`other.withRetry(fn)`) is another binding, and a member
+/// argument (`other.fn`) is another value.
+fn owner_call_passes(masked: &str, call_names: &[&str], mock: &str) -> bool {
+    let word = |c: char| c.is_alphanumeric() || matches!(c, '_' | '$');
+    call_names.iter().any(|name| {
+        [format!("{name}("), format!("{name}?.(")]
+            .iter()
+            .any(|needle| {
+                masked.match_indices(needle.as_str()).any(|(at, _)| {
+                    let before = masked[..at].chars().next_back();
+                    !before.is_some_and(|c| word(c) || c == '.')
+                        && call_arguments(&masked[at + needle.len()..]).contains(&mock)
+                })
+            })
+    })
+}
+
+/// Some related test that calls the owner directly, by import, or through a
+/// renamed import asserts the call count of a mock it passes to that call.
+fn counts_mock_calls(
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
     candidates
         .iter()
-        .filter(|candidate| candidate.relation.uses_oracle())
+        .filter(|candidate| {
+            matches!(
+                candidate.relation,
+                TypeScriptRelationKind::DirectOwnerCall
+                    | TypeScriptRelationKind::ImportedOwnerCall
+                    | TypeScriptRelationKind::ImportAliasOwnerCall
+            )
+        })
         .any(|candidate| {
+            let mut names = vec![owner.name.as_str()];
+            if candidate.relation == TypeScriptRelationKind::ImportAliasOwnerCall {
+                names = super::related_tests::import_alias_owner_locals(
+                    candidate.test,
+                    owner,
+                    alias_map,
+                    workspace_root,
+                );
+            }
+            let masked = ts_mask_literals_and_comments(&candidate.test.body_text);
             candidate
                 .test
                 .assertions
                 .iter()
                 .filter_map(|assertion| assertion.observed_expression.as_deref())
                 .filter_map(counted_mock)
-                .any(|name| owner_call_passes(&candidate.test.body_text, owner_name, name))
+                .any(|mock| owner_call_passes(&masked, &names, mock))
         })
 }
 
@@ -118,11 +224,13 @@ fn counts_mock_calls(candidates: &[TypeScriptRelatedCandidate<'_>], owner_name: 
 pub(crate) fn ts_loop_count_unmodeled(
     old_line: Option<&str>,
     new_line: &str,
-    owner_name: &str,
+    owner: &TypeScriptOwner,
     candidates: &[TypeScriptRelatedCandidate<'_>],
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
 ) -> bool {
     old_line.is_some_and(|old| ts_loop_header_changed(old, new_line))
-        && counts_mock_calls(candidates, owner_name)
+        && counts_mock_calls(candidates, owner, alias_map, workspace_root)
 }
 
 #[cfg(test)]
@@ -162,10 +270,23 @@ mod tests {
     }
 
     #[test]
-    fn a_spacing_only_edit_is_no_header_change() {
+    fn formatting_trivia_is_no_header_change_but_meaning_is() {
         assert!(!ts_loop_header_changed(
             "for (let i = 0; i<n; i++) {",
             "for (let i = 0; i < n; i++) {"
+        ));
+        // A different key, or a different incremented variable, is a change.
+        assert!(ts_loop_header_changed(
+            "for (let i = 0; i < counts[\"a b\"]; i++) {",
+            "for (let i = 0; i < counts[\"ab\"]; i++) {"
+        ));
+        assert!(ts_loop_header_changed(
+            "for (let i = 0; i < n + ++j; i++) {",
+            "for (let i = 0; i < n++ + j; i++) {"
+        ));
+        assert!(ts_loop_header_changed(
+            "for (let i = 0; i < n - 1; i++) {",
+            "for (let i = 0; i < n -1; i++) {"
         ));
     }
 
@@ -178,20 +299,38 @@ mod tests {
         assert_eq!(counted_mock("a.b.mock.callCount()"), None);
     }
 
+    fn passes(body: &str, names: &[&str], mock: &str) -> bool {
+        owner_call_passes(&ts_mask_literals_and_comments(body), names, mock)
+    }
+
     #[test]
-    fn the_owner_call_must_pass_the_mock() {
-        assert!(owner_call_passes(
-            "await withRetry(fn, 2);",
-            "withRetry",
+    fn the_owner_call_must_pass_the_mock_as_a_whole_argument() {
+        let names = ["withRetry"];
+        assert!(passes("await withRetry(fn, 2);", &names, "fn"));
+        assert!(passes("await withRetry?.(fn, 2);", &names, "fn"));
+        assert!(!passes("withRetry(other, 2); log(fn);", &names, "fn"));
+        assert!(!passes("withRetry(fnx, 2);", &names, "fn"));
+        assert!(!passes("rewithRetry(fn, 2);", &names, "fn"));
+        // Another value, another binding, and text that is not code.
+        assert!(!passes("await withRetry(other.fn, 3);", &names, "fn"));
+        assert!(!passes(
+            "withRetry(real, 3); other.withRetry(fn, 2);",
+            &names,
             "fn"
         ));
-        assert!(!owner_call_passes(
-            "withRetry(other, 2); log(fn);",
-            "withRetry",
+        assert!(!passes(
+            "withRetry(real, 3); // withRetry(fn, 2)",
+            &names,
             "fn"
         ));
-        assert!(!owner_call_passes("withRetry(fnx, 2);", "withRetry", "fn"));
-        assert!(!owner_call_passes("rewithRetry(fn, 2);", "withRetry", "fn"));
+        assert!(!passes(
+            "withRetry(real, 3); log(\"withRetry(fn, 2)\");",
+            &names,
+            "fn"
+        ));
+        // A renamed import is the owner under its local name.
+        assert!(passes("await retry(fn, 2);", &["retry"], "fn"));
+        assert!(!passes("await retry(fn, 2);", &names, "fn"));
     }
 
     #[test]
