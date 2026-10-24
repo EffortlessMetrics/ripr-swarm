@@ -10,5 +10,4 @@
   inside the callback closure itself, helpers that invoke two or more closure parameters, boxed or
   by-reference closures and forwarded callbacks (the
   tracing `with_default(subscriber, fun)` shape) are not credited by this
-  change. A helper that never invokes the parameter is still credited by the
-  pre-existing plain-helper path (#9997 stays open) (#9981).
+  change (#9981).
