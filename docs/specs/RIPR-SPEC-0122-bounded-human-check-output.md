@@ -156,6 +156,10 @@ When the hidden identity list exceeds its 20-finding window, its remainder
 line names `--format json with RIPR_CHECK_FINDINGS_BYTES=0` for every identity.
 Default check JSON has its own findings-array byte budget; the explicit
 opt-out recovers the full finding set without changing either display cap.
+When that JSON budget engages, it keeps the highest-priority findings
+(candidate-current first, then the strongest gap classes) rather than a
+file-order prefix, and its `limited_findings_bound` message names the dropped
+counts per class and file (#10093).
 
 When a selected finding exists, the digest includes file and line, static
 exposure class, changed behavior, first missing discriminator when known,

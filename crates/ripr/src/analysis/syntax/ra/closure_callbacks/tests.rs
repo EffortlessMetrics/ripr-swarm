@@ -473,11 +473,6 @@ fn any_call_making_closure_literal_handed_to_the_helper_is_withheld() {
         ("closure without a call", "fn t() { run(1, || 5); }", false),
         ("no closure argument", "fn t() { run(1, 2); }", false),
         (
-            "closure bound to a name",
-            "fn t() { let f = || greet(); run(1, f); }",
-            false,
-        ),
-        (
             "closure handed to a different callee",
             "fn t() { other(|| greet()); run(1, 2); }",
             false,
@@ -485,6 +480,119 @@ fn any_call_making_closure_literal_handed_to_the_helper_is_withheld() {
         (
             "path call is not the helper",
             "fn t() { m::run(1, || greet()); }",
+            false,
+        ),
+    ] {
+        assert_eq!(passes_call_making_closure(test, "run"), expected, "{shape}");
+    }
+}
+
+#[test]
+fn a_name_bound_earlier_to_a_call_making_closure_is_withheld() {
+    for (shape, test, expected) in [
+        (
+            "named closure",
+            "fn t() { let f = || greet(); run(1, f); }",
+            true,
+        ),
+        (
+            "named closure at a later position",
+            "fn t() { let f = || greet(); run(f, 1); }",
+            true,
+        ),
+        (
+            "borrowed and parenthesized uses",
+            "fn t() { let f = || greet(); run(1, &f); run(1, (f)); }",
+            true,
+        ),
+        (
+            "borrowed and parenthesized literal initializer",
+            "fn t() { let f = &|| greet(); run(1, f); }",
+            true,
+        ),
+        (
+            "method-call closure",
+            "fn t() { let f = || x.go(); run(1, f); }",
+            true,
+        ),
+        (
+            "typed binding and block closure",
+            "fn t() { let f: fn() = || { greet(); }; run(1, f); }",
+            true,
+        ),
+        (
+            "mut binding",
+            "fn t() { let mut f = || greet(); run(1, f); }",
+            true,
+        ),
+        (
+            "later rebinding does not exempt it",
+            "fn t() { let f = || greet(); let f = 5; run(1, f); }",
+            true,
+        ),
+        (
+            "binding in an enclosing block",
+            "fn t() { let f = || greet(); if c { run(1, f); } }",
+            true,
+        ),
+        (
+            "binding in a different scope",
+            "fn t() { { let f = || greet(); } run(1, f); }",
+            false,
+        ),
+        (
+            "binding in a skipped sibling branch",
+            "fn t() { if c { let f = || greet(); } run(1, f); }",
+            false,
+        ),
+        (
+            "binding after the helper call",
+            "fn t() { run(1, f); let f = || greet(); }",
+            false,
+        ),
+        (
+            "closure without a call",
+            "fn t() { let f = || 5; run(1, f); }",
+            false,
+        ),
+        (
+            "non-closure binding",
+            "fn t() { let f = greet(); run(1, f); }",
+            false,
+        ),
+        (
+            "boxed named closure is a residual",
+            "fn t() { let f = Box::new(|| greet()); run(1, f); }",
+            false,
+        ),
+        (
+            "different name",
+            "fn t() { let f = || greet(); run(1, g); }",
+            false,
+        ),
+        (
+            "path argument is not a bare name",
+            "fn t() { let f = || greet(); run(1, m::f); }",
+            false,
+        ),
+        (
+            "closure parameter shadow is an over-withhold",
+            "fn t() { let f = || greet(); let g = |f| run(1, f); }",
+            true,
+        ),
+        (
+            "alias of a named closure is a residual",
+            "fn t() { let f = || greet(); let h = f; run(1, h); }",
+            false,
+        ),
+        (
+            "function item by name is a residual",
+            "fn t() { run(1, greet_fn); }",
+            false,
+        ),
+        (
+            "destructuring binding is not a plain name",
+            "fn t() { let (f, g) = (|| greet(), 1); run(1, f); }",
             false,
         ),
     ] {

@@ -1,0 +1,48 @@
+{
+  "case_id": "spec-b-0164-literal-arms",
+  "subject_id": "authored-spec-b-match",
+  "diff": "cases/spec-b-0164-literal-arms.diff",
+  "anchor": {
+    "file": "src/m_literal.rs",
+    "line": 13
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "match_arm_literal_helper",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if final_label == \"beta\" {",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "m_literal::tests::each_arm_has_its_own_label_m_literal",
+        "equivalence_review": "the edit itself: comparing against beta moves the verdict for the pinned row"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "label is one match over string literals and classify compares its return with alpha. The test pins word to alpha and text to beta, so moving the compared constant to beta fails it. Spec cells: RIPR-SPEC-0164#1.",
+  "labeling_observation": {
+    "ripr_commit": "7cc4412c",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0164#1"
+  ]
+}
