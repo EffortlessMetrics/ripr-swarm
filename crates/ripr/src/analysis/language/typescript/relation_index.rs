@@ -137,10 +137,10 @@ impl RelationIndex {
         // `ns.Class(`) or a ClassMethod call names the class; the import
         // locals and namespace forms already landed in `by_name` at build
         // time, so the class-name key admits every such test.
-        if let Some(class_name) = owner.class_name.as_deref().and_then(non_empty) {
-            if let Some(indices) = self.by_name.get(class_name) {
-                set.extend(indices.iter().copied());
-            }
+        if let Some(class_name) = owner.class_name.as_deref().and_then(non_empty)
+            && let Some(indices) = self.by_name.get(class_name)
+        {
+            set.extend(indices.iter().copied());
         }
         if owner.exported_as_default || owner.class_default_export {
             // A default import is the only way to reach a default-exported
