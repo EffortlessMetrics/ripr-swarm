@@ -12,9 +12,16 @@ pub(super) fn owner_for_changed_line<'a>(
     owners: &'a [PythonOwner],
 ) -> Option<&'a PythonOwner> {
     let changed_file = normalized_path(file);
+    // Allocation-free per owner (#10021): this scan runs once per changed
+    // line, and `normalized_path` allocated a String for every workspace
+    // owner on every line. The component-wise Path compare covers the
+    // common same-spelling case; the normalizing compare stays the
+    // fallback for divergent spellings (`\` vs `/`, a leading `./`).
     owners
         .iter()
-        .filter(|owner| normalized_path(&owner.file) == changed_file)
+        .filter(|owner| {
+            owner.file.as_path() == file || normalized_path(&owner.file) == changed_file
+        })
         .filter(|owner| {
             (line >= owner.start_line && line <= owner.end_line)
                 || owner
