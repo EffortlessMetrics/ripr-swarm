@@ -927,7 +927,6 @@ fn find_related_tests_with_candidates<'a>(
         .iter()
         .filter(|t| t.len() >= ASSERTION_TOKEN_MIN_LEN)
         .filter(|t| !GENERIC_PROBE_TOKENS.contains(&t.as_str()))
-        .filter(|t| !is_rust_keyword(t))
         .filter(|t| !is_declaration_only_token(&probe.expression, t))
         .filter(|t| !common_tokens.assertion_tokens.contains(t.as_str()))
         .map(String::as_str)
@@ -2712,14 +2711,6 @@ fn literal_ids(masked: &str) -> impl Iterator<Item = usize> + '_ {
         .skip(1)
         .step_by(2)
         .filter_map(|id| id.parse().ok())
-}
-
-/// Whether `token` is a strict or reserved Rust keyword (`RUST_KEYWORDS`). A
-/// path or declaration keyword (`crate::helper(..)`, `pub(crate) use`, `const`,
-/// `static`) is syntax shared by unrelated code, so it must never tie a test
-/// to a probe through assertion-target affinity (#9171).
-fn is_rust_keyword(token: &str) -> bool {
-    RUST_KEYWORDS.contains(&token)
 }
 
 /// Weak declaration introducers that are not reserved words: `union` and
@@ -11413,11 +11404,11 @@ try_parse_summary(raw).map_err(Into::into)"
     /// `ASSERTION_TOKEN_MIN_LEN` is refused as an affinity seed.
     #[test]
     fn every_long_rust_keyword_is_refused_as_assertion_affinity_seed() {
-        let keywords = [
-            "abstract", "async", "await", "become", "break", "const", "continue", "crate",
-            "extern", "final", "macro", "match", "override", "return", "static", "struct", "super",
-            "trait", "typeof", "unsafe", "unsized", "virtual", "where", "while", "yield",
-        ];
+        // `false` is dropped by the tokenizer's noise filter before this gate.
+        let keywords = RUST_KEYWORDS
+            .iter()
+            .copied()
+            .filter(|keyword| keyword.len() >= ASSERTION_TOKEN_MIN_LEN && *keyword != "false");
         for keyword in keywords {
             assert!(
                 keyword.len() >= ASSERTION_TOKEN_MIN_LEN,
