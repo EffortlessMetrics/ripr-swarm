@@ -267,3 +267,20 @@ fn a_rebound_parameter_keeps_the_credit() -> Result<(), String> {
     assert_eq!(finding.class, ExposureClass::Exposed);
     Ok(())
 }
+
+#[test]
+fn a_literal_beyond_i64_names_no_differing_input() -> Result<(), String> {
+    let huge = ts_comparison_edit(
+        "n === 99999999999999999999 ? 1 : 2",
+        "n <= 99999999999999999999 ? 1 : 2",
+    )
+    .ok_or("the huge-literal edit should still read")?;
+    assert_eq!(huge.differing_value(), None);
+    let top = ts_comparison_edit(
+        "n === 9223372036854775807 ? 1 : 2",
+        "n <= 9223372036854775807 ? 1 : 2",
+    )
+    .ok_or("the i64::MAX edit should read")?;
+    assert_eq!(top.differing_value(), None);
+    Ok(())
+}

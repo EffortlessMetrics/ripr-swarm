@@ -318,9 +318,14 @@ impl ComparisonEdit {
     /// A whole number where the two comparisons disagree, for the message.
     pub(crate) fn differing_value(&self) -> Option<i64> {
         let center = self.new.1.round();
+        // A literal beyond i64 cannot be named as a whole-number input.
+        if !center.is_finite() || center < i64::MIN as f64 || center >= i64::MAX as f64 {
+            return None;
+        }
+        let base = center as i64;
         (0..=3i64)
             .flat_map(|step| [step, -step])
-            .map(|step| center as i64 + step)
+            .filter_map(|step| base.checked_add(step))
             .find(|candidate| self.differs_at(*candidate as f64))
     }
 
