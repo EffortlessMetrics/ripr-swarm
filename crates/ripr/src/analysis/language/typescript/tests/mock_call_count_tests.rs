@@ -20,13 +20,32 @@ fn jest_test(assertion: &str) -> String {
 }
 
 fn notify_class(label: &str, source: &str) -> Result<ExposureClass, String> {
+    notify_class_for(label, source, Some("  sender.send(id + 1);"))
+}
+
+/// `old_line` is the removed counterpart; `None` makes the changed line a
+/// pure addition.
+fn notify_class_for(
+    label: &str,
+    source: &str,
+    old_line: Option<&str>,
+) -> Result<ExposureClass, String> {
     let root = ts_unique_tempdir(label)?;
     ts_write_file(&root.join("src/notify.ts"), OWNER)?;
     ts_write_file(&root.join("tests/notify.test.ts"), source)?;
+    let mut changed = changed_with_lines("src/notify.ts", &[OWNER_LINE]);
+    changed.removed_lines = old_line
+        .map(|text| crate::analysis::diff::ChangedLine {
+            line: OWNER_LINE.0,
+            text: text.to_string(),
+            new_side_line: OWNER_LINE.0,
+        })
+        .into_iter()
+        .collect();
     let result = TypeScriptAdapter.analyze_diff(
         &ts_analysis_options(root.clone()),
         &OraclePolicy::default(),
-        &[changed_with_lines("src/notify.ts", &[OWNER_LINE])],
+        &[changed],
     );
     let _ = std::fs::remove_dir_all(&root);
     result?
@@ -59,6 +78,16 @@ fn a_call_count_does_not_see_the_arguments_of_a_changed_call() -> Result<(), Str
             "{label}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn an_added_call_keeps_the_count_because_the_count_sees_it() -> Result<(), String> {
+    let source = node_test("assert.equal(fn.mock.callCount(), 1);");
+    assert_eq!(
+        notify_class_for("added-call", &source, None)?,
+        ExposureClass::Exposed
+    );
     Ok(())
 }
 

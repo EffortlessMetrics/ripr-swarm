@@ -1220,8 +1220,9 @@ the masker.
     like `toHaveBeenCalledTimes`, under any matcher (the classifier applies
     this; extraction still labels the equality `exact_value`). Rejected:
     crediting the count as an exact value of the arguments the changed call
-    sends. Not demoted: a deleted call or a value that decides how many
-    calls run (a count sees both), an aliased or optional-chained count,
+    sends. Not demoted: a deleted call, an added call (a changed line with
+    no removed counterpart, which a count sees), or a value that decides
+    how many calls run (a count sees both), an aliased or optional-chained count,
     and `mock.calls[0].arguments` pins, which keep their reading.
 
 ## Required Evidence
