@@ -619,8 +619,14 @@ adapter's reason text prints without the producer marker while the JSON
 `missing` strings keep it (#9929). The digest's "Missing discriminator" line
 prints the raw `missing` text truncated at 180 characters and is not rewritten;
 the marker sits past that window for the current producer forms. This item does
-not rewrite the LSP hover, pilot output or the agent packet routes. Those, with
-the Python `classify.rs` reason texts there, remain tracked in #9929.
+not rewrite pilot output or the agent packet routes, which remain tracked in
+#9929.
+
+The LSP hover (finding hover, line hover and classified-seam hover) is prose for
+a person and applies the same anchored rewrite to its stage lines, the
+discriminator line's related-oracle summary, its Weakness list, and the seam
+hover's Strong/Weak evidence lists and missing-discriminator reasons; the
+structured finding and JSON keep the machine value (#9929).
 
 ### Next step for an unmapped infection input (#9244)
 
@@ -713,6 +719,9 @@ not a head-only row and prints no note.
 - `crates/ripr/src/output/human.rs::tests::plain_observation_wording_handles_each_producer_form`
 - `crates/ripr/src/output/human.rs::tests::shared_evidence_rows_spell_the_unconfirmed_observation_in_words`
 - `crates/ripr/src/output/human.rs::tests::weakness_list_drops_producer_marker_but_keeps_embedded_token_and_json`
+- `crates/ripr/src/lsp/tests.rs::finding_hover_spells_the_unconfirmed_observation_in_words`
+- `crates/ripr/src/lsp/tests.rs::finding_hover_with_named_missing_discriminator_spells_markers_in_words`
+- `crates/ripr/src/lsp/hover.rs::seam_hover_tests::seam_hover_spells_the_unconfirmed_observation_in_words`
 - `crates/ripr/src/output/human.rs::tests::plain_wording_leaves_backticked_source_literals_alone`
 - `crates/ripr/src/output/human.rs::tests::plain_observation_wording_never_modifies_embedded_source_text`
 - `crates/ripr/tests/observation_wording_python_literals.rs::single_backtick_before_the_token_prints_as_written`
