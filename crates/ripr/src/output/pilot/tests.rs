@@ -2112,6 +2112,174 @@ fn pilot_repair_line_follows_the_canonical_pilot_decision() -> Result<(), String
     Ok(())
 }
 
+/// The repair start refuses only an inline-module target file that differs
+/// from HEAD (worktree or index), so the precondition appears exactly when the
+/// target file's own state is uncommitted and the repair targets an inline
+/// module (#9553); step 3 names the `continue --attempt ...` command that
+/// step 1 prints.
+#[test]
+fn pilot_next_steps_name_the_dirty_target_precondition_only_when_it_applies() -> Result<(), String>
+{
+    use crate::analysis::new_test_target::{
+        InlineTestRegionAuthority, NewTestKind, NewTestProposalProvenance, NewTestTargetAdmission,
+        NewTestTargetProposal,
+    };
+
+    fn vcs(root: &Path, args: &[&str]) -> Result<(), String> {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .map_err(|err| format!("run git {args:?}: {err}"))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ))
+        }
+    }
+    struct Fixture(PathBuf);
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|err| format!("clock before UNIX_EPOCH: {err}"))?
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "ripr-pilot-precondition-{}-{stamp}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(dir.join("src")).map_err(|err| format!("create src: {err}"))?;
+    std::fs::create_dir_all(dir.join("tests")).map_err(|err| format!("create tests: {err}"))?;
+    let fixture = Fixture(dir);
+    let root = fixture.0.as_path();
+    let write = |relative: &str, text: &str| {
+        std::fs::write(root.join(relative), text).map_err(|err| format!("write {relative}: {err}"))
+    };
+    write("src/pricing.rs", "pub fn price() {}\n")?;
+    write("tests/pricing.rs", "fn boundary() {}\n")?;
+    write("Cargo.toml", "[workspace]\n")?;
+    vcs(root, &["-c", "init.templateDir=", "init", "-q"])?;
+    vcs(root, &["config", "user.email", "ripr@example.invalid"])?;
+    vcs(root, &["config", "user.name", "RIPR Test"])?;
+    vcs(root, &["config", "commit.gpgSign", "false"])?;
+    vcs(root, &["config", "core.hooksPath", ".no-hooks"])?;
+    vcs(root, &["add", "."])?;
+    vcs(root, &["commit", "-qm", "baseline"])?;
+
+    let artifacts = pilot_artifacts();
+    let tests_dir_entry = route_ready_entry(&["tests/pricing.rs"]);
+    let mut inline_entry = route_ready_entry(&["src/pricing.rs"]);
+    let region = InlineTestRegionAuthority {
+        file: PathBuf::from("src/pricing.rs"),
+        module_name: "tests".to_string(),
+        parent_modules: Vec::new(),
+        body_start: 0,
+        close_brace_start: 0,
+        source_digest: String::new(),
+    };
+    inline_entry.evidence.new_test_target = Some(NewTestTargetAdmission {
+        proposal: Some(NewTestTargetProposal {
+            kind: NewTestKind::InlineUnit,
+            file: PathBuf::from("src/pricing.rs"),
+            owner: "pricing::discounted_total".to_string(),
+            provenance: NewTestProposalProvenance::ProducerOwned,
+        }),
+        region: Some(region.clone()),
+        blocker: None,
+        owner_inline_region: Some(region),
+    });
+    let precondition = "if `src/pricing.rs` has uncommitted edits, commit or stash them";
+    let change = changed("src/pricing.rs", 3);
+    let no_change = PilotCurrentChange::NoChange { base: None };
+
+    let render = |entry: &ClassifiedSeam, change: &PilotCurrentChange| -> Result<String, String> {
+        let route = commands::repair_start_command(root, entry)
+            .ok_or_else(|| "fixture seam must offer a repair start".to_string())?;
+        let mut context = pilot_context(&artifacts);
+        context.root = root;
+        context.current_change = Some(change);
+        let terminal = render_pilot_terminal(std::slice::from_ref(entry), context);
+        assert!(terminal.contains(&format!("  1. {route}\n")), "{terminal}");
+        Ok(terminal)
+    };
+    let render_md = |entry: &ClassifiedSeam, change: &PilotCurrentChange| {
+        let mut context = pilot_context(&artifacts);
+        context.root = root;
+        context.current_change = Some(change);
+        render_pilot_summary_md(std::slice::from_ref(entry), context)
+    };
+
+    // Committed target: no line, whatever the current change claims.
+    assert!(!render(&inline_entry, &change)?.contains("uncommitted edits"));
+
+    // Worktree edit: the line sits between heading and step 1.
+    write("src/pricing.rs", "pub fn price() { let _ = 1; }\n")?;
+    let route = commands::repair_start_command(root, &inline_entry)
+        .ok_or_else(|| "inline fixture must offer a repair start".to_string())?;
+    let inline_dirty = render(&inline_entry, &change)?;
+    let positions = (
+        inline_dirty.find("Next, in order:"),
+        inline_dirty.find(precondition),
+        inline_dirty.find(&format!("  1. {route}")),
+    );
+    assert!(
+        matches!(positions, (Some(head), Some(pre), Some(one)) if head < pre && pre < one),
+        "{inline_dirty}"
+    );
+    assert!(
+        inline_dirty.contains("  3. run the `continue --attempt ...` command that step 1 prints\n"),
+        "{inline_dirty}"
+    );
+
+    // The saved Markdown summary carries the same precondition, ahead of the
+    // repair introduction and without a placeholder command a user could run.
+    let markdown = render_md(&inline_entry, &change);
+    assert!(
+        markdown.contains("Before starting the repair: if `src/pricing.rs` has uncommitted edits"),
+        "{markdown}"
+    );
+    assert!(
+        markdown.contains("then run the `continue --attempt ...` command it prints:"),
+        "{markdown}"
+    );
+
+    // A tests/ target is not an inline target: no line under a dirty file.
+    let tests_dirty = render(&tests_dir_entry, &change)?;
+    assert!(!tests_dirty.contains("uncommitted edits"), "{tests_dirty}");
+    assert!(
+        tests_dirty.contains("  3. run the `continue --attempt ...`"),
+        "{tests_dirty}"
+    );
+
+    // Staged-only (#9553): the index differs from HEAD and the worktree
+    // matches the index, so pilot's worktree diff sees no change. The target
+    // file's own state still names the precondition `agent repair` enforces.
+    vcs(root, &["add", "src/pricing.rs"])?;
+    let staged = render(&inline_entry, &no_change)?;
+    assert!(staged.contains(precondition), "{staged}");
+    assert!(
+        render_md(&inline_entry, &no_change)
+            .contains("Before starting the repair: if `src/pricing.rs` has uncommitted edits")
+    );
+    assert!(
+        !render(&tests_dir_entry, &no_change)?.contains("uncommitted edits"),
+        "a staged inline file must not leak into a tests/ target"
+    );
+
+    // Back at HEAD: a clean tree prints no line, with or without a change.
+    vcs(root, &["reset", "-q", "--hard", "HEAD"])?;
+    assert!(!render(&inline_entry, &no_change)?.contains("uncommitted edits"));
+    assert!(!render(&inline_entry, &change)?.contains("uncommitted edits"));
+    Ok(())
+}
+
 /// #8992: the offered repair start route renders the root through
 /// `root_path_display` before `bound_root`, so a Unix checkout whose path
 /// contains a literal backslash still names the user's checkout; `display_path`
@@ -3021,6 +3189,87 @@ fn pilot_terminal_next_follows_the_python_repair_card_route() -> Result<(), Stri
         "{md}"
     );
     Ok(())
+}
+
+/// #9857: the scope line names the seam owners the recommendation below it
+/// actually is. A Python-only run (empty Rust ranking, Python repair card
+/// leading) must not claim only Rust seams ranked; a ranked Rust seam keeps
+/// the historical wording even when a Python card exists.
+#[test]
+fn pilot_scope_line_names_the_language_actually_ranked() {
+    let artifacts = pilot_artifacts();
+    let python = python_first_use();
+    let change = changed("pricing.py", 2);
+
+    // Empty Rust ranking + a leading Python repair card: Python ranked.
+    let context = PilotSummaryContext {
+        current_change: Some(&change),
+        ..pilot_context_with_python(&artifacts, &python)
+    };
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(
+        terminal.contains(
+            "  scope: change-first (python (preview) seams on lines changed since origin/main rank first)\n"
+        ),
+        "Python-only scope must name python, not Rust:\n{terminal}"
+    );
+    let md = render_pilot_summary_md(&[], context);
+    assert!(
+        md.contains(
+            "- Scope: change-first (python (preview) seams on lines changed since `origin/main` rank first)\n"
+        ),
+        "Python-only scope must name python, not Rust:\n{md}"
+    );
+
+    // A ranked Rust seam owns the recommendation: the scope keeps the
+    // historical Rust label even though a Python card also exists.
+    let entries = [classified_with(
+        SeamGripClass::WeaklyGripped,
+        "src/pricing.rs",
+        88,
+        vec![missing()],
+        vec![related_test()],
+    )];
+    let context = PilotSummaryContext {
+        current_change: Some(&change),
+        ..pilot_context_with_python(&artifacts, &python)
+    };
+    let terminal = render_pilot_terminal(&entries, context);
+    assert!(
+        terminal.contains(
+            "  scope: change-first (Rust seams on lines changed since origin/main rank first)\n"
+        ),
+        "a ranked Rust seam keeps the Rust scope label:\n{terminal}"
+    );
+    let md = render_pilot_summary_md(&entries, context);
+    assert!(
+        md.contains(
+            "- Scope: change-first (Rust seams on lines changed since `origin/main` rank first)\n"
+        ),
+        "a ranked Rust seam keeps the Rust scope label:\n{md}"
+    );
+
+    // No Python card (no Python findings): an empty Rust ranking keeps the
+    // historical label, which the none-explanation lines below still use.
+    let no_python = PilotPythonFirstUse {
+        status: super::types::PilotPythonFirstUseStatus::NoPythonFindings,
+        findings_total: 0,
+        repair_cards_total: 0,
+        limitation_count: 0,
+        analysis_error: None,
+        top_repair_card: None,
+    };
+    let context = PilotSummaryContext {
+        current_change: Some(&change),
+        ..pilot_context_with_python(&artifacts, &no_python)
+    };
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(
+        terminal.contains(
+            "  scope: change-first (Rust seams on lines changed since origin/main rank first)\n"
+        ),
+        "no Python card keeps the Rust scope label:\n{terminal}"
+    );
 }
 
 /// A `-U0` unified diff that changes `line` of `file`, as the default

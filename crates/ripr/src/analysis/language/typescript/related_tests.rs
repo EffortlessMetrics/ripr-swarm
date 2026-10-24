@@ -2,7 +2,7 @@
 
 use super::tsconfig::{TsAliasMap, TsOutDirMap, load_out_dir_map};
 use super::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 // ── Re-export index ───────────────────────────────────────────────────────────
 
@@ -48,6 +48,15 @@ pub(crate) struct ReExportIndex {
     local_exports: HashMap<String, HashSet<String>>,
     /// Normalized module paths of every workspace file seen by the index.
     modules: HashSet<String>,
+    /// Extension stripping can collapse distinct real files. General owner
+    /// discovery keeps its existing behavior; strict enum identity refuses.
+    ambiguous_enum_modules: HashSet<String>,
+    /// Actual runtime enum declarations and their statically named members.
+    /// Export-list mentions and unresolved re-exports cannot create these facts.
+    enum_bindings: HashMap<(String, String), Vec<String>>,
+    /// Actual imports (not re-exports) used to finish a canonical enum chain.
+    enum_imports: HashMap<String, Vec<TypeScriptImport>>,
+    unstable_enum_roots: HashSet<(String, String)>,
 }
 
 /// Outcome of resolving one exported name through the re-export graph.
@@ -60,6 +69,14 @@ enum ExportResolution {
     Found(String, String),
     /// The chain is too deep, ambiguous, or otherwise not decidable.
     Unknown,
+}
+
+#[derive(Clone, Copy)]
+struct EnumBindingContext<'a> {
+    mocked: &'a dyn Fn(&str) -> bool,
+    alias_map: Option<&'a TsAliasMap>,
+    workspace_root: Option<&'a Path>,
+    check_stability: bool,
 }
 
 impl ReExportIndex {
@@ -124,15 +141,28 @@ impl ReExportIndex {
         alias_map: Option<&TsAliasMap>,
         is_test: impl Fn(&Path) -> bool,
     ) -> Self {
-        use oxc_parser::Parser;
-
         let mut entries: HashMap<(String, String), (String, String)> = HashMap::new();
         let mut star_edges: HashSet<(String, String)> = HashSet::new();
         let mut local_exports: HashMap<String, HashSet<String>> = HashMap::new();
+        let mut enum_bindings = HashMap::new();
+        let mut enum_imports = HashMap::new();
+        let mut unstable_enum_roots = HashSet::new();
         let modules: HashSet<String> = workspace_files
             .iter()
             .map(|file| normalized_module_path(file))
             .collect();
+        let mut module_files = HashMap::new();
+        let mut ambiguous_enum_modules = HashSet::new();
+        for file in workspace_files {
+            let module = normalized_module_path(file);
+            let path = normalized_path(file);
+            if module_files
+                .insert(module.clone(), path.clone())
+                .is_some_and(|previous| previous != path)
+            {
+                ambiguous_enum_modules.insert(module);
+            }
+        }
         for relative in workspace_files {
             if is_test(relative) {
                 continue;
@@ -140,26 +170,16 @@ impl ReExportIndex {
             let Some(source) = sources.get(relative) else {
                 continue;
             };
-            // Parse on the guarded large-stack worker (#4101): the recursive
-            // oxc parser must not run on the caller's stack, and an
-            // over-budget source is skipped exactly like a parse error.
-            let worker_root = workspace_root.to_path_buf();
-            let worker_alias = alias_map.cloned();
-            let Ok(file_facts) = parse_on_worker(
-                relative.as_path(),
+            // Per-file facts come from the content-keyed combined cache
+            // (#10071, #10063): a re-save with one edited file re-parses only
+            // that file instead of every non-test source in the workspace.
+            // Facts depend on the workspace root and the tsconfig alias map,
+            // both carried by the cache key.
+            let Some(file_facts) = super::extraction_cache::export_facts_cached(
+                relative,
                 source.as_str(),
-                move |relative, source, allocator| {
-                    let ret = Parser::new(allocator, source, source_type_for(relative)).parse();
-                    if !ret.errors.is_empty() {
-                        return ModuleExportFacts::default();
-                    }
-                    module_export_facts(
-                        relative,
-                        &ret.program.body,
-                        worker_alias.as_ref(),
-                        worker_root.as_path(),
-                    )
-                },
+                workspace_root,
+                alias_map,
             ) else {
                 continue;
             };
@@ -167,6 +187,17 @@ impl ReExportIndex {
                 entries.entry(key).or_insert_with(|| value);
             }
             star_edges.extend(file_facts.star_edges);
+            let module = normalized_module_path(relative);
+            for (name, members) in file_facts.enum_bindings {
+                enum_bindings.insert((module.clone(), name), members);
+            }
+            enum_imports.insert(module.clone(), file_facts.enum_imports);
+            unstable_enum_roots.extend(
+                file_facts
+                    .unstable_enum_roots
+                    .into_iter()
+                    .map(|name| (module.clone(), name)),
+            );
             if !file_facts.local_exports.is_empty() {
                 local_exports
                     .entry(normalized_module_path(relative))
@@ -179,7 +210,323 @@ impl ReExportIndex {
             star_edges,
             local_exports,
             modules,
+            ambiguous_enum_modules,
+            enum_bindings,
+            enum_imports,
+            unstable_enum_roots,
         }
+    }
+
+    /// Strict rule-15 identity, layered over the existing bounded export
+    /// graph. Its terminal must be an actual enum declaration; the ordinary
+    /// owner-discovery fallback for an unresolved explicit export is not proof.
+    pub(crate) fn enum_member_identity(
+        &self,
+        file: &Path,
+        path: &str,
+        test: &TypeScriptTest,
+        alias_map: Option<&TsAliasMap>,
+        workspace_root: Option<&Path>,
+    ) -> Option<(String, String, String)> {
+        if test
+            .mocks_in_file
+            .iter()
+            .any(|source| source == UNRESOLVED_MOCK_SPECIFIER)
+        {
+            return None;
+        }
+        let parts: Vec<&str> = path.split('.').collect();
+        let [root, ..] = parts.as_slice() else {
+            return None;
+        };
+        let module = normalized_module_path(file);
+        if self.ambiguous_enum_modules.contains(&module) {
+            return None;
+        }
+        // Owner.imports also carries synthetic re-export records for call
+        // discovery. A re-export creates no local binding, so only the
+        // actual-only imports collected from this module can anchor a root.
+        let imports = if normalized_path(file) == normalized_path(&test.file) {
+            &test.imports_in_file
+        } else {
+            self.enum_imports.get(&module)?
+        };
+        if self
+            .unstable_enum_roots
+            .contains(&(module.clone(), (*root).to_string()))
+        {
+            return None;
+        }
+        let matching: Vec<_> = imports
+            .iter()
+            .filter(|import| import.local == *root)
+            .collect();
+        let (binding_module, name, member, exported) = match matching.as_slice() {
+            [] if parts.len() == 2 => (module, (*root).to_string(), parts[1], false),
+            [import] => {
+                let imported_module = normalized_relative_import_module(
+                    file,
+                    &import.source,
+                    alias_map,
+                    workspace_root,
+                )?;
+                if import.namespace && parts.len() == 3 {
+                    (imported_module, parts[1].to_string(), parts[2], true)
+                } else if !import.namespace && parts.len() == 2 {
+                    (imported_module, import.imported.clone()?, parts[1], true)
+                } else {
+                    return None;
+                }
+            }
+            _ => return None,
+        };
+        let mocked_modules: Vec<_> = test
+            .mocks_in_file
+            .iter()
+            .filter_map(|source| {
+                normalized_relative_import_module(&test.file, source, alias_map, workspace_root)
+                    .map(|module| self.canonical_module(&module))
+            })
+            .collect();
+        let mocked = |module: &str| {
+            mocked_modules.iter().any(|name| name == module)
+                || test
+                    .mocks_in_file
+                    .iter()
+                    .any(|source| root_relative_mock_names_module(source, module))
+        };
+        let mut stack = Vec::new();
+        let context = EnumBindingContext {
+            mocked: &mocked,
+            alias_map,
+            workspace_root,
+            check_stability: true,
+        };
+        let resolution = if exported {
+            self.resolve_export_with_context(
+                &binding_module,
+                &name,
+                0,
+                &mut stack,
+                &mocked,
+                Some(&context),
+            )
+        } else {
+            self.enum_local_binding(&binding_module, &name, 0, &mut stack, &context)
+        };
+        let ExportResolution::Found(module, name) = resolution else {
+            return None;
+        };
+        let unstable_roots: Vec<String> = if normalized_path(file) == normalized_path(&test.file) {
+            test.unstable_member_roots_in_file.clone()
+        } else {
+            self.unstable_enum_roots
+                .iter()
+                .filter(|(source, _)| source == &normalized_module_path(file))
+                .map(|(_, name)| name.clone())
+                .collect()
+        };
+        if self.enum_aliases_taint_binding(
+            file,
+            imports,
+            &unstable_roots,
+            (&module, &name),
+            &context,
+        ) {
+            return None;
+        }
+        self.enum_bindings
+            .get(&(module.clone(), name.clone()))?
+            .iter()
+            .any(|known| known == member)
+            .then(|| (module, name, member.to_string()))
+    }
+
+    /// Finish an actual local binding within the same bounded export walk.
+    /// Imported-local re-exports share its hop count and cycle stack.
+    fn enum_local_binding(
+        &self,
+        module: &str,
+        name: &str,
+        hops: usize,
+        stack: &mut Vec<(String, String)>,
+        context: &EnumBindingContext<'_>,
+    ) -> ExportResolution {
+        let module = self.canonical_module(module);
+        if (context.mocked)(&module)
+            || self.ambiguous_enum_modules.contains(&module)
+            || (context.check_stability
+                && self
+                    .unstable_enum_roots
+                    .contains(&(module.clone(), name.to_string())))
+        {
+            return ExportResolution::Unknown;
+        }
+        if self
+            .enum_bindings
+            .contains_key(&(module.clone(), name.to_string()))
+        {
+            return ExportResolution::Found(module, name.to_string());
+        }
+        let Some(imports) = self.enum_imports.get(&module) else {
+            return ExportResolution::NotFound;
+        };
+        let matching: Vec<_> = imports
+            .iter()
+            .filter(|import| import.local == name)
+            .collect();
+        let [import] = matching.as_slice() else {
+            return ExportResolution::NotFound;
+        };
+        let Some(imported) = import.imported.as_deref().filter(|_| !import.namespace) else {
+            return ExportResolution::Unknown;
+        };
+        if hops >= MAX_REEXPORT_HOPS {
+            return ExportResolution::Unknown;
+        }
+        let Some(source) = normalized_relative_import_module(
+            Path::new(&format!("{module}.ts")),
+            &import.source,
+            context.alias_map,
+            context.workspace_root,
+        ) else {
+            return ExportResolution::Unknown;
+        };
+        self.resolve_export_with_context(
+            &source,
+            imported,
+            hops + 1,
+            stack,
+            context.mocked,
+            Some(context),
+        )
+    }
+
+    /// Compare unsafe imported aliases through the same strict graph, while
+    /// temporarily ignoring stability. This identifies which declaration a
+    /// known mutation/escape taints; it never supplies witness credit.
+    fn enum_aliases_taint_binding(
+        &self,
+        file: &Path,
+        imports: &[TypeScriptImport],
+        unstable_roots: &[String],
+        desired: (&str, &str),
+        context: &EnumBindingContext<'_>,
+    ) -> bool {
+        let raw_context = EnumBindingContext {
+            check_stability: false,
+            ..*context
+        };
+        imports
+            .iter()
+            .filter(|import| unstable_roots.contains(&import.local))
+            .any(|import| {
+                let Some(module) = normalized_relative_import_module(
+                    file,
+                    &import.source,
+                    context.alias_map,
+                    context.workspace_root,
+                ) else {
+                    // This comparison propagates taint only among observed
+                    // in-repository enum declarations. An unresolved import
+                    // cannot itself establish the ordinary witness identity.
+                    return false;
+                };
+                let names: HashSet<&str> = if import.namespace {
+                    self.enum_exported_names(&module)
+                } else {
+                    import.imported.as_deref().into_iter().collect()
+                };
+                names.into_iter().any(|name| {
+                    match self.resolve_export_with_context(
+                        &module,
+                        name,
+                        0,
+                        &mut Vec::new(),
+                        context.mocked,
+                        Some(&raw_context),
+                    ) {
+                        ExportResolution::Found(module, name) => {
+                            module == desired.0 && name == desired.1
+                        }
+                        ExportResolution::Unknown => true,
+                        ExportResolution::NotFound => false,
+                    }
+                })
+            })
+    }
+
+    /// Names only, limited to this namespace's existing export/star graph.
+    /// The strict resolver still establishes their declaration identities.
+    fn enum_exported_names(&self, module: &str) -> HashSet<&str> {
+        let mut names = HashSet::new();
+        let mut pending = vec![(self.canonical_module(module), 0usize)];
+        let mut visited = HashMap::new();
+        while let Some((module, hops)) = pending.pop() {
+            if visited
+                .get(&module)
+                .is_some_and(|previous| *previous <= hops)
+            {
+                continue;
+            }
+            visited.insert(module.clone(), hops);
+            if let Some(exports) = self.local_exports.get(&module) {
+                names.extend(exports.iter().map(String::as_str));
+            }
+            names.extend(
+                self.entries
+                    .keys()
+                    .filter(|(source, _)| source == &module)
+                    .map(|(_, name)| name.as_str()),
+            );
+            if hops < MAX_REEXPORT_HOPS {
+                pending.extend(
+                    self.star_edges
+                        .iter()
+                        .filter(|(source, _)| source == &module)
+                        .map(|(_, target)| (self.canonical_module(target), hops + 1)),
+                );
+            }
+        }
+        names
+    }
+
+    /// Map each declaration name to every exported name that resolves to it
+    /// through the bounded re-export graph (#10028). An owner named `foo` can
+    /// be imported — and thus credited — through any export name whose chain
+    /// lands on a `foo` declaration, so the relation index widens an owner's
+    /// name candidates with these aliases. Keyed by name only: owners sharing
+    /// a declaration name receive the union of their exposure aliases, which
+    /// is sound because the index is a pre-filter and every identity guard
+    /// still runs on each candidate.
+    pub(crate) fn exposed_names_by_owner(&self) -> HashMap<String, HashSet<String>> {
+        let mut candidates: HashSet<(String, String)> = HashSet::new();
+        for (module, names) in &self.local_exports {
+            for name in names {
+                candidates.insert((module.clone(), name.clone()));
+            }
+        }
+        for (module, exported) in self.entries.keys() {
+            candidates.insert((module.clone(), exported.clone()));
+        }
+        // A star edge forwards every named export of its source; enumerate
+        // those (already bounded by MAX_REEXPORT_HOPS) so a barrel-only
+        // export still reaches its declaration.
+        for (module, source) in &self.star_edges {
+            for name in self.enum_exported_names(source) {
+                candidates.insert((module.clone(), name.to_string()));
+            }
+        }
+        let mut exposed: HashMap<String, HashSet<String>> = HashMap::new();
+        for (module, name) in candidates {
+            let mut stack = Vec::new();
+            if let ExportResolution::Found(_, local_name) =
+                self.resolve_export(&module, &name, 0, &mut stack, &|_| false)
+            {
+                exposed.entry(local_name).or_default().insert(name);
+            }
+        }
+        exposed
     }
 
     /// Resolve a normalized module specifier path to the workspace module it
@@ -213,8 +560,26 @@ impl ReExportIndex {
         stack: &mut Vec<(String, String)>,
         mocked: &dyn Fn(&str) -> bool,
     ) -> ExportResolution {
+        self.resolve_export_with_context(module, name, hops, stack, mocked, None)
+    }
+
+    fn resolve_export_with_context(
+        &self,
+        module: &str,
+        name: &str,
+        hops: usize,
+        stack: &mut Vec<(String, String)>,
+        mocked: &dyn Fn(&str) -> bool,
+        enum_context: Option<&EnumBindingContext<'_>>,
+    ) -> ExportResolution {
         let module = self.canonical_module(module);
-        if mocked(&module) {
+        if mocked(&module)
+            || (enum_context.is_some() && self.ambiguous_enum_modules.contains(&module))
+            || (enum_context.is_some_and(|context| context.check_stability)
+                && self
+                    .unstable_enum_roots
+                    .contains(&(module.clone(), name.to_string())))
+        {
             // A mocked barrel or intermediate module replaces every binding
             // it forwards, so the chain no longer reaches the owner.
             return ExportResolution::Unknown;
@@ -226,7 +591,30 @@ impl ReExportIndex {
             return ExportResolution::NotFound;
         }
         stack.push(frame);
-        let resolution = self.resolve_export_frame(&module, name, hops, stack, mocked);
+        let mut resolution =
+            self.resolve_export_frame(&module, name, hops, stack, mocked, enum_context);
+        if let (Some(context), ExportResolution::Found(target_module, target_name)) =
+            (enum_context, &resolution)
+            && context.check_stability
+        {
+            let unsafe_roots: Vec<_> = self
+                .unstable_enum_roots
+                .iter()
+                .filter(|(source, _)| source == &module)
+                .map(|(_, name)| name.clone())
+                .collect();
+            if let Some(imports) = self.enum_imports.get(&module)
+                && self.enum_aliases_taint_binding(
+                    Path::new(&format!("{module}.ts")),
+                    imports,
+                    &unsafe_roots,
+                    (target_module, target_name),
+                    context,
+                )
+            {
+                resolution = ExportResolution::Unknown;
+            }
+        }
         stack.pop();
         resolution
     }
@@ -238,21 +626,32 @@ impl ReExportIndex {
         hops: usize,
         stack: &mut Vec<(String, String)>,
         mocked: &dyn Fn(&str) -> bool,
+        enum_context: Option<&EnumBindingContext<'_>>,
     ) -> ExportResolution {
         if let Some((original, source)) = self.entries.get(&(module.to_string(), name.to_string()))
         {
             if source == module {
                 // Own rename export `export { local as name }` (#4104-B).
+                if let Some(context) = enum_context {
+                    return self.enum_local_binding(module, original, hops, stack, context);
+                }
                 return ExportResolution::Found(module.to_string(), original.clone());
             }
             if hops >= MAX_REEXPORT_HOPS {
                 return ExportResolution::Unknown;
             }
-            return match self.resolve_export(source, original, hops + 1, stack, mocked) {
+            return match self.resolve_export_with_context(
+                source,
+                original,
+                hops + 1,
+                stack,
+                mocked,
+                enum_context,
+            ) {
                 // An explicit `export { N } from './A'` asserts that A
                 // exports N; when A records no deeper fact for it, A's own
                 // binding is the named target.
-                ExportResolution::NotFound => {
+                ExportResolution::NotFound if enum_context.is_none() => {
                     ExportResolution::Found(self.canonical_module(source), original.clone())
                 }
                 resolved => resolved,
@@ -263,6 +662,9 @@ impl ReExportIndex {
             .get(module)
             .is_some_and(|names| names.contains(name))
         {
+            if let Some(context) = enum_context {
+                return self.enum_local_binding(module, name, hops, stack, context);
+            }
             return ExportResolution::Found(module.to_string(), name.to_string());
         }
         // `export *` never forwards the default export.
@@ -284,7 +686,14 @@ impl ReExportIndex {
         star_sources.sort();
         let mut found: Option<(String, String)> = None;
         for star_source in star_sources {
-            match self.resolve_export(star_source, name, hops + 1, stack, mocked) {
+            match self.resolve_export_with_context(
+                star_source,
+                name,
+                hops + 1,
+                stack,
+                mocked,
+                enum_context,
+            ) {
                 ExportResolution::NotFound => {}
                 ExportResolution::Unknown => return ExportResolution::Unknown,
                 ExportResolution::Found(target_module, target_name) => {
@@ -378,22 +787,132 @@ impl ReExportIndex {
 }
 
 /// Export facts of one parsed module, collected on the parse worker.
-#[derive(Debug, Default)]
-struct ModuleExportFacts {
-    entries: Vec<((String, String), (String, String))>,
-    star_edges: Vec<(String, String)>,
-    local_exports: Vec<String>,
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct ModuleExportFacts {
+    pub(crate) entries: Vec<((String, String), (String, String))>,
+    pub(crate) star_edges: Vec<(String, String)>,
+    pub(crate) local_exports: Vec<String>,
+    pub(crate) enum_bindings: Vec<(String, Vec<String>)>,
+    pub(crate) enum_imports: Vec<TypeScriptImport>,
+    pub(crate) unstable_enum_roots: Vec<String>,
 }
 
-fn module_export_facts(
+impl ModuleExportFacts {
+    /// Approximate retained bytes, for the export-facts cache bound.
+    pub(crate) fn approx_bytes(&self) -> usize {
+        type StringPair = (String, String);
+        let string_pair_bytes = |pairs: &Vec<(StringPair, StringPair)>| {
+            pairs
+                .iter()
+                .map(|((a, b), (c, d))| a.len() + b.len() + c.len() + d.len())
+                .sum::<usize>()
+        };
+        let tuple_bytes = |pairs: &Vec<(String, String)>| {
+            pairs.iter().map(|(a, b)| a.len() + b.len()).sum::<usize>()
+        };
+        string_pair_bytes(&self.entries)
+            .saturating_add(tuple_bytes(&self.star_edges))
+            .saturating_add(
+                self.local_exports
+                    .iter()
+                    .map(|name| name.len())
+                    .sum::<usize>(),
+            )
+            .saturating_add(
+                self.enum_bindings
+                    .iter()
+                    .map(|(name, members)| {
+                        name.len().saturating_add(
+                            members.iter().map(|member| member.len() + 1).sum::<usize>(),
+                        )
+                    })
+                    .sum::<usize>(),
+            )
+            .saturating_add(
+                self.enum_imports
+                    .iter()
+                    .map(|import| {
+                        import.source.len()
+                            + import.local.len()
+                            + import.imported.as_ref().map_or(0, |name| name.len())
+                    })
+                    .sum::<usize>(),
+            )
+            .saturating_add(
+                self.unstable_enum_roots
+                    .iter()
+                    .map(|name| name.len())
+                    .sum::<usize>(),
+            )
+    }
+}
+
+pub(crate) fn module_export_facts(
     relative: &Path,
     body: &oxc_allocator::Vec<'_, Statement<'_>>,
+    source: &str,
     alias_map: Option<&TsAliasMap>,
     workspace_root: &Path,
 ) -> ModuleExportFacts {
     // intermediate module path (normalized, no extension)
     let module = normalized_module_path(relative);
-    let mut facts = ModuleExportFacts::default();
+    let mut facts = ModuleExportFacts {
+        enum_imports: extract_imports_for_test_file(body),
+        ..ModuleExportFacts::default()
+    };
+    for statement in body {
+        let declaration = match statement {
+            Statement::TSEnumDeclaration(declaration) => Some(declaration.as_ref()),
+            Statement::ExportNamedDeclaration(export) => match &export.declaration {
+                Some(Declaration::TSEnumDeclaration(declaration)) => Some(declaration.as_ref()),
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(declaration) = declaration else {
+            continue;
+        };
+        if declaration.declare || declaration.r#const {
+            continue;
+        }
+        let mut members = Vec::new();
+        let readable = declaration.body.members.iter().all(|member| {
+            let oxc_ast::ast::TSEnumMemberName::Identifier(name) = &member.id else {
+                return false;
+            };
+            if members.iter().any(|seen| seen == name.name.as_str()) {
+                return false;
+            }
+            members.push(name.name.to_string());
+            member.initializer.as_ref().is_none_or(|value| {
+                matches!(
+                    value,
+                    Expression::NumericLiteral(_) | Expression::StringLiteral(_)
+                )
+            })
+        });
+        let name = declaration.id.name.to_string();
+        if !readable || facts.enum_bindings.iter().any(|(seen, _)| seen == &name) {
+            facts.unstable_enum_roots.push(name);
+        } else {
+            facts.enum_bindings.push((name, members));
+        }
+    }
+    let code = enum_member_guard::enum_member_use_code(body, source);
+    for name in facts
+        .enum_imports
+        .iter()
+        .map(|import| &import.local)
+        .chain(facts.enum_bindings.iter().map(|(name, _)| name))
+    {
+        let namespace = facts
+            .enum_imports
+            .iter()
+            .any(|import| import.local == *name && import.namespace);
+        if !enum_member_guard::enum_member_root_is_read_only(&code, name, namespace) {
+            facts.unstable_enum_roots.push(name.clone());
+        }
+    }
     for stmt in body {
         match stmt {
             Statement::ExportAllDeclaration(export_all) => {
@@ -643,12 +1162,21 @@ pub(crate) fn same_package_root(
 ///
 /// `alias_map` enables tsconfig.json path alias resolution for non-relative
 /// specifiers.  Pass `None` when `resolve_tsconfig_paths` is `false` (explicit opt-out).
+///
+/// `relation_index` pre-filters pass 1 to the tests that can possibly relate
+/// to the owner (body-name, import-shape, or re-export-exposure keys;
+/// #10028). Every identity guard still runs on each survivor, so this is a
+/// scan restriction, not a semantic change; the module-entry and heuristic
+/// fallback passes only run when pass 1 found nothing and keep their
+/// previous scans.  Pass `&RelationIndex::empty()` (test-only) to preserve
+/// the unindexed full scan.
 pub(crate) fn related_test_candidates<'a>(
     owner: &TypeScriptOwner,
     all_tests: &'a [TypeScriptTest],
     workspace_root: Option<&Path>,
     reexport_index: &ReExportIndex,
     alias_map: Option<&TsAliasMap>,
+    relation_index: &RelationIndex,
 ) -> Vec<TypeScriptRelatedCandidate<'a>> {
     let package_scope = workspace_root.map(|root| OwnerPackageScope::new(&owner.file, root));
     let in_owner_package = |test: &&TypeScriptTest| {
@@ -656,8 +1184,9 @@ pub(crate) fn related_test_candidates<'a>(
             .as_ref()
             .is_none_or(|scope| scope.contains(&test.file))
     };
-    let mut candidates: Vec<TypeScriptRelatedCandidate<'a>> = all_tests
-        .iter()
+    let mut candidates: Vec<TypeScriptRelatedCandidate<'a>> = relation_index
+        .candidates(owner, all_tests)
+        .into_iter()
         .filter_map(|test| {
             owner_call_relation(test, owner, reexport_index, alias_map, workspace_root)
                 .map(|relation| related_candidate(test, relation, owner, alias_map, workspace_root))
@@ -666,9 +1195,20 @@ pub(crate) fn related_test_candidates<'a>(
     // Same-module entry reach is admitted only when no test calls the owner
     // itself, so a direct relation's oracle alone decides exposure.
     if candidates.is_empty() && !owner.module_entries.is_empty() {
-        candidates = all_tests
+        // Each entry's stand-in owner has its own name/import keys; union the
+        // indexed candidates so a name-less entry test is still reachable
+        // without rescanning the whole corpus.
+        let entry_indices: BTreeSet<u32> = owner
+            .module_entries
             .iter()
-            .filter(in_owner_package)
+            .flat_map(|entry| {
+                relation_index.candidate_indices(&module_entry_owner(owner, entry), all_tests.len())
+            })
+            .collect();
+        candidates = entry_indices
+            .into_iter()
+            .map(|index| &all_tests[index as usize])
+            .filter(|test| in_owner_package(test))
             .filter(|test| {
                 module_entry_relation(test, owner, reexport_index, alias_map, workspace_root)
             })
@@ -903,6 +1443,22 @@ pub(crate) fn module_entry_owner(
     owner: &TypeScriptOwner,
     entry: &TypeScriptModuleEntry,
 ) -> TypeScriptOwner {
+    if let Some(method_kind) = entry.class_member {
+        // A sibling method of the owner's own class: a test reaches it
+        // through a receiver the test constructs, like any instance method.
+        return TypeScriptOwner {
+            name: entry.name.clone(),
+            owner_kind: OwnerKind::Method,
+            exported_as_default: false,
+            default_object_member: false,
+            method_kind,
+            module_entries: Vec::new(),
+            params: Vec::new(),
+            arity: None,
+            source_text: None,
+            ..owner.clone()
+        };
+    }
     TypeScriptOwner {
         name: entry.name.clone(),
         owner_kind: OwnerKind::Function,
@@ -910,6 +1466,8 @@ pub(crate) fn module_entry_owner(
         exported_as_default: entry.exported_as_default,
         class_default_export: false,
         default_object_member: false,
+        commonjs_default_export: false,
+        commonjs_whole_function: false,
         method_kind: TypeScriptMethodKind::Ordinary,
         module_entries: Vec::new(),
         params: Vec::new(),
@@ -944,6 +1502,7 @@ pub(crate) fn module_initializer_observer_relation(
             return expect_actual_references_member(&test.body_text, &import.local, &owner.name);
         }
         import.imported.as_deref() == Some(owner.name.as_str())
+            && !owner.commonjs_whole_function
             && !local_identifier_declared_in_test_body(&test.body_text, &import.local)
             && expect_actual_references_identifier(&test.body_text, &import.local)
     })
@@ -984,11 +1543,15 @@ fn module_value_use_relation(
             return false;
         }
         if import.namespace {
-            return contains_member_reference(body, &import.local, &owner.name)
+            return !owner.commonjs_whole_function
+                && contains_member_reference(body, &import.local, &owner.name)
                 && !local_identifier_declared_in_test_body(body, &import.local);
         }
         import.imported.as_deref().is_some_and(|imported| {
-            imported == owner.name || (imported == "default" && owner.exported_as_default)
+            (imported == owner.name && !owner.commonjs_whole_function)
+                || (imported == "default"
+                    && owner.exported_as_default
+                    && !owner.commonjs_whole_function)
         }) && !local_identifier_declared_in_test_body(body, &import.local)
             && contains_identifier_reference(body, &import.local)
     })
@@ -1822,6 +2385,7 @@ pub(crate) fn import_alias_owner_locals<'t>(
             !import.namespace
                 && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
                 && import.imported.as_deref() == Some(owner.name.as_str())
+                && !owner.commonjs_whole_function
                 && import.local != owner.name
                 && contains_call_name(&test.body_text, &import.local)
                 && !local_identifier_declared_in_test_body(&test.body_text, &import.local)
@@ -1891,7 +2455,7 @@ pub(crate) fn default_import_owner_locals<'t>(
     test.imports_in_file
         .iter()
         .filter(|import| {
-            !import.namespace
+            (!import.namespace || commonjs_default_binding(import, owner))
                 && import.imported.as_deref() == Some("default")
                 && import.local != owner.name
                 && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
@@ -2100,13 +2664,18 @@ fn test_references_owner(
             return false;
         }
         if import.namespace {
-            return contains_member_reference(body, &import.local, &owner.name);
+            // `k.triple` is a property of a CommonJS function export, not it.
+            return !owner.commonjs_whole_function
+                && contains_member_reference(body, &import.local, &owner.name);
         }
         // Same default-export rule as `import_references_owner_call` (#4103):
         // a default import binds the owner only when the owner is the
         // module's default export.
         import.imported.as_deref().is_some_and(|imported| {
-            imported == owner.name || (imported == "default" && owner.exported_as_default)
+            (imported == owner.name && !owner.commonjs_whole_function)
+                || (imported == "default"
+                    && owner.exported_as_default
+                    && !owner.commonjs_whole_function)
         }) && !local_identifier_declared_in_test_body(body, &import.local)
             && contains_identifier_reference(body, &import.local)
     })
@@ -2205,8 +2774,14 @@ pub(crate) fn find_related_tests(
     reexport_index: &ReExportIndex,
     alias_map: Option<&TsAliasMap>,
 ) -> Vec<RelatedTest> {
-    let candidates =
-        related_test_candidates(owner, all_tests, workspace_root, reexport_index, alias_map);
+    let candidates = related_test_candidates(
+        owner,
+        all_tests,
+        workspace_root,
+        reexport_index,
+        alias_map,
+        &RelationIndex::empty(),
+    );
     related_tests_for_candidates(&candidates, None)
 }
 
@@ -2255,6 +2830,8 @@ pub(crate) fn related_tests_for_candidates(
                 relation_reason,
                 relation_confidence,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }
         })
         .collect()
@@ -2535,7 +3112,7 @@ fn owner_name_import_binding_mismatch(
         .iter()
         .filter(|import| import.local == owner.name)
         .map(|import| {
-            if import.namespace {
+            if import.namespace && !commonjs_default_binding(import, owner) {
                 return Some(OwnerBindingMismatch::Unrelated);
             }
             match import_source_resolution(
@@ -2558,7 +3135,9 @@ fn owner_name_import_binding_mismatch(
                         if imported == "default" {
                             !owner.exported_as_default
                         } else {
-                            imported != owner.name.as_str()
+                            // A named binding of a CommonJS function export is
+                            // a property of the function, not the owner.
+                            imported != owner.name.as_str() || owner.commonjs_whole_function
                         }
                     })
                     .then_some(OwnerBindingMismatch::Unrelated),
@@ -2579,14 +3158,32 @@ fn owner_export_imported_from_unrelated_source(
     })
 }
 
+/// A literal `require()` binding (recorded as a default-named namespace
+/// binding) of a module whose whole export is the owner function
+/// (`module.exports = <function>`, RIPR-SPEC-0243 rule 19).
+pub(crate) fn commonjs_default_binding(import: &TypeScriptImport, owner: &TypeScriptOwner) -> bool {
+    import.namespace
+        && import.imported.as_deref() == Some("default")
+        && owner.commonjs_default_export
+}
+
 fn import_references_owner_call(
     import: &TypeScriptImport,
     test: &TypeScriptTest,
     owner: &TypeScriptOwner,
 ) -> bool {
     let body_text = test.body_text.as_str();
+    // RIPR-SPEC-0243 rule 19: `require()` of a CommonJS `module.exports =
+    // <function>` module returns the function itself, so the bare local call
+    // reaches the owner. The shadow guard matches the default-import arm.
+    if commonjs_default_binding(import, owner) {
+        return contains_call_name(body_text, &import.local)
+            && !local_identifier_declared_in_test_body(body_text, &import.local)
+            && !test.written_locals_in_file.contains(&import.local);
+    }
     if import.namespace {
-        return contains_member_call_name(body_text, &import.local, &owner.name);
+        return !owner.commonjs_whole_function
+            && contains_member_call_name(body_text, &import.local, &owner.name);
     }
     // RIPR-SPEC-0243 rule 5: a default import of a module whose `export
     // default { name }` object holds the owner reaches it as
@@ -2606,7 +3203,10 @@ fn import_references_owner_call(
     // local when the owner IS that default export. An anonymous default
     // already matches via `owner.name == "default"`.
     import.imported.as_deref().is_some_and(|imported| {
-        imported == owner.name || (imported == "default" && owner.exported_as_default)
+        (imported == owner.name && !owner.commonjs_whole_function)
+            || (imported == "default"
+                && owner.exported_as_default
+                && !owner.commonjs_whole_function)
     }) && contains_call_name(body_text, &import.local)
         // Shadow guard (#4102): the same test-body declaration guard the
         // alias arm applies — a locally re-declared `local` reaches the
@@ -2782,6 +3382,67 @@ fn out_dir_map_for(root: &Path) -> Option<TsOutDirMap> {
 struct RunResolverCache {
     directory_modules: HashMap<(PathBuf, String), Option<String>>,
     out_dir_maps: HashMap<PathBuf, Option<TsOutDirMap>>,
+    /// The committed-snapshot reader's verdict per config directory
+    /// (RIPR-SPEC-0258, #7708): `Some(mentions_vitest)` when the directory's
+    /// configs are clean, `None` when one refuses. Keyed by the directory and
+    /// whether it may be a symlink (the analysis root).
+    config_directories: HashMap<(PathBuf, bool), Option<bool>>,
+    /// Tracked `*.snap` files per analysis root (`None`: unknown).
+    tracked_snapshots: HashMap<PathBuf, Option<std::sync::Arc<HashSet<String>>>>,
+}
+
+/// Memoize `compute` for one analysis run, keyed by `key`, in the field
+/// `slot` picks. Outside a [`DirectoryModuleCacheScope`] nothing is stored,
+/// so no answer outlives the run that computed it.
+fn run_memoized<K: Clone + Eq + std::hash::Hash, V: Clone>(
+    key: &K,
+    slot: impl Fn(&mut RunResolverCache) -> &mut HashMap<K, V>,
+    compute: impl FnOnce() -> V,
+) -> V {
+    let cached = RUN_RESOLVER_CACHE.with(|cache| {
+        cache.try_borrow_mut().ok().and_then(|mut cache| {
+            cache
+                .as_mut()
+                .and_then(|cache| slot(cache).get(key).cloned())
+        })
+    });
+    if let Some(value) = cached {
+        return value;
+    }
+    let value = compute();
+    RUN_RESOLVER_CACHE.with(|cache| {
+        if let Ok(mut cache) = cache.try_borrow_mut()
+            && let Some(cache) = cache.as_mut()
+        {
+            slot(cache).insert(key.clone(), value.clone());
+        }
+    });
+    value
+}
+
+/// Per-run memo of one config directory's snapshot-config verdict.
+pub(crate) fn run_cached_config_directory(
+    directory: &Path,
+    allow_symlink: bool,
+    compute: impl FnOnce() -> Option<bool>,
+) -> Option<bool> {
+    run_memoized(
+        &(directory.to_path_buf(), allow_symlink),
+        |cache| &mut cache.config_directories,
+        compute,
+    )
+}
+
+/// Per-run memo of the tracked `*.snap` files under `root`.
+pub(crate) fn run_cached_tracked_snapshots(
+    root: &Path,
+    compute: impl FnOnce() -> Option<std::sync::Arc<HashSet<String>>>,
+) -> Option<std::sync::Arc<HashSet<String>>> {
+    run_memoized(
+        &root.to_path_buf(),
+        |cache| &mut cache.tracked_snapshots,
+        compute,
+    )
 }
 
 thread_local! {
@@ -2931,7 +3592,11 @@ fn strip_typescript_module_extension(path: &str) -> String {
     path.to_string()
 }
 
-fn contains_member_call_name(body_text: &str, object_name: &str, method_name: &str) -> bool {
+pub(crate) fn contains_member_call_name(
+    body_text: &str,
+    object_name: &str,
+    method_name: &str,
+) -> bool {
     if !is_safe_javascript_identifier(object_name) || !is_safe_javascript_identifier(method_name) {
         return false;
     }

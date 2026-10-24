@@ -56182,3 +56182,38 @@ fn gh_pr_status_real_cli_schema() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// #5531: the capability registry checks are hosted. The docs-gate step must
+/// invoke both commands, key off the SUPPORT_TIERS.md, LANGUAGE_ADAPTER_PREVIEW.md and docs/specs paths, and
+/// must not use a failure-swallowing form.
+#[test]
+fn routed_rust_docs_gate_runs_capability_registry_checks() -> Result<(), String> {
+    let workflow = routed_rust_workflow_text()?;
+    let docs_gate = workflow
+        .split("\n  docs-gate:")
+        .nth(1)
+        .and_then(|rest| rest.split("\n  result:").next())
+        .ok_or("routed-rust.yml must declare a docs-gate job before result")?;
+    for needle in [
+        "cargo xtask capability-docs --check",
+        "cargo xtask check-capability-producers",
+        "docs/status/SUPPORT_TIERS\\.md",
+        "docs/LANGUAGE_ADAPTER_PREVIEW\\.md",
+        "core.quotePath=false",
+        "docs/specs/",
+    ] {
+        if !docs_gate.contains(needle) {
+            return Err(format!("docs-gate must contain `{needle}`"));
+        }
+    }
+    for line in docs_gate.lines().map(str::trim) {
+        if (line.contains("capability-docs") || line.contains("check-capability-producers"))
+            && line.contains("|| true")
+        {
+            return Err(format!(
+                "docs-gate must not swallow capability failures: {line}"
+            ));
+        }
+    }
+    Ok(())
+}

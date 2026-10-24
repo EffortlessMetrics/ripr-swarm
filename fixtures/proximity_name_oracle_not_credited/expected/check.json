@@ -115,7 +115,7 @@
           "relation_reason": "owner_named_test",
           "relation_confidence": "medium",
           "miss": "no_call_path",
-          "why": "no call to the changed code found; linked by name only"
+          "why": "no established call path to the changed code; linked by name only"
         },
         {
           "name": "malformedsource_variant_is_distinct",
@@ -127,7 +127,7 @@
           "relation_reason": "weak_token_substring",
           "relation_confidence": "low",
           "miss": "no_call_path",
-          "why": "no call to the changed code found; linked by name only"
+          "why": "no established call path to the changed code; linked by name only"
         }
       ],
       "stop_reasons": [],
@@ -244,7 +244,7 @@
           "relation_reason": "owner_named_test",
           "relation_confidence": "medium",
           "miss": "no_call_path",
-          "why": "no call to the changed code found; linked by name only"
+          "why": "no established call path to the changed code; linked by name only"
         },
         {
           "name": "malformedsource_variant_is_distinct",
@@ -256,7 +256,7 @@
           "relation_reason": "weak_token_substring",
           "relation_confidence": "low",
           "miss": "no_call_path",
-          "why": "no call to the changed code found; linked by name only"
+          "why": "no established call path to the changed code; linked by name only"
         }
       ],
       "stop_reasons": [],
