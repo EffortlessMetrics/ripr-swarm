@@ -19,7 +19,7 @@ pub(crate) mod language_outcome;
 pub(crate) mod new_test_target;
 pub(crate) mod path_glob;
 mod pipeline;
-pub(crate) use extract::mask_comments_and_strings;
+pub(crate) use extract::{mask_comments_and_strings, rust_identity_spans};
 pub(crate) use pipeline::NON_TEXT_ONLY_DETAIL;
 mod probes;
 pub(crate) mod repair_route;
@@ -40,6 +40,7 @@ mod summary;
 mod sync_memo;
 mod syntax;
 mod test_changes;
+mod trybuild_fixtures;
 pub(crate) use test_changes::{DiffTestChanges, diff_test_changes};
 pub(crate) mod test_grip_evidence;
 pub(crate) mod test_stub;
@@ -1027,6 +1028,10 @@ pub struct AnalysisResult {
     pub(crate) rust_diagnostic_origins: crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
     /// Raw per-path Rust producer observations, separate from decoded geometry.
     pub(crate) rust_consumed_sources: crate::analysis::consumed_source::ConsumedRustSources,
+    /// Crate-private mixed-language completeness view of this run's sealed
+    /// aggregate (#6475). A sidecar for in-process consumers (the editor);
+    /// never serialized and not part of the public output contract.
+    pub(crate) language_view: Option<language_outcome::LanguageCompletenessView>,
 }
 
 /// Default language list when callers do not pass `[languages]` config.

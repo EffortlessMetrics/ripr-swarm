@@ -15,6 +15,8 @@ Linked plan:
 Linked issues:
 
 - #4478 (confirm a return value pinned by `assert_eq!` on the owner's own call)
+- #9478 (bounded typed function-pointer calls; iterator, macro and executor
+  credit remain separate work)
 - #5027 (share bounded equality execution admission with ErrorPath and Predicate)
 - #5040 (typed async-harness execution provenance; explicit unsupported boundary)
 - #3727 (parser-backed call identity; this spec adds the owner's item
@@ -403,6 +405,49 @@ wrong credits.
    unrelated `let (want, _) = (12, 0);` keeps the pin. Residual, shared with
    the bare call on main: an item `const` or `static` initialized from a
    `const fn` owner (`const W: u32 = crate::weight(4);`) is not followed.
+   A sync free function returning a primitive scalar may also be pinned through
+   `let f: fn(..) -> Scalar = owner_path; assert_eq!(f(args), literal)`
+   (#9478), with either operand order. The shared local-alias reader requires
+   one unattributed immutable ASCII identifier binding in the test's root
+   statement list, a safe Rust `fn` type (no ABI,
+   `unsafe`, type alias or cast), a plain function path, and only direct calls
+   of the binding after its definition. A bare target is admitted only when
+   the parsed test body binds no value of that name; the existing import,
+   module, rival-owner and cfg gates still resolve its identity. No other
+   declaration may bind the pointer's name (raw spellings count as the same
+   name), and body-local glob imports refuse the alias. The original assertion
+   must immediately follow that binding in the same root statement list,
+   matched by both source text and line. Calls must
+   close on one line and the existing 64-alias/body cap applies. The resolved
+   call supplies reach and its own arguments, and the pin checks it under the
+   existing owner and assertion gates. The original assertion's exact text,
+   location and execution context are preserved. The changed tail must have
+   the ordinary unconditional return-path gate, and the expected operand must
+   be a literal. A blind comparison, a value computed from the pointer, any
+   mutation, shadow, capture or forwarding of the pointer, and a deferred
+   assertion supply no pointer pin. A `fn(..)` type is not a nested function
+   declaration; actual nested `fn` items retain the existing refusal. Async,
+   associated, iterator and macro-generated owner credit is outside this rule.
+   For a masked integer-cast tail, the selected pointer call must itself pass
+   one unsigned literal that sets every nonzero mask bit the cast keeps. The
+   mask, parameter and unique owner must be readable by the existing mask
+   rules. The original parameter must reach the mask unchanged under the
+   existing operand-rebinding refusal: an owner binding, assignment, closure
+   or control-flow construct supplies no masked pointer pin. A call argument
+   that sets every mask bit cannot certify a different operand produced by
+   shadowing that parameter. Partial inputs are not combined across indirect calls, and an
+   unread mask, zero kept bits or nonliteral input supplies no pointer pin.
+   The ordinary direct-call mask guard retains its existing collective rule.
+   A selected pointer call also supplies no pin when the existing integer fold
+   proves its arguments give the same result before and after the change, and
+   the existing bounded input grid finds another input that separates them.
+   Thus `n.min(5)` changed to `n.min(6)` is not pinned by `f(3) == 3`, while
+   `f(9) == 6` may pin it. Either equality order and a qualified binding have
+   the same rule. The separating-input preparation is lazy and reused per pin;
+   unknown folds and equivalent rewrites retain today's reading. This veto
+   reads only the selected call's arguments and leaves ordinary direct-call
+   infection and owner-identity rules unchanged.
+
 2. Call identity, from the parser's item-container fact on the owner
    (`FunctionFact.item`: free, local, inherent, trait impl, or trait, with
    the `self`-receiver and body flags; the lexical fallback leaves it
@@ -1822,6 +1867,104 @@ not hold because the line has a second call; an argument passed by
 reference (`check(&actual, "4")`); a helper over `&str`, a workspace type
 or two different types; and `.to_string()` or `.into()` expected values.
 
+### Closure-callback assertion facts (#9981)
+
+A same-file evidence helper lends the assertions that follow its invocation of
+a closure parameter to a test that passes a synchronous, call-making closure
+literal at that parameter (`run_test("hi bob", || greet("bob"))`, helper body
+`let got = f(); assert_eq!(got, want);`). This adds observation facts only. It
+is not an owner-return pin or changed-sink discrimination: the existing
+classifier still decides whether an assertion observes the changed behavior,
+and an unrelated exact-value assertion can stay strong in shape while the
+finding is weakly exposed with unconfirmed observation.
+
+Admission is a small, explicit, fail-closed grammar, not general execution
+analysis:
+
+- Test side: the helper is called as a single-segment free function by a
+  statement the test body reaches unconditionally and in order (`call;`, a
+  tail call, or `let PAT = call;` without `else`), after only statements
+  whose parsed syntax holds no `return`, `?`, `break`, `continue` or loop and
+  no macro outside the trusted set (`TRUSTED_MACRO_NAMES` in `owner_pin.rs`:
+  the assertion, formatting, printing, `vec!`, `matches!` and `panic!`-family
+  macros and similar, none of which can `return` from the enclosing function
+  on its own; not only assertion and formatting macros) and no
+  closure-owned `return`, `?` or `yield` anywhere in the statement, including
+  inside the callback literal itself (`|| { gate()?; true }` earns no credit;
+  fail-closed, a deliberate narrowing relative to the raw early-exit scan).
+  Macro arguments
+  are token trees the parser does not read as expressions, so a hidden exit
+  (`format!("{}", { return; x })`, `format!("{}", x?)`) is refused through the
+  same trusted-macro operand escape authority the owner-pin path uses
+  (`owner_pin::has_escape`), not a second token scan: it is an exit barrier
+  for the current call's operands, preceding statements and tails, and for the
+  helper's own prefix, before any fact is copied. Benign arguments
+  (`format!("{}", x)`) do not block. The callback argument is a closure literal
+  (not `async`, not boxed, not a reference) whose body makes a call that is
+  not under a nested closure, `async` block or `fn`.
+- Helper side: the callback parameter is an immutable plain identifier bound
+  once (a `mut` binding is refused outright, which also closes parenthesized,
+  destructuring and `mem::replace` reassignment, and any `&mut` borrow that
+  mentions the name is refused), and invoked by a direct statement of the helper body (`f();`, tail `f()`, `let PAT = f();`)
+  under the same reached-in-order rule. The helper invokes exactly one
+  callback parameter, and the test reaches it with a call-making closure
+  literal; a helper that invokes two or more closure parameters is not
+  credited.
+- Ordering: only parser-backed assertions that start after the invoking
+  statement ends are copied, compared by source position (line, then byte
+  column), so `let got = f(); assert_eq!(..)` on one line is credited and
+  `assert_eq!(..); f()` on one line is not. On a shared line the assertion is
+  identified by its parser macro site, never by text search, so a comment or
+  string repeating the spelling cannot hide or move it; an assertion that does
+  not map to exactly one macro site, including a repeated identical spelling,
+  is refused. The callback parameter's own call is not added to the test.
+
+The credit rides the existing same-file helper eligibility (helper role,
+single definition, same module, no cfg, no `use`/nested `fn`, non-async).
+Not credited by this rule: a callback merely forwarded to another function
+(tracing's `with_default(subscriber, fun)`, #9981's original example),
+`assert_eq!(f(), x)` or other invocations inside macro arguments, boxed or
+by-reference closures, and invocations under branches, loops, or after an
+earlier exit.
+
+A plain helper (one that invokes no parameter directly, so it never runs a
+closure parameter or only forwards it, as tracing's `with_default(subscriber,
+fun)` does) lends nothing to a test that passes it an argument containing a
+call-making closure literal (#9997). The check reuses the test-side closure
+grammar above, without the eager-reach and async exemptions because it only
+withholds: any direct call to the helper, at any argument position and under
+any branch, whose argument subtree holds a closure literal with a call or
+method call in its body refuses the credit, so a bare literal, `&|| ..`,
+`(|| ..)` and `Box::new(|| ..)` are all withheld; a literal only inside a nested
+`fn` item in the argument is not, and a test body that does not parse refuses
+credit. The withholding is per helper, not per parameter or per call: a helper
+whose own assertion observes the owner directly also loses credit for a test
+that hands it any call-making closure, and one such call withholds the helper
+from the whole test (a missed advisory, fail-closed). Likewise a closure an
+iterator or `Option` adapter runs eagerly inside the argument
+(`xs.iter().map(|v| gate(*v)).count()`, `.any(..)`, `.unwrap_or_else(|| ..)`)
+is withheld although the base credited it: a deliberate missed advisory. A closure bound to a name first is withheld too
+(`let f = || ..; run(f)`): an argument that is exactly a single-segment name
+(also `&f`, `(f)`), with an earlier `let f = <call-making closure literal>` (the
+literal bare, `&`-borrowed or parenthesized, a plain identifier pattern) in a
+block that encloses the helper call. Rebinding, `mut` and shadowing do not
+exempt it, so `let f = || ..; let f = 5; run(f)` is a deliberate missed
+advisory instead of a guess about which binding the name reaches; a binding in a
+block that does not enclose the call, one after the call, a closure with no
+call, a non-closure initializer and a destructuring pattern do not withhold.
+This reuses the same scan, with no second pass. Not recognized, so they keep
+the plain-helper credit (known residual): a function item passed by name
+(`run(make)` with `fn make() { gate(11) }`; resolving it needs a file-level
+lookup this text-only scan does not have, and it is not decided fail-closed
+here), a boxed named closure (`let f = Box::new(|| ..)`), and a closure with no
+call. Other indirections also keep credit as residuals: an alias (`let h = f;
+run(h)`), a deferred assignment (`let f; f = || ..;`), a conditional
+initializer, and a wrapping expression (`f.clone()`, `f as fn()`, a struct field
+or tuple holding the closure). The scan does not model shadowing, so a closure
+parameter `|f| run(1, f)` beside an outer call-making `let f` is withheld (a
+missed advisory). The tracing forwarding shape is a limitation, not a credit, until the
+receiving call is itself resolved.
+
 ## Required Evidence
 
 - Rule 7 (#6482): in the RIPR-SPEC-0219 verdict corpus, `grid-arith-helper`
@@ -2286,6 +2429,45 @@ assertions. This repair shares the existing callback without that larger migrati
 
 ## Test Mapping
 
+- Closure-callback helper facts (#9981): the `closure_callback_*` controls in
+  `crates/ripr/src/analysis/facts/test_helpers/tests.rs` (direct, generic
+  bound, same-line post-invocation positives; two invoked callbacks, branch,
+  loop, early exit, opaque macro, reassignment, async closure, boxed and
+  by-reference closures, same-line pre-invocation and repeated spelling,
+  cross-module helper negatives) and the unit controls in
+  `crates/ripr/src/analysis/syntax/ra/closure_callbacks/tests.rs` (including
+  the hidden-macro-exit negatives: a `return` or `?` inside a transparent
+  macro's operand of the current call, of a preceding statement or of a tail,
+  a return or `?` written in the callback literal, and the benign
+  `format!("hi {}", "bob")` operand positive) pin
+  observation-fact admission, not a changed-sink or owner-return claim.
+
+- `crates/ripr/tests/owner_pin_execution/function_pointer.rs`:
+  `function_pointer_pins_only_the_observed_owner_value` and
+  `function_pointer_runtime_controls_observe_the_same_value` (#9478) compare
+  the same admitted and blind/rebound/rival/dead subjects through the public
+  API and compiled neutral/wrong-value runs. Every runtime subject must
+  compile, enumerate one test and execute it before its outcome is checked.
+  The scope-escape, raw-shadow, glob-shadow and cfg-disabled-binding controls
+  also live in `fixtures/owner_return_pin_pointer_*` and the evidence-promotion
+  honesty corpus, where none may promote the changed return.
+  `function_pointer_mask_pins_require_an_individually_discriminating_input`
+  and `function_pointer_mask_runtime_controls_match_the_selected_input`
+  keep partial-bit inputs uncredited while an all-bit input catches a narrower
+  mask, including qualified/reversed calls and additional unread aliases.
+  `function_pointer_rebound_mask_inputs_do_not_pin_the_changed_mask` and
+  `function_pointer_rebound_mask_runtime_controls_miss_the_narrower_mask`
+  retain owner-side constant and partial-bit shadows: an all-bit argument
+  cannot pin the mask when both neutral and narrower masks pass the same
+  one-test native assertion. The constant-shadow case is also retained in
+  `fixtures/owner_return_pin_pointer_mask_rebound` and the honesty corpus.
+
+  `function_pointer_invisible_inputs_withhold_exposure` and
+  `function_pointer_invisible_runtime_controls_match_the_input` retain bare,
+  qualified and reversed pointer calls, plus direct-call twins. Both versions
+  pass at a neutral input; a separating input fails the baseline. The neutral
+  pointer case is retained in `fixtures/owner_return_pin_pointer_invisible_input`.
+
 - Unit (`crates/ripr/src/analysis/classify/owner_pin/tests.rs`): the bytes
   shape; trait scope; competing definitions (override, inherent twin,
   `macro_rules!` body, forward, free twin); receiver typing; slice-method
@@ -2491,6 +2673,16 @@ assertions. This repair shares the existing callback without that larger migrati
 
 ## Implementation Mapping
 
+- `crates/ripr/src/analysis/facts/test_helpers.rs` and
+  `crates/ripr/src/analysis/syntax/ra/closure_callbacks.rs`: same-file
+  closure-callback observation facts (`closure_argument_positions`,
+  `invoked_callback_params`, source-position ordering in `starts_after`).
+
+- `crates/ripr/src/analysis/extract/calls/function_alias.rs`: shared bounded
+  alias reader and `local_fn_pointer_call`; `extract/calls.rs` retains the
+  call-fact producer and its per-line budget. The scalar free-function pin
+  resolves the returned path through its existing identity gates (#9478).
+
 - `crates/ripr/src/analysis/syntax/ra.rs`: `function_item_fact` fills
   `FunctionFact.item`.
 - `crates/ripr/src/analysis/facts/model.rs`: `FunctionContainer`,
@@ -2694,4 +2886,10 @@ the same side of both thresholds keep the gap.
 
 The intermediate-input reading also declines when the owner may compare a value other than the caller's: any occurrence of the parameter name in the body before the compared line (a `let`, pattern, `for`, `if let`, `match` arm or closure binding, or any other use), a binding form beside it on the compared line, a `mut` binding or borrow of it, or any assignment to it (`x += 5`). The gap stays in those cases (#9147).
 
-Only unqualified owner calls supply separating inputs: a module-qualified or method call of the same name (`rival::thr(101)`) may be another function and is never counted, and helper-transferred rows are not read (#9147).
+Only unqualified owner calls supply separating inputs: a module-qualified or method call of the same name (`rival::thr(101)`) may be another function and is never counted by this path, and helper-transferred rows are not read (#9147). The shared producer's resolver (#9218, below) is more permissive for equality-boundary inputs; this path keeps its stricter rule.
+
+The shared owner call-value producer (`call_values_for_owner`, which feeds the equality-boundary reading `equality_observed`/`exact_rows` and the helper-transferred entry rows) reads a module-qualified free call of the owner's name only when its spelled path settles on the owner: through the same-named-rival call identity when the owner has rivals, otherwise through the owner-alone identity, which reads `crate`/`self`/`super`, in-file `mod` names, `use`-bound modules (`use crate::pricing; pricing::thr(..)`, renames included) and the owner crate's own name from another crate's test, and finally a path anchored at the owner's crate whose target module re-exports the owner through a top-level `pub use` item of the owner crate target's own module file (a `main.rs`, `src/bin` or `tests` file never counts), whose leaf is not renamed and whose path resolves to the owner's own module (`pub use internal::inner;`, `pub use crate::internal::*;`). Explicit leaves take precedence over globs (an explicit dependency export beats an owner glob and an explicit owner export beats a dependency glob), a dependency glob beside an owner glob is ambiguous and declines, and a leading `::`, an undeclared first segment, a nested-scope `use` or an unreadable tree does not qualify (`pub use other_dep::thr;`, `pub use other_dep::*;`). A `crate::` qualifier counts only from a test in the owner's own crate target. A bare call, a type-path call and a method call keep their reading; any other qualified spelling (`rival::thr(101)`, a module bound to something else, a dependency path, a glob-bound or unreadable qualifier, a `#[path]`-remapped package) supplies no input row (#9218).
+
+Accepted tradeoff: a genuine owner call spelled through a path ripr cannot resolve is declined, so its input is not read and a missing-equality gap can stay open although a test exercises the boundary. That direction was chosen because crediting an unresolved qualified call lets another function's input suppress the gap and reads `Exposed` wrongly. The filter covers the direct owner calls and the helper-transferred entry rows (`chain_entry_rows`). It does not cover the computed-input continuation (`computed_input_parameters`), which reads calls by name and stays unfiltered because it is conservative (it only ever unresolves a boundary), nor the adaptor element-run reader (`sequence_runs`): dropping only some of its calls could remove the discriminating element and create an actionable gap. The call-value producer and the chain entry rows are the only consumers filtered. A re-export counts only from the owner crate target's own module file (a `main.rs`, `src/bin` or `tests` file is another crate) and only from a top-level `pub use` item whose leaf is not renamed; a `use` inside a nested module binds there and never counts.
+
+Out of scope: a bare call whose name an import binds to a rival (`use rival::thr; thr(5)`) keeps the name-only reading it always had, because the resolver filters only module-qualified spellings; resolving bare imports is a separate change.

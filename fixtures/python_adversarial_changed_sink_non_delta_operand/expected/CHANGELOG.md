@@ -553,20 +553,7 @@ Updated:
 ## Pending — python_adversarial_changed_sink_non_delta_operand (25)
 
 Reason:
-RIPR-SPEC-0319: human-full gains a Next line under static limitations and stop reasons
-
-Command:
-`cargo xtask goldens bless python_adversarial_changed_sink_non_delta_operand --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending — python_adversarial_changed_sink_non_delta_operand (26)
-
-Reason:
-RIPR-SPEC-0319: reviewed Next line wording and gap-evidence dedup in human-full
+RIPR-SPEC-0122: bounded evidence legend defines the Summary count terms (#9244 item 4)
 
 Command:
 `cargo xtask goldens bless python_adversarial_changed_sink_non_delta_operand --reason "..."`

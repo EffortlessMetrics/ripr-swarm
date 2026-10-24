@@ -157,20 +157,7 @@ Updated:
 ## Pending — rust_test_written_expected_file_bound (13)
 
 Reason:
-RIPR-SPEC-0319: human-full gains a Next line under static limitations and stop reasons
-
-Command:
-`cargo xtask goldens bless rust_test_written_expected_file_bound --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending — rust_test_written_expected_file_bound (14)
-
-Reason:
-RIPR-SPEC-0319: reviewed Next line wording and gap-evidence dedup in human-full
+RIPR-SPEC-0122: bounded evidence legend defines the Summary count terms (#9244 item 4)
 
 Command:
 `cargo xtask goldens bless rust_test_written_expected_file_bound --reason "..."`

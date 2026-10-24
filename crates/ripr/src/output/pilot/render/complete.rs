@@ -453,12 +453,9 @@ pub(crate) fn render_pilot_summary_md(
                 .first()
                 .map(|entry| repair_edit_scope(entry))
                 .unwrap_or_default();
-            if context
-                .current_change
-                .is_some_and(crate::output::pilot::PilotCurrentChange::is_uncommitted)
-                && let Some(file) = top
-                    .first()
-                    .and_then(|entry| repair_inline_target_file(entry))
+            if let Some(file) = top
+                .first()
+                .and_then(|entry| uncommitted_inline_target(context.root, entry))
             {
                 out.push_str(&format!(
                     "Before starting the repair: if `{file}` has uncommitted edits, commit or stash them; the repair start refuses a target file that differs from HEAD.\n\n",
@@ -793,12 +790,9 @@ pub(crate) fn render_pilot_terminal(
         .and_then(|entry| repair_start_command(context.root, entry))
     {
         out.push_str("Next, in order:\n");
-        if context
-            .current_change
-            .is_some_and(crate::output::pilot::PilotCurrentChange::is_uncommitted)
-            && let Some(file) = top
-                .first()
-                .and_then(|entry| repair_inline_target_file(entry))
+        if let Some(file) = top
+            .first()
+            .and_then(|entry| uncommitted_inline_target(context.root, entry))
         {
             out.push_str(&dirty_target_precondition(&file));
             out.push('\n');
@@ -901,10 +895,20 @@ pub(crate) fn render_pilot_terminal(
     out
 }
 
-/// Precondition printed ahead of the repair steps when the change is
-/// uncommitted and the repair edits an inline test module in `file`: the
-/// repair start refuses that file when its worktree or index copy differs
-/// from HEAD.
+/// The inline repair target file whose copy differs from HEAD in the index or
+/// the worktree, when the top seam's repair edits an inline test module (#9553).
+/// The decision reads the file's own state through the edit cage's predicate,
+/// the same one the repair start's baseline capture enforces, so a staged-only
+/// difference is named too and pilot does not fork its own check. The predicate
+/// fails open (`None`) whenever the answer is not positively established.
+fn uncommitted_inline_target(root: &std::path::Path, entry: &ClassifiedSeam) -> Option<String> {
+    repair_inline_target_file(entry)
+        .filter(|file| crate::edit_cage::inline_target_is_uncommitted(root, file))
+}
+
+/// Precondition printed ahead of the repair steps when `file`, the inline test
+/// module the repair edits, differs from HEAD: the repair start refuses that
+/// file when its worktree or index copy differs.
 fn dirty_target_precondition(file: &str) -> String {
     format!(
         "  Before step 1: if `{file}` has uncommitted edits, commit or stash them; the repair start refuses a target file that differs from HEAD."

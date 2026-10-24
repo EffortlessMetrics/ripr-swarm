@@ -377,20 +377,7 @@ Updated:
 ## Pending — error_path_oracle_execution_uncalled (29)
 
 Reason:
-RIPR-SPEC-0319: human-full gains a Next line under static limitations and stop reasons
-
-Command:
-`cargo xtask goldens bless error_path_oracle_execution_uncalled --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending — error_path_oracle_execution_uncalled (30)
-
-Reason:
-RIPR-SPEC-0319: reviewed Next line wording and gap-evidence dedup in human-full
+RIPR-SPEC-0122: bounded evidence legend defines the Summary count terms (#9244 item 4)
 
 Command:
 `cargo xtask goldens bless error_path_oracle_execution_uncalled --reason "..."`

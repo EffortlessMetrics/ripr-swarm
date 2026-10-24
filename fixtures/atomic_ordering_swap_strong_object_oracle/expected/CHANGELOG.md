@@ -69,20 +69,7 @@ Updated:
 ## Pending — atomic_ordering_swap_strong_object_oracle (6)
 
 Reason:
-RIPR-SPEC-0319: human-full gains a Next line under static limitations and stop reasons
-
-Command:
-`cargo xtask goldens bless atomic_ordering_swap_strong_object_oracle --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending — atomic_ordering_swap_strong_object_oracle (7)
-
-Reason:
-RIPR-SPEC-0319: reviewed Next line wording and gap-evidence dedup in human-full
+RIPR-SPEC-0122: bounded evidence legend defines the Summary count terms (#9244 item 4)
 
 Command:
 `cargo xtask goldens bless atomic_ordering_swap_strong_object_oracle --reason "..."`

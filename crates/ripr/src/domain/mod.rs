@@ -111,8 +111,8 @@ pub(crate) use probe::{
 pub use probe::{
     ActivationEvidence, AnalysisScope, DeltaKind, Finding, FindingCanonicalGap, FlowSinkFact,
     FlowSinkKind, MissingDiscriminatorFact, ORACLE_ALIGNMENT_VALUES, Probe, ProbeFamily,
-    RelatedTest, RelatedTestMiss, SOURCE_CURRENTNESS_VALUES, SourceCurrentness, StopReason,
-    ValueContext, ValueFact,
+    RelatedTest, RelatedTestMiss, RelatedTestMissSupport, RelatedTestRole,
+    SOURCE_CURRENTNESS_VALUES, SourceCurrentness, StopReason, ValueContext, ValueFact,
 };
 pub use repair_card::{
     AgentCardRefusalKind, CardCurrentnessGoal, DEFAULT_REPAIR_CARD_MAX_DETAIL_ITEMS,

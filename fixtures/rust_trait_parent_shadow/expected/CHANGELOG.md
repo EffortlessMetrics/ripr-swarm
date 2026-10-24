@@ -104,3 +104,55 @@ Source-only reviewed edit; no native fixture or goldens-bless command executed b
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_trait_parent_shadow (9)
+
+Reason:
+RIPR-SPEC-0122: bounded evidence legend defines the Summary count terms (#9244 item 4)
+
+Command:
+`cargo xtask goldens bless rust_trait_parent_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_trait_parent_shadow (10)
+
+Reason:
+RIPR-SPEC-0108: a name-token relation no longer credits an oracle, and a name-token-only owner gets inspection-first guidance rather than assertion advice (#9169); regenerated over main's #9373/#9244 wording
+
+Command:
+`cargo xtask goldens bless rust_trait_parent_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_trait_parent_shadow (11)
+
+Reason:
+RIPR-SPEC-0108: regenerated after merging origin/main over the #9169 name-token demotion; wording from main's #9373/#9244 legend, no class change beyond #9169
+
+Command:
+`cargo xtask goldens bless rust_trait_parent_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_trait_parent_shadow (12)
+
+Reason:
+RIPR-SPEC-0224
+
+Command:
+`cargo xtask goldens bless rust_trait_parent_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -82,7 +82,7 @@ Updated:
 ## Pending — macro_site_scoped_rest_limit (7)
 
 Reason:
-RIPR-SPEC-0319: human-full gains a Next line under static limitations and stop reasons
+RIPR-SPEC-0122: bounded evidence legend defines the Summary count terms (#9244 item 4)
 
 Command:
 `cargo xtask goldens bless macro_site_scoped_rest_limit --reason "..."`

@@ -37,10 +37,14 @@ pub mod human;
 pub(crate) mod intervention_study;
 pub mod json;
 pub(crate) mod language_capabilities;
+#[cfg(test)]
+pub(crate) mod language_view_agreement_tests;
 pub(crate) mod limited_check;
 pub(crate) mod markdown;
 pub(crate) mod mutation_calibration;
 pub(crate) mod oracle_phrase;
+#[cfg(test)]
+mod related_test_role_tests;
 pub use mutation_calibration::{
     CargoMutantsLocationJoin, CargoMutantsOutcomeRecord, CargoMutantsRuntimeSpan,
     CargoMutantsSeamLocation, join_cargo_mutants_location, parse_cargo_mutants_outcomes_json,

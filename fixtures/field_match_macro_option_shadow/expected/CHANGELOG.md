@@ -145,7 +145,7 @@ Updated:
 ## Pending — field_match_macro_option_shadow (12)
 
 Reason:
-RIPR-SPEC-0319: human-full gains a Next line under static limitations and stop reasons
+RIPR-SPEC-0122: bounded evidence legend defines the Summary count terms (#9244 item 4)
 
 Command:
 `cargo xtask goldens bless field_match_macro_option_shadow --reason "..."`
