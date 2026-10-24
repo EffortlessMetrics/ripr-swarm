@@ -151,6 +151,28 @@ fn credited(lib: &str, diff: &str, line: usize, label: &str) -> Result<(), Strin
     Ok(())
 }
 
+/// No finding carries the limit and every finding has no static path: the
+/// method belongs to a trait this workspace declares and nothing names it, so
+/// nothing reaches it unseen (#9169), which is also not an implicit call.
+fn unreached(lib: &str, diff: &str, line: usize, label: &str) -> Result<(), String> {
+    let findings = findings_on(lib, diff, line)?;
+    if findings.iter().any(limited)
+        || findings.is_empty()
+        || findings
+            .iter()
+            .any(|f| f.class != ExposureClass::NoStaticPath)
+    {
+        return Err(format!(
+            "{label}: expected no_static_path without the limit, got {:?}",
+            findings
+                .iter()
+                .map(|f| (f.class.as_str(), f.static_limit_kind))
+                .collect::<Vec<_>>()
+        ));
+    }
+    Ok(())
+}
+
 /// 1-based line of the first line of `lib` containing `needle`.
 fn line_of(lib: &str, needle: &str) -> Result<usize, String> {
     lib.lines()
@@ -461,10 +483,12 @@ fn a_dispatch_shape_that_differs_keeps_its_class() -> Result<(), String> {
             diff(line, "        self.0 + self.0", "        self.0 * self.0"),
         ))
     };
-    // The test names the type but never calls a method named `area`.
+    // The test names the type but never calls a method named `area`. `Shape` is
+    // declared in this workspace, so nothing reaches `area` unseen (#9169): no
+    // static path, and certainly not the implicit-call limit.
     let lib = dispatch_source("let _square = Square(3);\n        assert_eq!(9, 9);");
     let (line, patch) = edit(&lib)?;
-    kept(&lib, &patch, line, "never calls area")?;
+    unreached(&lib, &patch, line, "never calls area")?;
     // The test calls `area` but never names `Square`.
     let lib = dispatch_source("let tile = Tile(3);\n        assert_eq!(tile.area(), 9);");
     let (line, patch) = edit(&lib)?;
@@ -550,5 +574,75 @@ mod tests {
 ";
     let line = line_of(lib, "self.0 + 1")?;
     let edit = diff(line, "        self.0 + 2", "        self.0 + 1");
-    kept(lib, &edit, line, "local trait named Add")
+    unreached(lib, &edit, line, "local trait named Add")
+}
+
+#[test]
+fn an_affinity_linked_implicit_dispatch_row_is_not_an_inspection_only_pointer() -> Result<(), String>
+{
+    // #10053: `PartialEq` is owned elsewhere, so the gap is not withheld, and the
+    // only related test is linked by name (`eq_...`) yet reaches `eq` through `==`.
+    // It must not be told it "does not establish a call to the changed owner".
+    let lib = "use std::sync::atomic::{AtomicU32, Ordering};
+
+pub static COMPARISONS: AtomicU32 = AtomicU32::new(0);
+
+pub struct Tag(pub u32);
+
+impl PartialEq for Tag {
+    fn eq(&self, other: &Tag) -> bool {
+        COMPARISONS.fetch_add(2 - 1, Ordering::SeqCst);
+        self.0 == other.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn eq_runs_when_two_tags_are_compared() {
+        let same = Tag(7) == Tag(7);
+        assert!(same || !same);
+    }
+}
+";
+    let line = line_of(lib, "COMPARISONS.fetch_add(")?;
+    let edit = diff(
+        line,
+        "        COMPARISONS.fetch_add(1, Ordering::SeqCst);",
+        "        COMPARISONS.fetch_add(2 - 1, Ordering::SeqCst);",
+    );
+    let findings = findings_on(lib, &edit, line)?;
+    let gaps: Vec<&Finding> = findings
+        .iter()
+        .filter(|f| f.class == ExposureClass::WeaklyExposed)
+        .collect();
+    if gaps.is_empty() {
+        return Err(format!(
+            "premise: a weakly_exposed finding, got {findings:?}"
+        ));
+    }
+    for finding in gaps {
+        let rows: Vec<_> = finding
+            .related_tests
+            .iter()
+            .map(|test| (test.name.as_str(), test.relation_reason))
+            .collect();
+        if rows
+            != [(
+                "eq_runs_when_two_tags_are_compared",
+                Some(ripr::domain::RelationReason::OwnerNamedTest),
+            )]
+        {
+            return Err(format!("premise: one owner-named row, got {rows:?}"));
+        }
+        let step = finding.recommended_next_step.as_deref().unwrap_or_default();
+        if step.contains("do not establish a call") {
+            return Err(format!(
+                "implicit-dispatch row told it never calls the owner: {step}"
+            ));
+        }
+    }
+    Ok(())
 }

@@ -56,3 +56,22 @@ pub(super) fn bare_callees(owner_text: &str, parameters: &[PythonParameter]) -> 
     callees.sort();
     callees
 }
+
+/// Whether `owner_text` calls `name` anywhere other than its own `def name(`
+/// header: `name(`, `self.name(` or `mod.name(`. Textual, so a mention in a
+/// string or comment also counts; the claim it guards fails closed.
+pub(super) fn calls_own_name(owner_text: &str, name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    owner_text.match_indices(name).any(|(start, _)| {
+        let before = owner_text[..start].chars().next_back();
+        let rest = &owner_text[start + name.len()..];
+        let boundary_before = !before.is_some_and(is_python_identifier_char);
+        let boundary_after = !rest.chars().next().is_some_and(is_python_identifier_char);
+        boundary_before
+            && boundary_after
+            && rest.trim_start().starts_with('(')
+            && !owner_text[..start].trim_end().ends_with("def")
+    })
+}

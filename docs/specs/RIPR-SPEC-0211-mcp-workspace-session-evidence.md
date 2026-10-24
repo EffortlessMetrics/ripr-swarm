@@ -120,6 +120,27 @@ official SDK transport:
   the committed
   snapshot's typed `AnalysisOutcome`, and profile/support facts. No
   evidence detail is returned.
+- The session block additively carries `language_completeness`
+  (`[{language, status}]`, #6475): one row per language the committed
+  snapshot's analysis recorded, in canonical label order, with the closed
+  status spelling the producer's aggregate owns (`complete`,
+  `complete_zero`, `partial`, `unavailable`, `invalid`, `failed`,
+  `unsupported`, `not_selected`, `no_current_scope`). It is read from the
+  producer's crate-private completeness view bound at commit time, not
+  re-derived from limitation kinds. It is emitted only when a committed
+  snapshot carries a view. The presence is intentionally conditional: the
+  field appears only with a committed view, and omission preserves the
+  previous shape only when there is no committed view (a committed snapshot's
+  status now carries it). The `ripr-mcp-session-v1` version is kept, as for
+  the conditional `base_revision`; the output schema declares the property
+  optional. Supported readers are those that validate against the advertised
+  `outputSchema` (`tools/list`) and readers that tolerate unknown keys; a
+  reader pinned to a frozen strict-closed session shape is outside that
+  support (MCP behavior is Unstable in `docs/SEMVER.md`). No deployed-client
+  failure is claimed. The `ripr://workspace/status` resource renders the same
+  session block and carries the field too; the snapshot, gap and other
+  evidence resources do not. The field is not part of the snapshot identity,
+  and no existing field changes.
 - `ripr_refresh` runs one bounded static analysis through the shared
   `app::check_workspace` authority on the committed default-branch diff
   and commits the completed snapshot. Initialize/discover instructions,
@@ -442,6 +463,18 @@ unknown route into a recognized one.
 
 ## Test Mapping
 
+- `crates/ripr/src/mcp/workspace.rs::tests::status_serves_per_language_completeness_from_the_view`
+  and `status_without_a_view_keeps_the_unchanged_shape` — literal
+  `language_completeness` rows and absence without a view.
+  `every_emitted_session_key_is_declared_by_the_status_schema` is a
+  structural schema-alignment check only (emitted keys are declared, the
+  property is optional, status-enum membership), not a full JSON-Schema
+  validation.
+- `crates/ripr/tests/mcp_stdio.rs::refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation`
+  — separate real-refresh evidence: both the status tool and the
+  `ripr://workspace/status` resource serve the producer's rows (rust, plus
+  python when compiled and enabled). Dropping the commit-time view binding in
+  `run_check` fails it, for both feature profiles.
 - `crates/ripr/tests/mcp_stdio.rs::rejection_arms_survive_the_stdio_transport`
   — literal complete recovery prose and arrays, retained recognized-route
   refusal, then valid status recovery on the same session.

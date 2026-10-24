@@ -207,12 +207,10 @@ pub(crate) fn render_finding_digest_with_config(
         };
         // #5344: say why the named test misses, so the reader can open it
         // and disagree without re-deriving the analysis.
-        let why = crate::output::related_test_miss::related_test_miss_reason(
-            test,
-            &finding.activation.missing_discriminators,
-        )
-        .map(|why| format!(" ({why})"))
-        .unwrap_or_default();
+        let why =
+            crate::output::related_test_miss::related_test_miss_reason(test, &finding.probe.family)
+                .map(|why| format!(" ({why})"))
+                .unwrap_or_default();
         out.push_str(&format!(
             "  {label}: {}:{} {}{why}\n",
             display_path(&test.file),
@@ -1355,7 +1353,10 @@ fn classification_hint(
                 Some(format!(
                     "a related test asserts here, but ripr could not establish that the assertion runs and is {standard_macro}"
                 ))
-            } else if reveal.observe.state == StageState::No && !callee_only {
+            } else if reveal.observe.state == StageState::No
+                && !callee_only
+                && ripr.reach.state != StageState::Weak
+            {
                 Some(
                     "a related test reaches this change, but no assertion observes the changed behavior"
                         .to_string(),

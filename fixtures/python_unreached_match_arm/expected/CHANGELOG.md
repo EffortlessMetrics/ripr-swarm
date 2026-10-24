@@ -64,3 +64,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_unreached_match_arm (6)
+
+Reason:
+RIPR-SPEC-0122: human Weakness list drops the observation_unverified token (#9929)
+
+Command:
+`cargo xtask goldens bless python_unreached_match_arm --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
