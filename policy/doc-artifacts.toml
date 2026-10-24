@@ -1716,6 +1716,14 @@ owner = "product-output"
 standalone_reason = "Issues #8743, #8744 and #8746 record the agent context packet clarity contract: the ripr context packet contract is 1.1 and states the exposure verdict outright (classification, severity resolved through the caller severity config, and confidence, wire-identical to the ripr check --json finding fields) so packet consumers never derive the class from the underdetermined stage states, and the context refusal envelope is keyed with the packet version; the human evidence window glosses the unknown sink row with the same contract."
 
 [[artifact]]
+id = "RIPR-SPEC-0288"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0288-agent-stub-rewrite-clarity.md"
+status = "proposed"
+owner = "product-cli"
+standalone_reason = "Issue #8891 records the agent stub rewrite clarity contract: a second ripr agent stub --write for the same seam reports the stub already written at the file (with the run command; additive JSON already_present, written stays false) instead of suffixing a _2 duplicate, where only a byte-identical recompute counts as already written and a genuinely different test sharing the generated name still suffixes; and the strongly_gripped disclosure on the stub path names the real reason (existing tests already discriminate it, so a stub would add nothing) instead of reusing the packet/brief 'configured off' wording, which stays only for classes a user severity actually disables."
+
+[[artifact]]
 id = "RIPR-SPEC-0286"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0286-empty-diff-base-candidate.md"
@@ -1826,6 +1834,14 @@ path = "docs/specs/RIPR-SPEC-0318-pilot-dirty-target-next-steps.md"
 status = "proposed"
 owner = "product-output"
 standalone_reason = "Issue #3896 and PR #8520 record the pilot next-step contract: when the current change is uncommitted and the repair targets an inline test module the terminal and Markdown summaries say to commit or stash the target before the repair start, and the final step names the continue command that step 1 prints."
+
+[[artifact]]
+id = "RIPR-SPEC-0347"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0347-trybuild-fixtures-not-analyzed-as-oracles.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #8999 records the trybuild fixture disclosure: a changed tests/ui fixture in a crate whose manifest depends on trybuild is named on stderr as not analyzed as a test oracle, as advisory text that changes no finding, outcome or output contract."
 
 [[artifact]]
 id = "RIPR-SPEC-0300"
