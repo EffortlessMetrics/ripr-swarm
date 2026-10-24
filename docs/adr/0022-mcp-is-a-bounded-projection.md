@@ -286,6 +286,17 @@ The server remains a bounded adapter over shared RIPR authority:
   adapter edits nothing, launches nothing, and executes nothing a returned
   route names.
 
+## Per-language completeness in session status (#6475)
+
+`ripr_workspace_status` gains one additive, optional session field,
+`language_completeness: [{language, status}]`, read from the producer's
+crate-private mixed-language completeness view that the shared check returns
+beside its output (the same sidecar the LSP receives). MCP remains a bounded
+read-only projection: it computes no per-language state of its own, adds no
+tool, and does not change the public check API, the session schema version,
+any existing field, or the snapshot identity. The field is omitted until a
+snapshot is committed, so consumers that ignore it see the unchanged v1 shape.
+
 ## Analysis-configuration loading (#6825)
 
 The read-only boundary is about authority, not ignorance: the adapter never
