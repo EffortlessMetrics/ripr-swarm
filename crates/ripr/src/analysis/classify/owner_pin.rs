@@ -232,6 +232,9 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     execution_contexts: SyncMemo<BTreeMap<PathBuf, Arc<Option<ExecutionContext>>>>,
     /// Workspace-wide inputs to [`TargetRoots::root`], computed once.
     target_roots: OnceLock<TargetRoots>,
+    /// Names of the workspace's `macro_rules!` macros, scanned once per run
+    /// (RIPR-SPEC-0351 out-parameter owner scan).
+    workspace_macro_names: OnceLock<Vec<String>>,
     /// #6974: path-call memos. A path-shaped assertion is read once per
     /// probe, test and assertion, and each input below scans the workspace,
     /// so every answer is kept for the run under the key it depends on.
@@ -1681,6 +1684,12 @@ fn recognized_target_root(root: &Path, src_dirs: &BTreeSet<PathBuf>) -> bool {
 }
 
 impl OwnerPinSyntax {
+    /// The workspace's `macro_rules!` macro names, scanned once per run.
+    pub(in crate::analysis) fn workspace_macro_names(&self, index: &RustIndex) -> &[String] {
+        self.workspace_macro_names
+            .get_or_init(|| super::out_parameter::workspace_macro_names(index))
+    }
+
     /// Workspace routing inputs, computed once per run.
     fn target_roots(&self, index: &RustIndex) -> &TargetRoots {
         self.target_roots.get_or_init(|| TargetRoots::new(index))

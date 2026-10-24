@@ -58,13 +58,16 @@ pub(in crate::analysis) fn assertion_out_parameter(
     {
         return None;
     }
-    let macro_names = if owner.body.contains('!') {
-        workspace_macro_names(index)
+    let macro_names: &[String] = if owner.body.contains('!') {
+        syntax.workspace_macro_names(index)
     } else {
-        Vec::new()
+        &[]
     };
-    let out_parameters = owner_out_parameters(owner, &macro_names)?;
+    let out_parameters = owner_out_parameters(owner, macro_names)?;
     let impl_type = impl_self_type_name(&owner.id.0)?;
+    if !owner_item_context_is_inert(owner, index, &impl_type) {
+        return None;
+    }
     let impl_trait = owner_dispatch_trait(owner);
     let [left, right] = assertion_comparison_operands(&assertion.text)?;
     // Exactly one operand may be the candidate local that a matching call
@@ -123,6 +126,21 @@ fn owner_out_parameters(
             let Some(ast::Type::RefType(ty)) = parameter.ty() else {
                 return false;
             };
+            // A generic or trait-typed `T` could be anything with a no-op
+            // `push`: only the std growable buffers are accepted.
+            let concrete = match ty.ty() {
+                Some(ast::Type::PathType(path)) => path
+                    .path()
+                    .and_then(|path| path.segment())
+                    .and_then(|segment| segment.name_ref())
+                    .is_some_and(|name| {
+                        matches!(strip_raw(name.text()), "String" | "Vec" | "VecDeque")
+                    }),
+                _ => false,
+            };
+            if !concrete {
+                return false;
+            }
             pattern.ref_token().is_none()
                 && pattern.pat().is_none()
                 && ty.mut_token().is_some()
@@ -326,7 +344,14 @@ fn arguments_are_empty(call: &ast::MethodCallExpr) -> bool {
     compacted.is_empty()
         || compacted
             .iter()
-            .all(|argument| EMPTY.contains(&argument.as_str()))
+            .all(|argument| {
+                EMPTY.iter().any(|empty| {
+                    argument.as_str() == *empty
+                        || argument
+                            .strip_prefix(empty)
+                            .is_some_and(|rest| rest.starts_with('.'))
+                })
+            })
 }
 
 const ADDITIVE_WRITERS: &[&str] = &[
@@ -542,7 +567,7 @@ fn is_read_only_use(token: &ra_ap_syntax::SyntaxToken) -> bool {
 }
 
 /// Names of the workspace's `macro_rules!` macros (any file).
-fn workspace_macro_names(index: &RustIndex) -> Vec<String> {
+pub(in crate::analysis) fn workspace_macro_names(index: &RustIndex) -> Vec<String> {
     let mut names = Vec::new();
     for (_, facts) in index.files().iter() {
         if !facts.source.contains("macro_rules") {
@@ -601,17 +626,43 @@ fn straight_line(node: &SyntaxNode, macro_names: &[String]) -> bool {
         .filter_map(|element| element.into_token())
         .filter(|token| !token.kind().is_trivia())
         .collect();
+    // A trailing `?` ends the statement; any other `?` can leave the owner.
+    let mut end = tokens.len();
+    while end > 0 && tokens[end - 1].kind() == SyntaxKind::SEMICOLON {
+        end -= 1;
+    }
     for (at, token) in tokens.iter().enumerate() {
+        let text = token.text();
+        if matches!(
+            text,
+            "return"
+                | "break"
+                | "continue"
+                | "loop"
+                | "while"
+                | "for"
+                | "if"
+                | "match"
+                | "else"
+                | "async"
+                | "await"
+                | "|"
+                | "||"
+        ) || (text == "?" && at + 1 != end)
+        {
+            return false;
+        }
         if token.kind() == SyntaxKind::IDENT
             && matches!(
-                strip_raw(token.text()),
+                strip_raw(text),
                 "exit" | "abort" | "panic_any" | "resume_unwind"
             )
         {
             return false;
         }
+        let previous = at.checked_sub(1).and_then(|before| tokens.get(before));
         if token.kind() == SyntaxKind::BANG {
-            let Some(previous) = at.checked_sub(1).and_then(|before| tokens.get(before)) else {
+            let Some(previous) = previous else {
                 return false;
             };
             let leaf = strip_raw(previous.text());
@@ -622,8 +673,118 @@ fn straight_line(node: &SyntaxNode, macro_names: &[String]) -> bool {
                 return false;
             }
         }
+        // A call to a bare identifier (possibly an alias of `exit`, or a
+        // workspace function that diverges) is not followed: refuse it. Method
+        // and path calls, `Some`/`Ok`/`Err` and macros are not bare calls.
+        if token.kind() == SyntaxKind::IDENT
+            && tokens
+                .get(at + 1)
+                .is_some_and(|next| next.kind() == SyntaxKind::L_PAREN)
+            && !matches!(text, "Some" | "Ok" | "Err")
+            && !previous
+                .is_some_and(|before| matches!(before.kind(), SyntaxKind::DOT | SyntaxKind::COLON2))
+        {
+            return false;
+        }
     }
     true
+}
+
+/// Attributes that cannot remove or redirect an item.
+fn attribute_is_inert(attribute: &ast::Attr) -> bool {
+    attribute.meta().is_some_and(|meta| {
+        meta.path().is_some_and(|path| {
+            matches!(
+                compact(&path.syntax().text().to_string()).as_str(),
+                "doc" | "inline" | "must_use" | "allow" | "track_caller" | "cold" | "deprecated"
+            )
+        })
+    })
+}
+
+/// The owner fn, its impl and every enclosing module carry only inert
+/// attributes, and no second method of the same name exists in an impl of the
+/// same type in the file (a `cfg`-gated twin could be the active one).
+fn owner_item_context_is_inert(
+    owner: &FunctionSummary,
+    index: &RustIndex,
+    impl_type: &str,
+) -> bool {
+    use ra_ap_syntax::ast::HasAttrs;
+    let Some(facts) = index.files().get(&owner.file) else {
+        return false;
+    };
+    let Some(parse) = parse_clean_source_file(&facts.source) else {
+        return false;
+    };
+    let tree = parse.tree();
+    let line_of = |offset: usize| {
+        1 + facts.source[..offset.min(facts.source.len())]
+            .matches('\n')
+            .count()
+    };
+    let functions: Vec<ast::Fn> = tree
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| {
+            function
+                .name()
+                .is_some_and(|name| strip_raw(name.text()) == owner.name)
+        })
+        .collect();
+    let Some(function) = functions
+        .iter()
+        .filter(|function| {
+            let range = function.syntax().text_range();
+            line_of(usize::from(range.start())) <= owner.start_line
+                && owner.start_line <= line_of(usize::from(range.end()))
+        })
+        .min_by_key(|function| function.syntax().text_range().len())
+    else {
+        return false;
+    };
+    let mut twins = 0;
+    for impl_item in tree.syntax().descendants().filter_map(ast::Impl::cast) {
+        let self_ty = impl_item
+            .self_ty()
+            .map(|ty| ty.syntax().text().to_string())
+            .unwrap_or_default();
+        if word_occurrences(&self_ty, impl_type) == 0 {
+            continue;
+        }
+        twins += impl_item
+            .syntax()
+            .descendants()
+            .filter_map(ast::Fn::cast)
+            .filter(|candidate| {
+                candidate
+                    .name()
+                    .is_some_and(|name| strip_raw(name.text()) == owner.name)
+            })
+            .count();
+    }
+    if twins != 1 {
+        return false;
+    }
+    let inert_all = |attrs: ast::AstChildren<ast::Attr>| {
+        attrs.into_iter().all(|attr| attribute_is_inert(&attr))
+    };
+    if !inert_all(function.attrs()) {
+        return false;
+    }
+    function.syntax().ancestors().skip(1).all(|ancestor| {
+        if let Some(item) = ast::Impl::cast(ancestor.clone()) {
+            return inert_all(item.attrs());
+        }
+        if let Some(item) = ast::Module::cast(ancestor.clone()) {
+            return inert_all(item.attrs());
+        }
+        if let Some(item) = ast::Trait::cast(ancestor) {
+            return inert_all(item.attrs());
+        }
+        true
+    })
 }
 
 fn local_written_by_owner_call(

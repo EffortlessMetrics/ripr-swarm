@@ -112,13 +112,26 @@ assertion reads the call's out-parameter; it grants no strength or reach.
   execute it. The changed expression must itself be such a write with no
   branch, loop, closure or early exit inside it, so a changed token on an
   unexercised conditional side is not credited.
-- Any attribute in the owner body (`#[cfg(..)]` and kin) refuses, since it
-  can remove the write. Every statement at or before the last write may use
-  only a small pure macro list (`format!`, `vec!`, `assert*`, `matches!`,
-  `write!`, ...) that the workspace does not redefine, and no
-  `exit`/`abort`/`panic`-family call; a macro that expands to `return` is
-  refused because it is not on the list. Calls to workspace functions that
-  themselves exit are not followed.
+- Capacity-only operations (`reserve`, `shrink_to_fit`, ...) are not writes.
+  `extend_from_slice`/`extend`/`append` with a data-dependent argument (a
+  local that may be empty) are accepted as writes; only literally empty
+  arguments are refused.
+- Any attribute in the owner body (`#[cfg(..)]` and kin) refuses. The owner
+  fn, its impl and every enclosing module may carry only inert attributes
+  (`doc`, `inline`, `must_use`, `allow`, `track_caller`, `cold`,
+  `deprecated`), and the file may hold exactly one method of that name in
+  impls of the owner's type, so a `cfg`-gated twin cannot be the active one.
+  Twins in other files are not seen.
+- The parameter type must be a concrete `&mut String`, `&mut Vec<..>` or
+  `&mut VecDeque<..>`; generic, `impl Trait` and `dyn Trait` outputs refuse.
+- Every statement at or before the last write may contain none of `return`,
+  `break`, `continue`, `loop`, `while`, `for`, `if`, `match`, `else`,
+  closures, `async`/`await`, `exit`/`abort`/`panic_any`/`resume_unwind`, or a
+  `?` other than a trailing one, in code or in macro arguments; macros must be
+  on the pure std list and not redefined by the workspace; and a call to a
+  bare identifier (a possible alias of `exit` or a diverging workspace
+  function) refuses. A path or method call to a workspace function that
+  itself exits or panics is not followed (named limit, follow-up issue).
 - `write!`/`writeln!` resolve by exact std path; a workspace file that
   defines a macro whose name starts with `write` refuses every owner that
   mentions `write`. Macros imported from other crates are not inspected.

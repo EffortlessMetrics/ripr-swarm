@@ -589,10 +589,12 @@ fn a_user_defined_write_macro_is_not_a_writer() -> Result<(), String> {
         new,
         "        out.push_str(\"fixed\");",
     ]);
-    let test = format!(
-        "        macro_rules! write {{ ($o:expr, $($t:tt)*) => {{ $o.clear() }}; }}\n{BUILD}        assert_eq!(s, \"fixed\");"
-    );
-    let finding = finding_custom(&owner, old, new, &test)?;
+    // The macro precedes the owner textually, so it is the `write!` the
+    // owner resolves; it expands to a value `.unwrap()` accepts.
+    let prelude =
+        "macro_rules! write { ($o:expr, $($t:tt)*) => {{ $o.clear(); Ok::<(), ()>(()) }}; }\n";
+    let test = format!("{BUILD}        assert_eq!(s, \"fixed\");");
+    let finding = finding_custom_in(prelude, &owner, old, new, &test)?;
     assert_uncredited(&finding, "user write! macro");
     Ok(())
 }
@@ -694,5 +696,125 @@ fn a_constant_conditional_sign_row_does_not_come_from_the_out_parameter_route() 
         "        let mut s = String::new();\n        let mut t = String::new();\n        OffsetFormat.format(&mut s, 570);\n        t.push_str(\"+570\");\n        assert_eq!(t, \"+570\");",
     )?;
     assert_eq!(credited_shape, route_disabled);
+    Ok(())
+}
+
+#[test]
+fn an_earlier_same_named_call_does_not_resolve_the_target_receiver() -> Result<(), String> {
+    let extra = "    }\n\n    struct Other;\n    impl Other {\n        fn format(&self, out: &mut String, _m: i32) {\n            out.push('x');\n        }\n    }\n\n    #[test]\n    fn earlier() {\n";
+    for earlier in [
+        // an earlier call on another type
+        "        let mut x = String::new();\n        Other.format(&mut x, 1);\n",
+        // an earlier call on the owner type itself
+        "        let mut x = String::new();\n        OffsetFormat.format(&mut x, 1);\n",
+    ] {
+        let body = format!(
+            "        let _ = 0;\n{extra}{earlier}        let mut s = String::new();\n        make().format(&mut s, 570);\n        assert_eq!(s, \"+570\");"
+        );
+        let finding = finding(&body)?;
+        assert_uncredited(&finding, earlier);
+    }
+    Ok(())
+}
+
+#[test]
+fn capacity_only_and_empty_extension_operations_are_not_writes() -> Result<(), String> {
+    let test = format!("{BUILD}        assert_eq!(s, \"+570\");");
+    for changed in [
+        "        out.reserve_exact(8);",
+        "        out.shrink_to_fit();",
+        "        out.extend_from_slice(&[]);",
+        "        out.extend(\"\".chars());",
+    ] {
+        let owner = owner_with(&[changed]);
+        let finding = finding_custom(&owner, "        out.reserve_exact(1);", changed, &test)?;
+        assert_uncredited(&finding, changed);
+    }
+    Ok(())
+}
+
+#[test]
+fn macro_argument_exits_and_bare_calls_before_the_last_write_are_not_credited() -> Result<(), String>
+{
+    let test = format!("{BUILD}        assert_eq!(s, \"570\");");
+    let first = "        out.push_str(\"570\");";
+    for (prelude, lines) in [
+        (
+            "",
+            vec![
+                first,
+                "        assert!({ if minutes == 570 { return; } true });",
+                NEW,
+            ],
+        ),
+        (
+            "",
+            vec![
+                first,
+                "        let _n = format!(\"{}\", { if minutes == 570 { return; } 1 });",
+                NEW,
+            ],
+        ),
+        (
+            "",
+            vec![
+                first,
+                "        let _n = format!(\"{}\", helper(minutes)?);",
+                NEW,
+            ],
+        ),
+        (
+            "use std::process::exit as bye;\n",
+            vec![
+                first,
+                "        if minutes == 570 {",
+                "            bye(0);",
+                "        }",
+                NEW,
+            ],
+        ),
+        ("", vec![first, "        helper(minutes);", NEW]),
+    ] {
+        let owner = owner_with(&lines);
+        let finding = finding_custom_in(prelude, &owner, OLD, NEW, &test)?;
+        assert_uncredited(&finding, &owner);
+    }
+    Ok(())
+}
+
+#[test]
+fn an_enclosing_item_attribute_or_a_same_named_twin_is_not_credited() -> Result<(), String> {
+    let test = format!("{BUILD}        assert_eq!(s, \"+570\");");
+    let owner = owner_with(&[NEW, "        out.push_str(\"570\");"]);
+    // The owner fn itself is cfg-gated away.
+    let gated = format!("    #[cfg(any())]\n{owner}");
+    let finding = finding_custom(&gated, OLD, NEW, &test)?;
+    assert_uncredited(&finding, "cfg on the owner fn");
+    // A second method of the same name sits in the same impl.
+    let twin = format!(
+        "    #[cfg(not(any()))]\n    pub fn format(&self, out: &mut String, minutes: i32) {{\n        let _ = (out, minutes);\n    }}\n{owner}"
+    );
+    let finding = finding_custom(&twin, OLD, NEW, &test)?;
+    assert_uncredited(&finding, "same-named twin");
+    // Inert attributes keep the credit.
+    let inert = format!("    #[inline]\n    #[must_use]\n{owner}");
+    let finding = finding_custom(&inert, OLD, NEW, &test)?;
+    assert_eq!(finding["classification"], "exposed", "{finding}");
+    assert_eq!(finding["ripr"]["discriminate"]["state"], "yes", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn a_generic_or_trait_typed_output_is_not_credited() -> Result<(), String> {
+    let test = format!("{BUILD}        assert_eq!(s, \"+570\");");
+    for signature in [
+        "    pub fn format<T: Sink>(&self, out: &mut T, minutes: i32) {",
+        "    pub fn format(&self, out: &mut impl Sink, minutes: i32) {",
+        "    pub fn format(&self, out: &mut dyn Sink, minutes: i32) {",
+    ] {
+        let owner = format!("{signature}\n{NEW}\n        out.push('x');\n    }}");
+        let finding = finding_custom(&owner, OLD, NEW, &test)?;
+        assert_uncredited(&finding, signature);
+    }
     Ok(())
 }
