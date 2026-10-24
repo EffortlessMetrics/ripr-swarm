@@ -75,6 +75,7 @@ tests = [
   "crates/ripr/tests/slice_direct_calls.rs::hidden_or_conditional_arguments_cannot_supply_a_length",
   "crates/ripr/tests/slice_direct_calls.rs::a_lone_empty_literal_call_credits_and_a_second_slice_does_not_pair",
   "crates/ripr/tests/unindexed_guidance.rs::unindexed_doc_assertion_prompts_inspection_without_credit_or_gap_claim",
+  "crates/ripr/tests/unindexed_guidance.rs::owner_named_test_that_never_calls_the_owner_prompts_inspection",
   "crates/ripr/tests/unindexed_guidance.rs::weak_direct_owner_assertion_keeps_exact_value_advice",
   "crates/ripr/tests/unindexed_guidance.rs::wrapper_error_retains_specific_guidance_for_proximity_reach",
   "crates/ripr/tests/unindexed_guidance.rs::assertion_helper_retains_oracle_inspection_guidance",
