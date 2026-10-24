@@ -1,0 +1,33 @@
+{
+  "subject_id": "authored-spec0171-5d",
+  "origin": "authored",
+  "version_label": "authored 2026-10-25 for RIPR-SPEC-0171 example 5, direct dependent call",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "4a5d37905523fc2348b8a45d97b1c6f71048a51bfc433b07bba7d751de494dba"
+    },
+    {
+      "path": "meter/Cargo.toml",
+      "sha256": "8df2bd614d9483e1f41fee94f49bf4a3c4c7a6d45c1682fa69f14929c8a068f7"
+    },
+    {
+      "path": "meter/src/lib.rs",
+      "sha256": "af61dbef76b423da2ad94fa33ffbc3540727c09ebc8aed39d856d3234b5d1bf1"
+    },
+    {
+      "path": "meter/tests/meter.rs",
+      "sha256": "ac36ae6c6797795ca08cd9013d124b3c22bb705d806cbefdb1a3993865b2210e"
+    },
+    {
+      "path": "tally/Cargo.toml",
+      "sha256": "376dd64ba84da68b002b39872fbcceb559969dea747ca8e87f2519b56c57c2e5"
+    },
+    {
+      "path": "tally/lib/core.rs",
+      "sha256": "017f8cd3de8b0de2c703fca668b8f3aa658932502e9f63d8486007d02cc2bf0d"
+    }
+  ]
+}
