@@ -82,6 +82,7 @@ mod instance_class_guard;
 #[cfg(test)]
 mod line_index_tests;
 mod literal_eval;
+mod literal_mask;
 mod literal_matcher_guard;
 mod lookup_table_guard;
 mod loop_bound_guard;
