@@ -22,8 +22,8 @@ use super::diagnostics::{
 };
 use super::hover::{
     classified_seam_hover_response, diagnostic_at_position, diagnostic_covers_position,
-    diagnostic_hover_response, finding_hover_response, hover_response, hover_with_analysis_health,
-    is_gap_diagnostic, markdown_hover,
+    diagnostic_hover_response, finding_hover_response, hover_response_without_evidence,
+    hover_with_analysis_health, is_gap_diagnostic, markdown_hover,
 };
 use super::lens::{LensViewIdentity, code_lens_response, lens_view_identity};
 use super::payload_bounds::{
@@ -220,6 +220,12 @@ pub(super) struct Backend {
     /// snapshot: a byte-identical repeated degradation warns once, a new
     /// signature warns again, and a cleared signature logs one recovery line.
     last_component_degradation: Mutex<Option<String>>,
+    /// The snapshot input identity whose pull-side partial-delivery
+    /// disclosures have already been logged (#9604 finding 35). Compared per
+    /// document pull: repeated pulls of the same committed selection warn
+    /// once, like the workspace report dedups, and a new snapshot identity
+    /// logs again.
+    pull_delivery_disclosure_logged_for: Mutex<Option<String>>,
     /// The failure signature covered by the last generic-client
     /// `window/showMessage` analysis-failure disclosure (#8583). Compared
     /// per status publication: a byte-identical repeated failure shows
@@ -374,6 +380,7 @@ impl Backend {
             watched_files_relative_pattern_support: AtomicBool::new(false),
             diagnostics_input_watch: AsyncMutex::new(DiagnosticsInputWatch::default()),
             last_component_degradation: Mutex::new(None),
+            pull_delivery_disclosure_logged_for: Mutex::new(None),
             last_analysis_failure_shown: Mutex::new(None),
             unavailable_language_notices_shown: Mutex::new(BTreeSet::new()),
             initialize_failure_disclosure_omitted: AtomicBool::new(false),
@@ -1126,13 +1133,17 @@ impl Backend {
         duration: Duration,
         kind: AnalysisFailureKind,
     ) {
+        // Record the failure (and drop uncovered save digests) before the
+        // client can observe the failure log: a client that re-saves
+        // identical bytes in response to that log must not race the
+        // invalidation and be deduplicated (#10033).
+        self.mark_attempt_failed(request, kind, &message);
         self.client
             .log_message(
                 MessageType::WARNING,
                 refresh_failed_log_message(&message, duration),
             )
             .await;
-        self.mark_attempt_failed(request, kind, &message);
         self.publish_analysis_status().await;
     }
 
@@ -1718,6 +1729,15 @@ impl Backend {
             .lock()
             .map(|supported| *supported)
             .unwrap_or(false)
+    }
+
+    /// A copy of the negotiated client profile; a poisoned store fails
+    /// closed to the unsupported (generic-client) profile.
+    fn client_feature_profile(&self) -> ClientFeatureProfile {
+        self.client_features
+            .lock()
+            .map(|features| features.clone())
+            .unwrap_or_else(|_| ClientFeatureProfile::unsupported())
     }
 
     /// Whether the client negotiated `publishDiagnostics` version support
@@ -2506,6 +2526,7 @@ impl Backend {
         let root = self.workspace_root_authority();
         let config = self.analysis_config();
         let configuration_failure = self.configuration_failure();
+        let client_profile = self.client_feature_profile();
         let snapshot_state = self.latest_analysis.lock().ok().and_then(|snapshot| {
             snapshot.as_ref().map(|value| {
                 (
@@ -2513,7 +2534,12 @@ impl Backend {
                     value
                         .component_outcomes
                         .iter()
-                        .map(|outcome| outcome.status_payload(value.input_identity_id().as_deref()))
+                        .map(|outcome| {
+                            outcome.status_payload(
+                                value.input_identity_id().as_deref(),
+                                &client_profile,
+                            )
+                        })
                         .collect::<Vec<_>>(),
                     value.analysis_outcome.clone(),
                     withheld_unknown_summary(value),
@@ -3645,7 +3671,43 @@ impl Backend {
                 reason.description()
             ));
         }
-        hover_response()
+        // #9604 finding 32: the generic fallback is state- and
+        // language-aware — before the first analysis the recovery is the
+        // `ripr.refresh` editor command, and the language list comes from
+        // the session configuration instead of a hardcoded `Rust`.
+        hover_response_without_evidence(
+            self.has_committed_analysis(),
+            &self.configured_language_labels(),
+        )
+    }
+
+    /// Whether any analysis snapshot has committed in this session.
+    fn has_committed_analysis(&self) -> bool {
+        self.latest_analysis
+            .lock()
+            .ok()
+            .and_then(|value| value.clone())
+            .is_some()
+    }
+
+    /// The enabled language labels from the session configuration, for
+    /// language-aware no-evidence hover text. Falls back to Rust when the
+    /// session configuration is unavailable so the generic wording survives.
+    fn configured_language_labels(&self) -> Vec<String> {
+        let labels = self.analysis_config().map_or_else(Vec::new, |config| {
+            config
+                .repo_config
+                .languages()
+                .enabled()
+                .iter()
+                .map(|language| language.display_name().to_string())
+                .collect()
+        });
+        if labels.is_empty() {
+            vec!["Rust".to_string()]
+        } else {
+            labels
+        }
     }
 
     /// The quarantine state of an open document, as `(path, reason)`.
@@ -3680,6 +3742,22 @@ impl Backend {
         }
         quarantine.withdrawal_disclosed = true;
         Some((state.path.clone(), quarantine.reason))
+    }
+
+    /// Mark the pull-side partial-delivery disclosures for one snapshot input
+    /// identity as logged. Returns `true` only on the first call for that
+    /// identity (#9604 finding 35) so repeated document pulls of the same
+    /// committed selection disclose once, matching the workspace report's
+    /// per-report dedup. A poisoned lock discloses rather than suppresses.
+    fn mark_pull_delivery_disclosed(&self, identity: &str) -> bool {
+        let Ok(mut logged) = self.pull_delivery_disclosure_logged_for.lock() else {
+            return true;
+        };
+        if logged.as_deref() == Some(identity) {
+            return false;
+        }
+        *logged = Some(identity.to_string());
+        true
     }
 
     async fn disclose_withdrawal_once(&self, uri: &Uri) {
@@ -4278,11 +4356,10 @@ fn root_relative_components_on(
         let (Some(expected), Some(actual)) = (expected, actual) else {
             return None;
         };
-        let matched = if case_insensitive {
-            expected.eq_ignore_ascii_case(actual)
-        } else {
-            expected == actual
+        let key = |name: &str| {
+            crate::output::path::path_identity_key_on(Path::new(name), false, case_insensitive)
         };
+        let matched = key(expected) == key(actual);
         if !matched {
             return None;
         }
@@ -4361,7 +4438,9 @@ fn diagnostics_input_watchers(
             })
             .collect());
     }
-    let absolute = root.to_string_lossy().replace('\\', "/");
+    // Display/glob text, not an identity key: lossy for non-UTF-8, `\`
+    // rewritten only on Windows (a Unix `\` is a filename byte).
+    let absolute = crate::output::path::path_display_lossy(root);
     // Glob syntax has no portable escape, so a root containing
     // metacharacters would match other paths or none at all.
     if absolute.contains(['*', '?', '[', ']', '{', '}']) {
@@ -4677,7 +4756,7 @@ mod workspace_input_tests {
         // Without it: absolute string globs, because VS Code matches a
         // string glob against the absolute path and a bare relative string
         // never fires.
-        let absolute = root.to_string_lossy().replace('\\', "/");
+        let absolute = crate::output::path::path_display_lossy(&root);
         let expected_absolute = expected
             .iter()
             .map(|relative| serde_json::json!(format!("{absolute}/{relative}")))
@@ -5031,7 +5110,10 @@ impl Backend {
         if previous == signature {
             return;
         }
-        if let Some(message) = super::component_outcome::degradation_log_message(outcomes) {
+        if let Some(message) = super::component_outcome::degradation_log_message(
+            outcomes,
+            &self.client_feature_profile(),
+        ) {
             self.client.log_message(MessageType::WARNING, message).await;
         } else if previous.is_some() {
             self.client
@@ -5804,6 +5886,26 @@ impl LanguageServer for Backend {
         // from it, and downstream surfaces consume session state or the
         // profile — never raw `InitializeParams` capability trees.
         let profile = ClientFeatureProfile::from_initialize_params(&params);
+        // #9604 batch G finding 30: an advertised-but-rejected riprAgent block
+        // gets exactly one typed warning at initialize (the rejection itself
+        // is durable session state and rides every status projection); an
+        // absent block stays silent, so the warning never nags unenhanced
+        // clients.
+        if let Some(rejection) = &profile.ripr_agent_rejection {
+            let kind = serde_json::to_value(rejection.kind)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_string))
+                .unwrap_or_else(|| "unsupported_protocol_version".to_string());
+            self.client
+                .log_message(
+                    MessageType::WARNING,
+                    format!(
+                        "ripr agent protocol rejected at initialize: {kind} — {}; ripr_agent surfaces as null",
+                        rejection.detail
+                    ),
+                )
+                .await;
+        }
         let supports_pull_diagnostics = profile.pull_diagnostics;
         let supports_diagnostic_refresh = profile.diagnostic_refresh;
         if let Ok(mut supported) = self.pull_diagnostics.lock() {
@@ -6717,15 +6819,26 @@ impl Backend {
         // (#1973): the same membership push publishes, never a re-evaluated
         // budget. A partial delivery state is disclosed, not hidden behind an
         // empty report.
-        if let Some(disclosure) = pull_delivery_disclosure(&snapshot) {
-            self.client
-                .log_message(MessageType::WARNING, disclosure)
-                .await;
-        }
-        if let Some(disclosure) = profile_withholding_pull_disclosure(&snapshot) {
-            self.client
-                .log_message(MessageType::WARNING, disclosure)
-                .await;
+        // #9604 finding 35: disclose once per committed selection identity,
+        // like the workspace report dedups — a client that pulls every open
+        // document otherwise logs the same warning once per file per cycle.
+        // An identity-less snapshot (unit fixture) cannot dedup safely and
+        // keeps the per-pull disclosure.
+        let disclose = match snapshot.input_identity_id() {
+            Some(identity) => self.mark_pull_delivery_disclosed(&identity),
+            None => true,
+        };
+        if disclose {
+            if let Some(disclosure) = pull_delivery_disclosure(&snapshot) {
+                self.client
+                    .log_message(MessageType::WARNING, disclosure)
+                    .await;
+            }
+            if let Some(disclosure) = profile_withholding_pull_disclosure(&snapshot) {
+                self.client
+                    .log_message(MessageType::WARNING, disclosure)
+                    .await;
+            }
         }
         let diagnostics = result_ids.delivered_diagnostics_for_uri(&snapshot, &uri);
         Ok(
@@ -7242,7 +7355,7 @@ impl Backend {
                         snapshot.and_then(|snapshot| {
                             snapshot
                                 .unavailable_adapter
-                                .not_enabled_language(relative, snapshot.analysis_outcome.as_ref())
+                                .not_enabled_language(relative, snapshot.language_view.as_ref())
                         })
                     });
                 let not_analyzed = outside_partition || adapter_language.is_some();
@@ -8959,6 +9072,7 @@ mod top_limitation_selection_tests {
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
+            language_view: None,
         }
     }
 
@@ -11157,8 +11271,15 @@ mod gap_record_context_tests {
 
     #[test]
     fn display_path_normalizes_backslashes_to_forward_slashes() {
+        // Display-only: `\` is rewritten on Windows hosts; a Unix `\` is a
+        // filename byte and stays visible.
         let path = std::path::PathBuf::from(r"a\b\c.rs");
-        assert_eq!(display_path(&path), "a/b/c.rs");
+        let expected = if cfg!(windows) {
+            "a/b/c.rs"
+        } else {
+            r"a\b\c.rs"
+        };
+        assert_eq!(display_path(&path), expected);
     }
 
     #[test]
@@ -11780,6 +11901,7 @@ mod delivery_selection_parity_tests {
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
+            language_view: None,
         };
         WorkspaceDiagnostics { snapshot, batches }
     }
@@ -12425,6 +12547,79 @@ mod work_done_progress_guard_tests {
     use crate::lsp::progress::ProgressEvent;
     use tower_lsp_server::LspService;
 
+    /// Wrong-order control for #10033: the failure must be recorded (uncovered
+    /// save digests dropped) before the failure log is sent. The client
+    /// channel is bounded, so with an undrained socket the log send stays
+    /// pending; the digest must already be gone while it is pending. Under
+    /// the old order (log first) the digest would still match here.
+    #[test]
+    fn refresh_failure_drops_uncovered_save_digest_before_failure_log_is_sent() -> Result<(), String>
+    {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| format!("failed to start test runtime: {err}"))?;
+        runtime.block_on(async {
+            let (service, _socket) =
+                LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+            let backend = service.inner();
+            let uri = "file:///workspace/src/lib.rs"
+                .parse::<Uri>()
+                .map_err(|err| format!("uri: {err}"))?;
+            backend.record_saved_content_digest_and_advance(&uri, "d".to_string());
+            if !backend.saved_content_digest_matches(&uri, "d") {
+                return Err("precondition: digest recorded".to_string());
+            }
+            let decision = backend.refresh_scheduler.request(
+                PathBuf::from("/workspace"),
+                LspAnalysisConfig::default(),
+                backend.workspace_revision(),
+                0,
+                RefreshScope::Interactive,
+                RefreshReason::DidSave,
+            );
+            let RefreshDecision::Start(request) = &decision else {
+                return Err(format!("expected Start decision, got {decision:?}"));
+            };
+            let request = request.as_ref().clone();
+
+            // Saturate the bounded client channel without draining it, until
+            // a send stays pending.
+            let pending = Duration::from_millis(50);
+            let mut saturated = false;
+            for _ in 0..64 {
+                let send = backend
+                    .client
+                    .log_message(tower_lsp_server::ls_types::MessageType::INFO, "fill");
+                if tokio::time::timeout(pending, send).await.is_err() {
+                    saturated = true;
+                    break;
+                }
+            }
+            if !saturated {
+                return Err("precondition: client channel never backed up".to_string());
+            }
+
+            // The failure log now cannot complete. The report must have
+            // dropped the digest before reaching it.
+            let report = backend.report_refresh_failure_after(
+                &request,
+                "forced failure".to_string(),
+                Duration::from_millis(1),
+                AnalysisFailureKind::AnalysisError,
+            );
+            if tokio::time::timeout(pending, report).await.is_ok() {
+                return Err("expected the failure log send to stay pending".to_string());
+            }
+            if backend.saved_content_digest_matches(&uri, "d") {
+                return Err(
+                    "uncovered save digest remained while the failure log was pending".to_string(),
+                );
+            }
+            Ok(())
+        })
+    }
+
     #[test]
     fn dropped_refresh_guard_invalidates_only_uncovered_save_digests() -> Result<(), String> {
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -12868,6 +13063,7 @@ mod list_actionable_items_tests {
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
+            language_view: None,
         }
     }
 
@@ -13400,5 +13596,133 @@ mod analysis_error_cancellation_tests {
                 "{kind:?} observed at a checkpoint must classify as cancellation"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod pull_disclosure_dedup_tests {
+    use super::*;
+    use std::path::PathBuf;
+    use tower_lsp_server::LspService;
+
+    #[test]
+    fn pull_delivery_disclosure_logs_once_per_snapshot_identity() {
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        assert!(
+            backend.mark_pull_delivery_disclosed("identity-a"),
+            "first pull of a selection discloses"
+        );
+        assert!(
+            !backend.mark_pull_delivery_disclosed("identity-a"),
+            "repeated pulls of the same committed selection stay silent (#9604 finding 35)"
+        );
+        assert!(
+            backend.mark_pull_delivery_disclosed("identity-b"),
+            "a new snapshot identity discloses again"
+        );
+        assert!(
+            !backend.mark_pull_delivery_disclosed("identity-b"),
+            "the new identity dedups too"
+        );
+    }
+
+    #[test]
+    fn committed_selection_identity_comes_from_the_snapshot() -> Result<(), String> {
+        // The dedup key is the committed selection's input identity, so two
+        // snapshots over different inputs disclose independently even when
+        // their budget outcomes are identical.
+        let first = crate::lsp::state::AnalysisSnapshot {
+            input_identity: Some(
+                crate::lsp::input_identity::LspAnalysisInputIdentity::from_refresh_inputs(
+                    PathBuf::from("/workspace"),
+                    1,
+                    &crate::lsp::config::LspAnalysisConfig::default(),
+                ),
+            ),
+            ..snapshot_fixture()?
+        };
+        let second = crate::lsp::state::AnalysisSnapshot {
+            input_identity: Some(
+                crate::lsp::input_identity::LspAnalysisInputIdentity::from_refresh_inputs(
+                    PathBuf::from("/workspace"),
+                    2,
+                    &crate::lsp::config::LspAnalysisConfig::default(),
+                ),
+            ),
+            ..snapshot_fixture()?
+        };
+        let first_identity = first
+            .input_identity_id()
+            .ok_or_else(|| "fixture snapshot must carry an input identity".to_string())?;
+        let second_identity = second
+            .input_identity_id()
+            .ok_or_else(|| "fixture snapshot must carry an input identity".to_string())?;
+        assert_ne!(
+            first_identity, second_identity,
+            "distinct refresh inputs must produce distinct dedup identities"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn hover_state_helpers_reflect_the_session() -> Result<(), String> {
+        // #9604 finding 32: the no-evidence hover's state and language
+        // inputs track the session — nothing committed yet, then a committed
+        // snapshot; the configured default analyzes Rust.
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        assert!(
+            !backend.has_committed_analysis(),
+            "a fresh session has no committed analysis"
+        );
+        assert_eq!(
+            backend.configured_language_labels(),
+            vec!["Rust".to_string()],
+            "the default session configuration analyzes Rust"
+        );
+        backend
+            .refresh_plan(crate::lsp::diagnostics::WorkspaceDiagnostics {
+                snapshot: snapshot_fixture()?,
+                batches: Vec::new(),
+            })
+            .ok_or_else(|| "expected committed snapshot".to_string())?;
+        assert!(
+            backend.has_committed_analysis(),
+            "a committed snapshot flips the analyzed state"
+        );
+        Ok(())
+    }
+
+    fn snapshot_fixture() -> Result<crate::lsp::state::AnalysisSnapshot, String> {
+        // Empty evidence keeps the fixture consistent (`is_consistent` ties
+        // the diagnostic count to findings, seams, gaps, and scope guards);
+        // these tests only need a committed snapshot identity.
+        let diagnostics_by_uri = std::collections::BTreeMap::new();
+        Ok(crate::lsp::state::AnalysisSnapshot {
+            root: PathBuf::from("/workspace"),
+            rust_consumed_sources: Default::default(),
+            input_identity: None,
+            base: Some("origin/main".to_string()),
+            mode: crate::app::Mode::Draft,
+            refresh: crate::lsp::state::RefreshMetadata::generated_now(),
+            findings: Vec::new(),
+            analysis_outcome: None,
+            diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
+            classified_seams: Vec::new(),
+            repair_card_candidate_seams: None,
+            gap_artifacts: Vec::new(),
+            gap_artifact_rejections: Vec::new(),
+            harness_facts: crate::lsp::state::HarnessFactsOnSnapshot::NotRegistered,
+            diagnostics_by_uri,
+            diagnostic_uri_index: None,
+            delivery_selection: None,
+            seams_deferred: false,
+            partial_scope: None,
+            component_outcomes: Vec::new(),
+            out_of_scope_test_file_findings: 0,
+            unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
+            language_view: None,
+        })
     }
 }

@@ -2,6 +2,9 @@
 //! Run the same tests against correct and deliberately wrong libraries;
 //! compilation success and one executed test precede outcome assertions.
 
+#[path = "owner_pin_execution/shared_execution.rs"]
+mod shared_execution;
+
 use ripr::{
     CheckInput, ExposureClass, Mode, OutputFormat, ProbeFamily, check_workspace, render_check,
 };
@@ -14,6 +17,13 @@ mod field_projected_collection;
 
 #[path = "owner_pin_execution/literal_json_output.rs"]
 mod literal_json_output;
+
+#[path = "owner_pin_execution/effect_assertion_sweep.rs"]
+mod effect_assertion_sweep;
+#[path = "owner_pin_execution/effect_assertions.rs"]
+mod effect_assertions;
+#[path = "owner_pin_execution/function_pointer.rs"]
+mod function_pointer;
 
 struct Scratch(PathBuf);
 
@@ -3375,7 +3385,11 @@ fn trait_shadow_corpus_matches_compiled_owner_dispatch() -> Result<(), String> {
         assert_eq!(finding["probe"]["family"], "return_value", "{fixture_name}");
         assert_eq!(
             finding["classification"],
-            if shadow { "weakly_exposed" } else { "exposed" },
+            if shadow {
+                "reachable_unrevealed"
+            } else {
+                "exposed"
+            },
             "{fixture_name}: {finding}"
         );
         let related = finding["related_tests"]
@@ -3661,9 +3675,13 @@ fn literal_json_constructor_matches_real_callback_and_runtime_controls() -> Resu
         let root = scratch.0.join(case);
         std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
         std::fs::create_dir_all(root.join("tests")).map_err(|e| e.to_string())?;
+        // Read and write rather than `fs::copy`: on Windows the copy keeps the
+        // fixture's old mtime, and the shared target dir then reuses the
+        // previous case's broken `demo` build as fresh (#9661).
         for file in ["Cargo.toml", "Cargo.lock", "src/lib.rs", "tests/save.rs"] {
-            std::fs::copy(fixture.join("input").join(file), root.join(file))
-                .map_err(|e| e.to_string())?;
+            let bytes =
+                std::fs::read(fixture.join("input").join(file)).map_err(|e| e.to_string())?;
+            std::fs::write(root.join(file), bytes).map_err(|e| e.to_string())?;
         }
         let correct =
             std::fs::read_to_string(root.join("src/lib.rs")).map_err(|e| e.to_string())?;

@@ -1,0 +1,12 @@
+diff --git a/src/h_computed.rs b/src/h_computed.rs
+--- a/src/h_computed.rs
++++ b/src/h_computed.rs
+@@ -2,7 +2,7 @@
+ //! row value does not transfer.
+ 
+ fn wide_x(input: &str) -> bool {
+-    input.len() > 3
++    3 < input.len()
+ }
+ 
+ pub fn classify_trimmed(input: &str) -> &'static str {

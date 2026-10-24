@@ -6,7 +6,7 @@ TypeScript repositories (re-authored, not copied).
 
 ## Given
 
-Seventeen small authored TypeScript packages under `subjects/`, our own code
+Twenty-seven small authored TypeScript packages under `subjects/`, our own code
 under this repository's license, grouped by test runner:
 
 - jest (ts-jest): `authored-ts-jest-checkout` (strict and loose matchers,
@@ -52,6 +52,9 @@ under this repository's license, grouped by test runner:
 - node:test: `authored-ts-nodetest-billing` and `authored-ts-nodetest-pricing`
   (`node:assert` strict and legacy, `assert.throws` and `assert.rejects`,
   subtests, `t.assert`).
+- node:test operator grid and traps: `authored-ts-grid-<operator>` (seven
+  subjects) and `authored-ts-trap-kit`, described below. Run with
+  `node --experimental-strip-types --test`.
 
 Every RIPR-SPEC-0243 acceptance example has at least one case. Example 33
 (two test files, one mocked) is `jest-spec0243-ex33-two-files-one-mocked`;
@@ -118,6 +121,16 @@ is what counts as detection, but no test is named as failing, and the case's
 `failing_test` says so rather than naming the test whose callback raised it
 (#7734).
 
+The two `jest-then-owner-*` cases (#9354) add multiline and namespace-member
+calls in separate source/test files. Their whole expanded Jest package passed
+33 tests and four snapshots under Node 24.19.0, Jest 30.5.2, ts-jest 29.4.15
+and TypeScript 5.9.3. Each hand-applied reducer edit (initial sum 0 to 1)
+failed only its own test at the value assertion (expected 30, received 31),
+and restoration passed again. Both `.then` calls carry rejection handlers;
+rule 4 abstains as `static_unknown` rather than claiming a static oracle.
+Generic-call and `this`-member boundaries retain the unit coverage from #9519;
+these corpus rows exercise bare multiline and namespace-import member calls.
+
 The five `jest-spec0258-*` cases came last and were labeled the same way.
 Their two own subjects exist because each one's whole-package state is the
 point: a missing snapshot fails every `jest --ci` run of the unedited
@@ -149,6 +162,17 @@ the mutant applied, which is the line the replay below wrote. Test commands
 are the npm commands each case ran and failing tests are test titles, so
 `verdict-corpus relabel`, which replays cargo commands, does not run on this
 corpus.
+
+`authored-ts-grid-<operator>` (seven subjects) cross each mutation-operator
+class with five node:test styles (exact pin, table loop, property loop,
+helper-wrapped assert, no assertion; returns adds a startsWith case), one
+function per style. `authored-ts-trap-kit` holds false-credit traps (`if
+(false)`, `test.skip`, `{ todo: true }`, a foreign platform guard, a helper no
+test calls, assertions on inputs, a swallowed `AssertionError`, a tautology, a
+truthy-only `assert.ok`, an empty table loop, a swallowing wrapper, a mock
+checked without arguments, a sibling arm, and an unawaited promise whose late
+rejection node:test still fails), each paired with a control. These subjects run
+under `node --experimental-strip-types --test` with no installed packages.
 
 ## When
 

@@ -1,0 +1,12 @@
+diff --git a/trapkit/core.py b/trapkit/core.py
+--- a/trapkit/core.py
++++ b/trapkit/core.py
+@@ -6,7 +6,7 @@
+ 
+ 
+ def live_branch(a, b):
+-    return a * b
++    return b * a
+ 
+ 
+ def skipped_test(a, b):

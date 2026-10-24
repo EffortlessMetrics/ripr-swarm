@@ -243,7 +243,7 @@ fn unknown_stub_json_refusal_keeps_exit_three_with_closed_stderr() -> TestResult
             "missing-stderr-seam",
             "--json",
         ],
-        "0.2",
+        "0.3",
         "rust_test_stub",
         "/refusal/kind",
         "seam_not_found",
@@ -272,7 +272,7 @@ fn resolved_stub_json_refusal_keeps_exit_three_with_closed_stderr() -> TestResul
             "--write",
             "--json",
         ],
-        "0.2",
+        "0.3",
         "rust_test_stub",
         "/refusal/kind",
         "owner_async",
@@ -304,7 +304,7 @@ fn ready_stub_json_keeps_exit_zero_with_closed_stderr() -> TestResult {
             closed,
         )?;
         let document: Value = serde_json::from_slice(&output.stdout)?;
-        assert_eq!(document["schema_version"], "0.2");
+        assert_eq!(document["schema_version"], "0.3");
         assert_eq!(document["kind"], "rust_test_stub");
         assert_eq!(document["state"], "ready");
         assert_eq!(document["written"], false);

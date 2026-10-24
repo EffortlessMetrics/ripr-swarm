@@ -1,3 +1,4 @@
+use super::approx_band::{PythonBandReading, PythonBandVerdict, python_band_reading};
 use super::arm_activation;
 use super::assertion_selection::{
     PythonAssertionFocus, PythonAssertionSelection, select_relevant_assertion,
@@ -6,6 +7,7 @@ use super::assertion_selection::{
 use super::boundary::{BoundaryActivation, python_boundary_evidence};
 use super::discriminators::python_missing_discriminators;
 use super::guard_activation;
+use super::message_pin;
 use super::no_behavior::{
     changed_default_overridden_params, format_param_name_list, is_annotation_only_def_change,
     is_annotation_only_var_change, is_new_def_header_without_defaults, is_python_no_behavior_line,
@@ -21,7 +23,10 @@ use super::related_tests::{
 };
 use super::row_miss::{RowMissChange, annotate_row_misses};
 use super::sink_alignment::{SinkAlignment, classify_sink_alignment_with_old};
-use super::static_limits::{implicit_dunder_dispatch_limit, static_limit_for_focused_change};
+use super::static_limits::{
+    heuristic_only_relation_limit, implicit_dunder_dispatch_limit, static_limit_for_focused_change,
+    unpinned_equality_dunder_limit,
+};
 use super::table_rows::python_unvaried_table_operand;
 use super::term_activation::python_inactive_term_evidence;
 use super::transitive_reach::apply_python_no_static_path_limit;
@@ -303,9 +308,18 @@ pub(super) fn classify_change_for_owner(
     let mut related = related_tests_for_candidates(&related_candidates, Some(&focus));
     let alignment =
         classify_sink_alignment_with_old(owner, line_text, old_line_text, &related, all_tests);
-    let static_limit =
-        static_limit_for_focused_change(line_text, &focus, owner, &related_candidates)
-            .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, &related_candidates));
+    let static_limit = static_limit_for_focused_change(
+        line_text,
+        old_line_text,
+        &focus,
+        owner,
+        &related_candidates,
+    )
+    .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, &related_candidates))
+    .or_else(|| heuristic_only_relation_limit(owner, &related_candidates))
+    .or_else(|| {
+        unpinned_equality_dunder_limit(owner, &related_candidates, alignment.credited.is_some())
+    });
     let has_oracle_eligible_relation = related_candidates
         .iter()
         .any(|candidate| candidate.relation.uses_oracle());
@@ -406,7 +420,14 @@ pub(super) fn classify_change_for_owner(
     // `boundary_activation_unresolved` limitation instead.
     let boundary = (static_limit.is_none() && matches!(family, ProbeFamily::Predicate))
         .then(|| {
-            python_boundary_evidence(line_text, old_line_text, owner, &related_candidates, &focus)
+            python_boundary_evidence(
+                line_text,
+                old_line_text,
+                owner,
+                owner_source,
+                &related_candidates,
+                &focus,
+            )
         })
         .flatten();
     let boundary_gap = boundary
@@ -468,10 +489,42 @@ pub(super) fn classify_change_for_owner(
                         &focus,
                     )
                 })
+                .or_else(|| {
+                    // #9429: an owner observed only through a further method
+                    // call on its result.
+                    arm_activation::python_chained_receiver_gap(
+                        owner,
+                        source,
+                        line,
+                        line_text,
+                        old_line_text,
+                        &related_candidates,
+                        &focus,
+                    )
+                })
             })
         })
         .flatten();
     let mut guarded_arm_downgraded = false;
+    // Message-pin gate (#9185): a message-only change to a `raise` is
+    // discriminated by a `match=` pattern only when the pattern accepts one
+    // message and rejects the other. When every strong related error
+    // assertion pins the exception with a literal pattern that matches the old
+    // and the new message alike, it pins only the exception class. Unreadable
+    // patterns, non-literal messages and other assertion shapes fail open.
+    let message_pin_gap = (static_limit.is_none()
+        && matches!(family, ProbeFamily::ErrorPath)
+        && !no_behavior.multi_line_def_header_line)
+        .then(|| {
+            message_pin::python_message_pin_gap(
+                line_text,
+                old_line_text,
+                &related_candidates,
+                &focus,
+            )
+        })
+        .flatten();
+    let mut message_pin_downgraded = false;
     // Table-driven expected values that never vary the changed returned
     // operand cannot discriminate `return default` -> `return None` (#6651).
     // The same gate evaluates simple integer arithmetic per row so a 20xx
@@ -491,6 +544,28 @@ pub(super) fn classify_change_for_owner(
     })
     .flatten();
     let mut table_downgraded = false;
+    // An `approx` band that provably admits both the old and the new result
+    // lets a strong assertion pass either way (#9546, RIPR-SPEC-0238 rule 21).
+    let band_gap = (static_limit.is_none()
+        && matches!(family, ProbeFamily::ReturnValue)
+        && boundary_gap.is_none()
+        && inactive_term.is_none()
+        && guarded_arm_gap.is_none()
+        && unvaried_table.is_none()
+        && !no_behavior.multi_line_def_header_line)
+        .then(|| {
+            match python_band_reading(old_line_text, line_text, owner, &related_candidates, &focus)
+            {
+                PythonBandReading::Read(evidence)
+                    if evidence.verdict == PythonBandVerdict::Absorbs =>
+                {
+                    Some(evidence)
+                }
+                _ => None,
+            }
+        })
+        .flatten();
+    let mut band_downgraded = false;
     // An existing exact-list assertion cannot justify prescribing the same
     // assertion again when this bounded path cannot prove unequal values.
     let unproven_list_equality = !alignment.observes()
@@ -557,7 +632,9 @@ pub(super) fn classify_change_for_owner(
         && boundary_gap.is_none()
         && inactive_term.is_none()
         && guarded_arm_gap.is_none()
+        && message_pin_gap.is_none()
         && unvaried_table.is_none()
+        && band_gap.is_none()
     {
         (
             ExposureClass::Exposed,
@@ -625,14 +702,40 @@ pub(super) fn classify_change_for_owner(
         // changed line never executes under an observed input and the oracle
         // cannot discriminate a line it never runs (#7392).
         guarded_arm_downgraded = true;
+        let message = if gap.chained_receiver {
+            format!(
+                "A strong Python oracle reaches `{}`, but every strong assertion reads its result only through a further method call, and that method does not return the edited state directly, so the edited value is not observed (observation_unverified). {}.",
+                owner.name, gap.reason,
+            )
+        } else {
+            format!(
+                "A strong Python oracle reaches `{}`, but static evidence does not place a related test input inside the guarding arm `{}`; every observed input leaves the changed line unexecuted (observation_unverified). Add a test input that satisfies the guarding condition.",
+                owner.name, gap.discriminator,
+            )
+        };
+        (
+            ExposureClass::WeaklyExposed,
+            StageState::Yes,
+            StageState::Yes,
+            StageState::Weak,
+            vec![message],
+        )
+    } else if strongest_strength >= OracleStrength::Strong.rank()
+        && alignment.observes()
+        && let Some(gap) = message_pin_gap.as_ref()
+    {
+        // A strong error-variant oracle reaches the raise, but every message
+        // pattern it pins matches the old and the new message alike, so the
+        // assertion passes either way (#9185).
+        message_pin_downgraded = true;
         (
             ExposureClass::WeaklyExposed,
             StageState::Yes,
             StageState::Yes,
             StageState::Weak,
             vec![format!(
-                "A strong Python oracle reaches `{}`, but static evidence does not place a related test input inside the guarding arm `{}`; every observed input leaves the changed line unexecuted (observation_unverified). Add a test input that satisfies the guarding condition.",
-                owner.name, gap.discriminator,
+                "A strong Python oracle reaches `{}`, but {}. Add a `match=` pattern that the old message does not satisfy.",
+                owner.name, gap.reason,
             )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
@@ -666,6 +769,21 @@ pub(super) fn classify_change_for_owner(
             vec![format!(
                 "A strong Python oracle reaches `{}`, but {}; static evidence cannot confirm the changed operand is discriminated. Add a table row that varies `{}`.",
                 owner.name, gap.reason, gap.operand,
+            )],
+        )
+    } else if strongest_strength >= OracleStrength::Strong.rank()
+        && alignment.observes()
+        && let Some(gap) = &band_gap
+    {
+        band_downgraded = true;
+        (
+            ExposureClass::WeaklyExposed,
+            StageState::Yes,
+            StageState::Yes,
+            StageState::Weak,
+            vec![format!(
+                "A strong Python oracle reaches `{}`, but {}. Tighten the `approx` tolerance or assert a value the edit moves outside it.",
+                owner.name, gap.reason,
             )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank() {
@@ -792,6 +910,7 @@ pub(super) fn classify_change_for_owner(
             || term_downgraded
             || guarded_arm_downgraded
             || table_downgraded
+            || band_downgraded
         {
             StageState::Weak
         } else {
@@ -805,10 +924,18 @@ pub(super) fn classify_change_for_owner(
             )
         } else if boundary_downgraded {
             "Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary.".to_string()
+        } else if guarded_arm_downgraded
+            && guarded_arm_gap
+                .as_ref()
+                .is_some_and(|gap| gap.chained_receiver)
+        {
+            "Related tests reach the changed owner, but every strong assertion reads its result only through a further method call that does not return the edited state.".to_string()
         } else if guarded_arm_downgraded {
             "Related tests reach the changed owner, but every strong related test call provably fails the guarding arm, so the changed line never executes under an observed input.".to_string()
         } else if term_downgraded {
             "Related tests reach the changed term, but every strong related test call gives it the value 0.".to_string()
+        } else if band_downgraded {
+            "Related tests reach the changed return, but the asserted `approx` band admits both the old and the new result.".to_string()
         } else if table_downgraded {
             format!(
                 "Related tests reach the changed operand, but {}.",
@@ -860,12 +987,34 @@ pub(super) fn classify_change_for_owner(
                 })
                 .into_iter()
                 .collect()
+        } else if message_pin_downgraded {
+            // The message-pin downgrade names the changed message a
+            // distinguishing pattern must reject the old text for.
+            message_pin_gap
+                .as_ref()
+                .map(|gap| MissingDiscriminatorFact {
+                    value: gap.discriminator.clone(),
+                    reason: gap.reason.clone(),
+                    flow_sink: flow_sink.clone(),
+                })
+                .into_iter()
+                .collect()
         } else if term_downgraded {
             inactive_term
                 .as_ref()
                 .map(|term| MissingDiscriminatorFact {
                     value: term.discriminator.clone(),
                     reason: term.reason.clone(),
+                    flow_sink: flow_sink.clone(),
+                })
+                .into_iter()
+                .collect()
+        } else if band_downgraded {
+            band_gap
+                .as_ref()
+                .map(|gap| MissingDiscriminatorFact {
+                    value: gap.discriminator.clone(),
+                    reason: gap.reason.clone(),
                     flow_sink: flow_sink.clone(),
                 })
                 .into_iter()
@@ -1044,6 +1193,11 @@ pub(super) fn classify_change_for_owner(
             owner,
             line_text,
             old_line_text,
+            focus: &focus,
+            boundary_fact: crate::domain::input_boundary_fact(
+                &missing_discriminators,
+                &ProbeFamily::Predicate,
+            ),
         },
         all_tests,
     );
@@ -1051,7 +1205,8 @@ pub(super) fn classify_change_for_owner(
         let test = candidate.test;
         evidence.push(format!(
             "test_framework: {} ({})",
-            test.framework, test.name
+            test.framework.as_str(),
+            test.name
         ));
         if !test.fixtures.is_empty() {
             evidence.push(format!(
@@ -1134,6 +1289,7 @@ pub(super) fn classify_change_for_owner(
     );
 
     let mut finding = Finding {
+        analysis_scope: crate::domain::AnalysisScope::Diff,
         id: probe.id.0.clone(),
         canonical_gap,
         probe,
@@ -1158,6 +1314,8 @@ pub(super) fn classify_change_for_owner(
                 inactive_term
                     .map(|term| term.observed_values)
                     .unwrap_or_default()
+            } else if band_downgraded {
+                band_gap.map(|gap| gap.observed_values).unwrap_or_default()
             } else if guarded_arm_downgraded {
                 // A guarded-arm downgrade names the guarding comparison; show
                 // the literal inputs the strong related calls actually bind.
