@@ -30,6 +30,7 @@ fn a_current_block_passes() {
     let rendered = rendering("state_a");
     assert_eq!(
         block_violations(
+            "doc.md",
             &doc_with(&rendered),
             &validate_rendering(&format!("{rendered}\n")).unwrap_or_default()
         ),
@@ -39,7 +40,11 @@ fn a_current_block_passes() {
 
 #[test]
 fn a_stale_block_fails_with_the_write_hint() {
-    let violations = block_violations(&doc_with(&rendering("state_a")), &rendering("state_b"));
+    let violations = block_violations(
+        "doc.md",
+        &doc_with(&rendering("state_a")),
+        &rendering("state_b"),
+    );
     assert_eq!(violations.len(), 1, "{violations:?}");
     assert!(
         violations[0].contains("capability-docs --write"),
@@ -58,7 +63,11 @@ fn missing_duplicate_and_reversed_markers_fail_closed() {
         format!("{END}\n{BEGIN}\n"),
     ] {
         assert!(refused(locate_block(&doc)), "{doc}");
-        assert_eq!(block_violations(&doc, &rendered).len(), 1, "{doc}");
+        assert_eq!(
+            block_violations("doc.md", &doc, &rendered).len(),
+            1,
+            "{doc}"
+        );
         assert!(refused(replace_block(&doc, &rendered)), "{doc}");
     }
 }
@@ -71,7 +80,10 @@ fn write_round_trip_rewrites_only_the_block() -> Result<(), String> {
     assert_eq!(written, doc_with(&fresh));
     assert!(written.starts_with("# Doc\n\nbefore\n\n"));
     assert!(written.ends_with("\n\nafter\n"));
-    assert_eq!(block_violations(&written, &fresh), Vec::<String>::new());
+    assert_eq!(
+        block_violations("doc.md", &written, &fresh),
+        Vec::<String>::new()
+    );
     assert_eq!(replace_block(&written, &fresh)?, written);
     Ok(())
 }
@@ -108,24 +120,39 @@ fn arguments_default_to_check_and_reject_conflicts() {
 }
 
 #[test]
-fn the_real_doc_has_one_locatable_block_and_a_hand_edit_is_caught() -> Result<(), String> {
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/status/SUPPORT_TIERS.md");
-    let doc = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let (start, end) = locate_block(&doc)?;
-    let block = doc.get(start..end).ok_or("range")?.to_string();
+fn every_bound_doc_has_one_locatable_block_and_a_hand_edit_is_caught() -> Result<(), String> {
     assert!(
-        accepted(validate_rendering(&block)),
-        "real block is not a valid rendering"
+        super::DOC_PATHS.contains(&"docs/LANGUAGE_ADAPTER_PREVIEW.md"),
+        "the preview guide must stay bound to the registry block"
     );
-    assert_eq!(block_violations(&doc, &block), Vec::<String>::new());
-    // Negative experiment: flip one documented state inside the block only.
-    let edited_block = block.replacen("`usable_alpha`", "`state_x`", 1);
-    let edited_doc = doc.replacen(&block, &edited_block, 1);
-    assert_ne!(
-        edited_block, block,
-        "real block has no usable_alpha cell to edit"
+    let mut blocks = Vec::new();
+    for rel in super::DOC_PATHS {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join(rel);
+        let doc = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let (start, end) = locate_block(&doc)?;
+        let block = doc.get(start..end).ok_or("range")?.to_string();
+        assert!(
+            accepted(validate_rendering(&block)),
+            "{rel}: real block is not a valid rendering"
+        );
+        assert_eq!(block_violations(rel, &doc, &block), Vec::<String>::new());
+        // Negative experiment: flip one documented state inside the block only.
+        let edited_block = block.replacen("`preview`", "`state_x`", 1);
+        let edited_doc = doc.replacen(&block, &edited_block, 1);
+        assert_ne!(
+            edited_block, block,
+            "{rel}: real block has no preview cell to edit"
+        );
+        let violations = block_violations(rel, &edited_doc, &block);
+        assert_eq!(violations.len(), 1, "{rel}: {violations:?}");
+        assert!(violations[0].contains(rel), "{violations:?}");
+        blocks.push(block);
+    }
+    assert!(
+        blocks.windows(2).all(|pair| pair[0] == pair[1]),
+        "bound docs embed the same registry rendering"
     );
-    assert_eq!(block_violations(&edited_doc, &block).len(), 1);
     Ok(())
 }

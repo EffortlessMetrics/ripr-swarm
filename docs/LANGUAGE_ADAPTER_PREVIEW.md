@@ -13,7 +13,44 @@ typechecker or test runner, and they do not make generated CI blocking.
 | --- | --- | --- | --- |
 | Rust | reference path | enabled | Rust static exposure evidence and the existing CLI, CI, editor, report, and gate surfaces. |
 | TypeScript and JavaScript | preview | detected TypeScript projects (root `tsconfig.json`/`jsconfig.json`, or `.ts`/`.tsx`/`.mts`/`.cts` source under `src/` or `tests/`) without `ripr.toml`; otherwise disabled unless configured | Syntax-first owners, tests, assertions, probes, related tests, and visible static limits for `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, and `.cjs`. |
-| Python | preview static facts; scoped repair routing is `usable alpha` | detected Python projects without `ripr.toml`; otherwise disabled unless configured | Syntax-first owners, tests, assertions, probes, related tests, RIPR-stage evidence, selected repair-class missing discriminators, fail-closed static limits, and bounded repair cards/packets for selected pytest/unittest routes. |
+| Python | preview static facts, plus a scoped repair-routing lane (tier in the registry projection below) | detected Python projects without `ripr.toml`; otherwise disabled unless configured | Syntax-first owners, tests, assertions, probes, related tests, RIPR-stage evidence, selected repair-class missing discriminators, fail-closed static limits, and bounded repair cards/packets for selected pytest/unittest routes. |
+
+## Capability Registry Projection
+
+Per-cell support states and tier ceilings for every language, framework, mode
+and family come only from the generated block below, which is the registry
+(`domain::language_capability::CAPABILITY_CELLS`, also `ripr capabilities
+--json`) rendered by its single renderer. An absent cell is `not_proven`. The
+prose elsewhere in this guide is narrative and must not state a per-cell
+support state or tier that the block does not: `cargo xtask capability-docs
+--check` fails when the block is hand-edited, and the `language_capability_drift`
+test fails when prose names a `not_proven` cell the registry does not leave
+`not_proven` or states a tier word the block owns. Edit cell states in the
+registry, never here. The block is a static-evidence statement, not a runtime
+mutation outcome or a sufficiency claim, and promotes no tier.
+
+<!-- capability-registry:begin (generated from domain::language_capability::CAPABILITY_CELLS; do not edit) -->
+
+| Cell (language/framework/mode/family) | Support state | Tier ceiling |
+| --- | --- | --- |
+| `rust/any/diff/static_facts` | `supported_with_required_fallback` | `usable_alpha` |
+| `rust/any/repo/static_facts` | `supported_with_required_fallback` | `usable_alpha` |
+| `rust/any/diff/repair_routing` | `supported_with_required_fallback` | `usable_alpha` |
+| `python/any/diff/static_facts` | `supported_with_required_fallback` | `preview` |
+| `python/any/repo/static_facts` | `supported_with_required_fallback` | `preview` |
+| `python/pytest/diff/repair_routing` | `supported_with_required_fallback` | `usable_alpha` |
+| `python/unittest/diff/repair_routing` | `supported_with_required_fallback` | `usable_alpha` |
+| `typescript/any/diff/static_facts` | `supported_with_required_fallback` | `preview` |
+| `typescript/any/repo/static_facts` | `supported_with_required_fallback` | `preview` |
+| `typescript/any/diff/repair_routing` | `supported_with_required_fallback` | `preview` |
+| `javascript/any/diff/static_facts` | `supported_with_required_fallback` | `preview` |
+| `javascript/any/repo/static_facts` | `supported_with_required_fallback` | `preview` |
+| `javascript/any/diff/repair_routing` | `supported_with_required_fallback` | `preview` |
+| `perl/any/diff/static_facts` | `not_proven` | `preview` |
+| `perl/any/repo/static_facts` | `not_proven` | `preview` |
+| `perl/any/diff/repair_routing` | `not_proven` | `preview` |
+
+<!-- capability-registry:end -->
 
 The preview adapters feed the same output schema and review surfaces as Rust.
 Preview findings carry additive metadata such as `language`,
@@ -157,7 +194,8 @@ Read preview findings as syntax-first advisory evidence:
   `*.generated.py`, `*_generated.py`, and `generated_*.py` are excluded from
   preview diff analysis instead of being routed as repairable behavior changes.
 
-Python repair routing has a separate scoped `usable alpha` support-tier row for
+Python repair routing has a separate scoped support-tier row (see
+[Support tiers](status/SUPPORT_TIERS.md) and the projection above) for
 selected pytest/unittest workflows. That row covers direct weak findings that
 carry a canonical gap, missing discriminator, suggested test target, verify
 command, stop conditions, bounded agent packet, and before/after receipt. It
@@ -215,7 +253,7 @@ Useful references:
 - [Output schema](OUTPUT_SCHEMA.md) for field contracts.
 - [Support tiers](status/SUPPORT_TIERS.md) for maturity and trust boundaries.
 - [Python repair routing proposal](proposals/RIPR-PROP-0017-python-repair-routing-lane.md)
-  for the end-state repair-card and receipt loop and its scoped `usable alpha`
+  for the end-state repair-card and receipt loop and its scoped
   support-tier boundary.
 - [Python repair routing usable-alpha closeout](handoffs/2026-05-31-python-repair-routing-usable-alpha-closeout.md)
   for the proof and remaining limits behind the scoped support-tier row.
@@ -228,7 +266,7 @@ Useful references:
 - [TypeScript preview static facts](specs/RIPR-SPEC-0027-typescript-preview-static-facts.md).
 - [Python preview static facts](specs/RIPR-SPEC-0028-python-preview-static-facts.md).
 
-## Repo-Mode Analysis: Rust/Perl Full, Python and TypeScript Bounded Preview
+## Repo-Mode Analysis: Rust Full, Python and TypeScript Bounded Preview
 
 The preview adapters (TypeScript, Python) implement diff-mode static exposure
 analysis. Repo-mode analysis differs per adapter:
@@ -330,13 +368,14 @@ result, never silent skips.
 
 | Format | Rust repo | Perl repo | TypeScript repo | Python repo |
 | --- | --- | --- | --- | --- |
-| `repo-exposure-json` / `repo-exposure-md` / `repo-sarif` | full | full | seams: none rendered; `typescript_diff_first` limitation | seams: none rendered; `python_diff_first` limitation |
-| `repo-seams-json` / `repo-seams-md` | full | full | seams: none rendered; evidence via repo analysis result | seams: none rendered; evidence via repo analysis result |
-| `repo-badge-json` / `repo-badge-shields` | full | full | seams: none rendered; evidence via repo analysis result | seams: none rendered; capped/partial runs never badge-eligible |
-| `agent-seam-packets-json` | full | full | seams: none rendered; evidence via repo analysis result | seams: none rendered; evidence via repo analysis result |
+| `repo-exposure-json` / `repo-exposure-md` / `repo-sarif` | full | opt-in `lang-perl` build only |  seams: none rendered; `typescript_diff_first` limitation | seams: none rendered; `python_diff_first` limitation |
+| `repo-seams-json` / `repo-seams-md` | full | opt-in `lang-perl` build only; registry `not_proven` | seams: none rendered; evidence via repo analysis result | seams: none rendered; evidence via repo analysis result |
+| `repo-badge-json` / `repo-badge-shields` | full | opt-in `lang-perl` build only; registry `not_proven` | seams: none rendered; evidence via repo analysis result | seams: none rendered; capped/partial runs never badge-eligible |
+| `agent-seam-packets-json` | full | opt-in `lang-perl` build only; registry `not_proven` | seams: none rendered; evidence via repo analysis result | seams: none rendered; evidence via repo analysis result |
 
 Diff-scoped `check` formats (`check --json`, `check --format human`, SARIF from
-a diff) work normally on all four languages. The base/head `review-comments`
+a diff) work normally on Rust, TypeScript/JavaScript and Python; the Perl diff
+and repo static-facts cells are `not_proven` in the registry. The base/head `review-comments`
 path is the one diff-scoped exception (#6832): it projects seam-backed
 findings, and preview-language findings are not seams, so a Python or
 TypeScript diff yields an empty report (`comments: 0`, run status

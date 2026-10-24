@@ -1,6 +1,9 @@
 //! `cargo xtask capability-docs [--check|--write]`: keep the generated
-//! capability-registry block in `docs/status/SUPPORT_TIERS.md` equal to the
-//! registry's own rendering (#5531).
+//! capability-registry block in `docs/status/SUPPORT_TIERS.md` and in
+//! `docs/LANGUAGE_ADAPTER_PREVIEW.md` equal to the registry's own rendering
+//! (#5531). The preview guide embeds the same block so its per-cell support
+//! statements are generated, not hand-written; the guide's remaining prose is
+//! checked against the registry by the `language_capability_drift` test.
 //!
 //! There is one renderer, `domain::language_capability::render_registry_block`
 //! in the `ripr` library. This command never re-implements it: it runs
@@ -25,7 +28,12 @@ use crate::{FixKind, PolicyDisclosure, PolicyReportSpec, read_text_lossy};
 #[cfg(test)]
 mod tests;
 
-const DOC_PATH: &str = "docs/status/SUPPORT_TIERS.md";
+/// Every document that embeds the generated block. Each must contain exactly
+/// one marker pair; a missing one is a violation, never a skip.
+const DOC_PATHS: &[&str] = &[
+    "docs/status/SUPPORT_TIERS.md",
+    "docs/LANGUAGE_ADAPTER_PREVIEW.md",
+];
 const BEGIN_PREFIX: &str = "<!-- capability-registry:begin";
 const END_MARKER: &str = "<!-- capability-registry:end -->";
 const USAGE: &str =
@@ -60,39 +68,54 @@ pub(crate) fn capability_docs(args: &[String]) -> Result<(), String> {
         ),
     };
     let rendered = validate_rendering(&rendered_text)?;
-    let doc_path = Path::new(DOC_PATH);
-    let doc = read_text_lossy(doc_path)?;
     match options.mode {
         Mode::Write => {
-            let updated = replace_block(&doc, &rendered)?;
-            if updated == doc {
-                println!("{DOC_PATH}: capability-registry block already current");
-            } else {
-                std::fs::write(doc_path, updated)
-                    .map_err(|err| format!("failed to write {DOC_PATH}: {err}"))?;
-                println!("{DOC_PATH}: capability-registry block rewritten");
+            // Read and splice every doc before writing any, so a missing
+            // marker in one document leaves all of them untouched.
+            let mut updates = Vec::new();
+            for path in DOC_PATHS {
+                let doc = read_text_lossy(Path::new(path))?;
+                let updated =
+                    replace_block(&doc, &rendered).map_err(|reason| format!("{path}: {reason}"))?;
+                updates.push((*path, doc, updated));
+            }
+            for (path, doc, updated) in updates {
+                if updated == doc {
+                    println!("{path}: capability-registry block already current");
+                } else {
+                    std::fs::write(path, updated)
+                        .map_err(|err| format!("failed to write {path}: {err}"))?;
+                    println!("{path}: capability-registry block rewritten");
+                }
             }
             Ok(())
         }
         Mode::Check => {
-            let violations = block_violations(&doc, &rendered);
+            let mut violations = Vec::new();
+            for path in DOC_PATHS {
+                let doc = read_text_lossy(Path::new(path))?;
+                violations.extend(block_violations(path, &doc, &rendered));
+            }
             let disclosures = vec![PolicyDisclosure {
                 heading: "Scope and limits".to_string(),
                 intro: format!("{source_note}."),
                 items: vec![
-                    "Enforced: the marker block in docs/status/SUPPORT_TIERS.md equals the registry's own rendering.".to_string(),
-                    "Not enforced here: tier prose and row bindings (the in-crate drift test and check-support-tiers). Not part of precommit; hosted in rust-gates.yml and the docs-gate.".to_string(),
+                    format!(
+                        "Enforced: the marker block in each of {} equals the registry's own rendering.",
+                        DOC_PATHS.join(", ")
+                    ),
+                    "Not enforced here: tier prose and row bindings in SUPPORT_TIERS.md, and per-cell statements in the preview guide's prose (the in-crate `language_capability_drift` test and check-support-tiers). Not part of precommit; hosted in rust-gates.yml and the docs-gate.".to_string(),
                 ],
             }];
             crate::finish_policy_report_with_disclosures(
                 PolicyReportSpec {
                     report_file: "capability-docs.md",
                     check: "capability-docs",
-                    why_it_matters: "The capability-registry block in SUPPORT_TIERS.md is a generated projection of the registry. A hand edit or a missed regeneration makes the doc state a support state the binary does not. When run, this reports a stale block as a failure; it runs in rust-gates.yml and, for SUPPORT_TIERS.md or docs/specs changes, the docs-gate.",
+                    why_it_matters: "The capability-registry blocks in SUPPORT_TIERS.md and LANGUAGE_ADAPTER_PREVIEW.md are generated projections of the registry. A hand edit or a missed regeneration makes a doc state a support state the binary does not. When run, this reports a stale block as a failure; it runs in rust-gates.yml and, for SUPPORT_TIERS.md, LANGUAGE_ADAPTER_PREVIEW.md or docs/specs changes, the docs-gate.",
                     fix_kind: FixKind::AuthorDecisionRequired,
                     recommended_fixes: &[
-                        "Run `cargo xtask capability-docs --write` to regenerate only the marker block.",
-                        "Change cell states in `domain/language_capability.rs`, never in the generated block.",
+                        "Run `cargo xtask capability-docs --write` to regenerate only the marker blocks.",
+                        "Change cell states in `domain/language_capability.rs`, never in a generated block.",
                     ],
                     rerun_command: "cargo xtask capability-docs --check",
                     exception_template: None,
@@ -191,25 +214,23 @@ pub(super) fn locate_block(doc: &str) -> Result<(usize, usize), String> {
     let ends = doc.matches(END_MARKER).count();
     if begins != 1 || ends != 1 {
         return Err(format!(
-            "{DOC_PATH}: expected exactly one capability-registry begin/end marker pair, found {begins}/{ends}"
+            "expected exactly one capability-registry begin/end marker pair, found {begins}/{ends}"
         ));
     }
     match (doc.find(BEGIN_PREFIX), doc.find(END_MARKER)) {
         (Some(start), Some(end_start)) if start < end_start => {
             Ok((start, end_start + END_MARKER.len()))
         }
-        _ => Err(format!(
-            "{DOC_PATH}: capability-registry end marker precedes the begin marker"
-        )),
+        _ => Err("capability-registry end marker precedes the begin marker".to_string()),
     }
 }
 
-pub(super) fn block_violations(doc: &str, rendered: &str) -> Vec<String> {
+pub(super) fn block_violations(path: &str, doc: &str, rendered: &str) -> Vec<String> {
     match locate_block(doc) {
-        Err(reason) => vec![reason],
+        Err(reason) => vec![format!("{path}: {reason}")],
         Ok((start, end)) if doc.get(start..end) == Some(rendered) => Vec::new(),
         Ok(_) => vec![format!(
-            "the generated capability-registry block in {DOC_PATH} differs from `ripr capabilities --markdown`; run `cargo xtask capability-docs --write`"
+            "the generated capability-registry block in {path} differs from `ripr capabilities --markdown`; run `cargo xtask capability-docs --write`"
         )],
     }
 }

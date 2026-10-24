@@ -2371,7 +2371,13 @@ one docs-only way to break a `proof_refs` entry).
 
 `cargo xtask capability-docs [--check | --write] [--markdown-file <path>]` keeps
 the generated `<!-- capability-registry:begin ... end -->` block in
-`docs/status/SUPPORT_TIERS.md` equal to the registry (#5531). There is one
+`docs/status/SUPPORT_TIERS.md` and in `docs/LANGUAGE_ADAPTER_PREVIEW.md` equal
+to the registry (#5531). Both documents embed the same rendering; a marker
+pair missing from either is a failure, and `--write` splices every document or
+none. The preview guide's remaining prose is checked by the
+`language_capability_drift` test: it may not state a `usable alpha` tier (the
+block owns per-cell tiers) and may say `<cell id> is not_proven` only of a cell
+the registry lacks or holds at `not_proven`. There is one
 renderer, in the `ripr` library; `ripr capabilities --markdown` prints it and
 the command builds `ripr`, runs that, and compares or splices the exact text.
 The in-crate `language_capability_drift` test checks the same renderer, but a
@@ -2391,8 +2397,8 @@ Hosted wiring (#5531): `rust-gates.yml` runs `capability-docs --check` as the
 unconditional `capability_docs` step after `fixtures` on every non-docs-only
 lane, so registry drift (an edit to `domain/language_capability.rs`) fails the
 required `Ripr Rust Small Result`. For a docs-only PR the `routed-rust.yml`
-docs-gate runs it only when the PR changes `docs/status/SUPPORT_TIERS.md` or
-`docs/specs/**`, so a hand edit of the block fails the same required result
+docs-gate runs it only when the PR changes `docs/status/SUPPORT_TIERS.md`,
+`docs/LANGUAGE_ADAPTER_PREVIEW.md` or `docs/specs/**`, so a hand edit of the block fails the same required result
 while other docs-only PRs build nothing extra. Both are existing jobs of the
 existing `pull_request`/`merge_group` workflow: no new trigger, permission,
 secret or `pull_request_target`, and candidate code runs only where
