@@ -184,8 +184,11 @@ pub(super) fn test_applies_operator_to_owner(
         .filter(|site| !opaque.iter().any(|range| range.contains(&site.at)))
         // A result thrown away cannot reach an assertion.
         .filter(|site| result_is_used(&masked, site.at))
-        // `>>` and `<<` also close and open generic arguments.
-        .filter(|site| !in_generic_arguments(&masked, site.at))
+        // `>>` and `<<` also close and open generic arguments; no other
+        // operator is read that way.
+        .filter(|site| {
+            !matches!(operator.token, "<<" | ">>") || !in_generic_arguments(&masked, site.at)
+        })
         .any(|site| {
             let operand = if operator.unary {
                 operand_after(&masked, site.at + site.len)
@@ -204,7 +207,22 @@ pub(super) fn test_applies_operator_to_owner(
         let masked = mask_comments_and_strings(source);
         // A `macro_rules!` may expand to a second impl of the operator trait
         // that the index never sees, so the unique-impl count proves nothing.
-        !masked.contains("macro_rules!") && !imports_other_type(&masked, impl_type, &owner.file)
+        !masked.contains("macro_rules!")
+            && !imports_other_type(&masked, impl_type, &owner.file)
+            && !workspace_macro_may_generate_impls(index)
+    })
+}
+
+/// Whether any workspace file defines a `macro_rules!` that expands to an
+/// `impl`. Invoked in the owner's file (through `#[macro_use]` or a path
+/// import), it can generate a second operator impl the index never sees.
+fn workspace_macro_may_generate_impls(index: &RustIndex) -> bool {
+    index.files().values().any(|facts| {
+        let source = facts.data().source.as_ref();
+        source.contains("macro_rules!") && {
+            let masked = mask_comments_and_strings(source);
+            masked.contains("macro_rules!") && masked.contains("impl")
+        }
     })
 }
 

@@ -610,8 +610,9 @@ hold, or the test is not related and the abstention above applies:
   that name and the owner's file imports none by a non-standard path or glob;
 - it is the only impl of that method for `T`, because `impl Add<i64> for T`
   beside `impl Add<T> for T` is chosen by the right-hand side, which ripr
-  does not type, and the owner's file declares no `macro_rules!`, whose
-  expansion could add an impl the index never sees;
+  does not type, and neither the owner's file nor any workspace file defines
+  a `macro_rules!` that expands to an `impl`, whose invocation could add an
+  impl the index never sees;
 - the test is in the owner's file, outside property-test macros, and no scope
   between the test and the file declares or renames another `T`;
 - the `Self` operand is a whole operand whose type is syntactically `T`: a
@@ -622,8 +623,9 @@ hold, or the test is not related and the abstention above applies:
   and an operand after a comparison or a block (`T { .. } - n` is a
   subtraction, not `-n`) are not resolved;
 - the operand is not also a parameter, closure parameter or pattern binding
-  elsewhere in the body, and a `>>`/`<<` is not inside an unclosed `<` of its
-  statement (generic arguments);
+  elsewhere in the body, and a `>>`/`<<` (only those) is not inside an
+  unclosed `<` of its statement (generic arguments), so a comparison earlier
+  in the statement does not hide a `+`;
 - the result is used: `let _ = a + b;` or a `let` nothing reads again does not
   reach an assertion.
 
@@ -764,7 +766,10 @@ Tests in `crates/ripr/tests/operator_call_credit.rs` and
   `a_type_the_test_redeclares_is_not_the_impl_type` and
   `generic_arguments_are_not_shift_operators`,
   `a_binary_minus_after_a_block_is_not_negation` and
-  `a_macro_that_may_generate_a_second_impl_is_not_attributed`
+  `a_macro_that_may_generate_a_second_impl_is_not_attributed`,
+  `a_macro_defined_in_a_sibling_file_may_generate_a_second_impl`,
+  `a_comparison_before_a_plus_does_not_hide_the_operator` and
+  `every_binary_and_assigning_operator_reaches_its_impl`
 - `the_left_operand_is_a_whole_path_with_one_group`,
   `a_left_operand_that_is_only_a_tail_is_refused` and
   `the_unary_operand_is_a_whole_path`

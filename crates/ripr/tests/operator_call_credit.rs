@@ -23,6 +23,8 @@ struct Case {
     old_line: &'static str,
     new_line: &'static str,
     extra_items: &'static str,
+    /// Source of `src/macros.rs`, a second workspace file.
+    sibling: &'static str,
     test_body: &'static str,
 }
 
@@ -82,6 +84,10 @@ fn run(case: &Case, root: &Path) -> Result<Vec<String>, String> {
         .position(|line| line == case.new_line)
         .map(|at| at + 1)
         .ok_or("premise: the changed line is in the source")?;
+    if !case.sibling.is_empty() {
+        std::fs::write(root.join("src/macros.rs"), case.sibling)
+            .map_err(|e| format!("write sibling: {e}"))?;
+    }
     std::fs::write(root.join("src/lib.rs"), &lib).map_err(|e| format!("write source: {e}"))?;
     std::fs::write(
         root.join("diff.patch"),
@@ -134,6 +140,7 @@ const ADD: Case = Case {
     old_line: "        Money(self.0 + other.0)",
     new_line: "        Money(other.0 + self.0)",
     extra_items: "",
+    sibling: "",
     test_body: "assert_eq!(Money(2) + Money(3), Money(5));",
 };
 
@@ -157,6 +164,7 @@ fn typed_operands_reach_each_operator_impl() -> Result<(), String> {
             old_line: "        Money(self.0 - other.0)",
             new_line: "        Money(self.0 + 0 - other.0)",
             extra_items: "",
+            sibling: "",
             test_body: "let a = Money(5);\n        let b = Money(3);\n        assert_eq!(a - b, Money(2));",
         },
         Case {
@@ -167,6 +175,7 @@ fn typed_operands_reach_each_operator_impl() -> Result<(), String> {
             old_line: "        Money(-self.0)",
             new_line: "        Money(0 - self.0)",
             extra_items: "",
+            sibling: "",
             test_body: "let m = Money(4);\n        assert_eq!(-m, Money(-4));",
         },
         Case {
@@ -177,6 +186,7 @@ fn typed_operands_reach_each_operator_impl() -> Result<(), String> {
             old_line: "        Money(!self.0)",
             new_line: "        Money(!(self.0))",
             extra_items: "",
+            sibling: "",
             test_body: "assert_eq!(!Money(0), Money(-1));",
         },
         Case {
@@ -187,6 +197,7 @@ fn typed_operands_reach_each_operator_impl() -> Result<(), String> {
             old_line: "        self.0 += other.0;",
             new_line: "        self.0 = self.0 + other.0;",
             extra_items: "",
+            sibling: "",
             test_body: "let mut total = Money(1);\n        total += Money(2);\n        assert_eq!(total, Money(3));",
         },
     ];
@@ -235,6 +246,7 @@ fn every_binary_and_assigning_operator_reaches_its_impl() -> Result<(), String> 
             old_line: leak(format!("        Money(self.0 {token} other.0)")),
             new_line: leak(format!("        Money((self.0 {token} other.0) + 0)")),
             extra_items: "",
+            sibling: "",
             test_body: leak(format!(
                 "let a = Money(6);\n        let b = Money(2);\n        let r = a {token} b;\n        assert_eq!(r, Money(0));"
             )),
@@ -249,6 +261,7 @@ fn every_binary_and_assigning_operator_reaches_its_impl() -> Result<(), String> 
             old_line: leak(format!("        self.0 {token}= other.0;")),
             new_line: leak(format!("        self.0 = self.0 {token} other.0;")),
             extra_items: "",
+            sibling: "",
             test_body: leak(format!(
                 "let mut total = Money(6);\n        total {token}= Money(2);\n        let _ = total;"
             )),
@@ -384,6 +397,7 @@ fn generic_arguments_are_not_shift_operators() -> Result<(), String> {
         old_line: "        Money(self.0 >> other.0)",
         new_line: "        Money((self.0) >> other.0)",
         extra_items: "",
+        sibling: "",
         test_body: "let v: Vec<Result<u8, Money>> = Vec::new();\n        assert!(v.is_empty());",
     };
     let direct = direct_tests(&shr)?;
@@ -416,6 +430,7 @@ fn a_binary_minus_after_a_block_is_not_negation() -> Result<(), String> {
         old_line: "        Money(-self.0)",
         new_line: "        Money(0 - self.0)",
         extra_items: "",
+        sibling: "",
         test_body: "let n = Money(2);\n        let r = Money { 0: 5 } - n;\n        assert_eq!(r.0, 3);",
     };
     let direct = direct_tests(&case)?;
@@ -454,5 +469,52 @@ add_for!(i32);
         Ok(())
     } else {
         Err(format!("related by a direct call: {direct:?}"))
+    }
+}
+
+#[test]
+fn a_macro_defined_in_a_sibling_file_may_generate_a_second_impl() -> Result<(), String> {
+    // `add_for!(i32)` is invoked here but defined in `src/macros.rs`.
+    let case = Case {
+        extra_items: "
+add_for!(i32);
+",
+        sibling: "macro_rules! add_for {
+    ($t:ty) => {
+        impl Add<$t> for Money {
+            type Output = Money;
+            fn add(self, other: $t) -> Money {
+                Money(self.0 + other as i64)
+            }
+        }
+    };
+}
+",
+        ..with_body(
+            ADD,
+            "sibling-file macro",
+            "assert_eq!(Money(2) + Money(3), Money(5));",
+        )
+    };
+    let direct = direct_tests(&case)?;
+    if direct.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("related by a direct call: {direct:?}"))
+    }
+}
+
+#[test]
+fn a_comparison_before_a_plus_does_not_hide_the_operator() -> Result<(), String> {
+    let case = with_body(
+        ADD,
+        "comparison then add",
+        "let n = 1;\n        assert!(n < 5, \"{:?}\", Money(1) + Money(2));",
+    );
+    let direct = direct_tests(&case)?;
+    if direct == ["operator_under_test"] {
+        Ok(())
+    } else {
+        Err(format!("expected the add credited, got {direct:?}"))
     }
 }
