@@ -1068,9 +1068,9 @@ fn calls_are_plain(node: &SyntaxNode, local: &str) -> bool {
         .collect();
     for (at, token) in tokens.iter().enumerate() {
         if token.kind() != SyntaxKind::IDENT
-            || !tokens
+            || tokens
                 .get(at + 1)
-                .is_some_and(|next| next.kind() == SyntaxKind::L_PAREN)
+                .is_none_or(|next| next.kind() != SyntaxKind::L_PAREN)
         {
             continue;
         }
@@ -1089,7 +1089,7 @@ fn calls_are_plain(node: &SyntaxNode, local: &str) -> bool {
                         (strip_raw(owner.text()), name),
                         ("String", "from" | "new") | ("Vec", "new") | ("VecDeque", "new")
                     )
-                }) && !before(3).is_some_and(|prefix| prefix.kind() == SyntaxKind::COLON2)
+                }) && before(3).is_none_or(|prefix| prefix.kind() != SyntaxKind::COLON2)
             }
             _ => matches!(name, "Some" | "Ok" | "Err"),
         };

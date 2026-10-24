@@ -950,10 +950,9 @@ fn a_call_inside_an_assertion_or_macro_between_call_and_assertion_is_not_credite
         let finding = finding(&body)?;
         assert_uncredited(&finding, between);
     }
-    // Plain setup and a pure std method on the local keep the credit.
-    let body = format!(
-        "{BUILD}        let _m = format!(\"{{}}\", 1);\n        assert_eq!(s, \"+570\");"
-    );
+    // Plain setup between the call and the assertion keeps the credit.
+    let body =
+        format!("{BUILD}        let _m = format!(\"{{}}\", 1);\n        assert_eq!(s, \"+570\");");
     let kept = finding(&body)?;
     assert_eq!(kept["classification"], "exposed", "{kept}");
     assert_eq!(kept["ripr"]["discriminate"]["state"], "yes", "{kept}");
