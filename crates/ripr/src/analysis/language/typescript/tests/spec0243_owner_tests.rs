@@ -39,10 +39,17 @@ fn tests_of(source: &str) -> Vec<TypeScriptTest> {
 }
 
 fn relations(owner: &TypeScriptOwner, tests: &[TypeScriptTest]) -> Vec<TypeScriptRelationKind> {
-    related_test_candidates(owner, tests, None, &ReExportIndex::empty(), None)
-        .into_iter()
-        .map(|candidate| candidate.relation)
-        .collect()
+    related_test_candidates(
+        owner,
+        tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    )
+    .into_iter()
+    .map(|candidate| candidate.relation)
+    .collect()
 }
 
 fn classify(owners: &[TypeScriptOwner], tests: &[TypeScriptTest]) -> Result<Finding, String> {
