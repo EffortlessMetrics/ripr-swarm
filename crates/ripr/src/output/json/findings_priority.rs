@@ -84,7 +84,10 @@ pub(super) fn omitted_summary(findings: &[Finding], kept: &[usize]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     let mut files: Vec<(&Path, usize)> = by_file.iter().map(|(file, n)| (*file, *n)).collect();
-    // Count descending, then path order; display_path only for the named files.
+    // Count descending, then `Path` component order (deterministic; avoids
+    // building a display string for every omitted file). Ties can order
+    // differently from the display string only for names that differ at a
+    // separator; `display_path` runs only for the named files.
     files.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
     let named = files
         .iter()

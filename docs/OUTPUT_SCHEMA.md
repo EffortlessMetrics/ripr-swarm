@@ -2834,7 +2834,7 @@ Example (budget engaged after the first of 61 findings):
     "run_status": "limited_findings_bound",
     "basis": "check_findings_byte_budget",
     "downstream_consumable": false,
-    "message": "rendered 1 of 61 findings within the findings-array byte budget (RIPR_CHECK_FINDINGS_BYTES=1; raise it or set =0 for the full set); kept the highest-priority findings (candidate-current first, then reachable_unrevealed, weakly_exposed, no_static_path, the unknown classes, exposed last) in sort order; omitted 60: by class exposed=40, weakly_exposed=20; by file src/lib.rs=60",
+    "message": "rendered 1 of 61 findings within the findings-array byte budget (RIPR_CHECK_FINDINGS_BYTES=1; raise it or set =0 for the full set); kept the highest-priority findings (candidate-current first, then reachable_unrevealed, weakly_exposed, no_static_path, the unknown classes, exposed last, then a recommended next step) in sort order; omitted 60: by class weakly_exposed=20, exposed=40; by file src/lib.rs=60",
     "repair_route": "output/check-findings-budget"
   }
 ]
