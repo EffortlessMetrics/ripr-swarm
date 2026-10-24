@@ -11935,6 +11935,9 @@ name = "cross-crate test relation through dependency edges"
 spec = "docs/specs/RIPR-SPEC-0172-cross-crate-dependency-edge-relation.md"
 tests = [
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_ambiguous_owner_when_cross_crate_dependent_test_calls_owner_then_edge_admits",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::path_keyword_in_owner_less_probe_relates_no_assertion_test",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::declaration_introducer_in_probe_relates_no_assertion_test",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::every_long_rust_keyword_is_refused_as_assertion_affinity_seed",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::root_build_script_probe_relates_no_name_token_test",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::mounting_package_source_restores_build_script_relation",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::mount_scanner_reads_structure_not_text",
@@ -11994,6 +11997,7 @@ fixtures = [
   "fixtures/same_name_sibling_file_test",
   "fixtures/same_name_qualified_other_module",
   "fixtures/glob_import_qualified_other_module",
+  "fixtures/rust_path_keyword_affinity",
   "fixtures/rust_build_script_no_test_reach",
 ]
 code = [
