@@ -174,12 +174,22 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
 /// candidate-test pointer they found stays in the evidence. Fail closed: only
 /// `no_static_path` in the lib root or its modules (see
 /// `MemberCrates::is_proc_macro_library_file`) is rewritten, to the
-/// non-actionable unknown; no other class is touched or promoted.
+/// non-actionable unknown, and so is a `static_unknown` that still carries a
+/// ruled-out `reach no` (#10088); no other class is touched or promoted.
 pub(in crate::analysis) fn withhold_proc_macro_no_path_as_unknown(
     finding: &mut Finding,
     index: &RustIndex,
 ) {
-    if finding.class != ExposureClass::NoStaticPath
+    // #10088: an unmodelled-syntax probe (`let mut n = 0;`, `n += 1;`) whose
+    // owner has a production caller is classified `static_unknown` directly,
+    // yet still carries the ruled-out `reach no` and its "no static test path"
+    // wording: the same unsupported claim, so it is rewritten the same way.
+    let reach_ruled_out = match finding.class {
+        ExposureClass::NoStaticPath => true,
+        ExposureClass::StaticUnknown => finding.ripr.reach.state == StageState::No,
+        _ => false,
+    };
+    if !reach_ruled_out
         || !index
             .member_crates
             .is_proc_macro_library_file(&finding.probe.location.file)

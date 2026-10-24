@@ -151,7 +151,11 @@ which ripr does not follow.
   (activate/observe/discriminate and their evidence lines) become unknown with
   truthful summaries; evidence gains a `proc_macro_expansion:` line. A negative
   a stage established on its own evidence is kept.
-- Never promotes: only `no_static_path` is rewritten, only to `static_unknown`.
+- A `static_unknown` finding that still carries a ruled-out `reach no` (an
+  unmodelled-syntax probe whose owner has a production caller, #10088) gets the
+  same reach/stage/evidence/next-step rewrite; its class is already the unknown.
+- Never promotes: only `no_static_path` and a `static_unknown` with ruled-out
+  reach are rewritten, only to `static_unknown`.
 
 ### Wire format
 
@@ -278,6 +282,10 @@ transitive helper witnesses keep `rust_transitive_reach_unresolved`.
   — witness limit kind and pointer kept, transitive stop reason dropped
 - `crates/ripr/tests/proc_macro_no_static_path.rs::build_script_of_a_proc_macro_package_is_not_proc_macro_library_code`
   — diff-path negative for a build script
+- `crates/ripr/tests/proc_macro_no_static_path.rs::proc_macro_static_unknown_with_a_production_caller_does_not_claim_reach_no`
+  — an unmodelled-syntax `static_unknown` with a production caller reads `reach unknown`, not `reach no` (#10088)
+- `crates/ripr/tests/proc_macro_no_static_path.rs::ordinary_static_unknown_with_a_production_caller_keeps_reach_no`
+  — discriminating negative: an ordinary crate keeps `reach no`
 
 ## Implementation Mapping
 
