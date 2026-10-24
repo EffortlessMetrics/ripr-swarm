@@ -1305,6 +1305,12 @@ fn run_pipeline_for_diff_text_with_language_config(
     // (#5421). They say nothing about whether the diff parsed, so the
     // malformed-diff check below must not treat them as an explanation.
     let mut supplied_evidence_limitations = 0usize;
+    // The TypeScript adapter serves both the `typescript` and `javascript`
+    // ids and returns the same result for either (#10013). Its per-label
+    // outcomes are recorded on every pass, but findings, limitations and
+    // counts are merged once per adapter family so enabling both ids does not
+    // retain each finding twice.
+    let mut typescript_family_merged = false;
     for language in languages {
         cancellation::checkpoint()?;
         // Non-abort contract (Campaign 31 PR 10, #1403): a preview-language
@@ -1335,9 +1341,14 @@ fn run_pipeline_for_diff_text_with_language_config(
         match attempted {
             Ok(result) => {
                 cancellation::checkpoint()?;
-                candidate_line_count += result
-                    .candidate_line_count
-                    .max(candidate_lines_from_findings(&result.findings));
+                let repeat_typescript_pass =
+                    matches!(language, LanguageId::TypeScript | LanguageId::JavaScript)
+                        && std::mem::replace(&mut typescript_family_merged, true);
+                if !repeat_typescript_pass {
+                    candidate_line_count += result
+                        .candidate_line_count
+                        .max(candidate_lines_from_findings(&result.findings));
+                }
                 let produced_findings = !result.findings.is_empty();
                 // A preview adapter indexes its whole language across the
                 // workspace even when the diff touches none of it. Its
@@ -1375,6 +1386,9 @@ fn run_pipeline_for_diff_text_with_language_config(
                     &routed_outcome_labels(preview_changed_files),
                     &scope_label,
                 ));
+                if repeat_typescript_pass {
+                    continue;
+                }
                 findings.extend(result.findings);
                 if reads_only_supplied_evidence {
                     supplied_evidence_limitations += result.limitations.len();
@@ -5879,7 +5893,16 @@ mod tests {
             single_aggregate.semantic_digest,
             both_aggregate.semantic_digest
         );
-        assert!(both.findings.len() >= single.findings.len());
+        // #10013: the retained findings, limitations and file counts are the
+        // single run's, not the adapter output appended once per id.
+        assert!(!single.findings.is_empty(), "fixture must yield findings");
+        assert_eq!(both.findings.len(), single.findings.len());
+        assert_eq!(both.findings.len(), summed(&both_aggregate));
+        assert_eq!(both.summary.findings, single.summary.findings);
+        assert_eq!(
+            both.summary.changed_files_by_language,
+            single.summary.changed_files_by_language
+        );
         Ok(())
     }
 
