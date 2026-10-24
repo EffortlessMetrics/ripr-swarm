@@ -6,6 +6,7 @@
 //! `static_unknown` under `rust_implicit_call_unresolved`. Each control below
 //! changes one thing about the shape and keeps the gap.
 
+use ripr::domain::RelationReason;
 use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, check_workspace};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -130,6 +131,26 @@ fn kept(lib: &str, diff: &str, line: usize, label: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// A test is related to the owner by a direct call, and no finding carries the
+/// limit: the operator was credited to the impl instead of abstained on.
+fn credited(lib: &str, diff: &str, line: usize, label: &str) -> Result<(), String> {
+    let findings = findings_on(lib, diff, line)?;
+    let direct = findings
+        .iter()
+        .flat_map(|finding| &finding.related_tests)
+        .any(|test| test.relation_reason == Some(RelationReason::DirectOwnerCall));
+    if findings.iter().any(limited) || !direct {
+        return Err(format!(
+            "{label}: expected the operator credited to the impl, got {:?}",
+            findings
+                .iter()
+                .map(|f| (f.class.as_str(), f.static_limit_kind, f.related_tests.len()))
+                .collect::<Vec<_>>()
+        ));
+    }
+    Ok(())
+}
+
 /// 1-based line of the first line of `lib` containing `needle`.
 fn line_of(lib: &str, needle: &str) -> Result<usize, String> {
     lib.lines()
@@ -176,7 +197,7 @@ mod tests {{
 }
 
 #[test]
-fn an_operator_impl_reached_through_the_operator_is_withheld() -> Result<(), String> {
+fn an_operator_impl_reached_through_the_operator_is_credited() -> Result<(), String> {
     let lib = add_source("assert_eq!(Money(2) + Money(3), Money(5));");
     let line = line_of(&lib, "Money(other.0 + self.0)")?;
     let edit = diff(
@@ -184,11 +205,11 @@ fn an_operator_impl_reached_through_the_operator_is_withheld() -> Result<(), Str
         "        Money(self.0 + other.0)",
         "        Money(other.0 + self.0)",
     );
-    withheld(&lib, &edit, line, "Add through +")
+    credited(&lib, &edit, line, "Add through +")
 }
 
 #[test]
-fn an_operator_bound_through_lets_is_withheld() -> Result<(), String> {
+fn an_operator_bound_through_lets_is_credited_when_typed() -> Result<(), String> {
     let edit = |lib: &str| -> Result<(usize, String), String> {
         let line = line_of(lib, "Money(other.0 + self.0)")?;
         let edit = diff(
@@ -198,47 +219,62 @@ fn an_operator_bound_through_lets_is_withheld() -> Result<(), String> {
         );
         Ok((line, edit))
     };
-    for (label, body) in [
+    // Operands ripr types are credited to the impl; the one it cannot type (a
+    // helper's return value) still abstains.
+    for (label, body, typed) in [
         (
             "result bound then asserted",
             "let total = Money(2) + Money(3);\n        assert_eq!(total, Money(5));",
+            true,
         ),
         (
             "operand from a helper",
             "fn money(v: i64) -> Money {\n            Money(v)\n        }\n        assert_eq!(money(2) + Money(3), Money(5));",
+            false,
         ),
         (
             "associated call returning Money",
             "struct Factory;\n        impl Factory {\n            fn new() -> Money {\n                Money(1)\n            }\n        }\n        let value = Factory::new();\n        assert_eq!(value + Money(1), Money(2));",
+            false,
         ),
         (
             "closed block shadowing the operand",
             "let m = Money(1);\n        {\n            let m = Tile(1);\n            let _ = m;\n        }\n        assert_eq!(m + Money(2), Money(3));",
+            false,
         ),
         (
             "destructured result",
             "let Money(v) = Money(2) + Money(3);\n        assert_eq!(v, 5);",
+            true,
         ),
         (
             "reassigned accumulator",
             "let mut acc = Money(0);\n        acc = acc + Money(1);\n        assert_eq!(acc, Money(1));",
+            true,
         ),
         (
             "operand rebound by a for loop",
             "let t = Tile(1);\n        let _ = t;\n        for t in [Money(1)] {\n            assert_eq!(t + Money(2), Money(3));\n        }",
+            false,
         ),
         (
             "operand rebound by a match arm",
             "let t = Tile(1);\n        let _ = t;\n        match Some(Money(1)) {\n            Some(t) if true => assert_eq!(t + Money(2), Money(3)),\n            _ => {}\n        }",
+            false,
         ),
         (
             "operands bound",
             "let a = Money(2);\n        let b = Money(3);\n        assert_eq!(a + b, Money(5));",
+            true,
         ),
     ] {
         let lib = add_source(body);
         let (line, patch) = edit(&lib)?;
-        withheld(&lib, &patch, line, label)?;
+        if typed {
+            credited(&lib, &patch, line, label)?;
+        } else {
+            withheld(&lib, &patch, line, label)?;
+        }
     }
     Ok(())
 }

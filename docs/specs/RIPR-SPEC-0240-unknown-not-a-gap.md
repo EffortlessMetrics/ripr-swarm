@@ -581,9 +581,7 @@ A test with no strong assertion (`negation_is_only_exercised`,
 `assert!(a < b)`), a test that never names the self type, a dispatch test that never calls the
 method name, an ignored test, and a finding whose reach is not `weak` keep
 their class: the rule only withholds, so the actionability flip stays
-fail-closed. It does not credit the test: whether the operator or virtual call
-lands on the changed method is not established. Corpus effect:
-`shape-op-add-impl`, `shape-drop-impl-side-effect` and
+fail-closed. Corpus effect: `shape-drop-impl-side-effect` and
 `shape-dyn-trait-method-exact` move from `false_actionable` to `abstained`,
 which their cases accept. `shape-dyn-trait-method-twin-input` is a true gap
 (`partially_discriminated`: the input cannot tell the twin impls apart) that
@@ -591,6 +589,49 @@ now reads `abstained` instead of `ideal`; its case accepts `limited`, and ripr
 cannot tell twin impls apart from a dyn call, so the rule trades that one
 advisory for removing three false actionable claims. The finding names at most
 three judged tests.
+
+### Crediting operator syntax (#9567)
+
+Withholding is the fallback. When the test's operator provably runs the changed
+impl, `related_tests::operator_dispatch` relates the test to the owner by
+`direct_owner_call`, the same signal an `assert_eq!` over a user `PartialEq`
+carries (#8999), so the reach stage is no longer `weak` and the implicit-call
+rule has nothing to withhold. The finding is then judged by the ordinary
+oracle pipeline: relating the test raises no class by itself.
+
+The reading is as narrow as the equality one and fails closed. All of these
+hold, or the test is not related and the abstention above applies:
+
+- the owner is the method of a non-generic `impl <OpTrait> for T` with a plain
+  self type, `OpTrait` is one of `Add`, `Sub`, `Mul`, `Div`, `Rem`, `BitAnd`,
+  `BitOr`, `BitXor`, `Shl`, `Shr`, their `*Assign` forms, `Neg` or `Not`, and
+  its method name is the trait's;
+- the trait name is the standard one: no workspace file declares a trait of
+  that name and the owner's file imports none by a non-standard path or glob;
+- it is the only impl of that method for `T`, because `impl Add<i64> for T`
+  beside `impl Add<T> for T` is chosen by the right-hand side, which ripr
+  does not type, and the owner's file declares no `macro_rules!`, whose
+  expansion could add an impl the index never sees;
+- the test is in the owner's file, outside property-test macros, and no scope
+  between the test and the file declares or renames another `T`;
+- the `Self` operand is a whole operand whose type is syntactically `T`: a
+  constructor `T(..)`/`T { .. }`, a unit struct, an associated function whose
+  declared return is `Self`, or a `let` annotated `: T` or built by one of
+  those, bound once. A reference (`&a + &b` runs the impl for `&T`), a method
+  chain, a field, a call result, the tail of a longer expression (`a * b + c`)
+  and an operand after a comparison or a block (`T { .. } - n` is a
+  subtraction, not `-n`) are not resolved;
+- the operand is not also a parameter, closure parameter or pattern binding
+  elsewhere in the body, and a `>>`/`<<` is not inside an unclosed `<` of its
+  statement (generic arguments);
+- the result is used: `let _ = a + b;` or a `let` nothing reads again does not
+  reach an assertion.
+
+`Index`, `Drop` and the iterator traits keep the abstention until their own
+readings are added.
+
+Corpus effect: `shape-op-add-impl` moves from `limited` to `credited`, its
+ideal verdict.
 
 ## Scope boundary
 
@@ -694,7 +735,6 @@ Tests in `crates/ripr/src/analysis/classify/implicit_call.rs` and
 - `operator_syntax_is_read_per_trait`
 - `a_drop_impl_reached_at_scope_exit_is_withheld`,
   `an_iterator_impl_reached_through_collect_is_withheld`,
-  `an_operator_impl_reached_through_the_operator_is_withheld` and
   `a_dyn_trait_method_called_on_an_untyped_receiver_is_withheld`
 - keeps-the-gap controls (each asserts a gap remains and the limit is absent):
   `an_operator_impl_controls_keep_the_gap` (no test names the type, smoke
@@ -706,10 +746,28 @@ Tests in `crates/ripr/src/analysis/classify/implicit_call.rs` and
   shapes (an operator on integers beside an unused `Money`, operands bound to
   another type, a discarded result) and
   `a_dispatch_shape_that_differs_keeps_its_class` the receiver of another
-  type; `an_operator_bound_through_lets_is_withheld` pins the forms that stay
-  withheld (a bound result, bound operands, a helper's value, a reassigned
-  accumulator) (#9540). The `rust_trait_impl_shadow` and
+  type; `an_operator_bound_through_lets_is_credited_when_typed` pins the forms that
+  are credited (a bound result, a destructured result, bound operands, a reassigned accumulator) and
+  the one that stays withheld (a helper's value) (#9540). The `rust_trait_impl_shadow` and
   `rust_trait_parent_shadow` goldens pin the same shadow rule.
+
+Tests in `crates/ripr/tests/operator_call_credit.rs` and
+`crates/ripr/src/analysis/classify/related_tests/operator_dispatch.rs`
+(#9567):
+
+- `typed_operands_reach_each_operator_impl` (`Add`, `Sub`, `Neg`, `Not`,
+  `AddAssign`) and `an_operator_impl_reached_through_the_operator_is_credited`
+- `operands_that_are_not_established_as_the_impl_type_stay_unrelated`
+  (integers, references, a method chain, a longer expression, a field, a
+  binding of another type, a discarded result, a parameter, a shadowing
+  `let`), `a_second_impl_of_the_trait_for_the_type_is_not_attributed` and
+  `a_type_the_test_redeclares_is_not_the_impl_type` and
+  `generic_arguments_are_not_shift_operators`,
+  `a_binary_minus_after_a_block_is_not_negation` and
+  `a_macro_that_may_generate_a_second_impl_is_not_attributed`
+- `the_left_operand_is_a_whole_path_with_one_group`,
+  `a_left_operand_that_is_only_a_tail_is_refused` and
+  `the_unary_operand_is_a_whole_path`
 
 Tests in `crates/ripr/src/analysis/classify/owner_pin/tests.rs`:
 
