@@ -596,6 +596,7 @@ pub(crate) fn related_profile_bun_tests(
                 relation_confidence: None,
                 miss: None,
                 miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }
         })
         .collect::<Vec<_>>();

@@ -323,7 +323,7 @@ pub(in crate::analysis) fn exact_oracle_gap_next_step(
         return None;
     }
     let candidates = related.iter().filter(|test| {
-        !test.is_unmatched()
+        test.is_contributing()
             && test
                 .relation_reason
                 .is_none_or(|reason| reason.establishes_reach(owner_is_function))
@@ -1006,6 +1006,7 @@ mod tests {
             relation_confidence: Some(RelationConfidence::High),
             miss,
             miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }
     }
 

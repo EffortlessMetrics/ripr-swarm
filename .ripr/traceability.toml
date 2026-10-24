@@ -15075,6 +15075,12 @@ id = "RIPR-SPEC-0224"
 name = "Examined-test miss evidence"
 spec = "docs/specs/RIPR-SPEC-0224-examined-test-miss-evidence.md"
 tests = [
+  "crates/ripr/src/output/related_test_role_tests.rs::miss_mutation_never_changes_a_contributing_rows_eligibility",
+  "crates/ripr/src/output/related_test_role_tests.rs::examined_only_rows_are_excluded_whatever_miss_they_carry",
+  "crates/ripr/src/output/related_test_role_tests.rs::a_pre_field_artifact_keeps_every_row_eligible",
+  "crates/ripr/src/output/related_test_role_tests.rs::the_examined_only_role_round_trips_on_the_wire",
+  "crates/ripr/src/output/related_test_role_tests.rs::annotating_an_existing_row_changes_no_decision",
+  "crates/ripr/src/output/related_test_role_tests.rs::decision_helpers_never_branch_on_the_miss",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::reveal_evidence_lists_a_test_whose_assertions_do_not_match_as_a_miss",
   "crates/ripr/src/output/human/explain.rs::tests::unrecorded_assertion_row_names_the_retention_limit",
   "crates/ripr/src/output/human/explain.rs::tests::bare_fallback_suppressed_when_sibling_row_printed_an_assertion",
