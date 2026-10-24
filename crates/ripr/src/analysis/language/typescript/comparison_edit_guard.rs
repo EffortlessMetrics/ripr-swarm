@@ -323,6 +323,19 @@ impl ComparisonEdit {
             .map(|step| center as i64 + step)
             .find(|candidate| self.differs_at(*candidate as f64))
     }
+
+    /// The rule 9 limitation: what the change did and the input that would
+    /// tell the two comparisons apart.
+    pub(crate) fn limitation(&self, owner_name: &str) -> String {
+        let add = match self.differing_value() {
+            Some(value) => format!("Add a case where `{}` is `{value}`.", self.parameter),
+            None => format!("Add a case where `{}` separates the two.", self.parameter),
+        };
+        format!(
+            "The change to `{owner_name}` only turns the condition `{}` into `{}`, and every tested call passes a `{}` the two comparisons treat alike, so the edit is not discriminated. {add}",
+            self.old_text, self.new_text, self.parameter
+        )
+    }
 }
 
 /// Check every observed owner call. Any piece that cannot be read, from an
@@ -346,6 +359,38 @@ pub(crate) fn ts_comparison_witness(
         workspace_root,
     )
     .unwrap_or(ComparisonWitness::Discriminates)
+}
+
+/// RIPR-SPEC-0246 rule 9 wording inside the #9497 unexercised returned-
+/// expression limitation: the ladder already demotes a same-outcome returned
+/// expression, and when the edit is a ternary comparison every observed owner
+/// call proves with a plain numeric literal, the ladder names the condition
+/// and a differing value instead of the generic changed-arm note. `None`
+/// keeps the generic note: any piece the rule 9 reader cannot read (a
+/// variable or expression argument, a rebound parameter, a call it cannot
+/// see) fails open to the generic limitation.
+pub(crate) fn ts_unexercised_comparison_limitation(
+    old_line_text: &str,
+    line_text: &str,
+    owner: &TypeScriptOwner,
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    all_tests: &[TypeScriptTest],
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Option<String> {
+    let edit = ts_comparison_edit(old_line_text, line_text)?;
+    if ts_comparison_witness(
+        &edit,
+        owner,
+        candidates,
+        all_tests,
+        alias_map,
+        workspace_root,
+    ) != ComparisonWitness::SameOutcome
+    {
+        return None;
+    }
+    Some(edit.limitation(&owner.name))
 }
 
 fn witness_or_keep(

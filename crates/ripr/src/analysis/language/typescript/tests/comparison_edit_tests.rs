@@ -189,15 +189,41 @@ fn an_unreadable_call_keeps_the_credit() -> Result<(), String> {
             "plural-variable",
             vec![("1", "\"1 item\""), ("count", "\"3 items\"")],
         ),
-        (
-            "plural-expression",
-            vec![("1", "\"1 item\""), ("1 + 1", "\"2 items\"")],
-        ),
         ("plural-no-argument", vec![("", "\"undefined items\"")]),
     ] {
         let finding = plural(label, &calls)?;
         assert_eq!(finding.class, ExposureClass::Exposed, "{label}");
     }
+    Ok(())
+}
+
+#[test]
+fn an_argument_only_the_unexercised_reader_folds_demotes_generically() -> Result<(), String> {
+    // `1 + 1` is not a plain numeric literal, so the rule 9 reader refuses it
+    // and the post-ladder hook stands down; the #9497 unexercised returned-
+    // expression arm folds the same input and demotes at the ladder with the
+    // generic changed-arm note, not the rule 9 wording.
+    let finding = plural(
+        "plural-expression",
+        &[("1", "\"1 item\""), ("1 + 1", "\"2 items\"")],
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|line| line.contains("the changed arm or bound is not exercised")),
+        "{:?}",
+        finding.missing
+    );
+    assert!(
+        !finding
+            .missing
+            .iter()
+            .any(|line| line.contains("`n === 1` into `n <= 1`")),
+        "{:?}",
+        finding.missing
+    );
     Ok(())
 }
 

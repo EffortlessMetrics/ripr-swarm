@@ -6052,10 +6052,28 @@ pub(crate) fn classify_change_with_alias_state(
                 owner.name
             )
         } else if returned_expression_unexercised {
-            format!(
-                "Every related assertion calls `{}` with literal inputs on which the old and the changed returned expression evaluate to the same value; the changed arm or bound is not exercised, so an exact assertion on those inputs passes on both versions. Add an input that reaches the changed arm.",
-                owner.name
-            )
+            // RIPR-SPEC-0246 rule 9: when the same-outcome inputs are a
+            // ternary comparison edit every observed call proves with a
+            // literal, the limitation names the condition and a differing
+            // value; any unreadable piece keeps the generic note.
+            old_line_text
+                .and_then(|old| {
+                    ts_unexercised_comparison_limitation(
+                        old,
+                        line_text,
+                        owner,
+                        &related_candidates,
+                        all_tests,
+                        alias_map,
+                        workspace_root,
+                    )
+                })
+                .unwrap_or_else(|| {
+                    format!(
+                        "Every related assertion calls `{}` with literal inputs on which the old and the changed returned expression evaluate to the same value; the changed arm or bound is not exercised, so an exact assertion on those inputs passes on both versions. Add an input that reaches the changed arm.",
+                        owner.name
+                    )
+                })
         } else if boundary_witnessed {
             ts_observation_guard_limitation(&probe_shape, line_text)
         } else {
@@ -6794,16 +6812,9 @@ fn ts_apply_post_ladder_rules(
             context.workspace_root,
         ) == ComparisonWitness::SameOutcome
     {
-        let add = match edit.differing_value() {
-            Some(value) => format!("Add a case where `{}` is `{value}`.", edit.parameter),
-            None => format!("Add a case where `{}` separates the two.", edit.parameter),
-        };
         verdict.class = ExposureClass::WeaklyExposed;
         verdict.discriminate_state = StageState::Weak;
-        verdict.missing = vec![format!(
-            "The change to `{}` only turns the condition `{}` into `{}`, and every tested call passes a `{}` the two comparisons treat alike, so the edit is not discriminated. {add}",
-            context.owner.name, edit.old_text, edit.new_text, edit.parameter
-        )];
+        verdict.missing = vec![edit.limitation(&context.owner.name)];
         return;
     }
     if matches!(context.probe_shape.family, ProbeFamily::ReturnValue)

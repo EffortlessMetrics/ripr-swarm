@@ -348,8 +348,11 @@ observed value separates the two comparisons, or any call cannot be read (a
 variable or expression argument, an omitted argument, a test file that feeds
 the owner another way), the ladder result stands. Otherwise an `exposed` ladder
 result reads `weakly_exposed`, and the missing line names a whole number where
-the comparisons differ. Rule 9 runs after RIPR-SPEC-0248 rule 2 and removes
-credit only.
+the comparisons differ. When the RIPR-SPEC-0243 rule 18 unexercised returned-
+expression arm demotes first, the ladder limitation carries this rule's
+condition and differing value instead of the generic changed-arm note; an
+argument only that arm's evaluator can read keeps the generic note. Rule 9
+runs after RIPR-SPEC-0248 rule 2 and removes credit only.
 
 ### Decisions
 
@@ -520,8 +523,10 @@ and the rejected alternative.
 
 17. `return \`${n} item${n === 1 ? "" : "s"}\`` becomes `n <= 1`, tests
     `expect(plural(1)).toBe("1 item")` and `expect(plural(3)).toBe("3 items")`:
-    `weakly_exposed`. Adding `expect(plural(0)).toBe("0 items")`, or any
-    argument that is not a numeric literal: `exposed`.
+    `weakly_exposed`. Adding `expect(plural(0)).toBe("0 items")`: `exposed`.
+    An argument the RIPR-SPEC-0243 rule 18 evaluator cannot read (a variable,
+    a missing argument): `exposed`; one only that evaluator can read
+    (`1 + 1`) reads `weakly_exposed` with the generic unexercised-arm note.
 
 ## Test Mapping
 

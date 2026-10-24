@@ -16408,6 +16408,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/comparison_edit_tests.rs::an_input_where_the_comparisons_differ_keeps_the_credit",
   "crates/ripr/src/analysis/language/typescript/tests/comparison_edit_tests.rs::an_unreadable_call_keeps_the_credit",
   "crates/ripr/src/analysis/language/typescript/tests/comparison_edit_tests.rs::a_rebound_parameter_keeps_the_credit",
+  "crates/ripr/src/analysis/language/typescript/tests/comparison_edit_tests.rs::an_argument_only_the_unexercised_reader_folds_demotes_generically",
   "crates/ripr/src/analysis/language/typescript/tests/mocha_hook_owner_tests.rs::a_before_hook_that_calls_the_owner_abstains",
   "crates/ripr/src/analysis/language/typescript/tests/mocha_hook_owner_tests.rs::the_same_suite_without_a_hook_keeps_the_gap",
   "crates/ripr/src/analysis/language/typescript/tests/mocha_hook_owner_tests.rs::a_before_each_hook_and_an_enclosing_describe_hook_abstain",
