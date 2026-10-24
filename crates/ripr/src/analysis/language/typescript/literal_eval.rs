@@ -401,6 +401,9 @@ mod tests {
             agree("Math.min(100, n)", "Math.min(n, 100)", &["n"], &["40"]),
             None
         );
+        // The literals differ (2 against 1 and 1), so the changed-number
+        // probes run, and the values still agree everywhere.
+        assert_eq!(agree("n + 2", "n + 1 + 1", &["n"], &["40"]), None);
     }
 
     #[test]
