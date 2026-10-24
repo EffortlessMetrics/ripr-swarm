@@ -1891,9 +1891,20 @@ fn run_pipeline_for_diff_text_with_language_config(
     // a contradiction is an accounting bug for tests and debug builds to
     // surface, never an analysis failure.
     debug_assert!(
-        diff_language_aggregate.validate().is_ok(),
+        super::language_outcome::reconcile(
+            &diff_language_aggregate,
+            languages,
+            &findings,
+            analysis_outcome.as_ref()
+        )
+        .is_ok(),
         "{:?}",
-        diff_language_aggregate.validate()
+        super::language_outcome::reconcile(
+            &diff_language_aggregate,
+            languages,
+            &findings,
+            analysis_outcome.as_ref()
+        )
     );
     #[cfg(test)]
     if let Ok(mut aggregates) = DIFF_AGGREGATES.lock() {
@@ -2135,9 +2146,10 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
     let repo_language_aggregate = repo_language_aggregate.finish();
     // Internal invariant check; never changes what a release build reports.
     debug_assert!(
-        repo_language_aggregate.validate().is_ok(),
+        super::language_outcome::reconcile(&repo_language_aggregate, languages, &findings, None)
+            .is_ok(),
         "{:?}",
-        repo_language_aggregate.validate()
+        super::language_outcome::reconcile(&repo_language_aggregate, languages, &findings, None)
     );
     #[cfg(test)]
     if let Ok(mut aggregates) = REPO_AGGREGATES.lock() {
