@@ -14625,9 +14625,9 @@ tests = [
   "crates/ripr/src/mcp/repair_freshness_tests.rs::durable_selected_action_awaiting_and_descendant_keep_after",
   "crates/ripr/src/mcp/repair_freshness_tests.rs::durable_selected_action_tampered_terminal_restarts_without_old_routes",
   "crates/ripr/src/mcp/repair_freshness_tests.rs::durable_selected_action_open_gap_unknown_head_does_not_offer_restart",
-  "crates/ripr/src/mcp/repair_root_tests.rs::durable_selected_restart_failed_preserves_literal_unix_root",
-  "crates/ripr/src/mcp/repair_root_tests.rs::durable_selected_restart_open_gap_preserves_literal_unix_root",
-  "crates/ripr/src/mcp/repair_root_tests.rs::durable_selected_awaiting_literal_unix_root_retains_after_control",
+  "crates/ripr/src/mcp/repair_root_tests.rs::durable_selected_restart_failed_cli_binds_root_mcp_projects_portable",
+  "crates/ripr/src/mcp/repair_root_tests.rs::durable_selected_restart_open_gap_cli_binds_root_mcp_projects_portable",
+  "crates/ripr/src/mcp/repair_root_tests.rs::durable_selected_awaiting_mcp_projects_portable_continue_root",
   "crates/ripr/src/mcp/server_tests.rs::delayed_durable_read_leaves_the_async_executor_and_status_available",
   "crates/ripr/src/mcp/gaps.rs::tests::evidence_document_reports_producer_repair_readiness",
   "crates/ripr/src/mcp/gaps.rs::tests::readiness_stays_fail_closed_on_missing_producer_facts",
@@ -18131,6 +18131,32 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0282-repair-attempt-after-refusal-retry-budget.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0287"
+name = "Agent stub names the repair journey it feeds"
+spec = "docs/specs/RIPR-SPEC-0287-agent-stub-repair-journey-pointer.md"
+tests = [
+  "crates/ripr/src/app/test_stub.rs::tests::next_repair_names_the_start_and_the_agreeing_surface",
+  "crates/ripr/src/app/test_stub.rs::tests::next_repair_warns_when_the_stub_lands_outside_the_packet_surface",
+  "crates/ripr/src/app/test_stub.rs::tests::next_repair_stays_silent_when_the_repair_route_is_not_eligible",
+  "crates/ripr/src/app/test_stub.rs::tests::at_kind_stub_on_an_open_gap_is_not_strongly_gripped",
+  "crates/ripr/src/cli/commands/agent_stub.rs::tests::next_repair_block_carries_the_start_command_and_surface",
+  "crates/ripr/src/cli/commands/agent_stub.rs::tests::divergence_warning_names_both_files_and_the_consequence",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/app/test_stub.rs",
+  "crates/ripr/src/cli/commands/agent_stub.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0287-agent-stub-repair-journey-pointer.md",
+  "docs/OUTPUT_SCHEMA.md",
+  "docs/EXIT_CODES.md",
 ]
 metrics = [
   "unit_test_pass_rate",

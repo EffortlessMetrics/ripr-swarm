@@ -10,8 +10,10 @@
 //! stub for that location, so the printed command and its answer cannot
 //! disagree.
 
+use crate::agent::loop_commands::{bound_root, display_path, root_path_display, shell_arg};
 use crate::analysis;
 use crate::analysis::owner_fn_line_span;
+use crate::analysis::repair_route::repair_packet_eligibility;
 use crate::analysis::seams::SeamGripClass;
 use crate::analysis::seams::SeamKind;
 use crate::analysis::test_stub::{
@@ -20,8 +22,12 @@ use crate::analysis::test_stub::{
 };
 use crate::analysis::{ClassifiedSeam, RepoSeam};
 use crate::app::CheckOutput;
+use crate::app::agent_brief::AgentBriefPolicy;
 use crate::config::RiprConfig;
 use crate::domain::{ExposureClass, Finding};
+use crate::output::agent_seam_packets::{
+    recommended_test_for, recommended_test_is_repair_edit_target,
+};
 use std::path::{Path, PathBuf};
 
 /// Which gap the caller means.
@@ -92,9 +98,48 @@ pub(crate) struct TestStubResolution {
     /// nearest gap in the same function was stubbed instead (#6298), so the
     /// substitution is stated rather than left to the generated comment.
     pub(crate) at_note: Option<String>,
+    /// The repair journey this stub feeds (#8727): the documented
+    /// `ripr agent repair` start for the same seam plus the repair packet's
+    /// admitted edit surface, projected from the classified entry that
+    /// produced the stub. `None` when the route cannot be established
+    /// honestly — a file-parse (`--at --kind`) resolution carries no
+    /// classified entry, or the fail-closed repair-route flip does not hold —
+    /// so no route is invented.
+    pub(crate) next_repair: Option<StubNextRepair>,
     /// The line of the seam this resolution stubs. It differs from a
     /// requested `--at` line when the nearest gap was substituted.
     pub(crate) seam_line: usize,
+}
+
+/// The repair journey one generated stub feeds (#8727). Both placements are
+/// independent derivations over the same classified seam: the stub's
+/// placement comes from the stub producer's owner-shape rules, the admitted
+/// surface from the repair packet's recommended-test authority. Comparing
+/// them at generation time turns the before phase's later dirty-premise
+/// refusal into a stated, named choice.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StubNextRepair {
+    /// The documented start of the repair transaction for the same seam.
+    pub(crate) start_command: String,
+    /// The file the repair packet admits as its edit surface; the stub's
+    /// test must land here for the repair's before phase to accept the edit.
+    pub(crate) allowed_edit_surface: String,
+    /// Set when the stub's chosen placement file differs from the packet's
+    /// admitted surface: writing the stub where the stub says would make the
+    /// repair's before phase refuse the edit at the dirty-premise gate.
+    pub(crate) placement_divergence: Option<StubPlacementDivergence>,
+}
+
+/// Two independently derived placements that disagree at stub generation
+/// time, both named so the user can place the test where the repair admits
+/// it instead of discovering the refusal after the write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StubPlacementDivergence {
+    /// Where the stub is placed: an inline test module of a production file,
+    /// or an integration test file.
+    pub(crate) stub_file: String,
+    /// The only file the repair packet's edit cage admits.
+    pub(crate) packet_file: String,
 }
 
 #[derive(Debug)]
@@ -123,7 +168,7 @@ pub(crate) fn resolve_test_stub(
                 .find(|entry| entry.seam.id().as_str() == id)
                 .ok_or_else(|| TestStubError::NotFound(format!("seam_id {id} was not found")))?;
             let source = read_owner_source(root, &entry.seam)?;
-            Ok(resolution_for(root, entry, source))
+            Ok(resolution_for(root, config, entry, source))
         }
         TestStubSelector::At { file, line, kind } => {
             let mut seam_index = None;
@@ -183,7 +228,7 @@ fn resolve_at_location(
             let seams = analysis::scoped_file_seams(root, config, &relative, seam_index)
                 .map_err(TestStubError::Operational)?;
             let candidates = seams.iter().map(AtCandidate::Shape).collect::<Vec<_>>();
-            resolve_at(root, candidates, file, line, kind)
+            resolve_at(root, config, candidates, file, line, kind)
         }
         (Some(relative), None) => {
             let scoped = analysis::inventory_diff_scoped_classified_seams_at_with_config(
@@ -195,6 +240,7 @@ fn resolve_at_location(
             .map_err(TestStubError::Operational)?;
             resolve_at(
                 root,
+                config,
                 classified_candidates(&scoped.classified),
                 file,
                 line,
@@ -204,7 +250,14 @@ fn resolve_at_location(
         (None, _) => {
             let (classified, _) = analysis::inventory_classified_seams_at_with_config(root, config)
                 .map_err(TestStubError::Operational)?;
-            resolve_at(root, classified_candidates(&classified), file, line, kind)
+            resolve_at(
+                root,
+                config,
+                classified_candidates(&classified),
+                file,
+                line,
+                kind,
+            )
         }
     }
 }
@@ -225,7 +278,7 @@ impl<'a> AtCandidate<'a> {
         }
     }
 
-    fn resolution(self, root: &Path, source: String) -> TestStubResolution {
+    fn resolution(self, root: &Path, config: &RiprConfig, source: String) -> TestStubResolution {
         match self {
             Self::Shape(seam) => {
                 let outcome = rust_test_stub(seam, None, &source);
@@ -236,10 +289,14 @@ impl<'a> AtCandidate<'a> {
                     outcome,
                     grip_class: None,
                     at_note: None,
+                    // A file-parse selection carries no classified entry, so
+                    // the repair packet's surface cannot be established; no
+                    // route is invented (#8727).
+                    next_repair: None,
                     seam_line: seam.display_line(),
                 }
             }
-            Self::Classified(entry) => resolution_for(root, entry, source),
+            Self::Classified(entry) => resolution_for(root, config, entry, source),
         }
     }
 }
@@ -708,6 +765,7 @@ fn finding_text_is_on_disk(root: &Path, file: &str, line: usize, expression: &st
 /// first candidate's refusal names why.
 fn resolve_at(
     root: &Path,
+    config: &RiprConfig,
     candidates: Vec<AtCandidate<'_>>,
     file: &str,
     line: usize,
@@ -812,7 +870,7 @@ fn resolve_at(
     let mut first_refusal = None;
     for candidate in candidates {
         let seam_line = candidate.seam().display_line();
-        let mut resolution = candidate.resolution(root, source.clone());
+        let mut resolution = candidate.resolution(root, config, source.clone());
         // A finding line is the changed line, which need not hold a gap of
         // its own; when the stub is for a different line, say so (#6298).
         if seam_line != line {
@@ -872,8 +930,17 @@ fn read_owner_source(root: &Path, seam: &RepoSeam) -> Result<String, TestStubErr
     })
 }
 
-fn resolution_for(root: &Path, entry: &ClassifiedSeam, source: String) -> TestStubResolution {
+fn resolution_for(
+    root: &Path,
+    config: &RiprConfig,
+    entry: &ClassifiedSeam,
+    source: String,
+) -> TestStubResolution {
     let outcome = rust_test_stub_for_classified_seam(root, entry, &source);
+    let next_repair = outcome
+        .as_ref()
+        .ok()
+        .and_then(|stub| next_repair_for(root, config, entry, stub));
     TestStubResolution {
         seam_id: entry.seam.id().as_str().to_string(),
         owner: entry.seam.owner().to_string(),
@@ -881,8 +948,63 @@ fn resolution_for(root: &Path, entry: &ClassifiedSeam, source: String) -> TestSt
         outcome,
         grip_class: Some(entry.class),
         at_note: None,
+        next_repair,
         seam_line: entry.seam.display_line(),
     }
+}
+
+/// The repair journey projection for one produced stub (#8727), or `None`
+/// when the repair route cannot be established honestly. The fail-closed
+/// flip is the same one the pilot's offered repair start uses
+/// (`repair_packet_eligibility` plus `recommended_test_is_repair_edit_target`):
+/// when it does not hold, the before phase would only refuse, so no start
+/// command is offered. The packet renderer also refuses policy-omitted seams
+/// (`AgentBriefPolicy::omission_reason_for_class`, applied in
+/// `render_agent_packet_for_seam_with_report` before any packet is produced),
+/// so a seam whose class is configured off gets no start command either —
+/// the offered journey must not be one the packet would refuse. The surface
+/// names the same `recommended_test_for` derivation the packet render writes
+/// into `allowed_edit_surface` (or the edit cage's `recommended_test.file`
+/// fallback), so it is the file the before-phase cage actually admits.
+fn next_repair_for(
+    root: &Path,
+    config: &RiprConfig,
+    entry: &ClassifiedSeam,
+    stub: &RustTestStub,
+) -> Option<StubNextRepair> {
+    if AgentBriefPolicy::from_config(config)
+        .omission_reason_for_class(entry.class)
+        .is_some()
+    {
+        return None;
+    }
+    if !repair_packet_eligibility(entry).eligible()
+        || !recommended_test_is_repair_edit_target(entry)
+    {
+        return None;
+    }
+    let surface = recommended_test_for(entry).file;
+    // Compare as paths, not strings: the placement is a checkout-relative
+    // path whose separators follow the host, the surface a stable `/`-joined
+    // derivation, and both may sit under any worktree root.
+    let placement_divergence =
+        (!stub.placement.file().ends_with(&surface)).then(|| StubPlacementDivergence {
+            stub_file: display_path(stub.placement.file()),
+            packet_file: surface.clone(),
+        });
+    Some(StubNextRepair {
+        start_command: format!(
+            "ripr agent repair --root {} --seam-id {} --phase before",
+            // Render the root with `root_path_display` before binding it, as
+            // the CLI recovery paths do: `display_path` would rewrite a
+            // literal backslash in a Unix checkout into a separator and the
+            // pasted command would target another directory (#4287).
+            shell_arg(&bound_root(&root_path_display(root))),
+            shell_arg(entry.seam.id().as_str()),
+        ),
+        allowed_edit_surface: surface,
+        placement_divergence,
+    })
 }
 
 /// Inventory class for a seam selected from a file parse (`--at --kind`).
@@ -1485,8 +1607,10 @@ mod tests {
             ungripped("crates/a/src/lib.rs", 2),
             ungripped("crates/b/src/lib.rs", 2),
         ];
+        let config = RiprConfig::default();
         let result = resolve_at(
             Path::new("/nonexistent"),
+            &config,
             classified_candidates(&classified),
             "src/lib.rs",
             2,
@@ -1502,6 +1626,7 @@ mod tests {
         // One full path is unambiguous and reaches the source read.
         let one = resolve_at(
             Path::new("/nonexistent"),
+            &config,
             classified_candidates(&classified),
             "crates/a/src/lib.rs",
             2,
@@ -2045,9 +2170,256 @@ impl Size {
             resolve_test_stub(&root, &config, &selector).map_err(|error| format!("{error:?}"))?;
         let outcome_ok = resolution.outcome.is_ok();
         let grip = resolution.grip_class;
+        // #8727: a file-parse (`--at --kind`) selection carries no classified
+        // entry, so the repair packet's surface cannot be established and no
+        // route is invented.
+        let next_repair = resolution.next_repair.is_none();
         let _ = std::fs::remove_dir_all(&root);
         assert!(outcome_ok, "an open gap still yields a stub: {grip:?}");
+        assert!(next_repair, "--at --kind must not invent a repair route");
         assert_ne!(grip, Some(SeamGripClass::StronglyGripped));
+        Ok(())
+    }
+
+    /// One classified gap whose repair route holds: an exact missing
+    /// boundary discriminator and a producer-owned integration test
+    /// proposal. `line` is display-only; `offset` must point at the seam
+    /// expression inside `source`.
+    fn repair_ready_entry(line: usize, offset: usize, owner: &str) -> ClassifiedSeam {
+        use crate::analysis::new_test_target::{
+            NewTestKind, NewTestProposalProvenance, NewTestTargetAdmission, NewTestTargetProposal,
+        };
+        use crate::analysis::seams::{ExpectedSink, RequiredDiscriminator};
+        use crate::domain::MissingDiscriminatorFact;
+        let mut entry = classified_at("src/lib.rs", line, SeamGripClass::WeaklyGripped);
+        entry.seam = RepoSeam::new(
+            "src/lib.rs",
+            owner,
+            SeamKind::PredicateBoundary,
+            offset,
+            line,
+            "x >= 100",
+            RequiredDiscriminator::BoundaryValue {
+                description: "x >= 100".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        entry.evidence.seam_id = entry.seam.id().clone();
+        entry
+            .evidence
+            .missing_discriminators
+            .push(MissingDiscriminatorFact {
+                value: "x >= 100".to_string(),
+                reason: "observed values do not include the boundary case".to_string(),
+                flow_sink: None,
+            });
+        entry.evidence.new_test_target = Some(NewTestTargetAdmission {
+            proposal: Some(NewTestTargetProposal {
+                kind: NewTestKind::Integration,
+                file: PathBuf::from("tests/clamp_tests.rs"),
+                owner: owner.to_string(),
+                provenance: NewTestProposalProvenance::ProducerOwned,
+            }),
+            region: None,
+            blocker: None,
+            owner_inline_region: None,
+        });
+        entry
+    }
+
+    const FREE_FN_SOURCE: &str =
+        "pub fn clamp_to(x: i32) -> i32 {\n    if x >= 100 { 100 } else { x }\n}\n";
+    const IMPL_METHOD_SOURCE: &str = "pub struct Clamp;\nimpl Clamp {\n    pub fn clamp_to(&self, x: i32) -> i32 {\n        if x >= 100 { 100 } else { x }\n    }\n}\n";
+
+    fn seam_offset(source: &str) -> Result<usize, String> {
+        source
+            .find("x >= 100")
+            .ok_or_else(|| "fixture source lost its seam expression".to_string())
+    }
+
+    /// #8727: a repair-ready stub names the repair journey it feeds — the
+    /// documented `ripr agent repair` start and the packet's admitted edit
+    /// surface. A free crate-root owner takes the producer-admitted
+    /// integration file, so the two independent derivations agree and no
+    /// divergence is carried.
+    #[test]
+    fn next_repair_names_the_start_and_the_agreeing_surface() -> Result<(), String> {
+        let root = scratch_stub_crate("next-repair-agree", FREE_FN_SOURCE)?;
+        let entry = repair_ready_entry(2, seam_offset(FREE_FN_SOURCE)?, "clamp_to");
+        let seam_id = entry.seam.id().as_str().to_string();
+        let resolution = resolution_for(
+            &root,
+            &RiprConfig::default(),
+            &entry,
+            FREE_FN_SOURCE.to_string(),
+        );
+        // #8727 review: filename agreement is the projection's own rule, but
+        // the before phase's edit cage is the authority that must admit the
+        // written test; an agreeing placement must pass the target predicate
+        // the repair start itself uses.
+        let stub = resolution
+            .outcome
+            .as_ref()
+            .map_err(|refusal| format!("fixture seam must stub: {refusal:?}"))?;
+        assert!(
+            recommended_test_is_repair_edit_target(&entry),
+            "an agreeing surface must be one the repair route admits"
+        );
+        let next = resolution
+            .next_repair
+            .ok_or("a repair-ready stub must name its repair journey")?;
+        assert_eq!(
+            next.start_command,
+            format!(
+                "ripr agent repair --root {} --seam-id {} --phase before",
+                shell_arg(&bound_root(&root_path_display(&root))),
+                shell_arg(&seam_id),
+            ),
+            "the start command must name the same seam and root"
+        );
+        assert_eq!(next.allowed_edit_surface, "tests/clamp_tests.rs");
+        assert_eq!(
+            next.placement_divergence, None,
+            "a free owner lands the stub in the packet's own surface"
+        );
+        assert!(
+            stub.placement
+                .file()
+                .ends_with(next.allowed_edit_surface.as_str()),
+            "the admitted surface must cover the stub's placement file: {:?}",
+            stub.placement.file()
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #8727: the divergence the two derivations actually permit. The
+    /// producer's target selection proposes an integration file, but an
+    /// `impl`-method owner is not one an integration test can name, so the
+    /// stub falls back to an inline module of the production file while the
+    /// repair packet admits only the integration file. Generation time must
+    /// name both files — the before phase's dirty-premise gate would
+    /// otherwise refuse the written stub without ever mentioning it.
+    #[test]
+    fn next_repair_warns_when_the_stub_lands_outside_the_packet_surface() -> Result<(), String> {
+        let root = scratch_stub_crate("next-repair-diverge", IMPL_METHOD_SOURCE)?;
+        let entry = repair_ready_entry(4, seam_offset(IMPL_METHOD_SOURCE)?, "Clamp::clamp_to");
+        let resolution = resolution_for(
+            &root,
+            &RiprConfig::default(),
+            &entry,
+            IMPL_METHOD_SOURCE.to_string(),
+        );
+        let stub = resolution
+            .outcome
+            .as_ref()
+            .map_err(|refusal| format!("fixture seam must stub: {refusal:?}"))?;
+        assert!(
+            matches!(stub.placement, TestStubPlacement::NewInlineModule { .. }),
+            "an impl-method owner keeps the stub inline: {:?}",
+            stub.placement
+        );
+        let next = resolution
+            .next_repair
+            .ok_or("a repair-ready stub must name its repair journey")?;
+        assert_eq!(next.allowed_edit_surface, "tests/clamp_tests.rs");
+        let divergence = next
+            .placement_divergence
+            .ok_or("diverging placements must be named at generation time")?;
+        assert_eq!(divergence.stub_file, "src/lib.rs");
+        assert_eq!(divergence.packet_file, "tests/clamp_tests.rs");
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #8727 fail-closed honesty: the stub producer does not wait on the
+    /// repair-packet flip, but the repair journey must. With no safe test
+    /// target the route is not eligible, so no start command is offered —
+    /// offering one would send the user into a refusal.
+    #[test]
+    fn next_repair_stays_silent_when_the_repair_route_is_not_eligible() -> Result<(), String> {
+        let root = scratch_stub_crate("next-repair-ineligible", FREE_FN_SOURCE)?;
+        let mut entry = repair_ready_entry(2, seam_offset(FREE_FN_SOURCE)?, "clamp_to");
+        entry.evidence.new_test_target = None;
+        let resolution = resolution_for(
+            &root,
+            &RiprConfig::default(),
+            &entry,
+            FREE_FN_SOURCE.to_string(),
+        );
+        let outcome_ok = resolution.outcome.is_ok();
+        let next_repair = resolution.next_repair;
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(outcome_ok, "the stub itself does not wait on the flip");
+        assert_eq!(
+            next_repair, None,
+            "no eligible repair route, no invented start command"
+        );
+        Ok(())
+    }
+
+    /// #8727 review: a seam whose class is configured off still yields a
+    /// ready stub (the producer does not gate on agent policy), but the
+    /// packet renderer refuses policy-omitted seams before producing any
+    /// packet, so the projected start command would only meet that refusal.
+    /// The same `AgentBriefPolicy::omission_reason_for_class` gate the packet
+    /// renderer applies must suppress the block.
+    #[test]
+    fn next_repair_stays_silent_when_the_class_is_configured_off() -> Result<(), String> {
+        let root = scratch_stub_crate("next-repair-configured-off", FREE_FN_SOURCE)?;
+        let entry = repair_ready_entry(2, seam_offset(FREE_FN_SOURCE)?, "clamp_to");
+        let config =
+            crate::config::tests_only_parse("[severity.seams]\nweakly_gripped = \"off\"\n")?;
+        let resolution = resolution_for(&root, &config, &entry, FREE_FN_SOURCE.to_string());
+        let outcome_ok = resolution.outcome.is_ok();
+        let next_repair = resolution.next_repair;
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(outcome_ok, "the stub itself does not wait on agent policy");
+        assert_eq!(
+            next_repair, None,
+            "a policy-omitted seam must not be offered a repair start"
+        );
+        Ok(())
+    }
+
+    /// #8727 review: the start command renders the selected root exactly as
+    /// the filesystem spells it. On Unix a `\` is an ordinary filename
+    /// character; rewriting it into a separator before binding would make
+    /// the pasted command target another directory (#4287). The unit form is
+    /// a plain string path — no checkout with such a name is created.
+    #[test]
+    fn next_repair_start_preserves_a_literal_backslash_unix_root() -> Result<(), String> {
+        let root = Path::new("/tmp/team\\repo");
+        let entry = repair_ready_entry(2, 0, "clamp_to");
+        let stub = RustTestStub {
+            placement: TestStubPlacement::NewIntegrationFile {
+                file: PathBuf::from("tests/clamp_tests.rs"),
+            },
+            test_name: "clamp_to_boundary".to_string(),
+            text: String::new(),
+            fill_ins: Vec::new(),
+            derived_inputs: Vec::new(),
+        };
+        let next = next_repair_for(root, &RiprConfig::default(), &entry, &stub)
+            .ok_or("a repair-ready stub must name its repair journey")?;
+        if cfg!(unix) {
+            assert!(
+                next.start_command.contains("team\\repo"),
+                "a literal backslash in a Unix root must survive: {}",
+                next.start_command
+            );
+        } else {
+            assert!(
+                !next.start_command.contains("team\\repo"),
+                "Windows treats `\\` as a separator: {}",
+                next.start_command
+            );
+            assert!(
+                next.start_command.contains("team/repo"),
+                "the root must render with stable separators: {}",
+                next.start_command
+            );
+        }
         Ok(())
     }
 }
