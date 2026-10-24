@@ -42,34 +42,86 @@ fn for_header_clauses(line: &str) -> Option<[&str; 3]> {
     Some([init, test, update])
 }
 
+/// The clauses with all whitespace removed, so a spacing-only edit is no change.
+fn squeezed(clauses: [&str; 3]) -> [String; 3] {
+    clauses.map(|clause| clause.chars().filter(|c| !c.is_whitespace()).collect())
+}
+
 /// Both the old and the new line are counted-loop headers and they differ.
 pub(crate) fn ts_loop_header_changed(old_line: &str, new_line: &str) -> bool {
     match (for_header_clauses(old_line), for_header_clauses(new_line)) {
-        (Some(old), Some(new)) => old != new,
+        (Some(old), Some(new)) => squeezed(old) != squeezed(new),
         _ => false,
     }
 }
 
-/// Some oracle-eligible related test asserts a mock's call count.
-fn counts_mock_calls(candidates: &[TypeScriptRelatedCandidate<'_>]) -> bool {
+/// The mock a call-count expression reads: `fn` in `fn.mock.callCount()` or
+/// `fn.mock.calls.length`, when it is a plain identifier.
+fn counted_mock(observed: &str) -> Option<&str> {
+    let at = observed
+        .find(".mock.callCount(")
+        .or_else(|| observed.find(".mock.calls.length"))?;
+    let receiver = observed[..at].trim();
+    let name = receiver
+        .rsplit(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '$')))
+        .next()?;
+    (!name.is_empty() && name.len() == receiver.len()).then_some(name)
+}
+
+/// `owner(` appears in `body` with `name` as a word inside its argument list.
+fn owner_call_passes(body: &str, owner_name: &str, name: &str) -> bool {
+    let word = |c: char| c.is_alphanumeric() || matches!(c, '_' | '$');
+    body.match_indices(&format!("{owner_name}("))
+        .any(|(at, _)| {
+            let args = &body[at + owner_name.len() + 1..];
+            let mut depth = 0usize;
+            let mut end = args.len();
+            for (i, ch) in args.char_indices() {
+                match ch {
+                    '(' => depth += 1,
+                    ')' if depth == 0 => {
+                        end = i;
+                        break;
+                    }
+                    ')' => depth -= 1,
+                    _ => {}
+                }
+            }
+            args[..end].match_indices(name).any(|(i, _)| {
+                !args[..i].chars().next_back().is_some_and(word)
+                    && !args[i + name.len()..].chars().next().is_some_and(word)
+            })
+        })
+}
+
+/// Some oracle-eligible related test asserts the call count of a mock it
+/// passes to the owner.
+fn counts_mock_calls(candidates: &[TypeScriptRelatedCandidate<'_>], owner_name: &str) -> bool {
     candidates
         .iter()
         .filter(|candidate| candidate.relation.uses_oracle())
-        .flat_map(|candidate| &candidate.test.assertions)
-        .filter_map(|assertion| assertion.observed_expression.as_deref())
-        .any(|observed| observed.contains("callCount(") || observed.contains("calls.length"))
+        .any(|candidate| {
+            candidate
+                .test
+                .assertions
+                .iter()
+                .filter_map(|assertion| assertion.observed_expression.as_deref())
+                .filter_map(counted_mock)
+                .any(|name| owner_call_passes(&candidate.test.body_text, owner_name, name))
+        })
 }
 
 /// The change rewrites a counted-loop header and a related test observes it
-/// only through a mock call count the adapter cannot tie to the iteration
-/// count.
+/// only through the call count of a mock it hands the owner, which the
+/// adapter cannot tie to the iteration count.
 pub(crate) fn ts_loop_count_unmodeled(
     old_line: Option<&str>,
     new_line: &str,
+    owner_name: &str,
     candidates: &[TypeScriptRelatedCandidate<'_>],
 ) -> bool {
     old_line.is_some_and(|old| ts_loop_header_changed(old, new_line))
-        && counts_mock_calls(candidates)
+        && counts_mock_calls(candidates, owner_name)
 }
 
 #[cfg(test)]
@@ -106,6 +158,38 @@ mod tests {
             "while (i < attempts) {",
             "while (i < attempts - 1) {"
         ));
+    }
+
+    #[test]
+    fn a_spacing_only_edit_is_no_header_change() {
+        assert!(!ts_loop_header_changed(
+            "for (let i = 0; i<n; i++) {",
+            "for (let i = 0; i < n; i++) {"
+        ));
+    }
+
+    #[test]
+    fn the_counted_mock_is_a_plain_receiver() {
+        assert_eq!(counted_mock("fn.mock.callCount()"), Some("fn"));
+        assert_eq!(counted_mock("send.mock.calls.length"), Some("send"));
+        assert_eq!(counted_mock("syscalls.length"), None);
+        assert_eq!(counted_mock("getCallCount()"), None);
+        assert_eq!(counted_mock("a.b.mock.callCount()"), None);
+    }
+
+    #[test]
+    fn the_owner_call_must_pass_the_mock() {
+        assert!(owner_call_passes(
+            "await withRetry(fn, 2);",
+            "withRetry",
+            "fn"
+        ));
+        assert!(!owner_call_passes(
+            "withRetry(other, 2); log(fn);",
+            "withRetry",
+            "fn"
+        ));
+        assert!(!owner_call_passes("withRetry(fnx, 2);", "withRetry", "fn"));
     }
 
     #[test]

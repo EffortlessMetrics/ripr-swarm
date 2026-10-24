@@ -125,3 +125,16 @@ fn a_for_of_loop_header_change_is_not_made_unknown() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn a_call_count_on_a_mock_the_owner_never_receives_is_not_made_unknown() -> Result<(), String> {
+    let body = "  const fn = mock.fn(async () => \"ok\");\n  const log = mock.fn();\n  assert.equal(await withRetry(fn, 3), \"ok\");\n  assert.equal(log.mock.callCount(), 0);";
+    let finding = run("loop-unrelated-count", RETRY, OLD, NEW, &retry_test(body))?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::StaticUnknown,
+        "{:?}",
+        finding.missing
+    );
+    Ok(())
+}
