@@ -3055,18 +3055,26 @@ pub(crate) fn related_mock_payload_oracle(related: &[RelatedTest]) -> Option<Str
 /// relation set: the mock producer set must be identical to that set, so a
 /// cross-package test the relation layer excluded (or an alias the relation
 /// layer resolved differently) cannot re-enter through the mock collector
-/// and force a wrong actionable `mocked_module` signal on the finding.
+/// and force a wrong actionable `mocked_module` signal on the finding. The
+/// `relation_index` MUST likewise be the same pre-filter, so the collector
+/// sees exactly the candidates pass 1 admitted (#10028).
 pub(crate) fn collect_related_mock_paths(
     owner: &TypeScriptOwner,
     all_tests: &[TypeScriptTest],
     workspace_root: Option<&Path>,
     reexport_index: &ReExportIndex,
     alias_map: Option<&TsAliasMap>,
+    relation_index: &RelationIndex,
 ) -> Vec<String> {
     let mut paths: Vec<String> = Vec::new();
-    for candidate in
-        related_test_candidates(owner, all_tests, workspace_root, reexport_index, alias_map)
-    {
+    for candidate in related_test_candidates(
+        owner,
+        all_tests,
+        workspace_root,
+        reexport_index,
+        alias_map,
+        relation_index,
+    ) {
         for path in &candidate.test.mocks_in_file {
             if !paths.iter().any(|existing| existing == path) {
                 paths.push(path.clone());

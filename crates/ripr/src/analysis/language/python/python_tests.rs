@@ -3115,8 +3115,8 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             unresolved,
         ),
         (
-            "same-module helper with an arbitrary name",
-            "def run_case(value):\n    assert apply_discount(value) == 10\n\ndef test_x():\n    run_case(20)\n",
+            "same-module helper with an arbitrary name and a computed argument (a literal one is credited by helper_inline)",
+            "def run_case(value):\n    assert apply_discount(value) == 10\n\ndef test_x():\n    run_case(10 + 10)\n",
             unresolved,
         ),
         (
@@ -3933,6 +3933,8 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         relation_reason: None,
         relation_confidence: None,
         miss: None,
+        miss_support: None,
+        role: crate::domain::RelatedTestRole::Contributing,
     };
 
     // Strong oracle on a wrapper's return value -> does not observe the owner.
@@ -4010,6 +4012,8 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         relation_reason: None,
         relation_confidence: None,
         miss: None,
+        miss_support: None,
+        role: crate::domain::RelatedTestRole::Contributing,
     }];
     // Without the alias import, the oracle names neither owner nor sink.
     assert!(!strong_oracle_observes_owner(&owner, line, &related, &[]));
@@ -4089,6 +4093,8 @@ fn align_strong(oracle: &str) -> RelatedTest {
         relation_reason: None,
         relation_confidence: None,
         miss: None,
+        miss_support: None,
+        role: crate::domain::RelatedTestRole::Contributing,
     }
 }
 

@@ -99,7 +99,7 @@ impl MockCallFacts {
         owner_name: &str,
         owner_params: &[String],
         owner_start_line: usize,
-        module_source: Option<&str>,
+        module_source: Option<(&str, SourceType)>,
     ) {
         let (Some(owner_source), Some(module_source)) = (owner_source, module_source) else {
             return;
@@ -136,7 +136,9 @@ impl MockCallFacts {
                 continue;
             }
             seen.push(&test.file);
-            if !read_file(&test.file).is_some_and(|source| spy::spy_safe_test_file(&source)) {
+            if !read_file(&test.file)
+                .is_some_and(|source| spy::spy_safe_test_file(&source, source_type_for(&test.file)))
+            {
                 continue;
             }
             // Importing a module runs its top level before the test body, so
@@ -956,6 +958,10 @@ fn closing_offset(text: &str, open: char, close: char) -> Option<usize> {
 /// to the first top-level `{` or `=>`), or `None` when no body opens.
 pub(super) fn masked_owner_body(owner_source: &str) -> Option<String> {
     let masked = ts_mask_literals_and_comments(owner_source);
+    owner_body_from_mask(&masked)
+}
+
+pub(super) fn owner_body_from_mask(masked: &str) -> Option<String> {
     let mut parens = 0usize;
     for (index, c) in masked.char_indices() {
         match c {
