@@ -647,6 +647,17 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
             return snapshot;
         }
     };
+    // A plain test's calls to a same-file assertion helper read as the
+    // helper's asserts (#9636); extract from the rewritten source, which keeps
+    // every line number.
+    if is_test_file(file)
+        && let Some(inlined) = super::helper_inline::inline_test_helpers(source, &module.body)
+        // Defence in depth: a rewrite that fails to parse degrades to the
+        // original source (unknown), never to a file with no tests.
+        && matches!(parse_module_result(file, &inlined), Ok(Mod::Module(_)))
+    {
+        return extract_source_facts(file, &inlined);
+    }
     // One line-start index per file; every line lookup below is a binary
     // search against it rather than a rescan from byte 0 (#4495).
     let source = &SourceText::new(source);
