@@ -206,6 +206,52 @@ no repair is ready. Follow its retry guidance when analysis is partial.
 Non-Rust workspaces are routed to the appropriate diff-analysis or
 unavailable-adapter guidance, not the Rust repair sequence.
 
+### Python first hour (preview)
+
+Python analysis is `preview`: its evidence is advisory, not Rust-grade. A
+Python project needs no `ripr.toml` — when the repository root has a Python
+project marker (`pyproject.toml`, `setup.py`, `setup.cfg`,
+`requirements.txt`, `pytest.ini`, `tox.ini`, or `noxfile.py`), the CLI
+auto-enables the preview. From a Python repository on a branch with a change
+to inspect:
+
+```bash
+ripr check
+```
+
+On a project with markers, `check` analyzes the changed Python files and
+reports the boundary gap with a pytest (or unittest) verify command; its
+top finding is labeled `State: preview language, advisory only`. For the
+repository-wide ranking and a repair recommendation, run:
+
+```bash
+ripr pilot --root .
+```
+
+When the Rust ranking is empty, pilot's top recommendation is the Python
+repair card (`language: python (preview)`) and its `Next, in order:` route;
+run the steps it prints. Both commands write under `target/ripr/`; in a
+project without a Cargo `target/` convention, add `/target/ripr/` to
+`.gitignore` (doctor and pilot say so on the first run when no ignore rule
+covers it).
+
+A repository with no marker leaves the preview disabled; `check` then skips
+Python files and prints:
+
+```text
+Note: this diff contains 1 Python file. The Python adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.
+
+To enable, add to ripr.toml:
+
+[languages]
+enabled = ["python"]
+```
+
+Enable it exactly as printed when the repository has no marker. Python
+repair routes and their evidence limits are described in
+[Known Limits](#known-limits) and
+[Language adapters](LANGUAGE_ADAPTER_PREVIEW.md).
+
 ## VS Code First Hour
 
 Install [EffortlessMetrics.ripr](https://marketplace.visualstudio.com/items?itemName=EffortlessMetrics.ripr)

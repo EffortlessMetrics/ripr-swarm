@@ -1353,6 +1353,8 @@ fn apply_probe_and_oracle_limits(
     // tail is a closure, a returned-receiver effect or a let-else exit is a
     // shape the owner pin does not read, not a missing assertion.
     classify::withhold_pinned_shape_gap(finding, index);
+    // #9490: an `Err(..)` pin never reaches the `Ok` path of a `Result` collect.
+    classify::withhold_result_collect_err_pin(finding, index);
     // RIPR-SPEC-0240: an operator, `Drop`, iterator or dyn call a test makes
     // may run the owner without naming it.
     classify::withhold_implicit_call_gap(finding, index);
@@ -7027,6 +7029,7 @@ fn absent_delimiter_boundary_returns_head() {
     fn no_path_finding_with_infection_summary(summary: &str, evidence: Vec<String>) -> Finding {
         let stage = |state| StageEvidence::new(state, Confidence::Low, "stage");
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_lib.rs:predicate:test".to_string(),
             canonical_gap: None,
             probe: Probe {
