@@ -377,6 +377,17 @@ fn shadowed_by_local_fn(
     }) {
         return true;
     }
+    // A hand-written `#[test] fn` (outside any macro tree) is likewise a
+    // binding of its name in the module: refuse when an emitted token mentions it.
+    if root
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(is_test_fn)
+        .filter_map(|function| function.name())
+        .any(|name| idents.contains(&plain(name.text())))
+    {
+        return true;
+    }
     if bound.contains("*") {
         return true;
     }
@@ -687,6 +698,13 @@ mod tests {
             format!("{second}suite! {{ {test} }}\nsecond! {{ const r#gate: u32 = 1; }}\n"),
             format!("{second}suite! {{ {test} }}\nsecond! {{ use other::r#gate; }}\n"),
             format!("{second}suite! {{ {test} }}\nsecond! {{ use other::x as r#gate; }}\n"),
+            // A hand-written module-level test fn named like the callee.
+            format!(
+                "#[test] fn gate() {{}}\nsuite! {{ #[test] fn a() {{ let _n = 10; assert_eq!(gate(), ()); }} }}\n"
+            ),
+            format!(
+                "#[test] fn gate() {{}}\nsuite! {{ #[test] fn a() {{ let _x = gate; assert_eq!(10u32 >= 10, true); }} }}\n"
+            ),
             // A test fn named like the callee rebinds it.
             format!("{second}suite! {{ {test} }}\nsecond! {{ #[test] fn gate() {{}} }}\n"),
             // Nested item macros stay opaque.

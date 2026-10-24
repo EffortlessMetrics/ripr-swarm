@@ -398,6 +398,16 @@ fn shadow_cases() -> Vec<(&'static str, String, String)> {
             format!("{GATE_TEST}\n    #[test]\n    fn gate() {{}}\n"),
         ),
         (
+            "hand-written test fn named like the callee, called",
+            format!("{IDENTITY}    #[test]\n    fn gate() {{}}\n    suite! {{\n    #[test]\n    fn ten_is_open() {{\n        let _n = 10;\n        assert_eq!(gate(), ());\n    }}\n    }}\n"),
+            "    #[test]\n    fn gate() {}\n    #[test]\n    fn ten_is_open() {\n        let _n = 10;\n        assert_eq!(gate(), ());\n    }\n".to_string(),
+        ),
+        (
+            "hand-written test fn named like the callee, referenced",
+            format!("{IDENTITY}    #[test]\n    fn gate() {{}}\n    suite! {{\n    #[test]\n    fn ten_is_open() {{\n        let _x = gate;\n        assert_eq!(10u32 >= 10, true);\n    }}\n    }}\n"),
+            "    #[test]\n    fn gate() {}\n    #[test]\n    fn ten_is_open() {\n        let _x = gate;\n        assert_eq!(10u32 >= 10, true);\n    }\n".to_string(),
+        ),
+        (
             "fn in a different identity macro after the suite",
             format!("{both}    suite! {{\n{GATE_TEST}    }}\n    second! {{\n{SHADOW_FN}    }}\n"),
             format!("{GATE_TEST}\n{SHADOW_FN}"),
@@ -453,6 +463,8 @@ fn a_binding_that_could_shadow_the_callee_never_promotes_a_wrapped_test() -> Res
         ExposureClass::Exposed,
         ExposureClass::Exposed,
         ExposureClass::InfectionUnknown,
+        ExposureClass::InfectionUnknown,
+        ExposureClass::WeaklyExposed,
         ExposureClass::StaticUnknown,
         ExposureClass::NoStaticPath,
         ExposureClass::StaticUnknown,
@@ -466,10 +478,19 @@ fn a_binding_that_could_shadow_the_callee_never_promotes_a_wrapped_test() -> Res
     for ((label, wrapped_source, twin_source), twin_class) in cases.into_iter().zip(expected_twin) {
         let twin = TempRepo::create(&twin_source)?.predicate()?;
         let wrapped = TempRepo::create(&wrapped_source)?.predicate()?;
-        if twin.class != twin_class
-            || wrapped.class != ExposureClass::NoStaticPath
-            || !wrapped.related_tests.is_empty()
-        {
+        // A hand-written module-level test fn named like the callee is a real
+        // indexed test of its own; the wrapped suite must index nothing of its
+        // own and must not be stronger than the twin.
+        let wrapped_bad = if label.starts_with("hand-written test fn") {
+            wrapped.class != ExposureClass::InfectionUnknown
+                || wrapped
+                    .related_tests
+                    .iter()
+                    .any(|test| test.name == "ten_is_open")
+        } else {
+            wrapped.class != ExposureClass::NoStaticPath || !wrapped.related_tests.is_empty()
+        };
+        if twin.class != twin_class || wrapped_bad {
             failures.push(format!(
                 "{label}: wrapped {:?} (tests {}) twin {:?}, expected twin {twin_class:?}",
                 wrapped.class,
