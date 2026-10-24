@@ -384,6 +384,20 @@ fn shadow_cases() -> Vec<(&'static str, String, String)> {
             format!("{GATE_TEST}\n    #[shadow]\n    fn decoy() {{}}\n"),
         ),
         (
+            "raw-identifier fn in a sibling call",
+            format!(
+                "{both}    suite! {{\n{GATE_TEST}    }}\n    second! {{\n    fn r#gate(_input: u32) -> bool {{\n        true\n    }}\n    }}\n"
+            ),
+            format!("{GATE_TEST}\n    fn r#gate(_input: u32) -> bool {{\n        true\n    }}\n"),
+        ),
+        (
+            "test fn named like the callee in a sibling call",
+            format!(
+                "{both}    suite! {{\n{GATE_TEST}    }}\n    second! {{\n    #[test]\n    fn gate() {{}}\n    }}\n"
+            ),
+            format!("{GATE_TEST}\n    #[test]\n    fn gate() {{}}\n"),
+        ),
+        (
             "fn in a different identity macro after the suite",
             format!("{both}    suite! {{\n{GATE_TEST}    }}\n    second! {{\n{SHADOW_FN}    }}\n"),
             format!("{GATE_TEST}\n{SHADOW_FN}"),
@@ -437,6 +451,8 @@ fn a_binding_that_could_shadow_the_callee_never_promotes_a_wrapped_test() -> Res
         ExposureClass::Exposed,
         ExposureClass::Exposed,
         ExposureClass::Exposed,
+        ExposureClass::Exposed,
+        ExposureClass::InfectionUnknown,
         ExposureClass::StaticUnknown,
         ExposureClass::NoStaticPath,
         ExposureClass::StaticUnknown,

@@ -307,16 +307,23 @@ no attribute, supported item context, definition in textual scope before it, no
 import of its name, no unseen item macro between). A local item spelled like
 the invocation's macro name (`fn suite`, `struct suite`) is refused too: the
 macro and value namespaces are separate, but the name collision is treated as a
-possible rebinding, which is a support restriction, not a Rust rule. Attribute boundary: every attribute on an item emitted by
-any identity invocation in the file, including a separate sibling invocation
-that carries no test, must be inert (`#[test]`, `#[ignore]`, `#[should_panic]`,
-`#[allow(..)]`, or an attribute the shared source-preserving authority admits);
-any other attribute may rewrite the item into a different binding, so the file
-is refused. `#[should_panic]` and `#[ignore]` tests stay indexed but earn no
-oracle credit. Bindings scoped inside a
+possible rebinding, which is a support restriction, not a Rust rule.
+
+Attribute boundary: every attribute on an item emitted by any identity
+invocation in the file, including a separate sibling invocation that carries no
+test, must be inert (`#[test]`, `#[ignore]`, `#[should_panic]`, `#[allow(..)]`,
+or an attribute the shared source-preserving authority admits). Any other
+attribute may rewrite the item into a different binding, so the file is
+refused. `#[should_panic]` and `#[ignore]` tests stay indexed but earn no
+oracle credit.
+
+Name comparison strips a raw-identifier prefix (`r#gate` binds `gate`). A
+`#[test]` function is exempt from binding collection only while no emitted
+token mentions its name beyond its own declaration; a `#[test] fn gate` beside a
+call to `gate` is a rebinding and the file is refused. Bindings scoped inside a
 function body are left to the expansion's own summary. The boundary is
 name-based and file-wide, not a resolver: it does not model visibility or
-`#[path]`/out-of-line modules beyond refusing across them, and it refuses
+`#[path]` or out-of-line modules beyond refusing across them, and it refuses
 legitimate nested-owner layouts. The expansion is the invocation's own text,
 indexed with the same pinning and assertion admission as a generated test; the
 refusal above is the only shadow authority for these tests, because the

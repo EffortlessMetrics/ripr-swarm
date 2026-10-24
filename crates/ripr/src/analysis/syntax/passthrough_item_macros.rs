@@ -222,7 +222,7 @@ fn collect_bindings(node: &SyntaxNode, at_file_root: bool, names: &mut BTreeSet<
                 && !is_test_fn(&function)
                 && let Some(name) = function.name()
             {
-                names.insert(name.text().to_string());
+                names.insert(plain(name.text()));
             }
         } else if let Some(name) = declared_name(&descendant) {
             names.insert(name);
@@ -230,6 +230,11 @@ fn collect_bindings(node: &SyntaxNode, at_file_root: bool, names: &mut BTreeSet<
             use_tree_names(&tree, names);
         }
     }
+}
+
+/// The identifier without a raw-identifier prefix: `r#gate` is `gate`.
+fn plain(name: &str) -> String {
+    name.strip_prefix("r#").unwrap_or(name).to_string()
 }
 
 fn declared_name(node: &SyntaxNode) -> Option<String> {
@@ -252,7 +257,7 @@ fn declared_name(node: &SyntaxNode) -> Option<String> {
     } else {
         None
     };
-    name.map(|name| name.text().to_string())
+    name.map(|name| plain(name.text()))
 }
 
 fn use_tree_names(tree: &ast::UseTree, names: &mut BTreeSet<String>) {
@@ -267,14 +272,14 @@ fn use_tree_names(tree: &ast::UseTree, names: &mut BTreeSet<String>) {
         if let Some(rename) = tree.rename() {
             match rename.name() {
                 Some(name) => {
-                    names.insert(name.text().to_string());
+                    names.insert(plain(name.text()));
                 }
                 None => {
                     names.insert("*".to_string());
                 }
             }
         } else if let Some(segment) = tree.path().and_then(|path| path.segment()) {
-            names.insert(segment.syntax().text().to_string());
+            names.insert(plain(&segment.syntax().text().to_string()));
         }
     }
 }
@@ -299,6 +304,8 @@ fn shadowed_by_local_fn(
         return true;
     };
     let mut bound = BTreeSet::new();
+    let mut idents: Vec<String> = Vec::new();
+    let mut test_names: Vec<String> = Vec::new();
     collect_bindings(&root, true, &mut bound);
     // Every identity invocation in the file, whatever its macro name, is
     // inspected: its tokens are items in this file. A nested item-position
@@ -344,7 +351,31 @@ fn shadowed_by_local_fn(
         {
             return true;
         }
+        // Test-named siblings are exempt from binding collection only while
+        // no emitted token mentions their name beyond the declaration: a
+        // `#[test] fn gate` beside a call to `gate` is a rebinding.
+        for token in inner
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .filter(|token| token.kind() == SyntaxKind::IDENT)
+        {
+            idents.push(plain(token.text()));
+        }
+        test_names.extend(
+            inner
+                .descendants()
+                .filter_map(ast::Fn::cast)
+                .filter(is_test_fn)
+                .filter_map(|function| function.name())
+                .map(|name| plain(name.text())),
+        );
         collect_bindings(&inner, false, &mut bound);
+    }
+    if test_names.iter().any(|name| {
+        idents.iter().filter(|ident| *ident == name).count()
+            > test_names.iter().filter(|other| *other == name).count()
+    }) {
+        return true;
     }
     if bound.contains("*") {
         return true;
@@ -364,7 +395,7 @@ fn shadowed_by_local_fn(
             .syntax_node()
             .descendants_with_tokens()
             .filter_map(|element| element.into_token())
-            .any(|token| token.kind() == SyntaxKind::IDENT && bound.contains(token.text()))
+            .any(|token| token.kind() == SyntaxKind::IDENT && bound.contains(&plain(token.text())))
     })
 }
 
@@ -648,6 +679,16 @@ mod tests {
             format!("{second}suite! {{ {test} #[shadow] fn decoy() {{}} }}\n"),
             // A separate unannotated call whose emitted item is attributed.
             format!("{second}suite! {{ {test} }}\nsecond! {{ #[shadow] fn decoy() {{}} }}\n"),
+            // Raw-identifier sibling bindings name the plain identifier.
+            format!(
+                "{second}suite! {{ {test} }}\nsecond! {{ fn r#gate(_x: u32) -> bool {{ true }} }}\n"
+            ),
+            format!("{second}suite! {{ {test} }}\nsecond! {{ struct r#gate; }}\n"),
+            format!("{second}suite! {{ {test} }}\nsecond! {{ const r#gate: u32 = 1; }}\n"),
+            format!("{second}suite! {{ {test} }}\nsecond! {{ use other::r#gate; }}\n"),
+            format!("{second}suite! {{ {test} }}\nsecond! {{ use other::x as r#gate; }}\n"),
+            // A test fn named like the callee rebinds it.
+            format!("{second}suite! {{ {test} }}\nsecond! {{ #[test] fn gate() {{}} }}\n"),
             // Nested item macros stay opaque.
             format!("suite! {{ {test} }}\nsuite! {{ suite! {{ {shadow} }} }}\n"),
             format!("{second}suite! {{ {test} }}\nsecond! {{ second! {{ {shadow} }} }}\n"),
