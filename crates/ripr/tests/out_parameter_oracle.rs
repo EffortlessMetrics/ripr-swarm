@@ -112,6 +112,11 @@ fn assert_uncredited(finding: &Value, context: &str) {
     );
 }
 
+fn assert_credited(finding: &Value) {
+    assert_eq!(finding["classification"], "exposed", "{finding}");
+    assert_eq!(discriminate_state(finding), "yes", "{finding}");
+}
+
 const BUILD: &str =
     "        let mut s = String::new();\n        OffsetFormat.format(&mut s, 570);\n";
 
@@ -139,36 +144,22 @@ fn a_different_asserted_local_is_not_credited() -> Result<(), String> {
 }
 
 #[test]
-fn an_assertion_before_the_call_is_not_credited() -> Result<(), String> {
-    let body = "        let mut s = String::new();\n        assert_eq!(s, \"\");\n        OffsetFormat.format(&mut s, 570);";
-    let finding = finding(body)?;
-    assert_uncredited(&finding, "negative");
-    Ok(())
-}
-
-#[test]
 fn a_rebound_or_reused_local_is_not_credited() -> Result<(), String> {
     for body in [
         // rebound after the call: the assertion reads a fresh local
         "        let mut s = String::new();\n        OffsetFormat.format(&mut s, 570);\n        let mut s = String::from(\"+570\");\n        assert_eq!(s, \"+570\");",
         // written by another statement between definition and call
         "        let mut s = String::new();\n        s.push('x');\n        OffsetFormat.format(&mut s, 570);\n        assert_eq!(s, \"x+570\");",
+        // assertion before the call
+        "        let mut s = String::new();\n        assert_eq!(s, \"\");\n        OffsetFormat.format(&mut s, 570);",
+        // the call sits in another test
+        "        let mut s = String::new();\n        OffsetFormat.format(&mut s, 570);\n    }\n\n    #[test]\n    fn other() {\n        let mut s = String::from(\"+570\");\n        assert_eq!(s, \"+570\");",
         // passed twice
         "        let mut s = String::new();\n        OffsetFormat.format(&mut s, 570);\n        OffsetFormat.format(&mut s, 5);\n        assert_eq!(s, \"+570+05\");",
     ] {
         let finding = finding(body)?;
         assert_uncredited(&finding, body);
     }
-    Ok(())
-}
-
-#[test]
-fn a_call_in_another_test_is_not_credited() -> Result<(), String> {
-    let body = format!(
-        "{BUILD}    }}\n\n    #[test]\n    fn other() {{\n        let mut s = String::from(\"+570\");\n        assert_eq!(s, \"+570\");"
-    );
-    let finding = finding(&body)?;
-    assert_uncredited(&finding, "negative");
     Ok(())
 }
 
@@ -217,40 +208,11 @@ fn discriminate_state(finding: &Value) -> String {
         .to_string()
 }
 
-/// Source whose owner body is `owner_body`; the changed line is the one that
-/// pushes the sign, wherever it falls in the body.
-fn finding_with_owner(owner_body: &str, test_body: &str) -> Result<Value, String> {
-    finding_with_owner_changed(owner_body, "        out.push('+');", test_body)
-}
-
-fn finding_with_owner_changed(
-    owner_body: &str,
-    line5: &str,
-    test_body: &str,
-) -> Result<Value, String> {
-    let rest = "        out.push_str(&format!(\"{:02}\", minutes.abs()));";
-    let original = "        out.push('+');";
-    let src =
-        source(test_body).replace(&format!("{original}\n{rest}\n"), &format!("{owner_body}\n"));
-    let changed = src
-        .lines()
-        .position(|text| text == line5)
-        .ok_or("changed line missing")?
-        + 1;
-    let old = line5.replace("'+'", "'~'");
-    let line5 = line5.to_string();
-    let diff = format!(
-        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{changed},1 +{changed},1 @@\n-{old}\n+{line5}\n"
-    );
-    finding_at(src, diff, changed as u64)
-}
-
 #[test]
 fn a_callee_local_shadow_of_the_out_parameter_gets_no_credit() -> Result<(), String> {
     let test = format!("{BUILD}        assert_eq!(s, \"+570\");");
     let ordinary = finding(&test)?;
-    assert_eq!(ordinary["classification"], "exposed", "{ordinary}");
-    assert_eq!(discriminate_state(&ordinary), "yes", "{ordinary}");
+    assert_credited(&ordinary);
     for owner in [
         // changed line writes a shadow that is then discarded
         "        let mut out = String::new();\n        out.push('+');\n        let _ = out;",
@@ -259,20 +221,8 @@ fn a_callee_local_shadow_of_the_out_parameter_gets_no_credit() -> Result<(), Str
         // parameter reassigned to another buffer
         "        out = &mut String::new();\n        out.push('+');",
     ] {
-        let src_owner = owner.to_string();
-        let finding = finding_with_owner(&src_owner, &test)?;
-        let state = discriminate_state(&finding);
-        assert_ne!(state, "yes", "{owner}: {finding}");
+        let finding = finding_custom(&owner_with(&[owner]), OLD, NEW, &test)?;
         assert_uncredited(&finding, owner);
-    }
-    Ok(())
-}
-
-#[test]
-fn an_expected_value_equal_to_the_initial_state_is_not_credited() -> Result<(), String> {
-    for expected in ["String::new()", "\"\""] {
-        let finding = finding(&format!("{BUILD}        assert_eq!(s, {expected});"))?;
-        assert_uncredited(&finding, expected);
     }
     Ok(())
 }
@@ -280,9 +230,9 @@ fn an_expected_value_equal_to_the_initial_state_is_not_credited() -> Result<(), 
 #[test]
 fn a_read_only_out_parameter_is_not_credited() -> Result<(), String> {
     let changed = "        out.reserve(minutes as usize + '+' as usize);";
-    let owner = format!("{changed}\n        let _ = out.len();");
+    let owner = owner_with(&[changed, "        let _ = out.len();"]);
     let test = format!("{BUILD}        assert_eq!(s, \"+570\");");
-    let finding = finding_with_owner_changed(&owner, changed, &test)?;
+    let finding = finding_custom(&owner, OLD, changed, &test)?;
     assert_uncredited(&finding, &owner);
     Ok(())
 }
@@ -356,6 +306,8 @@ fn a_name_mention_on_an_unrelated_changed_line_is_not_confirmed() -> Result<(), 
 #[test]
 fn string_expectations_that_may_equal_the_initial_state_are_not_credited() -> Result<(), String> {
     for expected in [
+        "String::new()",
+        "\"\"",
         "String::from(\"\")",
         "String::default()",
         "\"\".to_string()",
@@ -374,23 +326,28 @@ fn string_expectations_that_may_equal_the_initial_state_are_not_credited() -> Re
     Ok(())
 }
 
+/// A `&mut Vec<u8>` owner whose changed line is `out.push(b'+')`, asserted
+/// against `expected`.
+fn vec_finding(lines: &[&str], expected: &str) -> Result<Value, String> {
+    let owner = format!(
+        "    pub fn format(&self, out: &mut Vec<u8>, minutes: i32) {{\n{}\n    }}",
+        lines.join("\n")
+    );
+    let test = format!(
+        "        let mut s = Vec::new();\n        OffsetFormat.format(&mut s, 570);\n        assert_eq!(s, {expected});"
+    );
+    finding_custom(
+        &owner,
+        "        out.push(b'~');",
+        "        out.push(b'+');",
+        &test,
+    )
+}
+
 #[test]
 fn vec_expectations_that_may_equal_the_initial_state_are_not_credited() -> Result<(), String> {
-    let owner = "    pub fn format(&self, out: &mut Vec<u8>, minutes: i32) {\n        out.push(b'+');\n    }";
-    let old = "        out.push(b'~');";
-    let new = "        out.push(b'+');";
-    let build = "        let mut s = Vec::new();\n        OffsetFormat.format(&mut s, 570);\n";
-    let credited = finding_custom(
-        owner,
-        old,
-        new,
-        &format!("{build}        assert_eq!(s, vec![b'+']);"),
-    )?;
-    assert_eq!(credited["classification"], "exposed", "{credited}");
-    assert_eq!(
-        credited["ripr"]["discriminate"]["state"], "yes",
-        "{credited}"
-    );
+    let push = "        out.push(b'+');";
+    assert_credited(&vec_finding(&[push], "vec![b'+']")?);
     for expected in [
         "Vec::<u8>::default()",
         "Vec::with_capacity(4)",
@@ -400,13 +357,7 @@ fn vec_expectations_that_may_equal_the_initial_state_are_not_credited() -> Resul
         "<Vec<u8>>::new()",
         "vec![]",
     ] {
-        let finding = finding_custom(
-            owner,
-            old,
-            new,
-            &format!("{build}        assert_eq!(s, {expected});"),
-        )?;
-        assert_uncredited(&finding, expected);
+        assert_uncredited(&vec_finding(&[push], expected)?, expected);
     }
     Ok(())
 }
@@ -422,78 +373,36 @@ fn no_op_writers_are_not_credited() -> Result<(), String> {
         "        out.retain(|_| true);",
         "        out.push_str(\"\");",
     ] {
-        let owner = format!(
-            "    pub fn format(&self, out: &mut String, minutes: i32) {{\n{changed}\n        let _ = minutes;\n    }}"
-        );
+        let owner = owner_with(&[changed, "        let _ = minutes;"]);
         let old = changed
             .replace(");", ", 1);")
             .replace("clear()", "clear(1)");
-        let finding = finding_custom(&owner, &old, changed, &test)?;
-        assert_uncredited(&finding, changed);
-    }
-    Ok(())
-}
-
-#[test]
-fn a_callee_overwrite_of_the_changed_output_is_not_confirmed() -> Result<(), String> {
-    let old = "        out.push('~');";
-    let new = "        out.push('+');";
-    let test = format!("{BUILD}        assert_eq!(s, \"fixed\");");
-    for tail in [
-        "        out.clear();\n        out.push_str(\"fixed\");",
-        "        *out = String::from(\"fixed\");",
-        "        std::mem::take(out);\n        out.push_str(\"fixed\");",
-    ] {
-        let owner = format!(
-            "    pub fn format(&self, out: &mut String, minutes: i32) {{\n{new}\n{tail}\n    }}"
-        );
-        let finding = finding_custom(&owner, old, new, &test)?;
-        assert_uncredited(&finding, tail);
+        assert_uncredited(&finding_custom(&owner, &old, changed, &test)?, changed);
     }
     Ok(())
 }
 
 #[test]
 fn a_fmt_write_owner_and_a_non_empty_initial_local_behave_as_specified() -> Result<(), String> {
-    let old = "        write!(out, \"~\").unwrap();";
     let new = "        write!(out, \"+\").unwrap();";
-    let owner = format!(
-        "    pub fn format(&self, out: &mut String, minutes: i32) {{\n        use std::fmt::Write;\n{new}\n    }}"
-    );
-    let healthy = finding_custom(
-        &owner,
-        old,
-        new,
-        &format!("{BUILD}        assert_eq!(s, \"+\");"),
-    )?;
-    assert_eq!(healthy["classification"], "exposed", "{healthy}");
-    assert_eq!(healthy["ripr"]["discriminate"]["state"], "yes", "{healthy}");
+    let owner = owner_with(&["        use std::fmt::Write;", new]);
+    let test = format!("{BUILD}        assert_eq!(s, \"+\");");
+    assert_credited(&finding_custom(&owner, &new.replace('+', "~"), new, &test)?);
     // A local that starts non-empty may already equal the expected value.
-    for build in [
-        "        let mut s = String::from(\"+\");\n        OffsetFormat.format(&mut s, 570);\n",
-        "        let mut s = String::from(\"x\");\n        OffsetFormat.format(&mut s, 570);\n",
-    ] {
-        let finding = finding(&format!("{build}        assert_eq!(s, \"x\");"))?;
-        assert_uncredited(&finding, build);
+    for init in ["+", "x"] {
+        let body = format!(
+            "        let mut s = String::from(\"{init}\");\n        OffsetFormat.format(&mut s, 570);\n        assert_eq!(s, \"x\");"
+        );
+        assert_uncredited(&finding(&body)?, init);
     }
     Ok(())
 }
 
 #[test]
 fn a_clear_before_the_changed_write_stays_credited() -> Result<(), String> {
-    let old = "        out.push('~');";
-    let new = "        out.push('+');";
-    let owner = format!(
-        "    pub fn format(&self, out: &mut String, minutes: i32) {{\n        out.clear();\n{new}\n    }}"
-    );
-    let finding = finding_custom(
-        &owner,
-        old,
-        new,
-        &format!("{BUILD}        assert_eq!(s, \"+\");"),
-    )?;
-    assert_eq!(finding["classification"], "exposed", "{finding}");
-    assert_eq!(finding["ripr"]["discriminate"]["state"], "yes", "{finding}");
+    let owner = owner_with(&["        out.clear();", NEW]);
+    let test = format!("{BUILD}        assert_eq!(s, \"+\");");
+    assert_credited(&finding_custom(&owner, OLD, NEW, &test)?);
     Ok(())
 }
 
@@ -511,6 +420,10 @@ fn owner_with(lines: &[&str]) -> String {
 fn a_later_use_of_the_output_other_than_a_plain_write_is_not_credited() -> Result<(), String> {
     let test = format!("{BUILD}        assert_eq!(s, \"fixed\");");
     for tail in [
+        // destructive callee overwrites after the changed write
+        "        out.clear();\n        out.push_str(\"fixed\");",
+        "        *out = String::from(\"fixed\");",
+        "        std::mem::take(out);\n        out.push_str(\"fixed\");",
         // the output is passed onward
         "        wipe(out);",
         // parenthesized deref receiver
@@ -530,24 +443,13 @@ fn a_later_use_of_the_output_other_than_a_plain_write_is_not_credited() -> Resul
 
 #[test]
 fn a_later_use_of_a_vec_output_other_than_a_plain_write_is_not_credited() -> Result<(), String> {
-    let build = "        let mut s = Vec::new();\n        OffsetFormat.format(&mut s, 570);\n";
-    let new = "        out.push(b'+');";
-    let old = "        out.push(b'~');";
+    let push = "        out.push(b'+');";
     for tail in [
         "        out.clone_from(&vec![9u8]);",
         "        let _ = out.split_off(0);\n        out.push(9u8);",
         "        out.splice(.., [9u8]);",
     ] {
-        let owner = format!(
-            "    pub fn format(&self, out: &mut Vec<u8>, minutes: i32) {{\n{new}\n{tail}\n    }}"
-        );
-        let finding = finding_custom(
-            &owner,
-            old,
-            new,
-            &format!("{build}        assert_eq!(s, vec![9u8]);"),
-        )?;
-        assert_uncredited(&finding, tail);
+        assert_uncredited(&vec_finding(&[push, tail], "vec![9u8]")?, tail);
     }
     Ok(())
 }
@@ -557,38 +459,32 @@ fn a_changed_write_that_may_not_execute_is_not_credited() -> Result<(), String> 
     let test = format!("{BUILD}        assert_eq!(s, \"570\");");
     let tail = "        out.push_str(\"570\");";
     for lines in [
-        vec!["        if minutes < 0 {", NEW, "        }", tail],
-        vec!["        for _ in 0..0 {", NEW, "        }", tail],
-        vec![tail, "        return;", NEW],
-        vec![
-            tail,
-            "        if minutes > 0 {",
-            "            return;",
-            "        }",
-            NEW,
-        ],
+        format!("        if minutes < 0 {{\n{NEW}\n        }}\n{tail}"),
+        format!("        for _ in 0..0 {{\n{NEW}\n        }}\n{tail}"),
+        format!("{tail}\n        return;\n{NEW}"),
+        format!("{tail}\n        if minutes > 0 {{\n            return;\n        }}\n{NEW}"),
     ] {
-        let owner = owner_with(&lines);
+        let owner = owner_with(&[&lines]);
         let finding = finding_custom(&owner, OLD, NEW, &test)?;
         assert_uncredited(&finding, &owner);
     }
-    // The changed token sits on the unexercised side of a conditional.
-    let new = "        out.push(if minutes < 0 { '-' } else { '+' });";
-    let old = "        out.push(if minutes < 0 { '~' } else { '+' });";
-    let owner = owner_with(&[new, tail]);
-    let finding = finding_custom(
-        &owner,
-        old,
-        new,
-        &format!("{BUILD}        assert_eq!(s, \"+570\");"),
-    )?;
-    assert_uncredited(&finding, "unexercised branch");
-    // The changed write may write the empty branch.
-    let new = "        out.push_str(if minutes < 0 { \"-\" } else { \"\" });";
-    let old = "        out.push_str(if minutes < 0 { \"~\" } else { \"\" });";
-    let owner = owner_with(&[new, tail]);
-    let finding = finding_custom(&owner, old, new, &test)?;
-    assert_uncredited(&finding, "empty branch");
+    // The changed token sits on the unexercised side of a conditional, or
+    // the changed write may write the empty branch.
+    for (new, expected) in [
+        (
+            "        out.push(if minutes < 0 { '-' } else { '+' });",
+            "+570",
+        ),
+        (
+            "        out.push_str(if minutes < 0 { \"-\" } else { \"\" });",
+            "570",
+        ),
+    ] {
+        let owner = owner_with(&[new, tail]);
+        let test = format!("{BUILD}        assert_eq!(s, \"{expected}\");");
+        let finding = finding_custom(&owner, &new.replace('-', "~"), new, &test)?;
+        assert_uncredited(&finding, new);
+    }
     Ok(())
 }
 
@@ -634,40 +530,16 @@ fn divergence_hidden_in_a_macro_or_exit_before_the_changed_write_is_not_credited
     let test = format!("{BUILD}        assert_eq!(s, \"570\");");
     let first = "        out.push_str(\"570\");";
     let quit = "macro_rules! quit { () => { return }; }\n";
+    let guarded = |inner: &str| {
+        format!("{first}\n        if minutes == 570 {{\n            {inner}\n        }}\n{NEW}")
+    };
     for (prelude, lines) in [
-        (quit, vec![first, "        quit!();", NEW]),
-        (
-            quit,
-            vec![
-                first,
-                "        if minutes == 570 {",
-                "            quit!();",
-                "        }",
-                NEW,
-            ],
-        ),
-        (
-            "",
-            vec![
-                first,
-                "        if minutes == 570 {",
-                "            std::process::exit(0);",
-                "        }",
-                NEW,
-            ],
-        ),
-        (
-            "",
-            vec![
-                first,
-                "        if minutes == 570 {",
-                "            panic!(\"stop\");",
-                "        }",
-                NEW,
-            ],
-        ),
+        (quit, format!("{first}\n        quit!();\n{NEW}")),
+        (quit, guarded("quit!();")),
+        ("", guarded("std::process::exit(0);")),
+        ("", guarded("panic!(\"stop\");")),
     ] {
-        let owner = owner_with(&lines);
+        let owner = owner_with(&[&lines]);
         let finding = finding_custom_in(prelude, &owner, OLD, NEW, &test)?;
         assert_uncredited(&finding, &owner);
     }
@@ -750,44 +622,23 @@ fn macro_argument_exits_and_bare_calls_before_the_last_write_are_not_credited() 
 {
     let test = format!("{BUILD}        assert_eq!(s, \"570\");");
     let first = "        out.push_str(\"570\");";
-    for (prelude, lines) in [
+    for (prelude, middle) in [
         (
             "",
-            vec![
-                first,
-                "        assert!({ if minutes == 570 { return; } true });",
-                NEW,
-            ],
+            "        assert!({ if minutes == 570 { return; } true });",
         ),
         (
             "",
-            vec![
-                first,
-                "        let _n = format!(\"{}\", { if minutes == 570 { return; } 1 });",
-                NEW,
-            ],
+            "        let _n = format!(\"{}\", { if minutes == 570 { return; } 1 });",
         ),
-        (
-            "",
-            vec![
-                first,
-                "        let _n = format!(\"{}\", helper(minutes)?);",
-                NEW,
-            ],
-        ),
+        ("", "        let _n = format!(\"{}\", helper(minutes)?);"),
         (
             "use std::process::exit as bye;\n",
-            vec![
-                first,
-                "        if minutes == 570 {",
-                "            bye(0);",
-                "        }",
-                NEW,
-            ],
+            "        if minutes == 570 {\n            bye(0);\n        }",
         ),
-        ("", vec![first, "        helper(minutes);", NEW]),
+        ("", "        helper(minutes);"),
     ] {
-        let owner = owner_with(&lines);
+        let owner = owner_with(&[&format!("{first}\n{middle}\n{NEW}")]);
         let finding = finding_custom_in(prelude, &owner, OLD, NEW, &test)?;
         assert_uncredited(&finding, &owner);
     }
@@ -811,8 +662,7 @@ fn an_enclosing_item_attribute_or_a_same_named_twin_is_not_credited() -> Result<
     // Inert attributes keep the credit.
     let inert = format!("    #[inline]\n    #[must_use]\n{owner}");
     let finding = finding_custom(&inert, OLD, NEW, &test)?;
-    assert_eq!(finding["classification"], "exposed", "{finding}");
-    assert_eq!(finding["ripr"]["discriminate"]["state"], "yes", "{finding}");
+    assert_credited(&finding);
     Ok(())
 }
 
@@ -847,8 +697,7 @@ fn a_user_type_named_like_a_std_buffer_is_not_credited() -> Result<(), String> {
     // A std import of the same names keeps the credit.
     let owner = owner_with(&[NEW, "        out.push_str(\"570\");"]);
     let finding = finding_custom_in("use std::collections::VecDeque;\n", &owner, OLD, NEW, &test)?;
-    assert_eq!(finding["classification"], "exposed", "{finding}");
-    assert_eq!(finding["ripr"]["discriminate"]["state"], "yes", "{finding}");
+    assert_credited(&finding);
     Ok(())
 }
 
@@ -878,11 +727,7 @@ fn only_certainly_non_empty_write_arguments_are_credited() -> Result<(), String>
     ] {
         let owner = owner_with(&["        use std::fmt::Write;", changed]);
         let finding = finding_custom(&owner, "        // old", changed, &test)?;
-        assert_eq!(finding["classification"], "exposed", "{changed}: {finding}");
-        assert_eq!(
-            finding["ripr"]["discriminate"]["state"], "yes",
-            "{changed}: {finding}"
-        );
+        assert_credited(&finding);
     }
     Ok(())
 }
@@ -900,29 +745,38 @@ fn a_helper_call_between_setup_and_assertion_is_not_credited() -> Result<(), Str
     Ok(())
 }
 
+/// The finding for an owner made of `lines` whose changed line is `changed`.
+fn changed_finding(
+    prelude: &str,
+    lines: &[&str],
+    changed: &str,
+    test: &str,
+) -> Result<Value, String> {
+    finding_custom_in(prelude, &owner_with(lines), "        // old", changed, test)
+}
+
 #[test]
 fn a_trait_resolved_writer_needs_a_std_write_import_and_no_user_trait() -> Result<(), String> {
     let test = format!("{BUILD}        assert_eq!(s, \"+570\");");
     let sink = "trait Sink { fn write_str(&mut self, s: &str); }\nimpl Sink for String { fn write_str(&mut self, _s: &str) {} }\n";
+    let import = "        use std::fmt::Write;";
     let write_str = "        out.write_str(\"+\").unwrap();";
-    // A user trait answers the call and no std Write is imported.
-    let owner = owner_with(&[write_str]);
-    let finding = finding_custom_in(sink, &owner, "        // old", write_str, &test)?;
-    assert_uncredited(&finding, "user trait, no import");
-    // A std Write import does not help while a user trait exists.
-    let owner = owner_with(&["        use std::fmt::Write;", write_str]);
-    let finding = finding_custom_in(sink, &owner, "        // old", write_str, &test)?;
-    assert_uncredited(&finding, "user trait with import");
-    // write! without any std Write import.
     let write_macro = "        write!(out, \"+\").unwrap();";
-    let owner = owner_with(&[write_macro]);
-    let finding = finding_custom(&owner, "        // old", write_macro, &test)?;
-    assert_uncredited(&finding, "write! without import");
+    for (prelude, lines, what) in [
+        (sink, vec![write_str], "user trait, no import"),
+        (sink, vec![import, write_str], "user trait with import"),
+        ("", vec![write_macro], "write! without import"),
+    ] {
+        let finding = changed_finding(prelude, &lines, lines[lines.len() - 1], &test)?;
+        assert_uncredited(&finding, what);
+    }
     // The import alone keeps the credit.
-    let owner = owner_with(&["        use std::fmt::Write;", write_str]);
-    let finding = finding_custom(&owner, "        // old", write_str, &test)?;
-    assert_eq!(finding["classification"], "exposed", "{finding}");
-    assert_eq!(finding["ripr"]["discriminate"]["state"], "yes", "{finding}");
+    assert_credited(&changed_finding(
+        "",
+        &[import, write_str],
+        write_str,
+        &test,
+    )?);
     Ok(())
 }
 
@@ -954,8 +808,7 @@ fn a_call_inside_an_assertion_or_macro_between_call_and_assertion_is_not_credite
     let body =
         format!("{BUILD}        let _m = format!(\"{{}}\", 1);\n        assert_eq!(s, \"+570\");");
     let kept = finding(&body)?;
-    assert_eq!(kept["classification"], "exposed", "{kept}");
-    assert_eq!(kept["ripr"]["discriminate"]["state"], "yes", "{kept}");
+    assert_credited(&kept);
     Ok(())
 }
 
@@ -984,53 +837,44 @@ fn assert_not_confirmed(finding: &Value, what: &str) {
 fn a_write_macro_into_an_expression_starting_with_the_parameter_is_not_credited()
 -> Result<(), String> {
     let test = format!("{BUILD}        assert_eq!(s, \"+570\");");
+    let import = "        use std::fmt::Write;";
     for changed in [
         "        write!(out.clone(), \"+\").unwrap();",
         "        write!(out.to_string(), \"+\").unwrap();",
         "        writeln!(out.clone()).unwrap();",
         "        write!(&mut out, \"+\").unwrap();",
     ] {
-        let owner = owner_with(&["        use std::fmt::Write;", changed]);
-        let finding = finding_custom(&owner, "        // old", changed, &test)?;
+        let finding = changed_finding("", &[import, changed], changed, &test)?;
         assert_not_confirmed(&finding, changed);
     }
     // The bare parameter as destination keeps the credit.
     let changed = "        write!(out, \"+\").unwrap();";
-    let owner = owner_with(&["        use std::fmt::Write;", changed]);
-    let kept = finding_custom(&owner, "        // old", changed, &test)?;
-    assert_eq!(kept["classification"], "exposed", "{kept}");
-    assert_eq!(discriminate_state(&kept), "yes", "{kept}");
+    assert_credited(&changed_finding("", &[import, changed], changed, &test)?);
     Ok(())
 }
 
 #[test]
 fn turbofish_parenthesised_and_argument_calls_are_not_followed() -> Result<(), String> {
     let assertion = "        assert_eq!(s, \"+570\");";
+    let call = |arg: &str| {
+        format!(
+            "        let mut s = String::new();\n        OffsetFormat.format(&mut s, {arg});\n{assertion}"
+        )
+    };
     for body in [
         format!("{BUILD}        assert!(bye::<u8>());\n{assertion}"),
-        format!(
-            "        let mut s = String::new();\n        OffsetFormat.format(&mut s, util::go());\n{assertion}"
-        ),
         format!("{BUILD}        assert!((bye)());\n{assertion}"),
-        format!(
-            "        let mut s = String::new();\n        OffsetFormat.format(&mut s, std::process::exit(0));\n{assertion}"
-        ),
-        format!(
-            "        let mut s = String::new();\n        OffsetFormat.format(&mut s, bye::<i32>());\n{assertion}"
-        ),
-        format!(
-            "        let mut s = String::new();\n        OffsetFormat.format(&mut s, 570).wrap::<u8>();\n{assertion}"
-        ),
+        call("util::go()"),
+        call("std::process::exit(0)"),
+        call("bye::<i32>()"),
+        format!("{}", call("570").replace("570);", "570).wrap::<u8>();")),
     ] {
-        let finding = finding(&body)?;
-        assert_not_confirmed(&finding, &body);
+        assert_not_confirmed(&finding(&body)?, &body);
     }
     // The same shape in the owner, before the changed write.
-    let changed = "        out.push('+');";
     let test = format!("{BUILD}{assertion}");
     for before in ["        bye::<u8>();", "        (bye)();"] {
-        let owner = owner_with(&[before, changed]);
-        let finding = finding_custom(&owner, "        // old", changed, &test)?;
+        let finding = changed_finding("", &[before, NEW], NEW, &test)?;
         assert_not_confirmed(&finding, before);
     }
     Ok(())
@@ -1047,8 +891,7 @@ fn a_workspace_macro_shadowing_a_pure_macro_in_test_setup_is_not_credited() -> R
         let owner = owner_with(&[NEW]);
         // Unshadowed, the same setup keeps the credit.
         let kept = finding_custom_in("", &owner, OLD, NEW, &body)?;
-        assert_eq!(kept["classification"], "exposed", "{name}: {kept}");
-        assert_eq!(discriminate_state(&kept), "yes", "{name}: {kept}");
+        assert_credited(&kept);
         // A workspace macro of the same name that returns early is refused.
         let prelude = format!("macro_rules! {name} {{ ($($t:tt)*) => {{ {{ return; }} }}; }}\n");
         let shadowed = finding_custom_in(&prelude, &owner, OLD, NEW, &body)?;

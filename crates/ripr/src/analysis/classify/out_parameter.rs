@@ -1,27 +1,14 @@
 //! Out-parameter observation (RIPR-SPEC-0351, #8999).
 //!
 //! `OffsetFormat { .. }.format(&mut s, off).unwrap(); assert_eq!(s, "+09:30");`
-//! passes a local to the changed method as `&mut` and then asserts on that
-//! local. The assertion never names the method, so lexical matching leaves
-//! only the builder statement as the test's oracle. This module admits the
-//! assertion for the call when every link is syntactically exact:
-//!
-//! - the owner is a method with a `&mut` parameter it actually uses;
-//! - the asserted operand is a bare local, and that local is bound once by
-//!   `let mut local = <call or record literal>;`, passed once as
-//!   `&mut local` to a method call named like the owner, and mentioned by no
-//!   other statement before the assertion;
-//! - the definition, the call and the assertion are top-level statements of
-//!   the test body, in that order;
-//! - the call's receiver resolves to the owner's impl type by the same
-//!   receiver rules as the relation layer (a type-qualified path, a struct
-//!   literal, or a `let` typed by a literal or annotation).
-//!
-//! Anything else (a rebinding, a shadow, a loop, closure or macro mention,
-//! an unresolved receiver, an alias, a second asserted operand that is also
-//! a candidate) stays uncredited. The helper decides only that the
-//! assertion reads the call's out-parameter; it grants no observation
-//! confirmation, strength or reach.
+//! passes a local as `&mut` and asserts on it. This module admits that
+//! assertion for the call when every link is syntactically exact: a method
+//! owner with a used `&mut` parameter; a bare asserted local bound once by a
+//! recognized empty constructor, passed once as `&mut local` to a call named
+//! like the owner and mentioned by no other statement; definition, call and
+//! assertion as ordered top-level statements; a receiver that resolves to the
+//! owner's impl type by the relation-layer rules. Anything else stays
+//! uncredited. It grants no strength or reach.
 
 use crate::analysis::classify::OwnerPinSyntax;
 use crate::analysis::classify::reveal::assertion_comparison_operands;
@@ -37,9 +24,8 @@ use ra_ap_syntax::{
     ast::{self, HasArgList, HasName},
 };
 
-/// The owner parameter name when `assertion` is a top-level `assert_eq!` on a
-/// local that the test passed as `&mut` to a call of `owner` before it, under
-/// the rules above.
+/// The owner parameter name when `assertion` asserts a local the test passed
+/// as `&mut` to a call of `owner` before it, under the rules above.
 pub(in crate::analysis) fn assertion_out_parameter(
     owner: &FunctionSummary,
     index: &RustIndex,
@@ -59,17 +45,15 @@ pub(in crate::analysis) fn assertion_out_parameter(
     {
         return None;
     }
-    // The test-side scan always sees every workspace macro name; the owner
-    // side only needs them when the owner body invokes a macro.
+    // The test side always sees every workspace macro name.
     let all_macro_names: &[String] = syntax.workspace_macro_names(index);
     let macro_names: &[String] = if owner.body.contains('!') {
         all_macro_names
     } else {
         &[]
     };
-    // `write_str`/`write_char`/`write_all`/`write!` resolve through a trait:
-    // credit them only when a std `Write` is imported and no workspace trait
-    // could answer the same call on the std buffers.
+    // Trait-resolved writers need a std `Write` import and no workspace trait
+    // that could answer the same call.
     let std_write_ok = index
         .files()
         .get(&owner.file)
@@ -183,10 +167,8 @@ fn owner_out_parameters(
     (!positions.is_empty()).then_some(positions)
 }
 
-/// Whether the owner body can rebind or reassign `name` (a `let`, any
-/// pattern binding including closure and match-arm parameters, a plain
-/// assignment, or a binding keyword before the name inside a macro), so a
-/// later use may no longer be the `&mut` parameter. Fail closed.
+/// Whether the owner body can rebind or reassign `name`, so a later use may
+/// no longer be the `&mut` parameter. Fail closed.
 fn name_rebound_in(body: &SyntaxNode, name: &str) -> bool {
     let bound = body.descendants().any(|node| {
         ast::IdentPat::cast(node.clone())
@@ -211,9 +193,8 @@ fn name_rebound_in(body: &SyntaxNode, name: &str) -> bool {
     }
 }
 
-/// Whether the changed expression itself writes through `parameter` (the
-/// same rule as the owner-side check), so a mention of the name in an
-/// unrelated expression is not confirmation.
+/// Whether the changed expression itself writes through `parameter`; a
+/// mere mention of the name is not confirmation.
 pub(in crate::analysis) fn expression_writes_parameter(expression: &str, parameter: &str) -> bool {
     let source = format!("fn __probe() {{ {expression}; }}");
     let Some(parse) = parse_clean_source_file(&source) else {
@@ -250,11 +231,10 @@ pub(in crate::analysis) fn expression_writes_parameter(expression: &str, paramet
             .is_some_and(|(kind, _)| kind == StatementKind::Write)
 }
 
-/// Whether `expected` is clearly a non-empty value (a non-empty string or
-/// byte-string literal, a non-zero integer literal, `lit.to_string()` and
-/// kin, `String::from(lit)`, or a non-empty `vec![..]`). Anything else,
-/// including every empty spelling and every local, is refused: an expected
-/// value that may equal the local's initial state cannot notice a write.
+/// Whether `expected` is clearly non-empty (a non-empty literal, a non-zero
+/// integer, `lit.to_string()` and kin, `String::from(lit)`, a non-empty
+/// `vec![..]`). Everything else is refused: a value that may equal the
+/// initial state cannot notice a write.
 fn is_clearly_nonempty(expected: &str) -> bool {
     let source = format!("fn __expected() {{ let _ = {expected}; }}");
     let Some(parse) = parse_clean_source_file(&source) else {
@@ -272,8 +252,7 @@ fn is_clearly_nonempty(expected: &str) -> bool {
     nonempty_expr(&initializer)
 }
 
-/// The local starts as a recognized empty collection, so a clearly non-empty
-/// expected value cannot equal its initial state.
+/// The local starts as a recognized empty collection.
 fn is_empty_constructor(initial: &str) -> bool {
     matches!(
         initial,
@@ -591,9 +570,8 @@ fn classify_statement(
                     .iter()
                     .position(|token| token.kind() == SyntaxKind::IDENT)?;
                 let first = &tokens[first_at];
-                // The destination is exactly the bare identifier: the first
-                // argument is `name` alone, followed by a comma, so `out.clone()`, `out.to_string()`
-                // and `&mut other` are not writes through the parameter.
+                // The first argument is the bare `name` followed by a comma
+                // (`out.clone()` and `&mut other` are not writes through it).
                 if strip_raw(first.text()) != name
                     || tokens
                         .get(2)
@@ -636,14 +614,10 @@ fn top_level_statements(body: &ast::BlockExpr) -> Option<Vec<SyntaxNode>> {
     )
 }
 
-/// Fail-closed allowlist for an owner `&mut` parameter `name`: every use of
-/// the bare identifier is either a top-level additive write statement (or a
-/// `clear()` before the first write), a std `write!`/`writeln!` into it, or a
-/// read-only method call; any other use (passing it onward, reborrowing,
-/// aliasing, deref or parenthesized receivers, closure capture, unknown
-/// methods, other macros) refuses. The writes are straight-line top-level
-/// statements with no `return`, `break`, `continue` or `?` before the last
-/// one, so the credited write executes for any input.
+/// Fail-closed allowlist for an owner `&mut` parameter `name`: every use is a
+/// top-level additive write (or a `clear()` before the first write), a std
+/// `write!`/`writeln!` into it, or a read-only method call; any other use
+/// refuses. Writes are straight-line, with no early exit before the last one.
 fn owner_allows_out_parameter(
     body: &ast::BlockExpr,
     name: &str,
@@ -777,10 +751,9 @@ const PURE_MACROS: &[&str] = &[
     "writeln",
 ];
 
-/// A statement that cannot attach a condition or an early exit to the writes
-/// after it: no attribute, no macro outside a small pure std list (and none
-/// the workspace redefines), no `exit`/`abort`/`panic`-family call. Macro
-/// calls inside other macros' arguments are read from the tokens.
+/// A statement that cannot attach a condition or early exit to later writes:
+/// no attribute, no macro outside the pure std list (or redefined by the
+/// workspace), no `exit`/`abort`/`panic`-family call.
 fn straight_line(node: &SyntaxNode, macro_names: &[String]) -> bool {
     if node
         .descendants()
@@ -882,9 +855,7 @@ fn std_write_imported(source: &str) -> bool {
         })
 }
 
-/// Whether some workspace file implements a non-std trait for `String`,
-/// `Vec` or `VecDeque`, or declares a trait with a method named like the
-/// std writers, so a trait-resolved `write_str` could be the user's.
+/// Whether a workspace trait could answer a std-writer call on the buffers.
 pub(in crate::analysis) fn workspace_has_user_buffer_traits(index: &RustIndex) -> bool {
     const STD_TRAITS: &[&str] = &[
         "Display",
@@ -966,9 +937,8 @@ fn attribute_is_inert(attribute: &ast::Attr) -> bool {
     })
 }
 
-/// The owner fn, its impl and every enclosing module carry only inert
-/// attributes, and no second method of the same name exists in an impl of the
-/// same type in the file (a `cfg`-gated twin could be the active one).
+/// Only inert attributes on the owner and its enclosing items, and no
+/// same-named twin method (a `cfg`-gated twin could be the active one).
 fn owner_item_context_is_inert(
     owner: &FunctionSummary,
     index: &RustIndex,
@@ -1071,12 +1041,10 @@ fn simple_test_statement(node: &SyntaxNode, macro_names: &[String], local: &str)
     }
 }
 
-/// Every call in `node` (macro arguments included) is `String::from`,
-/// `String::new`, `Vec::new`, `VecDeque::new`, `Some`/`Ok`/`Err`, or a pure
-/// std method (`len`, `is_empty`, `as_str`, `to_string`) directly on `local`.
-/// A `(` that follows `>` (a turbofish call such as `f::<u8>()`), `)`, `]` or
-/// `?` is a call whose callee is not a plain identifier or path; it cannot be
-/// checked against the allowlists, so it refuses.
+/// Every call in `node` (macro arguments included) is `String::from|new`,
+/// `Vec::new`, `VecDeque::new`, `Some`/`Ok`/`Err`, an `extra_methods` name, or
+/// a pure std method directly on `local`. A `(` after `>`, `)`, `]` or `?`
+/// (turbofish, parenthesised or chained callee) refuses.
 fn has_unnamed_call(tokens: &[ra_ap_syntax::SyntaxToken]) -> bool {
     tokens.windows(2).any(|pair| {
         pair[1].kind() == SyntaxKind::L_PAREN
@@ -1271,9 +1239,8 @@ fn local_written_by_owner_call(
     if !is_owned_local_definition(&items[*definition_at], local) {
         return None;
     }
-    // Every other statement before the assertion must be a plain setup
-    // statement: a helper that exits or panics there could stop the test
-    // before the assertion runs.
+    // Other statements before the assertion must be plain setup: a helper
+    // that exits could stop the test before the assertion.
     if items
         .iter()
         .enumerate()
@@ -1305,9 +1272,8 @@ fn local_written_by_owner_call(
     {
         return None;
     }
-    // The call statement's receiver and arguments are scanned like any other
-    // setup statement; only the owner method, `unwrap` and `expect` are
-    // additional allowed callees.
+    // Scan the call statement like setup; only the owner method, `unwrap`
+    // and `expect` are extra allowed callees.
     if !straight_line(call, macro_names)
         || !calls_are_plain(call, local, &[owner.name.as_str(), "unwrap", "expect"])
     {
@@ -1316,9 +1282,8 @@ fn local_written_by_owner_call(
     let call_expr = ast::ExprStmt::cast(call.clone()).and_then(|statement| statement.expr())?;
     let method_call = owner_method_call(call_expr, &owner.name)?;
     let parameter = passes_local_as_out_parameter(&method_call, call, out_parameters, local)?;
-    // The receiver must resolve to the owner's impl type, read from the
-    // masked source up to this call so an earlier call of the same method
-    // name on another receiver cannot supply the resolution.
+    // Resolve the receiver from masked source up to this call, so an earlier
+    // same-named call cannot supply the resolution.
     let masked = mask_comments_and_strings(&test.body);
     let start = usize::from(call.text_range().start());
     let end = usize::from(call.text_range().end());
@@ -1332,8 +1297,7 @@ fn local_written_by_owner_call(
     resolves_method_in_prefix(&prefix, &owner.name, impl_type, impl_trait).then_some(parameter)
 }
 
-/// `let mut local = Type::ctor(..)` or `let mut local = Type { .. }`, with
-/// no borrow in the initializer and no `let ... else`.
+/// `let mut local = Type::ctor(..)` or `Type { .. }`, no borrow, no `else`.
 fn is_owned_local_definition(statement: &SyntaxNode, local: &str) -> bool {
     let Some(ast::Stmt::LetStmt(definition)) = ast::Stmt::cast(statement.clone()) else {
         return false;
@@ -1365,9 +1329,7 @@ fn is_owned_local_definition(statement: &SyntaxNode, local: &str) -> bool {
         )
 }
 
-/// The method call named `method` at the end of a `?` / `.unwrap()` /
-/// `.expect(..)` chain; any other wrapper (a `match`, a closure, another
-/// method) refuses.
+/// The `method` call at the end of a `?` / `.unwrap()` / `.expect(..)` chain.
 fn owner_method_call(mut expression: ast::Expr, method: &str) -> Option<ast::MethodCallExpr> {
     loop {
         match expression {

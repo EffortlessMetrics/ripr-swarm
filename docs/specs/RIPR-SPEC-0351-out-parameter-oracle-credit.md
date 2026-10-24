@@ -90,116 +90,87 @@ assertion reads the call's out-parameter; it grants no strength or reach.
 ## Known Limits
 
 - Credit needs a clearly non-empty expected operand: a non-empty string or
-  byte-string literal, a non-zero integer literal, such a literal with
+  byte-string literal, a non-zero integer, such a literal with
   `.to_string()`/`.to_owned()`/`.into()`/`.to_vec()`, `String::from(lit)`, or
-  a non-empty `vec![..]`. Every empty spelling, every local and every other
-  expression is refused, as is an operand equal to the local's initializer.
-  Other expected values are not evaluated for correctness: like every
+  a non-empty `vec![..]`. Every empty spelling, local and other expression is
+  refused, as is an operand equal to the local's initializer. Like every
   exact-value oracle, the helper decides that a discriminator exists, not
   that the test passes.
-- The owner is accepted by an allowlist, not a blocklist. Every use of the
-  out-parameter in the owner body must be a top-level write statement, a
-  `clear()` before the first write, or a read-only method call (`len`,
-  `is_empty`, ...) on the bare identifier. Later additive writes after the
-  changed write are allowed because an additive write cannot erase it; every
-  other later use (passing it onward, reborrowing, aliasing, a deref or
-  parenthesized receiver, closure capture, an unknown or destructive method
-  such as `clone_from`, `split_off`, `truncate` or `drain`, any other macro)
-  refuses.
+- The owner is accepted by an allowlist. Every use of the out-parameter must
+  be a top-level write statement, a `clear()` before the first write, or a
+  read-only call (`len`, `is_empty`, ...) on the bare identifier. Later
+  additive writes are allowed because they cannot erase the changed write;
+  every other later use (passing it onward, reborrowing, aliasing, deref or
+  parenthesized receivers, closure capture, `clone_from`, `split_off`,
+  `truncate`, `drain`, any other macro) refuses.
 - A write counts only when its arguments certainly add data: `push`,
   `push_back`, `push_front`, `write_char` and two-argument `insert` always;
   `push_str`, `write_str`, `insert_str` and `write_all` with a non-empty
-  string or byte-string literal, `&format!(..)` whose template has
-  non-placeholder text or a placeholder with an explicit width, or a plain
-  identifier (data-dependent: a named limit); `extend`/`extend_from_slice`
-  with a non-empty array literal or `"lit".chars()`/`.bytes()`; `write!` with
-  such a template; `writeln!` into the parameter. `append`, empty literals,
-  `format!("")`, `None`, empty constructors and every other argument form
-  are not writes.
-- The writes must be straight-line top-level statements with no `return`,
-  `break`, `continue` or `?` before the last one. A write inside an
-  `if`/`match` arm, loop or closure refuses, because the test input may not
-  execute it. The changed expression must itself be such a write with no
-  branch, loop, closure or early exit inside it (tokens `if`, `match`,
-  `for`, `while`, `loop`, `|`, `?`, `return`, `break`). A changed token that
-  selects a side without those tokens (`then_some`, indexing, `get`, width
-  or precision, `abs()`) is not detected; see follow-up #10058.
-- Capacity-only operations (`reserve`, `shrink_to_fit`, ...) are not writes.
-  `extend_from_slice`/`extend`/`append` with a data-dependent argument (a
-  local that may be empty) are accepted as writes; only literally empty
-  arguments are refused.
-- Any attribute in the owner body (`#[cfg(..)]` and kin) refuses. The owner
-  fn, its impl and every enclosing module may carry only inert attributes
-  (`doc`, `inline`, `must_use`, `allow`, `track_caller`, `cold`,
-  `deprecated`), and the file may hold exactly one method of that name in
-  impls of the owner's type, so a `cfg`-gated twin cannot be the active one.
-  Twins in other files are not seen.
-- A user type, alias or `use` named `String`, `Vec` or `VecDeque` in the
-  owner's file or the test's file refuses credit; a std-rooted import of those
-  names does not. Any non-std glob import refuses, except `use self::*` and
-  `use super::*` inside an inline module (a top-level `use super::*`,
-  `use crate::*` or `use other::*` can bring a user `String` from another
-  file).
-- Non-inherent writers (`write_str`, `write_char`, `write_all`, `write!`,
-  `writeln!`) are credited only when the owner's file imports a std `Write`
-  trait (`std`, `core` or `alloc` path, or a std prelude glob), and only when
-  no workspace file implements a non-std trait for `String`/`Vec`/`VecDeque`
-  or declares a trait with a method named `write_str`, `write_char`,
-  `write_all`, `write_fmt` or `write`; otherwise a user trait could resolve
-  the call to a no-op. Inherent `push`/`push_str`/`insert`/`extend` are not
-  affected.
-- `write!`/`writeln!` credit needs the parameter as the whole first argument
-  (`write!(out, ..)`); `write!(out.clone(), ..)`, `out.to_string()` and
-  similar destinations that merely start with the name refuse.
-- Calls whose callee is not a plain identifier or path (turbofish `f::<T>()`,
-  parenthesised `(f)()`, chained `f()()`) refuse in the owner statements at
-  or before the last write, in test setup and assertions, and in the owner
-  call statement itself, whose receiver and arguments are scanned too; the
-  only callees allowed there beyond the test-side allowlist are the owner
-  method, `unwrap` and `expect`.
-- Named non-blocking limits (#10058): data-dependent empties (a named
-  identifier or width-padded placeholder may format to empty or whitespace),
-  width padding on a user `Display`, traits from external crates, and a std
-  `Write` import anywhere in the owner file's scope counting as in scope for
-  every function in the file.
-- User `Drop`, operator, `Index` and `Deref` impls that diverge are not
-  followed, on the owner side or the test side. Path, method and UFCS calls
-  to workspace functions that exit are likewise not followed (named above).
-- `write!(out.clone(), "+")` with expected `"+"` can still be credited by a
-  pre-existing literal-match route outside this helper; that is not a false
-  promotion, because the native test fails on the original, and it has not
-  been verified against main.
-- A format template containing `$` or `*` (`{:1$}`, `{:.*}`) is never treated
-  as certainly non-empty, and a string literal with a backslash-newline
-  continuation or any escape other than `\n \t \\ \" \'` is not a non-empty
-  literal (its value is not decided here); raw literals are plain.
-- Between the start of the test and its assertion, every statement other
-  than the setup definition and the owner call must be a `let` of a plain
-  value or an assertion macro; a helper call there refuses, including a
-  method call inside an assertion, `format!` or `vec!` macro. The only calls
-  allowed are pure `len`/`is_empty`/`as_str`/`to_string` directly on the
-  local, `String::from`/`String::new`/`Vec::new`/`VecDeque::new`, and
-  `Some`/`Ok`/`Err`. A helper hidden
-  inside the owner call's receiver or arguments is not followed (#10058).
-- The parameter type must be a concrete `&mut String`, `&mut Vec<..>` or
-  `&mut VecDeque<..>`; generic, `impl Trait` and `dyn Trait` outputs refuse.
+  literal, `&format!(..)` whose template has non-placeholder text or an
+  explicit width, or a plain identifier (data-dependent: a named limit);
+  `extend`/`extend_from_slice` with a non-empty array literal or
+  `"lit".chars()`/`.bytes()` (a data-dependent argument is also accepted);
+  `write!` with such a template; `writeln!`. `append`, capacity-only
+  operations (`reserve`, `shrink_to_fit`), empty literals, `format!("")`,
+  `None` and empty constructors are not writes. A format template containing
+  `$` or `*` is never certainly non-empty, and a string literal with a
+  backslash-newline or an escape other than `\n \t \\ \" \'` is not a
+  non-empty literal; raw literals are plain.
+- Writes must be straight-line top-level statements with no `return`,
+  `break`, `continue` or non-trailing `?` before the last one, and the changed
+  expression must itself be such a write with no branch, loop, closure or
+  early exit (tokens `if`, `match`, `for`, `while`, `loop`, `|`, `?`,
+  `return`, `break`). A changed token that selects a side without those
+  tokens (`then_some`, indexing, `get`, width or precision, `abs()`) is not
+  detected; see follow-up #10058.
 - Every statement at or before the last write may contain none of `return`,
   `break`, `continue`, `loop`, `while`, `for`, `if`, `match`, `else`,
-  closures, `async`/`await`, `exit`/`abort`/`panic_any`/`resume_unwind`, or a
-  `?` other than a trailing one, in code or in macro arguments; macros must be
-  on the pure std list and not redefined by the workspace; and a call to a
-  bare identifier (a possible alias of `exit` or a diverging workspace
-  function) refuses. A path or method call to a workspace function that
-  itself exits or panics is not followed (named limit, follow-up issue).
-- `write!`/`writeln!` resolve by exact std path; a workspace file that
-  defines a macro whose name starts with `write` refuses every owner that
-  mentions `write`. Macros imported from other crates are not inspected.
-- A write after an early `return` in a callee branch the owner scan cannot
-  see (a helper the owner calls) is outside this check, and two same-named
-  callees under `#[cfg(test)]` and `#[cfg(not(test))]` are not distinguished.
-- Only `assert_eq!` and only a bare local operand are recognised.
-- Out-parameters reached through fields, helper wrappers or returned
-  references are not followed.
+  closures, `async`/`await`, `exit`/`abort`/`panic_any`/`resume_unwind`, in
+  code or macro arguments; macros must be on the pure std list and not
+  redefined by the workspace; a call to a bare identifier (a possible alias
+  of `exit`) refuses; and so does a call whose callee is not an identifier or
+  path (turbofish `f::<T>()`, `(f)()`, `f()()`), in the owner, in test setup
+  and assertions, and in the owner call statement's receiver and arguments
+  (only the owner method, `unwrap` and `expect` are extra callees there).
+- Any attribute in the owner body refuses. The owner fn, its impl and every
+  enclosing module may carry only inert attributes (`doc`, `inline`,
+  `must_use`, `allow`, `track_caller`, `cold`, `deprecated`), and the file may
+  hold exactly one method of that name in impls of the owner's type. Twins in
+  other files are not seen.
+- A user type, alias or `use` named `String`, `Vec` or `VecDeque` in the
+  owner's or the test's file refuses; a std-rooted import does not. Any
+  non-std glob refuses except `use self::*` and `use super::*` inside an
+  inline module (a top-level `use super::*`, `use crate::*` or `use other::*`
+  can bring a user `String` from another file).
+- `write_str`, `write_char`, `write_all`, `write!` and `writeln!` are
+  credited only when the owner's file imports a std/core/alloc `Write` (or a
+  std prelude glob) and no workspace file implements a non-std trait for
+  `String`/`Vec`/`VecDeque` or declares a trait method named `write_str`,
+  `write_char`, `write_all`, `write_fmt` or `write`. `write!`/`writeln!` also
+  need the bare parameter as the whole first argument (`write!(out.clone(),
+  ..)` refuses), resolve by exact std path, and refuse when a workspace file
+  defines a macro whose name starts with `write`.
+- Between the test's start and its assertion, every statement other than the
+  setup definition and the owner call must be a `let` of a plain value or an
+  assertion macro. The only calls allowed, including inside assertion,
+  `format!` and `vec!` macros, are pure `len`/`is_empty`/`as_str`/`to_string`
+  on the local, `String::from`/`String::new`/`Vec::new`/`VecDeque::new`, and
+  `Some`/`Ok`/`Err`.
+- The parameter type must be a concrete `&mut String`, `&mut Vec<..>` or
+  `&mut VecDeque<..>`; generic, `impl Trait` and `dyn Trait` outputs refuse.
+- Only `assert_eq!` and a bare local operand are recognised. Out-parameters
+  reached through fields, helper wrappers or returned references are not
+  followed.
+- Named limits not followed (#10058): workspace functions that exit or panic
+  (path, method and UFCS calls, and diverging user `Drop`, operator, `Index`
+  and `Deref` impls, owner and test side); a helper hidden in the owner call's
+  receiver or arguments beyond the scan above; macros from other crates;
+  traits from external crates; `#[cfg(test)]`/`#[cfg(not(test))]` callee
+  twins; data-dependent empties and width padding on a user `Display`; a std
+  `Write` import counting for the whole file scope. `write!(out.clone(), "+")`
+  with expected `"+"` can still be credited by a pre-existing literal-match
+  route outside this helper; that is not a false promotion (the native test
+  fails on the original) and is unverified against main.
 
 ## Non-Goals
 
