@@ -2798,6 +2798,13 @@ fn collect_exit_records(expression: &ast::Expr, records: &mut Vec<ast::RecordExp
 }
 
 impl OwnerReturnPin {
+    /// The owner's changed value is its unconditional whole boolean tail.
+    /// A wrapper pin may reuse boundary pairing only for this shape; the
+    /// short-circuit and adaptor paths require their own pinned-input gates.
+    pub(in crate::analysis) fn is_unconditional_boolean_tail(&self) -> bool {
+        self.returns_bool && matches!(self.path, ReturnPathGate::Any)
+    }
+
     /// The owner-side gates: `None` when the probe is not a return value
     /// (or a changed `return Err(..)`, filed as `error_path`),
     /// the owner's declaration or return paths are not established, or

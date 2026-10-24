@@ -170,6 +170,91 @@ fn forwarding_wrapper_relates_and_pairs_its_boundary_pin() -> Result<(), String>
     Ok(())
 }
 
+// #9849: the private bool's whole return is the same observed boundary as
+// its predicate twin; the wrapper's distinct literal branches preserve it.
+#[test]
+fn boolean_return_twin_is_pinned_by_a_forwarding_wrapper() -> Result<(), String> {
+    for tests in [
+        BOUNDARY_TESTS,
+        "        assert_eq!(5, order_discount(10));\n        assert_eq!(0, order_discount(9));",
+    ] {
+        let finding = family_finding(&bulk_source(FORWARDING, tests), BULK_DIFF, "return_value")?;
+        assert_eq!(finding["probe"]["expression"], "10 <= qty", "{finding}");
+        assert_eq!(finding["ripr"]["propagate"]["state"], "yes", "{finding}");
+        assert_eq!(finding["classification"], "exposed", "{finding}");
+    }
+    Ok(())
+}
+
+#[test]
+fn boolean_return_twin_keeps_unobserved_wrapper_results_unconfirmed() -> Result<(), String> {
+    for (wrapper, tests) in [
+        (FORWARDING, "        assert_eq!(order_discount(10) * 0, 0);"),
+        (FORWARDING, "        assert_eq!(order_discount(10) % 5, 0);"),
+        (
+            FORWARDING,
+            "        let expected = order_discount(10);\n        assert_eq!(order_discount(10), expected);",
+        ),
+        (FORWARDING, "        assert_ne!(order_discount(10), 99);"),
+        (
+            FORWARDING,
+            "        assert_eq!(order_discount(12), 5);\n        assert_eq!(order_discount(3), 0);",
+        ),
+        (
+            FORWARDING,
+            "        let _ = order_discount(10);\n        assert_eq!(order_discount(12), 5);",
+        ),
+        (
+            FORWARDING,
+            "        if false { assert_eq!(order_discount(10), 5); }",
+        ),
+        (
+            FORWARDING,
+            "        let _ = order_discount(10);\n        let order_discount = |_: u32| 5;\n        assert_eq!(order_discount(10), 5);",
+        ),
+        (
+            "    let _ = is_bulk(qty);\n    5",
+            "        assert_eq!(order_discount(10), 5);",
+        ),
+        (
+            "    let _ = is_bulk(qty);\n    if qty >= 10 { 5 } else { 0 }",
+            BOUNDARY_TESTS,
+        ),
+        (
+            "    if is_bulk(qty) { qty / 2 } else { 5 }",
+            "        assert_eq!(order_discount(10), 5);\n        assert_eq!(order_discount(9), 5);",
+        ),
+    ] {
+        let finding = family_finding(&bulk_source(wrapper, tests), BULK_DIFF, "return_value")?;
+        assert_ne!(
+            finding["classification"], "exposed",
+            "{wrapper}\n{tests}\n{finding}"
+        );
+        assert_ne!(finding["ripr"]["discriminate"]["state"], "yes", "{finding}");
+    }
+    Ok(())
+}
+
+#[test]
+fn boolean_return_twin_does_not_borrow_other_calls_or_short_circuit_gates() -> Result<(), String> {
+    let split = bulk_source(FORWARDING, "        let _ = order_discount(10);");
+    let split = split.replace(
+        "fn quota_is_two_hundred() {",
+        "fn quota_is_two_hundred() { assert_eq!(order_discount(12), 5);",
+    );
+    let finding = family_finding(&split, BULK_DIFF, "return_value")?;
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+
+    let source = bulk_source(FORWARDING, "        assert_eq!(order_discount(10), 5);")
+        .replace("10 <= qty", "(10 <= qty) || true");
+    let diff = BULK_DIFF
+        .replace("qty >= 10", "(qty >= 10) || true")
+        .replace("10 <= qty", "(10 <= qty) || true");
+    let finding = family_finding(&source, &diff, "return_value")?;
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
 #[test]
 fn wrapper_tests_that_miss_the_boundary_still_report_the_gap() -> Result<(), String> {
     let tests =

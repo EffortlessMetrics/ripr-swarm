@@ -12714,6 +12714,9 @@ tests = [
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::forwarding_wrapper_oracle_pairs_with_the_helper_boundary",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::wrapper_oracle_off_the_boundary_line_does_not_pair",
   "crates/ripr/tests/helper_wrapper_reach.rs::forwarding_wrapper_relates_and_pairs_its_boundary_pin",
+  "crates/ripr/tests/helper_wrapper_reach.rs::boolean_return_twin_is_pinned_by_a_forwarding_wrapper",
+  "crates/ripr/tests/helper_wrapper_reach.rs::boolean_return_twin_keeps_unobserved_wrapper_results_unconfirmed",
+  "crates/ripr/tests/helper_wrapper_reach.rs::boolean_return_twin_does_not_borrow_other_calls_or_short_circuit_gates",
   "crates/ripr/tests/helper_wrapper_reach.rs::wrapper_tests_that_miss_the_boundary_still_report_the_gap",
   "crates/ripr/tests/helper_wrapper_reach.rs::wrapper_that_drops_the_helper_result_keeps_pairing_missing",
   "crates/ripr/tests/helper_wrapper_reach.rs::wrapper_that_transforms_the_argument_transfers_no_boundary_value",
@@ -12746,6 +12749,7 @@ tests = [
 fixtures = [
   "fixtures/split_test_boundary_oracle",
   "fixtures/strong_boundary_oracle",
+  "fixtures/rust_wrapper_boolean_return_discarded",
   "fixtures/predicate_pairing_reassigned_binding",
   "fixtures/predicate_pairing_compound_assigned_binding",
   "fixtures/predicate_pairing_mutably_borrowed_binding",
@@ -12759,6 +12763,8 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0186-same-test-boundary-oracle-pairing.md",
+  "fixtures/rust_wrapper_boolean_return_discarded/expected/check.json",
+  "fixtures/rust_wrapper_boolean_return_discarded/expected/human.txt",
   "fixtures/split_test_boundary_oracle/expected/check.json",
   "fixtures/split_test_boundary_oracle/expected/human.txt"
 ]
