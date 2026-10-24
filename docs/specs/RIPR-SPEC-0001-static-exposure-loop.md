@@ -645,11 +645,26 @@ Fixture coverage:
 - `probes_for_file_keeps_lone_structural_line_hunks`
 - `probes_for_file_keeps_structural_line_closing_outside_block_in_mixed_run`
 - `lone_else_split_hunk_is_not_no_behavioral_candidates`
+- `multi_line_attribute_entries_seed_no_probe_but_the_same_text_as_code_does`
+- `attribute_continuation_lines_cover_the_span_and_fail_closed`
 - `an_identical_line_inside_a_replacement_block_seeds_no_probe`
 - `identical_line_suppression_is_fail_closed`
 - `identical_line_pairing_never_hides_reorders_or_block_moves`
 - `multiline_builder_chain_setup_row_is_dropped_beside_the_assertion`
 - `multiline_setup_row_stays_unless_it_is_a_bare_unwrap_chain_beside_an_assertion`
+- `keyword_probe_tokens_do_not_relate_tests_by_name`
+
+The entries of a multi-line `#![..]`/`#[..]` attribute (a lint list, a `cfg_attr`
+argument list) are attribute text, like the single-line form, and seed no probe
+on either diff side (#10089). The closing line counts only when nothing follows
+the bracket, and an unclosed attribute marks nothing.
+
+Related-test name tokens come from the changed expression's identifiers. A Rust
+keyword (`return`, `while`, `loop`, ...) is syntax and never a name token, and
+the substring fallback applies the same generic/common-word gate as the
+word-boundary path (#9172), so a test named `ready_return` or `wait_while` does
+not make an uncalled owner read `weakly_exposed`. Words inside string literals
+remain name tokens; that residual is tracked in #9172.
 
 ## Implementation Mapping
 

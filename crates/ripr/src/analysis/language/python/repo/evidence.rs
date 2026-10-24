@@ -291,6 +291,7 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
     // Conftests with implicit setup, and every conftest actually read
     // (#6657): a chain conftest that was not read cannot be ruled out.
     let mut implicit_conftests: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut reach_conftests: BTreeSet<PathBuf> = BTreeSet::new();
     let mut read_conftests: BTreeSet<PathBuf> = BTreeSet::new();
 
     // Evidence sources first, so production items can relate against the
@@ -310,6 +311,9 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
                         read_conftests.insert(relative.clone());
                         if facts.conftest_implicit_setup {
                             implicit_conftests.insert(relative.clone());
+                        }
+                        if facts.conftest_declares_fixture_or_hook {
+                            reach_conftests.insert(relative.clone());
                         }
                     }
                     files.push(PythonRepoFileRecord {
@@ -346,6 +350,19 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
         &implicit_conftests,
         |conftest| !read_conftests.contains(conftest) && root.join(conftest).is_file(),
     );
+    super::super::fixtures::mark_implicit_reach_by_conftest(
+        &mut all_tests,
+        &reach_conftests,
+        |conftest| !read_conftests.contains(conftest) && root.join(conftest).is_file(),
+    );
+    super::super::fixtures::taint_admission_by_conftest_declarations(
+        &mut all_tests,
+        &reach_conftests,
+        |conftest| !read_conftests.contains(conftest) && root.join(conftest).is_file(),
+    );
+    super::super::fixtures::record_bare_sibling_imports(&mut all_tests, |path| {
+        root.join(path).exists()
+    });
 
     // Production subjects: owners + behavior items, related against the
     // evidence pool built above. The public Finding projection is built in
@@ -728,7 +745,7 @@ fn build_behavior_item(
     let focus = PythonAssertionFocus::for_change(family.clone(), text, None);
     let related = related_tests_for_candidates(candidates, Some(&focus));
     let related = related.as_slice();
-    let static_limit = static_limit_for_focused_change(text, None, &focus, owner, candidates)
+    let static_limit = static_limit_for_focused_change(text, None, None, &focus, owner, candidates)
         .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, candidates))
         .map(|limit| limit.kind);
     let canonical_gap = static_limit

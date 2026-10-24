@@ -1241,7 +1241,7 @@ mod sections;
 mod shared;
 mod triage;
 
-pub(crate) use evidence_lines::JsonPointerWording;
+pub(crate) use evidence_lines::{JsonPointerWording, plain_observation_wording};
 pub(crate) use sections::render_finding_with_config;
 
 #[cfg(test)]
@@ -2420,6 +2420,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }];
         } else {
             finding.activation.missing_discriminators.clear();
@@ -4765,6 +4767,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             });
         }
         finding
@@ -5613,6 +5617,7 @@ mod tests {
             relation_reason: Some(reason),
             relation_confidence: Some(reason.confidence()),
             miss: Some(RelatedTestMiss::NoCallPath),
+            miss_support: None,
             ..template.clone()
         };
         finding.related_tests = vec![
@@ -5679,7 +5684,8 @@ mod tests {
             Some(Some(crate::domain::RelationReason::WeakTokenSubstring))
         );
         assert!(
-            retained[0].contains("no call to the changed code found; linked by name only"),
+            retained[0]
+                .contains("no established call path to the changed code; linked by name only"),
             "disclosure stays visible: {}",
             retained[0]
         );
@@ -5838,6 +5844,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             });
         }
         assert_eq!(finding.related_tests.len(), 9);
@@ -5984,6 +5992,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             });
         }
         for index in 0..13 {
@@ -6134,6 +6144,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         });
 
         let digest = super::sections::render_finding_digest_with_config(
@@ -6179,6 +6191,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             })
             .collect();
         finding.related_tests_matched_total = Some(81);
@@ -7380,6 +7394,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }];
         finding.recommended_next_step = Some("Add a focused Perl assertion.".to_string());
         finding.language = Some(LanguageId::Perl);
@@ -7531,6 +7547,34 @@ mod tests {
         );
     }
 
+    // #9929: the human Weakness list drops the producer marker from the
+    // Python adapter's reason text, the JSON `missing` list keeps it, and an
+    // entry that merely embeds the token as source text is left alone.
+    #[test]
+    fn weakness_list_drops_producer_marker_but_keeps_embedded_token_and_json() -> Result<(), String>
+    {
+        let producer = "A strong Python oracle reaches `kind`, but static evidence does not place a related test input inside the guarding arm `case _`; every observed input leaves the changed line unexecuted (observation_unverified). Add a test input that satisfies the guarding condition.";
+        let embedded = "missing proof: `raise ValueError(\"observation_unverified\")`.";
+        let mut finding = sample_finding();
+        finding.activation.missing_discriminators.clear();
+        finding.missing = vec![producer.to_string(), embedded.to_string()];
+        let lines = super::evidence_lines::weakness_lines(&finding);
+        let expected_producer = "A strong Python oracle reaches `kind`, but static evidence does not place a related test input inside the guarding arm `case _`; every observed input leaves the changed line unexecuted. Add a test input that satisfies the guarding condition.";
+        assert_eq!(
+            lines,
+            vec![expected_producer.to_string(), embedded.to_string()],
+            "{lines:?}"
+        );
+        let full = render_finding(&finding);
+        if full.contains("(observation_unverified)") {
+            return Err(format!("rendered Weakness kept the marker:\n{full}"));
+        }
+        if finding.missing[0] != producer {
+            return Err("the structured missing list must keep the machine marker".to_string());
+        }
+        Ok(())
+    }
+
     #[test]
     fn plain_observation_wording_never_modifies_embedded_source_text() {
         use super::evidence_lines::plain_observation_wording;
@@ -7675,6 +7719,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }],
             recommended_next_step: Some("Add assertion for disabled path result.".to_string()),
             language: None,
@@ -8674,6 +8720,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         };
         finding.related_tests.push(related_test.clone());
         let mut duplicate_finding = unknown_finding();
@@ -8730,6 +8778,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         };
         let packed = |lines: std::ops::Range<usize>, total: usize| {
             let mut finding = unknown_finding();
@@ -9269,10 +9319,10 @@ mod tests {
         let [direct, advisory] = finding.related_tests.as_slice() else {
             return Err(format!("expected two rows: {:?}", finding.related_tests));
         };
-        let why = related_test_miss_reason(direct, &finding.activation.missing_discriminators)
+        let why = related_test_miss_reason(direct, &finding.probe.family)
             .ok_or("the direct row should have a reason")?;
         assert_eq!(
-            related_test_miss_reason(advisory, &finding.activation.missing_discriminators),
+            related_test_miss_reason(advisory, &finding.probe.family),
             None
         );
         let config = crate::config::RiprConfig::default();

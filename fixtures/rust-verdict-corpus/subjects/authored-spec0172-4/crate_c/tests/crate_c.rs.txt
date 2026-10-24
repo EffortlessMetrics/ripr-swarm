@@ -1,0 +1,6 @@
+use outer::score;
+
+#[test]
+fn outer_score_of_seven() {
+    assert_eq!(score(7), 21);
+}

@@ -165,6 +165,20 @@ fn extract_tests_expanding_suite_factories(file: &Path, source: &str, expand: bo
         {
             return (Vec::new(), None, Some(expansion));
         }
+        // A top-level test's call to a same-file assertion helper reads as
+        // the helper's assertions (#9636); rerun on the rewritten source.
+        if expand
+            && let Some(inlined) =
+                super::helper_inline::inline_test_helpers(&ret.program.body, source)
+            // Defence in depth: a rewrite that fails to parse degrades to the
+            // original source (unknown), never to a file with no tests.
+            && Parser::new(allocator, &inlined.source, source_type_for(file))
+                .parse()
+                .errors
+                .is_empty()
+        {
+            return (Vec::new(), None, Some(inlined));
+        }
         let imports = extract_imports_for_test_file(&ret.program.body);
         let mocks = extract_mocks_from_statements(&ret.program.body, &imports);
         let mut tests = Vec::new();
@@ -2964,7 +2978,12 @@ pub(crate) fn test_from_statement<'s, 'a>(
             ),
             None => source[call.span.start as usize..call.span.end as usize].to_string(),
         },
-        reach_body_text: unused_function_reach_body(call, referenced, source),
+        reach_body_text: unused_function_reach_body(
+            call,
+            referenced,
+            source,
+            source_type_for(file),
+        ),
         assertions,
         // Populated by `extract_tests` (the only public extractor) once
         // per file before the test is returned to the caller.
@@ -2989,21 +3008,26 @@ pub(crate) fn test_from_statement<'s, 'a>(
 /// Unicode literals. Expand only its spaces back to the original byte widths
 /// before comparing identifier offsets with parser spans.
 pub(super) fn byte_preserving_code_mask(source: &str) -> Option<String> {
-    byte_preserving_mask_of(
-        source,
-        super::classifier::ts_mask_literals_and_comments(source),
-    )
+    let masked = super::classifier::ts_mask_literals_and_comments(source);
+    preserve_mask_byte_width(source, &masked)
+}
+
+pub(super) fn byte_preserving_code_mask_for_source_type(
+    source: &str,
+    source_type: SourceType,
+) -> Option<String> {
+    let masked =
+        super::classifier::ts_mask_literals_and_comments_for_source_type(source, source_type);
+    preserve_mask_byte_width(source, &masked)
 }
 
 /// [`byte_preserving_code_mask`] over the division-only mask.
 pub(super) fn byte_preserving_division_mask(source: &str) -> Option<String> {
-    byte_preserving_mask_of(
-        source,
-        super::classifier::ts_mask_literals_and_comments_division_only(source),
-    )
+    let masked = super::classifier::ts_mask_literals_and_comments_division_only(source);
+    preserve_mask_byte_width(source, &masked)
 }
 
-fn byte_preserving_mask_of(source: &str, masked: String) -> Option<String> {
+fn preserve_mask_byte_width(source: &str, masked: &str) -> Option<String> {
     if source.chars().count() != masked.chars().count() {
         return None;
     }
@@ -3028,6 +3052,7 @@ fn unused_function_reach_body(
     call: &oxc_ast::ast::CallExpression<'_>,
     referenced: Option<&oxc_ast::ast::Function<'_>>,
     source: &SourceText<'_>,
+    source_type: SourceType,
 ) -> Option<String> {
     let call_text = &source[call.span.start as usize..call.span.end as usize];
     let (start, body, statements) = if let Some(function) = referenced {
@@ -3046,7 +3071,7 @@ fn unused_function_reach_body(
             .as_slice(),
         )
     };
-    let code = byte_preserving_code_mask(body)?;
+    let code = byte_preserving_code_mask_for_source_type(body, source_type)?;
     if file_is_opaque(&code) {
         return None;
     }

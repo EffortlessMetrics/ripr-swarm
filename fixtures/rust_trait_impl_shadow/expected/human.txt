@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_trait_impl_shadow/input
 
-Summary: 1 probe (0 exposed, 1 weak, 0 unrevealed, 0 no path); 1 of 1 finding unsuppressed
+Summary: 1 probe (0 exposed, 0 weak, 1 unrevealed, 0 no path); 1 of 1 finding unsuppressed
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
@@ -11,12 +11,16 @@ Start here:
   State: a test gap to inspect or repair
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
   File: ./src/lib.rs:7
-  Static exposure: weak (severity: warning, confidence 0.66)
-  Why weak: a related test reaches this change, but the static evidence path is partially complete — see full form for details
+  Static exposure: unrevealed (severity: warning, confidence 0.66)
+  Why unrevealed: no test is seen calling this change
   Canonical gap: gap:rust:src/lib.rs:impl Render for Sample::render:return_value:return_value:string_from_lit
   Changed behavior: String::from("")
-  Related test: src/lib.rs:28 render_is_empty
-  Evidence: reach weak · infection yes · propagation yes · observation yes · discriminator not established
+  Missing discriminator (1 of 3): No detected assertion observes the changed value, error, field, or effect
+  Related test: src/lib.rs:28 render_is_empty (no established call path to the changed code; linked by name only)
+  Next step: The indexed related tests do not establish a call to the changed owner. Inspect
+    existing tests, doctests and examples before changing assertions; they may already constrain the
+    changed behavior. Add or strengthen a test only if that inspection finds a gap
+  Evidence: reach weak · infection yes · propagation yes · observation no · discriminator no
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
       discriminator = assertion distinguishes intended from wrong behavior

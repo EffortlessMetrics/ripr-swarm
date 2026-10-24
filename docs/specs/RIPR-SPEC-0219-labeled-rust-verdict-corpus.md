@@ -424,6 +424,13 @@ listed row that is no longer false, so a bless cannot absorb a new false
 verdict and a fixed row cannot return unnoticed. A `--case` subset is never
 gated on it.
 
+`missed_credit_ceiling` in `spec-coverage.toml` counts `abstained` rows whose
+truth is `discriminated`: tests that catch the change while ripr says
+unknown. A whole-corpus `check` fails when the count rises above the ceiling
+and passes with a printed note when it falls below it, so a fix lowers the
+ceiling but concurrent fixes never deadlock on the same number. A corpus
+without the key is not gated.
+
 The `[oracle]` table of `spec-coverage.toml` holds `match_floor` and
 `overclaim_ceiling`. `validate` requires the table once any case is
 labeled and refuses a floor or ceiling above the labeled count. `check`

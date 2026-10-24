@@ -499,7 +499,11 @@ pub(crate) struct CachedSeamLimitInfo {
 /// (#9440). Old entries keep it weakly exposed.
 /// `1.97`: effect-family assertions share execution admission (#8927). Old
 /// entries credit an assertion that provably never runs.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.97";
+/// `1.98`: safe typed function-pointer calls retain reach and can pin a
+/// scalar owner return (RIPR-SPEC-0115/0197, #9478). Old entries lack the pin.
+/// `1.99`: a one-line `else if` ladder tail flows its first arm to the
+/// returned value (#9630). Old entries keep the unknown propagation.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.99";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -643,7 +647,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.97";
 /// `0.102`: same local-macro wrapper limit as full `1.95`.
 /// `0.103`: same pinned-shape limit as full `1.96` (#9440).
 /// `0.104`: same effect-assertion execution admission as full `1.97` (#8927).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.104";
+/// `0.105`: same typed function-pointer pins as full `1.98` (#9478).
+/// `0.106`: same one-line ladder tail as full `1.99`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.106";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -789,7 +795,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.104";
 /// `0.102`: same local-macro wrapper limit as full `1.95`.
 /// `0.103`: same pinned-shape limit as full `1.96` (#9440).
 /// `0.104`: same effect-assertion execution admission as full `1.97` (#8927).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.104";
+/// `0.105`: same typed function-pointer pins as full `1.98` (#9478).
+/// `0.106`: same one-line ladder tail as full `1.99`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.106";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -974,7 +982,8 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// alias (#8388); `1.43` candidates omit it.
 /// `1.45`: oracle facts drop statements that never run (RIPR-SPEC-0231
 /// rule 8, #7638); `1.44` facts still credit them.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.45";
+/// `1.46`: call facts retain safe typed function-pointer aliases (#9478).
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.46";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -4640,7 +4649,8 @@ mod tests {
         // 1.41 -> 1.42: macro-body binding candidates (#5991).
         // 1.43 -> 1.44: `extern crate x as std` binding candidates (#8388).
         // 1.44 -> 1.45: never-executed oracle statements dropped (#7638).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.45");
+        // 1.45 -> 1.46: typed function-pointer alias facts (#9478).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.46");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -4763,7 +4773,9 @@ mod tests {
         // 1.94 -> 1.95: local macro wrapper beside a proximity oracle (RIPR-SPEC-0120, #7089).
         // 1.95 -> 1.96: pinned-shape limit (RIPR-SPEC-0240, #9440).
         // 1.96 -> 1.97: effect assertions require execution admission (#8927).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.97");
+        // 1.97 -> 1.98: typed function-pointer owner pins (#9478).
+        // 1.98 -> 1.99: one-line `else if` ladder tail (#9630).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.99");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4849,8 +4861,10 @@ mod tests {
         // 0.101 -> 0.102: same local-macro wrapper limit as full 1.95.
         // 0.102 -> 0.103: same pinned-shape limit as full 1.96.
         // 0.103 -> 0.104: same effect assertion admission as full 1.97 (#8927).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.104");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.104");
+        // 0.104 -> 0.105: same typed function-pointer pins as full 1.98.
+        // 0.105 -> 0.106: same one-line ladder tail as full 1.99.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.106");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.106");
     }
 
     #[test]

@@ -412,6 +412,222 @@ pub(super) fn python_boundary_evidence(
     })
 }
 
+/// Whether ONE related row's own calls provably leave the changed predicate
+/// boundary unexercised (#5491, RIPR-SPEC-0224 row-owned support). Unlike
+/// [`python_boundary_evidence`], which reads every strong row and is allowed
+/// to leave an operand unresolved, this holds only when every owner call of
+/// `candidate` binds, both compared operands resolve for every call, and no
+/// call places them on the boundary (new, or old for `==` -> `==`). Another
+/// row's input never counts, and an unreadable call, an unresolved operand or
+/// a computed comparison is unknown, not an omission. `all_candidates` only
+/// decides which module constants a related test rebinds.
+pub(super) fn python_row_boundary_omission(
+    line_text: &str,
+    old_line_text: Option<&str>,
+    owner: &PythonOwner,
+    candidate: &PythonRelatedCandidate<'_>,
+    all_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
+) -> bool {
+    let condition = predicate_condition(line_text);
+    let relational = relational_operators(&condition);
+    // Old and new compared pairs. A relational change must keep the very same
+    // operands (`x >= 10` -> `x > 20` changes more than the operator), so its
+    // old pair is the new pair; an equality change must read both pairs.
+    let (operators, old_pair) = if relational.is_empty() {
+        let Some(gate) = equality_predicate_gate(&condition, old_line_text) else {
+            return false;
+        };
+        let Some(old_pair) = gate.old_operands else {
+            return false;
+        };
+        (gate.operators, Some(old_pair))
+    } else {
+        (relational, None)
+    };
+    let &[(start, len)] = operators.as_slice() else {
+        return false;
+    };
+    let Some((left, right)) = simple_comparison_operands(&condition, start, len) else {
+        return false;
+    };
+    let new_operator = condition[start..start + len].to_string();
+    // An equality change must be the whole condition on both sides, so a
+    // wider edit (`== 2 and f` -> `== 3 or f`) is not read as a constant move.
+    if old_pair.is_some()
+        && !(is_whole_comparison(&condition, &left, "==")
+            && old_line_text.is_some_and(|old| {
+                let old_condition = predicate_condition(old);
+                old_pair.as_ref().is_some_and(|(old_left, old_right)| {
+                    is_whole_comparison(&old_condition, old_left, "==")
+                        && is_whole_comparison(&old_condition, old_right, "==")
+                })
+            }))
+    {
+        return false;
+    }
+    // Recursion or a call back into project code can reach the boundary with
+    // inputs the test never names: the owner may call only builtins.
+    if owner.term_facts.calls_own_name()
+        || owner
+            .module_callees
+            .iter()
+            .chain(&owner.same_class_callees)
+            .any(|callee| {
+                callee == &owner.name
+                    || !super::row_reach::SAFE_BARE_CALLS.contains(&callee.as_str())
+            })
+    {
+        return false;
+    }
+    if old_pair.is_none()
+        && !relational_change_keeps_boundary(line_text, old_line_text, &left, &right, &new_operator)
+    {
+        return false;
+    }
+    // A compared parameter the body rebinds (`qty = qty + 1`) is not the
+    // call-site value; only parameters the body provably never rebinds count.
+    let operands = [Some(&left), Some(&right)]
+        .into_iter()
+        .chain(old_pair.iter().flat_map(|(l, r)| [Some(l), Some(r)]))
+        .flatten();
+    for operand in operands {
+        let base = integer_offset(operand).map_or(operand.as_str(), |(base, _)| base);
+        let is_parameter = owner
+            .parameters
+            .iter()
+            .any(|parameter| parameter.name == base);
+        if is_parameter && !owner.term_facts.is_stable_parameter(base) {
+            return false;
+        }
+    }
+    // A free function's bare-name call is the owner's only when this test's
+    // import resolves the name to the owner's module; a same-named function of
+    // another module is not an owner call.
+    let method_call = !matches!(owner.owner_kind, Some(OwnerKind::Function));
+    if !method_call && owner_module_callees(candidate.test, owner).is_empty() {
+        return false;
+    }
+    let names = owner_call_names(owner, candidate.test, method_call);
+    if !super::row_reach::row_reaches_owner_only_by_direct_calls(owner, candidate.test, &names) {
+        return false;
+    }
+    let constants = unrebound_constants(owner, all_candidates);
+    let (rows, gaps) =
+        strong_owner_call_rows_with_gaps(owner, &constants, std::slice::from_ref(candidate), focus);
+    if gaps || rows.is_empty() {
+        return false;
+    }
+    let off_boundary = |left_operand: &str, right_operand: &str, row: &CallRow| match (
+        resolve_operand(left_operand, row, &constants),
+        resolve_operand(right_operand, row, &constants),
+    ) {
+        (Some(left_value), Some(right_value)) => provably_unequal(&left_value, &right_value),
+        _ => false,
+    };
+    rows.iter().all(|row| {
+        off_boundary(&left, &right, row)
+            && old_pair
+                .as_ref()
+                .is_none_or(|(old_left, old_right)| off_boundary(old_left, old_right, row))
+    })
+}
+
+/// Whether `condition` is exactly `<operand> <operator> <operand>` (spacing
+/// aside), with no `and`/`or`/`not` or other term around it.
+fn is_whole_comparison(condition: &str, operand: &str, operator: &str) -> bool {
+    let squashed = condition.split_whitespace().collect::<Vec<_>>().join(" ");
+    let squashed = squashed.trim_start_matches('(').trim_end_matches(')');
+    squashed.contains(&format!(" {operator} "))
+        && squashed.contains(operand)
+        && !squashed
+            .split_whitespace()
+            .any(|word| matches!(word, "and" | "or" | "not" | "if" | "else" | "in" | "is"))
+}
+
+/// A relational change whose changed lines are identical once the single
+/// relational operator is normalized, with the same operands and the same
+/// direction (`>` <-> `>=`, `<` <-> `<=`): only inclusivity moves, so the old
+/// and new predicates agree everywhere but at equality. A reversed direction,
+/// a moved operand or any other edit on the line (`and force` -> `or force`)
+/// differs away from the boundary.
+fn relational_change_keeps_boundary(
+    line_text: &str,
+    old_line_text: Option<&str>,
+    left: &str,
+    right: &str,
+    new_operator: &str,
+) -> bool {
+    let Some(old) = old_line_text else {
+        return false;
+    };
+    let old_condition = predicate_condition(old);
+    let &[(start, len)] = relational_operators(&old_condition).as_slice() else {
+        return false;
+    };
+    let direction = |operator: &str| {
+        if operator.starts_with('>') {
+            Some(true)
+        } else if operator.starts_with('<') {
+            Some(false)
+        } else {
+            None
+        }
+    };
+    let old_operator = &old_condition[start..start + len];
+    if direction(old_operator).is_none()
+        || direction(old_operator) != direction(new_operator)
+        || !simple_comparison_operands(&old_condition, start, len)
+            .is_some_and(|(old_left, old_right)| old_left == left && old_right == right)
+    {
+        return false;
+    }
+    // Same line once the operator is blanked out on both sides.
+    let new_condition = predicate_condition(line_text);
+    let &[(new_start, new_len)] = relational_operators(&new_condition).as_slice() else {
+        return false;
+    };
+    let blank = |line: &str, condition: &str, at: usize, width: usize| {
+        let marked = format!("{}\u{1}{}", &condition[..at], &condition[at + width..]);
+        line.replacen(condition, &marked, 1)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    blank(old, &old_condition, start, len) == blank(line_text, &new_condition, new_start, new_len)
+}
+
+/// Both literals are of one comparable kind and differ. Mixed kinds
+/// (`True` vs `1`), escaped or prefixed strings and anything unparsed are
+/// unknown, never "unequal".
+fn provably_unequal(left: &str, right: &str) -> bool {
+    #[derive(PartialEq)]
+    enum Kind {
+        Number(String),
+        Text(String),
+        Singleton(String),
+    }
+    fn kind(value: &str) -> Option<Kind> {
+        if matches!(value, "True" | "False" | "None") {
+            return Some(Kind::Singleton(value.to_string()));
+        }
+        if let Some(number) = canonical_decimal(value) {
+            return Some(Kind::Number(number));
+        }
+        let quoted = value.starts_with(['\'', '"']);
+        if quoted && !value.contains('\\') {
+            return python_string_literal_value(value).map(Kind::Text);
+        }
+        None
+    }
+    match (kind(left), kind(right)) {
+        (Some(left), Some(right)) => {
+            std::mem::discriminant(&left) == std::mem::discriminant(&right) && left != right
+        }
+        _ => false,
+    }
+}
+
 /// Whether the old predicate compares the same operands in the same order
 /// with the mirrored relational operator (`<` <-> `>`, `<=` <-> `>=`).
 fn reversing_flip(new_condition: &str, old_line_text: &str, left: &str, right: &str) -> bool {
@@ -1022,59 +1238,92 @@ pub(super) fn strong_owner_call_rows_with_gaps(
         if !strong {
             continue;
         }
-        // The test body, plus the call each callable-form exception assertion
-        // makes (RIPR-SPEC-0238 rule 13: `assertRaisesRegex(E, 'm', owner, 20)`
-        // calls `owner(20)`).
-        let mut sources = vec![(candidate.test.line, candidate.test.body_text.as_str())];
-        sources.extend(candidate.test.assertions.iter().filter_map(|assertion| {
-            assertion
-                .callable_call
-                .as_deref()
-                .map(|call| (assertion.line, call))
-        }));
-        let mut candidate_rows = 0usize;
-        for name in owner_call_names(owner, candidate.test, method_call) {
-            for (first_line, text) in &sources {
-                for (offset, arglist) in call_arglists_with_offsets(text, &name, method_call) {
-                    let Some((bindings, case_arguments, elements)) =
-                        bind_call_arguments(owner, constants, candidate.test, skip, arglist)
-                    else {
-                        gaps = true;
-                        continue;
-                    };
-                    candidate_rows += 1;
-                    let line = first_line + text[..offset].matches('\n').count();
-                    // The call runs from its name to its closing parenthesis,
-                    // the byte after the arglist; whitespace between the name
-                    // and `(` is part of it.
-                    let arglist_end =
-                        arglist.as_ptr().addr() - text.as_ptr().addr() + arglist.len();
-                    let text = call_line_text(text, offset, arglist_end + 1 - offset);
-                    match (&candidate.test.parametrize, case_arguments.is_empty()) {
-                        (Some(parametrize), false) => {
-                            rows.extend(parametrize.cases.iter().map(|case| {
-                                parametrize_case_row(
-                                    line,
-                                    &text,
-                                    &bindings,
-                                    &elements,
-                                    &case_arguments,
-                                    case,
-                                )
-                            }));
-                        }
-                        _ => rows.push(CallRow {
-                            line,
-                            text,
-                            bindings,
-                            elements,
-                        }),
+        let (candidate_rows, candidate_gaps) =
+            candidate_call_rows(owner, constants, candidate, method_call, skip);
+        rows.extend(candidate_rows);
+        gaps |= candidate_gaps;
+    }
+    (rows, gaps)
+}
+
+/// The analyzable owner calls of one related test regardless of how strong
+/// its selected assertion is, for a rule that reads a weaker assertion
+/// (`caplog_text.rs`). None when any call of the test goes unbound or the
+/// test makes no recognized owner call.
+pub(super) fn owner_call_rows_for_candidate(
+    owner: &PythonOwner,
+    constants: &[PythonModuleConstant],
+    candidate: &PythonRelatedCandidate<'_>,
+) -> Option<Vec<CallRow>> {
+    if owner.owner_kind != Some(OwnerKind::Function) || !candidate.relation.uses_oracle() {
+        return None;
+    }
+    let (rows, gaps) = candidate_call_rows(owner, constants, candidate, false, 0);
+    (!gaps && !rows.is_empty()).then_some(rows)
+}
+
+/// One related test's owner-call rows, and whether some call went unbound or
+/// none was recognized.
+fn candidate_call_rows(
+    owner: &PythonOwner,
+    constants: &[PythonModuleConstant],
+    candidate: &PythonRelatedCandidate<'_>,
+    method_call: bool,
+    skip: usize,
+) -> (Vec<CallRow>, bool) {
+    let mut rows = Vec::new();
+    let mut gaps = false;
+    // The test body, plus the call each callable-form exception assertion
+    // makes (RIPR-SPEC-0238 rule 13: `assertRaisesRegex(E, 'm', owner, 20)`
+    // calls `owner(20)`).
+    let mut sources = vec![(candidate.test.line, candidate.test.body_text.as_str())];
+    sources.extend(candidate.test.assertions.iter().filter_map(|assertion| {
+        assertion
+            .callable_call
+            .as_deref()
+            .map(|call| (assertion.line, call))
+    }));
+    let mut candidate_rows = 0usize;
+    for name in owner_call_names(owner, candidate.test, method_call) {
+        for (first_line, text) in &sources {
+            for (offset, arglist) in call_arglists_with_offsets(text, &name, method_call) {
+                let Some((bindings, case_arguments, elements)) =
+                    bind_call_arguments(owner, constants, candidate.test, skip, arglist)
+                else {
+                    gaps = true;
+                    continue;
+                };
+                candidate_rows += 1;
+                let line = first_line + text[..offset].matches('\n').count();
+                // The call runs from its name to its closing parenthesis,
+                // the byte after the arglist; whitespace between the name
+                // and `(` is part of it.
+                let arglist_end = arglist.as_ptr().addr() - text.as_ptr().addr() + arglist.len();
+                let text = call_line_text(text, offset, arglist_end + 1 - offset);
+                match (&candidate.test.parametrize, case_arguments.is_empty()) {
+                    (Some(parametrize), false) => {
+                        rows.extend(parametrize.cases.iter().map(|case| {
+                            parametrize_case_row(
+                                line,
+                                &text,
+                                &bindings,
+                                &elements,
+                                &case_arguments,
+                                case,
+                            )
+                        }));
                     }
+                    _ => rows.push(CallRow {
+                        line,
+                        text,
+                        bindings,
+                        elements,
+                    }),
                 }
             }
         }
-        gaps |= candidate_rows == 0;
     }
+    gaps |= candidate_rows == 0;
     (rows, gaps)
 }
 
@@ -1082,7 +1331,11 @@ pub(super) fn strong_owner_call_rows_with_gaps(
 /// module-qualified spelling (`utils.sign`, #4567); a method is only called
 /// through its own attribute name. Module-qualified calls must bind here too,
 /// or a call the alignment credits would skip the boundary gate.
-fn owner_call_names(owner: &PythonOwner, test: &PythonTest, method_call: bool) -> Vec<String> {
+pub(super) fn owner_call_names(
+    owner: &PythonOwner,
+    test: &PythonTest,
+    method_call: bool,
+) -> Vec<String> {
     let mut names = vec![owner.name.clone()];
     if !method_call {
         names.extend(
@@ -1166,6 +1419,11 @@ fn call_line_text(body: &str, offset: usize, call_len: usize) -> String {
 /// parametrize argname of the test (`sign(x)` under `parametrize("x", ...)`)
 /// with that argname, for per-case expansion (#4559). An argname the test body
 /// rebinds is not paired.
+/// Whether the call segment is `name=value` (a keyword argument).
+fn keyword_segment(segment: &str) -> bool {
+    call_segment_keyword_name(segment).is_some()
+}
+
 fn bind_call_arguments(
     owner: &PythonOwner,
     constants: &[PythonModuleConstant],
@@ -1210,6 +1468,18 @@ fn bind_call_arguments(
         let Some(name) = name else {
             continue;
         };
+        // A keyword names a declared, keyword-bindable parameter or it is
+        // captured by `**kwargs`; it never binds an owner local of that name
+        // (`limit = 10` in the body is not `limit=3` at the call).
+        if !owner
+            .parameters
+            .iter()
+            .skip(skip)
+            .any(|parameter| parameter.name == name && !parameter.positional_only)
+            && keyword_segment(segment)
+        {
+            continue;
+        }
         bound_names.push(name.clone());
         if let Some(literals) = literal_elements(value) {
             elements.insert(name, literals);

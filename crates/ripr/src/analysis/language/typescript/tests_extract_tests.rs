@@ -375,7 +375,14 @@ test.only("discount boundary", () => {
         imports: Vec::new(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
-    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
 
     assert_eq!(candidates.len(), 1);
     assert_eq!(
@@ -770,7 +777,7 @@ fn report_snippet_partial_owner_disclosure_preserves_selected_source_identity() 
             "class Decoy {{ ordinary() {{ return 0; }} }}{newline}class Selected {{{newline}  chosen = ({newline}{}value: number{newline}  ) => value + 1;{newline}}}{newline}",
             " ".repeat(100)
         );
-        let gap = detect_owner_extraction_gap(file, &source, &[4])
+        let gap = detect_owner_extraction_gap(file, &source, &[4], Path::new("."), None)
             .ok_or_else(|| "expected a real unsupported class-field owner".to_string())?;
         assert_eq!(gap.file, file);
         assert_eq!(gap.sample_line, 4);

@@ -3309,6 +3309,7 @@ mod tests {
                 .to_string(),
             parameters: vec!["input".to_string(), "want".to_string()],
             call_lines: vec![2],
+            eager_call_lines: Vec::new(),
         };
         let call_fact = || crate::analysis::facts::CallFact {
             line: 2,
