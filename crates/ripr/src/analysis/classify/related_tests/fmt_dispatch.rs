@@ -30,6 +30,9 @@ use super::{
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::rust_index::{FunctionSummary, RustIndex, TestSummary};
+use crate::analysis::sync_memo::SyncMemo;
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum FmtTrait {
@@ -77,6 +80,7 @@ pub(super) fn body_may_dispatch_fmt(body: &str) -> bool {
 
 /// Facts about the owner's type and the workspace that hold for every test
 /// of one owner, computed once per owner and probe instead of per test.
+#[derive(Debug)]
 pub(super) struct FmtContext {
     /// Exactly one type named like the owner's self type is declared.
     type_declared_once: bool,
@@ -120,6 +124,66 @@ impl FmtContext {
             competing_to_string,
             shadowed_macros,
         })
+    }
+}
+
+/// Run-scoped memo of [`FmtContext`] by owner slot. The context depends only
+/// on `(index, owner)`, so every probe of one owner shares one build instead
+/// of re-masking the workspace per probe. Bound to the first index it serves:
+/// an owner outside that index, or a query against another index, builds
+/// fresh and is never cached, so a key can only name the same context.
+#[derive(Clone, Debug, Default)]
+pub(in crate::analysis) struct FmtContextMemo {
+    index_identity: SyncMemo<Option<(usize, usize, u64)>>,
+    by_owner_slot: SyncMemo<BTreeMap<usize, Arc<Option<FmtContext>>>>,
+    /// `FmtContext::new` runs through this memo, so a test can tell a hit
+    /// from a rebuild.
+    #[cfg(test)]
+    builds: SyncMemo<usize>,
+}
+
+impl FmtContextMemo {
+    pub(super) fn context(
+        &self,
+        index: &RustIndex,
+        owner: &FunctionSummary,
+    ) -> Arc<Option<FmtContext>> {
+        let Some(slot) = self.slot_key(index, owner) else {
+            return Arc::new(self.build(index, owner));
+        };
+        if let Some(cached) = self.by_owner_slot.borrow().get(&slot) {
+            return Arc::clone(cached);
+        }
+        // Built outside the lock: other owners keep reading while the
+        // workspace is masked. A concurrent duplicate build is identical.
+        let built = Arc::new(self.build(index, owner));
+        Arc::clone(self.by_owner_slot.borrow_mut().entry(slot).or_insert(built))
+    }
+
+    fn build(&self, index: &RustIndex, owner: &FunctionSummary) -> Option<FmtContext> {
+        #[cfg(test)]
+        {
+            *self.builds.borrow_mut() += 1;
+        }
+        FmtContext::new(index, owner)
+    }
+
+    #[cfg(test)]
+    pub(super) fn builds_for_test(&self) -> usize {
+        *self.builds.borrow()
+    }
+
+    fn slot_key(&self, index: &RustIndex, owner: &FunctionSummary) -> Option<usize> {
+        let identity = index.storage_identity();
+        {
+            let mut guard = self.index_identity.borrow_mut();
+            match *guard {
+                None => *guard = Some(identity),
+                Some(bound_identity) if bound_identity != identity => return None,
+                Some(_) => {}
+            }
+        }
+        index.function_slot(owner)
     }
 }
 
@@ -1005,6 +1069,99 @@ mod tests {
         reasons
             .iter()
             .any(|(test, reason)| test == name && *reason == RelationReason::DirectOwnerCall)
+    }
+
+    /// Two `fmt` owners (`Alpha`, `Beta`) and one test per type, indexed once.
+    fn two_owner_index() -> RustIndex {
+        let source = "pub struct Alpha;\npub struct Beta;\n";
+        let mut files = std::collections::BTreeMap::new();
+        files.insert(
+            PathBuf::from("src/error.rs"),
+            FileFacts {
+                path: PathBuf::from("src/error.rs"),
+                source: source.into(),
+                ..FileFacts::default()
+            },
+        );
+        RustIndex::from_owned(OwnedRustIndex {
+            functions: vec![
+                fmt_function("src/error.rs", "fmt::Display for Alpha"),
+                fmt_function("src/error.rs", "fmt::Display for Beta"),
+            ],
+            tests: vec![
+                test_with_body("ta", "assert_eq!(Alpha.to_string(), \"a\");"),
+                test_with_body("tb", "assert_eq!(Beta.to_string(), \"b\");"),
+            ],
+            files,
+            ..Default::default()
+        })
+    }
+
+    fn related_names(
+        index: &RustIndex,
+        candidates: &super::super::RelatedTestCandidateIndex,
+        owner: &FunctionSummary,
+    ) -> Vec<String> {
+        super::super::find_related_tests_with_candidate_index(
+            &probe(),
+            Some(owner),
+            index,
+            true,
+            None,
+            None,
+            candidates,
+        )
+        .into_iter()
+        .filter(|(_, reason)| *reason == RelationReason::DirectOwnerCall)
+        .map(|(test, _)| test.name.clone())
+        .collect()
+    }
+
+    #[test]
+    fn fmt_context_is_built_once_per_owner_across_probes() {
+        let index = two_owner_index();
+        let candidates = super::super::RelatedTestCandidateIndex::new(&index);
+        let memo = candidates.fmt_contexts();
+        let owners: Vec<&FunctionSummary> = index.functions().iter().collect();
+        assert_eq!(owners.len(), 2, "fixture must index both fmt owners");
+        assert_eq!(memo.builds_for_test(), 0);
+
+        // Several probes of the Alpha owner share one build.
+        for _ in 0..4 {
+            assert_eq!(related_names(&index, &candidates, owners[0]), ["ta"]);
+        }
+        assert_eq!(memo.builds_for_test(), 1, "four probes, one owner");
+
+        // A different owner builds its own context and stays independent.
+        for _ in 0..3 {
+            assert_eq!(related_names(&index, &candidates, owners[1]), ["tb"]);
+        }
+        assert_eq!(memo.builds_for_test(), 2, "two owners, two builds");
+
+        // Interleaved re-queries of both owners hit the cache.
+        assert_eq!(related_names(&index, &candidates, owners[0]), ["ta"]);
+        assert_eq!(related_names(&index, &candidates, owners[1]), ["tb"]);
+        assert_eq!(memo.builds_for_test(), 2);
+    }
+
+    #[test]
+    fn fmt_context_memo_never_serves_another_index_or_foreign_owner() {
+        let index = two_owner_index();
+        let other = two_owner_index();
+        let candidates = super::super::RelatedTestCandidateIndex::new(&index);
+        let memo = candidates.fmt_contexts();
+        let owners: Vec<&FunctionSummary> = index.functions().iter().collect();
+        assert_eq!(owners.len(), 2, "fixture must index both fmt owners");
+        let owner = owners[0];
+        assert!(memo.context(&index, owner).is_some());
+        // A clone of the owner is not an element of the index: built fresh.
+        let foreign = owner.clone();
+        assert!(memo.context(&index, &foreign).is_some());
+        assert_eq!(memo.builds_for_test(), 2, "foreign owner is not cached");
+        assert!(memo.context(&other, owner).is_some());
+        assert_eq!(memo.builds_for_test(), 3, "another index is not cached");
+        assert!(memo.context(&index, owner).is_some());
+        assert_eq!(memo.builds_for_test(), 3, "bound index still hits");
     }
 
     #[test]
