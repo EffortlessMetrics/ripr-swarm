@@ -11843,6 +11843,52 @@
         }
       ],
       "control": "must_stay_no_static_path"
+    },
+    {
+      "id": "rust_out_parameter_name_mention_on_unrelated_line",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/out_parameter_unrelated_write_no_promote",
+      "vector": "out_parameter_name_mentioned_on_a_changed_line_that_writes_another_parameter_cannot_promote",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_out_parameter_empty_expected_value",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/out_parameter_empty_expected_no_promote",
+      "vector": "out_parameter_assertion_against_a_possibly_empty_expected_value_cannot_promote",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
     }
   ]
 }

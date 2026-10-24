@@ -83,6 +83,10 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// Exact projected mutable argument read through the shared collection observer.
     pub(in crate::analysis) collection_argument_observed:
         &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
+    /// RIPR-SPEC-0351: the owner `&mut` parameter whose call-site local the
+    /// assertion reads (`format(&mut s, ..); assert_eq!(s, ..)`), or `None`.
+    pub(in crate::analysis) out_parameter_read:
+        &'a dyn Fn(&TestSummary, &OracleFact) -> Option<String>,
     /// RIPR-SPEC-0228 getter credit: whether the owner type's method
     /// `(type, getter, field)` returns that field path itself
     /// (`builder_override::getter_plainly_reads`). Only a verified getter
@@ -143,6 +147,7 @@ fn reveal_evidence(
             effect_state_carried: &|_, _| true,
             setter_writes_field: &|_, _, _| true,
             collection_argument_observed: &|_, _| false,
+            out_parameter_read: &|_, _| None,
             getter_reads_field: &|_, _, _| false,
             getter_reads_key: &|_, _, _| None,
             owner_argument_names: &[],
@@ -183,6 +188,7 @@ fn reveal_evidence_with_exit(
             effect_state_carried: &|_, _| true,
             setter_writes_field: &|_, _, _| true,
             collection_argument_observed: &|_, _| false,
+            out_parameter_read: &|_, _| None,
             getter_reads_field: &|_, _, _| false,
             getter_reads_key: &|_, _, _| None,
             owner_argument_names: &[],
@@ -233,6 +239,7 @@ fn reveal_evidence_proximity_reach(
             owner_may_exit_before_probe: false,
             constructor_starts_empty: &|_, _, _| false,
             call_cannot_store: &|_, _, _, _| None,
+            out_parameter_read: &|_, _| None,
         },
         None,
     );
@@ -2239,7 +2246,32 @@ fn analyze_related_assertions(
             let field_collection_read = field_collection_read || keyed_read;
             let collection_argument_read =
                 (return_admission.collection_argument_observed)(test, assertion);
-            let matched = matched || field_collection_read || collection_argument_read;
+            // RIPR-SPEC-0351: an `assert_eq!` on the local a direct owner
+            // call wrote through as `&mut` reads the call's output. It is a
+            // candidate oracle for any probe, and confirms observation only
+            // when the changed expression itself writes through that
+            // parameter (a name mention alone is not a write).
+            let out_parameter = if credits_oracle
+                && *reason == RelationReason::DirectOwnerCall
+                && !import_defeats_owner
+                && !cross_package_defeats_owner
+                && !match_context.owner_shadowed
+                && !test_is_should_panic(test)
+            {
+                (return_admission.out_parameter_read)(test, assertion)
+            } else {
+                None
+            };
+            let out_parameter_confirmed = out_parameter.as_deref().is_some_and(|parameter| {
+                contains_as_whole_word(
+                    &crate::analysis::extract::mask_comments_and_strings(&probe.expression),
+                    parameter,
+                ) && super::expression_writes_parameter(&probe.expression, parameter)
+            });
+            let matched = matched
+                || field_collection_read
+                || collection_argument_read
+                || out_parameter.is_some();
             // A bounded assertion-local implicit witness is a matching
             // observer even beside another assertion. Keep refused kind rows
             // visible without borrowing the admitted assertion's confirmation.
@@ -2396,6 +2428,7 @@ fn analyze_related_assertions(
                                 assertion,
                             ) || field_collection_read
                                 || collection_argument_read
+                                || out_parameter_confirmed
                                 || (direct_collection_mutation_receiver(&probe.expression)
                                     .is_none()
                                     && ((has_token_match && field_write.is_none())
@@ -5700,6 +5733,7 @@ mod tests {
             setter_writes_field: &|_, _, _| false,
             getter_reads_field: &|_, _, _| false,
             collection_argument_observed: &|_, _| false,
+            out_parameter_read: &|_, _| None,
             getter_reads_key: &|_, getter, field| {
                 (getter == "on_hand" && field == "stock")
                     .then(|| KeyedFallback::Literal("0".to_string()))
@@ -7136,6 +7170,7 @@ mod tests {
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -7227,6 +7262,7 @@ mod tests {
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
+                    out_parameter_read: &|_, _| None,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
                     owner_argument_names: &[],
@@ -7405,6 +7441,7 @@ mod tests {
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
+                    out_parameter_read: &|_, _| None,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
                     owner_argument_names: &[],
@@ -7510,6 +7547,7 @@ mod tests {
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
+                    out_parameter_read: &|_, _| None,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
                     owner_argument_names: &[],
@@ -7928,6 +7966,7 @@ mod tests {
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -8009,6 +8048,7 @@ mod tests {
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -9781,6 +9821,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -9847,6 +9888,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -9884,6 +9926,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -9940,6 +9983,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -9998,6 +10042,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -10200,6 +10245,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -10240,6 +10286,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -10647,6 +10694,7 @@ return Err(\"typed pin\".into());
                         owner_argument_names: &[],
                         getter_reads_key: &|_, _, _| None,
                         collection_argument_observed: &|_, _| false,
+                        out_parameter_read: &|_, _| None,
                         assertion_has_known_implicit_observer: &|_, _| Some(false),
                         owner_return_pin: &|_, _| false,
                         assertion_admitted: &|_, _| true,
@@ -10722,6 +10770,7 @@ return Err(\"typed pin\".into());
                     owner_argument_names: &[],
                     getter_reads_key: &|_, _, _| None,
                     collection_argument_observed: &|_, _| false,
+                    out_parameter_read: &|_, _| None,
                     owner_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|test, _| {
@@ -10819,6 +10868,7 @@ return Err(\"typed pin\".into());
                     effect_state_carried: &carried,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
+                    out_parameter_read: &|_, _| None,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
                     owner_argument_names: &[],
@@ -11105,6 +11155,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -11206,6 +11257,7 @@ return Err(\"typed pin\".into());
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
+                    out_parameter_read: &|_, _| None,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
                     owner_argument_names: &[],
@@ -11250,6 +11302,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -11745,6 +11798,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
@@ -12288,6 +12342,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
