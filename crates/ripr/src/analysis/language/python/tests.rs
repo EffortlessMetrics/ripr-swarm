@@ -4489,6 +4489,51 @@ fn caplog_text_outside_the_bounded_shape_keeps_abstaining() -> Result<(), String
         )?,
         unread
     );
+    // `exception` appends the traceback, which can still hold the asserted text.
+    assert_eq!(
+        classify_log_text_edit(
+            &AUDIT_OWNER.replace("log.warning", "log.exception"),
+            "log.exception(\"balance low: %s\", balance)",
+            &PINNED_TEST.replace("logging.WARNING", "logging.ERROR")
+        )?,
+        unread
+    );
+    // A rebound `caplog` makes the pin and the asserted text different objects.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            removed,
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    caplog = frozen\n    assert \"low balance: 5\" in caplog.text\n"
+        )?,
+        unread
+    );
+    // A detached `logging.Logger` does not propagate to the root capture handler.
+    assert_eq!(
+        classify_log_text_edit(
+            &AUDIT_OWNER.replace("logging.getLogger(", "logging.Logger("),
+            removed,
+            PINNED_TEST
+        )?,
+        unread
+    );
+    // A receiver that is not a module-level logger binding is not recognized.
+    assert_eq!(
+        classify_log_text_edit(
+            &AUDIT_OWNER.replace("log = logging.getLogger(\"audit\")", "log = make_sink()"),
+            removed,
+            PINNED_TEST
+        )?,
+        unread
+    );
+    // An `or` can pass on the other literal when the edited one disappears.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            removed,
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        check_balance(5)\n    assert \"low balance: 5\" in caplog.text or \"balance low: 5\" in caplog.text\n"
+        )?,
+        unread
+    );
     // The call sits outside the `with` block that pins the level.
     assert_eq!(
         classify_log_text_edit(

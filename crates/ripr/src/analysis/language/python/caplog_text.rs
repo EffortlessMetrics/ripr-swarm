@@ -32,7 +32,7 @@ use super::discriminators::python_string_literal_value;
 use super::guard_activation::{condition_holds, leading_whitespace};
 use super::no_behavior::split_top_level_args;
 use super::related_tests::PythonRelatedCandidate;
-use super::static_limits::caplog_membership_literals;
+use super::static_limits::caplog_required_literals;
 use super::{PythonOwner, PythonTest, expr_full_name};
 use crate::domain::{OwnerKind, ValueContext, ValueFact};
 use rustpython_parser::ast::{self, Expr};
@@ -107,7 +107,7 @@ pub(super) fn python_log_evidence(
     }
     let old = parse_log_call(old_line)?;
     let new = parse_log_call(new_line)?;
-    if old.receiver != new.receiver {
+    if old.receiver != new.receiver || !receiver_reaches_root_capture(&old.receiver, owner_source) {
         return None;
     }
     let conditions = plain_if_conditions(owner, owner_source, changed_line)?;
@@ -120,7 +120,7 @@ pub(super) fn python_log_evidence(
     {
         let assertion =
             select_relevant_assertion(&candidate.test.assertions, Some(focus)).assertion()?;
-        let literals = caplog_membership_literals(&assertion.gate_text);
+        let literals = caplog_required_literals(&assertion.gate_text);
         if literals.is_empty() {
             // Another assertion may catch the edit too; this reading only
             // proves what the caplog assertions say.
@@ -242,6 +242,11 @@ fn parse_log_call(line: &str) -> Option<LogCall> {
         return None;
     };
     let level_name = attribute.attr.to_string();
+    // `exception` appends the active traceback to the record, which this
+    // reading does not evaluate, so asserted text may survive the edit.
+    if level_name == "exception" {
+        return None;
+    }
     let level = level_number(&level_name)?;
     let receiver = expr_full_name(attribute.value.as_ref())?;
     let Some(Expr::Constant(first)) = call.args.first() else {
@@ -257,6 +262,53 @@ fn parse_log_call(line: &str) -> Option<LogCall> {
         format: format.clone(),
         arguments: call.args[1..].to_vec(),
     })
+}
+
+/// Whether the receiver is the root `logging` module or a module-level name
+/// bound to `logging.getLogger(...)`, whose records propagate to the root
+/// handler `caplog` installs. A detached `logging.Logger(...)` or any other
+/// object named `warning`-capable does not establish that path.
+fn receiver_reaches_root_capture(receiver: &str, owner_source: &str) -> bool {
+    if receiver == "logging" {
+        return true;
+    }
+    let prefix = format!("{receiver} = logging.getLogger(");
+    owner_source
+        .lines()
+        .any(|line| line.starts_with(&prefix) && line.trim_end().ends_with(')'))
+}
+
+/// Whether the test rebinds `caplog` (assignment, walrus, `as`, `for`,
+/// `del`, `global`/`nonlocal`) so the level pin and the asserted
+/// `caplog.text` may name different objects.
+fn rebinds_caplog(body: &str) -> bool {
+    let mut from = 0;
+    while let Some(offset) = body[from..].find("caplog") {
+        let at = from + offset;
+        from = at + "caplog".len();
+        let before = body[..at].chars().next_back();
+        if before.is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || ch == '.') {
+            continue;
+        }
+        let rest = body[from..]
+            .trim_start_matches(|ch: char| ch.is_alphanumeric() || ch == '_' || ch == '.');
+        let rest = rest.trim_start_matches([' ', '\t']);
+        let assigned = rest.starts_with(":=")
+            || (rest.starts_with('=') && !rest.starts_with("=="))
+            || ["+=", "-=", "*=", "/=", "|=", "&="]
+                .iter()
+                .any(|op| rest.starts_with(op));
+        let line_start = body[..at].rfind('\n').map_or(0, |index| index + 1);
+        let head = body[line_start..at].trim_end();
+        let bound = ["as", "for", "del", "global", "nonlocal"]
+            .iter()
+            .any(|word| head.ends_with(word) && head.len() >= word.len());
+        let comma_bound = head.ends_with(',') && rest.starts_with('=');
+        if assigned || bound || comma_bound {
+            return true;
+        }
+    }
+    false
 }
 
 /// The numeric level of a logging method (`exception` logs at ERROR).
@@ -405,6 +457,7 @@ fn level_pin(test: &PythonTest, owner: &PythonOwner) -> Option<LevelPin> {
     if CAPLOG_INTERFERENCE
         .iter()
         .any(|needle| body.contains(needle))
+        || rebinds_caplog(body)
         || !body_calls_only_the_owner(body, test, owner)
     {
         return None;

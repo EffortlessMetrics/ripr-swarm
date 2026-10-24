@@ -842,20 +842,35 @@ fn related_candidates_have_log_membership_limit(
 /// read from the parsed expression so spacing, parentheses, line breaks and
 /// implicit literal concatenation do not change what is recognized.
 pub(super) fn caplog_membership_literals(gate_text: &str) -> Vec<String> {
+    caplog_literals(gate_text, false)
+}
+
+/// The literals that must all hold for the assertion to pass: a single
+/// membership or an `and` chain of them. A literal under `or` is not one of
+/// them (`assert A in caplog.text or B in caplog.text` still passes when A
+/// alone disappears), so crediting an edit never reads through an `or`.
+pub(super) fn caplog_required_literals(gate_text: &str) -> Vec<String> {
+    caplog_literals(gate_text, true)
+}
+
+fn caplog_literals(gate_text: &str, conjunctive_only: bool) -> Vec<String> {
     let expression = gate_text.trim_start();
     let expression = expression.strip_prefix("assert").unwrap_or(expression);
     let mut literals = Vec::new();
     if let Some(value) = parse_expression(expression) {
-        collect_caplog_membership_literals(&value, &mut literals);
+        collect_caplog_membership_literals(&value, conjunctive_only, &mut literals);
     }
     literals
 }
 
-fn collect_caplog_membership_literals(expr: &Expr, out: &mut Vec<String>) {
+fn collect_caplog_membership_literals(expr: &Expr, conjunctive_only: bool, out: &mut Vec<String>) {
     match expr {
         Expr::BoolOp(bool_op) => {
+            if conjunctive_only && bool_op.op != ast::BoolOp::And {
+                return;
+            }
             for value in &bool_op.values {
-                collect_caplog_membership_literals(value, out);
+                collect_caplog_membership_literals(value, conjunctive_only, out);
             }
         }
         Expr::Compare(compare)
