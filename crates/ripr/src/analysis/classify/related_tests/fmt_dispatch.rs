@@ -176,10 +176,10 @@ impl FmtContextMemo {
     fn slot_key(&self, index: &RustIndex, owner: &FunctionSummary) -> Option<usize> {
         let identity = index.storage_identity();
         {
-            let mut bound = self.index_identity.borrow_mut();
-            match *bound {
-                None => *bound = Some(identity),
-                Some(bound) if bound != identity => return None,
+            let mut guard = self.index_identity.borrow_mut();
+            match *guard {
+                None => *guard = Some(identity),
+                Some(bound_identity) if bound_identity != identity => return None,
                 Some(_) => {}
             }
         }
