@@ -62,6 +62,21 @@ fn findings_wrapped(
         &format!("pub fn thr(x: i32) -> bool {{\n{prefix}{new}\n{suffix}}}\n"),
     )?;
     write("tests/it.rs", test)?;
+    // Fixture construction: the changed line sits where the diff says it does,
+    // so an arm built from `prefix`/`suffix` is the subject being analyzed.
+    let source = std::fs::read_to_string(root.join("src/lib.rs"))
+        .map_err(|error| format!("read src/lib.rs: {error}"))?;
+    let lines: Vec<&str> = source.lines().collect();
+    if lines.get(changed_line - 1).copied() != Some(new) {
+        return Err(format!(
+            "changed line {changed_line} is not {new:?}: {lines:?}"
+        ));
+    }
+    if lines.len() != changed_line + suffix.lines().count() + 1 {
+        return Err(format!(
+            "unexpected source length for hunk counts: {lines:?}"
+        ));
+    }
     let diff = format!(
         "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,{n} +1,{n} @@\n pub fn thr(x: i32) -> bool {{\n{ctx}-{old}\n+{new}\n{post} }}\n",
         n = changed_line + 1 + suffix.lines().count(),
@@ -686,6 +701,25 @@ fn a_multiline_tuple_or_array_binding_makes_the_boundary_unresolved() -> Result<
             ExposureClass::InfectionUnknown,
             "{opening:?} {predicate:?}"
         );
+        // Control, same multiline shape with `x` left alone: not unresolved,
+        // so the assertion above cannot come from an unparsed subject.
+        let unbound = opening
+            .replace("x,", "a,")
+            .replace("\n            x\n", "\n            a\n");
+        assert_ne!(unbound, opening);
+        let control = findings_wrapped(
+            &unbound,
+            "    }\n",
+            "            if x > 101 { true } else { false }",
+            "            if x > 100 { true } else { false }",
+            AT_NEW_THRESHOLD,
+        )?;
+        let predicate = family(&control, "predicate")?;
+        assert_ne!(
+            predicate.class,
+            ExposureClass::InfectionUnknown,
+            "{unbound:?} {predicate:?}"
+        );
     }
     Ok(())
 }
@@ -766,5 +800,19 @@ fn a_bare_arm_after_a_nontrivial_earlier_result_still_binds_the_name() -> Result
             "{result:?} {predicate:?}"
         );
     }
+    // Control: the same shape binding `z`, not `x`, keeps the credit.
+    let control = findings_wrapped(
+        "    match y {\n        0 => a + 1,\n        z =>\n",
+        "    }\n",
+        "            if x > 101 { true } else { false }",
+        "            if x > 100 { true } else { false }",
+        AT_NEW_THRESHOLD,
+    )?;
+    let predicate = family(&control, "predicate")?;
+    assert_ne!(
+        predicate.class,
+        ExposureClass::InfectionUnknown,
+        "{predicate:?}"
+    );
     Ok(())
 }
