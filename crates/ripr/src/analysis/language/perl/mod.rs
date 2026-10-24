@@ -600,6 +600,7 @@ fn packet_to_findings_with_currentness(
                     relation_reason: perl_relation_reason,
                     relation_confidence: perl_relation_confidence,
                     miss: None,
+                    miss_support: None,
                 }
             })
             .collect();

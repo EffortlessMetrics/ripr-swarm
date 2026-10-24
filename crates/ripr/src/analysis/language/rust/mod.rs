@@ -9126,6 +9126,7 @@ fn absent_delimiter_boundary_returns_head() {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
         }];
 
         let rust_owner = FunctionSummary {
