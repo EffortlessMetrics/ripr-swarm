@@ -2093,15 +2093,140 @@ fn import_binds_owner_name(import: &PythonImport, owner: &PythonOwner) -> bool {
 }
 
 fn api_client_route_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
+    let receivers = api_client_receivers(&test.body_text);
     owner.route_paths.iter().enumerate().any(|(index, route)| {
         // An empty or missing verb list is an unknown verb, which keeps the
         // path-only match; a known list must contain the verb the test called.
         let verbs = owner.route_methods.get(index).map(Vec::as_slice);
-        body_calls_api_client_route(&test.body_text, route, verbs.unwrap_or_default())
+        receivers
+            .iter()
+            .filter(|receiver| {
+                !client_targets_rival_app(
+                    test,
+                    owner,
+                    receiver,
+                    owner.route_receivers.get(index).map(String::as_str),
+                )
+            })
+            .any(|receiver| {
+                body_calls_api_client_route(
+                    &test.body_text,
+                    receiver,
+                    route,
+                    verbs.unwrap_or_default(),
+                )
+            })
     })
 }
 
-fn body_calls_api_client_route(body_text: &str, route: &str, route_verbs: &[String]) -> bool {
+/// A request client's receiver names in a test body: the conventional
+/// `client` plus each name assigned exactly once from that client or from a
+/// `TestClient(...)` / `AsyncClient(...)` construction (`api = client`,
+/// `api = TestClient(app)`). A name rebound elsewhere is not tracked, so an
+/// alias cannot point at a different object by the time it is called.
+fn api_client_receivers(body_text: &str) -> Vec<String> {
+    let mut receivers = vec!["client".to_string()];
+    // Two passes so `a = client; b = a` resolves in either order of the lines.
+    for _ in 0..2 {
+        for line in body_text.lines() {
+            let Some((name, value)) = simple_assignment(line) else {
+                continue;
+            };
+            if receivers.iter().any(|known| known == name) || assignment_count(body_text, name) != 1
+            {
+                continue;
+            }
+            if receivers.iter().any(|known| known == value) || client_construction(value).is_some()
+            {
+                receivers.push(name.to_string());
+            }
+        }
+    }
+    receivers
+}
+
+/// `name = value` on one line: a plain identifier target, not `==`, an
+/// annotation or a tuple/attribute target.
+fn simple_assignment(line: &str) -> Option<(&str, &str)> {
+    let (name, value) = line.trim().split_once('=')?;
+    let name = name.trim();
+    let value = value.trim();
+    (!value.starts_with('=')
+        && !name.is_empty()
+        && name.chars().all(is_python_identifier_char)
+        && !name.starts_with(|ch: char| ch.is_ascii_digit()))
+    .then_some((name, value))
+}
+
+/// The argument text of a `TestClient(...)` / `AsyncClient(...)` construction
+/// (any dotted prefix), when `value` is one.
+fn client_construction(value: &str) -> Option<&str> {
+    let open = value.find('(')?;
+    let callee = value.get(..open)?.trim();
+    let class = callee.rsplit('.').next()?;
+    matches!(class, "TestClient" | "AsyncClient").then(|| value.get(open + 1..).unwrap_or_default())
+}
+
+/// Whether the request client demonstrably targets a different application
+/// than the owner's route decorator. Only the case this adapter can decide from
+/// the pair is withheld: the client is built over an application name imported
+/// from a module that is not the owner's module, and that name equals the
+/// decorator's receiver, so two modules each defining `app` cannot both take the
+/// credit. A client built elsewhere (a fixture, an unresolved name, a router
+/// the application includes under another name) stays unknown and keeps the
+/// path-and-verb match.
+fn client_targets_rival_app(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    receiver: &str,
+    owner_receiver: Option<&str>,
+) -> bool {
+    let Some(owner_receiver) = owner_receiver.filter(|name| !name.is_empty()) else {
+        return false;
+    };
+    let Some(app_name) = client_app_name(&test.body_text, receiver) else {
+        return false;
+    };
+    test.imports.iter().any(|import| {
+        let bound = if import.alias.is_empty() {
+            import.imported.as_str()
+        } else {
+            import.alias.as_str()
+        };
+        bound == app_name
+            && import.imported == owner_receiver
+            && !import.source_module.is_empty()
+            && !import_source_module_matches_owner(import, owner, &test.file)
+    })
+}
+
+/// The application name a receiver's `TestClient(app)` (or `app=app`)
+/// construction passes, following aliases of the client to their construction.
+fn client_app_name(body_text: &str, receiver: &str) -> Option<String> {
+    let mut target = receiver;
+    for _ in 0..3 {
+        let value = body_text
+            .lines()
+            .filter_map(simple_assignment)
+            .find(|(name, _)| *name == target)
+            .map(|(_, value)| value)?;
+        if let Some(arguments) = client_construction(value) {
+            let first = arguments.split([',', ')']).next()?.trim();
+            let first = first.strip_prefix("app=").unwrap_or(first).trim();
+            return (!first.is_empty() && first.chars().all(is_python_identifier_char))
+                .then(|| first.to_string());
+        }
+        target = value;
+    }
+    None
+}
+
+fn body_calls_api_client_route(
+    body_text: &str,
+    receiver: &str,
+    route: &str,
+    route_verbs: &[String],
+) -> bool {
     ["get", "post", "put", "patch", "delete", "options", "head"]
         .into_iter()
         .filter(|verb| {
@@ -2110,7 +2235,7 @@ fn body_calls_api_client_route(body_text: &str, route: &str, route_verbs: &[Stri
         .any(|verb| {
             contains_python_call_with_first_string_argument(
                 body_text,
-                &format!("client.{verb}"),
+                &format!("{receiver}.{verb}"),
                 route,
             )
         })
@@ -2220,7 +2345,13 @@ fn converter_accepts(converter: &str, value: &str) -> bool {
 pub(super) fn first_parenthesized_string_argument(text: &str) -> Option<String> {
     let body = text.strip_prefix('(')?.trim_start();
     let literal = first_python_string_literal(body)?;
-    body.starts_with(&literal)
+    // The literal must be the whole argument: `"/items" + suffix`, `"/x" % v`,
+    // `"/x".format(..)` and adjacent literals name a different path.
+    let whole_argument = body
+        .strip_prefix(&literal)?
+        .trim_start()
+        .starts_with([',', ')']);
+    whole_argument
         .then(|| python_string_literal_value(&literal))
         .flatten()
 }

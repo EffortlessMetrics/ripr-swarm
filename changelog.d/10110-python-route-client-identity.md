@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Python request-client call no longer relates to a route handler on the path literal alone: the path must be the whole first argument (`"/items" + x` no longer reads as `/items`), a client built over a same-named application imported from another module is withheld, and a client alias (`api = client`) now relates. Clients the adapter cannot identify keep the path-and-verb match (#10110).

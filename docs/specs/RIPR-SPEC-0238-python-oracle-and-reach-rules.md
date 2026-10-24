@@ -330,7 +330,18 @@ Relations, first match wins (rank, oracle-eligible):
   (braces or angle brackets, with or without a converter) matches one
   concrete segment the router accepts for its converter: untyped and
   `str` take any non-empty segment, `int`, `float` and `uuid` validate
-  the value, and `path` or any unknown converter stays unmatched;
+  the value, and `path` or any unknown converter stays unmatched. The
+  literal must be the whole first argument (`"/items" + x`, `"/items" % x`,
+  `"/items".format(..)` and adjacent literals name another path), in the test
+  call and in the route decorator alike. The receiver is `client`, or a name
+  assigned once from `client` or from a `TestClient(...)` / `AsyncClient(...)`
+  construction (`api = client`). A client built over an application name
+  imported from another module than the owner's, where that name is the
+  decorator's own receiver (`from app.b import app` against `@app.get` in
+  `app/a.py`), is a rival application and does not relate. A client built
+  elsewhere (a fixture, an unresolved name, a router an application includes
+  under another name) is unidentified and keeps the path-and-verb match
+  (#10110);
 - R4: `construct_call` (4, eligible): a `__call__` owner invoked as
   `Class(...)(...)`;
 - R5: `local_binding` (4, eligible): a `__call__` owner invoked through
