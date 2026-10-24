@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_bare_import_control (3)
+
+Reason:
+Summary terms legend from main (#10004); RIPR-SPEC-0122
+
+Command:
+`cargo xtask goldens bless module_reach_bare_import_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

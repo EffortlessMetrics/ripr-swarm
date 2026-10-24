@@ -35,3 +35,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_absolute_import_rebound (4)
+
+Reason:
+Summary terms legend from main (#10004); RIPR-SPEC-0122
+
+Command:
+`cargo xtask goldens bless module_reach_absolute_import_rebound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
