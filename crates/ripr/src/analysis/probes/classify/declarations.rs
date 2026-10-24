@@ -92,6 +92,48 @@ pub(super) fn header_bound_lines(
         .collect()
 }
 
+/// Removed struct and enum-variant field declarations (#9183), judged on the
+/// reconstructed old source with the added side's owner and exact-line rule:
+/// the line must equal the old source line, every nontrivia token of it must
+/// sit inside one supported field declaration, and the lexer must currently
+/// read it as `field_construction`. A failed parse, a mismatched line, a
+/// discriminant, macro syntax, a body constructor or a shared line stays
+/// `false` and keeps its existing probe.
+pub(super) fn field_declaration_lines(
+    source: &str,
+    lines: &[crate::analysis::diff::ChangedLine],
+) -> Vec<bool> {
+    let Some(parse) = parse_clean_source_file(source) else {
+        return vec![false; lines.len()];
+    };
+    let root = parse.tree();
+    lines
+        .iter()
+        .map(|line| {
+            if !classify_changed_line(line.text.trim()).contains(&ProbeFamily::FieldConstruction) {
+                return false;
+            }
+            let Some(range) = source_line_byte_range(source, line.line) else {
+                return false;
+            };
+            if source.get(range.clone()).map(str::trim) != Some(line.text.trim()) {
+                return false;
+            }
+            let Some(span) = declaration_line_span(root.syntax(), range) else {
+                return false;
+            };
+            root.syntax()
+                .descendants()
+                .filter(supported_field_declaration)
+                .any(|node| {
+                    let range = node.text_range();
+                    u32::from(range.start()) as usize <= span.start
+                        && span.end <= u32::from(range.end()) as usize
+                })
+        })
+        .collect()
+}
+
 /// This fallback is used only after ordinary parser-owned expressions have
 /// been considered. It never promotes exposure or drops the changed source.
 /// Exact current-line equality prevents borrowing new-side context for a
@@ -153,24 +195,29 @@ fn supported_declaration(node: &SyntaxNode) -> bool {
             .and_then(|list| list.syntax().parent())
             .is_some_and(|parent| ast::Fn::can_cast(parent.kind()));
     }
-    // A whole enum variant that carries named fields (`Bad { offset: usize },`
-    // on one line) is a type declaration, never a construction (#8999). It
-    // may own the line only when it holds no expression (discriminant) or
-    // macro syntax.
+    supported_field_declaration(node)
+}
+
+/// A named struct or enum-variant field declaration, or a whole one-line
+/// variant with named fields (`Bad { offset: usize },`). Type syntax, never a
+/// construction (#8999). Union, tuple and macro contexts have separate
+/// contracts; a real `RecordExprField` never matches. A discriminant, macro
+/// syntax or any expression inside the node withholds this authority.
+fn supported_field_declaration(node: &SyntaxNode) -> bool {
+    let holds_executable = |node: &SyntaxNode| {
+        node.descendants().any(|child| {
+            ast::Expr::can_cast(child.kind()) || ast::MacroCall::can_cast(child.kind())
+        })
+    };
     if ast::Variant::can_cast(node.kind()) {
         return node
             .children()
             .any(|child| ast::RecordFieldList::can_cast(child.kind()))
-            && !node.descendants().any(|child| {
-                ast::Expr::can_cast(child.kind()) || ast::MacroCall::can_cast(child.kind())
-            });
+            && !holds_executable(node);
     }
     if !ast::RecordField::can_cast(node.kind()) {
         return false;
     }
-    // Named struct and enum-variant fields are admitted here. Union, tuple
-    // and macro contexts have separate contracts; a real RecordExprField
-    // never matches.
     let owned_by_declaration = node
         .parent()
         .and_then(ast::RecordFieldList::cast)
@@ -178,10 +225,7 @@ fn supported_declaration(node: &SyntaxNode) -> bool {
         .is_some_and(|parent| {
             ast::Struct::can_cast(parent.kind()) || ast::Variant::can_cast(parent.kind())
         });
-    owned_by_declaration
-        && !node.descendants().any(|child| {
-            ast::Expr::can_cast(child.kind()) || ast::MacroCall::can_cast(child.kind())
-        })
+    owned_by_declaration && !holds_executable(node)
 }
 
 fn supported_type_bound(node: &SyntaxNode) -> bool {
@@ -544,5 +588,69 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    fn removed(line: usize, text: &str) -> crate::analysis::diff::ChangedLine {
+        crate::analysis::diff::ChangedLine {
+            line,
+            new_side_line: line,
+            text: text.into(),
+        }
+    }
+
+    #[test]
+    fn removed_field_declarations_need_exact_old_line_and_one_owner() {
+        let struct_src = "struct P {\n    offset: usize,\n    a: u8, b: u8,\n}\n";
+        let enum_src = "enum E {\n    A {\n        x: u8,\n    },\n    B { y: u8 },\n}\n";
+        for newline in ["\n", "\r\n"] {
+            let struct_src = struct_src.replace('\n', newline);
+            let enum_src = enum_src.replace('\n', newline);
+            let lines = [removed(2, "offset: usize,"), removed(3, "a: u8, b: u8,")];
+            assert_eq!(field_declaration_lines(&struct_src, &lines), [true, false]);
+            let lines = [removed(3, "x: u8,"), removed(5, "B { y: u8 },")];
+            assert_eq!(field_declaration_lines(&enum_src, &lines), [true, true]);
+        }
+        // A candidate-side line that is not this old line, or one outside the
+        // file, never borrows old-source authority.
+        let lines = [removed(2, "other: usize,"), removed(0, "offset: usize,")];
+        assert_eq!(field_declaration_lines(struct_src, &lines), [false, false]);
+        let lines = [removed(99, "offset: usize,")];
+        assert_eq!(field_declaration_lines(struct_src, &lines), [false]);
+        // An unparsable old source refuses everything.
+        let lines = [removed(2, "offset: usize,")];
+        assert_eq!(
+            field_declaration_lines("struct P {\n    offset: usize,\n", &lines),
+            [false]
+        );
+    }
+
+    #[test]
+    fn removed_field_declarations_reject_expressions_bodies_and_macros() {
+        for (source, line, text) in [
+            (
+                "fn f() -> P {\n    P { offset: 1 }\n}\n",
+                2,
+                "P { offset: 1 }",
+            ),
+            (
+                "#[repr(u8)]\nenum E {\n    A { x: u8 } = 3,\n}\n",
+                3,
+                "A { x: u8 } = 3,",
+            ),
+            (
+                "macro_rules! m { () => { u8 } }\nstruct S {\n    x: m!(),\n}\n",
+                3,
+                "x: m!(),",
+            ),
+            ("union U {\n    x: u8,\n}\n", 2, "x: u8,"),
+            ("fn f(\n    out: &P,\n) {}\n", 2, "out: &P,"),
+        ] {
+            let lines = [removed(line, text)];
+            assert_eq!(
+                field_declaration_lines(source, &lines),
+                [false],
+                "admitted removed field declaration: {text}"
+            );
+        }
     }
 }

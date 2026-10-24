@@ -94,8 +94,13 @@ A named field declared inside an enum variant, or a whole one-line variant with
 named fields, is likewise a type declaration (#8999): it stays one
 `static_unknown` probe, while a variant constructed in a body keeps
 `field_construction`. A discriminant, macro syntax or expression inside the
-variant, or a shared line, withholds that authority. Deleted-only struct and
-enum field declarations keep their removed-side lexical probe.
+variant, or a shared line, withholds that authority. A deleted-only struct or
+enum-variant field declaration gets the same authority on the reconstructed old
+source (#9183): the removed line must equal the old source line and sit wholly
+inside one field or variant declaration, and it then yields one `static_unknown`
+probe instead of a removed-side `field_construction`. A removed constructor in
+a body, discriminant, macro-typed field, shared line, or failed old-source
+parse keeps the lexical probe, and an edited field keeps its before/after pair.
 Real expressions on a shared line
 keep their existing parser-owned runtime probes. Comments, strings and macro
 token trees cannot establish declaration authority. Removed bounds require
