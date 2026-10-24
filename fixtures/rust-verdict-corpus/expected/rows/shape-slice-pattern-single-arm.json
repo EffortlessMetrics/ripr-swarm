@@ -1,0 +1,22 @@
+{
+  "case_id": "shape-slice-pattern-single-arm",
+  "subject_id": "authored-shape-kit",
+  "origin": "authored",
+  "anchor": "src/flow.rs:33",
+  "behavior_family": "match_arm_pattern",
+  "test_shape": "slice_pattern_arm_unreached",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

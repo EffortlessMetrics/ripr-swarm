@@ -30,6 +30,9 @@ use super::{
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::rust_index::{FunctionSummary, RustIndex, TestSummary};
+use crate::analysis::sync_memo::SyncMemo;
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum FmtTrait {
@@ -77,6 +80,7 @@ pub(super) fn body_may_dispatch_fmt(body: &str) -> bool {
 
 /// Facts about the owner's type and the workspace that hold for every test
 /// of one owner, computed once per owner and probe instead of per test.
+#[derive(Debug)]
 pub(super) struct FmtContext {
     /// Exactly one type named like the owner's self type is declared.
     type_declared_once: bool,
@@ -120,6 +124,66 @@ impl FmtContext {
             competing_to_string,
             shadowed_macros,
         })
+    }
+}
+
+/// Run-scoped memo of [`FmtContext`] by owner slot. The context depends only
+/// on `(index, owner)`, so every probe of one owner shares one build instead
+/// of re-masking the workspace per probe. Bound to the first index it serves:
+/// an owner outside that index, or a query against another index, builds
+/// fresh and is never cached, so a key can only name the same context.
+#[derive(Clone, Debug, Default)]
+pub(in crate::analysis) struct FmtContextMemo {
+    index_identity: SyncMemo<Option<(usize, usize, u64)>>,
+    by_owner_slot: SyncMemo<BTreeMap<usize, Arc<Option<FmtContext>>>>,
+    /// `FmtContext::new` runs through this memo, so a test can tell a hit
+    /// from a rebuild.
+    #[cfg(test)]
+    builds: SyncMemo<usize>,
+}
+
+impl FmtContextMemo {
+    pub(super) fn context(
+        &self,
+        index: &RustIndex,
+        owner: &FunctionSummary,
+    ) -> Arc<Option<FmtContext>> {
+        let Some(slot) = self.slot_key(index, owner) else {
+            return Arc::new(self.build(index, owner));
+        };
+        if let Some(cached) = self.by_owner_slot.borrow().get(&slot) {
+            return Arc::clone(cached);
+        }
+        // Built outside the lock: other owners keep reading while the
+        // workspace is masked. A concurrent duplicate build is identical.
+        let built = Arc::new(self.build(index, owner));
+        Arc::clone(self.by_owner_slot.borrow_mut().entry(slot).or_insert(built))
+    }
+
+    fn build(&self, index: &RustIndex, owner: &FunctionSummary) -> Option<FmtContext> {
+        #[cfg(test)]
+        {
+            *self.builds.borrow_mut() += 1;
+        }
+        FmtContext::new(index, owner)
+    }
+
+    #[cfg(test)]
+    pub(super) fn builds_for_test(&self) -> usize {
+        *self.builds.borrow()
+    }
+
+    fn slot_key(&self, index: &RustIndex, owner: &FunctionSummary) -> Option<usize> {
+        let identity = index.storage_identity();
+        {
+            let mut guard = self.index_identity.borrow_mut();
+            match *guard {
+                None => *guard = Some(identity),
+                Some(bound_identity) if bound_identity != identity => return None,
+                Some(_) => {}
+            }
+        }
+        index.function_slot(owner)
     }
 }
 
@@ -220,24 +284,146 @@ fn to_string_dispatch(masked: &str, self_type: &str) -> bool {
     let mut search = 0usize;
     while let Some(at) = masked[search..].find(".to_string").map(|at| search + at) {
         search = at + 1;
-        let after = masked[at + ".to_string".len()..].trim_start();
-        if !after.starts_with("()") {
-            continue;
-        }
-        let receiver = receiver_before(masked, at);
-        let lets = lets_before(masked, at);
-        if expr_has_type(
-            receiver,
-            Scope {
-                lets: &lets,
-                body: masked,
-            },
-            self_type,
-        ) {
+        if to_string_dispatch_at(masked, at, self_type) {
             return true;
         }
     }
     false
+}
+
+/// The `.to_string` at `at` is a call whose receiver is typed `self_type`.
+fn to_string_dispatch_at(masked: &str, at: usize, self_type: &str) -> bool {
+    let after = masked[at + ".to_string".len()..].trim_start();
+    if !after.starts_with("()") {
+        return false;
+    }
+    let receiver = receiver_before(masked, at);
+    let lets = lets_before(masked, at);
+    expr_has_type(
+        receiver,
+        Scope {
+            lets: &lets,
+            body: masked,
+        },
+        self_type,
+    )
+}
+
+/// Whether the changed expression differs from its prior text only inside
+/// string literals. A literal fragment of a `write!` is written whatever the
+/// test passes in, so an exact pin sees it; a changed argument may leave the
+/// output equal for the one value the test chose (`self.0 * 2` at `0`).
+pub(in crate::analysis) fn changes_only_string_literals(
+    before: Option<&str>,
+    after: Option<&str>,
+) -> bool {
+    let (Some(before), Some(after)) = (before, after) else {
+        return false;
+    };
+    let outside = |text: &str| {
+        let mut kept = String::new();
+        let mut in_string = false;
+        let mut escaped = false;
+        for c in text.chars() {
+            if in_string {
+                if escaped {
+                    escaped = false;
+                } else if c == '\\' {
+                    escaped = true;
+                } else if c == '"' {
+                    in_string = false;
+                    kept.push('"');
+                }
+            } else {
+                kept.push(c);
+                in_string = c == '"';
+            }
+        }
+        (kept, in_string)
+    };
+    let (kept_before, open_before) = outside(before);
+    let (kept_after, open_after) = outside(after);
+    !open_before && !open_after && kept_before == kept_after && before != after
+}
+
+/// RIPR-SPEC-0297: `assert_eq!(value.to_string(), "literal")` pins the whole
+/// text a `Display::fmt` writes when `value` is typed as the owner's self
+/// type and the test reaches that `fmt` by dispatch. One side is a string
+/// literal and the other a `.to_string()` call; every other shape (a
+/// `format!` side, a computed expected string, a `Debug` owner) is not read.
+pub(in crate::analysis) fn assertion_pins_display_string(
+    test: &TestSummary,
+    assertion: &crate::analysis::facts::OracleFact,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    let Some((FmtTrait::Display, self_type)) = fmt_owner(owner) else {
+        return false;
+    };
+    if !matches!(
+        assertion.kind,
+        crate::domain::OracleKind::ExactValue | crate::domain::OracleKind::WholeObjectEquality
+    ) || !assertion.text.trim_start().starts_with("assert_eq!")
+    {
+        return false;
+    }
+    let same_name_ids: Vec<&str> = index
+        .functions()
+        .iter()
+        .filter(|function| function.name == owner.name)
+        .map(|function| function.id.0.as_str())
+        .collect();
+    let Some(context) = FmtContext::new(index, owner) else {
+        return false;
+    };
+    if context.competing_to_string || !test_dispatches_to_fmt(test, owner, &same_name_ids, &context)
+    {
+        return false;
+    }
+    let sides = super::super::propagation_witness::compared_sides(&assertion.text);
+    let [first, second] = sides.as_slice() else {
+        return false;
+    };
+    // One string token: `"a".to_owned() + "b"` starts and ends with a quote
+    // but is a computed expectation.
+    let is_literal = |side: &str| {
+        let side = side.trim();
+        let Some(inner) = side
+            .strip_prefix('"')
+            .and_then(|rest| rest.strip_suffix('"'))
+        else {
+            return false;
+        };
+        let mut escaped = false;
+        inner.chars().all(|c| {
+            let ok = escaped || c != '"';
+            escaped = !escaped && c == '\\';
+            ok
+        })
+    };
+    let value = match (is_literal(first), is_literal(second)) {
+        (false, true) => first,
+        (true, false) => second,
+        _ => return false,
+    };
+    let masked = mask_comments_and_strings(&test.body);
+    // The assertion's own span: a side repeated elsewhere in the test is
+    // ambiguous, so it fails closed.
+    if test.body.matches(value.as_str()).count() != 1 {
+        return false;
+    }
+    let Some(side_start) = test.body.find(value.as_str()) else {
+        return false;
+    };
+    let Some(tail) = value.trim_end().strip_suffix(".to_string()") else {
+        return false;
+    };
+    // The `.to_string` offset inside the masked body.
+    let at = side_start + tail.len();
+    masked
+        .get(at..)
+        .is_some_and(|rest| rest.starts_with(".to_string"))
+        && to_string_dispatch_at(&masked, at, &self_type)
 }
 
 /// The receiver expression ending at `dot`: an identifier or a bracketed
@@ -885,6 +1071,99 @@ mod tests {
             .any(|(test, reason)| test == name && *reason == RelationReason::DirectOwnerCall)
     }
 
+    /// Two `fmt` owners (`Alpha`, `Beta`) and one test per type, indexed once.
+    fn two_owner_index() -> RustIndex {
+        let source = "pub struct Alpha;\npub struct Beta;\n";
+        let mut files = std::collections::BTreeMap::new();
+        files.insert(
+            PathBuf::from("src/error.rs"),
+            FileFacts {
+                path: PathBuf::from("src/error.rs"),
+                source: source.into(),
+                ..FileFacts::default()
+            },
+        );
+        RustIndex::from_owned(OwnedRustIndex {
+            functions: vec![
+                fmt_function("src/error.rs", "fmt::Display for Alpha"),
+                fmt_function("src/error.rs", "fmt::Display for Beta"),
+            ],
+            tests: vec![
+                test_with_body("ta", "assert_eq!(Alpha.to_string(), \"a\");"),
+                test_with_body("tb", "assert_eq!(Beta.to_string(), \"b\");"),
+            ],
+            files,
+            ..Default::default()
+        })
+    }
+
+    fn related_names(
+        index: &RustIndex,
+        candidates: &super::super::RelatedTestCandidateIndex,
+        owner: &FunctionSummary,
+    ) -> Vec<String> {
+        super::super::find_related_tests_with_candidate_index(
+            &probe(),
+            Some(owner),
+            index,
+            true,
+            None,
+            None,
+            candidates,
+        )
+        .into_iter()
+        .filter(|(_, reason)| *reason == RelationReason::DirectOwnerCall)
+        .map(|(test, _)| test.name.clone())
+        .collect()
+    }
+
+    #[test]
+    fn fmt_context_is_built_once_per_owner_across_probes() {
+        let index = two_owner_index();
+        let candidates = super::super::RelatedTestCandidateIndex::new(&index);
+        let memo = candidates.fmt_contexts();
+        let owners: Vec<&FunctionSummary> = index.functions().iter().collect();
+        assert_eq!(owners.len(), 2, "fixture must index both fmt owners");
+        assert_eq!(memo.builds_for_test(), 0);
+
+        // Several probes of the Alpha owner share one build.
+        for _ in 0..4 {
+            assert_eq!(related_names(&index, &candidates, owners[0]), ["ta"]);
+        }
+        assert_eq!(memo.builds_for_test(), 1, "four probes, one owner");
+
+        // A different owner builds its own context and stays independent.
+        for _ in 0..3 {
+            assert_eq!(related_names(&index, &candidates, owners[1]), ["tb"]);
+        }
+        assert_eq!(memo.builds_for_test(), 2, "two owners, two builds");
+
+        // Interleaved re-queries of both owners hit the cache.
+        assert_eq!(related_names(&index, &candidates, owners[0]), ["ta"]);
+        assert_eq!(related_names(&index, &candidates, owners[1]), ["tb"]);
+        assert_eq!(memo.builds_for_test(), 2);
+    }
+
+    #[test]
+    fn fmt_context_memo_never_serves_another_index_or_foreign_owner() {
+        let index = two_owner_index();
+        let other = two_owner_index();
+        let candidates = super::super::RelatedTestCandidateIndex::new(&index);
+        let memo = candidates.fmt_contexts();
+        let owners: Vec<&FunctionSummary> = index.functions().iter().collect();
+        assert_eq!(owners.len(), 2, "fixture must index both fmt owners");
+        let owner = owners[0];
+        assert!(memo.context(&index, owner).is_some());
+        // A clone of the owner is not an element of the index: built fresh.
+        let foreign = owner.clone();
+        assert!(memo.context(&index, &foreign).is_some());
+        assert_eq!(memo.builds_for_test(), 2, "foreign owner is not cached");
+        assert!(memo.context(&other, owner).is_some());
+        assert_eq!(memo.builds_for_test(), 3, "another index is not cached");
+        assert!(memo.context(&index, owner).is_some());
+        assert_eq!(memo.builds_for_test(), 3, "bound index still hits");
+    }
+
     #[test]
     fn debug_format_of_constructed_value_reaches_debug_fmt() {
         let related = reasons(
@@ -941,6 +1220,164 @@ mod tests {
             ],
         );
         assert!(related.is_empty(), "{related:?}");
+    }
+
+    /// Whether `assertion` pins the output of the one `fmt` owner in `impls`.
+    fn pins_display_string(impls: &[&str], assertion: &str, body: &str) -> bool {
+        use crate::analysis::facts::OracleFact;
+        use crate::domain::{OracleKind, OracleStrength};
+        let mut declared: Vec<&str> = impls
+            .iter()
+            .filter_map(|header| header.rsplit_once(" for ").map(|(_, ty)| ty))
+            .collect();
+        declared.sort_unstable();
+        declared.dedup();
+        let source: String = declared
+            .iter()
+            .map(|ty| format!("pub struct {ty};\n"))
+            .collect();
+        let mut files = std::collections::BTreeMap::new();
+        files.insert(
+            PathBuf::from("src/error.rs"),
+            FileFacts {
+                path: PathBuf::from("src/error.rs"),
+                source: source.as_str().into(),
+                ..FileFacts::default()
+            },
+        );
+        let functions: Vec<FunctionSummary> = impls
+            .iter()
+            .map(|header| fmt_function("src/error.rs", header))
+            .collect();
+        let owner = functions[0].clone();
+        let mut test = test_with_body("t0", body);
+        let fact = OracleFact {
+            line: 2,
+            text: assertion.to_string(),
+            kind: OracleKind::ExactValue,
+            strength: OracleStrength::Strong,
+            observed_tokens: Vec::new(),
+            ok_value_observed: None,
+        };
+        test.assertions = vec![fact.clone()];
+        let index = RustIndex::from_owned(OwnedRustIndex {
+            functions,
+            tests: vec![test.clone()],
+            files,
+            ..Default::default()
+        });
+        super::assertion_pins_display_string(&test, &fact, &owner, &index)
+    }
+
+    #[test]
+    fn display_to_string_against_a_literal_pins_the_display_output() {
+        let impls = ["fmt::Display for Temp"];
+        for (assertion, body) in [
+            (
+                "assert_eq!(Temp(21).to_string(), \"21C\");",
+                "assert_eq!(Temp(21).to_string(), \"21C\");",
+            ),
+            (
+                "assert_eq!(\"21C\", t.to_string());",
+                "let t = Temp(21);\nassert_eq!(\"21C\", t.to_string());",
+            ),
+        ] {
+            assert!(pins_display_string(&impls, assertion, body), "{body}");
+        }
+    }
+
+    #[test]
+    fn display_string_pin_refuses_a_computed_or_doubled_expectation() {
+        let display = ["fmt::Display for Temp"];
+        for assertion in [
+            "assert_eq!(Temp(1).to_string(), \"1\".to_owned() + \"C\");",
+            "assert_eq!(\"1C\", \"1C\");",
+        ] {
+            assert!(
+                !pins_display_string(&display, assertion, assertion),
+                "{assertion}"
+            );
+        }
+        // The same side written twice has no single assertion span.
+        let twice =
+            "assert_eq!(Temp(1).to_string(), \"1C\");\nassert_eq!(Temp(1).to_string(), \"1C\");";
+        assert!(!pins_display_string(
+            &display,
+            "assert_eq!(Temp(1).to_string(), \"1C\");",
+            twice
+        ));
+    }
+
+    #[test]
+    fn only_a_change_to_string_literal_text_counts_as_literal_only() {
+        let same = |before: &str, after: &str| {
+            super::changes_only_string_literals(Some(before), Some(after))
+        };
+        assert!(same(
+            "write!(f, \"{}C\", self.0)",
+            "write!(f, \"{}F\", self.0)"
+        ));
+        assert!(same(
+            "write!(f, \"{}C\", self.0)",
+            "write!(f, \"{}\\u{b0}C\", self.0)"
+        ));
+        // An argument changed, with or without a literal change beside it.
+        assert!(!same(
+            "write!(f, \"{}C\", self.0)",
+            "write!(f, \"{}C\", self.0 * 2)"
+        ));
+        assert!(!same(
+            "write!(f, \"{}C\", self.0)",
+            "write!(f, \"{}F\", self.1)"
+        ));
+        // Nothing changed, or no prior text.
+        assert!(!same("write!(f, \"x\")", "write!(f, \"x\")"));
+        assert!(!super::changes_only_string_literals(
+            None,
+            Some("write!(f, \"x\")")
+        ));
+        // An unterminated literal is not read.
+        assert!(!same("write!(f, \"x)", "write!(f, \"y)"));
+    }
+
+    #[test]
+    fn display_string_pin_refuses_other_receivers_expectations_and_traits() {
+        let display = ["fmt::Display for Temp"];
+        for (assertion, body) in [
+            // A value of another type.
+            (
+                "assert_eq!(Other(1).to_string(), \"1C\");",
+                "assert_eq!(Other(1).to_string(), \"1C\");",
+            ),
+            // A receiver of unknown type.
+            (
+                "assert_eq!(t.to_string(), \"1C\");",
+                "let t = make();\nassert_eq!(t.to_string(), \"1C\");",
+            ),
+            // An expected string computed rather than written.
+            (
+                "assert_eq!(Temp(1).to_string(), expected);",
+                "assert_eq!(Temp(1).to_string(), expected);",
+            ),
+            // Both sides are values, neither a literal.
+            (
+                "assert_eq!(Temp(1).to_string(), Temp(2).to_string());",
+                "assert_eq!(Temp(1).to_string(), Temp(2).to_string());",
+            ),
+            // Not an equality assertion.
+            (
+                "assert!(Temp(1).to_string() == \"1C\");",
+                "assert!(Temp(1).to_string() == \"1C\");",
+            ),
+        ] {
+            assert!(!pins_display_string(&display, assertion, body), "{body}");
+        }
+        // `to_string` is Display, not Debug.
+        assert!(!pins_display_string(
+            &["fmt::Debug for Temp"],
+            "assert_eq!(Temp(1).to_string(), \"1C\");",
+            "assert_eq!(Temp(1).to_string(), \"1C\");",
+        ));
     }
 
     #[test]

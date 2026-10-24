@@ -352,6 +352,7 @@
         "id": { "type": "string", "minLength": 1 },
         "suppressed": { "type": "boolean" },
         "suppressed_by": { "type": "string", "minLength": 1 },
+        "analysis_scope": { "const": "repo" },
         "canonical_gap_id": { "type": "string", "minLength": 1 },
         "canonical_gap_group_size": { "type": "integer", "minimum": 1 },
         "canonical_gap": { "type": "object" },

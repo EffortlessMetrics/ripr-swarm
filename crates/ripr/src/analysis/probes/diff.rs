@@ -15,7 +15,9 @@ use super::classify::{
 use super::expectations::{expected_sinks, required_oracles};
 use super::family::delta_for_family;
 use super::ids::diff_probe_id;
-use super::lexical::{classify_changed_line, is_accumulator_rewrite_of};
+use super::lexical::{
+    classify_changed_line, classify_changed_line_against, is_accumulator_rewrite_of,
+};
 use super::macro_definition::MacroMap;
 use crate::analysis::diagnostic_origin::ParserByteSpan;
 use crate::analysis::extract::mask_comments_and_strings;
@@ -168,6 +170,15 @@ pub(crate) fn probes_for_file_with_relations(
     let removed_block_comments = old_source
         .map(crate::analysis::syntax::block_comment_only_lines)
         .unwrap_or_default();
+    // #10089: the entries of a multi-line `#![allow(..)]`/`#[derive(..)]` sit
+    // on lines that do not start with `#`, but they are attribute text, like
+    // the single-line form `should_ignore_changed_line` already skips.
+    let added_attribute_lines = find_file_facts(index, &changed.path)
+        .map(|facts| attribute_continuation_lines(&facts.source))
+        .unwrap_or_default();
+    let removed_attribute_lines = old_source
+        .map(attribute_continuation_lines)
+        .unwrap_or_default();
     let removed_bounds = removed_type_bounds(root, registrations, old_source, changed);
     let old_test_module_ranges = removed_bounds
         .old_index
@@ -232,7 +243,8 @@ pub(crate) fn probes_for_file_with_relations(
             }
             continue;
         }
-        if should_ignore_changed_line(text) {
+        if should_ignore_changed_line(text) || added_attribute_lines.contains(&added.new_side_line)
+        {
             continue;
         }
         if opens_new_function_with_added_body(index, changed, added_index, &signature_cx) {
@@ -345,6 +357,23 @@ pub(crate) fn probes_for_file_with_relations(
                             })
                     })
             };
+            // A return value whose integer literal only changed spelling
+            // (`Some(21)` to `Some(0x15)`) holds the same value, so it is not
+            // changed behavior. As above, it is dropped only when another
+            // shape keeps a probe on the line: the arm head still stands for
+            // the edited arm, and the arm's own selection decides whether a
+            // test notices it.
+            let respelled_return = |shape: &super::classify::ParserProbeShape| {
+                shape.family == ProbeFamily::ReturnValue
+                    && removed_counterpart.as_deref().is_some_and(|removed| {
+                        let shape_text = canonical_probe_text(text, shape.text);
+                        removed_span_of_shape(text, &shape_text, removed.trim())
+                            .is_some_and(|before| is_integer_respelling(&shape_text, &before))
+                            && canonical_shapes
+                                .iter()
+                                .any(|other| other.family != ProbeFamily::ReturnValue)
+                    })
+            };
             // A guard-only edit (`n if 0 > n =>` from `n if n < 0 =>`) is
             // the guard's predicate finding: its boundary pairing is the
             // discriminator the edit needs, and arm selection never
@@ -380,7 +409,9 @@ pub(crate) fn probes_for_file_with_relations(
             }
             let canonical_shapes = canonical_shapes
                 .iter()
-                .filter(|shape| !unchanged_return(shape) && !guard_only_arm(shape))
+                .filter(|shape| {
+                    !unchanged_return(shape) && !respelled_return(shape) && !guard_only_arm(shape)
+                })
                 .cloned()
                 .collect::<Vec<_>>();
             for shape in canonical_shapes {
@@ -474,7 +505,7 @@ pub(crate) fn probes_for_file_with_relations(
             }
             continue;
         }
-        let families = classify_changed_line(text)
+        let families = classify_changed_line_against(text, removed_counterpart.as_deref())
             .into_iter()
             .filter(|family| propagation_subject.is_none() || *family != ProbeFamily::ErrorPath)
             .collect::<Vec<_>>();
@@ -560,7 +591,7 @@ pub(crate) fn probes_for_file_with_relations(
             }
             continue;
         }
-        if should_ignore_changed_line(text) {
+        if should_ignore_changed_line(text) || removed_attribute_lines.contains(&removed.line) {
             continue;
         }
         let families = if removed_bounds.lines[removed_index] {
@@ -782,6 +813,79 @@ fn is_behavior_neutral_respelling(after: &str, before: &str) -> bool {
         && neutral_spelling(after) == neutral_spelling(before)
 }
 
+/// Whether `after` is `before` with integer literals respelled to the same
+/// value (`Some(0x15)` for `Some(21)`, `1_000` for `1000`), the literals'
+/// suffixes unchanged and everything around them the same. Text holding a
+/// string, character or macro is never a respelling: its characters or
+/// expansion may observe the spelling.
+fn is_integer_respelling(after: &str, before: &str) -> bool {
+    let observes = |text: &str| text.contains(['"', '\'', '!']);
+    after != before
+        && !observes(after)
+        && !observes(before)
+        && canonical_integer_literals(after) == canonical_integer_literals(before)
+}
+
+/// `text` with each plain integer literal (decimal, `0x`, `0o` or `0b`, with
+/// optional `_` separators and an integer suffix) rewritten as its decimal
+/// value. A literal that is part of a longer token (an identifier, a float,
+/// a tuple index after `.`) or too large for `u128` is left as written.
+fn canonical_integer_literals(text: &str) -> String {
+    const SUFFIXES: [&str; 12] = [
+        "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
+    ];
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        let byte = bytes[at];
+        let free_start = text[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|prev| !(prev.is_alphanumeric() || matches!(prev, '_' | '.')));
+        if !(byte.is_ascii_digit() && free_start) {
+            let ch = text[at..].chars().next().unwrap_or(' ');
+            out.push(ch);
+            at += ch.len_utf8();
+            continue;
+        }
+        let (radix, digits_at) = match (byte, bytes.get(at + 1)) {
+            (b'0', Some(b'x')) => (16, at + 2),
+            (b'0', Some(b'o')) => (8, at + 2),
+            (b'0', Some(b'b')) => (2, at + 2),
+            _ => (10, at),
+        };
+        let mut end = digits_at;
+        while end < bytes.len()
+            && (bytes[end] == b'_'
+                || char::from(bytes[end]).is_digit(if radix == 16 { 16 } else { 10 }))
+        {
+            end += 1;
+        }
+        // An `e` after a decimal run, or `.` and a digit, makes a float.
+        let digits = text[digits_at..end].replace('_', "");
+        let rest = &text[end..];
+        let suffix = SUFFIXES
+            .iter()
+            .find(|suffix| rest.starts_with(**suffix))
+            .copied()
+            .unwrap_or("");
+        let after = rest[suffix.len()..].chars().next();
+        let boundary = after.is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'))
+            && !(rest.starts_with('.') && rest[1..].starts_with(|ch: char| ch.is_ascii_digit()));
+        let value = u128::from_str_radix(&digits, radix).ok();
+        match value {
+            Some(value) if boundary && !digits.is_empty() => {
+                out.push_str(&value.to_string());
+                out.push_str(suffix);
+            }
+            _ => out.push_str(&text[at..end + suffix.len()]),
+        }
+        at = end + suffix.len();
+    }
+    out
+}
+
 /// Whether a block of added lines only rewraps and respells the block of
 /// removed lines it replaced: the same statement joined or split across a
 /// different number of lines (`= \n Index::new(core::isize::MAX - 1);` joined
@@ -834,6 +938,64 @@ fn join_tokens(lines: &[&str]) -> String {
             out.push(' ');
         }
         out.push_str(&line);
+    }
+    out
+}
+
+/// 1-based lines of `source` that continue a multi-line outer or inner
+/// attribute (`#![allow(\n    clippy::x,\n)]`): every line after the one whose
+/// first token is `#[` or `#![`, through the line that closes its bracket.
+/// Read from comment/string-masked text. Fail closed: the closing line counts
+/// only when nothing but whitespace follows the bracket (`)] fn f() {` does
+/// not), and an attribute that never closes marks nothing.
+fn attribute_continuation_lines(source: &str) -> std::collections::BTreeSet<usize> {
+    let masked = mask_comments_and_strings(source);
+    let lines = masked.lines().collect::<Vec<_>>();
+    let mut out = std::collections::BTreeSet::new();
+    let mut at = 0;
+    while at < lines.len() {
+        let rest = lines[at].trim_start();
+        let Some(open) = rest.strip_prefix("#![").or_else(|| rest.strip_prefix("#[")) else {
+            at += 1;
+            continue;
+        };
+        let mut depth = 1usize;
+        let mut text = open;
+        let mut end = at;
+        let closed = loop {
+            let mut tail_after_close = None;
+            for (offset, ch) in text.char_indices() {
+                match ch {
+                    '[' => depth += 1,
+                    ']' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            tail_after_close = Some(&text[offset + 1..]);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(tail) = tail_after_close {
+                break Some(tail.trim().is_empty());
+            }
+            end += 1;
+            match lines.get(end) {
+                Some(next) => text = next,
+                None => break None,
+            }
+        };
+        let Some(clean_close) = closed else {
+            at += 1;
+            continue;
+        };
+        if end > at {
+            // 1-based: line index `at` is line `at + 1`.
+            let last = if clean_close { end } else { end - 1 };
+            out.extend(at + 2..=last + 1);
+        }
+        at = end + 1;
     }
     out
 }
@@ -2255,6 +2417,79 @@ mod tests {
     }
 
     #[test]
+    fn multi_line_attribute_entries_seed_no_probe_but_the_same_text_as_code_does() {
+        // #10089, dogfood (serde `56c29b3`): a renamed lint inside a
+        // multi-line `#![allow(..)]` is attribute text, not behavior.
+        let path = PathBuf::from("src/lib.rs");
+        let probes_for = |source: &str| {
+            // The changed line is wherever the entry sits in this source.
+            let at = source
+                .lines()
+                .position(|line| line.trim() == "limit: threshold,")
+                .map_or(0, |index| index + 1);
+            assert!(at > 0, "premise: the source holds the entry: {source}");
+            let changed = ChangedFile {
+                path: path.clone(),
+                added_lines: vec![ChangedLine {
+                    line: at,
+                    new_side_line: at,
+                    text: "limit: threshold,".to_string(),
+                }],
+                removed_lines: vec![],
+            };
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                files: BTreeMap::from([(
+                    path.clone(),
+                    FileFacts {
+                        path: path.clone(),
+                        source: source.into(),
+                        ..FileFacts::default()
+                    },
+                )]),
+                ..Default::default()
+            });
+            probes_for_file(Path::new("workspace"), &changed, &index)
+        };
+        let as_code = probes_for("let c = Config {\n limit: threshold,\n};\n");
+        assert!(
+            !as_code.is_empty(),
+            "control: the same text outside an attribute must still seed a probe"
+        );
+        for attribute in [
+            "#![allow(\n limit: threshold,\n)]\n",
+            "#[cfg_attr(\n    feature = \"x\",\n    allow(\n limit: threshold,\n    ),\n)]\nfn f() {}\n",
+        ] {
+            let in_attribute = probes_for(attribute);
+            assert!(in_attribute.is_empty(), "{attribute}: {in_attribute:?}");
+        }
+    }
+
+    #[test]
+    fn attribute_continuation_lines_cover_the_span_and_fail_closed() {
+        let lines = |source: &str| {
+            attribute_continuation_lines(source)
+                .into_iter()
+                .collect::<Vec<_>>()
+        };
+        // Lines after the opener through the closing `)]`.
+        assert_eq!(
+            lines("#![allow(\n    a,\n    b,\n)]\nfn f() {}\n"),
+            [2, 3, 4]
+        );
+        // A one-line attribute has no continuation line.
+        assert!(lines("#[allow(a)]\nfn f() {}\n").is_empty());
+        // The closing line counts only when nothing follows the bracket.
+        assert_eq!(lines("#[allow(\n    a,\n)] fn f() {\n    g();\n}\n"), [2]);
+        // Bracket text in a string or comment does not move the span, and an
+        // attribute that never closes marks nothing.
+        assert_eq!(lines("#[doc = \"]\"]\nfn f() {}\n"), Vec::<usize>::new());
+        assert_eq!(lines("#[a(\n    \"]\", // ]\n    b,\n)]\n"), [2, 3, 4]);
+        assert!(lines("#[allow(\n    a,\nfn f() {}\n").is_empty());
+        // A `#[` that is not the first token of its line starts nothing.
+        assert!(lines("let v = x; #[allow(\n    a,\n)]\n").is_empty());
+    }
+
+    #[test]
     fn an_accumulator_rewrite_of_a_call_leaves_no_removed_call_deletion() {
         // #8027: the removed `total = compute(x);` is paired away by its
         // accumulator rewrite instead of minting a base-side call_deletion.
@@ -3326,6 +3561,102 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(families.contains(&ProbeFamily::Predicate), "{probes:?}");
         assert!(families.contains(&ProbeFamily::ReturnValue), "{probes:?}");
+    }
+
+    /// A respelled integer literal in an arm's value holds the same value, so
+    /// the line keeps the arm probe and drops the return-value probe that
+    /// would ask for a discriminator of a value that never changed.
+    #[test]
+    fn a_respelled_arm_value_drops_the_return_value_probe() {
+        let probes = shapes_probes(
+            "\"ftp\" => Some(0x15),",
+            "\"ftp\" => Some(21),",
+            &[
+                (ProbeShapeKind::MatchArm, "\"ftp\" =>"),
+                (ProbeShapeKind::ReturnValue, "Some(0x15)"),
+            ],
+            "",
+        );
+
+        let families = probes
+            .iter()
+            .map(|probe| probe.family.clone())
+            .collect::<Vec<_>>();
+        assert!(families.contains(&ProbeFamily::MatchArm), "{probes:?}");
+        assert!(!families.contains(&ProbeFamily::ReturnValue), "{probes:?}");
+    }
+
+    /// Controls: a different value, a respelling that is not an equal integer
+    /// literal, and a respelled value with no other shape on the line all keep
+    /// the return-value probe.
+    #[test]
+    fn a_changed_or_unreadable_arm_value_keeps_the_return_value_probe() {
+        for (after, before, value) in [
+            (
+                "\"ftp\" => Some(0x16),",
+                "\"ftp\" => Some(21),",
+                "Some(0x16)",
+            ),
+            (
+                "\"ftp\" => Some(21u8),",
+                "\"ftp\" => Some(21),",
+                "Some(21u8)",
+            ),
+            (
+                "\"ftp\" => Some(1.5e0),",
+                "\"ftp\" => Some(1.5),",
+                "Some(1.5e0)",
+            ),
+            ("\"ftp\" => \"0x15\",", "\"ftp\" => \"21\",", "\"0x15\""),
+        ] {
+            let probes = shapes_probes(
+                after,
+                before,
+                &[
+                    (ProbeShapeKind::MatchArm, "\"ftp\" =>"),
+                    (ProbeShapeKind::ReturnValue, value),
+                ],
+                "",
+            );
+            assert!(
+                probes
+                    .iter()
+                    .any(|probe| probe.family == ProbeFamily::ReturnValue),
+                "{after}: {probes:?}"
+            );
+        }
+        let alone = shapes_probes(
+            "Some(0x15)",
+            "Some(21)",
+            &[(ProbeShapeKind::ReturnValue, "Some(0x15)")],
+            "",
+        );
+        assert!(
+            alone
+                .iter()
+                .any(|probe| probe.family == ProbeFamily::ReturnValue),
+            "{alone:?}"
+        );
+    }
+
+    #[test]
+    fn integer_respelling_compares_values_and_nothing_else() {
+        assert!(is_integer_respelling("Some(0x15)", "Some(21)"));
+        assert!(is_integer_respelling("n + 1_000", "n + 1000"));
+        assert!(is_integer_respelling("x = 0b101u8;", "x = 5u8;"));
+        assert!(is_integer_respelling("-0o17", "-15"));
+        assert!(!is_integer_respelling("Some(21)", "Some(21)"));
+        assert!(!is_integer_respelling("Some(0x16)", "Some(21)"));
+        // A suffix, a float, a tuple index and a longer token are not integers.
+        assert!(!is_integer_respelling("5u16", "5u8"));
+        assert!(!is_integer_respelling("1e3", "1000"));
+        assert!(!is_integer_respelling("x.0x1", "x.1"));
+        assert!(!is_integer_respelling("v0x15", "v21"));
+        assert!(!is_integer_respelling("na\u{ef}ve0x1", "na\u{ef}ve1"));
+        // Text that can observe its spelling is never a respelling.
+        assert!(!is_integer_respelling("f(\"a\", 0x15)", "f(\"a\", 21)"));
+        assert!(!is_integer_respelling("stringify!(0x15)", "stringify!(21)"));
+        assert!(!is_integer_respelling("'a' as u8 + 0x15", "'a' as u8 + 21"));
     }
 
     /// A guard-only edit is the guard's predicate finding: the arm head adds

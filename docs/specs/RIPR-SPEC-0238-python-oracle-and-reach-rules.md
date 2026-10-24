@@ -27,6 +27,8 @@ Linked issues:
 - #6599, #6600, #6601 (false actionable, false `exposed` and Hypothesis
   fixture verdicts in the #6597 corpus; rules 15 to 19)
 - #6733 (a removed term that is zero at every asserted input; rule 20)
+- #9185 (a message-only change under a literal pattern that fits both
+  messages; rule 2)
 - #7586 (a mock passed for a called parameter, and the wrapped-argument
   gate; rule 17, example 9)
 
@@ -231,6 +233,18 @@ as strong for one credit branch only; its table row is unchanged.
    literal (`pattern = '.*'` then `match=pattern` is `broad_error`); a
    name assigned more than once in the file is not resolved. Any other non-literal pattern keeps
    `exact_error_variant` / strong (Decision 5).
+   Change-aware reading (#9185): when the changed line is a message-only edit
+   of one `raise Exc("...")` (same exception expression, one literal string
+   argument on each side, no f-string), the old and the new message are both
+   known. If EVERY strong `exact_error_variant` assertion of the strong related
+   tests is a `pytest.raises(E, match=...)` or `assertRaisesRegex(E, ...)` with
+   a literal pattern made of literal characters (`.` is read as the regex
+   wildcard) that matches both messages, the patterns pin only the exception
+   class and the finding is `weakly_exposed` with missing discriminator
+   `message "<new message>"`. One pattern that rejects the old message, regex
+   syntax in a pattern, a non-literal pattern, a comparison of `str(exc.value)`,
+   an f-string message and an exception class change fail open and keep the
+   existing verdict.
 3. **A fluent helper chain is a custom helper.** A call statement whose
    callee chain contains a call whose last segment starts with `assert_`
    or equals `assert_that` (`assert_that(x).is_equal_to(y)`) assigns
@@ -371,7 +385,8 @@ This order is the existing behavior and is normative:
   custom helper assertion and no eligible candidate has a strong assertion;
 - L10: `missing_import_graph` for a changed line that uses a name the
   owner's own module imports (mock constructors and the click, typer and
-  `sys` output calls are exempt);
+  `sys` output calls are exempt, including `print(..., file=sys.stderr)`
+  and `file=sys.stdout`, `py-fixtures-warning-stderr`);
 - L11: `unsupported_syntax` for `lambda`;
 - L12: the implicit dunder dispatch limit (RIPR-SPEC-0028), then
   `python_transitive_reach_unresolved` on `no_static_path`
@@ -541,7 +556,11 @@ mutant calibrates the rule; ripr reports only the static shape.
     strength, so an exact conjunct on something else does not credit a
     weak conjunct on the owner (`fee(10) > 0 and other == 5` does not
     observe `fee`). `or`,
-    `not` and any other boolean form stay `smoke_only` / smoke.
+    `not` and any other boolean form stay `smoke_only` / smoke, with one
+    exception (#9542, RIPR-SPEC-0028): a bare `assert f(lit, ..)` or
+    `assert not f(lit, ..)` whose single resolved workspace function owner
+    provably returns `bool` is an exact pin, read as `f(lit, ..) == True` /
+    `== False`.
 16. **A constant offset is a static boundary operand.** In a changed
     comparison, an operand `C - k` or `C + k`, where `k` is an integer
     literal and `C` a literal or a module constant resolving to one, is
@@ -612,6 +631,15 @@ mutant calibrates the rule; ripr reports only the static shape.
     the changed effect could run, on both sides of the change. An
     assertion with no known source line does not credit here.
     Rule 6 still applies on the error path.
+    A comparison supplied by bounded assertion-helper resolution does not
+    establish that an `async def` or generator owner's body ran. Such an
+    owner receives no helper-derived credit, including through a method-name
+    branch when the changed effect has no modeled channel. Generator refusal
+    conservatively reads a whole `yield` identifier in the owner's source,
+    including f-string expressions, strings and nested scopes; it does not
+    claim precise generator execution. Raw assertions and mock expectations
+    keep their existing rules. Synchronous function-result helpers retain
+    the ordinary substituted-assertion reading.
 18. **A self-computed expected value does not credit.** Following
     RIPR-SPEC-0035, an assertion does not credit when every compared
     operand that names the owner is computed with a top-level
@@ -672,6 +700,122 @@ mutant calibrates the rule; ripr reports only the static shape.
     fixture, `setUp` or class decorator rather than in the related test
     itself, a string spanning several lines, brackets opened on an
     earlier line, and an owner call made through a test helper.
+
+21. **An explicit `approx` band is evaluated where it is decidable, else
+    abstains on a numeric edit.** Rule 12 reads `pytest.approx(expected)`
+    at its default tolerance as pinning the value. When the assertion the
+    row selects passes an explicit band, `approx(expected, rel=...)`,
+    `abs=...`, a positional second or third argument, or a `*` or `**`
+    spread that may carry one (a literal `None` counts as absent), the
+    band may admit the pre-change value. One shape is evaluated: the owner
+    is an undecorated one-statement function whose changed line is
+    `return <expr>` over numeric literals, its own parameters and
+    `+ - * /`, and the assertion is `<owner>(<numeric literals>) ==
+    approx(<number>, rel=<number>, abs=<number>)` in either operand order
+    (only `rel`, `abs` and `nan_ok` keywords). The old and new results are
+    compared with pytest's tolerance (`abs` alone, else the larger of
+    `rel * |expected|` and `abs`, default `1e-12`). An old result inside
+    the band and a new result outside it is `exposed`
+    (`py-idioms-approx-constant-outside-tolerance`); both inside, for
+    every selected strong assertion and with no unbanded strong
+    assertion, is `weakly_exposed` naming the band
+    (`py-idioms-approx-constant-within-tolerance`, whose old reading as
+    `exposed` was a false exposed). Everything else stays
+    `static_unknown` with the static limit `unsupported_syntax` naming the
+    band: an old result already outside the band, a result within `1e-9`
+    (relative) of the band edge, a non-literal argument, a positional
+    band, `**`, a longer body, a method or decorated owner, and a run
+    without the old line (repo mode).
+22. **A `caplog.text` membership check on a changed log call is
+    evaluated where it is decidable, else abstains.** When the changed
+    line is a logging call (`<receiver>.debug`, `.info`, `.warning`,
+    `.warn`, `.error`, `.critical` or `.exception` with a string literal)
+    and the selected assertion is `<text> in caplog.text` sharing a word
+    of three or more characters with that literal, the finding is
+    `static_unknown` with `unsupported_syntax`, unless the formatted
+    message can be evaluated. It can when all of these hold: the old and
+    new lines are logging calls on the same receiver with a literal
+    message and no keyword arguments, whose arguments are string or
+    integer literals or owner parameters the test's own calls bind to
+    such literals, formatted with `%s`, `%d`, `%i` and `%%` (no
+    arguments: the message as written); the owner is an undecorated
+    function whose lines between its `def` and the changed line are only
+    plain `if <comparison>:` blocks, with nothing after the line but
+    `return` or `pass`; every owner call of the test has a readable guard
+    outcome; the test pins the capture level with exactly one
+    `caplog.at_level(<level>)` block around its owner calls or one
+    `caplog.set_level(<level>)` before them and makes no other call, no
+    `caplog.clear`, no patching; the module configures no logger
+    (`setLevel`, `propagate`, filters, handlers, `logging` configuration);
+    and the asserted text holds a space after a character other than an
+    upper-case letter, a digit or a space, so it is read from the message
+    and not from the record header. A record is captured when its level is
+    at least the pinned level. The asserted text in the old message and
+    not in the new one (`py-idioms-caplog-message`, and a level lowered
+    below the pin, `py-idioms-caplog-level`) is `exposed`; in both is a
+    weak gap; a test that did not log the text before the edit, or any
+    shape outside these bounds, abstains. A custom `log_format` is not
+    read. The asserted literals are only those the assertion requires: a
+    single membership or an `and` chain, never a literal under `or`. The
+    receiver is `logging` or a module-level `name = logging.getLogger(...)`
+    (a detached `logging.Logger(...)` or any other object abstains), the
+    method is not `exception` (its traceback can hold the asserted text),
+    and the test never rebinds `caplog`. An assertion about unrelated text
+    keeps its verdict.
+    `caplog.messages` and `caplog.records` are not read by this rule. The
+    membership is read from the parsed assertion, not its text layout:
+    extra spacing, parentheses, line breaks, implicit literal
+    concatenation, an assertion message and a membership joined by `and`
+    all read the same way, while a membership against any receiver other
+    than `caplog.text` is not read.
+23. **An assertion that cannot run or cannot fail is not read.** The
+    assertion collector skips the dead arm of an `if` or `while` whose
+    condition is a literal (`if False:`, `if 0:`, `if None:`, `while False:`;
+    the arm that can run is still read) and the body of a `try` whose
+    handler catches `AssertionError` (a bare `except`, `Exception`,
+    `BaseException`, `AssertionError`, `builtins.AssertionError`, or a tuple
+    naming one) and does not raise, assert, call a `fail` helper or call a
+    unittest `assert*` method. The `else` and `finally` blocks
+    are still read. A swallowed or dead assertion cannot notice a change, so
+    it must not credit one (`py-trap-dead-branch`,
+    `py-trap-swallowed-assert`, #9691).
+24. **A test the collector skips is activation-controlled.** A parametrize
+    decorator over an empty literal table (`[]` or `()`) and an
+    unconditional module-level `pytest.importorskip(...)`,
+    `pytest.skip(..., allow_module_level=True)` or `pytestmark` that applies
+    a recognized skip, skipif or xfail mark control every affected test the
+    same way a `@pytest.mark.skip` decorator does (a condition is not
+    evaluated, so a `skipif` on a name or comparison that is false on the
+    host still abstains): the finding is `static_unknown` with
+    `decorator_indirection`. Two things are decidable from the source and
+    leave the test active: a condition that is itself the boolean literal
+    that never triggers the mark and is the only condition, given with the
+    string `reason` the runner requires for a boolean
+    (`skipif(False, reason="...")`, `xfail(False, reason="...")`,
+    `unittest.skipIf(False, "...")`, `unittest.skipUnless(True, "...")`).
+    A missing or non-string reason, a second positional condition, a
+    `condition=` that overrides the positional one and a `*` spread keep
+    the control, because the runner then errors, skips or xfails. The
+    second decidable case is `pytest.importorskip` of one bare module name that
+    every interpreter ships (`json`, `math`, `re`, ...). The adapter does
+    not evaluate whether any other module is installed, so `importorskip`
+    of it, or with `minversion` or `reason`, still abstains
+    (`py-trap-module-skipped`, `py-trap-empty-table`,
+    `py-trap-skipif-false`, `py-trap-module-loaded`, #9691).
+25. **A property check pins no value.** A single `==` in an `assert`
+    statement is a weak relational check, as a tautology is (rule 1), when
+    one side is a call and the other side is either a call that appears in
+    that call's arguments (`f(f(x)) == f(x)`, either order, at any depth,
+    keyword and container arguments included) or a `for` loop variable that
+    appears in them (`for n in range(1, 5): assert f(1, n) == n`; `async for`
+    and tuple or list targets count, `while` loops and names bound outside a
+    loop do not). The calls need not be the changed owner. Idempotence holds
+    for any constant return and an identity over a loop variable holds for
+    `n / 1`, so neither notices an edit. An independent expected value (a
+    literal, `n * 3`, a name bound outside a loop) still pins, and so does a
+    chain (`f(f(x)) == f(x) == 1`). Only the `assert` statement is read:
+    `assertEqual` and helper forms keep their strength
+    (`py-grid-returns-property`, `py-grid-arithmetic-property`, #9594).
 
 ### Verdict ladder
 
@@ -1200,6 +1344,13 @@ and the test is `tests/test_subject.py`, which imports each owner from
   `term_activation.rs` records the parameter an owner returns.
 - `crates/ripr/src/analysis/language/python/hypothesis.rs` and
   `owners_tests.rs`: generated inputs and `@example` rows (rule 19).
+- `crates/ripr/src/analysis/language/python/oracles.rs` (dead arms and
+  swallowed `try` bodies, rule 23) and `test_activation.rs` (empty tables and
+  module-level skips, rule 24), pinned by `unreachable_assertion_tests.rs` and
+  the `py-trap-*` corpus cases.
+- `oracles.rs` (`is_property_compare`: idempotence and loop-variable identity
+  checks, rule 25), pinned by `property_assertion_tests.rs` and the
+  `py-grid-*-property` corpus cases.
 
 ## Metrics
 

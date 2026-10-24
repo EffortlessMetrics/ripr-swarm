@@ -12,6 +12,32 @@ use crate::domain::{
 use std::path::Path;
 
 pub(super) fn classify_probe_shape(line_text: &str) -> (ProbeFamily, DeltaKind) {
+    classify_probe_shape_gated(line_text, true)
+}
+
+/// The shape of a changed line given the line it replaced. A comprehension
+/// filter is the changed behavior only when the filter itself changed: an edit
+/// to the yielded element or the surrounding call, under an unchanged filter,
+/// keeps the return-value shape, so its exact oracle is not asked for an input
+/// at a bound the edit never moved.
+pub(super) fn classify_probe_shape_with_old(
+    line_text: &str,
+    old_line_text: Option<&str>,
+) -> (ProbeFamily, DeltaKind) {
+    let filter_changed = match (
+        super::boundary::python_comprehension_filter(line_text),
+        old_line_text.and_then(super::boundary::python_comprehension_filter),
+    ) {
+        (Some(new), Some(old)) => new.condition != old.condition || new.iterable != old.iterable,
+        _ => true,
+    };
+    classify_probe_shape_gated(line_text, filter_changed)
+}
+
+fn classify_probe_shape_gated(
+    line_text: &str,
+    comprehension_filter: bool,
+) -> (ProbeFamily, DeltaKind) {
     let trimmed = line_text.trim_start();
     if is_python_cli_exit_line(trimmed) {
         return (ProbeFamily::SideEffect, DeltaKind::Effect);
@@ -41,7 +67,9 @@ pub(super) fn classify_probe_shape(line_text: &str) -> (ProbeFamily, DeltaKind) 
     {
         return (ProbeFamily::FieldConstruction, DeltaKind::Value);
     }
-    if super::boundary::python_return_comparison(trimmed).is_some() {
+    if super::boundary::python_return_comparison(trimmed).is_some()
+        || (comprehension_filter && super::boundary::python_comprehension_filter(trimmed).is_some())
+    {
         return (ProbeFamily::Predicate, DeltaKind::Control);
     }
     if trimmed.starts_with("return ") || trimmed == "return" {

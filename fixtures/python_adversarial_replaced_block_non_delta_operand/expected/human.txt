@@ -21,13 +21,20 @@ Start here:
   Canonical gap: gap:python:src/account.py:Account.balance:return_value:return_value:max_0_self._balance
   Changed behavior: return max(0, self._balance)
   Missing discriminator (1 of 2): A strong Python oracle reaches `balance`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add…
-  Related test: tests/test_account.py:4 test_balance_starts_at_the_opening_amount
+  Related test: tests/test_account.py:4 test_balance_starts_at_the_opening_amount (ripr could not confirm that this assertion observes the changed behavior)
   Suggested test file: tests/test_account.py
   Suggested test: test_balance_starts_at_the_opening_amount
   Test node: tests/test_account.py::test_balance_starts_at_the_opening_amount
   Verify command: python -m pytest tests/test_account.py::test_balance_starts_at_the_opening_amount (high)
   Next step — Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `return value == <expected value>`
   Evidence: reach yes · infection yes · propagation yes · observation weak · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: 1 related Python test(s) found for owner `balance`
     - infection yes: Changed Python return expression can alter the owner return value: `return max(0, self._balance)`
     - 5 more detail line(s) in --format human-full

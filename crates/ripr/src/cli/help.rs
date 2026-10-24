@@ -34,9 +34,9 @@ use crate::output::first_pr::FIRST_PR_HELP;
 /// the list next to [`help_text_for`] lets a test assert that every path a user
 /// can mistype still lands on real help.
 ///
-/// Only the flag-parity test reads it, so it is test-only; production lookups
-/// go through [`help_text_for`].
-#[cfg(test)]
+/// Only the flag-parity test used to read it, so it was test-only; production
+/// now reads it too: [`render_command_help`] groups these paths by help body
+/// to append the catalog `Examples:` section, keeping one path list for both.
 const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "agent brief",
     "agent card",
@@ -197,7 +197,6 @@ pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
 }
 
 /// The command paths [`help_text_for`] can resolve.
-#[cfg(test)]
 pub(super) fn registered_command_paths() -> &'static [&'static str] {
     REGISTERED_COMMAND_PATHS
 }
@@ -228,164 +227,261 @@ pub(super) fn print_check_help(all: bool) {
     println!("{}", if all { CHECK_HELP } else { CHECK_HELP_SHORT });
 }
 
+/// Render a per-command help body with an `Examples:` section built from the
+/// command catalog (#9864).
+///
+/// The catalog `example` field is the single source of truth: this function
+/// never authors example text. Every registered command path whose help body
+/// is `body` contributes its catalog example, so one shared family body
+/// (policy, reports, baseline, ...) shows one runnable example per subcommand
+/// it documents. `extra_paths` adds catalog paths whose `--help` prints `body`
+/// without being registered flag-documenting paths: family overviews such as
+/// `ripr agent --help`, and `gate evaluate`, which prints the `gate` body.
+///
+/// A body that already carries its own `Examples:` section keeps it untouched:
+/// the hand-written `check` examples are richer than the one-line catalog
+/// field, and richer hand-written content must not be replaced by thinner
+/// generated text.
+pub(crate) fn render_command_help(body: &str, extra_paths: &[&str]) -> String {
+    if body.contains("\nExamples:\n") {
+        return body.to_owned();
+    }
+    let examples = catalog_examples(body, extra_paths);
+    if examples.is_empty() {
+        return body.to_owned();
+    }
+    let mut rendered = String::from(body);
+    if !rendered.ends_with('\n') {
+        rendered.push('\n');
+    }
+    rendered.push_str("\nExamples:\n");
+    for example in examples {
+        rendered.push_str("  ");
+        rendered.push_str(example);
+        rendered.push('\n');
+    }
+    rendered
+}
+
+/// The catalog `example` strings for every command path whose `--help` renders
+/// `body`: the registered paths grouped by body, then any explicit extras.
+fn catalog_examples(body: &str, extra_paths: &[&str]) -> Vec<&'static str> {
+    let mut examples: Vec<&'static str> = Vec::new();
+    for path in registered_command_paths() {
+        if help_text_for(path).is_some_and(|known| known == body) {
+            push_catalog_example(&mut examples, path);
+        }
+    }
+    for path in extra_paths {
+        push_catalog_example(&mut examples, path);
+    }
+    examples
+}
+
+/// Append one path's catalog example, deduplicated; a path with no catalog
+/// row or an empty example contributes nothing.
+fn push_catalog_example(examples: &mut Vec<&'static str>, path: &str) {
+    let Some(example) = catalog_example(path) else {
+        return;
+    };
+    if !example.is_empty() && !examples.contains(&example) {
+        examples.push(example);
+    }
+}
+
+/// The catalog `example` field for one command path: the catalog row looked up
+/// by path, then the metadata row joined on the catalog id.
+fn catalog_example(path: &str) -> Option<&'static str> {
+    let entry = crate::cli::command_catalog::catalog()
+        .iter()
+        .find(|entry| entry.path == path)?;
+    crate::cli::command_metadata::metadata_for(entry).map(|metadata| metadata.example)
+}
+
 pub(super) fn print_config_help() {
-    println!("{CONFIG_HELP}");
+    println!("{}", render_command_help(CONFIG_HELP, &[]));
 }
 
 pub(super) fn print_diff_help() {
-    println!("{DIFF_HELP}");
+    println!("{}", render_command_help(DIFF_HELP, &[]));
 }
 
 pub(super) fn print_init_help() {
-    println!("{INIT_HELP}");
+    println!("{}", render_command_help(INIT_HELP, &[]));
 }
 
 pub(super) fn print_pilot_help() {
-    println!("{PILOT_HELP}");
+    println!("{}", render_command_help(PILOT_HELP, &[]));
 }
 
 pub(super) fn print_outcome_help() {
-    println!("{OUTCOME_HELP}");
+    println!("{}", render_command_help(OUTCOME_HELP, &[]));
 }
 
 pub(super) fn print_evidence_health_help() {
-    println!("{EVIDENCE_HEALTH_HELP}");
+    println!("{}", render_command_help(EVIDENCE_HEALTH_HELP, &[]));
 }
 
 pub(super) fn print_review_comments_help() {
-    println!("{REVIEW_COMMENTS_HELP}");
+    println!("{}", render_command_help(REVIEW_COMMENTS_HELP, &[]));
 }
 
 pub(super) fn print_gate_help() {
-    println!("{GATE_HELP}");
+    // `ripr gate evaluate --help` prints this same body; the catalog carries a
+    // richer example for that nested path than the bare `gate` row.
+    println!("{}", render_command_help(GATE_HELP, &["gate evaluate"]));
 }
 
 pub(super) fn print_baseline_help() {
-    println!("{BASELINE_HELP}");
+    println!("{}", render_command_help(BASELINE_HELP, &[]));
 }
 
 pub(super) fn print_zero_help() {
-    println!("{ZERO_HELP}");
+    println!("{}", render_command_help(ZERO_HELP, &[]));
 }
 
 pub(super) fn print_policy_help() {
-    println!("{POLICY_HELP}");
+    println!("{}", render_command_help(POLICY_HELP, &[]));
 }
 
 pub(super) fn print_pr_ledger_help() {
-    println!("{PR_LEDGER_HELP}");
+    println!("{}", render_command_help(PR_LEDGER_HELP, &[]));
 }
 
 pub(super) fn print_pr_comments_help() {
-    println!("{PR_COMMENTS_HELP}");
+    println!("{}", render_command_help(PR_COMMENTS_HELP, &[]));
 }
 
 pub(super) fn print_pr_review_help() {
-    println!("{PR_REVIEW_HELP}");
+    println!("{}", render_command_help(PR_REVIEW_HELP, &[]));
 }
 
 pub(super) fn print_coverage_grip_help() {
-    println!("{COVERAGE_GRIP_HELP}");
+    println!("{}", render_command_help(COVERAGE_GRIP_HELP, &[]));
 }
 
 pub(super) fn print_assistant_loop_help() {
-    println!("{ASSISTANT_LOOP_HELP}");
+    println!("{}", render_command_help(ASSISTANT_LOOP_HELP, &[]));
 }
 
 pub(super) fn print_first_action_help() {
-    println!("{FIRST_ACTION_HELP}");
+    println!("{}", render_command_help(FIRST_ACTION_HELP, &[]));
 }
 
 pub(super) fn print_reports_help() {
-    println!("{REPORTS_HELP}");
+    println!("{}", render_command_help(REPORTS_HELP, &[]));
 }
 
 pub(super) fn print_calibrate_help() {
-    println!("{CALIBRATE_HELP}");
+    println!("{}", render_command_help(CALIBRATE_HELP, &[]));
 }
 
 pub(super) fn print_agent_help() {
-    println!("{AGENT_HELP}");
+    // The family overview: no registered path maps to this body, so the
+    // parent's examples are the catalog examples of every agent subcommand.
+    println!(
+        "{}",
+        render_command_help(
+            AGENT_HELP,
+            &[
+                "agent brief",
+                "agent card",
+                "agent packet",
+                "agent repair",
+                "agent receipt",
+                "agent review-summary",
+                "agent start",
+                "agent status",
+                "agent stub",
+                "agent verify",
+                "agent verify-execute",
+            ],
+        )
+    );
 }
 
 pub(super) fn print_agent_start_help() {
-    println!("{AGENT_START_HELP}");
+    println!("{}", render_command_help(AGENT_START_HELP, &[]));
 }
 
 pub(super) fn print_agent_brief_help() {
-    println!("{AGENT_BRIEF_HELP}");
+    println!("{}", render_command_help(AGENT_BRIEF_HELP, &[]));
 }
 
 pub(super) fn print_agent_packet_help() {
-    println!("{AGENT_PACKET_HELP}");
+    println!("{}", render_command_help(AGENT_PACKET_HELP, &[]));
 }
 
 pub(super) fn print_agent_card_help() {
-    println!("{AGENT_CARD_HELP}");
+    println!("{}", render_command_help(AGENT_CARD_HELP, &[]));
 }
 
 pub(super) fn print_agent_stub_help() {
-    println!("{AGENT_STUB_HELP}");
+    println!("{}", render_command_help(AGENT_STUB_HELP, &[]));
 }
 
 pub(super) fn print_agent_verify_help() {
-    println!("{AGENT_VERIFY_HELP}");
+    println!("{}", render_command_help(AGENT_VERIFY_HELP, &[]));
 }
 
 pub(super) fn print_agent_verify_execute_help() {
-    println!("{AGENT_VERIFY_EXECUTE_HELP}");
+    println!("{}", render_command_help(AGENT_VERIFY_EXECUTE_HELP, &[]));
 }
 
 pub(super) fn print_agent_receipt_help() {
-    println!("{AGENT_RECEIPT_HELP}");
+    println!("{}", render_command_help(AGENT_RECEIPT_HELP, &[]));
 }
 
 pub(super) fn print_agent_status_help() {
-    println!("{AGENT_STATUS_HELP}");
+    println!("{}", render_command_help(AGENT_STATUS_HELP, &[]));
 }
 
 pub(super) fn print_agent_review_summary_help() {
-    println!("{AGENT_REVIEW_SUMMARY_HELP}");
+    println!("{}", render_command_help(AGENT_REVIEW_SUMMARY_HELP, &[]));
 }
 
 pub(super) fn print_agent_repair_help() {
-    println!("{AGENT_REPAIR_HELP}");
+    println!("{}", render_command_help(AGENT_REPAIR_HELP, &[]));
 }
 
 pub(super) fn print_swarm_help() {
-    println!("{SWARM_HELP}");
+    // The family overview; the queue/ingest bodies are separate constants.
+    println!(
+        "{}",
+        render_command_help(SWARM_HELP, &["swarm ingest", "swarm queue"])
+    );
 }
 
 pub(super) fn print_swarm_queue_help() {
-    println!("{SWARM_QUEUE_HELP}");
+    println!("{}", render_command_help(SWARM_QUEUE_HELP, &[]));
 }
 
 pub(super) fn print_swarm_ingest_help() {
-    println!("{SWARM_INGEST_HELP}");
+    println!("{}", render_command_help(SWARM_INGEST_HELP, &[]));
 }
 
 pub(super) fn print_explain_help() {
-    println!("{EXPLAIN_HELP}");
+    println!("{}", render_command_help(EXPLAIN_HELP, &[]));
 }
 
 pub(super) fn print_context_help() {
-    println!("{CONTEXT_HELP}");
+    println!("{}", render_command_help(CONTEXT_HELP, &[]));
 }
 
 pub(super) fn print_capabilities_help() {
-    println!("{CAPABILITIES_HELP}");
+    println!("{}", render_command_help(CAPABILITIES_HELP, &[]));
 }
 
 pub(super) fn print_doctor_help() {
-    println!("{DOCTOR_HELP}");
+    println!("{}", render_command_help(DOCTOR_HELP, &[]));
 }
 
 pub(super) fn print_lsp_help() {
-    println!("{LSP_HELP}");
+    println!("{}", render_command_help(LSP_HELP, &[]));
 }
 
 pub(super) fn print_rerun_help() {
-    println!("{RERUN_HELP}");
+    println!("{}", render_command_help(RERUN_HELP, &[]));
 }
 
 /// Test-only access to the two rendered human discovery surfaces, for the
@@ -504,13 +600,14 @@ mod tests {
 
     /// The default screen has to stay readable without scrolling. Before #1613
     /// it was 91 lines of command inventory with the quick start at line 75, so
-    /// this envelope is what keeps it from regrowing. 40 leaves room to edit the
-    /// wording without inviting the whole catalog back.
+    /// this envelope is what keeps it from regrowing. The exit-code and global
+    /// flag block (#9865) owns six of the budget's lines; 48 leaves room to
+    /// edit the wording without inviting the whole catalog back.
     #[test]
     fn help_overview_fits_one_screen() {
         let lines = HELP.lines().count();
         assert!(
-            lines <= 40,
+            lines <= 48,
             "the default help screen is {lines} lines; keep it under one screen and put \
              reference material in HELP_ALL (ripr help --all)"
         );
@@ -615,6 +712,99 @@ mod tests {
         Ok(())
     }
 
+    /// #9865: the first screen names the global exit vocabulary and the global
+    /// `-v`/`--verbose` flag. The typed contract stays in docs/EXIT_CODES.md;
+    /// this block is the discovery pointer, kept short enough for one screen.
+    #[test]
+    fn help_overview_discloses_exit_codes_and_global_verbose() -> Result<(), String> {
+        let Some(after_more) = HELP.split("\nMore:\n").nth(1) else {
+            return Err("default help lost its More: block".to_string());
+        };
+        let Some(blocks) = after_more.split("\n\n").nth(1) else {
+            return Err("default help lost its exit-code/global-flag block".to_string());
+        };
+        for needle in [
+            "Exit codes: 0 completed",
+            "2 could not complete",
+            "3 blocking decision or typed refusal",
+            "130 interrupted",
+            "docs/EXIT_CODES.md",
+            "-v, --verbose",
+            "Extra pipeline diagnostics on stderr",
+        ] {
+            if !blocks.contains(needle) {
+                return Err(format!(
+                    "the exit-code/global-flag block should name {needle:?}, got:\n{blocks}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// #9864: per-command help renders the catalog `example` field. The
+    /// renderer is the single source-of-truth join: every registered command
+    /// path resolves to a help body and a catalog metadata row with a
+    /// non-empty example, and the rendered body carries that row's example.
+    #[test]
+    fn every_command_help_renders_its_catalog_example() -> Result<(), String> {
+        for path in super::registered_command_paths() {
+            let body = super::help_text_for(path)
+                .ok_or_else(|| format!("registered path {path:?} has no help body"))?;
+            let example = super::catalog_example(path)
+                .ok_or_else(|| format!("catalog row for {path:?} has no example"))?;
+            assert!(
+                !example.is_empty(),
+                "{path:?} carries an empty catalog example"
+            );
+            let rendered = super::render_command_help(body, &[]);
+            if rendered.contains(&format!("  {example}\n")) {
+                continue;
+            }
+            // Only a richer hand-written Examples section may stand in for
+            // the catalog line (today: `check`), and it must at least name
+            // the example's command so a drifted example cannot hide.
+            if rendered == body && body.contains("\nExamples:\n") {
+                let command = example.split_whitespace().nth(1).unwrap_or_default();
+                if command.is_empty() || rendered.contains(command) {
+                    continue;
+                }
+            }
+            return Err(format!(
+                "{path:?} help does not render its catalog example {example:?}:\n{rendered}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #9864: richer hand-written example sections are not replaced by the
+    /// one-line catalog field. `check` owns the only hand-written `Examples:`
+    /// sections today; both must render byte-identical to their constants.
+    #[test]
+    fn hand_written_examples_survive_the_catalog_renderer() {
+        assert_eq!(
+            super::render_command_help(super::CHECK_HELP_SHORT, &[]),
+            super::CHECK_HELP_SHORT
+        );
+        assert_eq!(super::render_command_help(CHECK_HELP, &[]), CHECK_HELP);
+    }
+
+    /// #9864: a body without hand-written examples gains the catalog section,
+    /// built from the catalog rows only — the renderer authors no example
+    /// text of its own.
+    #[test]
+    fn catalog_examples_render_for_bodies_without_hand_written_sections() {
+        let rendered = super::render_command_help(ZERO_HELP, &[]);
+        assert!(
+            rendered.contains("\nExamples:\n  ripr zero status --delta"),
+            "zero help should carry the catalog example, got:\n{rendered}"
+        );
+        let rendered = super::render_command_help(GATE_HELP, &["gate evaluate"]);
+        assert!(
+            rendered.contains("ripr gate evaluate --pr-guidance"),
+            "gate help should carry the nested gate evaluate example, got:\n{rendered}"
+        );
+    }
+
     /// `ripr help --all` documents `help` in its header rather than as a
     /// catalog listing row. The machine route must appear there so the
     /// exhaustive screen is not a dead end (#5266), and the header must
@@ -717,7 +907,6 @@ mod tests {
         // #5065: standalone verify is the exit-3 path whose stdout stays empty.
         assert!(AGENT_VERIFY_HELP.contains("exits `3`"));
         assert!(AGENT_VERIFY_HELP.contains("stdout empty"));
-        assert!(AGENT_VERIFY_HELP.contains("RIPR-SPEC-0134"));
         assert!(AGENT_VERIFY_HELP.contains("exit `2`"));
         assert!(AGENT_VERIFY_HELP.contains("stderr"));
     }
@@ -771,6 +960,13 @@ mod tests {
         assert!(INIT_HELP.contains("--ci github"));
         assert!(INIT_HELP.contains("--dry-run"));
         assert!(INIT_HELP.contains("--force"));
+        // --force resets ripr.toml only for plain `ripr init`; with --ci/--mcp
+        // the plan keeps it. The option line must not claim otherwise.
+        assert!(
+            INIT_HELP.contains("With --ci or --mcp, ripr.toml is"),
+            "init --force help must state it never resets ripr.toml alongside --ci/--mcp"
+        );
+        assert!(!INIT_HELP.contains("Overwrite an existing ripr.toml, generated workflow"));
         assert!(CONFIG_HELP.starts_with("Validate the repository's ripr.toml"));
         assert!(CONFIG_HELP.contains("Usage: ripr config validate"));
         assert!(CONFIG_HELP.contains("without running workspace probes"));
@@ -781,6 +977,10 @@ mod tests {
         assert!(PILOT_HELP.contains("--timeout-ms MS"));
         assert!(PILOT_HELP.contains("--format FORMAT"));
         assert!(PILOT_HELP.contains("--format json"));
+        // #9368: every env var pilot honors appears in its help.
+        assert!(PILOT_HELP.contains("RIPR_PILOT_SEAM_BUDGET"));
+        assert!(PILOT_HELP.contains("RIPR_REPO_EXPOSURE_SEAM_LIMIT"));
+        assert!(PILOT_HELP.contains("RIPR_GIT_TIMEOUT"));
         assert!(OUTCOME_HELP.starts_with("Compare before/after static evidence"));
         assert!(OUTCOME_HELP.contains("Usage: ripr outcome"));
         assert!(OUTCOME_HELP.contains("--before PATH"));
@@ -891,7 +1091,7 @@ mod tests {
         assert!(AGENT_BRIEF_HELP.starts_with("Write a bounded brief for a coding agent"));
         assert!(AGENT_BRIEF_HELP.contains("Usage: ripr agent brief"));
         assert!(AGENT_BRIEF_HELP.contains("--max-seams N"));
-        assert!(AGENT_BRIEF_HELP.contains("RIPR-SPEC-0010"));
+        assert!(AGENT_BRIEF_HELP.contains("agent-brief router's first implementation seam"));
         assert!(AGENT_PACKET_HELP.starts_with("Write a per-change handoff packet"));
         assert!(AGENT_PACKET_HELP.contains("Usage: ripr agent packet"));
         assert!(AGENT_PACKET_HELP.contains("agent-seam-packets-json"));
@@ -927,6 +1127,11 @@ mod tests {
         assert!(DOCTOR_HELP.starts_with("Diagnose the local ripr setup"));
         assert!(DOCTOR_HELP.contains("Usage: ripr doctor [--root PATH]"));
         assert!(DOCTOR_HELP.contains("--json"));
+        // #9807: help names the volatile timing fields, the byte-stable
+        // default, and the opt-in that restores them.
+        assert!(DOCTOR_HELP.contains("--timings"));
+        assert!(DOCTOR_HELP.contains("byte-stable"));
+        assert!(DOCTOR_HELP.contains("elapsed_ms"));
         assert!(DOCTOR_HELP.contains("Cargo.toml"));
         assert!(DOCTOR_HELP.contains("nested Cargo.toml in this tree"));
         assert!(DOCTOR_HELP.contains("https://rustup.rs"));
@@ -1291,9 +1496,17 @@ mod tests {
             BASELINE_PARSER_RS,
             &["parse_baseline_update_options"],
         ),
-        ("cache clear", CACHE_PARSER_RS, &["parse_clear_args"]),
+        (
+            "cache clear",
+            CACHE_PARSER_RS,
+            &["parse_clear_args", "split_root_arg"],
+        ),
         ("cache export", CACHE_PARSER_RS, &["parse_export_args"]),
-        ("cache status", CACHE_PARSER_RS, &["parse_status_args"]),
+        (
+            "cache status",
+            CACHE_PARSER_RS,
+            &["parse_status_args", "split_root_arg"],
+        ),
         (
             "calibrate cargo-mutants",
             CLI_COMMANDS_RS,
@@ -1991,6 +2204,15 @@ fn parse_demo<'a>(xs: &'a str) {
                 "--static-json",
                 "hidden alias of --repo-exposure-json",
             ),
+            // `mcp --help --all` is rejected with a route to the documented
+            // extended help (#9867); `--all` is not an accepted mcp flag, so
+            // it owns no Options entry — the help body names the supported
+            // route in the rejection text itself.
+            (
+                "mcp",
+                "--all",
+                "rejected with --help; extended help is `ripr help --all`",
+            ),
         ];
 
         for (body, commands) in &groups {
@@ -2087,7 +2309,11 @@ fn parse_demo<'a>(xs: &'a str) {
             ),
             ("gate", GATE_HELP, &["--pr-guidance", "--mode"]),
             ("doctor", DOCTOR_HELP, &["--root", "--json", "--profile"]),
-            ("capabilities", CAPABILITIES_HELP, &["--language", "--json"]),
+            (
+                "capabilities",
+                CAPABILITIES_HELP,
+                &["--language", "--json", "--markdown"],
+            ),
             ("config validate", CONFIG_HELP, &["--root"]),
             (
                 "pilot",

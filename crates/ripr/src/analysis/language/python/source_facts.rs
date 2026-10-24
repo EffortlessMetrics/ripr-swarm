@@ -7,7 +7,7 @@ use super::owners_tests::{
 use super::source_utils::{
     SourceText, is_test_file, line_for_range_end, line_for_range_start, text_for_range,
 };
-use super::{PythonOwner, PythonTest, expr_full_name};
+use super::{PythonFramework, PythonOwner, PythonTest, expr_full_name};
 use crate::domain::{LanguageId as DomainLanguageId, StaticLimitKind};
 use rustpython_parser::{
     Mode,
@@ -29,10 +29,16 @@ pub(super) struct PythonSourceFacts {
     pub(super) tests: Vec<PythonTest>,
     /// Module-level `@pytest.fixture` functions (#4563).
     pub(super) fixtures: Vec<super::PythonFixtureDef>,
+    /// Single-assert helper defs of the module (#9419).
+    pub(super) helper_module: super::helper_assertions::PythonHelperModule,
     /// The file is a `conftest.py` that installs implicit setup around the
     /// tests in its scope (#6657). A conftest that failed to parse is not
     /// flagged here; the workspace pass treats any limitation as unreadable.
     pub(super) conftest_implicit_setup: bool,
+    /// The file is a `conftest.py` declaring any fixture or `pytest_*` hook
+    /// (or installing implicit setup): a test below it may reach project code
+    /// through it (#5491 `missing_input` fails closed on its existence).
+    pub(super) conftest_declares_fixture_or_hook: bool,
     pub(super) facts: Vec<PythonSourceFact>,
     pub(super) limitations: Vec<PythonSourceLimitation>,
     pub(super) docstring_line_ranges: Vec<RangeInclusive<usize>>,
@@ -139,7 +145,7 @@ pub(super) struct PythonSourceLimitation {
 /// first when both are present so primary-of-set consumers stay pytest-first.
 /// Fail-closed: empty when no marker matches — callers must report
 /// "not detected", never guess.
-pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
+pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<PythonFramework> {
     let mut saw_pytest = root.join("pytest.ini").exists()
         || root.join("conftest.py").exists()
         // A bare pyproject.toml is PEP 517 packaging, not pytest evidence
@@ -210,10 +216,10 @@ pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
     }
     let mut frameworks = Vec::new();
     if saw_pytest {
-        frameworks.push("pytest");
+        frameworks.push(PythonFramework::Pytest);
     }
     if saw_unittest {
-        frameworks.push("unittest");
+        frameworks.push(PythonFramework::Unittest);
     }
     frameworks
 }
@@ -255,7 +261,7 @@ fn python_framework_scan_dirs(root: &Path) -> Vec<PathBuf> {
 /// Primary detected Python test framework: the first entry of
 /// [`detect_python_test_frameworks`] (pytest before unittest). Adapter
 /// repo-input still stores a single `Option`; doctor prints the full set.
-pub(crate) fn detect_python_test_framework(root: &Path) -> Option<&'static str> {
+pub(crate) fn detect_python_test_framework(root: &Path) -> Option<PythonFramework> {
     detect_python_test_frameworks(root).into_iter().next()
 }
 
@@ -618,7 +624,9 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         owners: Vec::new(),
         tests: Vec::new(),
         fixtures: Vec::new(),
+        helper_module: super::helper_assertions::PythonHelperModule::default(),
         conftest_implicit_setup: false,
+        conftest_declares_fixture_or_hook: false,
         facts: Vec::new(),
         limitations: Vec::new(),
         docstring_line_ranges: Vec::new(),
@@ -644,6 +652,17 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
             return snapshot;
         }
     };
+    // A plain test's calls to a same-file assertion helper read as the
+    // helper's asserts (#9636); extract from the rewritten source, which keeps
+    // every line number.
+    if is_test_file(file)
+        && let Some(inlined) = super::helper_inline::inline_test_helpers(source, &module.body)
+        // Defence in depth: a rewrite that fails to parse degrades to the
+        // original source (unknown), never to a file with no tests.
+        && matches!(parse_module_result(file, &inlined), Ok(Mod::Module(_)))
+    {
+        return extract_source_facts(file, &inlined);
+    }
     // One line-start index per file; every line lookup below is a binary
     // search against it rather than a rescan from byte 0 (#4495).
     let source = &SourceText::new(source);
@@ -686,6 +705,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
             body: &imports,
             definition: &[],
             standard_unittest_list: false,
+            subclassed: false,
             admission: &PythonAdmissionContext::of_module(
                 &module.body,
                 &imports,
@@ -695,10 +715,29 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         &mut snapshot.tests,
     );
     snapshot.fixtures = super::fixtures::collect_fixture_defs(file, source, &module.body, &imports);
+    snapshot.helper_module =
+        super::helper_assertions::collect_helper_module(file, source, &module.body);
     snapshot.conftest_implicit_setup = file.file_name().and_then(|name| name.to_str())
         == Some("conftest.py")
         && super::admission::conftest_installs_implicit_setup(&module.body);
+    snapshot.conftest_declares_fixture_or_hook = snapshot.conftest_implicit_setup
+        || (file.file_name().and_then(|name| name.to_str()) == Some("conftest.py")
+            && (!snapshot.fixtures.is_empty()
+                || declares_renamed_or_any_fixture(&module.body)
+                || super::admission::module_level_effects(source, &module.body)
+                || module.body.iter().any(|statement| match statement {
+                    Stmt::FunctionDef(function) => function.name.as_str().starts_with("pytest_"),
+                    Stmt::AsyncFunctionDef(function) => {
+                        function.name.as_str().starts_with("pytest_")
+                    }
+                    _ => false,
+                })));
     with_module_rebinding(source, &module.body, &mut snapshot.tests);
+    super::test_activation::apply_module_controls(&module.body, &imports, &mut snapshot.tests);
+    let implicit_reach = super::admission::module_implicit_reach(source, &module.body, &imports);
+    for test in &mut snapshot.tests {
+        test.constant_rebinding.implicit_reach |= implicit_reach;
+    }
     super::oracles::unittest_list::withhold_modified_oracles(&mut snapshot.tests);
     collect_source_facts_from_statements(
         file,
@@ -1984,5 +2023,22 @@ fn contains_word(line: &str, word: &str) -> bool {
         let after = line[start + word.len()..].chars().next();
         let is_ident = |c: char| c.is_alphanumeric() || c == '_';
         !before.is_some_and(is_ident) && !after.is_some_and(is_ident)
+    })
+}
+
+/// A top-level def decorated as a fixture of any shape. `collect_fixture_defs`
+/// records only plain fixtures, so a renamed one
+/// (`@pytest.fixture(name="tmp_path")`) would otherwise leave a conftest
+/// looking fixture-free while it overrides a built-in fixture.
+fn declares_renamed_or_any_fixture(statements: &[Stmt]) -> bool {
+    statements.iter().any(|statement| {
+        let decorators = match statement {
+            Stmt::FunctionDef(function) => &function.decorator_list,
+            Stmt::AsyncFunctionDef(function) => &function.decorator_list,
+            _ => return false,
+        };
+        super::owners_tests::decorator_names(decorators)
+            .iter()
+            .any(|name| name.ends_with("fixture"))
     })
 }

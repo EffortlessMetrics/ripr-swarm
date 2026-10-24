@@ -513,12 +513,76 @@ pub(super) fn oracle_is_pure_len_aggregate(oracle: &str, changed_literals: &str)
     true
 }
 
+/// Per-finding state that does not depend on the related rows: the test index
+/// and the owner's import-alias locals across every test. Built once so a
+/// caller that aligns many rows separately does not rebuild it per row.
+pub(super) struct AlignmentPrep<'a> {
+    lookup: TestLookup<'a>,
+    alias_tokens: Vec<String>,
+}
+
+impl<'a> AlignmentPrep<'a> {
+    pub(super) fn new(owner: &PythonOwner, all_tests: &'a [PythonTest]) -> Self {
+        let mut alias_tokens: Vec<String> = all_tests
+            .iter()
+            .flat_map(|test| owner_import_aliases(owner, test))
+            .collect();
+        alias_tokens.retain(|token| token.len() >= 2);
+        Self {
+            lookup: TestLookup::new(all_tests),
+            alias_tokens,
+        }
+    }
+}
+
+/// Import aliases of the owner: `from m import owner as alias` makes the test
+/// assert on `alias(...)`, which still observes the owner's output. A method
+/// owner's only importable alias is its class's, which rule 9 does not count
+/// as identity alone; an aliased class reaches the bound-receiver branch
+/// instead (`from m import Cart as C`, `C().total()`).
+fn owner_import_aliases(owner: &PythonOwner, test: &PythonTest) -> Vec<String> {
+    let is_method_owner = matches!(
+        owner.owner_kind,
+        Some(OwnerKind::Method | OwnerKind::ClassMethod)
+    );
+    if is_method_owner || super::test_activation::activation_control(test).is_some() {
+        return Vec::new();
+    }
+    let owner_simple = owner
+        .qualified_name
+        .rsplit('.')
+        .next()
+        .unwrap_or(owner.name.as_str());
+    test.imports
+        .iter()
+        .filter(|import| {
+            // Free-function alias: require module identity, else a same-named
+            // function aliased from an unrelated module credits a false-`exposed`.
+            (import.imported == owner_simple || import.imported == owner.name)
+                && import_source_module_matches_owner(import, owner, &test.file)
+        })
+        .filter(|import| import.alias.len() >= 2)
+        .map(|import| import.alias.clone())
+        .collect()
+}
+
 pub(super) fn classify_sink_alignment_with_old(
     owner: &PythonOwner,
     line_text: &str,
     old_line_text: Option<&str>,
     related: &[RelatedTest],
     all_tests: &[PythonTest],
+) -> SinkAlignment {
+    let prep = AlignmentPrep::new(owner, all_tests);
+    classify_sink_alignment_prepared(owner, line_text, old_line_text, related, &prep)
+}
+
+pub(super) fn classify_sink_alignment_prepared(
+    owner: &PythonOwner,
+    line_text: &str,
+    old_line_text: Option<&str>,
+    related: &[RelatedTest],
+    prep: &AlignmentPrep<'_>,
 ) -> SinkAlignment {
     // Whether the changed line is genuinely a control-flow construct gates the
     // empty-token-delta fallback below: only a control-flow change may credit
@@ -582,17 +646,17 @@ pub(super) fn classify_sink_alignment_with_old(
     // behavior family (a `pytest.raises` for a changed `return`) never
     // credits, whichever branch its text would pass.
     let focus = PythonAssertionFocus::for_change(family, line_text, old_line_text);
-    let test_lookup = TestLookup::new(all_tests);
+    let test_lookup = &prep.lookup;
     let mut units = alignment_units(
         &strong_tests,
-        &test_lookup,
+        test_lookup,
         error_path,
         &focus,
         effect.as_ref(),
     );
     units.extend(alignment_units(
         &mock_tests,
-        &test_lookup,
+        test_lookup,
         error_path,
         &focus,
         effect.as_ref(),
@@ -656,33 +720,8 @@ pub(super) fn classify_sink_alignment_with_old(
         } else {
             None
         };
-    // Import aliases of the owner: `from m import owner as alias` makes the test
-    // assert on `alias(...)`, which still observes the owner's output.
-    let owner_simple = owner
-        .qualified_name
-        .rsplit('.')
-        .next()
-        .unwrap_or(owner.name.as_str());
-    // A method owner's only importable alias is its class's, which rule 9 does
-    // not count as identity alone; an aliased class reaches the bound-receiver
-    // branch instead (`from m import Cart as C`, `C().total()`).
-    let owner_aliases_in = |test: &PythonTest| -> Vec<String> {
-        if is_method_owner || super::test_activation::activation_control(test).is_some() {
-            return Vec::new();
-        }
-        test.imports
-            .iter()
-            .filter(|import| {
-                // Free-function alias: require module identity, else a same-named
-                // function aliased from an unrelated module credits a false-`exposed`.
-                (import.imported == owner_simple || import.imported == owner.name)
-                    && import_source_module_matches_owner(import, owner, &test.file)
-            })
-            .filter(|import| import.alias.len() >= 2)
-            .map(|import| import.alias.clone())
-            .collect()
-    };
-    let mut alias_tokens: Vec<String> = all_tests.iter().flat_map(owner_aliases_in).collect();
+    let owner_aliases_in = |test: &PythonTest| owner_import_aliases(owner, test);
+    let mut alias_tokens: Vec<String> = prep.alias_tokens.clone();
     let mut change_only = change_tokens.clone();
     identity_tokens.retain(|token| token.len() >= 2);
     let method_name_token = method_name_token.filter(|token| token.len() >= 2);
@@ -760,7 +799,7 @@ pub(super) fn classify_sink_alignment_with_old(
             owner_class_token.as_ref(),
             method_name_token.as_ref(),
             &[unit.related],
-            &test_lookup,
+            test_lookup,
         )
     });
     // The relation above reads the whole test body; the assertion itself must
@@ -782,13 +821,13 @@ pub(super) fn classify_sink_alignment_with_old(
     // is not identity-bearing — the false-`exposed` guard for free functions.
     let free_fn_module_identity = per_related_test(|unit: &AlignmentUnit<'_>| {
         !is_method_owner
-            && strong_test_imports_owner_from_module(&[unit.related], &test_lookup, owner)
+            && strong_test_imports_owner_from_module(&[unit.related], test_lookup, owner)
     });
     // Method-owner identity is class and method name; a test whose imports
     // name a same-named module of another project uses that project's class.
     let method_owner_identity = per_related_test(|unit: &AlignmentUnit<'_>| {
         is_method_owner
-            && !strong_tests_import_only_rival_modules(owner, &[unit.related], &test_lookup)
+            && !strong_tests_import_only_rival_modules(owner, &[unit.related], test_lookup)
     });
     // Owner output observed through a module-identified call (#4567): the
     // assertion calls the owner through its module (`utils.sign(0) == 0`,
@@ -907,8 +946,17 @@ pub(super) fn classify_sink_alignment_with_old(
         .chain(alias_tokens.iter())
         .cloned()
         .collect();
+    // Helper substitution supplies a comparison, not proof that a coroutine
+    // or generator body ran. Cover every credit branch, including method-name
+    // credit for writes outside ChangedEffect's modeled channels.
+    let helper_owner_supported = |unit: &AlignmentUnit<'_>| {
+        !unit.helper_derived
+            || (!owner.decorators.iter().any(|name| name == "async_def")
+                && !owner.term_facts.may_yield())
+    };
     let gates_ok = |unit: &AlignmentUnit<'_>| {
-        field_construction_credit_ok(unit)
+        helper_owner_supported(unit)
+            && field_construction_credit_ok(unit)
             && fstring_credit_ok(unit)
             && !expected_computed_through_owner(&unit.text, &owner_reference_tokens)
             && !owner_call_only_inside_opaque_wrapper(&unit.text, &owner_reference_tokens)
@@ -928,10 +976,11 @@ pub(super) fn classify_sink_alignment_with_old(
         }))
     });
     let effect_observed = |unit: &AlignmentUnit<'_>| {
-        effect_reads(unit)
-            .as_ref()
-            .as_ref()
-            .is_some_and(|reads| reads.observed_by(&unit.text, unit.line))
+        helper_owner_supported(unit)
+            && effect_reads(unit)
+                .as_ref()
+                .as_ref()
+                .is_some_and(|reads| reads.observed_by(&unit.text, unit.line))
             && field_construction_credit_ok(unit)
             && fstring_credit_ok(unit)
             && !assertion_calls_stand_in(unit, owner)
@@ -1067,6 +1116,8 @@ struct AlignmentUnit<'a> {
     kind: OracleKind,
     /// A mock assertion admitted only to observe a changed call's arguments.
     effect_only: bool,
+    /// Origin of the actual assertion, independent of its graded strength.
+    helper_derived: bool,
 }
 
 /// Every strong assertion of every strong related test, in related-test order
@@ -1103,6 +1154,7 @@ fn alignment_units<'a>(
                     line: Some(assertion.line),
                     kind: assertion.oracle_kind.clone(),
                     effect_only: !strong,
+                    helper_derived: assertion.helper_derived,
                 })
             }));
         }
@@ -1121,6 +1173,14 @@ fn alignment_units<'a>(
                 line: None,
                 kind: related.oracle_kind.clone(),
                 effect_only: false,
+                // A legacy reported oracle must not wash out known helper
+                // origin or borrow it from another assertion in this test.
+                helper_derived: test.is_some_and(|test| {
+                    test.assertions.iter().any(|assertion| {
+                        assertion.helper_derived
+                            && (assertion.text == *text || assertion.gate_text == *text)
+                    })
+                }),
             });
         }
     }
@@ -1165,7 +1225,7 @@ pub(super) fn function_scope_stand_in(test: &PythonTest, name: &str, owner: &Pyt
 /// (`name := ...`), which binds in the enclosing function scope wherever the
 /// expression sits. Textual on purpose: a comment or string match only
 /// withholds credit.
-fn binds_by_walrus(body_text: &str, name: &str) -> bool {
+pub(super) fn binds_by_walrus(body_text: &str, name: &str) -> bool {
     body_text.match_indices(name).any(|(idx, _)| {
         let before_ok = body_text[..idx]
             .chars()
@@ -1182,7 +1242,7 @@ fn binds_by_walrus(body_text: &str, name: &str) -> bool {
 
 /// Whether a `match` case pattern captures `name` (`case fee:`,
 /// `case [*fee]`, `case {**fee}`, `case Cls() as fee`).
-fn pattern_binds_name(pattern: &ast::Pattern, name: &str) -> bool {
+pub(super) fn pattern_binds_name(pattern: &ast::Pattern, name: &str) -> bool {
     let named =
         |bound: &Option<ast::Identifier>| bound.as_ref().is_some_and(|id| id.as_str() == name);
     let any =
@@ -1374,4 +1434,68 @@ fn dedent_python(source: &str) -> String {
         .map(|line| line.get(min_indent..).unwrap_or(line))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[cfg(test)]
+mod helper_origin_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    #[test]
+    fn helper_origin_survives_reported_oracle_fallback_without_tainting_raw_assertions()
+    -> Result<(), String> {
+        let file = PathBuf::from("tests/test_stats.py");
+        let source = "from src.stats import Stats\n\ndef check_writes(obj, want):\n    assert obj.writes >= want\n\ndef test_writes():\n    stats = Stats()\n    check_writes(stats, 0)\n    assert stats.hits >= 0\n";
+        let facts = super::super::source_facts::extract_source_facts(&file, source);
+        let mut tests = facts.tests;
+        let modules = BTreeMap::from([(file, facts.helper_module)]);
+        super::super::helper_assertions::apply_helper_assertions(&mut tests, &modules);
+        assert_eq!(tests.len(), 1);
+        let test = &tests[0];
+        let helper = test
+            .assertions
+            .iter()
+            .find(|assertion| assertion.helper_derived)
+            .ok_or("the existing helper pass must supply the control assertion")?;
+        let raw = test
+            .assertions
+            .iter()
+            .find(|assertion| !assertion.helper_derived)
+            .ok_or("an unrelated raw assertion must remain in the same test")?;
+        let lookup = TestLookup::new(&tests);
+        for (oracle, expected_helper) in [
+            (helper.text.clone(), true),
+            (helper.gate_text.clone(), true),
+            (raw.text.clone(), false),
+        ] {
+            // A legacy reported row can retain stronger grading than current
+            // source facts. Neither weak source assertion enters the ordinary
+            // unit list, so the reported-oracle fallback must preserve origin.
+            let related = RelatedTest {
+                name: test.name.clone(),
+                file: test.file.clone(),
+                line: test.line,
+                oracle: Some(oracle),
+                oracle_kind: OracleKind::ExactValue,
+                oracle_strength: OracleStrength::Strong,
+                relation_reason: None,
+                relation_confidence: None,
+                miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
+            };
+            let units = alignment_units(
+                &[&related],
+                &lookup,
+                false,
+                &PythonAssertionFocus::for_family(ProbeFamily::Predicate),
+                None,
+            );
+            assert_eq!(units.len(), 1);
+            assert_eq!(units[0].line, None, "control must reach fallback");
+            assert_eq!(units[0].helper_derived, expected_helper);
+        }
+        Ok(())
+    }
 }

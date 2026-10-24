@@ -1,0 +1,163 @@
+name: Windows Advisory Shards
+
+# Manual sharded form of the Windows workspace test (#9272). The single-job
+# lane in windows-advisory.yml needs a 75-minute step cap for one
+# `cargo test --workspace`; this splits the same tests with nextest's
+# deterministic partitioning so each shard is a separate, shorter job and a
+# failing test names its shard. It is advisory evidence only: it does not
+# replace the required Linux gates and is not wired to pull_request events.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-shard:
+    name: windows-shard-${{ matrix.shard }}
+    runs-on: windows-latest
+    timeout-minutes: 80
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.95
+        with:
+          toolchain: 1.95.0
+
+      - name: Install CI tools
+        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: nextest
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: ripr-windows-advisory-1.95-${{ runner.os }}
+          save-if: false
+
+      - name: Prepare locked owner-return fixture dependencies
+        run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
+
+      - name: Prepare locked JSON owner-return fixture dependencies
+        run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
+
+      # The policy tests spawn `cargo test --no-run -p xtask` themselves. That
+      # invocation unifies features differently from `nextest --workspace`, so on a
+      # cold runner it rebuilds about six minutes of dependencies inside a test
+      # (and the 6-minute kill fires). Running the same spawns here warms them.
+      - name: Warm the cargo builds the policy tests spawn
+        timeout-minutes: 20
+        shell: bash
+        run: cargo xtask check-covered-by
+
+      # File redirect, not `| tee`: see windows-advisory.yml. The shard's real
+      # cargo status is recorded and replayed so a failed test still fails the
+      # job, and the log is uploaded even when it does.
+      #
+      # Shard 3 of run 39854834481 outlived GNU `timeout` and the step cap and the
+      # job was cancelled with no log. The cause is not established. nextest now
+      # runs in the background with a watchdog scoped to its own process tree:
+      # after 44 minutes it records that subtree's command lines and force-kills
+      # it by native PID. This is intended to leave a log and a status to upload;
+      # only a forced stall on the runner proves it. The watchdog polls every 10
+      # seconds and exits when nextest does, so nothing outlives the step.
+      # The MSYS PID of the background job is not a native PID. Only a PID read from
+      # /proc/<pid>/winpid reaches taskkill; with no mapping the watchdog records
+      # that and kills the MSYS job only.
+      - name: Run workspace tests (shard ${{ matrix.shard }} of 4)
+        timeout-minutes: 55
+        shell: bash
+        run: |
+          mkdir -p target
+          shard=${{ matrix.shard }}
+          cargo nextest run --profile windows-advisory --workspace --no-fail-fast --partition count:$shard/4 > target/shard-$shard.log 2>&1 &
+          nextest_pid=$!
+          winpid=$(cat "/proc/$nextest_pid/winpid" 2> /dev/null | tr -cd 0-9 || true)
+          (
+            set +e
+            for _ in $(seq 1 264); do
+              sleep 10
+              kill -0 "$nextest_pid" 2> /dev/null || exit 0
+            done
+            if [ -z "$winpid" ]; then
+              echo "fired unmapped msys_pid=$nextest_pid; no native PID, no taskkill" > target/shard-$shard.watchdog
+              kill -9 "$nextest_pid" > /dev/null 2>&1
+            else
+              echo "fired winpid=$winpid" > target/shard-$shard.watchdog
+              powershell -NoProfile -Command "\$root = $winpid; \$all = Get-CimInstance Win32_Process; \$keep = @(\$root); do { \$new = \$all | Where-Object { \$keep -contains \$_.ParentProcessId -and \$keep -notcontains \$_.ProcessId }; \$keep += \$new.ProcessId } while (\$new); \$all | Where-Object { \$keep -contains \$_.ProcessId } | Select-Object ProcessId,ParentProcessId,Name,CommandLine | Format-List" > target/shard-$shard.processes 2>&1
+              taskkill //F //T //PID "$winpid" > /dev/null 2>&1
+            fi
+          ) > /dev/null 2>&1 &
+          watchdog_pid=$!
+          set +e
+          wait "$nextest_pid"; status=$?
+          wait "$watchdog_pid"
+          if [ -f target/shard-$shard.watchdog ]; then status=124; fi
+          printf '%s\n' "$status" > target/shard-$shard.status
+          cat target/shard-$shard.log
+          exit "$status"
+
+      # nextest colors its status rows; strip the escapes for the filter only, the
+      # uploaded log stays raw.
+      - name: Summarize failures
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          { echo "### Shard ${{ matrix.shard }} of 4"; echo "cargo nextest exit status: $(cat target/shard-${{ matrix.shard }}.status 2>/dev/null || echo missing)"; echo; echo '```'; sed -E 's/\x1b\[[0-9;]*m//g' target/shard-${{ matrix.shard }}.log 2>/dev/null | grep -aE "^\s*(FAIL|SIGABRT|SIGSEGV|TIMEOUT|LEAK)|Summary" | sort -u | head -80; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload shard logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-shard-${{ matrix.shard }}
+          path: |
+            target/shard-${{ matrix.shard }}.log
+            target/shard-${{ matrix.shard }}.status
+            target/shard-${{ matrix.shard }}.watchdog
+            target/shard-${{ matrix.shard }}.processes
+          if-no-files-found: warn
+          retention-days: 7
+
+  windows-doctests:
+    name: windows-doctests
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.95
+        with:
+          toolchain: 1.95.0
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: ripr-windows-advisory-1.95-${{ runner.os }}
+          save-if: false
+
+      - name: Run workspace doctests
+        timeout-minutes: 30
+        shell: bash
+        run: |
+          mkdir -p target; set +e; cargo test --workspace --doc --no-fail-fast > target/windows-doctests.log 2>&1; status=$?; printf '%s\n' "$status" > target/windows-doctests.status; cat target/windows-doctests.log; exit "$status"
+
+      - name: Upload doctest logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-doctests
+          path: |
+            target/windows-doctests.log
+            target/windows-doctests.status
+          if-no-files-found: warn
+          retention-days: 7

@@ -26,12 +26,14 @@ pub(crate) mod index_build_probe {
     }
 }
 mod doctests;
+mod execution_context;
 pub(crate) use build::CachedRustIndex;
 use build::MissAttribution;
 #[cfg(test)]
 pub(crate) use build::streamed_source_bytes;
 pub(crate) use build::{RUST_SOURCE_NOT_UTF8_REASON, rust_source_text};
 pub(crate) use doctests::SYNTHETIC_NAME as DOCTEST_FUNCTION_NAME;
+pub(crate) use execution_context::ExecutionContext;
 pub(crate) mod cfg_predicates;
 pub(crate) mod drop_in;
 mod harness_registry;
@@ -50,6 +52,11 @@ pub(crate) mod member_crates;
 mod model;
 mod parameterized_tests;
 mod role_composition;
+
+#[cfg(test)]
+pub(crate) fn compose_fixture_source_roles(index: &mut RustIndex, root: &Path) {
+    role_composition::compose_index_source_roles(index, root);
+}
 mod test_helpers;
 mod test_styles;
 pub(crate) use test_styles::BUILT_IN_TEST_ATTRIBUTE_PATHS;

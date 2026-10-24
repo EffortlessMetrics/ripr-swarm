@@ -255,7 +255,7 @@ that needs the tuning.
 | `RIPR_REVIEW_GUIDANCE_MAX_PAYLOAD_BYTES` | `268435456` (256 MiB) | Sum of changed diff bytes and the metadata source-byte total for the same unique input set. The shared generated-source classifier also inspects bounded headers/vendor markers, respecting handwritten-file declarations and stronger exclusions. The few-giant-files admission axis; a source-byte count is not the expanded index's memory usage. The same named failure and receipt contract applies before owner indexing or workspace loading. Raise only after runner measurement, or reduce corpus and/or diff bytes. Positive integer required; invalid values fail closed except for help. This preflight does not bound the earlier Git diff capture itself (#5000). |
 | `RIPR_REPO_EXPOSURE_SEAM_LIMIT` | `10000` | Maximum seams a full-repo `repo-exposure` analysis classifies before capping. When the cap fires, the run reports `run_status = "seam_limit_applied"` with a `limitations[]` entry naming the analyzed and total seam counts, this variable, and a repair route. Set to `0` to analyze all seams; any other value that is not a positive integer exits `2` and names the variable. `ripr doctor` reports this cap under its known limitations. |
 | `RIPR_PILOT_SEAM_BUDGET` | `2000` | Maximum seams written to `ripr pilot` artifacts (`repo-exposure.json`, `agent-seam-packets.json`). Set to `0` to disable the budget and write all seams, which may produce very large files; any other value that is not a positive integer exits `2` and names the variable. When the budget applies, both artifacts carry a `limitations[]` disclosure naming the variable and a repair route. |
-| `RIPR_CHECK_FINDINGS_BYTES` | `1000000` | Byte budget for the findings array in `ripr check --format json`. When it engages, the document carries a `limited_findings_bound` run limitation naming the variable and `analysis_outcome.document_complete: false` with rendered/total counts. Set to `0` to remove the cap; an unparseable value fails the run. |
+| `RIPR_CHECK_FINDINGS_BYTES` | `1000000` | Byte budget for the findings array in `ripr check --format json`. When it engages, the document carries a `limited_findings_bound` run limitation naming the variable and `analysis_outcome.document_complete: false` with rendered/total counts. The budget keeps the highest-priority findings (candidate-current, then the strongest gap classes) and the limitation names the dropped counts per class and file. Set to `0` to remove the cap; an unparseable value fails the run. |
 | `RIPR_PYTHON_MAX_WORKSPACE_FILES` | `800` | Maximum `.py` files discovered in one diff-mode Python walk; exceeding it produces a named limitation. Invalid or zero values use the default bound. |
 | `RIPR_PYTHON_MAX_FILE_READ_BYTES` | `16777216` (16 MiB) | Maximum bytes accepted from one Python source file; an oversized file is refused with a named limitation. Invalid or zero values use the default bound. |
 | `RIPR_PYTHON_MAX_WORKSPACE_READ_BYTES` | `67108864` (64 MiB) | Aggregate Python source-read budget per analysis run. Invalid or zero values use the default bound. |
@@ -421,7 +421,7 @@ ripr context [--root PATH] [--base REV] [--worktree | --diff PATH] [--from PATH]
 ### `ripr doctor`
 
 ```text
-ripr doctor [--root PATH] [--json] [--profile analysis|source-build]
+ripr doctor [--root PATH] [--json] [--timings] [--profile analysis|source-build]
 ```
 
 Reports local tooling and workspace shape. Takes no analysis-shaping flags.
@@ -440,6 +440,12 @@ The JSON report and the human command share the root-directory, `Cargo.toml`,
 configuration, `git`/`cargo`/`rustc`, and language-runtime checks. A `pass`
 report exits zero; a `fail` report exits non-zero. This is machine-readable
 setup evidence, not a release or analysis gate decision.
+
+The default `--json` document is byte-stable across runs that changed nothing:
+the volatile timing fields (the top-level `elapsed_ms` and `segments`, and the
+per-entry `elapsed_ms` on checks and runtime probes) are omitted. Pass
+`--timings` with `--json` to include them; see
+[Output schema](OUTPUT_SCHEMA.md#doctor-volatile-timing-fields-and-stable-output-9807).
 
 The JSON report includes a `runtime_probes` array. A primary runtime probe is
 `required: true` only when its language is enabled in the effective
@@ -477,11 +483,16 @@ ripr config validate --root .
 ```
 
 This uses the same ancestor-aware loader as analysis. A valid file prints
-`✓ ripr.toml valid`; a malformed or policy-invalid file returns its
-path-qualified validation error. A missing `ripr.toml` prints
-`✓ no ripr.toml found; built-in defaults apply` and follows the normal
-built-in-defaults path, including any existing root-level language detection
-rules, because that remains the normal first-run configuration.
+`✓ ripr.toml valid (<path>)`, naming the discovered file so an ancestor's
+config cannot silently stand in for a missing local one; a malformed or
+policy-invalid file returns its path-qualified validation error. A missing
+`ripr.toml` prints `✓ no ripr.toml found; built-in defaults apply` and
+follows the normal built-in-defaults path, including any existing root-level
+language detection rules, because that remains the normal first-run
+configuration. When those detection rules would refuse the root (for
+example, Python project markers in a binary built without the `lang-python`
+feature), validate still succeeds and carries the detection note in its
+output, because there is no user-written file to fail.
 
 ### `ripr lsp`
 

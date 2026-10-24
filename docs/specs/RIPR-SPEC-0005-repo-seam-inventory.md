@@ -146,6 +146,13 @@ not restore the disproven relation.
 Full evidence carries the indexed test target. Compact evidence intentionally
 omits target details and preserves the five stage states and contradiction count.
 Classified full and compact cache generations change with these semantics.
+Persisted entries also bind the producing analyzer's source identity and compiled
+language feature set. Equal numeric generations do not authorize reuse between
+different repair builds or language configurations. Admission checks that identity
+inside file-fact envelopes, classified envelopes, shard manifests and individual
+shards, even if old bytes are copied into a current key's location. A matching
+current entry remains reusable; old schema generations still invalidate
+independently of analyzer identity.
 Local binding/shadowing and duplicate-import residuals remain separate open work
 on #4680; these controls do not establish general extraction invariance or the
 closure of follow-on #4681 through #4683.
@@ -278,6 +285,12 @@ discriminator remains missing, and which assertion upgrade would improve the
 seam when the current shape is broad, smoke-only, or unknown. These semantics
 do not change `oracle_kind`, `oracle_strength`, relation confidence, or static
 classification; they make the existing oracle facts actionable.
+
+A standard-crate glob that is a direct item of an inline module is resolved
+against that module's own items only, so `mod core { pub use core::*; }` does
+not shadow the real root and no longer makes every assertion macro ambiguous
+workspace-wide; a binding of the root name in that module, or an item-position
+macro call that may emit one, keeps the whole-file refusal.
 
 ### Constructor-field observation linkage
 
