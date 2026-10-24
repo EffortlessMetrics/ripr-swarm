@@ -603,6 +603,8 @@ Rust family coverage for same-method-other-impl identity (#4760):
 | true owner constructed and observed | `rust_same_method_owner_type_positive_control` | `exposed` (`direct_owner_call`) |
 | workspace-trait impl no source names, beside a same-file test of another function | `rust_unreached_workspace_trait_impl_borrows_no_oracle` | `no_static_path` (only a foreign trait's impl is dispatched without spelling its method; #9169) |
 
+The foreign-import scan that decides whether a bare trait name is the workspace's masks comments and string and character literals before reading `use` items (the shared `mask_comments_and_strings`), so a `//` or `/*` inside a literal cannot hide `use std::ops::Add;` (#10050). Unit tests in `classify/reach.rs` pin both the per-owner and batch unseen-reach paths.
+
 Rust family coverage for free-function receiver identity (#7006):
 
 | family | corpus case | expected state |

@@ -1,5 +1,6 @@
 use super::super::facts::FunctionContainer;
 use super::super::rust_index::{FunctionSummary, RustIndex, TestSummary};
+use crate::analysis::extract::mask_comments_and_strings;
 use crate::domain::{
     CALLEE_ONLY_REACH_PREFIX, Confidence, RelationReason, StageEvidence, StageState,
 };
@@ -379,15 +380,16 @@ fn implements_trait_in(
 
 /// Each identifier of every `use` item whose path starts outside the
 /// workspace (not `crate`, `self` or `super`), so a name imported from
-/// `std::ops` or a dependency shows up here. Comments are masked first and
-/// any whitespace may follow `use`; a `use` inside another word (`reuse`,
-/// `because use`) advances only past the matched keyword. This is a text scan,
-/// not a parser: a `//` or `/*` inside a string literal is read as a comment
-/// and can hide an import after it. A hidden import is not recorded as
-/// foreign, so a bare same-named trait reads as the workspace's and the
-/// finding fails toward `no_static_path`.
+/// `std::ops` or a dependency shows up here. Comments and string and
+/// character literals are masked first with the shared lexical masker
+/// ([`mask_comments_and_strings`]: nested block comments, raw, byte and C
+/// strings, escapes, and lifetimes kept as code), so a `//` or `/*` inside a
+/// literal neither hides a later import nor makes a quoted `use` count. Any
+/// whitespace may follow `use`; a `use` inside another word (`reuse`,
+/// `because use`) advances only past the matched keyword. This is still a
+/// text scan, not a parser.
 fn foreign_imported_names(source: &str) -> Vec<String> {
-    let masked = mask_comments(source);
+    let masked = mask_comments_and_strings(source);
     let is_ident = |c: char| c.is_alphanumeric() || c == '_';
     let mut names = Vec::new();
     let mut from = 0;
@@ -416,43 +418,6 @@ fn foreign_imported_names(source: &str) -> Vec<String> {
         from = end;
     }
     names
-}
-
-/// `source` with every line and block comment replaced by spaces (newlines
-/// kept), so keyword scans never read commented-out code.
-fn mask_comments(source: &str) -> String {
-    let mut out = String::with_capacity(source.len());
-    let mut chars = source.chars().peekable();
-    let mut block_depth = 0usize;
-    while let Some(c) = chars.next() {
-        let next = chars.peek().copied();
-        if block_depth > 0 {
-            if c == '*' && next == Some('/') {
-                chars.next();
-                block_depth -= 1;
-                out.push_str("  ");
-            } else if c == '/' && next == Some('*') {
-                chars.next();
-                block_depth += 1;
-                out.push_str("  ");
-            } else {
-                out.push(if c == '\n' { '\n' } else { ' ' });
-            }
-        } else if c == '/' && next == Some('/') {
-            while chars.peek().is_some_and(|&c| c != '\n') {
-                chars.next();
-                out.push(' ');
-            }
-            out.push(' ');
-        } else if c == '/' && next == Some('*') {
-            chars.next();
-            block_depth = 1;
-            out.push_str("  ");
-        } else {
-            out.push(c);
-        }
-    }
-    out
 }
 
 /// Parser-backed owner ids carry their impl segment
@@ -1015,6 +980,91 @@ mod tests {
         assert!(!imports("/* /* */ use std::ops::Add; */ fn f() {}\n"));
         // A foreign import after a commented one still counts.
         assert!(imports("/* use crate::Add; */ use std::ops::Add;\n"));
+    }
+
+    /// #10050: the `use` scan masks string and character literals as well as
+    /// comments, so a comment marker inside a literal never hides a later
+    /// import, and a `use` quoted in a literal is not an import.
+    #[test]
+    fn foreign_imports_survive_comment_markers_inside_literals() {
+        let imports = |source: &str| foreign_imported_names(source).contains(&"Add".to_string());
+        let after = "use std::ops::Add;\n";
+        // The issue's example.
+        assert!(imports(&format!("const LABEL: &str = \"//\"; {after}")));
+        assert!(imports(&format!("const L: &str = \"/*\"; {after}")));
+        assert!(imports(&format!("const L: &str = r#\"//\"#; {after}")));
+        assert!(imports(&format!(
+            "const L: &str = r##\"a \"# // b\"##; {after}"
+        )));
+        assert!(imports(&format!("const L: &[u8] = b\"//\"; {after}")));
+        assert!(imports(&format!("const L: &[u8] = br#\"/*\"#; {after}")));
+        assert!(imports(&format!("const L: &str = \"a\\\"//\"; {after}")));
+        assert!(imports(&format!(
+            "const C: char = '\"'; const D: &str = \"//\"; {after}"
+        )));
+        assert!(imports(&format!(
+            "const C: char = '/'; const D: char = '\\''; {after}"
+        )));
+        // A lifetime is not a character literal: the apostrophe must not open
+        // a literal that swallows the import.
+        assert!(imports(&format!(
+            "fn f<'a>(x: &'a str) -> &'a str {{ x }} {after}"
+        )));
+        assert!(imports(&format!(
+            "struct S<'a>(&'a str); const L: &str = \"//\"; {after}"
+        )));
+        // A nested block comment closes only at its own end.
+        assert!(imports(&format!("/* a /* b */ // c */ {after}")));
+        assert!(!imports("/* a /* b */ use std::ops::Add; */ fn f() {}\n"));
+        // A quoted `use` is text, not an import.
+        assert!(!imports("const L: &str = \"use std::ops::Add;\";\n"));
+        assert!(!imports("const L: &str = r#\"use std::ops::Add;\"#;\n"));
+    }
+
+    /// #10050: a `//` or `/*` inside a literal before `use std::ops::Add;`
+    /// must not make a bare `impl Add` read as the workspace's `Add`, on the
+    /// per-owner and the batch path alike.
+    #[test]
+    fn a_literal_before_a_foreign_import_does_not_hide_it_from_either_path() {
+        let mut declaration = function("m");
+        declaration.item.container = FunctionContainer::Trait {
+            trait_name: "Add".to_string(),
+        };
+        let sources = [
+            "const LABEL: &str = \"//\"; use std::ops::Add;\n",
+            "const LABEL: &str = \"/*\"; use std::ops::Add;\n",
+            "const LABEL: &str = r#\"//\"#;\nuse std::ops::Add;\n",
+            "const LABEL: &[u8] = b\"//\"; use std::ops::Add;\n",
+            "fn f<'a>(x: &'a str) -> &'a str { x }\nuse std::ops::Add;\n",
+            "/* /* */ // */ use std::ops::Add;\n",
+        ];
+        for source in sources {
+            let mut owner = function("add");
+            owner.id = SymbolId("src/ops.rs::impl Add for Num::add".to_string());
+            owner.file = PathBuf::from("src/ops.rs");
+            owner.item.container = FunctionContainer::TraitImpl {
+                trait_path: "Add".to_string(),
+                self_ty: "Num".to_string(),
+            };
+            let index = RustIndex::from_owned(OwnedRustIndex {
+                files: BTreeMap::from([(
+                    PathBuf::from("src/ops.rs"),
+                    FileFacts {
+                        path: PathBuf::from("src/ops.rs"),
+                        source: source.into(),
+                        ..FileFacts::default()
+                    },
+                )]),
+                functions: vec![declaration.clone(), owner.clone()],
+                ..Default::default()
+            });
+            // The operator `+` runs `add` without spelling it.
+            assert!(owner_may_be_reached_unseen(&owner, &index), "{source}");
+            assert!(
+                UnseenReachNames::build(&index).may_reach_unseen(&owner),
+                "{source}"
+            );
+        }
     }
 
     /// #9169 review: dropping the trait allowance keeps the ordinary ones. A
