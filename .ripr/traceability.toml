@@ -13385,6 +13385,22 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_helper_credits_its_assertion_to_the_calling_test",
+  "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_helper_credits_a_block_closure_and_a_later_position",
+  "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_helpers_that_may_not_observe_the_closure_grant_nothing",
+  "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_credit_covers_generic_bounds_and_refuses_two_invoked_callbacks",
+  "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_credit_orders_same_line_statements_by_source_position",
+  "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_credit_ignores_an_unrelated_nested_fn_exit_in_the_test",
+  "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_credit_keeps_a_return_after_an_executed_helper_call",
+  "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_credit_keeps_benign_transparent_macro_arguments",
+  "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_credit_accepts_an_assertion_unrelated_to_the_closure_result",
+  "crates/ripr/src/analysis/facts/test_helpers/tests.rs::closure_callback_credit_does_not_reach_helper_callbacks_in_another_module",
+  "crates/ripr/src/analysis/syntax/ra/closure_callbacks/tests.rs::closure_literal_positions_require_a_call_that_runs_with_the_closure",
+  "crates/ripr/src/analysis/syntax/ra/closure_callbacks/tests.rs::invoked_parameters_are_plain_singly_bound_statement_level_calls",
+  "crates/ripr/src/analysis/syntax/ra/closure_callbacks/tests.rs::invoked_parameter_reports_the_first_call_line",
+  "crates/ripr/src/analysis/syntax/ra/closure_callbacks/tests.rs::invocation_end_orders_statements_sharing_a_line",
+  "crates/ripr/src/analysis/syntax/ra/closure_callbacks/tests.rs::methods_and_unparsable_text_have_no_invoked_parameters",
+  "crates/ripr/src/analysis/syntax/ra/closure_callbacks/tests.rs::macro_sites_come_from_the_parser_not_from_text",
   "crates/ripr/tests/owner_pin_execution/function_pointer.rs::function_pointer_pins_only_the_observed_owner_value",
   "crates/ripr/tests/owner_pin_execution/function_pointer.rs::function_pointer_runtime_controls_observe_the_same_value",
   "crates/ripr/tests/owner_pin_execution/function_pointer.rs::function_pointer_standard_glob_keeps_observation_and_macro_refusal",
