@@ -23,11 +23,12 @@
 //! evidence — it can only withhold it.
 
 use crate::analysis::extract::equality_assertion_arguments;
-use crate::analysis::facts::FunctionSummary;
 use crate::analysis::facts::TestFact as TestSummary;
+use crate::analysis::facts::{FunctionSummary, SourceText};
 use crate::analysis::syntax::parse_clean_source_file;
 use ra_ap_syntax::{AstNode, ast, ast::HasAttrs, ast::HasName};
 use std::collections::BTreeMap;
+use std::sync::OnceLock;
 
 /// The fixed disclosure a contradicted oracle carries in every evidence
 /// summary: stage summaries, related-test records, and the outcome
@@ -215,6 +216,68 @@ fn verdict_in(
     }
 }
 
+/// The before/after comparison for a selected typed-pointer call. Preparing
+/// the separating-input witness is lazy and shared by this owner pin, so
+/// ordinary direct calls pay no grid scan and later assertions reuse it.
+/// Call identity and assertion admission remain the caller's responsibility.
+pub(in crate::analysis) struct PointerReturnChange {
+    current: SourceText,
+    before: String,
+    after: String,
+    baseline: OnceLock<Option<String>>,
+}
+
+impl PointerReturnChange {
+    pub(in crate::analysis) fn new(
+        owner: &FunctionSummary,
+        before: Option<&str>,
+        after: &str,
+    ) -> Option<Self> {
+        let before = before?;
+        if before == after || owner.body.matches(after).count() != 1 {
+            return None;
+        }
+        Some(Self {
+            current: owner.body.clone(),
+            before: before.to_string(),
+            after: after.to_string(),
+            baseline: OnceLock::new(),
+        })
+    }
+
+    /// Refuse only a completed comparison that proves this call misses the
+    /// change. Unknown folds and equivalent rewrites keep today's reading.
+    pub(in crate::analysis) fn is_invisible_at_call(&self, call: &str) -> bool {
+        let Some(baseline) = self.baseline.get_or_init(|| {
+            let baseline = self.current.replacen(&self.after, &self.before, 1);
+            versions_differ_on_small_inputs(&self.current, &baseline).then_some(baseline)
+        }) else {
+            return false;
+        };
+        let Some(open) = call.find('(') else {
+            return false;
+        };
+        let Some(inside) = super::delimited_contents_at(call, open) else {
+            return false;
+        };
+        let environment = BTreeMap::new();
+        let mut values = Vec::new();
+        for argument in super::split_top_level_commas(&inside) {
+            let Some(value) = fold_expression(&argument, &environment) else {
+                return false;
+            };
+            values.push(value);
+        }
+        match (
+            fold_function_text(&self.current, &values),
+            fold_function_text(baseline, &values),
+        ) {
+            (Some(changed), Some(unchanged)) => changed == unchanged,
+            _ => false,
+        }
+    }
+}
+
 /// Whether the changed expression is invisible to every call the related
 /// tests make (#8659): each test is a plain `#[test]` whose assertions are all
 /// equality assertions over one bare call of `owner` with literal arguments,
@@ -240,7 +303,7 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
     // too, but "no input reaches a difference" would send the reader after a
     // test that cannot exist. The change must differ somewhere: a small input
     // grid has to find a call at which the two bodies fold to different values.
-    if !versions_differ_on_small_inputs(owner, current, &baseline) {
+    if !versions_differ_on_small_inputs(current, &baseline) {
         return false;
     }
     // A related test that never names the owner exercises it through no call
@@ -309,10 +372,10 @@ fn count_name_tokens(text: &str, name: &str) -> usize {
 /// over a small grid of integer arguments (every parameter takes each of
 /// [`SEPARATION_GRID`]). More than [`SEPARATION_MAX_PARAMETERS`] parameters
 /// are not searched.
-fn versions_differ_on_small_inputs(owner: &FunctionSummary, current: &str, baseline: &str) -> bool {
+fn versions_differ_on_small_inputs(current: &str, baseline: &str) -> bool {
     const SEPARATION_GRID: [i128; 8] = [0, 1, 2, 3, 5, 6, 7, 10];
     const SEPARATION_MAX_PARAMETERS: usize = 3;
-    let Some(parameters) = parse_clean_source_file(owner.body.as_str())
+    let Some(parameters) = parse_clean_source_file(current)
         .and_then(|parse| {
             parse
                 .tree()

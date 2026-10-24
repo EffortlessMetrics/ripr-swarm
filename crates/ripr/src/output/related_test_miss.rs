@@ -247,16 +247,18 @@ mod tests {
     }
 
     #[test]
-    fn shared_wording_stays_language_neutral() {
+    fn shared_wording_stays_language_neutral() -> Result<(), String> {
         let mut test = test_with(Some(RelatedTestMiss::AssertionNotCredited), None);
-        let credited =
-            related_test_miss_reason(&test, &ProbeFamily::ReturnValue).unwrap_or_default();
+        let credited = related_test_miss_reason(&test, &ProbeFamily::ReturnValue)
+            .ok_or("assertion_not_credited rendered no reason")?;
         assert!(!credited.contains("macro"), "{credited}");
         test.miss = Some(RelatedTestMiss::NoCallPath);
         test.relation_reason = None;
-        let path = related_test_miss_reason(&test, &ProbeFamily::ReturnValue).unwrap_or_default();
+        let path = related_test_miss_reason(&test, &ProbeFamily::ReturnValue)
+            .ok_or("no_call_path rendered no reason")?;
         assert!(!path.contains("found"), "{path}");
         assert!(path.starts_with("no established call path"), "{path}");
+        Ok(())
     }
 
     #[test]

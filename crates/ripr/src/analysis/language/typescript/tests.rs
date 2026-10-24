@@ -17909,3 +17909,127 @@ fn unresolved_workspace_package_import_names_the_manifest() -> Result<(), String
     );
     Ok(())
 }
+
+/// #10021: the per-line owner lookup must return the same owner the old
+/// linear scan returned — the FIRST same-file owner in extraction order
+/// whose span contains the line (the outer owner of a nested line) — while
+/// running in O(log n) over the start-line-sorted slice and its prefix-max
+/// of end lines.
+#[test]
+fn owner_index_for_line_matches_the_linear_scan_semantics() {
+    let owner_at = |name: &str, start: usize, end: usize| {
+        let mut owner = test_owner(name, "src/lib.ts");
+        owner.start_line = start;
+        owner.end_line = end;
+        owner
+    };
+    // Extraction order: a same-start short owner precedes the wide outer
+    // one (the stable sort must keep that relative order), the outer owner
+    // precedes the nested inner one, and a far-later owner must not be
+    // reachable by its prefix-max end line alone.
+    let owners = vec![
+        owner_at("short_first", 10, 12),
+        owner_at("outer", 10, 100),
+        owner_at("inner", 50, 60),
+        owner_at("later", 200, 300),
+    ];
+    let mut sorted = owners.clone();
+    sorted.sort_by_key(|owner| owner.start_line);
+    let mut prefix_max = Vec::with_capacity(sorted.len());
+    let mut max_end = 0usize;
+    for owner in &sorted {
+        max_end = max_end.max(owner.end_line);
+        prefix_max.push(max_end);
+    }
+
+    // Contained line: the first containing owner in source order (outer,
+    // not the nested inner one — the semantics the changed-line ownership
+    // test pins for the old scan).
+    let outer_idx = owner_index_for_line(&sorted, &prefix_max, 55);
+    assert!(outer_idx.is_some(), "line 55 must be contained");
+    let Some(outer_idx) = outer_idx else {
+        return;
+    };
+    assert_eq!(outer_idx, 1);
+    assert_eq!(sorted[outer_idx].name, "outer");
+    // Same-start owners keep extraction order: the short sibling that
+    // precedes the wide outer one is found first for its own lines.
+    let short_idx = owner_index_for_line(&sorted, &prefix_max, 11);
+    assert!(short_idx.is_some(), "line 11 must be contained");
+    let Some(short_idx) = short_idx else {
+        return;
+    };
+    assert_eq!(short_idx, 0);
+    assert_eq!(sorted[short_idx].name, "short_first");
+    // The last owner starts after the line: no containment.
+    assert_eq!(owner_index_for_line(&sorted, &prefix_max, 100), Some(1));
+    assert_eq!(owner_index_for_line(&sorted, &prefix_max, 150), None);
+    assert_eq!(owner_index_for_line(&sorted, &prefix_max, 9), None);
+    // Past every owner.
+    assert_eq!(owner_index_for_line(&sorted, &prefix_max, 301), None);
+    // Empty slice.
+    assert_eq!(owner_index_for_line(&[], &[], 1), None);
+}
+
+/// #10024 review: a normalized-path collision can put a later-start owner
+/// ahead of an earlier-start one in extraction order — e.g. `src/a/b.ts` at
+/// lines 10–12 extracted before a literal `src/a\b.ts` at lines 1–12, both
+/// of which `normalized_path` spells identically on every platform. A naive
+/// start-line sort would select the backslash-file owner for a change at
+/// slash-file line 11, changing the finding ID and classification. The plan
+/// must detect the non-monotonic group and keep extraction-order selection,
+/// exactly what the pre-index scan did.
+#[test]
+fn file_owner_plan_preserves_extraction_priority_across_path_collisions() -> Result<(), String> {
+    let mut slash = test_owner("slash", "src/a/b.ts");
+    slash.start_line = 10;
+    slash.end_line = 12;
+    let mut backslash = test_owner("backslash", "src/a\\b.ts");
+    backslash.start_line = 1;
+    backslash.end_line = 12;
+    // Both files normalize equal, so both owners land in the same group.
+    assert_eq!(
+        normalized_path(&slash.file),
+        normalized_path(&backslash.file)
+    );
+    let plan = FileOwnerPlan::build(vec![slash, backslash]);
+    // Line 11 lies in both spans; extraction order picked `slash`.
+    let owner = plan
+        .owner_for_line(11)
+        .ok_or("line 11 must resolve to an owner")?;
+    assert_eq!(owner.name, "slash");
+    // Line 5 only the backslash-file span reaches.
+    assert_eq!(
+        plan.owner_for_line(5).map(|owner| owner.name.as_str()),
+        Some("backslash")
+    );
+    Ok(())
+}
+
+/// A start-monotonic group keeps the binary-search path; equal start lines
+/// keep extraction order (the stable sort is a no-op on a monotonic group).
+#[test]
+fn file_owner_plan_uses_the_index_for_monotonic_groups() -> Result<(), String> {
+    let owner_at = |name: &str, start: usize, end: usize| {
+        let mut owner = test_owner(name, "src/lib.ts");
+        owner.start_line = start;
+        owner.end_line = end;
+        owner
+    };
+    let plan = FileOwnerPlan::build(vec![
+        owner_at("short_first", 10, 12),
+        owner_at("outer", 10, 100),
+        owner_at("inner", 50, 60),
+    ]);
+    // Nested line: the outer owner, as the old scan selected it.
+    assert_eq!(
+        plan.owner_for_line(55).map(|owner| owner.name.as_str()),
+        Some("outer")
+    );
+    // Same-start owners keep extraction order.
+    assert_eq!(
+        plan.owner_for_line(11).map(|owner| owner.name.as_str()),
+        Some("short_first")
+    );
+    Ok(())
+}

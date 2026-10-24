@@ -3,7 +3,7 @@
   "tool": "ripr",
   "mode": "fast",
   "root": "fixtures/owner_return_pin_identity_traps/input",
-  "summary": {"changed_rust_files":1,"probes":6,"findings":6,"exposed":0,"weakly_exposed":4,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":2,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "summary": {"changed_rust_files":1,"probes":6,"findings":6,"exposed":0,"weakly_exposed":3,"reachable_unrevealed":1,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":2,"changed_files_by_language":[{"language":"rust","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,
     "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:bc6abb090bba59291e0964a6bbc5720e91a29d5411c7e36af7d4a4842b1cb010","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":8,"candidate_line_count":4,"probe_count":6,"finding_count":6},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
@@ -23,7 +23,7 @@
         "normalized_discriminator": "input.rotate_left_3"
 
       },
-      "classification": "weakly_exposed",
+      "classification": "reachable_unrevealed",
       "severity": "warning",
       "confidence": 0.66,
       "probe": {
@@ -38,15 +38,15 @@
         "reach": {"state":"weak","confidence":"low","summary":"No test is seen calling decode; tests share only its file or a name token: bare_decode_names_the_free_function, negative_input_exits_early"},
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
         "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: input.rotate_left(3)"},
-        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
-        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+        "observe": {"state":"no","confidence":"medium","summary":"Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No assertion found on related tests"}
        },
-      "evidence_path": ["reach weak: No test is seen calling decode; tests share only its file or a name token: bare_decode_names_the_free_function, negative_input_exits_early", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: input.rotate_left(3)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: input.rotate_left(3) (line 7)", "related test tests/trap_tests.rs:4 bare_decode_names_the_free_function uses strong exact value oracle: assert_eq!(decode(8), 9);", "related test tests/trap_tests.rs:15 negative_input_exits_early uses strong exact error variant oracle: assert_eq!(checked_half(-4), Err(HalfError::Negative));", "source assertion argument value 9 at line 5", "source function argument value input = 8 at line 5", "source assertion argument value -4 at line 16", "source enum variant value HalfError::Negative at line 16"],
+      "evidence_path": ["reach weak: No test is seen calling decode; tests share only its file or a name token: bare_decode_names_the_free_function, negative_input_exits_early", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: input.rotate_left(3)", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches returned value: input.rotate_left(3) (line 7)", "related test tests/trap_tests.rs:4 bare_decode_names_the_free_function uses strong exact value oracle: assert_eq!(decode(8), 9);", "related test tests/trap_tests.rs:15 negative_input_exits_early uses strong exact error variant oracle: assert_eq!(checked_half(-4), Err(HalfError::Negative));", "source assertion argument value 9 at line 5", "source function argument value input = 8 at line 5", "source assertion argument value -4 at line 16", "source enum variant value HalfError::Negative at line 16"],
       "flow_sinks": [
         {"kind":"return_value","text":"input.rotate_left(3)","line":7}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: input.rotate_left(3)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No test is seen calling decode; tests share only its file or a name token: bare_decode_names_the_free_function, negative_input_exits_early", "Reachable tests can plausibly activate this changed behavior"],
-      "missing": ["No strong discriminator was detected"],
+      "evidence": ["Complete propagation witness reaches returned value: input.rotate_left(3)", "No assertion found on related tests", "No test is seen calling decode; tests share only its file or a name token: bare_decode_names_the_free_function, negative_input_exits_early", "Reachable tests can plausibly activate this changed behavior", "Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"],
+      "missing": ["No detected assertion observes the changed value, error, field, or effect", "No relevant oracle was detected", "No strong discriminator was detected"],
       "assertion_texts": {
         "5": "assert_eq!(decode(8), 9);",
         "16": "assert_eq!(checked_half(-4), Err(HalfError::Negative));"
@@ -112,8 +112,8 @@
           "oracle": "assert_eq!(decode(8), 9);",
           "relation_reason": "weak_token_substring",
           "relation_confidence": "low",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by name only"
         },
         {
           "name": "negative_input_exits_early",
@@ -124,8 +124,8 @@
           "oracle": "assert_eq!(checked_half(-4), Err(HalfError::Negative));",
           "relation_reason": "weak_token_substring",
           "relation_confidence": "low",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by name only"
         }
       ],
       "stop_reasons": [],
@@ -152,7 +152,7 @@
       },
       "classification": "static_unknown",
       "severity": "note",
-      "confidence": 0.50,
+      "confidence": 0.30,
       "probe": {
         "id": "probe:src_lib.rs:static_unknown:68a8a480",
         "family": "static_unknown",
@@ -165,15 +165,15 @@
         "reach": {"state":"weak","confidence":"low","summary":"No test is seen calling decode; tests share only its file or a name token: bare_decode_names_the_free_function, negative_input_exits_early"},
         "infect": {"state":"unknown","confidence":"unknown","summary":"Changed syntax is not mapped to a high-confidence probe family"},
         "propagate": {"state":"unknown","confidence":"low","summary":"No propagation model is available for this changed syntax"},
-        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
-        "discriminate": {"state":"unknown","confidence":"low","summary":"Assertions exist, but oracle strength is unknown"}
+        "observe": {"state":"no","confidence":"medium","summary":"Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No assertion found on related tests"}
        },
-      "evidence_path": ["reach weak: No test is seen calling decode; tests share only its file or a name token: bare_decode_names_the_free_function, negative_input_exits_early", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 7)", "related test tests/trap_tests.rs:4 bare_decode_names_the_free_function uses exact value oracle, not graded against this probe: assert_eq!(decode(8), 9);", "related test tests/trap_tests.rs:15 negative_input_exits_early uses exact error variant oracle, not graded against this probe: assert_eq!(checked_half(-4), Err(HalfError::Negative));", "source assertion argument value 9 at line 5", "source function argument value input = 8 at line 5", "source assertion argument value -4 at line 16", "source enum variant value HalfError::Negative at line 16"],
+      "evidence_path": ["reach weak: No test is seen calling decode; tests share only its file or a name token: bare_decode_names_the_free_function, negative_input_exits_early", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches unknown sink (line 7)", "related test tests/trap_tests.rs:4 bare_decode_names_the_free_function uses exact value oracle, not graded against this probe: assert_eq!(decode(8), 9);", "related test tests/trap_tests.rs:15 negative_input_exits_early uses exact error variant oracle, not graded against this probe: assert_eq!(checked_half(-4), Err(HalfError::Negative));", "source assertion argument value 9 at line 5", "source function argument value input = 8 at line 5", "source assertion argument value -4 at line 16", "source enum variant value HalfError::Negative at line 16"],
       "flow_sinks": [
         {"kind":"unknown","text":"unknown sink","line":7}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Assertions exist, but oracle strength is unknown", "Changed syntax is not mapped to a high-confidence probe family", "No propagation model is available for this changed syntax", "No test is seen calling decode; tests share only its file or a name token: bare_decode_names_the_free_function, negative_input_exits_early"],
-      "missing": ["No strong discriminator was detected", "Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests"],
+      "evidence": ["Changed syntax is not mapped to a high-confidence probe family", "No assertion found on related tests", "No propagation model is available for this changed syntax", "No test is seen calling decode; tests share only its file or a name token: bare_decode_names_the_free_function, negative_input_exits_early", "Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"],
+      "missing": ["No relevant oracle was detected", "No strong discriminator was detected", "Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests"],
       "assertion_texts": {
         "5": "assert_eq!(decode(8), 9);",
         "16": "assert_eq!(checked_half(-4), Err(HalfError::Negative));"

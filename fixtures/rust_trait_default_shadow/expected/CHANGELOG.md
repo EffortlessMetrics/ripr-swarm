@@ -130,3 +130,42 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_trait_default_shadow (11)
+
+Reason:
+RIPR-SPEC-0108: a name-token relation no longer credits an oracle, and a name-token-only owner gets inspection-first guidance rather than assertion advice (#9169); regenerated over main's #9373/#9244 wording
+
+Command:
+`cargo xtask goldens bless rust_trait_default_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_trait_default_shadow (12)
+
+Reason:
+RIPR-SPEC-0108: regenerated after merging origin/main over the #9169 name-token demotion; wording from main's #9373/#9244 legend, no class change beyond #9169
+
+Command:
+`cargo xtask goldens bless rust_trait_default_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_trait_default_shadow (13)
+
+Reason:
+RIPR-SPEC-0224
+
+Command:
+`cargo xtask goldens bless rust_trait_default_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
