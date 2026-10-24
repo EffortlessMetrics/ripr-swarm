@@ -10,11 +10,6 @@ name: Windows Watchdog Qualification
 # A shortened timer qualifies only the shorter bound, not the 44-minute one.
 on:
   workflow_dispatch:
-  # Temporary: a workflow file is dispatchable only once it is on main, so this
-  # branch runs it from its own push. Removed in the next commit.
-  push:
-    branches: [claude/windows-shard-watchdog-9272]
-    paths: [.github/workflows/windows-watchdog-qualification.yml]
 
 permissions:
   contents: read
