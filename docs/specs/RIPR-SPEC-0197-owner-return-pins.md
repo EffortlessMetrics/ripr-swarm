@@ -1943,11 +1943,22 @@ that hands it any call-making closure, and one such call withholds the helper
 from the whole test (a missed advisory, fail-closed). Likewise a closure an
 iterator or `Option` adapter runs eagerly inside the argument
 (`xs.iter().map(|v| gate(*v)).count()`, `.any(..)`, `.unwrap_or_else(|| ..)`)
-is withheld although the base credited it: a deliberate missed advisory. Not recognized, so they
-keep the plain-helper credit (known residual): a closure bound to a name first
-(`let f = || ..; run(f)`), a function item, and a closure with no call. The
-tracing forwarding shape is a limitation, not a credit, until the receiving call
-is itself resolved.
+is withheld although the base credited it: a deliberate missed advisory. A closure bound to a name first is withheld too
+(`let f = || ..; run(f)`): an argument that is exactly a single-segment name
+(also `&f`, `(f)`), with an earlier `let f = <call-making closure literal>` (the
+literal bare, `&`-borrowed or parenthesized, a plain identifier pattern) in a
+block that encloses the helper call. Rebinding, `mut` and shadowing do not
+exempt it, so `let f = || ..; let f = 5; run(f)` is a deliberate missed
+advisory instead of a guess about which binding the name reaches; a binding in a
+block that does not enclose the call, one after the call, a closure with no
+call, a non-closure initializer and a destructuring pattern do not withhold.
+This reuses the same scan, with no second pass. Not recognized, so they keep
+the plain-helper credit (known residual): a function item passed by name
+(`run(make)` with `fn make() { gate(11) }`; resolving it needs a file-level
+lookup this text-only scan does not have, and it is not decided fail-closed
+here), a boxed named closure (`let f = Box::new(|| ..)`), and a closure with no
+call. The tracing forwarding shape is a limitation, not a credit, until the
+receiving call is itself resolved.
 
 ## Required Evidence
 

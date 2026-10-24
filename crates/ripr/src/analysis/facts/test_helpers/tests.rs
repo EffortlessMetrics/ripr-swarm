@@ -1527,14 +1527,57 @@ fn plain_helper_withheld_for_an_adapter_closure_run_inside_the_argument()
 }
 
 #[test]
-fn named_closure_argument_keeps_plain_helper_credit_as_a_disclosed_residual()
--> Result<(), Box<dyn Error>> {
-    // Known residual (#9997): a closure bound to a name first is not a literal
-    // in the argument, so the withholding scan does not see it and the
-    // over-credit remains. Pinned so a later fix flips this test knowingly.
-    let index = index_for(&callback_source(
-        UNUSED_CLOSURE_HELPER,
+fn plain_helper_withheld_for_a_closure_bound_to_a_name_first() -> Result<(), Box<dyn Error>> {
+    // Negative (#9997 residual closed): the named closure is the same value as
+    // the literal, so the helper that never invokes it lends nothing.
+    for body in [
         "        let c = || gate(11);\n        run_test(true, c);\n",
+        "        let mut c = || gate(11);\n        run_test(true, c);\n",
+        "        let c = || gate(11);\n        run_test(true, &c);\n",
+        // Rebinding does not exempt it: fail-closed, a missed advisory.
+        "        let c = || gate(11);\n        let c = true;\n        run_test(true, c);\n",
+    ] {
+        let index = index_for(&callback_source(UNUSED_CLOSURE_HELPER, body))?;
+        let test = test_named(&index, "boundary")?;
+        assert!(
+            test.assertions.is_empty(),
+            "{body}: {:?}",
+            assertion_texts(test)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn plain_helper_keeps_credit_for_a_name_that_is_not_a_call_making_closure()
+-> Result<(), Box<dyn Error>> {
+    // Same fixture as the negatives: only what the name is bound to changes.
+    for body in [
+        "        let c = gate(11);\n        run_test(true, c);\n",
+        "        let c = || true;\n        run_test(true, c);\n",
+        "        { let c = || gate(11); }\n        let c = true;\n        run_test(true, c);\n",
+        "        run_test(true, c);\n        let c = || gate(11);\n",
+    ] {
+        let index = index_for(&callback_source(UNUSED_CLOSURE_HELPER, body))?;
+        let test = test_named(&index, "boundary")?;
+        assert_eq!(
+            assertion_texts(test),
+            vec!["assert_eq!(want, true);"],
+            "{body}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn function_item_passed_by_name_keeps_plain_helper_credit_as_a_disclosed_residual()
+-> Result<(), Box<dyn Error>> {
+    // Known residual (#9997): a function item is not a closure literal or a
+    // local binding, and resolving it needs a file-level lookup this text-only
+    // scan does not have. Pinned so a later fix flips this test knowingly.
+    let index = index_for(&format!(
+        "{}fn make() -> bool {{ gate(11) }}\n",
+        callback_source(UNUSED_CLOSURE_HELPER, "        run_test(true, make);\n")
     ))?;
     let test = test_named(&index, "boundary")?;
     assert_eq!(assertion_texts(test), vec!["assert_eq!(want, true);"]);
