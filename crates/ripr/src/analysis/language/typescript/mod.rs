@@ -76,6 +76,7 @@ mod discovery;
 mod dropped_term_guard;
 mod enum_member_guard;
 mod error_payload_guard;
+mod export_facts_cache;
 mod extraction_cache;
 mod field_update_guard;
 mod guard_entry_guard;
