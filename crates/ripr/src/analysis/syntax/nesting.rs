@@ -48,7 +48,9 @@ pub(crate) fn parse_clean_source_file(text: &str) -> Option<Parse<SourceFile>> {
 /// ripr does not read each crate's edition, and 2024 reserves `gen`, so a
 /// 2021 crate's `fn arbitrary(gen: &mut Gen)` is a syntax error under the
 /// current edition alone and its whole file fell to lexical fallback. The
-/// 2021 parse is used only when it is error-free.
+/// 2021 parse is used only when it is error-free. A file that uses the
+/// legacy `try!(..)` macro and still fails both is retried once as Rust 2015
+/// (#10054), again used only when error-free.
 pub(crate) fn parse_source_file(text: &str) -> Parse<SourceFile> {
     if text.len() > PARSE_CACHE_MAX_BYTES {
         return parse_source_file_uncached(text);
@@ -97,6 +99,12 @@ fn parse_source_file_uncached(text: &str) -> Parse<SourceFile> {
     // A Rust 2015 crate may still use the `try!(..)` macro, which 2018+
     // reserves as a keyword; both newer editions reject the whole file and
     // it would fall to the lexical fallback (#10054).
+    // The retry is gated on that macro so other 2015-only spellings (`async`
+    // or `dyn` as identifiers) and genuinely broken buffers keep failing
+    // closed and do not pay a third full parse.
+    if !(text.contains("try!") || text.contains("try !")) {
+        return parse;
+    }
     let oldest = SourceFile::parse(text, Edition::Edition2015);
     if oldest.errors().is_empty() {
         oldest
@@ -545,6 +553,11 @@ mod tests {
         );
         assert!(parse_clean_source_file(legacy).is_some());
         assert!(!parse_source_file("fn f( { try!(x)").errors().is_empty());
+        // The retry is gated on `try!`: a 2015-only identifier alone stays an error.
+        assert!(parse_clean_source_file("fn f(async: u8) -> u8 { async }").is_none());
+        // The tree keeps `try!` as a macro call.
+        let parse = parse_source_file(legacy);
+        assert!(format!("{:#?}", parse.syntax_node()).contains("MACRO_CALL"));
     }
 
     fn nested(open: &str, close: &str, levels: usize) -> String {
