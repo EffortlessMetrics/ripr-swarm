@@ -28896,3 +28896,89 @@ fn perl_packet_backed_rows_agree_in_hover_related_information_and_data() -> Resu
     }
     Ok(())
 }
+
+/// #6475 end to end: the real refresh path (git diff, pipeline, aggregate,
+/// sidecar view) with Python changed and the default Rust-only language set.
+/// The opened changed Python document must read `not_analyzed`, which only
+/// holds when `diagnostics.rs` hands the producer's view to the snapshot.
+#[tokio::test]
+async fn real_refresh_binds_a_disabled_language_document_not_analyzed() -> Result<(), String> {
+    let root = unique_lsp_test_root("disabled-language-real-refresh")?;
+    write_lsp_scope_fixture(root.path())?;
+    fs::create_dir_all(root.path().join("zpy")).map_err(|err| format!("create zpy: {err}"))?;
+    fs::write(
+        root.path().join("zpy/pricing.py"),
+        "def price():\n    return 1\n",
+    )
+    .map_err(|err| format!("write pricing.py: {err}"))?;
+    run_lsp_scope_git(root.path(), &["init"])?;
+    run_lsp_scope_git(
+        root.path(),
+        &["config", "user.email", "ripr@example.invalid"],
+    )?;
+    run_lsp_scope_git(root.path(), &["config", "user.name", "RIPR Test"])?;
+    run_lsp_scope_git(
+        root.path(),
+        &[
+            "add",
+            "Cargo.toml",
+            "src/lib.rs",
+            "tests/end_to_end.rs",
+            "zpy/pricing.py",
+        ],
+    )?;
+    run_lsp_scope_git(root.path(), &["commit", "-m", "base"])?;
+    fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn gate_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
+    )
+    .map_err(|err| format!("edit lib.rs: {err}"))?;
+    fs::write(
+        root.path().join("zpy/pricing.py"),
+        "def price():\n    return 2\n",
+    )
+    .map_err(|err| format!("edit pricing.py: {err}"))?;
+
+    let config = LspAnalysisConfig {
+        base_ref: Some("HEAD".to_string()),
+        mode: Mode::Instant,
+        diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
+        ..LspAnalysisConfig::default()
+    };
+    let diagnostics = workspace_diagnostics_with_config(root.path(), &config, true)?;
+    // Independent literal expectation: python is a changed, unselected
+    // language, so the producer's view must carry it as such.
+    let view = diagnostics
+        .snapshot
+        .language_view
+        .as_ref()
+        .ok_or("the refresh must hand the producer's view to the snapshot")?;
+    assert!(
+        view.rows.iter().any(|row| row.label == "python"
+            && row.status == crate::analysis::language_outcome::LanguageOutcomeStatus::NotSelected),
+        "{view:?}"
+    );
+
+    let python_uri = file_uri_for_path(&root.path().join("zpy/pricing.py"))?;
+    let (service, socket) =
+        LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .did_open(quarantine_open_params(
+            &python_uri,
+            "def price():\n    return 2\n",
+        ))
+        .await;
+    backend
+        .refresh_plan(diagnostics)
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+    let status = workspace_status_json(backend).await?;
+    let python = open_document_entry(&status, python_uri.as_str())?;
+    if python["state"].as_str() != Some("not_analyzed") {
+        return Err(format!(
+            "a changed document of a disabled language must read not_analyzed: {python}"
+        ));
+    }
+    Ok(())
+}

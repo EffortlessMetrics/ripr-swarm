@@ -839,14 +839,15 @@ impl UnavailableAdapterCoverage {
 fn view_not_selected(view: Option<&LanguageCompletenessView>, language: LanguageId) -> bool {
     // The shared router sends JavaScript documents to the TypeScript adapter
     // family, while the aggregate keeps `javascript` as its own label.
-    let labels: &[&str] = match language {
-        LanguageId::TypeScript | LanguageId::JavaScript => &["typescript", "javascript"],
-        other => &[other.as_str()],
-    };
     view.is_some_and(|view| {
         view.rows.iter().any(|row| {
-            labels.contains(&row.label.as_str())
-                && row.disclosure == LanguageDisclosure::AdvisoryOnly
+            row.disclosure == LanguageDisclosure::AdvisoryOnly
+                && match language {
+                    LanguageId::TypeScript | LanguageId::JavaScript => {
+                        matches!(row.label.as_str(), "typescript" | "javascript")
+                    }
+                    other => row.label == other.as_str(),
+                }
         })
     })
 }
