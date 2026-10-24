@@ -72,6 +72,7 @@ fn counted_mock(observed: &str) -> Option<&str> {
 fn owner_call_passes(body: &str, owner_name: &str, name: &str) -> bool {
     let word = |c: char| c.is_alphanumeric() || matches!(c, '_' | '$');
     body.match_indices(&format!("{owner_name}("))
+        .filter(|&(at, _)| !body[..at].chars().next_back().is_some_and(word))
         .any(|(at, _)| {
             let args = &body[at + owner_name.len() + 1..];
             let mut depth = 0usize;
@@ -190,6 +191,7 @@ mod tests {
             "fn"
         ));
         assert!(!owner_call_passes("withRetry(fnx, 2);", "withRetry", "fn"));
+        assert!(!owner_call_passes("rewithRetry(fn, 2);", "withRetry", "fn"));
     }
 
     #[test]
