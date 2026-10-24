@@ -63,6 +63,7 @@ mod boundary;
 mod classify;
 mod deleted_lines;
 mod guard_activation;
+mod helper_inline;
 mod message_pin;
 mod wrapped_call;
 use classify::{PythonNoBehaviorContext, classify_change_with_context};
@@ -1247,6 +1248,9 @@ mod helper_assertions_tests;
 
 #[cfg(test)]
 mod capability_disposition_tests;
+
+#[cfg(test)]
+mod helper_inline_tests;
 
 #[cfg(test)]
 mod helper_owner_call_tests;

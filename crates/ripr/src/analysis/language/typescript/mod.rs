@@ -79,6 +79,9 @@ mod error_payload_guard;
 mod extraction_cache;
 mod field_update_guard;
 mod guard_entry_guard;
+mod helper_inline;
+#[cfg(test)]
+mod helper_inline_tests;
 mod hook_owner_guard;
 mod instance_class_guard;
 #[cfg(test)]
