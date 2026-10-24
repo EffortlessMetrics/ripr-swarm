@@ -593,15 +593,19 @@ fn selected_action_parity(
         // quotes, backslashes), so compare against the rendered token, not
         // the raw path: a literal-backslash Unix root must not fail here
         // only because its display carries quoting.
+        // `root_path_display` is what the CLI renders: native spelling on
+        // Unix (a literal backslash stays a backslash), stable separators on
+        // Windows. `display_path` always folds `\` to `/`, so it names the
+        // wrong repository for a literal-backslash Unix root.
         let host_root = crate::agent::loop_commands::shell_arg(
-            &crate::agent::loop_commands::display_path(root),
+            &crate::agent::loop_commands::root_path_display(root),
         );
         assert!(
             cli_rendered.contains(host_root.as_str()),
             "CLI restart display must bind the selected repository: {cli_rendered}"
         );
         // The MCP projection must not name the host root in ANY spelling:
-        // raw, display, or shell-quoted.
+        // raw, slash-folded display, or the CLI's shell-quoted form.
         for spelling in [
             root.to_string_lossy().into_owned(),
             crate::agent::loop_commands::display_path(root),
