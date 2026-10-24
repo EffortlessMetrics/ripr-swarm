@@ -1202,6 +1202,36 @@ mod tests {
     }
 
     #[test]
+    fn an_expr_row_splits_only_at_top_level_separators() {
+        let table = |row: &str| {
+            format!(
+                "macro_rules! t {{\n    ($($n:ident: $v:expr, $w:expr);*) => {{ $( #[test] fn $n() {{ assert_eq!(gate($v), $w); }} )* }};\n}}\nt! {{ {row} }}\n"
+            )
+        };
+        // Separators inside (), [] and {} are one token tree in the row, so
+        // they never end an expression.
+        let nested = expand_local_test_macros(&table(
+            "a: f(1, 2), [3; 4].len(); b: { let x = (5, 6); x.0 }, 7",
+        ));
+        assert_eq!(nested.len(), 1, "{nested:?}");
+        let text = &nested[0].text;
+        assert_eq!(text.matches("#[test]").count(), 2, "{text}");
+        assert!(
+            text.contains("f(1, 2)") && text.contains("[3; 4].len()"),
+            "{text}"
+        );
+        assert!(text.contains("{ let x = (5, 6); x.0 }"), "{text}");
+
+        // A comma that is top level (a generic argument list) splits the
+        // expression into a fragment that does not parse: refuse, never
+        // bind half of it.
+        assert!(
+            expand_local_test_macros(&table("a: pick::<u8, u16>(1), 2")).is_empty(),
+            "an unsplittable top-level generic comma indexes nothing"
+        );
+    }
+
+    #[test]
     fn row_and_expansion_size_are_bounded() {
         let table = |rows: usize, body: &str| {
             let invocation: String = (0..rows).map(|row| format!("r{row}({row}) ")).collect();
