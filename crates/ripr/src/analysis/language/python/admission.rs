@@ -94,6 +94,12 @@ pub(super) struct PythonAdmissionContext {
     /// ...) in this file whose body is assertion-like. The runner calls it
     /// around tests without the test naming it.
     has_assertion_like_lifecycle: bool,
+    /// A module-level statement outside any definition that can fail or
+    /// reconfigure the run at import (`warnings.filterwarnings("error")`,
+    /// `pytest.skip(..., allow_module_level=True)`, `pytest.importorskip`, a
+    /// module-level `assert` or `raise`, a call RIPR cannot resolve), or a
+    /// star import that may bring an autouse fixture or hook into the module.
+    has_module_effect: bool,
     /// The dotted directory of the file (see `TestScope::module_dir`).
     module_dir: String,
     /// Class-base spellings known to be unittest's own test classes.
@@ -144,6 +150,28 @@ impl PythonAdmissionContext {
             scan.statements(body);
             scan.assertion_like
         });
+        let module_scope = TestScope::of_body(module_dir, &[], &[], None);
+        let top_level: Vec<Stmt> = statements
+            .iter()
+            .filter(|stmt| {
+                !matches!(
+                    stmt,
+                    Stmt::FunctionDef(_) | Stmt::AsyncFunctionDef(_) | Stmt::ClassDef(_)
+                )
+            })
+            .cloned()
+            .collect();
+        let mut module_scan = BodyScan {
+            context: &context,
+            imports,
+            scope: &module_scope,
+            assertion_like: false,
+        };
+        module_scan.statements(&top_level);
+        context.has_module_effect = module_scan.assertion_like
+            || imports
+                .iter()
+                .any(|import| import.alias == "*" || import.imported == "*");
         context
     }
 
@@ -710,19 +738,66 @@ fn is_test_support_path(path: &str) -> bool {
     })
 }
 
+/// `request` members that bring in fixtures, marks or finalizers at run time.
+const REQUEST_ESCAPES: &[&str] = &[
+    "add_marker",
+    "addfinalizer",
+    "applymarker",
+    "getfixturevalue",
+    "getfuncargvalue",
+];
+
+/// Modules whose context managers do not assert on exit. A `with` callee
+/// imported from any other module (`responses.RequestsMock()`, `respx.mock`,
+/// a project guard) may check on exit.
+fn is_inert_with_module(qualified: &str) -> bool {
+    let root = qualified.split('.').next().unwrap_or(qualified);
+    matches!(
+        root,
+        "contextlib"
+            | "tempfile"
+            | "unittest"
+            | "mock"
+            | "os"
+            | "pathlib"
+            | "io"
+            | "threading"
+            | "decimal"
+            | "warnings"
+            | "sys"
+            | "time"
+            | "datetime"
+            | "logging"
+            | "socket"
+            | "zipfile"
+            | "tarfile"
+            | "sqlite3"
+            | "shutil"
+            | "asyncio"
+            | "concurrent"
+            | "multiprocessing"
+            | "typing"
+    )
+}
+
 /// Third-party assertion, matcher and soft-check libraries (and the pytest
 /// plugin namespace). Their entry points often carry no assertion-like name
 /// (`nose.tools.eq_`, `pytest_check.check.equal`, `pytest_assume.assume`), so
 /// a name imported from one is assertion-like by origin.
 const ASSERTION_LIBRARY_ROOTS: &[&str] = &[
+    "aioresponses",
     "assertpy",
+    "doctest",
     "expects",
     "grappa",
     "hamcrest",
+    "httpretty",
     "nose",
     "nose2",
     "pytest_assume",
     "pytest_check",
+    "respx",
+    "responses",
     "should_dsl",
     "softest",
     "sure",
@@ -765,10 +840,13 @@ fn is_inert_decorator_module(qualified: &str) -> bool {
 /// the filter action is not read, so every filter call counts.
 const FAILING_CALLEES: &[&str] = &[
     "_thread.interrupt_main",
+    "importlib.import_module",
     "os._exit",
     "os.abort",
     "os.kill",
     "os.killpg",
+    "runpy.run_module",
+    "runpy.run_path",
     "signal.raise_signal",
     "subprocess.run",
     "sys.exit",
@@ -1093,6 +1171,7 @@ pub(super) fn assertion_admission(
         || context.has_implicit_fixture
         || context.has_plugins
         || context.has_assertion_like_lifecycle
+        || context.has_module_effect
         || opaque_class
     {
         return PythonAssertionAdmission::Unresolved;
@@ -1464,6 +1543,17 @@ impl BodyScan<'_> {
 
     fn with_items(&mut self, items: &[ast::WithItem]) {
         for item in items {
+            let head = match &item.context_expr {
+                Expr::Call(call) => call.func.as_ref(),
+                other => other,
+            };
+            if let Some(name) = dotted_name(head)
+                && let Some(qualified) = self.imported_name(&name)
+                && !is_inert_with_module(&qualified)
+                && !qualified.starts_with("pytest.")
+            {
+                self.assertion_like = true;
+            }
             self.expr(&item.context_expr);
             self.opt_expr(item.optional_vars.as_deref());
         }
@@ -1625,6 +1715,18 @@ impl BodyScan<'_> {
     /// not to assert. Calling the result of a call (`make_checker()(x)`) or a
     /// subscript (`checks[kind](x)`) is dynamic and so assertion-like.
     fn call_is_assertion_like(&self, call: &ast::ExprCall) -> bool {
+        // `pytest.param(..., marks=pytest.mark.xfail(strict=True))` applies a
+        // mark to one case: only `id=` is inert.
+        if dotted_name(call.func.as_ref())
+            .and_then(|name| self.imported_name(&name))
+            .is_some_and(|qualified| qualified == "pytest.param")
+            && call
+                .keywords
+                .iter()
+                .any(|keyword| keyword.arg.as_ref().is_none_or(|arg| arg.as_str() != "id"))
+        {
+            return true;
+        }
         if matches!(call.func.as_ref(), Expr::Call(_)) {
             return true;
         }
@@ -1671,7 +1773,7 @@ impl BodyScan<'_> {
             return true;
         }
         if self.scope.builtin_fixtures.contains(root) {
-            return matches!(last, "getfixturevalue" | "getfuncargvalue");
+            return REQUEST_ESCAPES.contains(&last);
         }
         if self.context.root_relative_aliases.contains(root) {
             // `from . import checks` in a root-level test file (#6657).
@@ -1716,8 +1818,10 @@ impl BodyScan<'_> {
             return false;
         }
         if self.scope.builtin_fixtures.contains(root) {
-            // `request.getfixturevalue("name")` pulls in any fixture.
-            return matches!(last, "getfixturevalue" | "getfuncargvalue");
+            // `request.getfixturevalue("name")` pulls in any fixture and
+            // `request.applymarker(...)` / `request.node.add_marker(...)`
+            // attach marks (`xfail`, `usefixtures`) after collection.
+            return REQUEST_ESCAPES.contains(&last);
         }
         if self.scope.argnames.contains(root) {
             // Calling a parameter runs whatever the case supplies.

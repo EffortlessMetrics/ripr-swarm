@@ -3396,6 +3396,26 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             unresolved,
         ),
         (
+            "request attribute read",
+            "def test_x(request):\n    request.config\n    apply_discount(20)\n",
+            none,
+        ),
+        (
+            "request.applymarker",
+            "import pytest\ndef test_x(request):\n    request.applymarker(pytest.mark.xfail)\n    apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "request.node.add_marker",
+            "import pytest\ndef test_x(request):\n    request.node.add_marker(pytest.mark.skip)\n    apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "request.addfinalizer",
+            "def test_x(request):\n    request.addfinalizer(print)\n    apply_discount(20)\n",
+            unresolved,
+        ),
+        (
             "usefixtures mark",
             "import pytest\n@pytest.mark.usefixtures('db')\ndef test_x():\n    apply_discount(20)\n",
             unresolved,

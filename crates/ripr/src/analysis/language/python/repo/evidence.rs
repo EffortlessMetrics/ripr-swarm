@@ -355,7 +355,7 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
         &reach_conftests,
         |conftest| !read_conftests.contains(conftest) && root.join(conftest).is_file(),
     );
-    super::super::fixtures::taint_builtin_fixture_overrides_by_conftest(
+    super::super::fixtures::taint_admission_by_conftest_declarations(
         &mut all_tests,
         &reach_conftests,
         |conftest| !read_conftests.contains(conftest) && root.join(conftest).is_file(),

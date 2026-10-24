@@ -228,29 +228,46 @@ static limit, one row at a time, in `python/row_miss.rs`:
   `extraction_complete_no_assertion` after the workspace passes. Parametrize is
   activation evidence, never an oracle, so a parametrized assertion-free test
   carries it with no oracle. The row keeps `miss: None` instead when the test
-  has any skip / xfail / expected-failure control, when it imports by bare name
-  a module that sits beside the test file other than the module under test
-  (pytest's rootdir insertion makes it importable test support RIPR cannot
-  read; the module under test is exempt), when the finding is not a
-  `weakly_exposed` gap, or when admission is anything but established absence.
-  Admission is withheld for every shape that could assert outside the scanned
-  body: helper, `self.` and same-module calls, unittest and mock assertions,
-  `pytest.raises`/`warns`/`fail`, `raise`, nested defs, lambdas, comprehensions,
-  context managers, opaque fixtures, `usefixtures`, `pytestmark`, setup hooks,
-  imported decorators outside `pytest`/`functools`/`hypothesis`/`unittest`,
-  names imported from assertion libraries (`nose`, `pytest_check`,
-  `pytest_assume`, `hamcrest`, other `pytest_*` plugins), `subprocess.run`,
-  `sys.exit`, and `unittest.main`; a conftest autouse fixture, hook, plugin,
-  re-export or built-in fixture override (including `name=` renames) on the
-  directory chain, or an unreadable conftest, withholds it. Residual limits
-  that stay invisible, so the reason is explanation only and never a proof:
-  plugins or `usefixtures` set by `-p`, ini/`addopts`, entry points or
-  `filterwarnings = error` in an ini file, plugins registered dynamically, an
-  autouse fixture imported by name into the test module, a sibling helper
-  reached through a root-level module or a path-configured source root, an
-  assertion helper in a third-party library not named above and not
-  assertion-like by name, assertions raised inside a project module the test
-  imports, and a test that fails only by crashing the process.
+  has any skip / xfail / expected-failure control, when the finding is not a
+  `weakly_exposed` gap or carries a static limit (a `request` or other
+  unresolved fixture parameter is one), or when admission is anything but
+  established absence. Admission is withheld for:
+  - calls RIPR cannot resolve: helper, `self.` and same-module callees, unittest
+    and mock assertions, `pytest.raises`/`warns`/`fail`, `raise`, nested defs,
+    lambdas, comprehensions, dynamic callees, `request.getfixturevalue`,
+    `applymarker`, `node.add_marker` and `addfinalizer`;
+  - context managers and decorators imported from anywhere other than a short
+    standard-library or pytest list (`responses.RequestsMock()`, `respx.mock`,
+    `freeze_time`, a project guard), and a `pytest.param` carrying `marks=`;
+  - names imported from assertion libraries (`nose`, `pytest_check`,
+    `pytest_assume`, `hamcrest`, `responses`, `respx`, `httpretty`, `doctest`,
+    other `pytest_*` plugins), `subprocess.run`, `sys.exit`, `unittest.main`,
+    `importlib.import_module` and `runpy`;
+  - fixtures and hooks: a same-module autouse fixture, `usefixtures`,
+    `pytestmark`, an opaque fixture parameter, an asserting setup hook, and
+    `pytest_plugins`;
+  - module-level effects in the test module itself: a call RIPR cannot
+    resolve (`warnings.filterwarnings("error")`, `pytest.skip(...,
+    allow_module_level=True)`, `pytest.importorskip`), a module-level `assert`
+    or `raise`, or a star import;
+  - any conftest on the directory chain that declares any fixture or `pytest_*`
+    hook, has a top-level call or attribute write, installs implicit setup, or
+    could not be read (this covers a built-in fixture override, including a
+    `name=` rename, `pytest_configure` adding `filterwarnings`, and
+    `pytest_generate_tests`, whether or not the test names it);
+  - a bare-importable module: a module or package beside the test file, or in
+    a parent while each directory is a package up to the first one that is not
+    (pytest's rootdir insertion), is test support RIPR cannot read. The module
+    or package that contains the changed owner is exempt, so a flat layout
+    keeps the reason.
+  Residual limits that stay invisible, so the reason is explanation only and
+  never a proof: plugins or `usefixtures` set by `-p`, ini/`addopts`, entry
+  points or `filterwarnings = error` in an ini file, plugins registered
+  dynamically, an autouse fixture imported by name into the test module, a
+  helper in a path-configured (`pythonpath`) source root, a helper inside the
+  owner's own package, an assertion helper in a third-party library not named
+  above and not assertion-like by name, assertions raised inside an imported
+  project module, and a test that fails only by crashing the process.
 - `observation_unconfirmed`: a strong family-selected assertion that the row,
   evaluated alone, does not credit as observing the changed sink. Python's
   alignment only credits; no credit never becomes an affirmative mismatch.
@@ -445,7 +462,7 @@ The line is evidence only: it changes no verdict, ranking, miss or
 actionability. For Python, a `conftest.py` on the test's directory chain that
 declares an `autouse` fixture, a `pytest_runtest_*` hook or `pytest_plugins`,
 or a test-item hook (`pytest_collection_modifyitems` and similar), or that imports names from any module outside a short standard-library list (the name may be an autouse fixture or hook), builds an autouse fixture decorator, aliases the fixture decorator or an external fixture, star-imports or imports relatively, passes `**options` to `fixture`, or that could not be read, withholds `extraction_complete_no_assertion` from
-every test in its scope (#6657). Remaining blind spots (dynamically registered
+every test in its scope (#6657). For the Python `no_assertion` miss a conftest that declares any fixture or `pytest_*` hook, or has a top-level call, taints every test below it as well. Remaining blind spots (dynamically registered
 plugins, plugins or `usefixtures` set in pytest ini `addopts`, TypeScript setup files; Python bare sibling modules are recorded per test and withhold the Python `no_assertion` row) are tracked in #6657
 and #6889.
 

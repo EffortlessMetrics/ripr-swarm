@@ -887,7 +887,7 @@ impl PythonAdapter {
             &reach_conftests,
             unreadable_conftest,
         );
-        fixtures::taint_builtin_fixture_overrides_by_conftest(
+        fixtures::taint_admission_by_conftest_declarations(
             &mut all_tests,
             &reach_conftests,
             unreadable_conftest,

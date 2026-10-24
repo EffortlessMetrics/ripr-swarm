@@ -108,8 +108,6 @@ fn mixed_rows_keep_their_own_reasons() -> Result<(), String> {
     Ok(())
 }
 
-const CONTROL: &str = "def test_control():\n    score(0)\n";
-
 fn no_assertion_rows(finding: &Finding) -> Vec<String> {
     finding
         .related_tests
@@ -138,138 +136,233 @@ fn call_bearing_test_with_no_assertion_is_no_assertion() -> Result<(), String> {
     Ok(())
 }
 
-/// Each shape could assert, fail the test or run assertion-like code outside
-/// the scanned body. Paired with the direct control: the same harness emits
-/// `no_assertion` for a bare call, so the withholding is the shape's own.
+/// Each pair is one withheld shape and its minimal direct control: the same
+/// module with only the assertion-capable construct removed, which does emit
+/// `no_assertion`. The withholding is therefore the construct's own.
+const SHAPE_PAIRS: &[(&str, &str, &str)] = &[
+    (
+        "same-module helper",
+        "def run_case(v):\n    assert v == 8\n\ndef test_shape():\n    run_case(score(0))\n",
+        "def run_case(v):\n    assert v == 8\n\ndef test_shape():\n    score(0)\n",
+    ),
+    (
+        "assert-named helper",
+        "def test_shape():\n    assert_payload(score(0))\n",
+        "def test_shape():\n    score(0)\n",
+    ),
+    (
+        "unittest assertEqual",
+        "import unittest\n\nclass T(unittest.TestCase):\n    def test_shape(self):\n        self.assertEqual(score(0), 8)\n",
+        "import unittest\n\nclass T(unittest.TestCase):\n    def test_shape(self):\n        score(0)\n",
+    ),
+    (
+        "unittest assertRaises",
+        "import unittest\n\nclass T(unittest.TestCase):\n    def test_shape(self):\n        with self.assertRaises(ValueError):\n            score(0)\n",
+        "import unittest\n\nclass T(unittest.TestCase):\n    def test_shape(self):\n        with self.subTest():\n            score(0)\n",
+    ),
+    (
+        "self helper",
+        "class TestX:\n    def _run(self, v):\n        assert v == 8\n    def test_shape(self):\n        self._run(score(0))\n",
+        "class TestX:\n    def _run(self, v):\n        assert v == 8\n    def test_shape(self):\n        score(0)\n",
+    ),
+    (
+        "pytest.raises",
+        "import pytest\n\ndef test_shape():\n    with pytest.raises(ValueError):\n        score(0)\n",
+        "import pytest\n\ndef test_shape():\n    score(0)\n",
+    ),
+    (
+        "pytest.warns",
+        "import pytest\n\ndef test_shape():\n    with pytest.warns(UserWarning):\n        score(0)\n",
+        "import pytest\n\ndef test_shape():\n    score(0)\n",
+    ),
+    (
+        "pytest.fail",
+        "import pytest\n\ndef test_shape():\n    score(0)\n    pytest.fail('x')\n",
+        "import pytest\n\ndef test_shape():\n    score(0)\n",
+    ),
+    (
+        "raise AssertionError",
+        "def test_shape():\n    if score(0) != 8:\n        raise AssertionError('bad')\n",
+        "def test_shape():\n    if score(0) != 8:\n        pass\n",
+    ),
+    (
+        "mock assertion",
+        "from unittest import mock\n\ndef test_shape():\n    m = mock.Mock()\n    score(0)\n    m.assert_called_once()\n",
+        "from unittest import mock\n\ndef test_shape():\n    m = mock.Mock()\n    score(0)\n    m.reset_mock()\n",
+    ),
+    (
+        "nested def assert",
+        "def test_shape():\n    def inner():\n        assert score(0) == 8\n    inner()\n",
+        "def test_shape():\n    def inner():\n        return score(0)\n    inner()\n",
+    ),
+    (
+        "lambda",
+        "def test_shape():\n    f = lambda: verify(score(0))\n    f()\n",
+        "def test_shape():\n    f = lambda: score(0)\n    f()\n",
+    ),
+    (
+        "comprehension helper",
+        "def test_shape():\n    [verify(score(v)) for v in (0, 1)]\n",
+        "def test_shape():\n    [score(v) for v in (0, 1)]\n",
+    ),
+    (
+        "project context manager",
+        "class Ctx:\n    def __enter__(self):\n        return self\n    def __exit__(self, *a):\n        assert False\n\ndef test_shape():\n    with Ctx():\n        score(0)\n",
+        "class Ctx:\n    def __enter__(self):\n        return self\n    def __exit__(self, *a):\n        assert False\n\ndef test_shape():\n    score(0)\n",
+    ),
+    (
+        "same-module autouse fixture",
+        "import pytest\n\n@pytest.fixture(autouse=True)\ndef guard():\n    yield\n    assert LEAKS == []\n\ndef test_shape():\n    score(0)\n",
+        "import pytest\n\n@pytest.fixture\ndef guard():\n    yield\n    assert LEAKS == []\n\ndef test_shape():\n    score(0)\n",
+    ),
+    (
+        "usefixtures",
+        "import pytest\n\n@pytest.mark.usefixtures('db')\ndef test_shape():\n    score(0)\n",
+        "import pytest\n\n@pytest.mark.slow\ndef test_shape():\n    score(0)\n",
+    ),
+    (
+        "pytestmark usefixtures",
+        "import pytest\n\npytestmark = pytest.mark.usefixtures('db')\n\ndef test_shape():\n    score(0)\n",
+        "import pytest\n\ndef test_shape():\n    score(0)\n",
+    ),
+    (
+        "opaque fixture parameter",
+        "def test_shape(checked_client):\n    score(0)\n",
+        "def test_shape(tmp_path):\n    score(0)\n",
+    ),
+    (
+        "asserting teardown fixture",
+        "import pytest\n\n@pytest.fixture\ndef res():\n    yield 1\n    assert False\n\ndef test_shape(res):\n    score(0)\n",
+        "import pytest\n\n@pytest.fixture\ndef res():\n    yield 1\n    assert False\n\ndef test_shape():\n    score(0)\n",
+    ),
+    (
+        "setUp that asserts",
+        "import unittest\n\nclass T(unittest.TestCase):\n    def setUp(self):\n        self.assertTrue(True)\n    def test_shape(self):\n        score(0)\n",
+        "import unittest\n\nclass T(unittest.TestCase):\n    def setUp(self):\n        self.x = 1\n    def test_shape(self):\n        score(0)\n",
+    ),
+    (
+        "pytest_plugins",
+        "pytest_plugins = ['plugin_a']\n\ndef test_shape():\n    score(0)\n",
+        "PLUGINS = ['plugin_a']\n\ndef test_shape():\n    score(0)\n",
+    ),
+    (
+        "subprocess exit code",
+        "import subprocess\n\ndef test_shape():\n    score(0)\n    subprocess.run(['prog'], check=True)\n",
+        "import shlex\n\ndef test_shape():\n    score(0)\n    shlex.split('prog')\n",
+    ),
+    (
+        "sys.exit",
+        "import sys\n\ndef test_shape():\n    score(0)\n    sys.exit(1)\n",
+        "import sys\n\ndef test_shape():\n    score(0)\n    sys.getsizeof(1)\n",
+    ),
+    (
+        "nose eq_",
+        "from nose.tools import eq_\n\ndef test_shape():\n    eq_(score(0), 8)\n",
+        "from decimal import Decimal\n\ndef test_shape():\n    Decimal(score(0))\n",
+    ),
+    (
+        "pytest_check",
+        "from pytest_check import check\n\ndef test_shape():\n    check.equal(score(0), 8)\n",
+        "from decimal import Decimal\n\ndef test_shape():\n    Decimal(score(0))\n",
+    ),
+    (
+        "imported decorator",
+        "from responses import activate\n\n@activate\ndef test_shape():\n    score(0)\n",
+        "from functools import wraps\n\n@wraps(print)\ndef test_shape():\n    score(0)\n",
+    ),
+    (
+        "filterwarnings mark",
+        "import pytest\n\n@pytest.mark.filterwarnings('error')\ndef test_shape():\n    score(0)\n",
+        "import pytest\n\n@pytest.mark.slow\ndef test_shape():\n    score(0)\n",
+    ),
+    (
+        "test-support helper",
+        "from tests.helpers import run_case\n\ndef test_shape():\n    run_case(score(0))\n",
+        "from decimal import Decimal\n\ndef test_shape():\n    Decimal(score(0))\n",
+    ),
+    (
+        "dynamic callee",
+        "CHECKS = {}\n\ndef test_shape():\n    CHECKS['x'](score(0))\n",
+        "def test_shape():\n    score(0)\n",
+    ),
+    // Module-level effects in the test module (B1).
+    (
+        "module warnings filter",
+        "import warnings\n\nwarnings.filterwarnings('error')\n\ndef test_shape():\n    score(0)\n",
+        "import warnings\n\nwarnings.catch_warnings\n\ndef test_shape():\n    score(0)\n",
+    ),
+    (
+        "module-level assert",
+        "assert True\n\ndef test_shape():\n    score(0)\n",
+        "FLAG = True\n\ndef test_shape():\n    score(0)\n",
+    ),
+    (
+        "module-level raise under a guard",
+        "import sys\n\nif sys.platform == 'none':\n    raise RuntimeError('x')\n\ndef test_shape():\n    score(0)\n",
+        "import sys\n\nif sys.platform == 'none':\n    FLAG = 1\n\ndef test_shape():\n    score(0)\n",
+    ),
+    (
+        "module-level pytest.skip",
+        "import pytest\n\npytest.skip('all', allow_module_level=True)\n\ndef test_shape():\n    score(0)\n",
+        "import pytest\n\nMARK = pytest.mark.slow\n\ndef test_shape():\n    score(0)\n",
+    ),
+    (
+        "module-level importorskip",
+        "import pytest\n\nnp = pytest.importorskip('numpy')\n\ndef test_shape():\n    score(0)\n",
+        "import pytest\n\nnp = None\n\ndef test_shape():\n    score(0)\n",
+    ),
+    (
+        "star import",
+        "from src.subject import *\n\ndef test_shape():\n    score(0)\n",
+        "from src.subject import score\n\ndef test_shape():\n    score(0)\n",
+    ),
+    // Context-manager and decorator forms of assertion libraries (B3).
+    (
+        "responses context manager",
+        "import responses\n\ndef test_shape():\n    with responses.RequestsMock() as rsps:\n        score(0)\n",
+        "import tempfile\n\ndef test_shape():\n    with tempfile.TemporaryDirectory() as tmp:\n        score(0)\n",
+    ),
+    (
+        "respx mock decorator",
+        "import respx\n\n@respx.mock\ndef test_shape():\n    score(0)\n",
+        "import functools\n\n@functools.cache\ndef test_shape():\n    score(0)\n",
+    ),
+    (
+        "project guard context manager",
+        "from src.guards import no_leaks\n\ndef test_shape():\n    with no_leaks():\n        score(0)\n",
+        "from contextlib import suppress\n\ndef test_shape():\n    with suppress(KeyError):\n        score(0)\n",
+    ),
+    // A mark on one case (B4).
+    (
+        "pytest.param with marks",
+        "import pytest\n\n@pytest.mark.parametrize('v', [pytest.param(0, marks=pytest.mark.xfail(strict=True))])\ndef test_shape(v):\n    score(v)\n",
+        "import pytest\n\n@pytest.mark.parametrize('v', [pytest.param(0, id='zero')])\ndef test_shape(v):\n    score(v)\n",
+    ),
+    // Dynamic-import and doctest escapes (B5); `request` shapes are pinned in
+    // the admission table because a `request` fixture is a static limit here.
+    (
+        "doctest run",
+        "import doctest\n\ndef test_shape():\n    score(0)\n    doctest.run_docstring_examples(score, {})\n",
+        "def test_shape():\n    score(0)\n",
+    ),
+    (
+        "import_module bound to a local",
+        "import importlib\n\ndef test_shape():\n    load = importlib.import_module\n    load('plugin_a')\n    score(0)\n",
+        "def test_shape():\n    load = len\n    load('plugin_a')\n    score(0)\n",
+    ),
+];
+
 #[test]
-fn assertion_like_shapes_never_get_no_assertion_beside_a_direct_control() -> Result<(), String> {
-    let control = score_case(&format!("{CONTROL}def test_shape():\n    score(0)\n"))?;
-    assert_eq!(
-        no_assertion_rows(&control).len(),
-        2,
-        "{:?}",
-        misses(&control)
-    );
-    let shapes: &[(&str, &str)] = &[
-        (
-            "same-module helper",
-            "def run_case(v):\n    assert v == 8\n\ndef test_shape():\n    run_case(score(0))\n",
-        ),
-        (
-            "assert-named helper",
-            "def test_shape():\n    assert_payload(score(0))\n",
-        ),
-        (
-            "unittest assertEqual",
-            "import unittest\n\nclass T(unittest.TestCase):\n    def test_shape(self):\n        self.assertEqual(score(0), 8)\n",
-        ),
-        (
-            "unittest assertRaises",
-            "import unittest\n\nclass T(unittest.TestCase):\n    def test_shape(self):\n        with self.assertRaises(ValueError):\n            score(0)\n",
-        ),
-        (
-            "self helper",
-            "class TestX:\n    def _run(self, v):\n        assert v == 8\n    def test_shape(self):\n        self._run(score(0))\n",
-        ),
-        (
-            "pytest.raises",
-            "import pytest\n\ndef test_shape():\n    with pytest.raises(ValueError):\n        score(0)\n",
-        ),
-        (
-            "pytest.warns",
-            "import pytest\n\ndef test_shape():\n    with pytest.warns(UserWarning):\n        score(0)\n",
-        ),
-        (
-            "pytest.fail",
-            "import pytest\n\ndef test_shape():\n    score(0)\n    pytest.fail('x')\n",
-        ),
-        (
-            "raise AssertionError",
-            "def test_shape():\n    if score(0) != 8:\n        raise AssertionError('bad')\n",
-        ),
-        (
-            "mock assertion",
-            "from unittest import mock\n\ndef test_shape():\n    m = mock.Mock()\n    score(0)\n    m.assert_called_once()\n",
-        ),
-        (
-            "nested def assert",
-            "def test_shape():\n    def inner():\n        assert score(0) == 8\n    inner()\n",
-        ),
-        (
-            "lambda",
-            "def test_shape():\n    f = lambda: verify(score(0))\n    f()\n",
-        ),
-        (
-            "comprehension helper",
-            "def test_shape():\n    [verify(score(v)) for v in (0, 1)]\n",
-        ),
-        (
-            "context manager",
-            "class Ctx:\n    def __enter__(self):\n        return self\n    def __exit__(self, *a):\n        assert False\n\ndef test_shape():\n    with Ctx():\n        score(0)\n",
-        ),
-        (
-            "same-module autouse fixture",
-            "import pytest\n\n@pytest.fixture(autouse=True)\ndef guard():\n    yield\n    assert LEAKS == []\n\ndef test_shape():\n    score(0)\n",
-        ),
-        (
-            "usefixtures",
-            "import pytest\n\n@pytest.mark.usefixtures('db')\ndef test_shape():\n    score(0)\n",
-        ),
-        (
-            "pytestmark usefixtures",
-            "import pytest\n\npytestmark = pytest.mark.usefixtures('db')\n\ndef test_shape():\n    score(0)\n",
-        ),
-        (
-            "opaque fixture parameter",
-            "def test_shape(checked_client):\n    score(0)\n",
-        ),
-        (
-            "asserting teardown fixture",
-            "import pytest\n\n@pytest.fixture\ndef res():\n    yield 1\n    assert False\n\ndef test_shape(res):\n    score(0)\n",
-        ),
-        (
-            "setUp that asserts",
-            "import unittest\n\nclass T(unittest.TestCase):\n    def setUp(self):\n        self.assertTrue(True)\n    def test_shape(self):\n        score(0)\n",
-        ),
-        (
-            "plugins",
-            "pytest_plugins = ['plugin_a']\n\ndef test_shape():\n    score(0)\n",
-        ),
-        (
-            "subprocess exit code",
-            "import subprocess\n\ndef test_shape():\n    score(0)\n    subprocess.run(['prog'], check=True)\n",
-        ),
-        (
-            "sys.exit",
-            "import sys\n\ndef test_shape():\n    score(0)\n    sys.exit(1)\n",
-        ),
-        (
-            "nose eq_",
-            "from nose.tools import eq_\n\ndef test_shape():\n    eq_(score(0), 8)\n",
-        ),
-        (
-            "pytest_check",
-            "from pytest_check import check\n\ndef test_shape():\n    check.equal(score(0), 8)\n",
-        ),
-        (
-            "imported decorator",
-            "from responses import activate\n\n@activate\ndef test_shape():\n    score(0)\n",
-        ),
-        (
-            "filterwarnings mark",
-            "import pytest\n\n@pytest.mark.filterwarnings('error')\ndef test_shape():\n    score(0)\n",
-        ),
-        (
-            "helper imported from test support",
-            "from tests.helpers import run_case\n\ndef test_shape():\n    run_case(score(0))\n",
-        ),
-        (
-            "dynamic callee",
-            "CHECKS = {}\n\ndef test_shape():\n    CHECKS['x'](score(0))\n",
-        ),
-    ];
-    for (label, tests) in shapes {
-        let finding = score_case(tests)?;
+fn assertion_like_shapes_never_get_no_assertion_beside_a_minimal_control() -> Result<(), String> {
+    for (label, shape, control) in SHAPE_PAIRS {
+        let controlled = score_case(control)?;
+        assert_eq!(
+            miss_of(&controlled, "test_shape"),
+            Some(RelatedTestMiss::NoAssertion),
+            "{label} control: {:?}",
+            misses(&controlled)
+        );
+        let finding = score_case(shape)?;
         assert!(
             finding
                 .related_tests
@@ -334,7 +427,7 @@ mod workspace {
     use super::*;
     use crate::analysis::language::python::fixtures::{
         record_bare_sibling_imports, taint_admission_by_conftest,
-        taint_builtin_fixture_overrides_by_conftest,
+        taint_admission_by_conftest_declarations,
     };
     use crate::analysis::language::python::source_facts::extract_source_facts;
     use std::collections::BTreeSet;
@@ -377,7 +470,7 @@ mod workspace {
         }
         let is_unread = |conftest: &Path| unread.iter().any(|path| Path::new(path) == conftest);
         taint_admission_by_conftest(&mut parsed, &implicit, is_unread);
-        taint_builtin_fixture_overrides_by_conftest(&mut parsed, &reach, is_unread);
+        taint_admission_by_conftest_declarations(&mut parsed, &reach, is_unread);
         record_bare_sibling_imports(&mut parsed, |path| {
             siblings.iter().any(|sibling| Path::new(sibling) == path)
         });
@@ -442,32 +535,52 @@ mod workspace {
     }
 
     #[test]
-    fn a_conftest_override_of_a_builtin_fixture_withholds_no_assertion() -> Result<(), String> {
-        let uses_tmp = "def test_bare(tmp_path):\n    score(0)\n";
-        // Control: a conftest declaring only an unrelated fixture is fine for
-        // a test that requests no built-in fixture.
-        let unrelated = "import pytest\n\n@pytest.fixture\ndef other():\n    return 1\n";
+    fn a_conftest_declaration_withholds_no_assertion_even_for_a_test_naming_none_of_it()
+    -> Result<(), String> {
+        // Control: a conftest that declares nothing keeps the reason.
         assert_eq!(
-            bare_miss(&[("tests/conftest.py", unrelated)], &[], &[], BARE)?,
+            bare_miss(
+                &[("tests/conftest.py", "import pytest\nMARK = 1\n")],
+                &[],
+                &[],
+                BARE
+            )?,
             Some(RelatedTestMiss::NoAssertion)
         );
-        assert_eq!(
-            bare_miss(&[], &[], &[], uses_tmp)?,
-            Some(RelatedTestMiss::NoAssertion)
-        );
-        for override_source in [
-            "import pytest\n\n@pytest.fixture\ndef tmp_path():\n    yield 1\n    assert False\n",
-            "import pytest\n\n@pytest.fixture(name='tmp_path')\ndef fake():\n    yield 1\n    assert False\n",
+        for (label, conftest) in [
+            (
+                "unrelated plain fixture",
+                "import pytest\n\n@pytest.fixture\ndef other():\n    return 1\n",
+            ),
+            (
+                "built-in override",
+                "import pytest\n\n@pytest.fixture\ndef tmp_path():\n    yield 1\n    assert False\n",
+            ),
+            (
+                "renamed built-in override",
+                "import pytest\n\n@pytest.fixture(name='tmp_path')\ndef fake():\n    yield 1\n    assert False\n",
+            ),
+            (
+                "configure hook",
+                "def pytest_configure(config):\n    config.addinivalue_line('filterwarnings', 'error')\n",
+            ),
+            (
+                "generate_tests hook",
+                "def pytest_generate_tests(metafunc):\n    metafunc.fixturenames.append('guard')\n",
+            ),
+            (
+                "session finish hook",
+                "def pytest_sessionfinish(session):\n    assert not session.testsfailed\n",
+            ),
+            (
+                "top-level filter",
+                "import warnings\n\nwarnings.simplefilter('error')\n",
+            ),
         ] {
             assert_eq!(
-                bare_miss(
-                    &[("tests/conftest.py", override_source)],
-                    &[],
-                    &[],
-                    uses_tmp
-                )?,
+                bare_miss(&[("tests/conftest.py", conftest)], &[], &[], BARE)?,
                 None,
-                "{override_source}"
+                "{label}"
             );
         }
         Ok(())
@@ -488,6 +601,35 @@ mod workspace {
         assert_eq!(
             bare_miss(&[], &[], &["tests/runner.py"], plain_import)?,
             None
+        );
+        // A package test directory makes the parent the pytest rootdir, so a
+        // root-level module is bare-importable too (B6); the module under test
+        // and its package are exempt.
+        let root_helper =
+            "from runner import run_case\n\ndef test_bare():\n    run_case(score(0))\n";
+        assert_eq!(
+            bare_miss(&[], &[], &["tests/__init__.py", "runner.py"], root_helper)?,
+            None
+        );
+        assert_eq!(
+            bare_miss(&[], &[], &["runner.py"], root_helper)?,
+            Some(RelatedTestMiss::NoAssertion),
+            "without a package test dir the root is not on sys.path"
+        );
+        let production_package =
+            "from src.subject import score as s\n\ndef test_bare():\n    s(0)\n";
+        let rows = row_misses_at(
+            "tests/test_subject.py",
+            "",
+            &[],
+            &[],
+            &["tests/__init__.py", "src"],
+            production_package,
+        )?;
+        assert_eq!(
+            rows.iter().map(|(_, miss)| *miss).collect::<Vec<_>>(),
+            vec![Some(RelatedTestMiss::NoAssertion)],
+            "the owner's package is exempt: {rows:?}"
         );
         // The module under test beside its test is not test support.
         let rows = row_misses_at(

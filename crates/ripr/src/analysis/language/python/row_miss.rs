@@ -147,9 +147,9 @@ fn row_miss(
 /// conftest chain pass (`fixtures.rs`, #6657) has already withheld every test
 /// a conftest can assert around, and this adds the row-local fail-closed
 /// guards: a test with a skip / xfail / expected-failure control is never
-/// credited with a reason it cannot reach, and a bare sibling module of the
-/// test (test support RIPR cannot read) other than the module under test
-/// keeps the row unknown. Invisible limits stay documented in RIPR-SPEC-0224.
+/// credited with a reason it cannot reach, and a bare-importable module
+/// beside the test (test support RIPR cannot read) other than the module or
+/// package under test keeps the row unknown. Invisible limits stay documented in RIPR-SPEC-0224.
 fn no_assertion_miss(test: &PythonTest, owner: &PythonOwner) -> Option<RelatedTestMiss> {
     (test.assertion_admission == PythonAssertionAdmission::NoAssertionLike
         && test.assertions.is_empty()
@@ -157,7 +157,7 @@ fn no_assertion_miss(test: &PythonTest, owner: &PythonOwner) -> Option<RelatedTe
         && test
             .bare_sibling_modules
             .iter()
-            .all(|module| module == &owner.file))
+            .all(|module| owner.file.starts_with(module)))
     .then_some(RelatedTestMiss::NoAssertion)
 }
 
