@@ -253,6 +253,76 @@ fn owner_index_for_line(
     (idx < hi && line <= file_owners[idx].end_line).then_some(idx)
 }
 
+/// Per-file owner resolution for the changed-line classifier (#10021), with
+/// the extraction-faithfulness guard from the #10024 review.
+///
+/// The binary-search index is only faithful to the old extraction-order scan
+/// while the file's owners are already non-decreasing in start line. A
+/// normalized-path collision (e.g. `src/a/b.ts` and a literal `src/a\b.ts`,
+/// which `normalized_path` spells identically on every platform) or an
+/// extraction quirk can invert two overlapping owners; a start-line sort
+/// would then change which owner a changed line resolves to, changing the
+/// finding ID and its classification. A non-monotonic group keeps extraction
+/// order and the old linear scan — rare, and byte-identical to pre-index
+/// behavior.
+enum FileOwnerPlan {
+    /// Start-monotonic group: stable-sorted (a no-op on a monotonic group, so
+    /// extraction order survives) plus the prefix-max of end lines.
+    Indexed {
+        owners: Vec<TypeScriptOwner>,
+        end_prefix_max: Vec<usize>,
+    },
+    /// Non-monotonic group: extraction-order linear scan per changed line.
+    Linear(Vec<TypeScriptOwner>),
+}
+
+impl FileOwnerPlan {
+    fn build(file_owners: Vec<TypeScriptOwner>) -> Self {
+        let start_monotonic = file_owners
+            .iter()
+            .zip(file_owners.iter().skip(1))
+            .all(|(earlier, later)| earlier.start_line <= later.start_line);
+        if start_monotonic {
+            let mut owners = file_owners;
+            owners.sort_by_key(|owner| owner.start_line);
+            let mut end_prefix_max: Vec<usize> = Vec::with_capacity(owners.len());
+            let mut max_end_line = 0usize;
+            for owner in &owners {
+                max_end_line = max_end_line.max(owner.end_line);
+                end_prefix_max.push(max_end_line);
+            }
+            Self::Indexed {
+                owners,
+                end_prefix_max,
+            }
+        } else {
+            Self::Linear(file_owners)
+        }
+    }
+
+    fn owners(&self) -> &[TypeScriptOwner] {
+        match self {
+            Self::Indexed { owners, .. } => owners,
+            Self::Linear(owners) => owners,
+        }
+    }
+
+    /// First owner whose span contains `line`, exactly as the pre-index
+    /// extraction-order scan selected it: the binary-search index for a
+    /// monotonic group, a linear scan over extraction order otherwise.
+    fn owner_for_line(&self, line: usize) -> Option<&TypeScriptOwner> {
+        match self {
+            Self::Indexed {
+                owners,
+                end_prefix_max,
+            } => owners.get(owner_index_for_line(owners, end_prefix_max, line)?),
+            Self::Linear(owners) => owners
+                .iter()
+                .find(|owner| owner.start_line <= line && line <= owner.end_line),
+        }
+    }
+}
+
 impl LanguageAdapter for TypeScriptAdapter {
     fn accepts_path(&self, path: &Path) -> bool {
         matches!(route(path), Some(LanguageId::TypeScript))
@@ -644,12 +714,11 @@ impl TypeScriptAdapter {
             // owner vec for every changed line — O(changed lines x workspace
             // owners), allocation-free per step only after the alloc-free
             // file compare, still ~140 s for 10k lines in a 100k-owner file.
-            // Resolve against a per-file, start-line-sorted slice with a
-            // prefix-max of end lines instead: O(workspace owners) once per
-            // changed file, then O(log file owners) per line. The stable
-            // sort keeps the extractor's relative order for equal start
-            // lines, so the first containing owner is the same one the old
-            // scan found (the outer owner of a nested line included).
+            // `FileOwnerPlan` resolves against a per-file owner group in
+            // O(log file owners) per line for the common start-monotonic
+            // group, and falls back to the old extraction-order linear scan
+            // when a normalized-path collision or extraction quirk inverts
+            // the group (#10024 review).
             let changed_norm = normalized_path(&changed.path);
             // #10021 (memoization half): the four per-owner `all_tests` scans
             // in the classifier depend on the owner, never on the changed
@@ -660,18 +729,13 @@ impl TypeScriptAdapter {
                 (String, String, usize, usize),
                 OwnerLineContext<'_>,
             > = std::collections::HashMap::new();
-            let mut file_owners: Vec<TypeScriptOwner> = all_owners
-                .iter()
-                .filter(|owner| normalized_path(&owner.file) == changed_norm)
-                .cloned()
-                .collect();
-            file_owners.sort_by_key(|owner| owner.start_line);
-            let mut owner_end_prefix_max: Vec<usize> = Vec::with_capacity(file_owners.len());
-            let mut max_end_line = 0usize;
-            for owner in &file_owners {
-                max_end_line = max_end_line.max(owner.end_line);
-                owner_end_prefix_max.push(max_end_line);
-            }
+            let owner_plan = FileOwnerPlan::build(
+                all_owners
+                    .iter()
+                    .filter(|owner| normalized_path(&owner.file) == changed_norm)
+                    .cloned()
+                    .collect(),
+            );
             // Every removed line of a replacement block shares the new-side
             // line where the added run starts, so matching on that coordinate
             // alone finds an old line only for the run's first added line
@@ -724,41 +788,37 @@ impl TypeScriptAdapter {
                 let old_line_text = counterparts
                     .get(&added.line)
                     .map(|removed| removed.text.as_str());
-                let resolved_finding =
-                    owner_index_for_line(&file_owners, &owner_end_prefix_max, added.line).and_then(
-                        |owner_idx| {
-                            let owner = &file_owners[owner_idx];
-                            let key = (
-                                changed_norm.clone(),
-                                owner.name.clone(),
-                                owner.start_line,
-                                owner.end_line,
-                            );
-                            let context = owner_contexts.entry(key).or_insert_with(|| {
-                                owner_line_context(
-                                    owner,
-                                    &all_tests,
-                                    Some(&options.root),
-                                    &reexport_index,
-                                    alias_map_ref,
-                                )
-                            });
-                            classify_resolved_owner(
-                                &changed.path,
-                                added.line,
-                                &added.text,
-                                old_line_text,
-                                owner,
-                                &file_owners,
-                                context,
-                                &all_tests,
-                                Some(&options.root),
-                                &reexport_index,
-                                alias_map_ref,
-                                alias_load_gap.as_ref(),
-                            )
-                        },
+                let resolved_finding = owner_plan.owner_for_line(added.line).and_then(|owner| {
+                    let key = (
+                        changed_norm.clone(),
+                        owner.name.clone(),
+                        owner.start_line,
+                        owner.end_line,
                     );
+                    let context = owner_contexts.entry(key).or_insert_with(|| {
+                        owner_line_context(
+                            owner,
+                            &all_tests,
+                            Some(&options.root),
+                            &reexport_index,
+                            alias_map_ref,
+                        )
+                    });
+                    classify_resolved_owner(
+                        &changed.path,
+                        added.line,
+                        &added.text,
+                        old_line_text,
+                        owner,
+                        owner_plan.owners(),
+                        context,
+                        &all_tests,
+                        Some(&options.root),
+                        &reexport_index,
+                        alias_map_ref,
+                        alias_load_gap.as_ref(),
+                    )
+                });
                 if let Some(mut finding) = resolved_finding {
                     test_index_consumed = true;
                     finding.evidence.extend(discovery_evidence.clone());
