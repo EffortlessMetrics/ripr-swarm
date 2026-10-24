@@ -1,0 +1,22 @@
+{
+  "case_id": "unnum-0095-ex3-two-hop-chain",
+  "subject_id": "authored-ts-vitest-unnum",
+  "origin": "authored",
+  "anchor": "src/hop/util.ts:2",
+  "behavior_family": "predicate_equality",
+  "test_shape": "vitest_expect_tobe_two_hop_named_reexport",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

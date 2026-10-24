@@ -12,7 +12,7 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 193
+floor = 201
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
@@ -552,6 +552,30 @@ id = "RIPR-SPEC-0243"
 scope = "out"
 reason = "non-Rust language or packaging surface"
 
+# TypeScript Preview Static Facts
+[[spec]]
+id = "RIPR-SPEC-0027"
+scope = "out"
+reason = "non-Rust language or packaging surface"
+
+# TypeScript Bounded Re-Export Test Discovery
+[[spec]]
+id = "RIPR-SPEC-0095"
+scope = "out"
+reason = "non-Rust language or packaging surface"
+
+# TypeScript toThrow Exact-Payload Oracle Upgrade
+[[spec]]
+id = "RIPR-SPEC-0097"
+scope = "out"
+reason = "non-Rust language or packaging surface"
+
+# TypeScript Exposed Observation Guard
+[[spec]]
+id = "RIPR-SPEC-0098"
+scope = "out"
+reason = "non-Rust language or packaging surface"
+
 # TypeScript corpus oracle amendments
 [[spec]]
 id = "RIPR-SPEC-0246"
@@ -765,9 +789,9 @@ example = 2
 reason = "the repeated state is reached only by an input that recurses forever at runtime, so no test row can reach it and no runtime label can pin it; match_transfer unit tests (repeated state) and the recursive_controls fixture cover the refusal"
 
 # Unsafe execution boundary probes
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0168"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+scope = "in"
 
 # Contextual source-role composition
 [[unmeasured]]
@@ -775,14 +799,34 @@ id = "RIPR-SPEC-0169"
 reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
 
 # path-dependency diff-scope expansion
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0171"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+scope = "in"
+
+[[spec.waived]]
+example = 2
+reason = "without the dependency edge no test in `b` can reach `a`, so there is no runtime truth to label"
+
+[[spec.waived]]
+example = 3
+reason = "manifest-graph `limited` disclosure; the classification is unchanged, so a verdict case cannot label it"
+
+[[spec.waived]]
+example = 4
+reason = "a directory with no Cargo.toml has no cargo workspace to run; graph `unavailable` is disclosure only"
+
+[[spec.waived]]
+example = 6
+reason = "a deleted dependency directory breaks the dependent's build, so no runtime mutant truth exists"
 
 # cross-crate test relation through dependency edges
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0172"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+scope = "in"
+
+[[spec.waived]]
+example = 5
+reason = "graph `limited`/`unavailable` fallback is disclosure of the #2971 filter; the classification is unchanged, so a verdict case cannot label it"
 
 # guarded Result match observations
 [[spec]]

@@ -5366,6 +5366,9 @@ id = "RIPR-SPEC-0051"
 name = "First successful PR UX"
 spec = "docs/specs/RIPR-SPEC-0051-first-successful-pr-ux.md"
 tests = [
+  "crates/ripr/tests/cli_smoke/first_pr_write_failure.rs::first_pr_packet_failed_write_preserves_destination_and_retries",
+  "crates/ripr/tests/cli_smoke/first_pr_write_failure.rs::first_pr_derived_ledger_failed_write_preserves_destination_and_retries",
+  "crates/ripr/src/output/file_write.rs::tests::failed_stream_keeps_success_looking_json_private_and_retry_publishes_all_bytes",
   "crates/ripr/src/output/ci_summary/tests.rs::given_ci_summary_why_markup_when_rendered_then_one_literal_span",
   "crates/ripr/src/output/ci_summary/tests.rs::given_changed_behavior_delimiters_when_rendered_then_one_literal_code_span",
   "crates/ripr/src/output/ci_summary/tests.rs::given_changed_behavior_fallback_when_rendered_then_delimiters_stay_literal",
