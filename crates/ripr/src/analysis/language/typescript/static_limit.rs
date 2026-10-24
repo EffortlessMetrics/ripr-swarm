@@ -341,6 +341,7 @@ fn relative_import_resolves_to_workspace_file(
 pub(crate) fn named_limitations_for_unresolved_ownership(
     owner: &TypeScriptOwner,
     all_tests: &[TypeScriptTest],
+    relation_index: &RelationIndex,
     workspace_root: &Path,
     related: &[TypeScriptRelatedCandidate<'_>],
 ) -> Vec<TypeScriptNamedLimitation> {
@@ -348,7 +349,10 @@ pub(crate) fn named_limitations_for_unresolved_ownership(
     let mut saw_target_unresolved = false;
 
     let package_scope = OwnerPackageScope::new(&owner.file, workspace_root);
-    for test in all_tests {
+    // #10028: a test can only fire here when it references the owner by a
+    // body call/name or an owner-matching import — exactly the relation
+    // index's keys — so the indexed candidates are a sound superset.
+    for test in relation_index.candidates(owner, all_tests) {
         if saw_target_unresolved {
             break;
         }
@@ -604,9 +608,13 @@ impl TsAliasGapDisclosure {
 pub(crate) fn named_limitations_for_spy_fabrication(
     owner: &TypeScriptOwner,
     all_tests: &[TypeScriptTest],
+    relation_index: &RelationIndex,
 ) -> Vec<TypeScriptNamedLimitation> {
     let mut limitations: Vec<TypeScriptNamedLimitation> = Vec::new();
-    for test in all_tests {
+    // #10028: spy fabrication names the owner in the test body (the
+    // fabricated-call string literal or a default-import binding), so the
+    // indexed candidates are a sound superset of potential producers.
+    for test in relation_index.candidates(owner, all_tests) {
         if test_spies_owner_with_fabrication_for_owner(test, &owner.name, owner.exported_as_default)
         {
             limitations.push(TypeScriptNamedLimitation {
@@ -656,6 +664,8 @@ mod module_identity_tests {
             method_kind: TypeScriptMethodKind::Ordinary,
             class_default_export: false,
             default_object_member: false,
+            commonjs_default_export: false,
+            commonjs_whole_function: false,
             module_entries: Vec::new(),
             arity: None,
             params: Vec::new(),
