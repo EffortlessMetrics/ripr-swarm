@@ -141,8 +141,6 @@ impl ReExportIndex {
         alias_map: Option<&TsAliasMap>,
         is_test: impl Fn(&Path) -> bool,
     ) -> Self {
-        use oxc_parser::Parser;
-
         let mut entries: HashMap<(String, String), (String, String)> = HashMap::new();
         let mut star_edges: HashSet<(String, String)> = HashSet::new();
         let mut local_exports: HashMap<String, HashSet<String>> = HashMap::new();
@@ -172,27 +170,16 @@ impl ReExportIndex {
             let Some(source) = sources.get(relative) else {
                 continue;
             };
-            // Parse on the guarded large-stack worker (#4101): the recursive
-            // oxc parser must not run on the caller's stack, and an
-            // over-budget source is skipped exactly like a parse error.
-            let worker_root = workspace_root.to_path_buf();
-            let worker_alias = alias_map.cloned();
-            let Ok(file_facts) = parse_on_worker(
-                relative.as_path(),
+            // Per-file facts come from the content-keyed cache (#10063): a
+            // re-save with one edited file re-parses only that file instead
+            // of every non-test source in the workspace. Facts depend on the
+            // workspace root and the tsconfig alias map, both carried by the
+            // cache key.
+            let Some(file_facts) = super::export_facts_cache::export_facts_cached(
+                relative,
                 source.as_str(),
-                move |relative, source, allocator| {
-                    let ret = Parser::new(allocator, source, source_type_for(relative)).parse();
-                    if !ret.errors.is_empty() {
-                        return ModuleExportFacts::default();
-                    }
-                    module_export_facts(
-                        relative,
-                        &ret.program.body,
-                        source,
-                        worker_alias.as_ref(),
-                        worker_root.as_path(),
-                    )
-                },
+                workspace_root,
+                alias_map,
             ) else {
                 continue;
             };
@@ -800,17 +787,67 @@ impl ReExportIndex {
 }
 
 /// Export facts of one parsed module, collected on the parse worker.
-#[derive(Debug, Default)]
-struct ModuleExportFacts {
-    entries: Vec<((String, String), (String, String))>,
-    star_edges: Vec<(String, String)>,
-    local_exports: Vec<String>,
-    enum_bindings: Vec<(String, Vec<String>)>,
-    enum_imports: Vec<TypeScriptImport>,
-    unstable_enum_roots: Vec<String>,
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct ModuleExportFacts {
+    pub(crate) entries: Vec<((String, String), (String, String))>,
+    pub(crate) star_edges: Vec<(String, String)>,
+    pub(crate) local_exports: Vec<String>,
+    pub(crate) enum_bindings: Vec<(String, Vec<String>)>,
+    pub(crate) enum_imports: Vec<TypeScriptImport>,
+    pub(crate) unstable_enum_roots: Vec<String>,
 }
 
-fn module_export_facts(
+impl ModuleExportFacts {
+    /// Approximate retained bytes, for the export-facts cache bound.
+    pub(crate) fn approx_bytes(&self) -> usize {
+        type StringPair = (String, String);
+        let string_pair_bytes = |pairs: &Vec<(StringPair, StringPair)>| {
+            pairs
+                .iter()
+                .map(|((a, b), (c, d))| a.len() + b.len() + c.len() + d.len())
+                .sum::<usize>()
+        };
+        let tuple_bytes = |pairs: &Vec<(String, String)>| {
+            pairs.iter().map(|(a, b)| a.len() + b.len()).sum::<usize>()
+        };
+        string_pair_bytes(&self.entries)
+            .saturating_add(tuple_bytes(&self.star_edges))
+            .saturating_add(
+                self.local_exports
+                    .iter()
+                    .map(|name| name.len())
+                    .sum::<usize>(),
+            )
+            .saturating_add(
+                self.enum_bindings
+                    .iter()
+                    .map(|(name, members)| {
+                        name.len().saturating_add(
+                            members.iter().map(|member| member.len() + 1).sum::<usize>(),
+                        )
+                    })
+                    .sum::<usize>(),
+            )
+            .saturating_add(
+                self.enum_imports
+                    .iter()
+                    .map(|import| {
+                        import.source.len()
+                            + import.local.len()
+                            + import.imported.as_ref().map_or(0, |name| name.len())
+                    })
+                    .sum::<usize>(),
+            )
+            .saturating_add(
+                self.unstable_enum_roots
+                    .iter()
+                    .map(|name| name.len())
+                    .sum::<usize>(),
+            )
+    }
+}
+
+pub(crate) fn module_export_facts(
     relative: &Path,
     body: &oxc_allocator::Vec<'_, Statement<'_>>,
     source: &str,
