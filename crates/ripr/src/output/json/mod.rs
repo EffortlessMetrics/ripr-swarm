@@ -147,6 +147,7 @@ mod tests {
             owner: None,
         });
         finding.activation.observed_values.push(ValueFact {
+            file: None,
             line: 12,
             text: "discounted_total(50, 100)".to_string(),
             value: "amount = 50".to_string(),
@@ -170,6 +171,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         });
 
         let mut out = String::new();
@@ -187,7 +190,12 @@ mod tests {
     #[test]
     fn context_packet_includes_effective_stop_reasons_for_unknowns() {
         let finding = unknown_finding();
-        let packet = render_context_packet(&finding, 5, Path::new("."));
+        let packet = render_context_packet(
+            &finding,
+            5,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
 
         assert!(packet.contains("\"stop_reasons\": [\"static_probe_unknown\"]"));
     }
@@ -206,6 +214,35 @@ mod tests {
         let rendered = render(&output);
 
         assert!(rendered.contains("\"base\": \"origin/main\""));
+    }
+
+    /// RIPR-SPEC-0051: the exhaustive text and JSON forms retain source details
+    /// that a compact Markdown summary may normalize onto one line.
+    #[test]
+    fn given_source_controls_when_rendered_then_json_round_trips_and_text_spells_controls()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = "`a``b``` | \\\"\n\t  next\r\n\u{0}\u{1b}\u{85}\u{202e}🦀";
+        let mut output = sample_output(None);
+        let finding = output
+            .findings
+            .first_mut()
+            .ok_or("fixture needs a finding")?;
+        finding.probe.expression = source.to_string();
+        finding.probe.before = None;
+        finding.probe.after = None;
+        let text = crate::output::human::render_finding(finding);
+        let changed = text
+            .split_once("\nChanged\n")
+            .and_then(|(_, tail)| tail.split_once("\nProbe\n"))
+            .map(|(changed, _)| changed)
+            .ok_or("full human report needs Changed and Probe sections")?;
+        assert_eq!(
+            changed,
+            "  expr:   `a``b``` | \\\"\n\t  next\\u{0d}\n\\u{00}\\u{1b}\\u{85}\\u{202e}🦀\n"
+        );
+        let json: serde_json::Value = serde_json::from_str(&render(&output))?;
+        assert_eq!(json["findings"][0]["probe"]["expression"], source);
+        Ok(())
     }
 
     // --- Property-based tests (#2751) ---
@@ -488,6 +525,66 @@ mod tests {
             ),
             Ok(Some((999, FindingsBudgetSource::Default)))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn bounded_findings_document_discloses_document_complete_in_analysis_outcome()
+    -> Result<(), String> {
+        use super::report::{FindingsBudgetSource, render_with_config};
+        use crate::config::RiprConfig;
+        // #9010: analysis_complete stays the analysis verdict; only a
+        // budget-bounded document adds `document_complete: false` + counts.
+        let outcome = AnalysisOutcome::new(
+            AnalysisOutcomeKind::CompleteWithFindings,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 3,
+                candidate_line_count: 3,
+                probe_count: 3,
+                finding_count: 3,
+            },
+            Vec::new(),
+        )?;
+        let mut output = three_finding_output();
+        output.analysis_outcome = Some(outcome);
+        let parse = |raw: &str| -> Result<serde_json::Value, String> {
+            serde_json::from_str(raw).map_err(|error| error.to_string())
+        };
+
+        let bounded = parse(&render_with_config(
+            &output,
+            &RiprConfig::default(),
+            Some((1, FindingsBudgetSource::Configured)),
+        ))?;
+        let envelope = &bounded["analysis_outcome"];
+        assert_eq!(envelope["analysis_complete"], true);
+        assert_eq!(envelope["outcome"]["kind"], "complete_with_findings");
+        assert_eq!(envelope["document_complete"], false);
+        assert_eq!(envelope["findings_rendered"], 1);
+        assert_eq!(envelope["findings_total"], 3);
+        assert_eq!(
+            bounded["findings"].as_array().map(Vec::len),
+            Some(1),
+            "the disclosed rendered count matches the array"
+        );
+
+        let unbounded = parse(&render_with_config(&output, &RiprConfig::default(), None))?;
+        assert!(unbounded["analysis_outcome"]["analysis_complete"] == true);
+        assert!(
+            unbounded["analysis_outcome"]
+                .get("document_complete")
+                .is_none(),
+            "unbounded runs stay byte-identical: no document_complete member"
+        );
+        // A budget that does not engage is unbounded output too.
+        let roomy = parse(&render_with_config(
+            &output,
+            &RiprConfig::default(),
+            Some((usize::MAX / 2, FindingsBudgetSource::Configured)),
+        ))?;
+        assert!(roomy["analysis_outcome"].get("document_complete").is_none());
         Ok(())
     }
 
@@ -850,6 +947,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         };
         let output = CheckOutput {
             harness_projections: Vec::new(),
@@ -990,6 +1089,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         };
         let output = CheckOutput {
             harness_projections: Vec::new(),
@@ -1169,6 +1270,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             },
             RelatedTest {
                 name: "strict_check".to_string(),
@@ -1180,6 +1283,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             },
         ];
 
@@ -1194,6 +1299,7 @@ mod tests {
     fn finding_json_formats_observed_value_context_labels() {
         let mut finding = unknown_finding();
         finding.activation.observed_values.push(ValueFact {
+            file: None,
             line: 33,
             text: "assert_eq!(actual, expected)".to_string(),
             value: "actual = 10".to_string(),
@@ -1231,6 +1337,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             })
             .collect();
         let mut out = String::new();
@@ -1261,6 +1369,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             })
             .collect();
         let mut out = String::new();
@@ -1324,6 +1434,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             })
             .collect();
         let mut out = String::new();
@@ -1353,6 +1465,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             })
             .collect();
         assert_eq!(finding.related_tests_total(), 2);
@@ -1398,6 +1512,8 @@ mod tests {
                     relation_reason: None,
                     relation_confidence: None,
                     miss: None,
+                    miss_support: None,
+                    role: crate::domain::RelatedTestRole::Contributing,
                 })
                 .collect();
             finding.related_tests_matched_total = Some(count);
@@ -1439,6 +1555,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             })
             .collect();
         finding.related_tests_matched_total = Some(9);
@@ -1816,14 +1934,32 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }];
         finding.recommended_next_step = Some("Add a focused Perl assertion.".to_string());
         finding.language = Some(LanguageId::Perl);
         finding.language_status = Some(LanguageStatus::Preview);
     }
 
+    /// #5531: the typed scope is omitted from a serialized diff `Finding`
+    /// (byte-stable) and round-trips for a repo finding.
+    #[test]
+    fn analysis_scope_serializes_only_for_repo() -> Result<(), String> {
+        let mut finding = unknown_finding();
+        let diff = serde_json::to_value(&finding).map_err(|e| e.to_string())?;
+        assert!(diff.get("analysis_scope").is_none());
+        finding.mark_repo_scoped();
+        let repo = serde_json::to_value(&finding).map_err(|e| e.to_string())?;
+        assert_eq!(repo["analysis_scope"], serde_json::json!("repo"));
+        let restored: Finding = serde_json::from_value(repo).map_err(|e| e.to_string())?;
+        assert_eq!(restored, finding);
+        Ok(())
+    }
+
     fn unknown_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_lib_rs:1:static_unknown".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -2006,6 +2142,7 @@ mod tests {
         let mut finding = unknown_finding();
         finding.activation.observed_values = (0..500)
             .map(|i| ValueFact {
+                file: None,
                 line: 42,
                 text: long_text.clone(),
                 value: format!("arg_{i} = {i}"),
@@ -2072,6 +2209,7 @@ mod tests {
         let mut finding = unknown_finding();
         finding.activation.observed_values = (1..=5_000)
             .map(|line| ValueFact {
+                file: None,
                 line,
                 text: format!("assert!(rendered.contains(\"field_{line}\"));"),
                 value: format!("\"field_{line}\""),
@@ -2116,6 +2254,7 @@ mod tests {
     fn json_omits_observed_values_total_when_nothing_is_dropped() {
         let mut finding = unknown_finding();
         finding.activation.observed_values = vec![ValueFact {
+            file: None,
             line: 12,
             text: "assert_eq!(discounted_total(50, 100), 50);".to_string(),
             value: "amount = 50".to_string(),

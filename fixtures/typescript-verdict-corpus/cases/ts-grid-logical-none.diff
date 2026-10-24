@@ -1,0 +1,10 @@
+diff --git a/src/logical.ts b/src/logical.ts
+--- a/src/logical.ts
++++ b/src/logical.ts
+@@ -15,5 +15,5 @@
+ }
+ 
+ export function shouldRetry(timedOut: boolean, attemptsLeft: boolean): boolean {
+-  return timedOut && attemptsLeft;
++  return attemptsLeft && timedOut;
+ }

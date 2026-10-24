@@ -30,15 +30,8 @@ Evidence
   - observation no: No test reaches the changed owner, so no test can observe this change
   - discriminator no: No test reaches the changed owner, so no test can discriminate this change
   - local flow reaches call effect: try_parse_summary(raw).map_err(Into::into) (line 26)
-  - related test tests/errors.rs:4 try_parse_summary_pins_malformed_source uses medium exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {
-return Err("callee pin should observe ParseSummaryError::MalformedSource".into());
-}; misses: no call to the changed code found; linked by name only
+  - related test tests/errors.rs:4 try_parse_summary_pins_malformed_source uses medium exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) { return Err("callee pin should observe ParseSummaryError::MalformedSource".into()); }; misses: no established call path to the changed code; linked by name only
   - source enum variant value ParseSummaryError::MalformedSource at line 6
-
-Weakness
-  - No relevant oracle was detected
-  - No static test path reaches the changed owner
-  - No strong discriminator was detected
 
 Next step
   ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists
@@ -69,14 +62,10 @@ Evidence
   - observation no: No test reaches the changed owner, so no test can observe this change
   - discriminator no: No test reaches the changed owner, so no test can discriminate this change
   - local flow reaches error variant: try_parse_summary(raw).map_err(Into::into) (line 26)
-  - related test tests/errors.rs:4 try_parse_summary_pins_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {
-return Err("callee pin should observe ParseSummaryError::MalformedSource".into());
-}; misses: no call to the changed code found; linked by name only
+  - related test tests/errors.rs:4 try_parse_summary_pins_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) { return Err("callee pin should observe ParseSummaryError::MalformedSource".into()); }; misses: no established call path to the changed code; linked by name only
   - source enum variant value ParseSummaryError::MalformedSource at line 6
 
 Weakness
-  - No relevant oracle was detected
-  - No static test path reaches the changed owner
   - Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
 
 Next step

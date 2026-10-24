@@ -79,6 +79,52 @@ file occurrence under a closed rule set:
   declarations. The single-identity index marks children from distinct
   anchors `rust_module_ambiguous_parent`, even if only one layout is indexed;
   it does not choose an anchor or mint an evidence role from partial context.
+- **Distinct Cargo target roots are not competing parents.** When every owner
+  of a child is a different file that is a Cargo target crate root
+  (autodiscovered `src/lib.rs`, `src/main.rs`, `src/bin/*.rs`,
+  `tests|benches|examples/*.rs`, or a manifest-declared target path), no owner
+  is itself a module child or an `include!` target (an included root may sit
+  behind a context the owners no longer share), and all declarations agree on name and test
+  requirement, each root compiles its own copy of the child, so there is no
+  single-module-graph conflict (tracing `benches/shared.rs`, crossbeam-channel
+  `benchmarks/message.rs`). The child's location is unconstrained. Any
+  non-root owner, repeated owner file, disagreeing declaration, owner already
+  in the ambiguous set, or unresolved include limitation anywhere in the index
+  stays ambiguous. Test: `target_root_exemption_conjuncts_each_fail_closed`
+  in `facts/role_composition.rs`. Non-claim: crate-root detection (`CrateRoots`) ignores
+  `autobins`/`autotests`/`autobenches`/`autoexamples = false`, so a disabled
+  autodiscovered layout file is still treated as a root.
+- **Role agreement is not unique execution context.** Retain every approved
+  module parent in a request-local graph before choosing the deterministic
+  role-explanation chain. Assertion admission checks every resolved ancestor
+  declaration and relevant macro context, including descendants of a shared
+  file. Crate-root-dependent positive owner attribution requires a unique
+  established root; independently established same-source local identity stays
+  supported. Possible shadow checks include all possible roots and remain conservative when
+  placement is unknown. Qualified macro and trusted-import certification cannot
+  use only a recorded subset while unresolved syntax disables complete routing.
+  This does not expand the role exemption or grant new Cargo target roles.
+  Missing/deserialized graph authority, missing ancestors, cycles and the
+  existing depth bound refuse trust until composition rebuilds the graph;
+  file-fact serialization and source-role provenance stay unchanged.
+- **Exclusive cfg alternatives are one owner.** Exactly two `mod name;`
+  declarations in one parent file that resolve to the same child, have the same
+  declared name and test requirement, and carry complementary simple guards
+  (`#[cfg(X)]` versus `#[cfg(not(X))]`, `X` a bare identifier or
+  `name = "value"`; punctuation inside the quoted value is data) are
+  alternatives of one module: at most one compiles, so they are not competing
+  parents (`rust-lang/log` `src/kv/mod.rs`). Any other shape stays ambiguous:
+  different or same-polarity predicates, compound `all`/`any`, extra or
+  `cfg_attr` cfg attributes, an unguarded sibling, different names, or more
+  than two claimants. A `cfg(test)` / `cfg(not(test))` pair stays ambiguous
+  because the test requirements differ and merging would grant a test-only
+  role to a child that also compiles in production. Tests:
+  `complementary_cfg_module_declarations_are_one_owner`,
+  `quoted_cfg_value_punctuation_is_not_a_compound_predicate`,
+  `non_complementary_cfg_module_declarations_stay_ambiguous`,
+  `cfg_test_pair_stays_ambiguous` and
+  `other_attributes_do_not_merge_distinct_module_identities` in
+  `facts/role_composition.rs`.
 - **Unknown fails closed.** Ambiguous module ownership (two claiming
   parents, or both default layouts present), cyclic or depth-bounded chains,
   conflicting module/include contexts, dynamic or conditionally introduced

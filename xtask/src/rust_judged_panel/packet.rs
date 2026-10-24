@@ -657,19 +657,21 @@ fn semantic_input(role: &str, file: &ReplaySubjectFile) -> SemanticInputDigest {
     }
 }
 
+/// A bounded check document (#9010) is as incomplete as an incomplete analysis.
+fn require_complete_report(report: &Value, case_id: &str) -> Result<(), String> {
+    if crate::check_document_analysis_complete(report) != Some(true) {
+        return Err(format!("host `{case_id}` analysis is incomplete"));
+    }
+    Ok(())
+}
+
 fn project_observed(
     subject: &PacketSubject,
     case: &ValidatedHostCase,
     host: &ValidatedHostRun,
     report: &Value,
 ) -> Result<ObservedFinding, String> {
-    if report
-        .pointer("/analysis_outcome/analysis_complete")
-        .and_then(Value::as_bool)
-        != Some(true)
-    {
-        return Err(format!("host `{}` analysis is incomplete", subject.case_id));
-    }
+    require_complete_report(report, &subject.case_id)?;
     let outcome_kind = text_at(report, "/analysis_outcome/outcome/kind")?;
     require_eq(
         outcome_kind,

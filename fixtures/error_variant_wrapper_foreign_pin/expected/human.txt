@@ -15,13 +15,20 @@ Start here:
   Why no path: no related test was found that reaches this change
   Canonical gap: gap:rust:src/lib.rs:parse_summary:error_variant:error_path:try_parse_summary_raw_.map_err_into_into
   Changed behavior: try_parse_summary(raw).map_err(Into::into)
-  Missing discriminator (1 of 3): No relevant oracle was detected
-  Related test (1 of 2 matched rows): tests/errors.rs:4 try_parse_summary_with_foreign_pin (no call to the changed code found; linked by name only)
+  Analyzer limit: Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
+  Related test (1 of 2 matched rows): tests/errors.rs:4 try_parse_summary_with_foreign_pin (no established call path to the changed code; linked by name only)
   Next step: ripr found no static test path to this change — this is not a coverage assessment. A
     test may already exercise it through macros, helper-call chains, or integration tests that
     ripr's static model does not yet trace. If none does, add a co-located test that reaches and
     observes the changed behavior so a discriminator exists
   Evidence: reach no · infection no · propagation yes · observation no · discriminator no
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach no: No test is seen calling parse_summary; tests share only its file or a name token: try_parse_summary_with_foreign_pin
     - infection no: No test reaches the changed owner, so no test can activate this change
     - 7 more detail line(s) in --format human-full
@@ -29,7 +36,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/error_variant_wrapper_foreign_pin/input --diff <cwd>/fixtures/error_variant_wrapper_foreign_pin/diff.patch --mode fast probe:src_lib.rs:error_path:edac60ec
   ripr context --root <cwd>/fixtures/error_variant_wrapper_foreign_pin/input --diff <cwd>/fixtures/error_variant_wrapper_foreign_pin/diff.patch --mode fast --at probe:src_lib.rs:error_path:edac60ec
-  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:error_path:edac60ec --root <cwd>/fixtures/error_variant_wrapper_foreign_pin/input` for the full gate's answer
+  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: error_variant); run `ripr repair probe:src_lib.rs:error_path:edac60ec --root <cwd>/fixtures/error_variant_wrapper_foreign_pin/input` for the full gate's answer
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

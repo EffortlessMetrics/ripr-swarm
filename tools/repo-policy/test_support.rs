@@ -19,15 +19,25 @@ pub fn workspace_root() -> Result<PathBuf, String> {
 }
 
 fn workspace_from_manifest(manifest: &Path, expected: &str) -> Result<PathBuf, String> {
-    let root = manifest
-        .join("../..")
+    // Resolve the manifest itself before walking up: Windows folds `..`
+    // lexically, so `missing/../..` would name an existing directory there
+    // while Unix refuses it.
+    let resource_root_error = |e: &dyn std::fmt::Display| {
+        format!("policy test resource root {}: {e}", manifest.display())
+    };
+    let manifest = manifest
         .canonicalize()
-        .map_err(|e| format!("policy test resource root {}: {e}", manifest.display()))?;
+        .map_err(|e| resource_root_error(&e))?;
+    let root = manifest
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| resource_root_error(&"no workspace above the manifest"))?
+        .to_path_buf();
     if root
         .join("tools/repo-policy")
         .canonicalize()
         .map_err(|e| e.to_string())?
-        != manifest.canonicalize().map_err(|e| e.to_string())?
+        != manifest
         || source_identity::source_identity(&root)? != expected
     {
         return Err("policy test resource source identity differs from the built harness".into());

@@ -19,6 +19,13 @@ Start here:
   Related test: src/lib.rs:12 records_into_the_bag (no test input enters `if x > 10`)
   Next step: Add a related test input that enters `if x > 10`; no related test call runs the changed line, so no assertion can observe it yet
   Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: Related tests appear to reach add: records_into_the_bag
     - infection weak: No related test call enters guard `if x > 10`; observed `x` values: `4`
     - 8 more detail line(s) in --format human-full
@@ -26,7 +33,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/collection_argument_guarded/input --diff <cwd>/fixtures/collection_argument_guarded/diff.patch --mode fast probe:src_lib.rs:call_deletion:1f64eda5
   ripr context --root <cwd>/fixtures/collection_argument_guarded/input --diff <cwd>/fixtures/collection_argument_guarded/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:1f64eda5
-  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:call_deletion:1f64eda5 --root <cwd>/fixtures/collection_argument_guarded/input` for the full gate's answer
+  no repair start offered: repair route not ready (missing evidence: observable sink localization); run `ripr repair probe:src_lib.rs:call_deletion:1f64eda5 --root <cwd>/fixtures/collection_argument_guarded/input` for the full gate's answer
 No test stub here: the change shows up as a side effect or call, which needs an observer or mock ripr cannot write
 
 Hidden:

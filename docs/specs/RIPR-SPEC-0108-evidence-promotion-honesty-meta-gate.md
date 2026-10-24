@@ -93,6 +93,14 @@ kind and strength; diagnostic text inside the assertion cannot override it.
 The separator follows a complete path, line and test identity, so a path that
 contains ` uses ` does not hide an otherwise valid oracle projection.
 
+A related-test row whose expected strength is `none` has no kind to project, so
+it matches only an expected kind of `unknown` and the absent-oracle phrase
+`uses no oracle`, followed by the end of the line, `;`, `:` or `,`. A row whose
+expected strength is `unknown` matches only the `not graded against this probe`
+phrase. The legacy `none unknown oracle` spelling and `no oracles` prose do not
+match (`evidence_promotion_human_oracle_line_accepts_absent_oracle_wording`,
+#8747).
+
 ## Behavior
 
 ### The invariant
@@ -464,8 +472,10 @@ gate-specific artifacts.
 | rust_macro_reach_named_limitation | rust | rust_macro_reach_limitation | macro_reach_named_not_silently_clean (also `must_not_report_clean` + `must_disclose_scope` + `must_emit_limitation: rust_macro_reach_unresolved` + `must_not_emit_repair_packet` + no verify/receipt commands + `must_disclose_witness` + `must_disclose_limitation_detail` + `expected_limitation_detail` + `expected_limitation_route: analysis/rust-macro-aware-reach` + `must_not_claim_no_tests_found`) |
 | rust_macro_wrapped_test_call_named_limitation | rust | rust_macro_wrapped_test_call_limitation | direct_test_macro_call_named_not_silently_clean (also `must_not_report_clean` + `must_disclose_scope` + `must_emit_limitation: rust_macro_wrapped_test_call_unresolved` + `must_not_emit_repair_packet` + no verify/receipt commands + `must_disclose_witness` + `must_disclose_limitation_detail` + `expected_limitation_detail` + `expected_limitation_route: analysis/rust-macro-aware-reach` + `must_not_claim_no_tests_found`) |
 | rust_macro_wrapped_assertion_named_limitation | rust | rust_macro_wrapped_assertion_limitation | custom_assertion_macro_named_not_silently_clean (also `must_not_report_clean` + `must_disclose_scope` + `must_emit_limitation: rust_macro_wrapped_assertion_unresolved` + `must_not_emit_repair_packet` + no verify/receipt commands + `must_disclose_witness` + `must_disclose_limitation_detail` + `expected_limitation_detail` + `expected_limitation_route: analysis/rust-macro-assertion-oracle` + `must_not_claim_no_tests_found`) |
-| rust_same_method_other_type | rust | rust_adversarial_same_method_other_type | method_owner_same_name_different_impl_type_identity (also `expected_class=weakly_exposed`, `must_not_report_clean`, `must_disclose_scope`, and no repair packet or receipt command) |
-| rust_free_function_receiver_qualified_call | rust | rust_adversarial_free_function_receiver | free_function_receiver_qualified_call_not_direct_owner_call (also `expected_class=weakly_exposed`, `must_not_report_clean`, `must_disclose_scope`, and no repair packet or receipt command) |
+| rust_same_method_other_type | rust | rust_adversarial_same_method_other_type | method_owner_same_name_different_impl_type_identity (also `expected_class=reachable_unrevealed`, `must_not_report_clean`, `must_disclose_scope`, and no repair packet or receipt command) |
+| rust_free_function_receiver_qualified_call | rust | rust_adversarial_free_function_receiver | free_function_receiver_qualified_call_not_direct_owner_call (also `expected_class=reachable_unrevealed`, `must_not_report_clean`, `must_disclose_scope`, and no repair packet or receipt command) |
+| rust_atomic_ordering_swap_strong_object_oracle_not_exposed | rust | atomic_ordering_swap_strong_object_oracle | atomic_ordering_only_call_edit_cannot_borrow_a_strong_whole_object_oracle (also `expected_class=static_unknown`, `expected_finding_count=1`, `must_not_report_clean`, and `must_not_promote`) |
+| rust_macro_passthrough_sibling_binding_not_promoted | rust | macro_passthrough_sibling_item_macro_binding | identity_item_macro_wrapped_test_with_sibling_binding_macro_never_promoted (predicate-family probe only; the fixture's second, return_value probe is not separately pinned) (also `expected_class=no_static_path`, `expected_finding_count=1`, `must_not_report_clean`, and `must_not_promote`) |
 | rust_shared_error_variant_proximity_other_owner | rust | rust_adversarial_shared_error_variant_proximity | shared_error_variant_same_file_pin_on_other_owner_not_confirmed (also `expected_class=weakly_exposed`, `must_not_report_clean`, `must_disclose_scope`, and no repair packet or receipt command) |
 | perl_preview_card_advisory_no_repair_packet | perl | reports/perl-preview-advisory-no-packet.json | perl_preview_card_advisory_only (also `expected_class=weakly_exposed`, production-shaped `perl_preview_card.v1`, `must_not_report_clean`, `must_disclose_scope`, no `verify_command`/`receipt_command` delegation fields, no promotion, and no repair packet) |
 | scope_committed_diff_changed_rust_file | rust | boundary_gap | committed_diff_changed_file_scope_count (also `must_not_report_clean` + `must_disclose_scope` + `expected_changed_rust_files: 1` + no verify/receipt commands + no repair packet + `expected_class: weakly_exposed`) |
@@ -584,19 +594,26 @@ or tampered fingerprint at ingestion.
 | dynamic require/eval dispatch | `perl_dynamic_require_eval_dispatch` | `static_unknown` + `must_emit_limitation: metaprogramming` |
 | token substring collision | `perl_token_substring` | `weakly_exposed` (sink alignment requires exact equality) |
 | fixture/harness test reaches but does not discriminate | `perl_fixture_setup_no_discrimination` | `reachable_unrevealed` (fixture-setup relations are advisory-only) |
+| `isnt` rejects one value (producer grades it `strong_exact`) | `perl_isnt_is_not_exact` | `reachable_unrevealed` (RIPR-SPEC-0235 rule 17; oracle read as smoke) |
 
 Rust family coverage for same-method-other-impl identity (#4760):
 
 | family | corpus case | expected state |
 |---|---|---|
-| same trait method name on a different impl type | `rust_same_method_other_type` | `weakly_exposed` (name-only; trait impl may be reached unseen) |
+| same trait method name on a different impl type | `rust_same_method_other_type` | `reachable_unrevealed` (name-only; a name-token relation never credits an oracle, #9169) |
 | true owner constructed and observed | `rust_same_method_owner_type_positive_control` | `exposed` (`direct_owner_call`) |
+| workspace-trait impl no source names, beside a same-file test of another function | `rust_unreached_workspace_trait_impl_borrows_no_oracle` | `no_static_path` (only a foreign trait's impl is dispatched without spelling its method; #9169) |
+| impl of a trait declared in a sibling workspace crate, beside a same-leaf-name file's doctest | `rust_cross_crate_trait_impl_borrows_no_doctest` | `no_static_path` (a trait imported from a workspace member is the workspace's; the same-crate control reads the same; #10061) |
+
+Sibling-crate trait rule (#10061): a trait named through a workspace member crate (`use rcore::Stream;` or `impl rcore::Stream for ..`) is the workspace's only when some workspace member's sources declare a trait of that name, resolved on demand from the member directories when the diff index does not hold the member. A member that merely re-exports a foreign trait (`pub use std::fmt::Display;`) declares none, so the impl keeps the #9342 dispatch allowance (fixture `member_reexport_foreign_trait_keeps_dispatch_allowance`), and a direct owner call keeps its evidence (fixture `cross_crate_trait_impl_direct_owner_positive`). Limits, none of which gain behavior there: a glob import of a member's trait (`use rcore::*;`), a re-export of a member trait through the impl's own crate (`pub use rcore::Stream;` then `use crate::Stream;`), a trait generated by a macro, a leading-`::` path (`::rcore::Stream`), a dependency renamed with `package =` and a trait declared in the root package itself (only member directories are scanned) are not recognized and keep the foreign-trait reading, so those impls can still borrow a same-leaf-name oracle (fail-open). `[workspace] members` globs that are not a trailing `/*` are not expanded (pre-existing). A member that declares a trait with a std name (`Display`) while another member re-exports the std one reads as the workspace's (fail-closed: credit withheld). The member scan runs once per analysis, only when a member-rooted trait impl is met, and never per function. `cross_crate_trait_impl_direct_owner_positive` is an over-refusal guard, not a discriminator: `cross_crate_trait_impl_borrows_no_doctest` discriminates the refusal and `member_reexport_foreign_trait_keeps_dispatch_allowance` discriminates the declaration requirement.
+
+The foreign-import scan that decides whether a bare trait name is the workspace's masks comments and string and character literals before reading `use` items (the shared `mask_comments_and_strings`), so a `//` or `/*` inside a literal cannot hide `use std::ops::Add;` (#10050). Unit tests in `classify/reach.rs` pin both the per-owner and batch unseen-reach paths.
 
 Rust family coverage for free-function receiver identity (#7006):
 
 | family | corpus case | expected state |
 |---|---|---|
-| receiver-qualified-only call against a free-function owner | `rust_free_function_receiver_qualified_call` | `weakly_exposed` (name-only; method-call syntax never resolves to a free function) |
+| receiver-qualified-only call against a free-function owner | `rust_free_function_receiver_qualified_call` | `reachable_unrevealed` (name-only; method-call syntax never resolves to a free function) |
 
 Positive controls (same-entity relations must still fire; preview/advisory
 per support policy, no gate, badge, or RIPR Zero role):

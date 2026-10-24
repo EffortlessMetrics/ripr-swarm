@@ -13,6 +13,7 @@ WARNING ./src/lib.rs:5
 Changed
   before: None => 601,
   after:  None =>
+          (arm head only; open the arm at ./src/lib.rs:5 to read its new body)
 
 Probe
   family: match_arm
@@ -27,7 +28,7 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Changed behavior appears to influence match arm result: None =>
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
   - local flow reaches match arm result: None => (line 5)
   - related test src/lib.rs:10 selected uses strong whole object equality oracle: assert_eq!(charge(&Lease { elapsed: None, timeout: 600 }), 1001); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - source assertion argument value 1001 at line 12
@@ -51,7 +52,7 @@ Drill in:
   ripr explain --root <cwd>/fixtures/field_match_macro_option_shadow/input --diff <cwd>/fixtures/field_match_macro_option_shadow/diff.patch --mode fast probe:src_lib.rs:match_arm:23efc786
   ripr context --root <cwd>/fixtures/field_match_macro_option_shadow/input --diff <cwd>/fixtures/field_match_macro_option_shadow/diff.patch --mode fast --at probe:src_lib.rs:match_arm:23efc786
 
-WARNING ./src/lib.rs:5
+NOTE ./src/lib.rs:5
   id: probe:src_lib.rs:match_arm:26dbc5a7
 
 Changed
@@ -66,14 +67,14 @@ Probe
   canonical gap: gap:rust:src/lib.rs:charge:match_arm:match_arm:none=>601
 
 Static exposure
-  weakly_exposed (warning, confidence 0.92)
+  weakly_exposed (note, confidence 0.92)
 
 Evidence
   - reach yes: Related tests appear to reach charge: selected
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Changed behavior appears to influence match arm result: 601
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
   - local flow reaches match arm result: 601 (line 5)
   - related test src/lib.rs:10 selected uses strong whole object equality oracle: assert_eq!(charge(&Lease { elapsed: None, timeout: 600 }), 1001); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - source assertion argument value 1001 at line 12
@@ -88,7 +89,7 @@ Drill in:
   ripr explain --root <cwd>/fixtures/field_match_macro_option_shadow/input --diff <cwd>/fixtures/field_match_macro_option_shadow/diff.patch --mode fast probe:src_lib.rs:match_arm:26dbc5a7
   ripr context --root <cwd>/fixtures/field_match_macro_option_shadow/input --diff <cwd>/fixtures/field_match_macro_option_shadow/diff.patch --mode fast --at probe:src_lib.rs:match_arm:26dbc5a7
 
-WARNING ./src/lib.rs:5
+NOTE ./src/lib.rs:5
   id: probe:src_lib.rs:return_value:377f287f
 
 Changed
@@ -103,7 +104,7 @@ Probe
   canonical gap: gap:rust:src/lib.rs:charge:return_value:return_value:none=>601
 
 Static exposure
-  reachable_unrevealed (warning, confidence 0.66)
+  reachable_unrevealed (note, confidence 0.66)
 
 Evidence
   - reach yes: Related tests appear to reach charge: selected
@@ -112,7 +113,7 @@ Evidence
   - observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - local flow reaches returned value: None => lease.timeout (line 5)
-  - related test src/lib.rs:10 selected uses none unknown oracle; misses: assertion not credited: ripr could not establish that it runs as the standard macro
+  - related test src/lib.rs:10 selected uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
   - source assertion argument value 1001 at line 12
   - source function argument value lease = 600 at line 12
 

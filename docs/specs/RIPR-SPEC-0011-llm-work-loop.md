@@ -160,6 +160,18 @@ report's `root` field and analysis-outcome presentation key retain display
 formatting. Unix literal filename backslashes remain distinct from Windows
 separators (#6313).
 
+### Repair phase value recovery (#5059)
+
+`ripr agent repair --phase` accepts only `before`, `after`, and `verify`.
+An unknown value uses the shared CLI value-suggestion rules: `befor`, `aftr`,
+and `verfy` suggest their corresponding phase; empty and distant values,
+including the sibling command name `packet`, list the phases without a suggestion. Suggestions never accept
+or execute the rejected spelling. Invalid occurrences, including one followed
+by a valid repeated flag, exit 2 with empty stdout and the refusal on stderr
+before configuration loading or repair/store writes. A missing value retains
+its missing-value refusal. Canonical phase meanings and the existing `--help`
+short circuit remain unchanged.
+
 ## JSON Shape
 
 The status report uses schema version `0.1`:
@@ -419,7 +431,15 @@ after phase applies) and selects `next_command` in this order:
    exposure report where each withheld seam names its unresolved stage
    (#5497). When that run's repo exposure report says a seam limit applied,
    the warning names raising the limit and rerunning pilot instead, since
-   seams past the cut may hold gaps. Likewise a complete pilot summary that ranked no seam,
+   seams past the cut may hold gaps. A complete pilot summary that ranked and
+   withheld no seam, recorded no repair start and carries
+   `declined_rust_files` (a parse limit declined Rust files, #9308) selects
+   nothing and warns `pilot_declined_rust_files_no_repair_target`, naming the
+   declined file(s) and the parse-limit repair (split below the Rust parse
+   budget or save as UTF-8, then rerun pilot with the selected root); a
+   recorded `seam_limit` adds the raise-the-limit remedy. With withheld
+   seams the withheld warning above keeps precedence and already names the
+   declined files (#9371). Likewise a complete pilot summary that ranked no seam,
    recorded no repair card (`python_first_use` absent, `null`, or status
    `no_python_findings` or `no_repair_cards`; `analysis_unavailable` is not
    this fact), routed the code to `ripr check` (`language_routes.state:
@@ -429,7 +449,12 @@ after phase applies) and selects `next_command` in this order:
    check command and the hand step (add or strengthen a test, then rerun
    that check); for a route with `enabled: false` it names the enable step
    (add the language to `[languages] enabled` in `ripr.toml`) instead. It
-   also says to rerun pilot if the workspace changed since that run. A
+   also says to rerun pilot if the workspace changed since that run. For an
+   enabled TypeScript-family route, whether the warning says `ripr check`
+   "offers no `ripr agent repair` start" is derived from the same gap-start
+   admission the routed `ripr check` uses (#10001): when check would print a
+   gap-bound start, the warning names that start instead, and a refused or
+   undecidable admission keeps the "offers no start" wording. A
    timed-out, missing or unreadable summary still routes to pilot. When the
    first missing artifact's directory does not exist and the seam is known,
    the next command starts a repair attempt, which writes the workflow
@@ -635,6 +660,7 @@ it does not execute the command or grant edit authority.
 
 ## Test Mapping
 
+- `crates/ripr/tests/cli_help_hierarchy.rs::agent_help_and_missing_seam_refusal_agree_that_finding_ids_resolve` (agent group help, the missing-`--seam-id` refusal and the workflow catalog agree that `--phase before` resolves `ripr check` finding IDs)
 - `crates/ripr/tests/cli_smoke/repair_orderfile.rs::repair_completes_despite_user_orderfile`
 - `crates/ripr/tests/cli_smoke/repair_orderfile.rs::dirty_production_requires_recovery_despite_user_orderfile`
 
@@ -767,8 +793,23 @@ Recovery labels the Bash/Git Bash form and the PowerShell form translated by
 the existing Markdown command helper. If that helper refuses translation, the
 diagnostic labels the command Bash/Git Bash only and names PowerShell recovery
 as unavailable. Root apostrophes and dollar signs remain literal path text.
-Printed recovery still requires the current installed RIPR executable; this
-partial repair does not bind PATH or qualify installed binary substitution.
+The printed recovery command runs the executable that issued the refusal
+(`std::env::current_exe()`, quoted by the shared shell-argument helper) and the
+refusal prints that executable's version line, so a stale `ripr` earlier on
+`PATH` cannot satisfy it (#9500). If the operating system cannot name the
+running executable the command falls back to bare `ripr` and the refusal says to
+confirm `ripr --version`. Only this refusal is rebound; other emitters still
+render PATH `ripr`, and installed-binary substitution on every route stays
+unqualified.
+
+An envelope whose `artifact.producer.version` is not exactly the consuming
+executable's version is refused at the same validation site (#9500) with a
+"produced by X, consumer is Y, regenerate" diagnostic and the same recovery
+command. This is fail-closed version equality, not producer authentication: a
+document can still declare the current version, and artifacts from another RIPR
+build, including a patch release, must be regenerated. `reports gap-ledger
+--repo-exposure` is a separate route governed by RIPR-SPEC-0046 (a missing
+envelope is disclosed as a warning there, #9570).
 
 - `agent_loop_status_available`
 - `agent_workflow_manifest_available`

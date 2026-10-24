@@ -23,6 +23,13 @@ Start here:
   Related test: tests/lib.test.ts:3 price
   Next step — TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator yes
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: 1 related test(s) found for owner `price`
     - infection unknown: TypeScript preview adapter does not yet model infection
     - 5 more detail line(s) in --format human-full
@@ -30,6 +37,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_conditional_assertion_credit/input --diff <cwd>/fixtures/typescript_conditional_assertion_credit/diff.patch --mode fast probe:src_lib.ts:typescript_preview:c712a282
   ripr context --root <cwd>/fixtures/typescript_conditional_assertion_credit/input --diff <cwd>/fixtures/typescript_conditional_assertion_credit/diff.patch --mode fast --at probe:src_lib.ts:typescript_preview:c712a282
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.ts:typescript_preview:c712a282 --root <cwd>/fixtures/typescript_conditional_assertion_credit/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

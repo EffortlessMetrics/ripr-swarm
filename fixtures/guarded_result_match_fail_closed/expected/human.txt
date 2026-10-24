@@ -17,11 +17,18 @@ Start here:
   Canonical gap: gap:rust:src/lib.rs:expect_response:error_variant:error_path:ok_build_response_id.trim_method
   Changed behavior: Ok(build_response(id.trim(), method)?)
   Missing discriminator (1 of 2): No exact error variant discriminator was detected
-  Related test (1 of 5 matched rows): tests/protocol.rs:43 message_only_error_predicate_never_pins (assertion not credited: ripr could not establish that it runs as the standard macro)
+  Related test (1 of 5 matched rows): tests/protocol.rs:43 message_only_error_predicate_never_pins (assertion not credited: ripr could not establish that this assertion counts here)
   Next step: Establish that the test is collected and enabled, that the assertion runs on its
     executed path, and that it resolves to the intended standard macro, then check the changed
     returned value
   Evidence: reach yes · infection yes · propagation yes · observation no · discriminator no
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: Related tests appear to reach expect_response: direct_owner_call_keeps_the_file_related, message_only_error_predicate_never_pins, shadowed_callee_never_credits_the_seam
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 18 more detail line(s) in --format human-full

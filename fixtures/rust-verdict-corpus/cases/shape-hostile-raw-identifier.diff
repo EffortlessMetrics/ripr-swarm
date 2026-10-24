@@ -1,0 +1,12 @@
+diff --git a/src/hostile.rs b/src/hostile.rs
+--- a/src/hostile.rs
++++ b/src/hostile.rs
+@@ -8,7 +8,7 @@
+ }
+ 
+ pub fn r#match(x: u32) -> u32 {
+-    x + 1
++    1 + x
+ }
+ 
+ pub fn größe(x: u32) -> u32 {

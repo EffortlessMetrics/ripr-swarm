@@ -1,7 +1,7 @@
 pub(super) const RERUN_HELP: &str = r#"Re-evaluate static evidence affected by one edited Rust test.
 
-Usage: ripr rerun --changed-test PATH[::TEST_NODE] [--before PATH] [--root PATH] [--json] [--out PATH]
-       ripr rerun --gap CANONICAL_GAP_ID --gap-ledger PATH [--before PATH] [--root PATH] [--json] [--out PATH]
+Usage: ripr rerun --changed-test PATH[::TEST_NODE] [--before PATH] [--root PATH] [--json] [--out PATH] [--check-parity]
+       ripr rerun --gap CANONICAL_GAP_ID --gap-ledger PATH [--before PATH] [--root PATH] [--json] [--out PATH] [--check-parity]
 
 Options:
   --changed-test PATH[::TEST_NODE]
@@ -10,7 +10,12 @@ Options:
   --gap-ledger PATH    Gap decision ledger required by --gap.
   --before PATH        Explicit prior targeted-rerun, repo-exposure, or compatible static snapshot.
   --check-parity       Compare selected current seams with a full static inventory; explicit and potentially expensive.
-  --root PATH          Workspace root. Defaults to current directory.
+  --root PATH          Workspace root. Defaults to the current directory, then
+                       walks up to the enclosing workspace or package, or the git
+                       top level; `--root .` pins this directory.
+                       A relative --out resolves against the resolved root;
+                       --before and --gap-ledger paths are read as typed from
+                       the current directory.
   --json               Emit the structured current-state report.
   --out PATH           Write the report to a file instead of stdout.
 

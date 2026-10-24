@@ -89,12 +89,24 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
 
-    let options = parse_pilot_options(args)?;
+    let mut options = parse_pilot_options(args)?;
+    // #8767: same implicit root `ripr check` uses; `--root .` opts out. The
+    // default packet directory follows the resolved root.
+    super::check::resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+    if !options.root_explicit && !options.out_explicit {
+        options.out_dir = default_pilot_out_dir(&options.root);
+    }
     if !options.root.is_dir() {
         return Err(format!(
             "pilot root {} is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)",
             options.root.display()
         ));
+    }
+
+    // #9922: refuse a root with nothing to inspect before any output dir or
+    // cache is created under it.
+    if let Some(message) = pilot_root_without_workspace(&options.root) {
+        return Err(message);
     }
 
     crate::atomic_file::ensure_default_output_contained(&options.root)?;
@@ -183,6 +195,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
                 limit_info: None,
                 skipped_generated: Vec::new(),
                 naming_only_skips: Vec::new(),
+                declined_rust_files: Vec::new(),
             },
             load_pilot_current_change(&input, git_timeout),
         ))
@@ -234,9 +247,11 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     let corpus_key = report.corpus_key;
     let diff_bound_corpus = report.diff_bound_corpus;
     let mut inventory_limit_info = report.limit_info;
-    let generated_skip = output::repo_exposure::GeneratedRustSkip::from_paths(
+    let declined_rust_files = report.declined_rust_files.clone();
+    let generated_skip = output::repo_exposure::GeneratedRustSkip::from_parts(
         report.skipped_generated,
         report.naming_only_skips,
+        report.declined_rust_files,
     );
     // The current change is loaded before the budget cut so an actionable
     // changed seam past the cut is kept and can still rank change-first. A
@@ -354,7 +369,8 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         analysis::workspace_unanalyzed_source_languages(&input.root),
         !rust_files.is_empty(),
     )
-    .with_rust_exclusion(rust_excluded);
+    .with_rust_exclusion(rust_excluded)
+    .with_declined_rust_files(declined_rust_files.clone());
     let context = output::pilot::PilotSummaryContext {
         root: &input.root,
         mode: &input.mode,
@@ -412,6 +428,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             repo_exposure_limit,
             causal_projection.as_ref(),
             &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
+            &declined_rust_files,
         ),
     )?;
 
@@ -436,7 +453,84 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     if let Some(sink) = progress.as_ref() {
         sink.commit_success();
     }
+    // #9858: the artifacts above live under Cargo-conventional `target/ripr`,
+    // which Python/TypeScript ignore templates do not cover. Doctor warns on
+    // its own first run; say it here too so a pilot-first session hears it
+    // before `git add .` can commit ripr's own reports.
+    if !options.quiet
+        && let Some(note) = artifact_root_ignore_note(&options.root, &options.out_dir)
+    {
+        eprintln!("{}", terminal_safe(note));
+    }
     Ok(())
+}
+
+/// The one-line first-run stderr note naming the artifact root pilot just
+/// wrote and the `.gitignore` entry that covers it (#9858). `None` for Cargo
+/// projects (the `target/` convention applies), an explicit `--out` outside
+/// the selected root's `target/ripr`, covered ignore rules, or a probe that
+/// cannot establish coverage — the note must never claim a fact ripr did
+/// not check.
+fn artifact_root_ignore_note(root: &Path, out_dir: &Path) -> Option<String> {
+    if root.join("Cargo.toml").is_file() {
+        return None;
+    }
+    let artifact_root = Path::new("target").join("ripr");
+    // Anchor the check in the selected root's coordinate system (#9858
+    // review follow-up): with a non-dot `--root`, a bare relative out_dir
+    // resolves against the process cwd, not the repository, so accepting it
+    // could probe the root's ignore rules for artifacts the run wrote
+    // elsewhere. The dot root keeps the historical bare form (cwd ==
+    // root). `default_pilot_out_dir` anchors the default packet under the
+    // root (#5324), so the stripped form covers every default run; an
+    // explicit out_dir outside the root stays silent — custom output
+    // outside the artifact root is the documented silence.
+    let repo_relative_out: &Path = if root == Path::new(".") {
+        out_dir
+    } else {
+        out_dir.strip_prefix(root).ok()?
+    };
+    // Lexically resolve `.`/`..` before the prefix decision (#9858 review
+    // follow-up): `--out target/ripr/../reports` starts with the artifact
+    // root component-wise yet lands outside it, and the note must not claim
+    // an ignore fact about a directory the run did not write. A path that
+    // climbs above the root cannot be anchored repository-relative, so it
+    // stays silent like every other unestablishable case.
+    let repo_relative_out = normalize_parent_components(repo_relative_out)?;
+    if !repo_relative_out.starts_with(&artifact_root) {
+        return None;
+    }
+    let uncovered = super::doctor::uncovered_artifact_roots(root, &[artifact_root])?;
+    if uncovered.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "ripr note: this run wrote artifacts under {}; that path is not covered by git \
+         ignore rules — add `/target/ripr/` to .gitignore so a future `git add -A` does \
+         not commit ripr's own reports.",
+        uncovered.join(", ")
+    ))
+}
+
+/// Lexically resolve `.` and `..` components in a repository-relative path
+/// without touching the filesystem (the packet directory may not exist yet).
+/// `None` when a `..` would climb above the root — the path cannot be
+/// anchored repository-relative, so callers stay silent rather than guess.
+fn normalize_parent_components(path: &Path) -> Option<PathBuf> {
+    use std::path::Component;
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    return None;
+                }
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    Some(normalized)
 }
 
 /// Classify the current change's Rust files on their own when the
@@ -666,7 +760,9 @@ fn collect_pilot_python_first_use(
 fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
     let mut options = PilotOptions {
         root: PathBuf::from("."),
+        root_explicit: false,
         out_dir: PathBuf::from(DEFAULT_PILOT_OUT_DIR),
+        out_explicit: false,
         mode: Mode::Draft,
         explicit: CheckInputExplicit::default(),
         max_seams: 5,
@@ -682,6 +778,7 @@ fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
             "--root" => {
                 i += 1;
                 options.root = PathBuf::from(expect_value(args, i, "--root")?);
+                options.root_explicit = true;
             }
             "--out" => {
                 i += 1;
@@ -715,6 +812,7 @@ fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
         }
         i += 1;
     }
+    options.out_explicit = out_explicit;
     if !out_explicit {
         options.out_dir = default_pilot_out_dir(&options.root);
     }
@@ -745,6 +843,21 @@ fn pilot_stdout<'a>(format: PilotStdoutFormat, json: &'a str, terminal: &'a str)
 /// Where pilot writes its packet when `--out` is not given, relative to the
 /// working directory.
 const DEFAULT_PILOT_OUT_DIR: &str = "target/ripr/pilot";
+
+/// #9922: a root with no `Cargo.toml` and no source file in any language ripr
+/// reads is not a workspace; `ripr pilot` there used to print "RIPR pilot
+/// complete" with no recommendation and write `target/ripr/` into the folder.
+/// Returns the refusal message, or `None` when the root has something to inspect.
+fn pilot_root_without_workspace(root: &Path) -> Option<String> {
+    let has_inspectable_content =
+        root.join("Cargo.toml").is_file() || analysis::workspace_has_inspectable_source(root);
+    (!has_inspectable_content).then(|| {
+        format!(
+            "pilot root {} has no Cargo.toml and no source files to inspect; pass --root <dir> for the directory that contains your workspace (nothing was written)",
+            root.display()
+        )
+    })
+}
 
 /// The default packet directory sits under `--root`, where the cache already
 /// goes and where `ripr agent status --root` reads `pilot-summary.json`
@@ -886,6 +999,18 @@ fn publish_timeout_packet(
         &artifacts.pilot_summary_md,
         output::pilot::render_pilot_timeout_summary_md(context),
     )?;
+    // #9368 item 2: a timeout partial run exits 0 deliberately (pinned by
+    // the cli-smoke contract), which reads as success to a CI pipeline
+    // keying on exit codes. Disclose the contract on stderr at the moment it
+    // happens — stdout stays byte-clean for `--format json` — and name the
+    // packet field CI must gate on. This is contract disclosure, not
+    // progress, so `--quiet` does not suppress it.
+    eprintln!(
+        "{}",
+        output::human::terminal_safe(
+            "ripr pilot: timed out; wrote a partial timeout packet and exited 0 deliberately. For CI: gate on pilot-summary.json top-level status (complete vs partial), not the exit code.".to_string()
+        )
+    );
     print!(
         "{}",
         pilot_stdout(
@@ -903,6 +1028,125 @@ mod tests {
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn pilot_refuses_root_without_workspace_and_accepts_cargo_root() -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!("ripr-pilot-root-{}", std::process::id()));
+        let empty = base.join("readme-only");
+        let cargo = base.join("cargo");
+        let python = base.join("python-only");
+        let io = |error: std::io::Error| error.to_string();
+        std::fs::create_dir_all(&empty).map_err(io)?;
+        std::fs::create_dir_all(&cargo).map_err(io)?;
+        std::fs::create_dir_all(&python).map_err(io)?;
+        std::fs::write(python.join("app.py"), "def f():\n    return 1\n").map_err(io)?;
+        std::fs::write(empty.join("README.md"), "hi\n").map_err(io)?;
+        std::fs::write(cargo.join("Cargo.toml"), "[package]\nname = \"x\"\n").map_err(io)?;
+
+        let message = pilot_root_without_workspace(&empty)
+            .ok_or_else(|| "README-only root must be refused".to_string())?;
+        assert!(
+            message.contains("no Cargo.toml and no source files"),
+            "{message}"
+        );
+        assert!(message.contains("nothing was written"), "{message}");
+        assert_eq!(pilot_root_without_workspace(&cargo), None);
+        assert_eq!(pilot_root_without_workspace(&python), None);
+
+        let result = pilot(&args(&["--root", &empty.to_string_lossy()]));
+        assert!(result.is_err());
+        assert!(!empty.join("target").exists(), "refusal must write nothing");
+
+        // A dangling link named like a source file is not a source: the root
+        // is refused and nothing is written.
+        #[cfg(unix)]
+        {
+            let linked = base.join("dangling-link");
+            std::fs::create_dir_all(&linked).map_err(io)?;
+            std::os::unix::fs::symlink("missing-target", linked.join("app.py")).map_err(io)?;
+            let result = pilot(&args(&["--root", &linked.to_string_lossy()]));
+            assert!(result.is_err(), "dangling link root must be refused");
+            assert!(
+                !linked.join("target").exists(),
+                "refusal must write nothing"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&base);
+        Ok(())
+    }
+
+    #[test]
+    fn artifact_root_ignore_note_fires_only_for_the_first_run_litter_case() -> Result<(), String> {
+        let root = crate::cli::commands::tests::unique_command_test_dir("pilot-ignore-note");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let empty_excludes = root.join("empty-excludes");
+        std::fs::write(&empty_excludes, "").map_err(|error| error.to_string())?;
+        for args in [
+            ["init"].as_slice(),
+            ["config", "user.email", "ripr@example.invalid"].as_slice(),
+            ["config", "user.name", "ripr tests"].as_slice(),
+            [
+                "config",
+                "core.excludesFile",
+                empty_excludes.to_str().ok_or("non-utf8 excludes path")?,
+            ]
+            .as_slice(),
+        ] {
+            crate::git::run_git(&root, args).map_err(|error| error.to_string())?;
+        }
+        let out = root.join("target").join("ripr").join("pilot");
+
+        // Non-Cargo project, default packet location (root-prefixed, as
+        // `default_pilot_out_dir` produces for any spelled root), no ignore
+        // coverage: the note names the root and the exact entry (#9858).
+        let note = artifact_root_ignore_note(&root, &out)
+            .ok_or("note must fire for an uncovered non-Cargo project")?;
+        assert!(note.contains("target/ripr"), "{note}");
+        assert!(note.contains("`/target/ripr/`"), "{note}");
+
+        // Covered by ignore rules: silent.
+        std::fs::write(root.join(".gitignore"), "/target/ripr/\n")
+            .map_err(|error| error.to_string())?;
+        assert!(artifact_root_ignore_note(&root, &out).is_none());
+
+        // A Cargo project: the `target/` convention applies, silent.
+        std::fs::remove_file(root.join(".gitignore")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"x\"\nversion = \"0.0.0\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert!(artifact_root_ignore_note(&root, &out).is_none());
+
+        // An explicit packet dir outside `target/ripr`: silent.
+        std::fs::remove_file(root.join("Cargo.toml")).map_err(|error| error.to_string())?;
+        assert!(artifact_root_ignore_note(&root, &root.join("reports/pilot")).is_none());
+
+        // A bare relative out_dir with a non-dot root resolves against the
+        // process cwd, not the repository — the note must stay silent
+        // rather than probe the root's ignore rules for artifacts the run
+        // wrote elsewhere (#9858 review follow-up). The dot-root bare form
+        // is exercised by the cli_smoke matrix
+        // `pilot_artifact_note_uses_the_selected_root_at_the_cli`.
+        let bare_out = Path::new("target").join("ripr").join("pilot");
+        assert!(artifact_root_ignore_note(&root, &bare_out).is_none());
+
+        // Parent components resolve before the prefix decision: an out_dir
+        // that starts with `target/ripr` component-wise but lands outside
+        // it must stay silent (#9858 review follow-up), while a harmless
+        // `.` component still resolves into the artifact root.
+        let parent_escape = root.join("target").join("ripr").join("..").join("reports");
+        assert!(artifact_root_ignore_note(&root, &parent_escape).is_none());
+        let dotted = root.join("target").join(".").join("ripr").join("pilot");
+        let note = artifact_root_ignore_note(&root, &dotted)
+            .ok_or("note must survive a no-op `.` component")?;
+        assert!(note.contains("target/ripr"), "{note}");
+        // A `..` that climbs above the root cannot be anchored: silent.
+        let above_root = root.join("..").join("elsewhere").join("pilot");
+        assert!(artifact_root_ignore_note(&root, &above_root).is_none());
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
     }
 
     #[test]
@@ -977,7 +1221,9 @@ mod tests {
             options,
             Ok(PilotOptions {
                 root: PathBuf::from("repo"),
+                root_explicit: true,
                 out_dir: PathBuf::from("target/pilot"),
+                out_explicit: true,
                 mode: Mode::Ready,
                 explicit: CheckInputExplicit {
                     mode: true,
@@ -1112,6 +1358,7 @@ mod tests {
                     limit_info: None,
                     skipped_generated: Vec::new(),
                     naming_only_skips: Vec::new(),
+                    declined_rust_files: Vec::new(),
                 })
             },
         );
@@ -1291,6 +1538,14 @@ mod tests {
         use crate::testing::unwritable_output::OutputDirFixture;
 
         let env = OutputDirFixture::unwritable("pilot-ro", "pilot")?;
+        std::fs::write(env.root.join("Cargo.toml"), "[package]\nname = \"x\"\n")
+            .map_err(|error| error.to_string())?;
+        if crate::testing::access_denial::skip_unless_denied(
+            "unwritable_out_dir_names_out_not_out_dir",
+            env.denies_creation()?,
+        ) {
+            return Ok(());
+        }
         let root = OutputDirFixture::path_arg(&env.root)?;
         let out = OutputDirFixture::path_arg(&env.target)?;
         let error = match pilot(&args(&["--root", root, "--out", out])) {
@@ -1549,6 +1804,8 @@ mod tests {
         use crate::testing::unwritable_output::OutputDirFixture;
 
         let env = OutputDirFixture::occupying_file("pilot-file", "pilot")?;
+        std::fs::write(env.root.join("Cargo.toml"), "[package]\nname = \"x\"\n")
+            .map_err(|error| error.to_string())?;
         let root = OutputDirFixture::path_arg(&env.root)?;
         let out = OutputDirFixture::path_arg(&env.target)?;
         let error = match pilot(&args(&["--root", root, "--out", out])) {

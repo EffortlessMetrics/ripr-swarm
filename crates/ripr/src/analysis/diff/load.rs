@@ -22,11 +22,13 @@ pub struct LoadedDiff {
     /// The commit id the loader itself already resolved for
     /// `effective_base`, captured from its own base-verification probe
     /// (the explicit `--base` path peels `<ref>^{commit}` and has the id
-    /// in hand). `None` when the loader resolved the base by name only
-    /// (the default-base search verifies candidates without keeping the
-    /// id) or when the load involves no base (`--diff`/stdin). The
-    /// analyzed-revisions naming reuses this id instead of spawning the
-    /// identical `rev-parse` again (#7716).
+    /// in hand; the identity-probe path carries the probed `base_sha` it
+    /// derived the origin from, a single source of truth that cannot name
+    /// a base other than the one the diff used). `None` when the loader
+    /// resolved the base by name only (the default-base search verifies
+    /// candidates without keeping the id) or when the load involves no
+    /// base (`--diff`/stdin). The analyzed-revisions naming reuses this id
+    /// instead of spawning the identical `rev-parse` again (#7716).
     pub resolved_base_commit: Option<String>,
     /// The merge-base commit the working-tree diff actually starts from —
     /// the value `worktree_diff_origin` computed to load this diff.
@@ -249,10 +251,77 @@ pub(crate) fn load_worktree_diff_with_effective_base_core(
     base: Option<&str>,
     git_timeout: Option<Duration>,
 ) -> Result<LoadedDiff, CoreError> {
+    // The configured base argument the entry must be cached under; `base` is
+    // shadowed by the resolved base below.
+    let base_arg = base;
+    // #10083: an origin the process already resolved, re-validated by ONE
+    // identity probe (`HEAD` + base commit both unchanged), replaces the
+    // three-spawn resolution (operation-marker probe, base resolve,
+    // merge-base) on every subsequent save. The diff itself always runs —
+    // the cache covers only the resolution. A miss or any unexpected probe
+    // answer falls through to the full path below, which re-probes the
+    // identity pair first so a cached origin is a pure function of the pair
+    // it is validated against. Failures are never cached.
+    if let Some(cached) = cached_worktree_origin(root, base_arg, git_timeout) {
+        let text = run_git_diff(
+            root,
+            &cached.merge_base_origin,
+            &["--submodule=short"],
+            git_timeout,
+        )?;
+        return Ok(LoadedDiff {
+            text,
+            effective_base: Some(cached.effective_base),
+            resolved_base_commit: cached.resolved_base_commit,
+            merge_base_origin: Some(cached.merge_base_origin),
+        });
+    }
     warn_if_git_operation_in_progress(root, git_timeout);
 
     let (base, resolved_base_commit) =
         resolve_effective_base_core_with_commit(root, base, git_timeout)?;
+
+    // Bind the origin to the probed identity pair BEFORE deriving it, so the
+    // cached tuple is a pure function of `(head_sha, base_sha)`: the hit
+    // probe re-verifies exactly the pair the origin was computed from. When
+    // the probe cannot run, fall back to the pre-cache ref-based sequence,
+    // byte-identical and simply uncached.
+    if let Some((head_sha, base_sha)) = probe_worktree_identity_shas(root, &base, git_timeout) {
+        let origin =
+            worktree_diff_origin_from_shas(root, &base, &head_sha, &base_sha, git_timeout)?;
+        let text = run_git_diff(root, &origin, &["--submodule=short"], git_timeout)?;
+        // `resolved_base_commit` is the PROBED `base_sha`, not the earlier
+        // resolve result: the two are separate Git reads, and an explicit
+        // base that moved A→B between them would otherwise leave the returned
+        // diff naming A while its origin was derived from B — and let the
+        // entry serve the stale A on every later hit (#10083 review).
+        // Store only explicit-base origins: a default-base (`None`) selection
+        // is not covered by the identity pair (see `cached_worktree_origin`),
+        // so caching it could serve a stale selection on every later save.
+        if base_arg.is_some() {
+            store_worktree_origin(
+                root,
+                base_arg,
+                WorktreeOriginCacheEntry {
+                    effective_base: base.clone(),
+                    resolved_base_commit: Some(base_sha.clone()),
+                    merge_base_origin: origin.clone(),
+                    head_sha,
+                    base_sha: base_sha.clone(),
+                },
+            );
+        }
+        return Ok(LoadedDiff {
+            text,
+            effective_base: Some(base),
+            resolved_base_commit: Some(base_sha),
+            // The origin IS the merge base of `base` and `HEAD` (see
+            // `worktree_diff_origin`); naming it again from a fresh probe
+            // would spawn the identical command and could even name a
+            // different merge base than the one this diff used (#7716).
+            merge_base_origin: Some(origin),
+        });
+    }
 
     let origin = worktree_diff_origin(root, &base, git_timeout)?;
     let text = run_git_diff(root, &origin, &["--submodule=short"], git_timeout)?;
@@ -266,6 +335,160 @@ pub(crate) fn load_worktree_diff_with_effective_base_core(
         // base than the one this diff used (#7716).
         merge_base_origin: Some(origin),
     })
+}
+
+/// One resolved worktree-diff origin, cached under the repository identity it
+/// was validated against (#10083). `merge_base_origin` is derived from the
+/// SAME `(head_sha, base_sha)` pair the hit probe re-verifies (see
+/// `worktree_diff_origin_from_shas`), so the cached tuple is a pure function
+/// of verified identities: commit objects are immutable, so fetched objects
+/// can never move an existing merge base and a rewrite always changes a
+/// ref's sha. A ref move, branch switch, rebase, or rewritten history always
+/// misses and takes the full path.
+#[derive(Clone)]
+struct WorktreeOriginCacheEntry {
+    effective_base: String,
+    resolved_base_commit: Option<String>,
+    merge_base_origin: String,
+    head_sha: String,
+    base_sha: String,
+}
+
+/// Process-lifetime origin cache. The LSP is long-lived and saves repeatedly;
+/// CLI invocations are one-shot misses, which only pays the one extra
+/// capture probe. A small bound keeps a long-lived multi-root consumer (MCP)
+/// from accumulating entries; clearing is correctness-neutral (a miss just
+/// re-resolves).
+const WORKTREE_ORIGIN_CACHE_MAX_ENTRIES: usize = 32;
+
+type WorktreeOriginCache =
+    std::collections::HashMap<(PathBuf, Option<String>), WorktreeOriginCacheEntry>;
+
+static WORKTREE_ORIGIN_CACHE: std::sync::Mutex<Option<WorktreeOriginCache>> =
+    std::sync::Mutex::new(None);
+
+/// Cache-slot key: the workspace root plus the configured base argument (the
+/// LSP may carry a session-configured base; `None` means default-base
+/// resolution). The tuple key keeps non-UTF-8 roots distinct (`Path::display`
+/// would lossily collapse them); the stored entry, not the key, carries the
+/// identity shas, so a stale entry can only be served after its shas verify.
+#[cfg(test)]
+pub(crate) static WORKTREE_ORIGIN_CACHE_HITS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(test)]
+pub(crate) fn worktree_origin_cache_hits() -> usize {
+    WORKTREE_ORIGIN_CACHE_HITS.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+#[cfg(test)]
+static WORKTREE_ORIGIN_CACHE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Serializes the origin-cache tests: the hit counter is process-global, so
+/// concurrent cache tests would race each other's deltas.
+#[cfg(test)]
+pub(crate) fn worktree_origin_cache_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    WORKTREE_ORIGIN_CACHE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Whether every stdout line is a full lowercase object id. Anything else —
+/// an unresolved ref's echoed argument, a warning, an ambiguous short sha —
+/// fails closed to the full resolution path. Parses the bytes in place and
+/// returns `None` on the first non-sha line instead of collecting first.
+fn rev_parse_sha_lines(stdout: &[u8]) -> Option<Vec<String>> {
+    let text = std::str::from_utf8(stdout).ok()?;
+    let mut lines = Vec::new();
+    for line in text.lines().map(str::trim) {
+        if line.is_empty() {
+            continue;
+        }
+        let is_sha = (40..=64).contains(&line.len())
+            && line
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+        if !is_sha {
+            return None;
+        }
+        lines.push(line.to_string());
+    }
+    Some(lines)
+}
+
+/// Fast path: serve the cached origin only when ONE `git rev-parse` probe
+/// shows `HEAD` and the effective base at the same commits the entry was
+/// captured under. `None` on miss, probe failure, poisoned lock, or any
+/// unexpected output — every `None` falls through to the full path.
+fn cached_worktree_origin(
+    root: &Path,
+    base: Option<&str>,
+    git_timeout: Option<Duration>,
+) -> Option<WorktreeOriginCacheEntry> {
+    // Default-base (`None`) loads are never served from cache: the selection
+    // (`resolve_default_base`) depends on which candidate refs EXIST and
+    // their priority order, and the identity pair cannot see a
+    // higher-priority candidate appearing mid-session — a first fetch
+    // creating `origin/main` moves the selection without moving the cached
+    // ref's sha, so the probe would hit and serve a stale origin (#10083
+    // review). Explicit bases name one ref; the pair covers them exactly.
+    base?;
+    let key = (root.to_path_buf(), base.map(str::to_string));
+    let entry = {
+        let cache = WORKTREE_ORIGIN_CACHE.lock().ok()?;
+        cache.as_ref()?.get(&key)?.clone()
+    };
+    let (head_sha, base_sha) =
+        probe_worktree_identity_shas(root, &entry.effective_base, git_timeout)?;
+    if head_sha == entry.head_sha && base_sha == entry.base_sha {
+        #[cfg(test)]
+        WORKTREE_ORIGIN_CACHE_HITS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Some(entry)
+    } else {
+        None
+    }
+}
+
+/// Probe the identity pair `(HEAD^{commit}, <base>^{commit})` in ONE git
+/// spawn. The pair is the cache's validity authority: a cached origin was
+/// derived from exactly this pair (see `worktree_diff_origin_from_shas`), and
+/// a hit requires the probe to return the same two shas, so a served origin
+/// is a pure function of verified identities — commit objects are immutable,
+/// so fetched objects can never move an existing merge base and a rewrite
+/// always changes a ref's sha. `None` on any spawn failure, non-zero exit,
+/// or unexpected output: the caller falls back to the ref-based sequence,
+/// which is the pre-cache behavior with no entry stored.
+fn probe_worktree_identity_shas(
+    root: &Path,
+    base: &str,
+    git_timeout: Option<Duration>,
+) -> Option<(String, String)> {
+    let base_probe = format!("{base}^{{commit}}");
+    let output = crate::git::run_git_output_with_deadline(
+        root,
+        &["rev-parse", "HEAD^{commit}", base_probe.as_str()],
+        git_timeout,
+    )
+    .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let shas = rev_parse_sha_lines(&output.stdout)?;
+    if shas.len() != 2 {
+        return None;
+    }
+    Some((shas[0].clone(), shas[1].clone()))
+}
+
+fn store_worktree_origin(root: &Path, base_arg: Option<&str>, entry: WorktreeOriginCacheEntry) {
+    let Ok(mut cache) = WORKTREE_ORIGIN_CACHE.lock() else {
+        return;
+    };
+    let cache = cache.get_or_insert_with(std::collections::HashMap::new);
+    if cache.len() >= WORKTREE_ORIGIN_CACHE_MAX_ENTRIES {
+        cache.clear();
+    }
+    cache.insert((root.to_path_buf(), base_arg.map(str::to_string)), entry);
 }
 
 /// The commit a working-tree diff starts from: the merge base of `base` and
@@ -288,8 +511,22 @@ fn worktree_diff_origin(
     base: &str,
     git_timeout: Option<Duration>,
 ) -> Result<String, CoreError> {
+    run_worktree_merge_base(root, base, base, "HEAD", git_timeout)
+}
+
+/// Run `git merge-base <left> <right>` for the working-tree diff origin with
+/// the shared success/empty-output/failure classification. `display_base` is
+/// the resolved ref name for the #7076 error messages; the shas variant
+/// passes commit ids and keeps its own display name.
+fn run_worktree_merge_base(
+    root: &Path,
+    display_base: &str,
+    left: &str,
+    right: &str,
+    git_timeout: Option<Duration>,
+) -> Result<String, CoreError> {
     let output =
-        crate::git::run_git_output_with_deadline(root, &["merge-base", base, "HEAD"], git_timeout)?;
+        crate::git::run_git_output_with_deadline(root, &["merge-base", left, right], git_timeout)?;
     if output.status.success() {
         if let Ok(text) = String::from_utf8(output.stdout) {
             let commit = text.trim();
@@ -298,16 +535,38 @@ fn worktree_diff_origin(
             }
         }
         return Err(CoreError::message(format!(
-            "git merge-base `{base}` HEAD succeeded but printed no commit (the analysis did not \
-             run). Re-run the command."
+            "git merge-base `{display_base}` HEAD succeeded but printed no commit (the analysis \
+             did not run). Re-run the command."
         )));
     }
     Err(no_worktree_merge_base_error(
         root,
-        base,
+        display_base,
         &output,
         git_timeout,
     ))
+}
+
+/// The cached-origin arm of [`worktree_diff_origin`]: same merge-base
+/// derivation, same fail-closed classifications, but run against the
+/// identity pair the entry was validated against instead of re-reading the
+/// refs. Deriving the origin FROM the probed shas (rather than probing shas
+/// after a ref-based merge-base) is what makes the cached tuple a pure
+/// function of `(head_sha, base_sha)`: the hit probe re-verifies exactly the
+/// pair this origin was computed from, so a served origin can never diverge
+/// from a fresh resolution under the verified identities. `display_base` is
+/// the resolved ref name, kept for the #7076 error messages; the shas came
+/// from `probe_worktree_identity_shas` in the same call, so they always name
+/// commits and the object-damage/unborn-HEAD probes below run only on a
+/// genuine no-merge-base or a concurrently-pruned object.
+fn worktree_diff_origin_from_shas(
+    root: &Path,
+    display_base: &str,
+    head_sha: &str,
+    base_sha: &str,
+    git_timeout: Option<Duration>,
+) -> Result<String, CoreError> {
+    run_worktree_merge_base(root, display_base, base_sha, head_sha, git_timeout)
 }
 
 /// The fail-closed error when the working-tree diff origin cannot be
@@ -520,10 +779,10 @@ pub(crate) fn resolve_effective_base_core_with_commit(
             if let Some(message) = unreadable_repository_message(root, &output) {
                 return Err(CoreError::repository_root_unusable(message));
             }
-            let fetch = missing_ref_repair(root, explicit, git_timeout);
+            let fetch = missing_ref_repair(root, explicit, "--base", git_timeout);
             Err(CoreError::base_unresolvable(format!(
                 "the base `{explicit}` does not resolve to a commit (the analysis did not \
-                 run). {fetch} or pass `--base <ref>` for a ref this repository has."
+                 run). {fetch}, or pass `--base <ref>` for a ref this repository has."
             )))
         }
         Some(output) => {
@@ -780,13 +1039,7 @@ fn unreadable_repository_message(root: &Path, output: &std::process::Output) -> 
         return None;
     }
     let reason = git_reason_line(&output.stderr)?;
-    // These two mean "no repository here", not "a damaged one": the work-tree
-    // message already tells the user to run from, or point `--root` at, one.
-    // Matched as the diagnostic's own prefix: a bad-config line can name a
-    // file whose path happens to contain those words.
-    if reason.starts_with("fatal: not a git repository")
-        || reason.starts_with("fatal: invalid gitfile")
-    {
+    if git_reason_means_no_repository(&reason) {
         return None;
     }
     // The whole stderr, not the displayed line: an `error:` line about a ref
@@ -808,6 +1061,24 @@ fn unreadable_repository_message(root: &Path, output: &std::process::Output) -> 
          {repair}",
         crate::terminal_text::terminal_safe(root.display().to_string())
     ))
+}
+
+/// Whether Git's reason line says "no repository here" rather than "a damaged
+/// one": the work-tree message already tells the user to run from, or point
+/// `--root` at, one. Matched as the diagnostic's own prefix: a bad-config line
+/// can name a file whose path happens to contain those words. Newer Git names
+/// a gitfile whose existing target is not a repository with "gitfile does not
+/// point to a valid repository" where older Git said "not a git repository"
+/// (seen on hosted Windows, #9661).
+fn git_reason_means_no_repository(reason: &str) -> bool {
+    [
+        "fatal: not a git repository",
+        "fatal: invalid gitfile",
+        "fatal: no path in gitfile",
+        "fatal: gitfile does not point to a valid repository",
+    ]
+    .iter()
+    .any(|prefix| reason.starts_with(prefix))
 }
 
 fn probe_git_root(root: &Path, git_timeout: Option<Duration>) -> GitRootProbe {
@@ -1136,12 +1407,28 @@ pub fn resolve_base_commit(
 /// the default-base failure context; any Git failure answers `None`, so
 /// callers never advise a `--base` repair that this probe could not
 /// support (#7644).
-/// The first branch (in `for-each-ref` order) that
-/// could serve as one, named as a usable
-/// `--base` value (`main`, `origin/main`). Callers that advise a
-/// `--base` repair must name this probed ref, never a hardcoded
-/// example, and must not name the base already in use.
+/// The branch with the smallest root-scoped changed-line count whose
+/// Rust lines stay within the changed-line guard, named as a usable
+/// `--base` value (`main`, `origin/main`); ref order breaks ties.
+/// A branch whose diff the guard would refuse is not a candidate
+/// (#9013). Callers that advise a `--base` repair must name this
+/// probed ref, never a hardcoded example, and must not name the base
+/// already in use.
 pub fn another_base_candidate(root: &Path, git_timeout: Option<Duration>) -> Option<String> {
+    // #9013: a candidate is only advice ripr can stand behind when the
+    // advised run would itself be analyzed. An unreadable/invalid line
+    // guard yields no advice rather than advice the guard would refuse.
+    let rust_line_limit = crate::analysis::language::diff_changed_rust_line_limit().ok()?;
+    let file_limit = super::parse::diff_file_limit_from_env();
+    another_base_candidate_with_limits(root, git_timeout, rust_line_limit, file_limit)
+}
+
+fn another_base_candidate_with_limits(
+    root: &Path,
+    git_timeout: Option<Duration>,
+    rust_line_limit: usize,
+    file_limit: usize,
+) -> Option<String> {
     let git_lines = |args: &[&str]| -> Vec<String> {
         crate::git::run_git_output_with_deadline(root, args, git_timeout)
             .ok()
@@ -1173,7 +1460,8 @@ pub fn another_base_candidate(root: &Path, git_timeout: Option<Duration>) -> Opt
     .filter(|name| !current.contains(name));
     let head_commit = resolve_base_commit(root, Some("HEAD"), git_timeout)?;
     const MERGE_BASE_PROBE_CAP: usize = 64;
-    others.take(MERGE_BASE_PROBE_CAP).find(|name| {
+    let mut best: Option<(bool, usize, String)> = None;
+    for name in others.take(MERGE_BASE_PROBE_CAP) {
         let merge_base_differs = crate::git::run_git_output_with_deadline(
             root,
             &["merge-base", name.as_str(), "HEAD"],
@@ -1184,25 +1472,88 @@ pub fn another_base_candidate(root: &Path, git_timeout: Option<Duration>) -> Opt
         .is_some_and(|output| {
             String::from_utf8_lossy(&output.stdout).trim() != head_commit.as_str()
         });
+        if !merge_base_differs {
+            continue;
+        }
         // A distinct historical range can still restore the merge-base
         // tree; only a non-empty three-dot diff makes the advice useful.
         // `--relative` scopes that diff to `root` like the analysis
         // loader, so a branch differing only outside the analyzed root
         // does not count.
-        merge_base_differs
-            && crate::git::run_git_output_with_deadline(
-                root,
-                &[
-                    "diff",
-                    "--relative",
-                    "--quiet",
-                    &format!("{name}...HEAD"),
-                    "--",
-                ],
-                git_timeout,
-            )
-            .is_ok_and(|output| output.status.code() == Some(1))
-    })
+        let numstat = crate::git::run_git_output_with_deadline(
+            root,
+            &[
+                "diff",
+                "--relative",
+                "--ignore-submodules=none",
+                "--numstat",
+                &format!("{name}...HEAD"),
+                "--",
+            ],
+            git_timeout,
+        );
+        let Ok(output) = numstat else { continue };
+        if !output.status.success() {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        if text.trim().is_empty() {
+            continue;
+        }
+        let mut total_lines = 0usize;
+        let mut rust_lines = 0usize;
+        let mut changed_files = 0usize;
+        for line in text.lines() {
+            let mut fields = line.split('\t');
+            let (Some(added), Some(deleted), Some(path)) =
+                (fields.next(), fields.next(), fields.next())
+            else {
+                continue;
+            };
+            changed_files = changed_files.saturating_add(1);
+            let changed = added
+                .parse::<usize>()
+                .unwrap_or(0)
+                .saturating_add(deleted.parse::<usize>().unwrap_or(0));
+            total_lines = total_lines.saturating_add(changed);
+            if numstat_new_path(path).ends_with(".rs") {
+                rust_lines = rust_lines.saturating_add(changed);
+            }
+        }
+        // The advised run must also survive the parser's changed-file
+        // guard, not only the Rust changed-line guard (#9013).
+        if rust_lines > rust_line_limit || changed_files > file_limit {
+            continue;
+        }
+        // Nearest first: a Rust-bearing diff before a non-Rust one, then
+        // the smallest analyzable diff; ref order only breaks ties.
+        let candidate = (rust_lines == 0, total_lines, name);
+        if best.as_ref().is_none_or(|current| candidate < *current) {
+            best = Some(candidate);
+        }
+    }
+    best.map(|(_, _, name)| name)
+}
+
+/// The destination path of one `--numstat` entry. Rename forms are
+/// `old => new` and `prefix/{old => new}/suffix`; Git also quotes paths
+/// with special characters. Anything else is already the plain path.
+fn numstat_new_path(path: &str) -> String {
+    let unquoted = path.trim().trim_matches('"');
+    let Some((before, after)) = unquoted.split_once(" => ") else {
+        return unquoted.to_string();
+    };
+    if let Some(open) = before.rfind('{')
+        && let Some(close) = after.find('}')
+    {
+        return format!(
+            "{}{}{}",
+            &before[..open],
+            &after[..close],
+            &after[close + 1..]
+        );
+    }
+    after.to_string()
 }
 
 /// Load `<base>...<head>` for the commands that name both revisions (`diff`,
@@ -1260,8 +1611,8 @@ fn verify_head_revision(
             .unwrap_or_else(|| {
                 format!(
                     "the head `{head}` does not resolve to a commit (the analysis did not \
-                     run). {} or pass `--head <ref>` for a ref this repository has.",
-                    missing_ref_repair(root, head, git_timeout)
+                     run). {}, or pass `--head <ref>` for a ref this repository has.",
+                    missing_ref_repair(root, head, "--head", git_timeout)
                 )
             })),
         _ => Ok(()),
@@ -1310,10 +1661,16 @@ fn remote_name_is_plain(name: &str) -> bool {
 /// names the add-remote step when it is not; an unqualified ref with no
 /// remote names the add-remote step, with exactly one remote names that
 /// remote, and with several remotes (or a probe that cannot answer) falls
-/// back to plain `git fetch`, which follows the default remote. Per-remote
-/// ref discovery for an unqualified ref (which of several remotes tracks
-/// it) would need network probes and stays out.
-fn missing_ref_repair(root: &Path, missing_ref: &str, git_timeout: Option<Duration>) -> String {
+/// back to plain `git fetch`, which follows the default remote. Before that,
+/// locally present remote-tracking refs (`refs/remotes/<remote>/<ref>`) are
+/// probed for every configured remote — a local probe, no network: exactly
+/// one names the followable advice, several are all named without picking.
+fn missing_ref_repair(
+    root: &Path,
+    missing_ref: &str,
+    flag: &str,
+    git_timeout: Option<Duration>,
+) -> String {
     if is_shallow_repository(root, git_timeout) {
         return "This is a shallow clone: fetch the missing history with `git fetch \
          --unshallow` (in GitHub Actions, set `fetch-depth: 0` on actions/checkout)"
@@ -1330,15 +1687,45 @@ fn missing_ref_repair(root: &Path, missing_ref: &str, git_timeout: Option<Durati
         );
     }
     let remotes = configured_remotes(root, git_timeout);
+    // A branch name can gain a remote-tracking form; rev expressions
+    // (`main~1`, `topic@{0}`), explicit `refs/...` paths, and option-shaped
+    // names never name a fetched branch. Slashes stay eligible: a nested
+    // branch (`feature/topic`) is not necessarily a remote qualifier.
+    let branch_like = !missing_ref.starts_with('-')
+        && !missing_ref.starts_with("refs/")
+        && !missing_ref.contains(['~', '^', ':', '?', '*', '[', '\\'])
+        && !missing_ref.contains("@{");
+    // #8652: a missing ref may already live in remote-tracking form. A
+    // fetch creates `refs/remotes/<remote>/<ref>`, never a local `<ref>`,
+    // so when that form resolves it is the followable advice;
+    // re-prescribing the fetch loops on the same failure. This probe runs
+    // before the qualified-remote arm so a nested branch name is not
+    // mistaken for an unconfigured remote.
+    if branch_like
+        && let Some(advice) =
+            remote_tracking_advice(root, missing_ref, flag, remotes.as_deref(), git_timeout)
+    {
+        return advice;
+    }
     if let Some(advice) = qualified_remote_advice(missing_ref, remotes.as_deref()) {
         return advice;
     }
+    let plain_branch = branch_like && !missing_ref.contains('/');
     match remotes.as_deref() {
-        Some([]) => format!(
+        Some([]) if !plain_branch => format!(
             "Check the spelling of `{missing_ref}` (`git branch --list` shows this repository's local branches). No git remote is configured: if it lives on a remote, add that remote (for example `git remote add <name> <url>`), then fetch it"
         ),
+        Some([]) => format!(
+            "Check the spelling of `{missing_ref}` (`git branch --list` shows this repository's local branches). No git remote is configured: if it lives on a remote, add that remote (for example `git remote add <name> <url>`), then fetch it; the fetched branch is named `<name>/{missing_ref}`, not a local `{missing_ref}`"
+        ),
         Some([only]) if remote_name_is_plain(only) => {
-            format!("Fetch the ref (for example `git fetch {only}`)")
+            if plain_branch {
+                format!(
+                    "Fetch the ref (for example `git fetch {only}`); the fetched branch is named `{only}/{missing_ref}`, not a local `{missing_ref}`"
+                )
+            } else {
+                format!("Fetch the ref (for example `git fetch {only}`)")
+            }
         }
         _ => {
             // #5252 item 8: plain `git fetch` follows the repo's own default
@@ -1358,6 +1745,45 @@ fn missing_ref_repair(root: &Path, missing_ref: &str, git_timeout: Option<Durati
 fn ancestor_anchor(missing_ref: &str) -> Option<&str> {
     let anchor = &missing_ref[..missing_ref.find(['~', '^'])?];
     (!anchor.is_empty() && !anchor.contains("@{")).then_some(anchor)
+}
+
+/// Advice naming locally present remote-tracking forms of `missing_ref`.
+/// Each candidate is verified as the full `refs/remotes/<remote>/<ref>`
+/// ref: the short `<remote>/<ref>` spelling can be shadowed by a tag or
+/// local branch of that name, which Git resolves first, so neither the
+/// probe nor the suggestion may use it. Exactly one candidate is the
+/// followable advice; several are all named without picking one; an
+/// unknown remote list invents none.
+fn remote_tracking_advice(
+    root: &Path,
+    missing_ref: &str,
+    flag: &str,
+    remotes: Option<&[String]>,
+    git_timeout: Option<Duration>,
+) -> Option<String> {
+    let found: Vec<String> = remotes?
+        .iter()
+        .filter(|remote| remote_name_is_plain(remote))
+        .map(|remote| format!("refs/remotes/{remote}/{missing_ref}"))
+        .filter(|tracking| {
+            git_ref_output(root, &format!("{tracking}^{{commit}}"), git_timeout)
+                .is_some_and(|output| output.status.success())
+        })
+        .collect();
+    match found.as_slice() {
+        [] => None,
+        [only] => Some(format!(
+            "the fetched branch is `{only}`, not a local `{missing_ref}`: pass `{flag} {only}`"
+        )),
+        _ => Some(format!(
+            "the fetched branch exists as {}, not a local `{missing_ref}`: pass `{flag}` with one of those refs",
+            found
+                .iter()
+                .map(|tracking| format!("`{tracking}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
 }
 
 /// Advice for a remote-qualified missing ref (`origin/main`). The qualifier
@@ -1911,21 +2337,37 @@ fn run_git_diff_bytes(
         }
     };
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stderr = stderr.trim();
-        let hint = if stderr.contains("no merge base") {
+        let raw_stderr = String::from_utf8_lossy(&output.stderr);
+        let raw_stderr = raw_stderr.trim();
+        let hint = if raw_stderr.contains("no merge base") {
             no_merge_base_hint(root, range, git_timeout)
-        } else if stderr.contains("unknown revision or path not in the working tree") {
+        } else if raw_stderr.contains("unknown revision or path not in the working tree") {
             format!(
                 " The range `{}` names a revision Git cannot resolve: HEAD may be unborn or \
                  point at a missing branch, or the base is absent. Check `git rev-parse HEAD` \
                  and the base ref, then re-run.",
                 crate::terminal_text::terminal_safe(range.to_string())
             )
-        } else if git_stderr_names_object_damage(stderr) {
+        } else if git_stderr_names_object_damage(raw_stderr) {
             format!(" {OBJECT_DAMAGE_REPAIR}")
         } else {
-            String::new()
+            // Unclassified failure: name the manual probe so the reader is not
+            // left with raw git output and no next step (#9604 batch E).
+            format!(
+                ". Re-run `git -C {} diff {range}` to see Git's full error.",
+                crate::terminal_text::terminal_safe(root.display().to_string())
+            )
+        };
+        // Bound and escape the displayed stderr: it is user-visible, and an
+        // unbounded raw dump can flood the terminal (same cap family as
+        // `git_reason_line` below).
+        let escaped = crate::terminal_text::terminal_safe(raw_stderr.to_string());
+        let stderr = if escaped.chars().count() <= GIT_REASON_MAX_CHARS {
+            escaped
+        } else {
+            let mut bounded: String = escaped.chars().take(GIT_REASON_MAX_CHARS).collect();
+            bounded.push('…');
+            bounded
         };
         return Err(format!("git diff failed: {stderr}{hint}").into());
     }
@@ -2609,6 +3051,138 @@ mod tests {
     }
 
     #[test]
+    fn another_base_candidate_rejects_a_diff_over_the_changed_line_guard() -> std::io::Result<()> {
+        // #9013: ripr must not advise `--base <branch>` when following that
+        // advice would refuse with `diff_scope_oversized`. The only other
+        // branch here differs by more Rust lines than the guard admits.
+        let dir = unique_fixture_root("another-base-candidate-oversized")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "master")?;
+        run_git_checked(&dir, &["branch", "ancient"])?;
+        let big = (0..2_100)
+            .map(|n| format!("fn f{n}() {{}}\n"))
+            .collect::<String>();
+        fs::write(dir.join("big.rs"), big)?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "big rust change"])?;
+        assert_eq!(
+            another_base_candidate(&dir, None),
+            None,
+            "a branch whose diff exceeds the changed-Rust-line guard must not be advised"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn another_base_candidate_prefers_the_smallest_analyzable_diff() -> std::io::Result<()> {
+        // #9013: with several qualifying branches, ref order must not pick
+        // an ancient branch over the near branch whose diff ripr can
+        // actually analyze and that plausibly parents the current work.
+        let dir = unique_fixture_root("another-base-candidate-nearest")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "master")?;
+        run_git_checked(&dir, &["branch", "aaa-ancient"])?;
+        let big = (0..300)
+            .map(|n| format!("fn g{n}() {{}}\n"))
+            .collect::<String>();
+        fs::write(dir.join("big.rs"), big)?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "larger change"])?;
+        run_git_checked(&dir, &["branch", "zzz-near"])?;
+        fs::write(dir.join("small.rs"), "fn only() {}\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "small change"])?;
+        assert_eq!(
+            another_base_candidate(&dir, None).as_deref(),
+            Some("zzz-near"),
+            "the smallest analyzable diff must win over first-in-ref-order"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn numstat_new_path_unwraps_rename_and_quote_forms() {
+        assert_eq!(numstat_new_path("src/lib.rs"), "src/lib.rs");
+        assert_eq!(numstat_new_path("old.rs => new.rs"), "new.rs");
+        assert_eq!(
+            numstat_new_path("src/{old.rs => new.rs}"),
+            "src/new.rs",
+            "the brace rename form must not leave a trailing brace"
+        );
+        assert_eq!(
+            numstat_new_path("\"src/{old.rs => new.rs}\""),
+            "src/new.rs",
+            "quoted rename paths must still classify by destination"
+        );
+    }
+
+    #[test]
+    fn another_base_candidate_rejects_a_diff_over_the_changed_file_guard() -> std::io::Result<()> {
+        // #9013: the parser refuses a diff naming more changed files than
+        // RIPR_MAX_DIFF_INDEX_FILES, so such a branch is not advice either.
+        let dir = unique_fixture_root("another-base-candidate-file-guard")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "master")?;
+        run_git_checked(&dir, &["branch", "ancient"])?;
+        for n in 0..3 {
+            fs::write(dir.join(format!("f{n}.rs")), "fn x() {}\n")?;
+        }
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "three files"])?;
+        assert_eq!(
+            another_base_candidate_with_limits(&dir, None, 2_000, 2),
+            None,
+            "a branch whose diff exceeds the changed-file guard must not be advised"
+        );
+        assert_eq!(
+            another_base_candidate_with_limits(&dir, None, 2_000, 3).as_deref(),
+            Some("ancient"),
+            "the same branch is a candidate when its diff fits the guard"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn another_base_candidate_counts_renamed_rust_lines() -> std::io::Result<()> {
+        // #9013: a rename-plus-edit numstat entry names both paths; the
+        // changed lines belong to the Rust destination, not to no file.
+        let dir = unique_fixture_root("another-base-candidate-rename")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "master")?;
+        fs::create_dir_all(dir.join("src"))?;
+        let original = (0..100)
+            .map(|n| format!("fn f{n}() {{}}\n"))
+            .collect::<String>();
+        fs::write(dir.join("src/old.rs"), original)?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "seed"])?;
+        run_git_checked(&dir, &["branch", "ancient"])?;
+        run_git_checked(&dir, &["mv", "src/old.rs", "src/new.rs"])?;
+        let edited = (0..100)
+            .map(|n| {
+                if n < 30 {
+                    format!("fn f{n}() {{ /* edited */ }}\n")
+                } else {
+                    format!("fn f{n}() {{}}\n")
+                }
+            })
+            .collect::<String>();
+        fs::write(dir.join("src/new.rs"), edited)?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "rename and edit"])?;
+        assert_eq!(
+            another_base_candidate_with_limits(&dir, None, 10, 10_000),
+            None,
+            "renamed Rust lines must count toward the changed-line guard"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
     fn worktree_loader_carries_the_revisions_it_already_resolved() -> std::io::Result<()> {
         let dir = unique_fixture_root("worktree-loaded-revisions")?;
         ignore_remove_dir_all(&dir);
@@ -2637,6 +3211,154 @@ mod tests {
             loaded.merge_base_origin.as_deref(),
             Some(expected_base.as_str()),
             "the worktree origin (the merge base the diff actually starts from) must be              carried for the analyzed-revisions naming (#7716)"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn worktree_origin_cache_serves_the_second_save_after_one_probe() -> std::io::Result<()> {
+        let _cache_test_guard = worktree_origin_cache_test_lock();
+        let dir = unique_fixture_root("worktree-origin-cache-hit")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        run_git_checked(&dir, &["branch", "base"])?;
+        fs::write(dir.join("README"), "edited in the worktree\n")?;
+
+        let first = load_worktree_diff_with_effective_base_core(&dir, Some("base"), None)
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        assert_eq!(first.effective_base.as_deref(), Some("base"));
+        assert!(!first.text.is_empty(), "the worktree edit must appear");
+
+        let hits_before = worktree_origin_cache_hits();
+        let second = load_worktree_diff_with_effective_base_core(&dir, Some("base"), None)
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        assert_eq!(
+            second.text, first.text,
+            "a cache hit must serve the same diff input"
+        );
+        assert_eq!(
+            second.effective_base.as_deref(),
+            Some("base"),
+            "a cache hit must carry the same effective base"
+        );
+        assert_eq!(
+            second.merge_base_origin, first.merge_base_origin,
+            "a cache hit must carry the same diff origin"
+        );
+        assert_eq!(
+            worktree_origin_cache_hits(),
+            hits_before + 1,
+            "the second save must be served from the validated origin cache"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn worktree_origin_cache_misses_when_head_advances() -> std::io::Result<()> {
+        let _cache_test_guard = worktree_origin_cache_test_lock();
+        let dir = unique_fixture_root("worktree-origin-cache-head-move")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        run_git_checked(&dir, &["branch", "base"])?;
+        fs::write(dir.join("README"), "uncommitted edit\n")?;
+
+        let first = load_worktree_diff_with_effective_base_core(&dir, Some("base"), None)
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        assert!(!first.text.is_empty(), "the worktree edit must appear");
+
+        // HEAD advances (the previous worktree change commits); the cached
+        // origin was validated against the old HEAD and must not serve.
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "second"])?;
+
+        let hits_before = worktree_origin_cache_hits();
+        let second = load_worktree_diff_with_effective_base_core(&dir, Some("base"), None)
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        assert!(
+            second.text.contains("uncommitted edit"),
+            "the committed change still diffs against the unchanged origin; got: {}",
+            second.text
+        );
+        assert_eq!(
+            worktree_origin_cache_hits(),
+            hits_before,
+            "a HEAD move must miss the cache and re-resolve"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn worktree_origin_cache_misses_when_the_base_ref_moves() -> std::io::Result<()> {
+        let _cache_test_guard = worktree_origin_cache_test_lock();
+        let dir = unique_fixture_root("worktree-origin-cache-base-move")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        run_git_checked(&dir, &["branch", "base"])?;
+        // A second commit advances HEAD past the base tip, so the base ref
+        // has somewhere to move.
+        fs::write(dir.join("README"), "second")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "second"])?;
+
+        let first = load_worktree_diff_with_effective_base_core(&dir, Some("base"), None)
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        let first_origin = first.merge_base_origin.clone();
+
+        // Move the base ref forward: the identity probe must see the new
+        // base commit and refuse the stale entry.
+        run_git_checked(&dir, &["branch", "-f", "base", "HEAD"])?;
+
+        let hits_before = worktree_origin_cache_hits();
+        let second = load_worktree_diff_with_effective_base_core(&dir, Some("base"), None)
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        assert_eq!(
+            worktree_origin_cache_hits(),
+            hits_before,
+            "a base-ref move must miss the cache and re-resolve"
+        );
+        assert_ne!(
+            second.merge_base_origin, first_origin,
+            "moving the base ref to HEAD moves the merge-base origin"
+        );
+        let expected_origin = run_git_checked(&dir, &["merge-base", "base", "HEAD"])?;
+        assert_eq!(
+            second.merge_base_origin.as_deref(),
+            Some(expected_origin.as_str()),
+            "the re-resolved origin must match a fresh merge-base"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn worktree_origin_cache_never_serves_a_default_base_load() -> std::io::Result<()> {
+        let _cache_test_guard = worktree_origin_cache_test_lock();
+        let dir = unique_fixture_root("worktree-origin-cache-default-base")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        run_git_checked(&dir, &["branch", "base"])?;
+        fs::write(dir.join("README"), "edited in the worktree\n")?;
+
+        // No explicit base: `main` is the resolved default base in this repo
+        // (no origin/* refs exist here).
+        let first = load_worktree_diff_with_effective_base_core(&dir, None, None)
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        assert_eq!(first.effective_base.as_deref(), Some("main"));
+        assert!(!first.text.is_empty(), "the worktree edit must appear");
+
+        let hits_before = worktree_origin_cache_hits();
+        let second = load_worktree_diff_with_effective_base_core(&dir, None, None)
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        assert_eq!(second.text, first.text);
+        assert_eq!(
+            worktree_origin_cache_hits(),
+            hits_before,
+            "default-base selection depends on which candidate refs exist and their priority; \
+             the identity pair cannot see a higher-priority candidate appear mid-session, so a \
+             None base must never be served (or stored) in the origin cache (#10083 review)"
         );
         ignore_remove_dir_all(&dir);
         Ok(())
@@ -3188,6 +3910,41 @@ mod tests {
     }
 
     #[test]
+    fn unclassified_git_diff_failure_names_the_manual_probe() -> std::io::Result<()> {
+        // `diff.renames` is validated only when git runs diff, so the failure
+        // classifies no hint branch; the message must stay prefixed and name
+        // the manual probe instead of leaving raw stderr as the only text
+        // (#9604 batch E).
+        let dir = unique_fixture_root("unclassified-diff-tail")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        fs::write(dir.join("src.rs"), "pub fn f() -> bool { 1 > 0 }\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "base"])?;
+        fs::write(dir.join("src.rs"), "pub fn f() -> bool { 1 >= 0 }\n")?;
+        run_git_checked(&dir, &["commit", "-am", "change"])?;
+        run_git_checked(&dir, &["config", "diff.renames", "not-a-boolean"])?;
+
+        let err = load_diff(&dir, Some("HEAD~1"), None, None)
+            .expect_err("a diff-time config failure must surface");
+        assert!(
+            err.starts_with("git diff failed:"),
+            "the consumer-facing prefix must stay intact, got: {err}"
+        );
+        assert!(
+            err.contains("Re-run `git -C ") && err.contains("to see Git's full error"),
+            "an unclassified failure must name the manual probe, got: {err}"
+        );
+        assert!(
+            !err.contains("not-a-boolean") || err.chars().count() < 1200,
+            "the displayed stderr must stay bounded, got {len} chars",
+            len = err.chars().count()
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
     fn explicit_base_is_used_as_is_without_resolution() -> std::io::Result<()> {
         // When an explicit base is given, load_diff does not attempt resolution.
         // A nonexistent explicit base must fail naming the ref the user chose,
@@ -3239,6 +3996,12 @@ mod tests {
             err.contains("the analysis did not run"),
             "expected an explicit did-not-run boundary so an unresolvable base \
              is never read as an empty result, got: {err}"
+        );
+        // #9277: the repair sentence and the alternative join with a comma, not
+        // a bare "or" that fuses onto the previous clause.
+        assert!(
+            err.contains(", or pass `--base <ref>` for a ref this repository has."),
+            "expected the repair and the alternative to be separate clauses, got: {err}"
         );
         assert!(
             err.contains("--base <ref>"),
@@ -3312,7 +4075,7 @@ mod tests {
         ignore_remove_dir_all(&dir);
         init_git_repo(&dir, "main")?;
 
-        let repair = missing_ref_repair(&dir, "no-such-ref-5252", None);
+        let repair = missing_ref_repair(&dir, "no-such-ref-5252", "--base", None);
         assert!(
             repair.contains("No git remote is configured")
                 && repair.contains("`no-such-ref-5252`")
@@ -3330,6 +4093,138 @@ mod tests {
     }
 
     #[test]
+    fn missing_ref_repair_names_the_remote_tracking_form_it_can_resolve() -> std::io::Result<()> {
+        // #8652: a fetch creates `origin/topic`, never a local `topic`.
+        // When that remote-tracking ref already resolves, the repair must
+        // name the followable `--base refs/remotes/origin/topic`, not
+        // re-prescribe the fetch that already happened.
+        let dir = unique_fixture_root("missing-ref-remote-tracking")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        run_git_checked(
+            &dir,
+            &["remote", "add", "origin", "https://example.test/fork.git"],
+        )?;
+        run_git_checked(&dir, &["update-ref", "refs/remotes/origin/topic", "HEAD"])?;
+
+        let repair = missing_ref_repair(&dir, "topic", "--base", None);
+        assert!(
+            repair.contains("--base refs/remotes/origin/topic"),
+            "the repair must name the resolvable remote-tracking ref, got: {repair}"
+        );
+        let head_repair = missing_ref_repair(&dir, "topic", "--head", None);
+        assert!(
+            head_repair.contains("--head refs/remotes/origin/topic")
+                && !head_repair.contains("--base"),
+            "the head repair must name its own flag, got: {head_repair}"
+        );
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_ref_repair_tracking_advice_is_not_shadowed_by_a_tag() -> std::io::Result<()> {
+        // A tag named `origin/topic` wins Git's short-name resolution over
+        // `refs/remotes/origin/topic`; the advice must name the full
+        // remote-tracking ref so following it loads the fetched branch.
+        let dir = unique_fixture_root("missing-ref-tracking-tag-shadow")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        run_git_checked(
+            &dir,
+            &["remote", "add", "origin", "https://example.test/fork.git"],
+        )?;
+        run_git_checked(&dir, &["commit", "--allow-empty", "-m", "second"])?;
+        run_git_checked(&dir, &["update-ref", "refs/remotes/origin/topic", "HEAD"])?;
+        run_git_checked(&dir, &["tag", "origin/topic", "HEAD~1"])?;
+
+        let repair = missing_ref_repair(&dir, "topic", "--base", None);
+        assert!(
+            repair.contains("--base refs/remotes/origin/topic"),
+            "the repair must name the unambiguous remote-tracking ref, got: {repair}"
+        );
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_ref_repair_probes_every_configured_remote() -> std::io::Result<()> {
+        let dir = unique_fixture_root("missing-ref-tracking-multi-remote")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        for remote in ["origin", "upstream"] {
+            run_git_checked(
+                &dir,
+                &["remote", "add", remote, "https://example.test/fork.git"],
+            )?;
+        }
+        run_git_checked(&dir, &["update-ref", "refs/remotes/upstream/topic", "HEAD"])?;
+
+        let repair = missing_ref_repair(&dir, "topic", "--base", None);
+        assert!(
+            repair.contains("--base refs/remotes/upstream/topic"),
+            "the repair must name the one existing tracking ref, got: {repair}"
+        );
+
+        run_git_checked(&dir, &["update-ref", "refs/remotes/origin/topic", "HEAD"])?;
+        let repair = missing_ref_repair(&dir, "topic", "--base", None);
+        assert!(
+            repair.contains("refs/remotes/origin/topic")
+                && repair.contains("refs/remotes/upstream/topic")
+                && !repair.contains("pass `--base refs/remotes/origin/topic`"),
+            "several tracking refs must all be named, none picked, got: {repair}"
+        );
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_ref_repair_probes_nested_branch_names() -> std::io::Result<()> {
+        let dir = unique_fixture_root("missing-ref-tracking-nested")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        run_git_checked(
+            &dir,
+            &["remote", "add", "origin", "https://example.test/fork.git"],
+        )?;
+        run_git_checked(
+            &dir,
+            &["update-ref", "refs/remotes/origin/feature/topic", "HEAD"],
+        )?;
+
+        let repair = missing_ref_repair(&dir, "feature/topic", "--base", None);
+        assert!(
+            repair.contains("--base refs/remotes/origin/feature/topic"),
+            "a slashed branch must probe remote-tracking forms, got: {repair}"
+        );
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_ref_repair_no_remote_arm_names_remote_tracking_refs() -> std::io::Result<()> {
+        // #8652: after add-remote + fetch, the branch lands as
+        // `<name>/topic`; the no-remote advice must say so, or following
+        // it literally re-fails on the unqualified name.
+        let dir = unique_fixture_root("missing-ref-no-remote-tracking")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+
+        let repair = missing_ref_repair(&dir, "topic", "--base", None);
+        assert!(
+            repair.contains("<name>/topic"),
+            "the no-remote repair must name the remote-tracking form, got: {repair}"
+        );
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
     fn missing_ref_repair_names_the_single_configured_remote() -> std::io::Result<()> {
         let dir = unique_fixture_root("missing-ref-one-remote")?;
         ignore_remove_dir_all(&dir);
@@ -3340,7 +4235,7 @@ mod tests {
             &["remote", "add", "fork", "https://example.test/fork.git"],
         )?;
 
-        let repair = missing_ref_repair(&dir, "fork/main", None);
+        let repair = missing_ref_repair(&dir, "fork/main", "--base", None);
         assert_eq!(
             repair, "Fetch the ref (for example `git fetch fork`)",
             "one configured remote is read, not assumed"
@@ -3368,7 +4263,7 @@ mod tests {
         // Unqualified: no qualifier names a remote, so several remotes fall
         // back to the default-remote fetch (a `fork/main` ref would take the
         // qualified arm instead).
-        let repair = missing_ref_repair(&dir, "no-such-ref-5252", None);
+        let repair = missing_ref_repair(&dir, "no-such-ref-5252", "--base", None);
         assert_eq!(repair, "Fetch the ref (for example `git fetch`)");
 
         // A probe that cannot answer never invents a remote list either. A
@@ -3379,7 +4274,7 @@ mod tests {
         let file_root = unique_fixture_path("missing-ref-file-root");
         ignore_remove_dir_all(&file_root);
         fs::write(&file_root, "not a directory")?;
-        let repair = missing_ref_repair(&file_root, "main", None);
+        let repair = missing_ref_repair(&file_root, "main", "--base", None);
         assert_eq!(repair, "Fetch the ref (for example `git fetch`)");
 
         ignore_remove_dir_all(&dir);
@@ -3405,7 +4300,7 @@ mod tests {
             &["remote", "add", "origin", "https://example.test/origin.git"],
         )?;
 
-        let repair = missing_ref_repair(&dir, "origin/main", None);
+        let repair = missing_ref_repair(&dir, "origin/main", "--base", None);
         assert_eq!(repair, "Fetch the ref (for example `git fetch origin`)");
 
         ignore_remove_dir_all(&dir);
@@ -3426,7 +4321,7 @@ mod tests {
             &["remote", "add", "fork", "https://example.test/fork.git"],
         )?;
 
-        let repair = missing_ref_repair(&dir, "origin/main", None);
+        let repair = missing_ref_repair(&dir, "origin/main", "--base", None);
         assert!(
             repair.contains("No `origin` remote is configured")
                 && repair.contains("`origin/main`")
@@ -3459,7 +4354,7 @@ mod tests {
         )?;
 
         for explicit in ["refs/heads/x", "refs/remotes/origin/main"] {
-            let repair = missing_ref_repair(&dir, explicit, None);
+            let repair = missing_ref_repair(&dir, explicit, "--base", None);
             assert_eq!(
                 repair, "Fetch the ref (for example `git fetch origin`)",
                 "an explicit ref path must fall through to the singleton arm, got: {repair}"
@@ -3483,7 +4378,7 @@ mod tests {
         let file_root = unique_fixture_path("missing-ref-qualified-unknown");
         ignore_remove_dir_all(&file_root);
         fs::write(&file_root, "not a directory")?;
-        let repair = missing_ref_repair(&file_root, "origin/main", None);
+        let repair = missing_ref_repair(&file_root, "origin/main", "--base", None);
         assert_eq!(repair, "Fetch the ref (for example `git fetch`)");
         let _ = fs::remove_file(&file_root);
         Ok(())
@@ -3497,7 +4392,7 @@ mod tests {
         ignore_remove_dir_all(&dir);
         init_git_repo(&dir, "main")?;
 
-        let repair = missing_ref_repair(&dir, "--upload-pack=x/main", None);
+        let repair = missing_ref_repair(&dir, "--upload-pack=x/main", "--base", None);
         assert!(
             repair.contains("No git remote is configured"),
             "a hostile qualifier must fall through to the generic arm, got: {repair}"
@@ -3899,6 +4794,30 @@ mod tests {
         assert!(!git_stderr_rejects_environment_config(
             "fatal: bad config line 1 in file /tmp/GIT_CONFIG_dir/.git/config\n"
         ));
+    }
+
+    #[test]
+    fn no_repository_reasons_cover_both_git_spellings_of_a_non_repository_gitdir() {
+        // Older Git (2.43) and newer Git (hosted Windows runners, #9661) name a
+        // gitfile whose existing target is not a repository differently; both
+        // are "no repository here", not repository damage.
+        // `check-local-context` forbids drive-letter path literals.
+        let drive = "F:";
+        for reason in [
+            "fatal: not a git repository: /work/admin".to_string(),
+            "fatal: invalid gitfile format: /work/.git".to_string(),
+            "fatal: no path in gitfile: /work/.git".to_string(),
+            format!("fatal: gitfile does not point to a valid repository: {drive}/work/admin/.git"),
+        ] {
+            assert!(git_reason_means_no_repository(&reason), "{reason}");
+        }
+        // A damaged repository whose path contains the words stays damage.
+        for reason in [
+            "fatal: bad config line 1 in file /work/not a git repository/.git/config",
+            "error: refs/heads/feat does not point to a valid object!",
+        ] {
+            assert!(!git_reason_means_no_repository(reason), "{reason}");
+        }
     }
 
     #[test]

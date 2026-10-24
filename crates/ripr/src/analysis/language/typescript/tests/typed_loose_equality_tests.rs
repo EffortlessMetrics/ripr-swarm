@@ -300,8 +300,14 @@ fn loose_number_facts_refuse_a_shadowed_owner_and_a_method_owner() -> Result<(),
             .find(|owner| owner.name == owner_name)
             .ok_or_else(|| format!("{label}: owner {owner_name} not extracted"))?;
         let tests = extract_tests(Path::new("tests/linecount.test.ts"), test);
-        let candidates =
-            related_test_candidates(&owner, &tests, Some(&root), &ReExportIndex::empty(), None);
+        let candidates = related_test_candidates(
+            &owner,
+            &tests,
+            Some(&root),
+            &ReExportIndex::empty(),
+            None,
+            &RelationIndex::empty(),
+        );
         let marked = tests
             .iter()
             .flat_map(|test| &test.assertions)
@@ -360,6 +366,7 @@ fn loose_number_facts_refuse_a_shadowed_owner_and_a_method_owner() -> Result<(),
         Some(&root),
         &ReExportIndex::empty(),
         None,
+        &RelationIndex::empty(),
     );
     let credited = |owner: &TypeScriptOwner| {
         let facts = ts_typed_loose_number_facts(owner, &candidates, None, Some(&root));
@@ -405,8 +412,14 @@ fn line_count_facts(label: &str, test: &str) -> Result<(usize, usize, usize), St
         .find(|owner| owner.name == "lineCount")
         .ok_or("owner lineCount not extracted")?;
     let tests = extract_tests(Path::new("tests/linecount.test.ts"), test);
-    let candidates =
-        related_test_candidates(&owner, &tests, Some(&root), &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        Some(&root),
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     let facts = ts_typed_loose_number_facts(&owner, &candidates, None, Some(&root));
     let marked = tests
         .iter()
@@ -499,16 +512,30 @@ fn loose_number_facts_refuse_a_shadowed_namespace_receiver() -> Result<(), Strin
         .into_iter()
         .find(|owner| owner.name == "lineCount")
         .ok_or("owner lineCount not extracted")?;
-    if !related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None)
-        .iter()
-        .any(|candidate| candidate.relation.uses_oracle())
+    if !related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    )
+    .iter()
+    .any(|candidate| candidate.relation.uses_oracle())
     {
         return Err(format!(
             "real owner smoke call must keep a trusted relation: {:?}",
-            related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None)
-                .iter()
-                .map(|candidate| candidate.relation)
-                .collect::<Vec<_>>()
+            related_test_candidates(
+                &owner,
+                &tests,
+                None,
+                &ReExportIndex::empty(),
+                None,
+                &RelationIndex::empty()
+            )
+            .iter()
+            .map(|candidate| candidate.relation)
+            .collect::<Vec<_>>()
         ));
     }
     Ok(())

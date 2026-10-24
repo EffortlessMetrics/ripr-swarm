@@ -896,3 +896,148 @@ fn removed_inline_test_bound_preserves_old_test_exclusion() -> Result<(), String
     }
     Ok(())
 }
+
+/// #8389: `Self: Sized` in an `impl` header is not a constructed field. The
+/// replaced header stays probed as one `static_unknown` (a changed bound is
+/// not dropped), and the `fn` inside the same `impl` keeps its own probe.
+#[test]
+fn replaced_impl_header_is_static_unknown_not_a_field() -> Result<(), String> {
+    let source =
+        "pub struct K;\nimpl Tr for K  where Self: Sized {\n    fn go(&self) -> u32 { 1 }\n}\n";
+    let header = probes(
+        source,
+        ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: vec![ChangedLine {
+                line: 2,
+                new_side_line: 2,
+                text: "impl Tr for K  where Self: Sized {".into(),
+            }],
+            removed_lines: vec![ChangedLine {
+                line: 2,
+                new_side_line: 2,
+                text: "impl Tr for K {".into(),
+            }],
+        },
+    )?;
+    assert!(
+        !header.is_empty()
+            && header
+                .iter()
+                .all(|probe| probe.family == ProbeFamily::StaticUnknown),
+        "impl header probed as something else, or lost: {header:?}"
+    );
+    let body = added(source, 3)?;
+    assert!(!body.is_empty(), "the fn inside the impl lost its probe");
+    Ok(())
+}
+
+/// #8389: a callable-looking bound (`Fn(u8)`) or a trailing comment in an
+/// `impl` header does not make it a call or a body: the replaced header is one
+/// `static_unknown` probe.
+#[test]
+fn impl_header_with_fn_bound_or_comment_is_static_unknown() -> Result<(), String> {
+    for header in [
+        "impl<T: Fn(u8)> Tr for K<T> where Self: Sized {",
+        "impl Tr for K where Self: Sized { // fn go",
+        "impl Tr for K where Self: Sized { // x;",
+        "impl Tr for K where [u8; 4]: Copy {",
+        "impl\tTr for K where Self: Sized {",
+    ] {
+        let source = format!("pub struct K;\n{header}\n    fn go(&self) -> u32 {{ 1 }}\n}}\n");
+        let result = probes(
+            &source,
+            ChangedFile {
+                path: PathBuf::from("src/lib.rs"),
+                added_lines: vec![ChangedLine {
+                    line: 2,
+                    new_side_line: 2,
+                    text: header.into(),
+                }],
+                removed_lines: vec![ChangedLine {
+                    line: 2,
+                    new_side_line: 2,
+                    text: "impl<T: Fn(u8)> Tr for K<T> {".into(),
+                }],
+            },
+        )?;
+        assert!(
+            !result.is_empty()
+                && result
+                    .iter()
+                    .all(|probe| probe.family == ProbeFamily::StaticUnknown),
+            "`{header}` was probed as something else, or lost: {result:?}"
+        );
+    }
+    Ok(())
+}
+
+/// #9170: a replaced `struct`/`enum`/`union`/`trait` header with generic bounds
+/// is one `static_unknown` probe, not a field; a const-generic default holding
+/// a call keeps its call probe.
+#[test]
+fn replaced_type_header_is_static_unknown_but_const_default_call_is_probed() -> Result<(), String> {
+    let probes_for = |header: &str, before: &str| -> Result<Vec<_>, String> {
+        let body = if header.starts_with("enum") {
+            "A,"
+        } else {
+            "x: u8,"
+        };
+        let source = format!("{header}\n    {body}\n}}\n");
+        probes(
+            &source,
+            ChangedFile {
+                path: PathBuf::from("src/lib.rs"),
+                added_lines: vec![ChangedLine {
+                    line: 1,
+                    new_side_line: 1,
+                    text: header.into(),
+                }],
+                removed_lines: vec![ChangedLine {
+                    line: 1,
+                    new_side_line: 1,
+                    text: before.into(),
+                }],
+            },
+        )
+    };
+    for (header, before) in [
+        (
+            "pub struct Wrapper<T: Clone + Send> {",
+            "pub struct Wrapper<T: Clone> {",
+        ),
+        ("enum Op<Q: Ord + Copy> {", "enum Op<Q: Ord> {"),
+        ("union Bits<T: Copy> {", "union Bits<T> {"),
+        ("enum É<T: Copy> {", "enum É<T> {"),
+        (
+            "enum Op<T> where [([u8; 4], fn()); 3]: Copy {",
+            "enum Op<T> {",
+        ),
+    ] {
+        let result = probes_for(header, before)?;
+        assert!(
+            !result.is_empty()
+                && result
+                    .iter()
+                    .all(|probe| probe.family == ProbeFamily::StaticUnknown),
+            "`{header}` was probed as something else, or lost: {result:?}"
+        );
+    }
+    let call = probes_for(
+        "struct Buffer<const N: usize = { capacity() }> {",
+        "struct Buffer<const N: usize = 4> {",
+    )?;
+    assert!(
+        call.iter()
+            .any(|probe| probe.family == ProbeFamily::CallDeletion),
+        "a call in a const-generic default lost its call probe: {call:?}"
+    );
+    // A brace-free macro in a generic default is evidence too.
+    let mac = probes_for("struct S<T = m!()> {", "struct S<T = u8> {")?;
+    assert!(
+        mac.iter()
+            .any(|probe| probe.family != ProbeFamily::StaticUnknown),
+        "a macro in a generic default was read as declaration-only: {mac:?}"
+    );
+    Ok(())
+}

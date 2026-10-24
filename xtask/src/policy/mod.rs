@@ -1,5 +1,7 @@
 mod all;
 mod allow_attributes;
+mod capability_docs;
+mod capability_producers;
 mod changelog_fragments;
 mod ci_lane_whitelist;
 mod covered_by;
@@ -17,6 +19,7 @@ mod positioning_language;
 mod process;
 mod product_copy;
 pub(crate) mod proof_packs;
+mod release_selection;
 mod release_targets;
 
 pub(crate) use release_targets::{CandidateAuthoritySnapshot, capture_candidate_authority};
@@ -27,6 +30,8 @@ mod workflows;
 
 pub(crate) use all::check_policy_all;
 pub(crate) use allow_attributes::check_allow_attributes;
+pub(crate) use capability_docs::capability_docs;
+pub(crate) use capability_producers::check_capability_producers;
 pub(crate) use changelog_fragments::{
     check_changelog_fragments, check_changelog_fragments_with_args, unfolded_fragment_paths,
 };
@@ -36,7 +41,7 @@ pub(crate) use dependency_expiry::check_dependency_suppression_expiry;
 pub(crate) use doc_roles::check_doc_roles;
 pub(crate) use droid_review::check_droid_review_config;
 pub(crate) use executable_files::check_executable_files;
-pub(crate) use file_policy::check_file_policy;
+pub(crate) use file_policy::{check_file_policy, is_covered_by_instrument_failure};
 pub(crate) use local_context::check_local_context;
 pub(crate) use network::check_network_policy;
 pub(crate) use no_panic::check_no_panic_family;
@@ -55,6 +60,9 @@ pub(crate) fn check_release_targets() -> Result<(), String> {
         failures.push(error);
     }
     if let Err(error) = distribution::check_distribution_contract() {
+        failures.push(error);
+    }
+    if let Err(error) = release_selection::check_release_selection() {
         failures.push(error);
     }
 

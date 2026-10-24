@@ -58,6 +58,50 @@ pub(super) struct EvidenceEntry {
     pub key: Option<Vec<u8>>,
 }
 
+/// #9244: the producer's reveal-stage summaries carry the machine marker
+/// `observation_unverified`, which consumers of the stage summary in JSON key
+/// on. The human window already says the same thing in words ("Discriminator
+/// unconfirmed: ..."), so it drops the marker. The JSON stage summary is
+/// untouched.
+///
+/// Only the producer-appended forms are recognized, each at its fixed
+/// position; no substring or token scanning is done, so source text the
+/// summary embeds (identifiers, quoted literals, backticks of any parity) is
+/// never modified. The forms are the ones the producers emit:
+/// - the trailing ` (observation_unverified)` suffix (Rust reveal stage and
+///   classifier evidence);
+/// - the Python adapter's fixed `... not observed (observation_unverified). `
+///   sentence and its fixed `... unexecuted (observation_unverified). Add a
+///   test input ...` tail;
+/// - the TypeScript adapter's exact strong-oracle-no-flow summary.
+pub(crate) fn plain_observation_wording(text: &str) -> String {
+    const MARKER: &str = " (observation_unverified)";
+    const PYTHON_PREFIX: &str = "A strong Python oracle reaches `";
+    const PYTHON_METHOD_CALL: &str =
+        "so the edited value is not observed (observation_unverified). ";
+    const PYTHON_UNEXECUTED_TAIL: &str =
+        " (observation_unverified). Add a test input that satisfies the guarding condition.";
+    const TYPESCRIPT_NO_FLOW: &str = "TypeScript preview adapter: strong oracle found but no assertion's observed_expression flows from the changed sub-expression; observation_unverified — discriminate unknown.";
+    if let Some(head) = text.strip_suffix(MARKER) {
+        return head.to_string();
+    }
+    if text == TYPESCRIPT_NO_FLOW {
+        return TYPESCRIPT_NO_FLOW
+            .replace("observation_unverified", "the observation is unconfirmed");
+    }
+    if text.starts_with(PYTHON_PREFIX) {
+        if let Some(head) = text.strip_suffix(PYTHON_UNEXECUTED_TAIL) {
+            return format!("{head}. Add a test input that satisfies the guarding condition.");
+        }
+        return text.replacen(
+            PYTHON_METHOD_CALL,
+            "so the edited value is not observed. ",
+            1,
+        );
+    }
+    text.to_string()
+}
+
 pub(super) fn evidence_path_lines(finding: &Finding, wording: JsonPointerWording) -> Vec<String> {
     evidence_path(finding, wording, |text, _| text)
 }
@@ -112,12 +156,15 @@ fn evidence_path<T>(
             format!(
                 "observation {}: {}",
                 finding.ripr.reveal.observe.state.as_str(),
-                finding.ripr.reveal.observe.summary
+                plain_observation_wording(&finding.ripr.reveal.observe.summary)
             ),
             EvidenceSource::Stage("observation", &finding.ripr.reveal.observe),
         ),
         project(
-            crate::output::discriminator_line::discriminator_evidence_line(finding),
+            crate::output::discriminator_line::discriminator_evidence_line_with_summary(
+                finding,
+                &plain_observation_wording(&finding.ripr.reveal.discriminate.summary),
+            ),
             EvidenceSource::Discriminator(
                 &finding.ripr.reveal.discriminate,
                 &finding.class,
@@ -127,18 +174,22 @@ fn evidence_path<T>(
     ];
 
     for sink in &finding.flow_sinks {
-        lines.push(project(
-            crate::output::flow_sink_line::flow_sink_evidence_line(sink),
-            EvidenceSource::Flow(sink),
-        ));
+        let mut line = crate::output::flow_sink_line::flow_sink_evidence_line(sink);
+        // #8744: `unknown sink` is the one unglossed internal term in the
+        // explain vocabulary; the human window states its meaning beside the
+        // row instead of leaving the consumer to guess whether it is a ripr
+        // limit, a code property, or an instruction.
+        if let Some(meaning) = crate::output::flow_sink_line::flow_sink_kind_meaning(&sink.kind) {
+            line.push_str(" — ");
+            line.push_str(meaning);
+        }
+        lines.push(project(line, EvidenceSource::Flow(sink)));
     }
 
     for test in finding.related_tests.iter().take(MAX_RELATED_TESTS_SHOWN) {
-        let why = crate::output::related_test_miss::related_test_miss_reason(
-            test,
-            &finding.activation.missing_discriminators,
-        );
-        if let Some(why) = why.as_deref().filter(|_| test.is_unmatched()) {
+        let why =
+            crate::output::related_test_miss::related_test_miss_reason(test, &finding.probe.family);
+        if let Some(why) = why.as_deref().filter(|_| test.is_examined_only()) {
             // #5344: an examined test with no matched oracle says why it
             // misses, then shows the assertion it was judged by, so the
             // claim can be checked in the source.
@@ -170,17 +221,22 @@ fn evidence_path<T>(
             ));
             continue;
         }
-        let oracle_kind = display_label(test.oracle_kind.as_str());
         let mut line = format!(
-            "related test {}:{} {} uses {} {} oracle",
+            "related test {}:{} {} uses {}",
             display_path(&test.file),
             test.line,
             test.name,
-            test.oracle_strength.as_str(),
-            oracle_kind
+            crate::output::related_test_miss::oracle_projection(
+                &test.oracle_strength,
+                &test.oracle_kind,
+                test.oracle.is_some()
+            )
         );
         if let Some(oracle) = &test.oracle {
-            line.push_str(&format!(": {oracle}"));
+            line.push_str(&format!(
+                ": {}",
+                crate::output::related_test_miss::single_line_evidence_text(oracle)
+            ));
         }
         // A matched row keeps its oracle projection and adds the reason it
         // still misses, so the oracle kind and strength stay readable.
@@ -225,14 +281,27 @@ fn evidence_path<T>(
     }
 
     let observed_values_total = finding.activation.observed_values.len();
-    for value in finding
+    let shown_values = finding
         .activation
         .observed_values
         .iter()
         .take(MAX_OBSERVED_VALUES_SHOWN)
-    {
+        .collect::<Vec<_>>();
+    // #8389: a bare `at line N` is only ambiguous when the shown window mixes
+    // facts from more than one test file; then each line names its file.
+    let name_files = shown_values
+        .iter()
+        .filter_map(|value| value.file.as_deref())
+        .collect::<std::collections::BTreeSet<_>>()
+        .len()
+        > 1;
+    for value in shown_values {
         lines.push(project(
-            crate::output::observed_values::source_value_evidence_line(value),
+            if name_files {
+                crate::output::observed_values::source_value_evidence_line_with_file(value)
+            } else {
+                crate::output::observed_values::human_source_value_evidence_line(value)
+            },
             EvidenceSource::Value(value),
         ));
     }
@@ -259,7 +328,7 @@ fn evidence_path<T>(
             }
         };
         lines.push(project(format!(
-            "source values (showing {MAX_OBSERVED_VALUES_SHOWN} of {observed_values_total}; {json_window})"
+            "source values (showing {MAX_OBSERVED_VALUES_SHOWN} of {observed_values_total} read from related tests; {json_window})"
         ), EvidenceSource::Window));
     }
 
@@ -289,8 +358,12 @@ pub(super) fn weakness_lines(finding: &Finding) -> Vec<String> {
         .filter(|missing| {
             !is_duplicate_discriminator_missing(missing, &discriminator_values)
                 && !is_preview_actionability_missing_summary(missing)
+                && !restates_no_static_path_evidence(finding, missing)
         })
-        .cloned()
+        // #9929: the Python adapter's reason text carries the producer marker
+        // `(observation_unverified)`; the human list drops it, JSON `missing`
+        // keeps it.
+        .map(|missing| plain_observation_wording(missing))
         .collect::<Vec<_>>();
     for discriminator in &finding.activation.missing_discriminators {
         lines.push(format!(
@@ -301,13 +374,32 @@ pub(super) fn weakness_lines(finding: &Finding) -> Vec<String> {
     lines
 }
 
+/// Whether a `missing` entry only restates a stage line the Evidence block
+/// already prints for this finding. A `no_static_path` finding carries three
+/// generic entries ("No static test path reaches the changed owner", "No
+/// relevant oracle was detected", "No strong discriminator was detected"),
+/// and its Evidence block says `reach no`, `observation no` and
+/// `discriminator no` in the same words, so listing them again reads one fact
+/// (no test reaches this code) as several problems (#9033). An entry is
+/// dropped only while its own stage reads `no`; any other stage state keeps
+/// the entry. The entries stay in the JSON `missing` list, and a distinct
+/// entry such as the missing boundary input is never dropped.
+pub(super) fn restates_no_static_path_evidence(finding: &Finding, missing: &str) -> bool {
+    if finding.class != crate::domain::ExposureClass::NoStaticPath {
+        return false;
+    }
+    let stage = match missing {
+        "No static test path reaches the changed owner" => &finding.ripr.reach,
+        "No relevant oracle was detected" => &finding.ripr.reveal.observe,
+        "No strong discriminator was detected" => &finding.ripr.reveal.discriminate,
+        _ => return false,
+    };
+    stage.state == crate::domain::StageState::No
+}
+
 fn is_duplicate_discriminator_missing(missing: &str, discriminator_values: &[&str]) -> bool {
     let Some(value) = missing.strip_prefix(MISSING_DISCRIMINATOR_VALUE_PREFIX) else {
         return false;
     };
     discriminator_values.contains(&value)
-}
-
-fn display_label(value: &str) -> String {
-    value.replace('_', " ")
 }

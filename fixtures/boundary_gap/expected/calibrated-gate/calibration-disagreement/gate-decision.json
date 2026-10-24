@@ -1,4 +1,28 @@
 {
+  "analysis_scope": {
+    "basis": "base",
+    "cap_omitted_seams": 0,
+    "changed_files": [
+      "src/pricing.rs"
+    ],
+    "changed_lines": 1,
+    "changed_owner_functions": 0,
+    "changed_production_files": [],
+    "classified_seams_considered": 1,
+    "downstream_consumable": true,
+    "immediate_caller_files": [],
+    "limitation": "review_comments_working_set_scope_only",
+    "omitted_by_policy": 0,
+    "production_files_considered": 1,
+    "repair_route": "analysis/review-comments-working-set",
+    "run_status": "scoped",
+    "scope": "working_set",
+    "scoped_production_files": [
+      "src/pricing.rs"
+    ],
+    "total_production_files": null,
+    "total_rust_files": null
+  },
   "config_errors": [],
   "decisions": [
     {
@@ -107,7 +131,7 @@
         "content_hash": "sha256:18521875e7b5146e8ea44de7211454dc152798c9dd71a72fc21525e2296deb4b"
       },
       "pr_guidance": {
-        "content_hash": "sha256:120f08c01081cde77c5a7ea0b778ee9fd226abf4e73c9b88b7fc2c6f30b3be1a"
+        "content_hash": "sha256:1bf470909ecadf507c584674ea5b99c245d49b2450fca8cb44fda14cf9cbe5dc"
       },
       "recommendation_calibration": {
         "content_hash": "sha256:b08f3d5eaaa216bc060246ad0980b021835236dbaed8ee14bc9ead00a8a38785"

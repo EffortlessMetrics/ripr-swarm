@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-py-grid-boundary",
+  "origin": "authored",
+  "version_label": "authored@3608bb9a",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "grid_boundary/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "grid_boundary/core.py",
+      "sha256": "386244bce7e04b4214b21bed03b4d5b038955ef49b72aaa60903a4b6fbb03800"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "05ad4c88ae38fdd4a6fcdbe7425f012c3984181d3b5465f499d778b56b42e314"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/test_core.py",
+      "sha256": "3392337b4c90e08b02077a6992b0816d32e14540280242b1e4bbec81458a8df9"
+    }
+  ]
+}

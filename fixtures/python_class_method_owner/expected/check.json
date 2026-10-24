@@ -79,7 +79,9 @@
           "line": 4,
           "oracle_strength": "weak",
           "oracle_kind": "relational_check",
-          "oracle": "assert PriceRule.from_config({\"discount\": 4}) is not None"
+          "oracle": "assert PriceRule.from_config({\"discount\": 4}) is not None",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
         }
       ],
       "repair_placement": {

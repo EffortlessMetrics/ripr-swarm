@@ -1,0 +1,650 @@
+{
+  "changes": [
+    {
+      "behavior_hint": "return_value",
+      "change_id": "change:file:lib/Ledger.pm:38:38",
+      "changed_observable": "0.01 * $amount",
+      "changed_text_digest": "fnv64:58cc3606013383f7",
+      "file_id": "file:lib/Ledger.pm",
+      "missing_discriminator": null,
+      "owner_id": "owner:lib/Ledger.pm:sub:Ledger::fee:644-705",
+      "provenance_refs": [],
+      "range": {
+        "end_column": 26,
+        "end_line": 38,
+        "start_column": 0,
+        "start_line": 38
+      }
+    }
+  ],
+  "dynamic_boundaries": [],
+  "files": [
+    {
+      "digest": "sha256:03758565fda2c097e8b5f5a7391bfac095f339ed8248e96f45d3768a4c151b13",
+      "file_id": "file:lib/Ledger.pm",
+      "package_names": [
+        "Ledger"
+      ],
+      "path": "lib/Ledger.pm",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Ledger.pm"
+      ],
+      "role": [
+        "source"
+      ]
+    },
+    {
+      "digest": "sha256:3dceac387a906f34dde83da8729b6e603ee6059221d1a430d97747840ec322b2",
+      "file_id": "file:t/ledger.t",
+      "package_names": [],
+      "path": "t/ledger.t",
+      "provenance_refs": [
+        "prov:syntax:file:t/ledger.t"
+      ],
+      "role": [
+        "test"
+      ]
+    }
+  ],
+  "input": {
+    "base": "base",
+    "diff_id": null,
+    "head": "HEAD",
+    "requested_fact_classes": [
+      "files",
+      "owners",
+      "changes",
+      "tests",
+      "oracles",
+      "relations",
+      "dynamic_boundaries",
+      "verify_commands",
+      "limitations",
+      "provenance"
+    ]
+  },
+  "limitations": [
+    {
+      "evidence_refs": [],
+      "kind": "partial_emitter",
+      "limitation_id": "emitter-partial",
+      "message": "Parser-backed tests/oracles, relations/discriminators (incl. a parser-backed direct_owner_call), boundaries/commands, files/owners, (when a diff is supplied) diff-owned changes, and a deterministic packet_fingerprint are emitted. Export-aware relation reachability and the managed-producer diff source land in later slices."
+    },
+    {
+      "evidence_refs": [],
+      "kind": "narrowed_representation",
+      "limitation_id": "oracle-representation",
+      "message": "oracle facts locate the whole assertion call range; the ripr-perl-facts-v1 schema has no observed/expected expression sub-range fields, so those are conveyed as string expressions only."
+    },
+    {
+      "evidence_refs": [],
+      "kind": "unverified_provenance",
+      "limitation_id": "diff-provenance-unverified",
+      "message": "base/head/diff are caller-asserted and not verified against a repository; this packet does not confirm the supplied diff is the actual base->head diff."
+    },
+    {
+      "evidence_refs": [],
+      "kind": "range_precision",
+      "limitation_id": "change-range-imprecise",
+      "message": "change ranges are line-granular with best-effort column data derived from the diff, not the byte-accurate LineIndex ranges used for owners."
+    },
+    {
+      "evidence_refs": [],
+      "kind": "partial_inference",
+      "limitation_id": "change-behavior-hint-partial",
+      "message": "only predicate_boundary / return_value / exception_path behavior_hints are inferred from added-line text; every other change resolves to \"unknown\", and missing_discriminator is always null in this slice. Whole-line comments are skipped, but a die/return/comparison token inside a string literal can still be misclassified (a robust fix needs tokenization)."
+    }
+  ],
+  "oracles": [
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "is(Ledger::summary(10, 20), { total => 30, count => 2 }, 'summary totals and counts')",
+      "kind": "exact_return_assertion",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/ledger.t:is:69-154",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/ledger.t"
+      ],
+      "range": {
+        "end_column": 85,
+        "end_line": 5,
+        "start_column": 0,
+        "start_line": 5
+      },
+      "strength": "strong_exact",
+      "target_owner_id": null,
+      "test_id": "test:t/ledger.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "like(Ledger::format_entry('2026-10-04', 5), qr/^2026/, 'entries start with the date')",
+      "kind": "predicate_boundary_assertion",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/ledger.t:like:157-242",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/ledger.t"
+      ],
+      "range": {
+        "end_column": 85,
+        "end_line": 7,
+        "start_column": 0,
+        "start_line": 7
+      },
+      "strength": "weak_broad",
+      "target_owner_id": null,
+      "test_id": "test:t/ledger.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "ok(Ledger::is_overdrawn(-1), 'negative balances are overdrawn')",
+      "kind": "smoke_ok",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/ledger.t:ok:245-308",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/ledger.t"
+      ],
+      "range": {
+        "end_column": 63,
+        "end_line": 9,
+        "start_column": 0,
+        "start_line": 9
+      },
+      "strength": "weak_smoke",
+      "target_owner_id": null,
+      "test_id": "test:t/ledger.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "like(dies { Ledger::withdraw(10, 20) }, qr/insufficient funds/, 'overdrawing names the reason')",
+      "kind": "predicate_boundary_assertion",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/ledger.t:like:311-406",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/ledger.t"
+      ],
+      "range": {
+        "end_column": 95,
+        "end_line": 11,
+        "start_column": 0,
+        "start_line": 11
+      },
+      "strength": "weak_broad",
+      "target_owner_id": null,
+      "test_id": "test:t/ledger.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "dies { Ledger::withdraw(10, 20) }, qr/insufficient funds/, 'overdrawing names the reason'",
+      "kind": "exception_observer",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/ledger.t:dies:316-405",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/ledger.t"
+      ],
+      "range": {
+        "end_column": 94,
+        "end_line": 11,
+        "start_column": 5,
+        "start_line": 11
+      },
+      "strength": "weak_broad",
+      "target_owner_id": null,
+      "test_id": "test:t/ledger.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "ok(lives { Ledger::deposit(5, 5) }, 'deposits never die')",
+      "kind": "smoke_ok",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/ledger.t:ok:409-466",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/ledger.t"
+      ],
+      "range": {
+        "end_column": 57,
+        "end_line": 13,
+        "start_column": 0,
+        "start_line": 13
+      },
+      "strength": "weak_smoke",
+      "target_owner_id": null,
+      "test_id": "test:t/ledger.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "lives { Ledger::deposit(5, 5) }, 'deposits never die'",
+      "kind": "smoke_ok",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/ledger.t:lives:412-465",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/ledger.t"
+      ],
+      "range": {
+        "end_column": 56,
+        "end_line": 13,
+        "start_column": 3,
+        "start_line": 13
+      },
+      "strength": "weak_smoke",
+      "target_owner_id": null,
+      "test_id": "test:t/ledger.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "isnt(Ledger::fee(100), 0, 'fees are charged')",
+      "kind": "exact_return_assertion",
+      "observed_sink": "0.01 * $amount",
+      "oracle_id": "oracle:t/ledger.t:isnt:469-514",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/ledger.t"
+      ],
+      "range": {
+        "end_column": 45,
+        "end_line": 15,
+        "start_column": 0,
+        "start_line": 15
+      },
+      "strength": "strong_exact",
+      "target_owner_id": "owner:lib/Ledger.pm:sub:Ledger::fee:644-705",
+      "test_id": "test:t/ledger.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "is(net_change(5, -3), 2, 'net change sums signed amounts')",
+      "kind": "exact_return_assertion",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/ledger.t:is:517-575",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/ledger.t"
+      ],
+      "range": {
+        "end_column": 58,
+        "end_line": 17,
+        "start_column": 0,
+        "start_line": 17
+      },
+      "strength": "strong_exact",
+      "target_owner_id": null,
+      "test_id": "test:t/ledger.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "is(Ledger::close_month(5, -5), 'balanced', 'zero is balanced')",
+      "kind": "exact_return_assertion",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/ledger.t:is:613-675",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/ledger.t"
+      ],
+      "range": {
+        "end_column": 66,
+        "end_line": 20,
+        "start_column": 4,
+        "start_line": 20
+      },
+      "strength": "strong_exact",
+      "target_owner_id": null,
+      "test_id": "test:t/ledger.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "is(Ledger::close_month(5, -6), 'short', 'negative is short')",
+      "kind": "exact_return_assertion",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/ledger.t:is:681-741",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/ledger.t"
+      ],
+      "range": {
+        "end_column": 64,
+        "end_line": 21,
+        "start_column": 4,
+        "start_line": 21
+      },
+      "strength": "strong_exact",
+      "target_owner_id": null,
+      "test_id": "test:t/ledger.t"
+    }
+  ],
+  "owners": [
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Ledger.pm",
+      "kind": "package",
+      "name": "Ledger",
+      "owner_id": "owner:lib/Ledger.pm:package:Ledger:0-14",
+      "package": "main",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Ledger.pm"
+      ],
+      "range": {
+        "end_column": 14,
+        "end_line": 0,
+        "start_column": 0,
+        "start_line": 0
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Ledger.pm",
+      "kind": "sub",
+      "name": "summary",
+      "owner_id": "owner:lib/Ledger.pm:sub:Ledger::summary:101-248",
+      "package": "Ledger",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Ledger.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 13,
+        "start_column": 0,
+        "start_line": 8
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Ledger.pm",
+      "kind": "sub",
+      "name": "format_entry",
+      "owner_id": "owner:lib/Ledger.pm:sub:Ledger::format_entry:250-346",
+      "package": "Ledger",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Ledger.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 18,
+        "start_column": 0,
+        "start_line": 15
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Ledger.pm",
+      "kind": "sub",
+      "name": "is_overdrawn",
+      "owner_id": "owner:lib/Ledger.pm:sub:Ledger::is_overdrawn:348-425",
+      "package": "Ledger",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Ledger.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 23,
+        "start_column": 0,
+        "start_line": 20
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Ledger.pm",
+      "kind": "sub",
+      "name": "withdraw",
+      "owner_id": "owner:lib/Ledger.pm:sub:Ledger::withdraw:427-561",
+      "package": "Ledger",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Ledger.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 29,
+        "start_column": 0,
+        "start_line": 25
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Ledger.pm",
+      "kind": "sub",
+      "name": "deposit",
+      "owner_id": "owner:lib/Ledger.pm:sub:Ledger::deposit:563-642",
+      "package": "Ledger",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Ledger.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 34,
+        "start_column": 0,
+        "start_line": 31
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Ledger.pm",
+      "kind": "sub",
+      "name": "fee",
+      "owner_id": "owner:lib/Ledger.pm:sub:Ledger::fee:644-705",
+      "package": "Ledger",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Ledger.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 39,
+        "start_column": 0,
+        "start_line": 36
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Ledger.pm",
+      "kind": "sub",
+      "name": "net_change",
+      "owner_id": "owner:lib/Ledger.pm:sub:Ledger::net_change:707-812",
+      "package": "Ledger",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Ledger.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 46,
+        "start_column": 0,
+        "start_line": 41
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Ledger.pm",
+      "kind": "sub",
+      "name": "close_month",
+      "owner_id": "owner:lib/Ledger.pm:sub:Ledger::close_month:814-944",
+      "package": "Ledger",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Ledger.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 52,
+        "start_column": 0,
+        "start_line": 48
+      }
+    }
+  ],
+  "packet_fingerprint": "sha256:90993daf3a9eb32b9e26522eaab521ba4cad190f6c293a724cd9fd823ff32622",
+  "packet_id": "perl-lsp-ripr-facts-ripr-perl-facts-v1-s-files,owners,changes,tests,oracles,relations,dynamic_boundaries,verify_commands,limitations,provenance",
+  "packet_status": "partial",
+  "producer": {
+    "capabilities": [
+      "files",
+      "owners",
+      "changes",
+      "tests",
+      "oracles",
+      "relations",
+      "dynamic_boundaries",
+      "verify_commands",
+      "limitations",
+      "provenance",
+      "test_facts"
+    ],
+    "name": "perl-lsp",
+    "version": "0.17.0"
+  },
+  "provenance": [
+    {
+      "confidence": "high",
+      "provenance_id": "cli-surface",
+      "source": "operator_config"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:t/ledger.t",
+      "provenance_id": "prov:test_discovery:file:t/ledger.t",
+      "range": "2:0-2:13",
+      "source": "test_discovery"
+    },
+    {
+      "confidence": "medium",
+      "file_id": "file:t/ledger.t",
+      "provenance_id": "prov:oracle_extraction:file:t/ledger.t",
+      "range": null,
+      "source": "oracle_extraction"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Ledger.pm",
+      "provenance_id": "prov:syntax:file:lib/Ledger.pm",
+      "source": "syntax"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:t/ledger.t",
+      "provenance_id": "prov:syntax:file:t/ledger.t",
+      "source": "syntax"
+    }
+  ],
+  "relations": [
+    {
+      "change_id": "change:unresolved",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Ledger.pm:sub:Ledger::close_month:814-944",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/ledger.t:lib/Ledger.pm:owner_lib/Ledger.pm_sub_Ledger__close_month_814-944",
+      "relation_kind": "direct_owner_call",
+      "test_id": "test:t/ledger.t"
+    },
+    {
+      "change_id": "change:unresolved",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Ledger.pm:sub:Ledger::deposit:563-642",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/ledger.t:lib/Ledger.pm:owner_lib/Ledger.pm_sub_Ledger__deposit_563-642",
+      "relation_kind": "direct_owner_call",
+      "test_id": "test:t/ledger.t"
+    },
+    {
+      "change_id": "change:file:lib/Ledger.pm:38:38",
+      "confidence": "medium",
+      "oracle_id": "oracle:t/ledger.t:isnt:469-514",
+      "owner_id": "owner:lib/Ledger.pm:sub:Ledger::fee:644-705",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/ledger.t:lib/Ledger.pm:owner_lib/Ledger.pm_sub_Ledger__fee_644-705:change:file:lib/Ledger.pm:38:38",
+      "relation_kind": "direct_owner_call",
+      "test_id": "test:t/ledger.t"
+    },
+    {
+      "change_id": "change:unresolved",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Ledger.pm:sub:Ledger::format_entry:250-346",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/ledger.t:lib/Ledger.pm:owner_lib/Ledger.pm_sub_Ledger__format_entry_250-346",
+      "relation_kind": "direct_owner_call",
+      "test_id": "test:t/ledger.t"
+    },
+    {
+      "change_id": "change:unresolved",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Ledger.pm:sub:Ledger::is_overdrawn:348-425",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/ledger.t:lib/Ledger.pm:owner_lib/Ledger.pm_sub_Ledger__is_overdrawn_348-425",
+      "relation_kind": "direct_owner_call",
+      "test_id": "test:t/ledger.t"
+    },
+    {
+      "change_id": "change:unresolved",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Ledger.pm:sub:Ledger::summary:101-248",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/ledger.t:lib/Ledger.pm:owner_lib/Ledger.pm_sub_Ledger__summary_101-248",
+      "relation_kind": "direct_owner_call",
+      "test_id": "test:t/ledger.t"
+    },
+    {
+      "change_id": "change:unresolved",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Ledger.pm:sub:Ledger::withdraw:427-561",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/ledger.t:lib/Ledger.pm:owner_lib/Ledger.pm_sub_Ledger__withdraw_427-561",
+      "relation_kind": "direct_owner_call",
+      "test_id": "test:t/ledger.t"
+    }
+  ],
+  "root": {
+    "path_style": "posix",
+    "repo_relative": "s",
+    "vcs_head": "HEAD"
+  },
+  "schema_version": "ripr-perl-facts-v1",
+  "tests": [
+    {
+      "confidence": "high",
+      "file_id": "file:t/ledger.t",
+      "framework": "Test2::V0",
+      "name": "t/ledger.t",
+      "provenance_refs": [
+        "prov:test_discovery:file:t/ledger.t"
+      ],
+      "range": {
+        "end_column": 0,
+        "end_line": 25,
+        "start_column": 0,
+        "start_line": 0
+      },
+      "runner_hints": [
+        "yath",
+        "prove"
+      ],
+      "test_id": "test:t/ledger.t"
+    }
+  ],
+  "verify_commands": [
+    {
+      "argv": [
+        "prove",
+        "t/ledger.t"
+      ],
+      "command_id": "verify_cmd:t/ledger.t:1",
+      "confidence": "high",
+      "preconditions": [],
+      "provenance_refs": [],
+      "runner": "prove",
+      "scope": "test",
+      "test_id": "test:t/ledger.t"
+    }
+  ]
+}

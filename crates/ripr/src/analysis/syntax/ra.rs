@@ -5,10 +5,15 @@ use ra_ap_syntax::{
     AstNode, SourceFile, TextSize,
     ast::{self, HasAttrs, HasGenericArgs, HasGenericParams, HasName},
 };
+mod closure_callbacks;
 #[cfg(test)]
 mod module_scope_walk_tests;
 mod probe_shapes;
 mod property_macros;
+pub(crate) use closure_callbacks::{
+    InvokedCallbackParam, closure_argument_positions, invoked_callback_params, macro_call_columns,
+    passes_call_making_closure,
+};
 use probe_shapes::extract_parser_probe_shapes;
 #[cfg(test)]
 mod probe_shape_walk_tests;
@@ -19,6 +24,7 @@ use std::sync::Arc;
 
 use super::super::extract::ShadowAuthority;
 use super::super::extract::extract_pattern_words;
+use super::super::extract::retain_reached_oracles;
 use super::super::facts::FileFacts;
 use super::super::facts::FunctionContainer;
 use super::super::facts::FunctionImplContext;
@@ -755,11 +761,70 @@ fn module_declaration_facts(
             requires_test: cfg_predicates::attributes_require_test(
                 attributes.iter().map(String::as_str),
             ),
+            cfg_guard: simple_cfg_guard(&attributes),
         });
     }
     declarations.sort_by(|left, right| left.line.cmp(&right.line).then(left.name.cmp(&right.name)));
     declarations.dedup();
     declarations
+}
+
+/// Returns `(X, negated)` when the attributes contain exactly one cfg-like
+/// attribute and it is `#[cfg(X)]` or `#[cfg(not(X))]` with `X` a bare
+/// identifier or `ident = "literal"`. Anything else (`cfg_attr`, compound
+/// predicates, several cfg attributes) returns `None` so exclusivity is never
+/// inferred from a shape this function does not fully understand.
+fn simple_cfg_guard(attributes: &[String]) -> Option<(String, bool)> {
+    let compact = |attribute: &String| -> String {
+        let mut out = String::new();
+        let mut in_string = false;
+        for ch in attribute.chars() {
+            if ch == '"' {
+                in_string = !in_string;
+            }
+            if in_string || !ch.is_whitespace() {
+                out.push(ch);
+            }
+        }
+        out
+    };
+    let mut cfgs = attributes.iter().map(compact).filter(|text| {
+        text.starts_with("#[cfg") || text.starts_with("#![cfg") || text.contains("cfg_attr")
+    });
+    let only = cfgs.next()?;
+    // An escape could hide a quote from the whitespace normalizer above;
+    // fail closed on any backslash in a cfg-like attribute.
+    if only.contains('\\') {
+        return None;
+    }
+    if cfgs.next().is_some() {
+        return None;
+    }
+    let body = only.strip_prefix("#[cfg(")?.strip_suffix(")]")?;
+    let (predicate, negated) = match body.strip_prefix("not(") {
+        Some(inner) => (inner.strip_suffix(')')?, true),
+        None => (body, false),
+    };
+    // Punctuation inside a quoted `name = "value"` literal is data, not a
+    // Boolean operator; a bare predicate must be a plain identifier. Any
+    // escape or inner quote in the literal fails closed.
+    let simple = match predicate.split_once('=') {
+        Some((name, value)) => {
+            !name.is_empty()
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && value.len() >= 2
+                && value.starts_with('"')
+                && value.ends_with('"')
+                && !value[1..value.len() - 1].contains(['"', '\\'])
+        }
+        None => {
+            !predicate.is_empty()
+                && predicate
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        }
+    };
+    simple.then(|| (predicate.to_string(), negated))
 }
 
 /// Collects the parser-backed test-body shadow facts for one function
@@ -1087,7 +1152,10 @@ fn disambiguate_duplicate_symbol_ids(functions: &mut [FunctionFact]) {
     }
 }
 
-fn has_test_attribute(function: &ast::Fn) -> bool {
+/// Whether a function carries a test-framework attribute (`#[test]`,
+/// `#[tokio::test]`, `#[async_std::test]`, `#[rstest]`). Parser-backed, so
+/// commented-out or string-embedded lookalikes never count.
+pub(crate) fn has_test_attribute(function: &ast::Fn) -> bool {
     function.attrs().any(|attr| {
         let compact = attr
             .syntax()
@@ -1573,6 +1641,34 @@ fn match_arm_probe_text(text: &str, start: TextSize, arrow_start: TextSize) -> S
     let pattern = raw.trim();
     let head = format!("{pattern} =>");
     normalize_probe_shape_text(&head)
+}
+
+/// Complete source ranges of actual match arms, keyed by their existing
+/// `=>` token identity. Geometry is independent of probe anchors and text.
+/// The range starts at the pattern and includes a trailing arm comma.
+/// Invalid/over-budget source and macro token-tree arrows supply no range.
+pub(crate) fn match_arm_source_ranges(text: &str) -> BTreeMap<usize, (usize, usize)> {
+    let Some(parse) = parse_clean_source_file(text) else {
+        return BTreeMap::new();
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::MatchArm::cast)
+        .filter_map(|arm| {
+            let arrow = arm.fat_arrow_token()?;
+            let pattern = arm.pat()?;
+            arm.expr()?;
+            Some((
+                usize::from(arrow.text_range().start()),
+                (
+                    usize::from(pattern.syntax().text_range().start()),
+                    usize::from(arm.syntax().text_range().end()),
+                ),
+            ))
+        })
+        .collect()
 }
 
 fn normalize_probe_shape_text(text: &str) -> String {
@@ -2423,6 +2519,9 @@ fn extract_parser_oracles(
     for oracle in guarded_matches.oracles {
         assertions.push(oracle);
     }
+    // RIPR-SPEC-0231 rule 8 (#7638): the line scanner's reach reading, so
+    // both adapters drop the same never-executed statements.
+    retain_reached_oracles(&mut assertions, &function_text, function_start);
 
     assertions.sort_by(|a, b| a.line.cmp(&b.line).then(a.text.cmp(&b.text)));
     assertions.dedup_by(|a, b| a.line == b.line && a.text == b.text);

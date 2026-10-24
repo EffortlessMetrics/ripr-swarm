@@ -1,0 +1,12 @@
+diff --git a/grid_logical/core.py b/grid_logical/core.py
+--- a/grid_logical/core.py
++++ b/grid_logical/core.py
+@@ -2,7 +2,7 @@
+ 
+ 
+ def can_ship(paid, in_stock):
+-    return paid and in_stock
++    return in_stock and paid
+ 
+ 
+ def needs_review(flagged, large):

@@ -1,7 +1,7 @@
 use crate::app::CheckOutput;
 use crate::config::RiprConfig;
 use crate::domain::{
-    Finding, FindingCanonicalGap, FlowSinkFact, MissingDiscriminatorFact, RelatedTest,
+    Finding, FindingCanonicalGap, FlowSinkFact, MissingDiscriminatorFact, ProbeFamily, RelatedTest,
     StageEvidence, ValueFact,
 };
 use crate::output::agent_seam_packets::{
@@ -218,6 +218,7 @@ pub(crate) fn render_with_config(
     out.push_str("  \"summary\": ");
     summary_json(&mut out, output);
     out.push_str(",\n");
+    let mut analysis_outcome_close_at: Option<usize> = None;
     if let Some(outcome) = &output.analysis_outcome {
         let serialized = serde_json::to_string(outcome).unwrap_or_else(|error| {
             format!(
@@ -233,6 +234,9 @@ pub(crate) fn render_with_config(
         });
         out.push_str("    \"outcome\": ");
         out.push_str(&serialized);
+        // #9010: the findings bound is only known after the array renders, so
+        // remember where a `document_complete` disclosure splices in.
+        analysis_outcome_close_at = Some(out.len());
         out.push_str("\n  },\n");
     }
     out.push_str("  \"findings\": [\n");
@@ -292,6 +296,22 @@ pub(crate) fn render_with_config(
     } else {
         None
     };
+    // #9010: a budget-bounded document must not read as a complete outcome.
+    // `analysis_complete` stays the analysis verdict (no new outcome kind);
+    // this additive, only-when-bounded disclosure sits beside it so the shared
+    // incomplete-outcome predicate can fail closed on a findings prefix.
+    if let (Some(bound), Some(at)) = (findings_bound.as_ref(), analysis_outcome_close_at) {
+        // `at` was recorded before the findings array was appended, so it must
+        // sit on a char boundary inside the buffer.
+        debug_assert!(at <= out.len() && out.is_char_boundary(at));
+        out.insert_str(
+            at,
+            &format!(
+                ",\n    \"document_complete\": false,\n    \"findings_rendered\": {},\n    \"findings_total\": {}",
+                bound.rendered, bound.total
+            ),
+        );
+    }
     // Additive advisory field — emitted only when the caller passed
     // `--suppression-policy` (#1441). Absent otherwise, so existing goldens
     // and consumers without a policy see identical output.
@@ -452,7 +472,7 @@ pub(crate) fn render_with_config(
                 3,
                 "why",
                 &format!(
-                    "empty working-tree range: the merge base of {base} and HEAD to the working tree contains no changed tracked files; nothing was analyzed because nothing changed"
+                    "empty working-tree range: the merge base of {base} and HEAD to the working tree has no analyzable changed files; nothing was analyzed; deleted files, submodule pointer changes and files ripr does not analyze are not counted, so this does not mean no behavior changed"
                 ),
                 false,
             );
@@ -462,7 +482,7 @@ pub(crate) fn render_with_config(
                 3,
                 "why",
                 &format!(
-                    "empty range: {base}...HEAD contains no changed files; nothing was analyzed because nothing changed"
+                    "empty range: {base}...HEAD has no analyzable changed files; nothing was analyzed; deleted files, submodule pointer changes and files ripr does not analyze are not counted, so this does not mean no behavior changed"
                 ),
                 false,
             );
@@ -791,6 +811,12 @@ fn finding_json_with_config_and_counts(
         true,
     );
     float_field(out, indent + 1, "confidence", finding.confidence, true);
+    // #5531: carry the typed scope for repo findings only, so ledger consumers
+    // of the rendered check JSON read the scope, not an evidence line. Omitted
+    // for diff scope to keep diff-mode bytes identical.
+    if finding.analysis_scope == crate::domain::AnalysisScope::Repo {
+        field(out, indent + 1, "analysis_scope", "repo", true);
+    }
     out.push_str(&format!("{}\"probe\": {{\n", "  ".repeat(indent + 1)));
     field(out, indent + 2, "id", &finding.probe.id.0, true);
     field(
@@ -895,12 +921,7 @@ fn finding_json_with_config_and_counts(
         .take(related_rendered)
         .enumerate()
     {
-        related_test_json(
-            out,
-            test,
-            &finding.activation.missing_discriminators,
-            indent + 2,
-        );
+        related_test_json(out, test, &finding.probe.family, indent + 2);
         if idx + 1 != related_rendered {
             out.push(',');
         }
@@ -1146,14 +1167,16 @@ fn evidence_path_values(finding: &Finding) -> Vec<String> {
     );
 
     values.extend(finding.related_tests.iter().take(5).map(|test| {
-        let oracle_kind = display_label(test.oracle_kind.as_str());
         let mut value = format!(
-            "related test {}:{} {} uses {} {} oracle",
+            "related test {}:{} {} uses {}",
             crate::output::path::display_path(&test.file),
             test.line,
             test.name,
-            test.oracle_strength.as_str(),
-            oracle_kind
+            crate::output::related_test_miss::oracle_projection(
+                &test.oracle_strength,
+                &test.oracle_kind,
+                test.oracle.is_some(),
+            )
         );
         if let Some(oracle) = &test.oracle {
             value.push_str(&format!(": {oracle}"));
@@ -1180,10 +1203,6 @@ fn evidence_path_values(finding: &Finding) -> Vec<String> {
     );
 
     values
-}
-
-fn display_label(value: &str) -> String {
-    value.replace('_', " ")
 }
 
 fn strongest_related_test(finding: &Finding) -> Option<&RelatedTest> {
@@ -1660,7 +1679,7 @@ fn typescript_repair_packet_json(record: &crate::output::gap_decision_ledger::Ga
 pub(super) fn related_test_json(
     out: &mut String,
     test: &RelatedTest,
-    missing_discriminators: &[MissingDiscriminatorFact],
+    family: &ProbeFamily,
     indent: usize,
 ) {
     let sp = "  ".repeat(indent);
@@ -1693,8 +1712,7 @@ pub(super) fn related_test_json(
     // TypeScript preview findings and on legacy callers that set None.
     // #5344: `miss` and `why` say why this test would not notice the change;
     // both are omitted when the analyzer established no miss.
-    let why =
-        crate::output::related_test_miss::related_test_miss_reason(test, missing_discriminators);
+    let why = crate::output::related_test_miss::related_test_miss_reason(test, family);
     let has_miss = test.miss.is_some();
     let has_reason = test.relation_reason.is_some();
     let has_confidence = test.relation_confidence.is_some();
@@ -1739,6 +1757,7 @@ mod provenance_tests {
 
     fn fact(line: usize, value: &str, text: &str) -> ValueFact {
         ValueFact {
+            file: None,
             line,
             text: text.to_string(),
             value: value.to_string(),
@@ -1980,6 +1999,7 @@ mod evidence_path_separator_tests {
 
     fn finding_with_related(file: &str) -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_lib_rs:9:error_path".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -2025,6 +2045,8 @@ mod evidence_path_separator_tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }],
             recommended_next_step: None,
             language: None,

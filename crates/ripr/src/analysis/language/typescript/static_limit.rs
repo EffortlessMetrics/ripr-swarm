@@ -341,6 +341,7 @@ fn relative_import_resolves_to_workspace_file(
 pub(crate) fn named_limitations_for_unresolved_ownership(
     owner: &TypeScriptOwner,
     all_tests: &[TypeScriptTest],
+    relation_index: &RelationIndex,
     workspace_root: &Path,
     related: &[TypeScriptRelatedCandidate<'_>],
 ) -> Vec<TypeScriptNamedLimitation> {
@@ -348,7 +349,10 @@ pub(crate) fn named_limitations_for_unresolved_ownership(
     let mut saw_target_unresolved = false;
 
     let package_scope = OwnerPackageScope::new(&owner.file, workspace_root);
-    for test in all_tests {
+    // #10028: a test can only fire here when it references the owner by a
+    // body call/name or an owner-matching import — exactly the relation
+    // index's keys — so the indexed candidates are a sound superset.
+    for test in relation_index.candidates(owner, all_tests) {
         if saw_target_unresolved {
             break;
         }
@@ -604,9 +608,13 @@ impl TsAliasGapDisclosure {
 pub(crate) fn named_limitations_for_spy_fabrication(
     owner: &TypeScriptOwner,
     all_tests: &[TypeScriptTest],
+    relation_index: &RelationIndex,
 ) -> Vec<TypeScriptNamedLimitation> {
     let mut limitations: Vec<TypeScriptNamedLimitation> = Vec::new();
-    for test in all_tests {
+    // #10028: spy fabrication names the owner in the test body (the
+    // fabricated-call string literal or a default-import binding), so the
+    // indexed candidates are a sound superset of potential producers.
+    for test in relation_index.candidates(owner, all_tests) {
         if test_spies_owner_with_fabrication_for_owner(test, &owner.name, owner.exported_as_default)
         {
             limitations.push(TypeScriptNamedLimitation {
@@ -655,6 +663,9 @@ mod module_identity_tests {
             imports: Vec::new(),
             method_kind: TypeScriptMethodKind::Ordinary,
             class_default_export: false,
+            default_object_member: false,
+            commonjs_default_export: false,
+            commonjs_whole_function: false,
             module_entries: Vec::new(),
             arity: None,
             params: Vec::new(),
@@ -800,7 +811,7 @@ pub(crate) fn named_limitations_for_oracle_candidates(
                 let sample = format!(
                     "{}:{}",
                     normalized_path(&candidate.test.file),
-                    assertion.line
+                    candidate.test.evidence_line(assertion)
                 );
                 limitations.push(TypeScriptNamedLimitation {
                     name: "typescript_snapshot_discriminator_unresolved",
@@ -821,7 +832,7 @@ pub(crate) fn named_limitations_for_oracle_candidates(
                 let sample = format!(
                     "{}:{}",
                     normalized_path(&candidate.test.file),
-                    assertion.line
+                    candidate.test.evidence_line(assertion)
                 );
                 let why = format!(
                     "the test uses an unrecognised matcher `.{}(...)`; the adapter cannot classify its oracle strength without knowing the matcher's semantics",
@@ -849,7 +860,7 @@ pub(crate) fn named_limitations_for_oracle_candidates(
                     let sample = format!(
                         "{}:{}",
                         normalized_path(&candidate.test.file),
-                        assertion.line
+                        candidate.test.evidence_line(assertion)
                     );
                     let why = format!(
                         "the table-driven test `{}` uses a row-derived dynamic value in `.{}(...)`; the adapter cannot statically bind table rows to concrete expected values",
@@ -866,7 +877,7 @@ pub(crate) fn named_limitations_for_oracle_candidates(
                 let sample = format!(
                     "{}:{}",
                     normalized_path(&candidate.test.file),
-                    assertion.line
+                    candidate.test.evidence_line(assertion)
                 );
                 let why = format!(
                     "the matcher `.{}(...)` receives a non-literal dynamic argument; the adapter cannot statically resolve the expected value and cannot confirm the discriminator pins the changed behavior",
@@ -901,7 +912,10 @@ fn oracle_helper_gated_call(
         let Some(helper_name) = assertion_helper_call_name(line, &owner.name) else {
             continue;
         };
-        return Some((helper_name, test.line + offset));
+        return Some((
+            helper_name,
+            test.factory_call_line.unwrap_or(test.line + offset),
+        ));
     }
     None
 }

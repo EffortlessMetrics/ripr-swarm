@@ -1732,6 +1732,37 @@ mod tests {
     }
 
     #[test]
+    fn capped_review_comments_fixture_matches_schema() -> Result<(), String> {
+        // A document with brief-cap and policy omissions carries
+        // `analysis_scope.cap_omitted_seams` / `omitted_by_policy` (#9301); it
+        // must validate, and a negative or non-integer count must not.
+        let root = repo_root()?;
+        let schema = read_json(root.join("schemas/ripr/review-comments.schema.json"))?;
+        let fixture = read_json(
+            root.join("tests/fixtures/verification/ripr/review-comments.capped.valid.json"),
+        )?;
+        assert_eq!(fixture["analysis_scope"]["cap_omitted_seams"], 2);
+        let check = |value: &Value| {
+            let mut violations = Vec::new();
+            validate_value_against_schema(
+                value,
+                &schema,
+                &schema,
+                "capped review comments".to_string(),
+                &mut violations,
+            );
+            violations
+        };
+        assert!(check(&fixture).is_empty(), "{:#?}", check(&fixture));
+        for bad in [serde_json::json!(-1), serde_json::json!("2")] {
+            let mut broken = fixture.clone();
+            broken["analysis_scope"]["cap_omitted_seams"] = bad;
+            assert!(!check(&broken).is_empty());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn review_comments_gap_ledger_card_has_its_own_schema_branch() -> Result<(), String> {
         let root = repo_root()?;
         let schema = read_json(root.join("schemas/ripr/review-comments.schema.json"))?;
@@ -2105,6 +2136,85 @@ mod tests {
         );
 
         assert!(violations.is_empty(), "{violations:#?}");
+        Ok(())
+    }
+
+    /// #5531: the optional finding-level `analysis_scope` accepts only `repo`;
+    /// absence (diff) stays valid and `additionalProperties: false` is kept.
+    #[test]
+    fn finding_analysis_scope_is_closed_to_repo() -> Result<(), String> {
+        let root = repo_root()?;
+        let schema = read_json(root.join("schemas/ripr/check.schema.json"))?;
+        let fixture =
+            read_json(root.join("tests/fixtures/verification/ripr/check-complete.valid.json"))?;
+        assert!(
+            fixture["findings"]
+                .as_array()
+                .is_some_and(|f| !f.is_empty())
+        );
+        let violations_for = |edit: &dyn Fn(&mut Value)| {
+            let mut doc = fixture.clone();
+            edit(&mut doc["findings"][0]);
+            let mut violations = Vec::new();
+            validate_value_against_schema(
+                &doc,
+                &schema,
+                &schema,
+                "doc".to_string(),
+                &mut violations,
+            );
+            violations
+        };
+        assert!(violations_for(&|_| {}).is_empty(), "missing field accepted");
+        assert!(
+            violations_for(&|f| f["analysis_scope"] = Value::from("repo")).is_empty(),
+            "repo accepted"
+        );
+        for bad in [
+            Value::from("diff"),
+            Value::from("unknown"),
+            Value::Bool(true),
+            Value::Null,
+        ] {
+            assert!(
+                !violations_for(&|f| f["analysis_scope"] = bad.clone()).is_empty(),
+                "{bad} must be rejected"
+            );
+        }
+        assert!(
+            !violations_for(&|f| f["unrelated_finding_property"] = Value::from("x")).is_empty(),
+            "additionalProperties:false must stay"
+        );
+        // The checks must discriminate: against broadened variants of the
+        // real schema, the same invalid inputs are accepted, so the negatives
+        // above cannot pass by broadening the published schema.
+        let accepted_by = |schema: &Value, edit: &dyn Fn(&mut Value)| {
+            let mut doc = fixture.clone();
+            edit(&mut doc["findings"][0]);
+            let mut violations = Vec::new();
+            validate_value_against_schema(&doc, schema, schema, "doc".to_string(), &mut violations);
+            violations.is_empty()
+        };
+        let mut loose_scope = schema.clone();
+        loose_scope["$defs"]["finding"]["properties"]["analysis_scope"] =
+            serde_json::json!({ "type": "string" });
+        assert!(accepted_by(&loose_scope, &|f| f["analysis_scope"] = Value::from("diff")));
+        assert!(accepted_by(&loose_scope, &|f| f["analysis_scope"] =
+            Value::from("unknown")));
+        let mut loose_props = schema.clone();
+        loose_props["$defs"]["finding"]["additionalProperties"] = Value::Bool(true);
+        assert!(accepted_by(
+            &loose_props,
+            &|f| f["unrelated_finding_property"] = Value::from("x")
+        ));
+        assert_eq!(
+            schema["$defs"]["finding"]["properties"]["analysis_scope"],
+            serde_json::json!({ "const": "repo" })
+        );
+        assert_eq!(
+            schema["$defs"]["finding"]["additionalProperties"],
+            Value::Bool(false)
+        );
         Ok(())
     }
 

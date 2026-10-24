@@ -144,6 +144,7 @@ pub(crate) fn unsupported_syntax_finding(
     );
 
     Finding {
+        analysis_scope: crate::domain::AnalysisScope::Diff,
         id: probe.id.0.clone(),
         canonical_gap: None,
         probe,
@@ -188,6 +189,105 @@ pub(crate) fn unsupported_syntax_finding(
         language_status: Some(LanguageStatus::Preview),
         owner_kind: None,
         static_limit_kind: Some(StaticLimitKind::UnsupportedSyntax),
+        changed_sink: None,
+        observed_sink: None,
+        oracle_alignment: None,
+        alignment_reason: None,
+        source_currentness,
+    }
+}
+
+/// A `static_unknown` finding for a changed runtime enum member (#9436).
+///
+/// The owner extractor indexes no enum, so the classifier yields nothing for
+/// `High = 2,` -> `High = 3,` and the edit would read as silence. Whether any
+/// test observes the member's numeric value is not statically known, so the
+/// honest verdict is limited, never exposed and never actionable.
+pub(crate) fn enum_member_finding(
+    file: &Path,
+    line: usize,
+    line_text: &str,
+    identity: &str,
+) -> Finding {
+    let id_path: String = normalized_path(file)
+        .to_string()
+        .chars()
+        .map(|c| if c == '/' || c == '\\' { '_' } else { c })
+        .collect();
+    let probe_id = fingerprint_probe_id(
+        "probe",
+        &id_path,
+        "typescript_preview_enum_member",
+        // Enum::Member keeps identical member text in two enums apart without
+        // tying the id to a source line.
+        identity,
+        &normalize_expression(line_text),
+        1,
+    );
+    let probe = Probe {
+        id: probe_id.clone(),
+        location: SourceLocation::new(file.to_string_lossy().as_ref(), line, 1),
+        owner: None,
+        family: ProbeFamily::StaticUnknown,
+        delta: DeltaKind::Unknown,
+        before: None,
+        after: Some(line_text.to_string()),
+        expression: line_text.to_string(),
+        expected_sinks: Vec::new(),
+        required_oracles: Vec::new(),
+    };
+    let summary = format!(
+        "TypeScript preview does not index enum members, so no test relation is known for `{}`",
+        normalized_path(file)
+    );
+    let stage = StageEvidence::new(StageState::Unknown, Confidence::Low, &summary);
+    let why_not_actionable = "static limit `typescript_owner_extraction_partial` (enum declaration): the changed enum member has no extracted owner, so whether a test observes its value is not statically known".to_string();
+    let repair_route =
+        "add or strengthen a test that reads the changed member's value, then re-run".to_string();
+    let source_currentness = crate::domain::SourceCurrentness::from_probe_delta(
+        probe.before.as_deref(),
+        probe.after.as_deref(),
+    );
+    Finding {
+        analysis_scope: crate::domain::AnalysisScope::Diff,
+        id: probe.id.0.clone(),
+        canonical_gap: None,
+        probe,
+        class: ExposureClass::StaticUnknown,
+        ripr: RiprEvidence {
+            reach: stage.clone(),
+            infect: stage.clone(),
+            propagate: stage.clone(),
+            reveal: RevealEvidence {
+                observe: stage.clone(),
+                discriminate: stage,
+            },
+        },
+        confidence: 0.2,
+        evidence: vec![
+            "static_limit typescript_owner_extraction_partial: enum member".to_string(),
+            "gap_state: static_limitation".to_string(),
+            "actionability_category: owner_shape_unextracted".to_string(),
+            format!("why_not_actionable: {why_not_actionable}"),
+            format!("repair_route: {repair_route}"),
+            "evidence_needed_to_promote: extract enum members as owners, then re-run TypeScript preview evidence".to_string(),
+            typescript_raw_evidence_ref(file, line, None, &probe_id.0),
+        ],
+        missing: vec![format!(
+            "Static limit `typescript_owner_extraction_partial`: {why_not_actionable}. Repair route: {repair_route}"
+        )],
+        flow_sinks: Vec::new(),
+        activation: Default::default(),
+        stop_reasons: vec![StopReason::StaticProbeUnknown],
+        related_tests_matched_total: None,
+        related_tests: Vec::new(),
+        recommended_next_step: Some(format!(
+            "TypeScript preview advisory: {why_not_actionable}; no actionable repair packet is emitted."
+        )),
+        language: Some(output_language_for(file)),
+        language_status: Some(LanguageStatus::Preview),
+        owner_kind: None,
+        static_limit_kind: None,
         changed_sink: None,
         observed_sink: None,
         oracle_alignment: None,
