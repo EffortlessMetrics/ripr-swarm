@@ -1660,3 +1660,78 @@ fn repository_tracking_nothing_under_root_is_unknown() -> Result<(), String> {
     assert_eq!(something_tracked, vec![OracleStrength::Medium]);
     Ok(())
 }
+
+/// #10139: a `projects` array whose elements are all inline object literals
+/// names no other config, so the walk reads the committed entry. A path,
+/// glob, identifier, spread or call element, a project that sets
+/// `rootDir`/`roots`/`root`, a second `projects`, a template placeholder and
+/// a member assignment keep the reading at medium.
+#[test]
+fn plain_inline_projects_keep_the_credit_and_every_other_spelling_refuses() -> Result<(), String> {
+    let jest = jest_snap(&[("price 1", "140")]);
+    for (text, expected) in [
+        (
+            "module.exports = { projects: [{ displayName: \"unit\", preset: \"ts-jest\", testMatch: [\"<rootDir>/test/**/*.test.ts\"] }] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { projects: [ // two\n  { displayName: \"a\" }, /* b */ { displayName: \"b\" },\n] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { projects: [\"<rootDir>/config/app.jest.js\"] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"a\" }, \"<rootDir>/pkg\"] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "const unit = {};\nmodule.exports = { projects: [unit] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "const unit = {};\nmodule.exports = { projects: [{ displayName: \"a\" }, ...[unit]] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ rootDir: \"pkg\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ roots: [\"<rootDir>/pkg\"] }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: `a${dir}` }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{}], other: { projects: [{}] } };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{}], workspace: \"./packages\" };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ snapshotResolver: \"<rootDir>/r.js\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"a\" ",
+            OracleStrength::Medium,
+        ),
+    ] {
+        assert_eq!(
+            strengths(
+                "snap-inline-projects",
+                PRICE_TEST,
+                &[(SNAP_PATH, &jest), ("jest.config.js", text)]
+            )?,
+            vec![expected],
+            "{text}"
+        );
+    }
+    Ok(())
+}

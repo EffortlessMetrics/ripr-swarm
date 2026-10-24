@@ -102,7 +102,9 @@ runner's entry for it can be named and is committed:
   `package.json` names `projects`, `workspace` or `root` as a key (plain,
   quoted, computed `["projects"]:`, JS shorthand, or a member assignment
   `config.projects = ...`), since those keys delegate to config files this
-  walk does not read, no `package.json` passes a config, project list or root
+  walk does not read (a Jest `projects: [...]` whose elements are all inline
+  object literals with no `rootDir`, `roots`, `root`, `workspace` or
+  `projects` key delegates to nothing and is read, #10139), no `package.json` passes a config, project list or root
   by path (a script flag `--config`, `--config=`, `-c`, `-cx`, `--projects`,
   `--rootDir`, `--root`, `-r`, `--dir` or `--workspace`, or a `"projects"` or
   `"rootDir"` key), and each such file reads; a `<stem>.config.<ext>` whose
@@ -219,7 +221,8 @@ RIPR-SPEC-0243 ladder, including the observation guard.
   with one row and a literal title runs once and can read strong.
 - A runner config passed by path is not read; a `package.json` script that
   passes one refuses instead. A config that names `projects`, `workspace` or
-  `root` is not followed into the files it names; it refuses instead. A
+  `root` is not followed into the files it names; it refuses instead, except
+  a plain inline `projects` array (#10139). A
   computed key built at run time (`["pro" + "jects"]`) is not read and a
   delegating config written that way keeps the credit. A config above the
   repository boundary is not read.
@@ -329,7 +332,10 @@ RIPR-SPEC-0243 ladder, including the observation guard.
    `__snapshots__` directory: medium.
 8. A `jest.config.js` with `projects: [...]` or `["projects"]: [...]`, a
    `vitest.config.ts` with `workspace`, `root` or `config.test.root = ...`:
-   medium. A `const root = process.cwd()` declaration, a Jest `roots` or
+   medium. A `jest.config.js` whose `projects` holds only inline objects
+   (`projects: [{ displayName: "unit", preset: "ts-jest" }]`): strong; the
+   same array with a path, glob, identifier or spread element, or a project
+   setting `rootDir` or `roots`: medium. A `const root = process.cwd()` declaration, a Jest `roots` or
    `rootDir` option: strong. A package whose `.git` file is a submodule
    pointer (`gitdir: ../../.git/modules/app`) under a superproject whose
    `jest.config.js` sets a `snapshotResolver`: medium; the same package with a
@@ -365,6 +371,7 @@ RIPR-SPEC-0243 ladder, including the observation guard.
   `symlinked_test_directory_stays_medium` pin example 7;
   `computed_and_member_spellings_of_delegating_keys_stay_medium`,
   `json_escaped_whitespace_before_the_update_flag_stays_medium`,
+  `plain_inline_projects_keep_the_credit_and_every_other_spelling_refuses`,
   `submodule_git_file_does_not_end_the_walk` and
   `only_a_submodule_pointer_is_not_a_boundary` pin example 8 and the
   #8768 spellings;

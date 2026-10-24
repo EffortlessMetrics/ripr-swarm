@@ -404,6 +404,99 @@ fn delegates_to_other_config(text: &str) -> bool {
         .any(|key| mentions_named_key(text, key))
 }
 
+/// `text` with its one `projects: [ { ... }, { ... } ]` array removed, when
+/// every element is an inline object literal that moves nothing: no string,
+/// identifier, spread or call at the array's top level (those name other
+/// configs), no template placeholder, and no `rootDir`, `roots`, `root`,
+/// `workspace` or `projects` key inside a project. `None` for any other
+/// spelling (a path or glob entry, a computed key, a member assignment, a
+/// second `projects`), so those keep delegating. A project's
+/// `snapshotResolver` is caught by `SNAPSHOT_OVERRIDES` before this runs.
+fn without_plain_inline_projects(text: &str) -> Option<String> {
+    let mut found = text.match_indices("projects");
+    let (index, matched) = found.next()?;
+    if found.next().is_some() {
+        return None;
+    }
+    let preceded_by_ident = text
+        .get(..index)?
+        .chars()
+        .next_back()
+        .is_some_and(is_identifier_char);
+    if preceded_by_ident {
+        return None;
+    }
+    let after_key = skip_trivia(text.get(index + matched.len()..)?);
+    let after_colon = skip_trivia(after_key.strip_prefix(':')?);
+    let array = after_colon.strip_prefix('[')?;
+    let mut depth = 1usize;
+    let mut end = None;
+    let mut chars = array.char_indices().peekable();
+    while let Some((at, ch)) = chars.next() {
+        match ch {
+            '"' | '\'' | '`' => {
+                // A string at the array's top level names another config.
+                if depth == 1 {
+                    return None;
+                }
+                loop {
+                    let (_, inner) = chars.next()?;
+                    if inner == '\\' {
+                        chars.next()?;
+                    } else if inner == '$' && ch == '`' && chars.peek().is_some_and(|c| c.1 == '{')
+                    {
+                        return None;
+                    } else if inner == ch {
+                        break;
+                    }
+                }
+            }
+            '/' if chars.peek().is_some_and(|c| matches!(c.1, '/' | '*')) => {
+                let rest = skip_trivia(array.get(at..)?);
+                let skipped = array.len() - rest.len();
+                while chars.peek().is_some_and(|c| c.0 < skipped) {
+                    chars.next();
+                }
+            }
+            '[' | '(' if depth == 1 => return None,
+            '{' | '[' | '(' => depth += 1,
+            '}' | ']' | ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    if ch != ']' {
+                        return None;
+                    }
+                    end = Some(at);
+                    break;
+                }
+            }
+            c if depth == 1 && !(c.is_whitespace() || c == ',') => return None,
+            _ => {}
+        }
+    }
+    let inside = array.get(..end?)?;
+    if delegates_to_other_config(inside)
+        || mentions_named_key(inside, "rootDir")
+        || mentions_named_key(inside, "roots")
+    {
+        return None;
+    }
+    let tail_start = text.len() - after_colon.len() + 1 + end? + 1;
+    Some(format!("{}{}", text.get(..index)?, text.get(tail_start..)?))
+}
+
+/// `true` when a Jest or Vitest config names another config this walk does
+/// not read. A Jest config whose only such key is a plain inline `projects`
+/// array (#10139) does not: the walk reads that array itself.
+fn delegates_beyond_plain_projects(file_name: &str, text: &str) -> bool {
+    if file_name.starts_with("jest") {
+        if let Some(rest) = without_plain_inline_projects(text) {
+            return delegates_to_other_config(&rest);
+        }
+    }
+    delegates_to_other_config(text)
+}
+
 /// JSON string escapes for the whitespace and quotes a `package.json`
 /// script may put around a flag (`"jest\t-u"`, `"jest \"-u\""`).
 const JSON_ESCAPES: [&str; 11] = [
@@ -528,7 +621,7 @@ fn scan_config_directory_uncached(directory: &Path, allow_symlink: bool) -> Opti
             || (file_name != "package.json" && mentions_update_key(&text))
             || (file_name == "package.json" && passes_config_by_path(&text))
             // A Jest/Vitest config that names other configs is not walked.
-            || (file_name != "package.json" && delegates_to_other_config(&text))
+            || (file_name != "package.json" && delegates_beyond_plain_projects(file_name, &text))
         {
             return None;
         }
