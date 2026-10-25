@@ -618,7 +618,7 @@ fn a_shadowed_or_reassigned_receiver_keeps_the_gap() -> Result<(), String> {
 fn a_closure_the_tail_never_calls_keeps_the_gap() -> Result<(), String> {
     let lib = owner_with_test(
         "pub fn seven(x: u32) -> u32 {
-    let _unused = || x + 1;
+    let _unused = || x > 1;
     7
 }",
         "",
@@ -627,8 +627,8 @@ fn a_closure_the_tail_never_calls_keeps_the_gap() -> Result<(), String> {
     keeps_gap(
         &lib,
         2,
-        "    let _unused = || x + 2;",
-        "    let _unused = || x + 1;",
+        "    let _unused = || x > 2;",
+        "    let _unused = || x > 1;",
         ProbeFamily::Predicate,
     )
 }

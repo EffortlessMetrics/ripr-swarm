@@ -13,7 +13,7 @@ const UTILS_PY: &str = "def _short(text, limit):\n    if limit > 3:\n        ret
 
 /// Owners from production files and tests (with fixtures attached) from test
 /// files, the way the workspace pass builds them.
-fn workspace(files: &[(&str, &str)]) -> (Vec<PythonOwner>, Vec<PythonTest>) {
+pub(super) fn workspace(files: &[(&str, &str)]) -> (Vec<PythonOwner>, Vec<PythonTest>) {
     let mut owners = Vec::new();
     let mut tests = Vec::new();
     let mut defs: BTreeMap<PathBuf, Vec<PythonFixtureDef>> = BTreeMap::new();
