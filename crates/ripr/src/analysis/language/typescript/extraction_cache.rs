@@ -325,19 +325,74 @@ pub(crate) type TestExtraction = (
 struct TestExtractionCache {
     entries: HashMap<CacheKey, Rc<TestExtraction>>,
     approx_bytes: usize,
+    max_entries: usize,
+    max_approx_bytes: usize,
+}
+
+/// Approximate heap bytes of a `Vec<String>`: the handles plus their text.
+fn strings_bytes(strings: &[String]) -> usize {
+    strings
+        .iter()
+        .map(|text| text.len().saturating_add(std::mem::size_of::<String>()))
+        .sum()
+}
+
+/// Approximate heap bytes of a `Vec<(String, String)>`.
+fn string_pairs_bytes(pairs: &[(String, String)]) -> usize {
+    pairs
+        .iter()
+        .map(|(left, right)| {
+            left.len()
+                .saturating_add(right.len())
+                .saturating_add(2 * std::mem::size_of::<String>())
+        })
+        .sum()
+}
+
+/// Approximate retained bytes of one extracted test. File-wide lists
+/// (imports, mocks, helpers) are copied into EVERY test of a file, so they
+/// dominate for files with many tests and must be counted per test.
+fn test_bytes(test: &super::types::TypeScriptTest) -> usize {
+    std::mem::size_of::<super::types::TypeScriptTest>()
+        .saturating_add(test.name.len())
+        .saturating_add(test.local_name.len())
+        .saturating_add(test.body_text.len())
+        .saturating_add(test.reach_body_text.as_ref().map_or(0, String::len))
+        .saturating_add(test.file.as_os_str().len())
+        .saturating_add(strings_bytes(&test.describe_names))
+        .saturating_add(strings_bytes(&test.mocks_in_file))
+        .saturating_add(strings_bytes(&test.unstable_member_roots_in_file))
+        .saturating_add(strings_bytes(&test.identity_helpers_in_file))
+        .saturating_add(strings_bytes(&test.written_locals_in_file))
+        .saturating_add(strings_bytes(&test.setup_hook_bodies))
+        .saturating_add(string_pairs_bytes(&test.default_member_only_locals_in_file))
+        .saturating_add(string_pairs_bytes(&test.mock_factories_in_file))
+        .saturating_add(string_pairs_bytes(&test.mock_spread_sources_in_file))
+        // Elements own further strings; a flat 96 bytes each keeps the estimate
+        // on the safe (large) side without walking their fields.
+        .saturating_add(test.imports_in_file.len().saturating_mul(
+            std::mem::size_of::<super::types::TypeScriptImport>().saturating_add(96),
+        ))
+        .saturating_add(test.scope_bindings.len().saturating_mul(
+            std::mem::size_of::<super::types::TypeScriptScopeBinding>().saturating_add(96),
+        ))
+        .saturating_add(test.assertions.len().saturating_mul(
+            std::mem::size_of::<super::types::TypeScriptAssertion>().saturating_add(96),
+        ))
 }
 
 impl TestExtractionCache {
+    fn with_bounds(max_entries: usize, max_approx_bytes: usize) -> Self {
+        Self {
+            entries: HashMap::new(),
+            approx_bytes: 0,
+            max_entries,
+            max_approx_bytes,
+        }
+    }
+
     fn entry_bytes(key: &CacheKey, extraction: &TestExtraction) -> usize {
-        let tests_bytes: usize = extraction
-            .0
-            .iter()
-            .map(|test| {
-                std::mem::size_of::<super::types::TypeScriptTest>()
-                    .saturating_add(test.body_text.len())
-                    .saturating_add(test.reach_body_text.as_ref().map_or(0, String::len))
-            })
-            .sum();
+        let tests_bytes: usize = extraction.0.iter().map(test_bytes).sum();
         let expansion_bytes = extraction
             .2
             .as_ref()
@@ -348,10 +403,15 @@ impl TestExtractionCache {
             .saturating_add(expansion_bytes)
     }
 
+    /// Stores `extraction` unless it alone exceeds the byte bound; an entry
+    /// that cannot fit is served uncached rather than retained past the bound.
     fn insert(&mut self, key: CacheKey, extraction: Rc<TestExtraction>) {
         let entry_bytes = Self::entry_bytes(&key, &extraction);
-        if self.entries.len() >= MAX_ENTRIES
-            || self.approx_bytes.saturating_add(entry_bytes) > MAX_APPROX_BYTES
+        if entry_bytes > self.max_approx_bytes {
+            return;
+        }
+        if self.entries.len() >= self.max_entries
+            || self.approx_bytes.saturating_add(entry_bytes) > self.max_approx_bytes
         {
             // Correctness-neutral: drop everything and start over.
             self.entries.clear();
@@ -376,7 +436,10 @@ thread_local! {
 /// uncached extraction. Test extraction costs about 4 s/MB in a debug build,
 /// which an unchanged test file used to pay again on every LSP save.
 pub(crate) fn test_extraction_cached(relative: &Path, source: &str) -> Rc<TestExtraction> {
-    let path = normalized_path(relative);
+    // Lossless path identity, not `normalized_path`: the extracted tests store
+    // `relative` as their `file`, and a Unix filename may contain a literal
+    // backslash that normalization would fold into a directory separator.
+    let path = relative.to_string_lossy().into_owned();
     let key = CacheKey {
         fingerprint: facts_fingerprint(Path::new(""), (0, 0), &path, source),
         source_len: source.len(),
@@ -401,9 +464,8 @@ pub(crate) fn test_extraction_cached(relative: &Path, source: &str) -> Rc<TestEx
     };
     TEST_EXTRACTION_CACHE.with(|cache| {
         if let Ok(mut cache) = cache.try_borrow_mut() {
-            let cache = cache.get_or_insert_with(|| TestExtractionCache {
-                entries: HashMap::new(),
-                approx_bytes: 0,
+            let cache = cache.get_or_insert_with(|| {
+                TestExtractionCache::with_bounds(MAX_ENTRIES, MAX_APPROX_BYTES)
             });
             cache.insert(key, Rc::clone(&extraction));
         }
@@ -863,5 +925,65 @@ mod tests {
             Rc::ptr_eq(&first, &second),
             "the budget refusal is a function of the bytes, so it may be cached"
         );
+    }
+
+    #[test]
+    fn test_extraction_cache_keeps_distinct_spellings_of_a_path_apart() {
+        // On Unix `a\\b.test.ts` is one filename and `a/b.test.ts` another;
+        // each must keep its own `file`.
+        let slash = test_extraction_cached(Path::new("tests/a/b.test.ts"), TEST_FILE);
+        let backslash = test_extraction_cached(Path::new("tests/a\\b.test.ts"), TEST_FILE);
+        assert!(!Rc::ptr_eq(&slash, &backslash));
+        assert_eq!(slash.0[0].file, Path::new("tests/a/b.test.ts"));
+        assert_eq!(backslash.0[0].file, Path::new("tests/a\\b.test.ts"));
+    }
+
+    #[test]
+    fn test_extraction_cache_counts_file_wide_lists_once_per_test() {
+        let many_imports: String = (0..40)
+            .map(|n| format!("import {{ f{n} }} from '../src/f{n}';\n"))
+            .collect();
+        let tests: String = (0..50)
+            .map(|n| format!("it('t{n}', () => {{ expect(f0({n})).toBe({n}); }});\n"))
+            .collect();
+        let source = format!("{many_imports}{tests}");
+        let extraction = test_extraction_cached(Path::new("tests/bytes.test.ts"), &source);
+        assert_eq!(extraction.0.len(), 50);
+        let key = CacheKey {
+            path: "tests/bytes.test.ts".to_string(),
+            source_len: source.len(),
+            fingerprint: (0, 0),
+        };
+        let bytes = TestExtractionCache::entry_bytes(&key, &extraction);
+        let one_test_imports = extraction.0[0].imports_in_file.len()
+            * std::mem::size_of::<super::super::types::TypeScriptImport>();
+        assert!(one_test_imports > 0);
+        assert!(
+            bytes >= 50 * one_test_imports,
+            "the per-test copies of the file's imports must be counted: {bytes} < {}",
+            50 * one_test_imports
+        );
+    }
+
+    #[test]
+    fn test_extraction_cache_skips_an_entry_larger_than_its_bound() {
+        let extraction = Rc::new(super::super::tests_extract::extract_tests_with_expansion(
+            Path::new("tests/bound.test.ts"),
+            TEST_FILE,
+        ));
+        let key = CacheKey {
+            path: "tests/bound.test.ts".to_string(),
+            source_len: TEST_FILE.len(),
+            fingerprint: (1, 1),
+        };
+        let mut cache = TestExtractionCache::with_bounds(8, 16);
+        cache.insert(key.clone(), Rc::clone(&extraction));
+        assert!(
+            cache.entries.is_empty(),
+            "an oversize entry must not be stored"
+        );
+        let mut roomy = TestExtractionCache::with_bounds(8, 1 << 30);
+        roomy.insert(key, extraction);
+        assert_eq!(roomy.entries.len(), 1);
     }
 }
