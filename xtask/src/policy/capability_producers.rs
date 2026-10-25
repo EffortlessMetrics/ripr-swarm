@@ -89,12 +89,14 @@ pub(crate) fn check_capability_producers(args: &[String]) -> Result<(), String> 
         .get("semantic_digest")
         .and_then(Value::as_str)
         .unwrap_or("<missing>");
+    let rerun_command = options.build.rerun_command();
     let disclosures = vec![PolicyDisclosure {
         heading: "Scope and limits".to_string(),
         intro: format!("{source_note}. Registry digest: `{digest}`. Expected compiled language features: `{enabled:?}`."),
         items: vec![
             "Enforced: LanguageId variants vs registry languages; cells per language; lang-* features vs required_feature vs adapter directories; proof_refs resolve to spec files; adapter_compiled matches selected Cargo language features.".to_string(),
             "Not enforced here: cell states and tiers (in-crate tests), docs text (check-support-tiers and the drift test), framework-level producers (per-language disposition tests), metrics/capabilities.toml. Only the selected build is checked; other feature combinations require separate invocations.".to_string(),
+            "The suggested rerun rebuilds the selected feature configuration. To replay offline input, also pass --registry-json with the original saved file; a rebuild does not reproduce saved bytes.".to_string(),
         ],
     }];
     crate::finish_policy_report_with_disclosures(
@@ -108,7 +110,7 @@ pub(crate) fn check_capability_producers(args: &[String]) -> Result<(), String> 
                 "Keep each `lang-*` feature, its adapter directory and the registry `required_feature` aligned.",
                 "Point `proof_refs` at an existing `docs/specs/RIPR-SPEC-NNNN-*.md`.",
             ],
-            rerun_command: "cargo xtask check-capability-producers",
+            rerun_command: &rerun_command,
             exception_template: None,
         },
         &violations,

@@ -372,6 +372,10 @@ fn selected_features_and_manifest_defaults_match_cargo_arguments() -> Result<(),
     .map_err(|e| e.to_string())?;
     let defaults = parse_args(&[])?;
     assert_eq!(
+        defaults.build.rerun_command(),
+        "cargo xtask check-capability-producers"
+    );
+    assert_eq!(
         defaults.build.enabled_features(&manifest)?,
         set(&["lang-rust", "lang-typescript", "lang-python"])
     );
@@ -411,6 +415,10 @@ fn selected_features_and_manifest_defaults_match_cargo_arguments() -> Result<(),
     assert_eq!(
         options.build.enabled_features(&manifest)?,
         set(&["lang-python", "lang-perl"])
+    );
+    assert_eq!(
+        options.build.rerun_command(),
+        "cargo xtask check-capability-producers --no-default-features --features lang-perl,lang-python"
     );
     let additive = parse_args(&["--features", "lang-perl"].map(String::from))?;
     assert_eq!(

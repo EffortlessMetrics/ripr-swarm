@@ -10,6 +10,16 @@ pub(super) struct BuildSelection {
 }
 
 impl BuildSelection {
+    pub(super) fn rerun_command(&self) -> String {
+        let flags = self.cargo_args().into_iter().skip(4).collect::<Vec<_>>();
+        let mut command = "cargo xtask check-capability-producers".to_string();
+        if !flags.is_empty() {
+            command.push(' ');
+            command.push_str(&flags.join(" "));
+        }
+        command
+    }
+
     pub(super) fn cargo_args(&self) -> Vec<String> {
         let mut args = ["build", "-p", "ripr", "--quiet"]
             .map(String::from)
