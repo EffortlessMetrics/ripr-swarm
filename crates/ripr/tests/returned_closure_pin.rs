@@ -447,6 +447,27 @@ fn typed_discriminating_arithmetic_and_literal_captures_keep_credit() -> Result<
 }
 
 #[test]
+fn distinct_decimals_that_round_to_one_float_input_keep_the_gap() -> Result<(), String> {
+    // 16_777_216.0 and 16_777_217.0 are the same f32, so the operators cannot
+    // be told apart by inputs that only look different in the source.
+    let found = typed_arithmetic_pin(
+        "",
+        "f32",
+        "move |x| n + x",
+        "move |x| n - x",
+        "assert_eq!(make_adder(16_777_216.0)(16_777_217.0), 33_554_432.0);",
+    )?;
+    assert_ne!(
+        found.class,
+        ExposureClass::Exposed,
+        "{:?} {:?}",
+        found.class,
+        limit(&found)
+    );
+    Ok(())
+}
+
+#[test]
 fn unsupported_numeric_authority_or_arithmetic_stays_withheld() -> Result<(), String> {
     for (prelude, kind, tail, before, test) in [
         (

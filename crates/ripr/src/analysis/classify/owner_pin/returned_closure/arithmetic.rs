@@ -182,6 +182,15 @@ impl ArithmeticPin {
         let Some(values) = self.inputs(operand) else {
             return false;
         };
+        // Distinct written decimals can round to one `f32`/`f64`, so the
+        // pairwise-different requirement is judged on the typed values.
+        let repeated = values
+            .iter()
+            .enumerate()
+            .any(|(at, value)| values[..at].iter().any(|seen| seen.same_value(*value)));
+        if repeated {
+            return false;
+        }
         let Some(original) = self.expression.evaluate(&values, self.kind, None) else {
             return false;
         };
