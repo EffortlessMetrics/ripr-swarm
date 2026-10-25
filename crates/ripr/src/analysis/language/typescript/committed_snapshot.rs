@@ -446,6 +446,11 @@ fn is_known_non_relocating_preset(name: &str) -> bool {
                 .is_some_and(|rest| !rest.is_empty() && !rest.contains(['/', '.'])))
 }
 
+/// JS line terminators: LF, CR, U+2028 and U+2029 (#8895).
+fn is_line_terminator(c: char) -> bool {
+    matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}')
+}
+
 /// `text` with every comment replaced by spaces, newlines kept, so offsets
 /// into the result are offsets into `text`. `None` for an unterminated
 /// string or block comment.
@@ -469,7 +474,7 @@ fn blank_comments(text: &str) -> Option<String> {
             '/' if chars.peek() == Some(&'/') => {
                 out.push(' ');
                 while let Some(next) = chars.peek().copied() {
-                    if next == '\n' {
+                    if is_line_terminator(next) {
                         break;
                     }
                     out.push(' ');
@@ -488,7 +493,7 @@ fn blank_comments(text: &str) -> Option<String> {
                         closed = true;
                         break;
                     }
-                    out.push(if next == '\n' { '\n' } else { ' ' });
+                    out.push(if is_line_terminator(next) { next } else { ' ' });
                 }
                 if !closed {
                     return None;
@@ -550,7 +555,7 @@ fn without_plain_inline_projects(raw: &str) -> Option<String> {
                         '\\' => {
                             chars.next()?;
                         }
-                        '\n' => return None,
+                        c if is_line_terminator(c) => return None,
                         '[' => in_class = true,
                         ']' => in_class = false,
                         '/' if !in_class => break,

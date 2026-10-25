@@ -1751,6 +1751,22 @@ fn plain_inline_projects_keep_the_credit_and_every_other_spelling_refuses() -> R
             OracleStrength::Medium,
         ),
         (
+            "module.exports = { projects: [{}], // first\r projects: [\"./other.config.js\"] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{}], // first\u{2028} projects: [\"./other.config.js\"] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{}], // first\u{2029} projects: [\"./other.config.js\"] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ globals: { tag: /a(b)\r/ } }] };",
+            OracleStrength::Medium,
+        ),
+        (
             "module.exports = { projects: [{ preset: \"review-snapshot-preset\" }] };",
             OracleStrength::Medium,
         ),
