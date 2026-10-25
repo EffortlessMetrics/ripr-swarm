@@ -2554,6 +2554,45 @@ pub(super) fn nearest_manifest_identity(
         .map(|prefix| format!("{prefix}Cargo.toml"))
 }
 
+/// #10127: whether a test in `test_file` sits in a package that directly
+/// declares the owner's package as a dependency, and that package defines no
+/// other function of the owner's name. Both package identities come from the
+/// discovered manifests (not from `src/`/`tests/` path shapes, which a
+/// declared `[lib] path` root does not follow), and the path-dependency
+/// graph must be complete. An unattributable file, an unrelated package, a
+/// transitive dependent and a dependent that defines its own function of the
+/// owner's name (so a bare call there need not reach the owner) all answer
+/// `false`, which keeps the finding's actionable gap.
+pub(in crate::analysis) fn declared_dependent_package_calls_owner(
+    context: &DependencyEdgeContext<'_>,
+    owner: &FunctionSummary,
+    test_file: &Path,
+) -> bool {
+    if context.adjacency.status() != PathDependencyGraphStatus::Complete {
+        return false;
+    }
+    let (Some(owner_manifest), Some(test_manifest)) = (
+        nearest_manifest_identity(context.manifest_dir_prefixes, &owner.file),
+        nearest_manifest_identity(context.manifest_dir_prefixes, test_file),
+    ) else {
+        return false;
+    };
+    if owner_manifest == test_manifest
+        || context
+            .adjacency
+            .forward_dependency_declarations(&test_manifest, &owner_manifest)
+            .is_none()
+    {
+        return false;
+    }
+    !context.index.functions().iter().any(|function| {
+        function.name == owner.name
+            && function.id != owner.id
+            && nearest_manifest_identity(context.manifest_dir_prefixes, &function.file)
+                .is_some_and(|manifest| manifest == test_manifest)
+    })
+}
+
 /// Whether `body` introduces a local binding of `owner_name` through a
 /// `let` declaration (including `let mut`). Such a binding — a closure, a
 /// shadowing local — is invisible to `index.functions()` and is the most

@@ -1420,7 +1420,7 @@ fn apply_rust_no_static_path_limit(
     dependency_edges: Option<&classify::DependencyEdgeContext<'_>>,
 ) {
     if needs_proximity_reach_limit(finding) {
-        apply_rust_proximity_reach_limit(finding, probe, index, transitive_reach);
+        apply_rust_proximity_reach_limit(finding, probe, index, transitive_reach, dependency_edges);
         return;
     }
     if needs_mixed_macro_reach_limit(finding) {
@@ -1518,25 +1518,30 @@ fn apply_rust_proximity_reach_limit(
     probe: &Probe,
     index: &RustIndex,
     transitive_reach: &classify::TransitiveReachIndex<'_>,
+    dependency_edges: Option<&classify::DependencyEdgeContext<'_>>,
 ) {
     let Some(owner_name) = owner_name_from_id(&probe.owner, &probe.location.file) else {
         return;
     };
     // A `reachable_unrevealed` finding names the limit only for a witness in
-    // another package: a same-package chain keeps its inspect-first gap, but
-    // a test that reaches the owner through a wrapper crate has no
-    // helper-transfer chain, so the name-token relation alone must not read
-    // as an actionable gap (#10127).
+    // a package that declares the owner's package as a dependency: a
+    // same-package chain keeps its inspect-first gap, and so does a witness
+    // whose package cannot be tied to the owner (unrelated, unattributable
+    // or defining its own function of the owner's name). A test that reaches
+    // the owner through a wrapper crate has no helper-transfer chain, so the
+    // name-token relation alone must not read as an actionable gap (#10127).
     let cross_package_only = finding.class == ExposureClass::ReachableUnrevealed;
-    // The owner's file as the index spells it, the same form a witness's
-    // test file has (the probe's own path may carry the checkout root).
-    let owner_package = probe
+    // The owner as the index spells it, the same form a witness's test file
+    // has (the probe's own path may carry the checkout root).
+    let owner = probe
         .owner
         .as_ref()
-        .and_then(|id| index.functions().iter().find(|function| function.id == *id))
-        .and_then(|owner| workspace::package_root(&owner.file));
+        .and_then(|id| index.functions().iter().find(|function| function.id == *id));
     let admits = |test_file: &Path| {
-        !cross_package_only || workspace::package_root(test_file) != owner_package
+        !cross_package_only
+            || owner.zip(dependency_edges).is_some_and(|(owner, context)| {
+                classify::declared_dependent_package_calls_owner(context, owner, test_file)
+            })
     };
     if let Some(witness) = transitive_reach
         .transitive_witness(&owner_name)

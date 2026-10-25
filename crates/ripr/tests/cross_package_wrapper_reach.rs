@@ -18,7 +18,7 @@ impl Scratch {
             std::process::id(),
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
-        std::fs::create_dir(&path).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(&path).map_err(|error| error.to_string())?;
         Ok(Self(path))
     }
 
@@ -140,4 +140,63 @@ fn a_wrapper_in_the_owners_own_package_keeps_the_gap() -> Result<(), String> {
         return Err(format!("expected the kept gap, got {summary:?}"));
     }
     Ok(())
+}
+
+/// Asserts the owner's `reachable_unrevealed` gap is kept: no static limit
+/// and the class unchanged.
+fn assert_gap_kept(found: &[Finding]) -> Result<(), String> {
+    let summary: Vec<_> = found
+        .iter()
+        .map(|finding| (finding.class.as_str(), limit(finding)))
+        .collect();
+    if found.iter().any(|finding| limit(finding).is_some())
+        || !found
+            .iter()
+            .any(|finding| finding.class == ExposureClass::ReachableUnrevealed)
+    {
+        return Err(format!("expected the kept gap, got {summary:?}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_custom_lib_owner_with_a_same_package_wrapper_keeps_the_gap() -> Result<(), String> {
+    // The owner file has no source-layout marker, so a path-shape package
+    // comparison would read the package's own `tests/` file as foreign.
+    assert_gap_kept(&findings_with(
+        CUSTOM_LIB_MANIFEST,
+        "tally/lib/core.rs",
+        &[
+            (
+                "tally/lib/core.rs",
+                "pub fn weight(count: u32) -> u32 {\n    3 * count\n}\npub fn heavy(count: u32) -> u32 {\n    weight(count)\n}\n",
+            ),
+            (
+                "tally/tests/tally.rs",
+                "#[test]\nfn heavy_triples_the_count() {\n    assert_eq!(tally::heavy(5), 15);\n}\n",
+            ),
+            ("ledger/src/lib.rs", "pub fn unrelated() {}\n"),
+        ],
+    )?)
+}
+
+#[test]
+fn a_dependent_that_defines_its_own_function_of_the_owners_name_keeps_the_gap() -> Result<(), String>
+{
+    // `ledger::heavy` calls ledger's own `weight`, never `tally::weight`.
+    assert_gap_kept(&findings_with(
+        CUSTOM_LIB_MANIFEST,
+        "tally/lib/core.rs",
+        &[
+            ("tally/lib/core.rs", TALLY_LIB),
+            (
+                "ledger/src/lib.rs",
+                "pub fn weight(count: u32) -> u32 {\n    3 * count\n}\npub fn heavy(count: u32) -> u32 {\n    weight(count)\n}\n",
+            ),
+            (
+                "ledger/tests/ledger.rs",
+                "#[test]\nfn heavy_triples_the_count() {\n    assert_eq!(ledger::heavy(5), 15);\n}\n",
+            ),
+        ],
+    )?)
 }
