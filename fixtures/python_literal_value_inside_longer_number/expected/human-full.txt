@@ -1,0 +1,55 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_literal_value_inside_longer_number/input
+config: <cwd>/fixtures/python_literal_value_inside_longer_number/input/ripr.toml
+
+Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Changed file(s) by language: python = 1
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+
+WARNING ports.py:3
+  id: probe:ports.py:python_preview:64ed4168
+
+Changed
+  after:          "lo": 80,
+
+Probe
+  family: predicate
+  delta:  control
+  owner:  python:ports.py::ranges
+  canonical gap: gap:python:ports.py:ranges:predicate_boundary:predicate:lo_80
+
+Language
+  language: python
+  status: preview
+  owner kind: function
+
+Static exposure
+  weakly_exposed (warning, confidence 0.40)
+
+Evidence
+  - reach yes: 1 related Python test(s) found for owner `ranges`
+  - infection yes: Changed Python expression can alter preview-classified predicate behavior: `"lo": 80,`
+  - propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink
+  - observation weak: Strongest extracted Python oracle kind: `relational_check` (rank 3)
+  - discriminator weak: Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape
+  - local flow reaches unknown sink: "lo": 80, (line 3) — ripr could not classify where the changed value ends up; propagation confidence is limited
+  - related test tests/test_ports.py:3 test_hi_is_8080 uses weak relational check oracle: assert "8080" in repr(ranges()); misses: assertion too weak to tell the old behavior from the new
+
+Weakness
+  - Related Python test reaches `ranges` but the strongest extracted oracle is `relational_check`; add or strengthen a focused assertion for the changed boundary
+
+Repair placement
+  suggested file: tests/test_ports.py
+  suggested test: test_hi_is_8080
+  pytest node: tests/test_ports.py::test_hi_is_8080
+  verify: python -m pytest tests/test_ports.py::test_hi_is_8080 (high)
+Drill in:
+  ripr explain --root <cwd>/fixtures/python_literal_value_inside_longer_number/input --diff <cwd>/fixtures/python_literal_value_inside_longer_number/diff.patch --mode fast probe:ports.py:python_preview:64ed4168
+  ripr context --root <cwd>/fixtures/python_literal_value_inside_longer_number/input --diff <cwd>/fixtures/python_literal_value_inside_longer_number/diff.patch --mode fast --at probe:ports.py:python_preview:64ed4168
+
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

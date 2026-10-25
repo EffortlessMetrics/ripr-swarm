@@ -1,0 +1,12 @@
+diff --git a/lits/cfg.py b/lits/cfg.py
+--- a/lits/cfg.py
++++ b/lits/cfg.py
+@@ -15,7 +15,7 @@ def ports():
+ def limits():
+     return {
+         "low": 10,
+-        "high": 10,
++        "high": 11,
+     }
+ 
+ 

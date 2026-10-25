@@ -77,6 +77,9 @@ pub(super) struct RowMissChange<'a> {
     /// Every strong related call provably enters the guards around the line
     /// (#9833), so a guarded write is read as run, as the finding read it.
     pub(super) guard_entered: bool,
+    /// The joined enclosing literal (new, old) of a multi-line literal element
+    /// change, so a row is rechecked against the same element gate as the finding.
+    pub(super) literal_pair: Option<&'a (String, String)>,
     pub(super) focus: &'a PythonAssertionFocus,
     /// The finding's changed-boundary fact. It describes the change, not a
     /// row: a row may carry it as `miss_support` only after that row's own
@@ -212,6 +215,7 @@ fn strong_row_miss(
         std::slice::from_ref(row),
         prep,
         change.guard_entered,
+        change.literal_pair,
     );
     (!alignment.observes()).then_some(RelatedTestMiss::ObservationUnconfirmed)
 }

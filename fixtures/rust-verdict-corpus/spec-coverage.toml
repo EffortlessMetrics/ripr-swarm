@@ -8,11 +8,12 @@
 # label. An in-scope example a case cannot label is waived with a reason;
 # waived examples are accounted for, never covered.
 #
-# `floor` is the covered-example count `verdict-corpus check` protects. Raise
-# it when coverage grows; lowering it is a reviewed edit with a reason.
+# `spec-examples.lock` lists the covered examples `verdict-corpus check`
+# protects, one per line in sorted order. A locked example that loses its case
+# fails; covering a new one passes with a note naming the line to add.
+# Dropping a line is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 225
 
 # Most abstained rows whose tests do catch the change (missed credit). A
 # regression fails `verdict-corpus check`; an improvement passes with a note
@@ -20,8 +21,12 @@ floor = 225
 # Raising it is a reviewed edit with a reason.
 # 144 (#6485: two grid rows recovered, one bound-input abstention added). Was 145: the 144 baseline plus the one abstention #10143 added (the private-predicate-via-wrapper
 # shape, spec0186-ex06, now abstains as limited and is no longer known-false). Measured on the combined tree.
-# 145: plus the one abstention #10163 added (spec0171-ex05, cross-package wrapper now limited). Measured on the combined tree.
-missed_credit_ceiling = 145
+# 146: plus the one abstention #10163 added (spec0171-ex05, cross-package wrapper now limited). Measured on the combined tree.
+# 147 (#9197): plus `strsim-sorensen-dice-equal`, which compares a local rebound
+# from the parameter (`let a = a.chars()..collect()`), so the name-only credit
+# is withheld and the row abstains; fail-closed by design. Measured on the
+# combined tree.
+missed_credit_ceiling = 147
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
@@ -968,6 +973,11 @@ reason = "release-process tooling (xtask release-ledger); its examples validate 
 id = "RIPR-SPEC-0351"
 scope = "out"
 reason = "Rust out-parameter oracle credit is proved by crates/ripr/tests/out_parameter_oracle.rs; no corpus case labels it yet"
+
+[[spec]]
+id = "RIPR-SPEC-0356"
+scope = "out"
+reason = "Rust uncompiled-file test withholding is proved by crates/ripr/tests/outside_target_haystack.rs; no corpus case labels it yet"
 
 [[spec]]
 id = "RIPR-SPEC-0360"
