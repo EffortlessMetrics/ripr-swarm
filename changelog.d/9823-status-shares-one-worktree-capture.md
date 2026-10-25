@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- `ripr agent status` captures the worktree once per call for finished attempts that share a cage policy, instead of once per attempt, so retained attempts no longer multiply its cost (roughly halved for two attempts over 3000 tracked files in a debug build). A later call always recaptures, so an edit between calls is never hidden; within one call every attempt reads the same observation (#9823).
