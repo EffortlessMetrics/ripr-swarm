@@ -40,7 +40,11 @@ related test row pins the exact label per arm.
   match, as it would not compile. The shared char parser still rejects
   an escaped char (`'\n'`), so an escaped char pattern or argument
   refuses; escapes resolve for string literals only. Values are plain string literals or
-  one nested direct call. A guard (`if`), a bare binding, a range, a
+  one nested direct call. A guard (`if`) that evaluates exactly over the
+  bound inputs — one comparison whose operands each resolve through the
+  shared evaluator, or `str::len()` on an exact string — selects the
+  arm only when it is true; a guard that does not evaluate, a bare
+  binding, a range, a
   path, or a value the shared authorities cannot evaluate refuses the
   whole match: an unresolved pattern could match anything and a
   non-literal value is not an exact return.
@@ -65,12 +69,12 @@ related test row pins the exact label per arm.
   provenance, and both non-wildcard arms connect to exact assertions
   (the #3215 literal-match acceptance row).
 - A controls fixture (`fixtures/match_arm_controls`) with four
-  variants. The guard arm and the bare-identifier pattern stay at
-  their fail-closed class with zero hop provenance: since #6674 that
+  variants. The bare-identifier pattern stays at
+  its fail-closed class with zero hop provenance: since #6674 that
   is `infection_unknown` with `Changed boundary input is unresolved`
-  naming `final_label` (RIPR-SPEC-0001). The literal-callee and char
-  variants resolve their operand, but the fixture's tests pin one row
-  each, so they read `weakly_exposed`, never `exposed`. The corpus
+  naming `final_label` (RIPR-SPEC-0001). The guard, literal-callee and
+  char variants resolve their operand, but the fixture's tests pin one
+  row each, so they read `weakly_exposed`, never `exposed`. The corpus
   cases `spec-b-0164-alternative-pattern`, `-escaped-pattern`,
   `-char-scrutinee` and `-computed-arm-value` carry the two-row tests
   that credit them.
@@ -105,7 +109,13 @@ related test row pins the exact label per arm.
    exposes — `label("word")` = `"alpha"` and `label("text")` = `"beta"`
    are exact per row, the boundary comparison is observed, and the
    provenance names the helper hop.
-2. Reject: a guard arm refuses the whole match (controls fixture).
+2. Accept: a guard the shared authorities can evaluate selects the arm
+   exactly (`"word" if kind.len() > 2 => "alpha"` with `kind = "word"`),
+   and a guard that evaluates false falls through in source order.
+   Reject: a guard that does not evaluate (an unknown operand, an
+   unsupported method, a boolean combinator) refuses the whole match
+   (controls fixture pins only the bare-identifier variant at the
+   fail-closed class now).
 3. Accept: `"word" | "term" => "alpha"` selects the arm for either
    literal.
 4. Reject: a bare binding pattern refuses the whole match.
@@ -130,8 +140,9 @@ related test row pins the exact label per arm.
 
 ## Non-Goals
 
-- Match arms with guards, ranges, or paths — these stay named
-  limitations until a corpus case demands them.
+- Match arms with unevaluable guards (anything beyond one exactly
+  evaluable comparison, such as boolean combinators or further method
+  calls), ranges, or paths — these stay named limitations.
 - Integer and enum scrutinees and non-string arm values: out of scope
   for this slice.
 - A match inside a let-chain or a statement position (only the tail
