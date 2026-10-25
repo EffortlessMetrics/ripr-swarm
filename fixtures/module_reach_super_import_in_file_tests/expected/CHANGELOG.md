@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_super_import_in_file_tests (3)
+
+Reason:
+RIPR-SPEC-0224: regenerate for the #10382 repair-route wording (inherited main drift, same change as #10422)
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_in_file_tests --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
