@@ -6,8 +6,8 @@
 //! verdict, and spells out each stop reason.
 
 use crate::domain::{
-    ExposureClass, Finding, OracleStrength, ProbeFamily, RelatedTest, RelatedTestMiss, StopReason,
-    exact_assertion_fact, input_boundary_fact,
+    ExposureClass, Finding, OracleStrength, ProbeFamily, RelatedTest, RelatedTestMiss,
+    StaticLimitKind, StopReason, exact_assertion_fact, input_boundary_fact,
 };
 use crate::output::path::display_path;
 use crate::output::related_test_miss::{checked_assertion_text, related_test_miss_reason};
@@ -173,6 +173,26 @@ fn group_rows_by_test(rows: &[RelatedTest]) -> Vec<Vec<&RelatedTest>> {
     groups
 }
 
+/// Whether the finding stopped at a reach edge ripr could not resolve, which
+/// no test shape is promised to close.
+fn reach_edge_unresolved(finding: &Finding) -> bool {
+    finding.effective_stop_reasons().iter().any(|reason| {
+        matches!(
+            reason,
+            StopReason::MaxDepthReached
+                | StopReason::TransitiveReachUnresolved
+                | StopReason::MacroReachUnresolved
+        )
+    }) || matches!(
+        finding.static_limit_kind,
+        Some(
+            StaticLimitKind::RustTransitiveReachUnresolved
+                | StaticLimitKind::RustIntegrationPublicApiPathUnresolved
+                | StaticLimitKind::RustMacroReachUnresolved
+        )
+    )
+}
+
 /// What a test would have to do for ripr to see a discriminator, one line per
 /// distinct miss. Only gap classes with a repair step get this list: for
 /// `exposed` there is nothing to change, for the unknown classes ripr has not
@@ -204,6 +224,14 @@ fn verdict_changers(finding: &Finding, owner_signature: Option<&str>) -> Vec<Str
                 .map(|name| format!("`{name}`"))
         })
         .unwrap_or_else(|| "the changed code".to_string());
+    // An unresolved reach edge may end at a private helper no test can name,
+    // so a recipe that tells the reader to call the owner would promise a fix
+    // an exact public-API assertion cannot deliver (#10220).
+    let unresolved_edge = reach_edge_unresolved(finding);
+    let conditional_call = format!(
+        "call {owner} directly if tests can name it; if it is a private helper behind a \
+         public API, this edge can stay unresolved even with an exact assertion"
+    );
     let mut needs: Vec<String> = Vec::new();
     let mut push = |need: String| {
         if !needs.contains(&need) {
@@ -211,11 +239,16 @@ fn verdict_changers(finding: &Finding, owner_signature: Option<&str>) -> Vec<Str
         }
     };
     if finding.related_tests.is_empty() {
-        push(format!("call {owner} and assert on its result"));
+        push(if unresolved_edge {
+            conditional_call.clone()
+        } else {
+            format!("call {owner} and assert on its result")
+        });
     }
     for test in &finding.related_tests {
         let Some(miss) = test.miss else { continue };
         push(match miss {
+            RelatedTestMiss::NoCallPath if unresolved_edge => conditional_call.clone(),
             RelatedTestMiss::NoCallPath => format!("call {owner}, directly or through a helper"),
             RelatedTestMiss::NoAssertion | RelatedTestMiss::AssertionNotObserving => {
                 format!("assert on what {owner} returns or changes")
@@ -354,6 +387,28 @@ mod tests {
             miss_support: None,
             role: crate::domain::RelatedTestRole::Contributing,
         }
+    }
+
+    #[test]
+    fn unresolved_reach_edge_recipe_does_not_promise_a_direct_call_closes_it() {
+        let mut finding = sample_perl_finding();
+        finding.class = ExposureClass::NoStaticPath;
+        finding.recommended_next_step = Some("add a test that calls the owner".to_string());
+        finding.related_tests = Vec::new();
+        finding.stop_reasons = vec![StopReason::TransitiveReachUnresolved];
+
+        let text = render_verdict_explanation(&finding, None);
+        assert!(text.contains("directly if tests can name it"), "{text}");
+        assert!(
+            text.contains("can stay unresolved even with an exact assertion"),
+            "{text}"
+        );
+        assert!(!text.contains("directly or through a helper"), "{text}");
+
+        finding.stop_reasons = Vec::new();
+        let plain = render_verdict_explanation(&finding, None);
+        assert!(plain.contains("and assert on its result"), "{plain}");
+        assert!(!plain.contains("if tests can name it"), "{plain}");
     }
 
     #[test]

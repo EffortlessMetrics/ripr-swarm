@@ -6,7 +6,7 @@ Owner: product-analysis
 
 Created: 2026-10-22
 
-Linked issues: [#9438](https://github.com/EffortlessMetrics/ripr-swarm/issues/9438).
+Linked issues: [#9438](https://github.com/EffortlessMetrics/ripr-swarm/issues/9438), [#10220](https://github.com/EffortlessMetrics/ripr-swarm/issues/10220).
 
 Support-tier impact: None
 
@@ -34,6 +34,8 @@ it has guidance.
 Human output renders the step as a `Next:` line directly under the
 limitation or stop reason it belongs to (`ripr check --format human-full` and
 `ripr explain`). Classification, JSON, SARIF and gate output are unchanged.
+
+`ripr explain`'s "To change the verdict" recipe follows the same rule: when the finding retains an unresolved reach edge (transitive, public-API-path or macro reach, or the depth limit), the call-the-owner step reads "call X directly if tests can name it" and says the edge can stay unresolved even with an exact assertion, instead of "directly or through a helper" (#10220).
 
 Next steps make no runtime, coverage or sufficiency claim: they say what to
 add, not that the addition will pass or change the classification.
@@ -66,6 +68,7 @@ the job of the evidence-specific producers.
 - `domain::limit_guidance::tests::every_static_limit_names_an_actionable_next_step`
 - `domain::limit_guidance::tests::every_stop_reason_names_an_actionable_next_step`
 - `domain::limit_guidance::tests::unresolved_edge_next_steps_are_conditional_and_name_the_limit`
+- `output::human::explain::tests::unresolved_reach_edge_recipe_does_not_promise_a_direct_call_closes_it`
 - `domain::limit_guidance::tests::next_steps_are_distinct_per_kind`
 - `domain::limit_guidance::tests::next_steps_make_no_runtime_or_coverage_claim`
 - `domain::limit_guidance::tests::static_limit_kinds_all_is_a_gap_free_ordinal_sequence`
