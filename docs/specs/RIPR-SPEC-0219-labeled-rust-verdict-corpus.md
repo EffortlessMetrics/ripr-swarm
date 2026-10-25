@@ -425,14 +425,15 @@ verdict and a fixed row cannot return unnoticed. A `--case` subset is never
 gated on it.
 
 Missed credit, an `abstained` row whose truth is `discriminated` (tests that
-catch the change while ripr says unknown), is accepted one row per file:
-`missed-credit/<case>.toml` in the corpus directory holds `case` and a
-`reason`, and the file name is the case id. The count is derived from the files,
-never stored, so two PRs that move different rows never edit the same line (a
+catch the change while ripr says unknown), is accepted one row per block:
+`missed-credit.toml` in the corpus directory holds `[[entry]]` blocks (`case`
+and a `reason`), sorted by case and unique, with a blank line between blocks.
+The count is derived from the entries, never stored, so two PRs that add or
+remove different rows touch different hunks and merge cleanly (a
 `missed_credit_ceiling` line in `spec-coverage.toml` is rejected). A
 whole-corpus `check` fails on a missed-credit row without an entry, naming it
 (a swap that keeps the count still fails), and passes with a printed note
-naming the file to delete when an accepted row no longer misses credit, so a
+naming the entry to delete when an accepted row no longer misses credit, so a
 fix never deadlocks concurrent fixes. A `--case` subset is never gated on it.
 
 The `[oracle]` table of `spec-coverage.toml` holds `match_floor` and

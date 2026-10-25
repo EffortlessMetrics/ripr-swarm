@@ -1,0 +1,109 @@
+# Abstained rows whose tests do catch the change (missed credit) that are
+# accepted, one `[[entry]]` per row, sorted by case with a blank line between
+# blocks so PRs adding different rows merge cleanly (#10222). A row that newly
+# misses credit fails `verdict-corpus check` until it is fixed or accepted here
+# with a reason; an entry whose row credits again passes with a note to delete it.
+
+[[entry]]
+case = "py-fixtures-deposit"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "py-fixtures-fee-boundary"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "py-hostile-dynamic-dispatch"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "py-hostile-lambda-assignment"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "py-hypothesis-mean-bounds"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "py-idioms-doctest-separator"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "py-idioms-patch-clock-offset"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "py-idioms-patch-clock-separator"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "py-shapes-dataclass-default-rate"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "py-shapes-decorator-loop-bound"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "py-shapes-decorator-retry-count"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "py-shapes-decorator-wrapped-return"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "py-shapes-dunder-eq-type-guard"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "py-shapes-package-export-lookup"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "py-shapes-relative-import-quote"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "py-shapes-relative-import-table"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "py-spec0201-ex01-construct-and-render-self-call"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "py-spec0201-ex05-module-function-builds-class-internally"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "py-spec0201-ex06-six-hop-self-chain"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "py-spec0233-ex10-numpy-helper"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "py-spec0233-ex11-fluent-helper"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "py-spec0233-ex27-module-imports-os"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "py-spec0233-ex30-property"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "py-trap-platform-matched"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "py-trap-wrapped-through"
+reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "unnum-0028-ex3-decorator-indirection"
+reason = "Abstains by design (RIPR-SPEC-0028 example 3): a decorator that may wrap the call is not credited although the test catches the change."

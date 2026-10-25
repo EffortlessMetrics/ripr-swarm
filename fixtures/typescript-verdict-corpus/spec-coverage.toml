@@ -27,13 +27,6 @@
 # have no such assertion; raising the floor stays a separate decision.
 # Lowering it is a reviewed edit with a reason.
 
-# Abstained rows whose tests do catch the change (missed credit) are accepted
-# one file each under `missed-credit/<case>.toml` (case + reason), never as a
-# shared number, so PRs moving different rows do not conflict (#10222). A row
-# that newly misses credit fails `verdict-corpus check` until it is fixed or
-# accepted by a reviewed new file; an accepted row that credits again passes
-# with a note to delete its file.
-
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
 floor = 159
 

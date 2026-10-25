@@ -44,11 +44,11 @@ pub(crate) struct Ledger {
     #[serde(default)]
     pub(crate) known_false: Vec<super::known_false::KnownFalse>,
     /// The retired shared ceiling line. Present only so a corpus that still
-    /// carries it is refused with a pointer to `missed-credit/` (#10222).
+    /// carries it is refused with a pointer to `missed-credit.toml` (#10222).
     #[serde(default)]
     pub(crate) missed_credit_ceiling: Option<usize>,
     /// Abstained rows whose tests do discriminate the change, each accepted by
-    /// its own `missed-credit/<case>.toml` (`verdict_corpus_known_false.rs`).
+    /// an `[[entry]]` in `missed-credit.toml` (`verdict_corpus_known_false.rs`).
     #[serde(skip)]
     pub(crate) missed_credit: Vec<super::known_false::MissedCredit>,
     /// Coverage axes beyond spec examples: language shapes, test-library
@@ -278,9 +278,9 @@ pub(crate) fn load_ledger(corpus_dir: &Path) -> Result<Ledger, String> {
     }
     if ledger.missed_credit_ceiling.is_some() {
         return Err(format!(
-            "{} carries `missed_credit_ceiling`; one `{}/<case>.toml` per accepted row replaces that shared line, which every ceiling-moving PR conflicted on",
+            "{} carries `missed_credit_ceiling`; sorted `[[entry]]` blocks in `{}` replace that shared line, which every ceiling-moving PR conflicted on",
             normalize_path(&path),
-            super::known_false::MISSED_CREDIT_DIR
+            super::known_false::MISSED_CREDIT_FILE
         ));
     }
     ledger.known_false = super::known_false::load_entries(corpus_dir)?;

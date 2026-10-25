@@ -1,2 +1,0 @@
-case = "perl-testmore-quote-is-deeply-total"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."

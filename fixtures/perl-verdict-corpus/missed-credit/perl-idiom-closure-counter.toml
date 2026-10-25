@@ -1,2 +1,0 @@
-case = "perl-idiom-closure-counter"
-reason = "Catches the rewrite but ripr abstains (limited) rather than reporting a false gap (#9416)."
