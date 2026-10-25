@@ -102,6 +102,8 @@ unchanged.
 all proximity-only; RIPR-SPEC-0117 states the rule. The class stays
 `weakly_exposed`.
 
+#10127 extends it to `reachable_unrevealed` findings, but only when a witness test lives in a different workspace package than the owner (a cross-crate wrapper). Same-package witnesses keep the existing reading. The class stays `reachable_unrevealed`; the finding gains the named limit.
+
 ### When NOT found
 
 Leave the finding exactly as today (bare `no_static_path`, or a proximity-only
