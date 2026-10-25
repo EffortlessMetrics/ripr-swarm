@@ -1806,10 +1806,7 @@ fn an_in_file_test_module_import_resolves_from_its_own_scope() -> Result<(), Str
     assert_recovered(
         &in_file(
             LIB,
-            &tests_module(
-                &format!("#[allow(unused_imports)]\n{import}"),
-                &test_file(BARE),
-            ),
+            &tests_module(&format!("#[doc(hidden)]\n{import}"), &test_file(BARE)),
         ),
         "attributed use item",
     )?;
@@ -1929,7 +1926,8 @@ fn an_in_file_relative_import_of_another_scope_stays_refused() -> Result<(), Str
         "import only in a sibling module",
     )?;
     // A nearer foreign binding in the test's scope beside a resolved import
-    // elsewhere (sibling and nested).
+    // elsewhere (sibling and nested). End-to-end pins: the file-wide renamed-
+    // import veto (`test_call_is_shadowed`) decides these, not the scope check.
     let identity =
         test_file("    assert_eq!(order_discount(10), 10);\n    assert_eq!(order_discount(9), 9);");
     assert_refused(
@@ -1965,6 +1963,23 @@ fn an_in_file_relative_import_of_another_scope_stays_refused() -> Result<(), Str
             ),
         ),
         "re-exporting module",
+    )?;
+    // Accepted conservative loss: a test fn nested in another fn has no
+    // module scope this resolver reads.
+    assert_refused(
+        &in_file(
+            LIB,
+            &tests_module(
+                "use super::order_discount;",
+                &format!(
+                    "fn outer() {{
+{}
+}}",
+                    test_file(BARE)
+                ),
+            ),
+        ),
+        "test fn nested in a fn",
     )?;
     // Guards that predate the in-file scope (glob, cfg-gated use, body
     // binding) still refuse beside the in-file layout.

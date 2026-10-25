@@ -389,7 +389,8 @@ can only hint that a caller "may lead here" without changing anything.
   in-file positive and `module_reach_super_import_in_file_wrong_module` its
   wrong-scope counterexample. An in-file import that resolves to another module
   only re-exporting the entry (`mod flat { pub use crate::<entry>; mod tests {
-  use super::<entry>; } }`) is an accepted conservative loss. Still refused, tracked in #9971: a test module on a
+  use super::<entry>; } }`) is an accepted conservative loss, as is a test function nested inside another
+  function. Still refused, tracked in #9971: a test module on a
   declaration chain that passes through an inline module (the library index
   does not place such a file in a module context either), a test module under
   a `cfg(test)`-gated parent, and the other routes listed above.
