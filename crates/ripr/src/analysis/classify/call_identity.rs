@@ -1093,7 +1093,110 @@ pub(super) fn library_module_path_is_bound(
     module
         .iter()
         .all(|segment| !module_declaration_is_ambiguous(index, segment, true))
-        && library_declaration_chain_reaches_file(index, &function.file)
+        && library_declaration_chain_reaches_file(index, &function.file, false)
+}
+
+/// Whether a relative `self::`/`super::` import (`import_path`, unaliased) in a
+/// unit test file under the root package's `src/` names `entry` (#9971). The
+/// spelled path is resolved against the test file's module (read from the
+/// layout) to an absolute module path, which must equal the entry's, and both
+/// sides must be bound by the library's declaration chain from `src/lib.rs`:
+/// the entry by [`library_module_path_is_bound`], the test file by an
+/// unconditional, un-remapped chain whose only `cfg` is a bare
+/// `#[cfg(test)]` on the test module's own out-of-line declaration, passing
+/// through no inline module. Fails closed (`false`) on anything else: a
+/// `#[path]` anywhere in the package, a file outside the root package's
+/// library, an inline module, glob import, `cfg`-gated `use` or item-position
+/// macro in the test file, or a path that goes through `self`/`super`/`crate`
+/// again.
+pub(super) fn unit_test_relative_import_names_entry(
+    index: &RustIndex,
+    test_file: &Path,
+    import_path: &str,
+    entry: &FunctionSummary,
+) -> bool {
+    use ra_ap_syntax::{AstNode, ast};
+    let segments: Vec<String> = import_path
+        .split("::")
+        .map(|segment| segment.strip_prefix("r#").unwrap_or(segment).to_string())
+        .collect();
+    let Some((last, path)) = segments.split_last() else {
+        return false;
+    };
+    let (ups, rest) = match path.first().map(String::as_str) {
+        Some("self") => (0, &path[1..]),
+        Some("super") => {
+            let ups = path
+                .iter()
+                .take_while(|segment| *segment == "super")
+                .count();
+            (ups, &path[ups..])
+        }
+        _ => return false,
+    };
+    if last != &entry.name {
+        return false;
+    }
+    let normalized = super::related_tests::normalize_path(test_file);
+    if package_key(test_file).is_some()
+        || package_key(&entry.file).is_some()
+        || super::related_tests::path_is_absolute_form(test_file)
+        || under_tests_dir(test_file)
+        || src_body(&normalized).is_none()
+        || package_remaps_module_paths(index, None)
+    {
+        return false;
+    }
+    let library_root = |file: &Path| {
+        super::owner_pin::target_root(file, index, &BTreeSet::new())
+            .is_some_and(|root| root == Path::new("src/lib.rs"))
+    };
+    if !library_root(test_file) || !library_root(&entry.file) {
+        return false;
+    }
+    let (Some(test_module), Some(entry_module)) = (
+        file_module_segments(test_file),
+        definition_module_path(entry),
+    ) else {
+        return false;
+    };
+    if ups > test_module.len() {
+        return false;
+    }
+    let resolved: Vec<String> = test_module[..test_module.len() - ups]
+        .iter()
+        .chain(rest)
+        .cloned()
+        .collect();
+    if resolved != entry_module
+        || !library_module_path_is_bound(index, entry, &entry_module)
+        || !library_declaration_chain_reaches_file(index, test_file, true)
+    {
+        return false;
+    }
+    let Some(facts) = index.files().get(test_file) else {
+        return false;
+    };
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&facts.source) else {
+        return false;
+    };
+    let tree = parse.tree();
+    // Scope: an inline module in the test file would move `super`/`self`, a
+    // glob or a `cfg`-gated `use` may bind or unbind the name, and a macro may
+    // splice items this scan does not read.
+    if source_may_splice_items(&facts.source, true)
+        || super::owner_pin::has_cfg_attr(&tree)
+        || super::reveal::flattened_use_paths(&facts.source)
+            .iter()
+            .any(|import| import.path.ends_with('*'))
+    {
+        return false;
+    }
+    !tree.syntax().descendants().any(|node| {
+        ast::Module::cast(node.clone()).is_some_and(|module| module.item_list().is_some())
+            || ast::Use::cast(node)
+                .is_some_and(|use_item| super::owner_pin::has_cfg_attr(&use_item))
+    })
 }
 
 /// Walk the declaration chain from `src/lib.rs`: each file-module segment of
@@ -1103,7 +1206,15 @@ pub(super) fn library_module_path_is_bound(
 /// the next link. The last link must be `file` itself, so a same-named inline
 /// module, or a `#[path]` that sends the file to another name, never binds the
 /// path to the indexed definition.
-fn library_declaration_chain_reaches_file(index: &RustIndex, file: &Path) -> bool {
+///
+/// With `unit_test_module`, the last declaration (the test module itself) may
+/// carry a bare `#[cfg(test)]` and no inline module may sit in the chain
+/// (#9971); every other `cfg` still refuses.
+fn library_declaration_chain_reaches_file(
+    index: &RustIndex,
+    file: &Path,
+    unit_test_module: bool,
+) -> bool {
     use ra_ap_syntax::{AstNode, ast, ast::HasModuleItem, ast::HasName};
     let Some(segments) = file_module_segments(file) else {
         return false;
@@ -1114,7 +1225,7 @@ fn library_declaration_chain_reaches_file(index: &RustIndex, file: &Path) -> boo
     // directory the next out-of-line declaration loads from.
     let mut inline_path: Vec<String> = Vec::new();
     let mut container: Option<Vec<ast::Item>> = None;
-    for segment in &segments {
+    for (position, segment) in segments.iter().enumerate() {
         if container.is_none() {
             let Some(facts) = index.files().get(&current) else {
                 return false;
@@ -1142,14 +1253,28 @@ fn library_declaration_chain_reaches_file(index: &RustIndex, file: &Path) -> boo
         let [declaration] = same_named.as_slice() else {
             return false;
         };
-        if super::owner_pin::has_cfg_attr(declaration)
+        let bare_cfg_test = unit_test_module
+            && position + 1 == segments.len()
+            && ast::HasAttrs::attrs(declaration)
+                .filter(|attr| {
+                    matches!(
+                        attr.meta(),
+                        Some(ast::Meta::CfgMeta(_) | ast::Meta::CfgAttrMeta(_))
+                    )
+                })
+                .all(|attr| {
+                    crate::analysis::cfg_predicates::attribute_is_plain_test_gate(
+                        &attr.syntax().text().to_string(),
+                    )
+                });
+        if (super::owner_pin::has_cfg_attr(declaration) && !bare_cfg_test)
             || ast::HasAttrs::attrs(declaration)
                 .any(|attr| has_path_attribute(&attr.syntax().text().to_string()))
         {
             return false;
         }
         if let Some(items) = declaration.item_list() {
-            if super::owner_pin::has_cfg_attr(&items) {
+            if unit_test_module || super::owner_pin::has_cfg_attr(&items) {
                 return false;
             }
             inline_path.push(segment.clone());
