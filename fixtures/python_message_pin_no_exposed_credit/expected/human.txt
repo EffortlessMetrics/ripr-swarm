@@ -20,7 +20,11 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Canonical gap: gap:python:src/check.py:check:exception_path:error_path:valueerror_negative_value_must_be_at_most_zero
   Changed behavior: raise ValueError("negative value: must be at most zero")
-  Missing discriminator (1 of 2): A strong Python oracle reaches `check`, but every strong related error assertion pins `ValueError` with a literal message pattern (`negative value`) that matches the old message…
+  Missing discriminator (1 of 2): A strong Python oracle reaches `check`, but every strong related
+    error assertion pins `ValueError` with a literal message pattern (`negative value`) that matches
+    the old message "negative value: must be at least zero" and the new message "negative value:
+    must be at most zero" alike, so it pins only the exception class. Add a `match=` pattern that
+    the old message does not satisfy
   Related test: tests/test_check.py:6 test_negative_is_rejected
   Suggested test file: tests/test_check.py
   Suggested test: test_negative_is_rejected
