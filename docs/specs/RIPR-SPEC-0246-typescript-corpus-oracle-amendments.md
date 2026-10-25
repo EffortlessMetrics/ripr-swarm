@@ -345,25 +345,35 @@ owner(f)`, `function go(f) { return owner(f); }`, `class H { go(f) {...} }`).
 For methods, only receivers the test builds from the owner's class count
 (`svc.retry`), and a same-named local cannot shadow the property. The mock
 and every local assigned from an expression that mentions it (declaration,
-assignment, destructuring, container, multi-line) are carriers. The rule
-abstains when a statement that mentions the owner also mentions a carrier, or
-when a carrier is used anywhere the rule cannot show is unrelated: not a plain
-local binding, not a state read (`.mock`, `.callCount`, `.calledOnce`), not a
-direct invocation outside any call, not an argument of a member call on a
-receiver that is neither the owner nor a carrier and does not store its
-arguments (`console.log(m)`, `other.owner(m)`), and not an argument of a
-body-local function that does not reach the owner. An unknown callee is
-unresolved flow and abstains. A member value (`owner(other.m)`), an object key
-(`{ m: x }`), a callback or function parameter that rebinds the name
-(`async (m = g) => m()`) and text in a comment or string are not uses of the
-mock. A call count on a mock that never leaves its declaration and its count
-reads stays an actionable gap. An owner spelling the adapter does not link as
-a call (`owner<T>(m)`, `owner!(m)`, `(0, owner)(m)`, `owner.call(null, m)`)
-has only a heuristic relation and an advisory finding, never a repair target.
-Multi-line `for (` headers, `while`, and chained labels are not read. The
-predicate-boundary witness does not apply to a loop header, and the adapter
-does not model how many iterations the loop runs, so neither a gap nor a
-credit is established. `for...of`, `for...in`,
+assignment, destructuring, container, multi-line) are carriers, and a count
+read through a local built from plain references to the mock (`const spy =
+m`, `[m]`, `{ m }`) counts the mock too. The rule abstains when a statement
+that mentions the owner also mentions a carrier, when a call that received a
+carrier (including a callback body split across statements and its chained
+`.then(...)`) mentions the owner anywhere in its span, or when a carrier is
+used anywhere the rule cannot show is unrelated. The only unrelated uses are:
+a plain local binding with no call around the mock, a direct invocation
+(`m()`), a state read or configuration of the mock itself (`m.mock…`,
+`m.callCount`, `m.calledOnce`), `expect(m)`, an argument of a call on an
+observing receiver (`console`, `assert`, `expect`, `JSON`, `Math`, `t`) or of
+`setTimeout`/`setInterval`/`queueMicrotask`, an argument of a member that
+shares the owner's name on another receiver (`other.owner(m)`), and an
+argument of a body-local function that does not reach the owner. Every other
+callee is unresolved flow and abstains, so a call that may store or forward
+the mock (`h.push(m)`, `outer.mockImplementation(m)`, `reg.register(m)`)
+abstains. A member value (`owner(other.m)`), an object key (`{ m: x }`), a
+callback or function parameter that rebinds the name (`async (m = g) =>
+m()`) and text in a comment or string are not uses of the mock. A call count
+on a mock that never leaves its declaration and its count reads stays an
+actionable gap. The rule fires only when the ladder's oracle is strong, so
+`expect(m).toHaveBeenCalledTimes(n)` (a medium oracle) abstains only beside a
+strong assertion. An owner spelling the adapter does not link as a call
+(`owner<T>(m)`, `owner!(m)`, `(0, owner)(m)`, `owner.call(null, m)`) has only
+a heuristic relation (`ambiguous_related_test`) and never routes a repair
+packet. Multi-line `for (` headers, `while`, and chained labels are not read.
+The predicate-boundary witness does not apply to a loop header, and the
+adapter does not model how many iterations the loop runs, so neither a gap
+nor a credit is established. `for...of`, `for...in`,
 `while` and `if` changes are not read. Rule 8 only moves `weakly_exposed` to
 `static_unknown`; it credits nothing. The credit, which needs an iteration
 count model, is tracked in #9874.

@@ -396,12 +396,14 @@ fn owner_spellings_without_a_direct_relation_are_never_actionable() -> Result<()
             "  const fn = mock.fn(async () => {{ throw new Error(\"down\"); }});\n  await assert.rejects({call}, /down/);\n  assert.equal(fn.mock.callCount(), 2);"
         );
         let finding = run(label, RETRY, OLD, NEW, &retry_test(&body))?;
-        let advisory = finding
+        // Only a heuristic-only link is `ambiguous_related_test`: the finding
+        // never routes a repair packet.
+        let heuristic_only = finding
             .missing
             .iter()
-            .any(|line| line.contains("actionability `advisory`"));
+            .any(|line| line.contains("ambiguous_related_test"));
         assert!(
-            finding.class == ExposureClass::StaticUnknown || advisory,
+            finding.class == ExposureClass::StaticUnknown || heuristic_only,
             "{label}: {:?}",
             finding.missing
         );
@@ -502,4 +504,75 @@ fn every_asserted_count_spelling_abstains_and_an_unasserted_read_does_not() -> R
     // A property mock is not the local handed to the owner.
     let property = "  const fn = mock.fn(async () => \"ok\");\n  const other = { fn: mock.fn(async () => \"ok\") };\n  assert.equal(await withRetry(fn, 3), \"ok\");\n  assert.equal(other.fn.mock.callCount(), 0);";
     assert_stays_a_gap("loop-property-count", property)
+}
+
+#[test]
+fn a_count_read_through_an_alias_or_container_of_the_mock_abstains() -> Result<(), String> {
+    for (label, setup, count) in [
+        (
+            "loop-count-alias",
+            "const spy = fn;",
+            "spy.mock.callCount()",
+        ),
+        (
+            "loop-count-array",
+            "const fns = [fn];",
+            "fns[0].mock.callCount()",
+        ),
+        (
+            "loop-count-object",
+            "const o = { fn };",
+            "o.fn.mock.callCount()",
+        ),
+    ] {
+        let body = format!(
+            "  const fn = mock.fn(async () => {{ throw new Error(\"down\"); }});\n  {setup}\n  await assert.rejects(withRetry(fn, 2), /down/);\n  assert.equal({count}, 2);"
+        );
+        let finding = run(label, RETRY, OLD, NEW, &retry_test(&body))?;
+        assert_abstains(label, &finding);
+    }
+    Ok(())
+}
+
+#[test]
+fn storing_the_mock_on_a_callee_or_in_a_callback_abstains() -> Result<(), String> {
+    for (label, flow) in [
+        (
+            "loop-push-binding",
+            "const h: any[] = [];\n  const n = h.push(fn);\n  await assert.rejects(withRetry(h[0], 2), /down/);",
+        ),
+        (
+            "loop-mock-impl",
+            "const outer = mock.fn();\n  outer.mock.mockImplementation(fn);\n  await assert.rejects(withRetry(outer, 2), /down/);",
+        ),
+        (
+            "loop-callback-body",
+            "await Promise.all([fn].map(async (f) => {\n    await assert.rejects(withRetry(f, 2), /down/);\n  }));",
+        ),
+    ] {
+        let body = format!(
+            "  const fn = mock.fn(async () => {{ throw new Error(\"down\"); }});\n  {flow}\n  assert.equal(fn.mock.callCount(), 2);"
+        );
+        let finding = run(label, RETRY, OLD, NEW, &retry_test(&body))?;
+        assert_abstains(label, &finding);
+    }
+    Ok(())
+}
+
+#[test]
+fn calling_or_configuring_an_unrelated_mock_stays_a_gap() -> Result<(), String> {
+    for (label, uses) in [
+        ("loop-lg-call", "lg('x');\n  await lg();"),
+        (
+            "loop-lg-config",
+            "lg.mock.mockImplementation(() => 1);\n  lg.mock.resetCalls();",
+        ),
+        ("loop-lg-timer", "setTimeout(lg, 0);"),
+    ] {
+        let body = format!(
+            "{REAL_VALUE}\n  const lg = mock.fn();\n  {uses}\n  assert.equal(lg.mock.callCount(), 0);"
+        );
+        assert_stays_a_gap(label, &body)?;
+    }
+    Ok(())
 }

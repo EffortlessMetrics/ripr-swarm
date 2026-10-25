@@ -295,6 +295,30 @@ fn asserted_counted_mocks<'a>(
             }
         }
     }
+    // `const spy = fn; spy.mock.calls.length`, `const fns = [fn]`, `{ fn }`:
+    // a local built from plain references stands for what it mentions.
+    loop {
+        let before = mocks.len();
+        for binding in bindings {
+            let rhs = binding.rhs.trim();
+            if rhs.contains('(') || !binding.names.iter().any(|n| mocks.contains(n)) {
+                continue;
+            }
+            for word in rhs.split(|c: char| !is_word(c)) {
+                let first = word.chars().next();
+                if !word.is_empty()
+                    && !first.is_some_and(|c| c.is_ascii_digit())
+                    && !NOT_A_MOCK.contains(&word)
+                    && !mention_positions(rhs, 0, rhs.len(), word).is_empty()
+                {
+                    add(&mut mocks, word);
+                }
+            }
+        }
+        if mocks.len() == before {
+            break;
+        }
+    }
     // `m.callCount()` after `const m = fn.mock`: the mock is the root of the
     // aliased `.mock` expression.
     for binding in bindings {
@@ -809,20 +833,29 @@ fn mentions_owner(statement: &str, name: &str, receivers: Receivers<'_>, skip_ke
     })
 }
 
-/// Methods that store their arguments where a later read can find them.
-const STORING_METHODS: [&str; 12] = [
-    "push",
-    "unshift",
-    "splice",
-    "set",
-    "add",
-    "concat",
-    "assign",
-    "fill",
-    "from",
-    "of",
-    "bind",
-    "defineProperty",
+/// Receivers whose member calls only observe their arguments.
+const INERT_RECEIVERS: [&str; 6] = ["console", "assert", "expect", "JSON", "Math", "t"];
+
+/// Bare callees that only observe or schedule their arguments.
+const INERT_CALLEES: [&str; 4] = [
+    "setTimeout",
+    "setInterval",
+    "clearTimeout",
+    "queueMicrotask",
+];
+
+/// Test registration callees: the test body is their argument, not a use.
+const TEST_WRAPPERS: [&str; 10] = [
+    "it",
+    "test",
+    "describe",
+    "suite",
+    "before",
+    "after",
+    "beforeEach",
+    "afterEach",
+    "beforeAll",
+    "afterAll",
 ];
 
 /// Suffixes that read a mock's state without passing the mock on.
@@ -854,10 +887,9 @@ fn is_simple_binding(statement: &str) -> bool {
         || (declared && rest.starts_with(['{', '[']) && first_assignment(rest).is_some())
 }
 
-/// The member chain that ends `callee`, whitespace around its dots removed
-/// (`other. withRetry` is `other.withRetry`).
-fn callee_chain(callee: &str) -> String {
-    let mut chain = String::new();
+/// Where the member chain that ends `callee` starts, whitespace around its
+/// dots included (`other. withRetry` starts at `other`).
+fn callee_start(callee: &str) -> usize {
     let mut rest = callee.trim_end();
     loop {
         let word_start = rest
@@ -866,16 +898,21 @@ fn callee_chain(callee: &str) -> String {
             .take_while(|(_, c)| is_word(*c) || matches!(c, '?' | '!'))
             .last()
             .map_or(rest.len(), |(at, _)| at);
-        chain.insert_str(0, &rest[word_start..]);
-        let before = rest[..word_start].trim_end();
-        match before.strip_suffix('.') {
-            Some(receiver) => {
-                chain.insert(0, '.');
-                rest = receiver.trim_end();
-            }
-            None => return chain,
+        match rest[..word_start].trim_end().strip_suffix('.') {
+            Some(receiver) => rest = receiver.trim_end(),
+            None => return word_start,
         }
     }
+}
+
+/// The member chain that ends `callee`, whitespace removed
+/// (`other. withRetry` is `other.withRetry`).
+fn callee_chain(callee: &str) -> String {
+    let callee = callee.trim_end();
+    callee[callee_start(callee)..]
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect()
 }
 
 /// The call whose argument list holds position `at`: its callee text, or
@@ -889,10 +926,11 @@ fn enclosing_callee(text: &str, at: usize) -> Option<String> {
                 if depth > 0 {
                     depth -= 1;
                 } else if ch == '(' {
-                    return Some(callee_chain(text[..i].trim_end()));
-                } else if ch == '{' {
-                    // An object or block opens here; keep looking outward.
-                    continue;
+                    let callee = callee_chain(text[..i].trim_end());
+                    let root = callee.split('.').next().unwrap_or("");
+                    if !TEST_WRAPPERS.contains(&root) {
+                        return Some(callee);
+                    }
                 }
             }
             _ => {}
@@ -902,29 +940,38 @@ fn enclosing_callee(text: &str, at: usize) -> Option<String> {
 }
 
 /// Whether the use of `name` at `at` demonstrably sends the mock nowhere: a
-/// state read, a direct invocation outside any call, an argument of a member
-/// call on a receiver that is not the owner or a carrier (`console.log(m)`,
-/// `assert.ok(m)`, `other.owner(m)`), or an argument of a body-local
-/// function that does not reach the owner (a shadowed canonical name).
+/// direct invocation, a state read or configuration of the mock itself
+/// (`.mock…`, `.callCount`), an argument of a call on an observing receiver
+/// (`console.log(m)`, `assert.ok(m)`), an argument of a member that shares the
+/// owner's name on another receiver (`other.owner(m)` is another binding), or
+/// an argument of a body-local function that does not reach the owner (a
+/// shadowed canonical name). Every other callee may forward the mock.
 fn use_is_inert(
     masked: &str,
     at: usize,
     name: &str,
+    call_names: &[&str],
     owners: &[String],
     carriers: &[String],
     locals: &[&str],
 ) -> bool {
     let after = &masked[at + name.len()..];
+    if after.starts_with(".mock") {
+        return true;
+    }
     if STATE_READS.iter().any(|read| {
         after.starts_with(read) && !after[read.len()..].chars().next().is_some_and(is_word)
     }) {
+        return true;
+    }
+    if after.trim_start().starts_with('(') {
         return true;
     }
     if masked[..at].trim_end().ends_with("expect(") {
         return true;
     }
     let Some(callee) = enclosing_callee(masked, at) else {
-        return after.trim_start().starts_with('(');
+        return false;
     };
     if callee.is_empty() {
         return false;
@@ -932,13 +979,48 @@ fn use_is_inert(
     let segments: Vec<&str> = callee.split('.').collect();
     let root = segments[0].trim_end_matches(['?', '!']);
     let last = segments[segments.len() - 1].trim_end_matches(['?', '!']);
-    if segments.len() > 1 {
-        !owners.iter().any(|o| o == root)
-            && !carriers.iter().any(|c| c == root)
-            && !STORING_METHODS.contains(&last)
-    } else {
-        locals.contains(&root) && !owners.iter().any(|o| o == root)
+    if owners.iter().any(|o| o == root) || carriers.iter().any(|c| c == root) {
+        return false;
     }
+    if segments.len() > 1 {
+        INERT_RECEIVERS.contains(&root) || call_names.contains(&last)
+    } else {
+        INERT_CALLEES.contains(&root) || locals.contains(&root)
+    }
+}
+
+/// The span of the outermost call whose argument list holds `at`, test
+/// registration callees excluded: a callback body split into several
+/// statements still belongs to the call that received the mock.
+fn outermost_call_span(text: &str, at: usize) -> Option<(usize, usize)> {
+    let mut depth = 0usize;
+    let mut span = None;
+    for (i, ch) in text[..at].char_indices().rev() {
+        match ch {
+            ')' | ']' | '}' => depth += 1,
+            '(' | '[' | '{' => {
+                if depth > 0 {
+                    depth -= 1;
+                } else if ch == '(' {
+                    let callee = callee_chain(text[..i].trim_end());
+                    let root = callee.split('.').next().unwrap_or("");
+                    if !TEST_WRAPPERS.contains(&root) {
+                        let start = callee_start(text[..i].trim_end());
+                        let mut end = group_end(text, i);
+                        // `.then(async (f) => {…})` chained on the call.
+                        while text[end..].trim_start().starts_with('.') {
+                            let rest = &text[end..];
+                            let Some(open) = rest.find('(') else { break };
+                            end += group_end(rest, open);
+                        }
+                        span = Some((start, end));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    span
 }
 
 /// Some statement in `masked` (comments and literals blanked) sends the
@@ -963,6 +1045,11 @@ fn hands_mock_to_owner(
         .iter()
         .flat_map(|binding| binding.names.iter().copied())
         .collect();
+    let runs_owner = |text: &str| {
+        owners
+            .iter()
+            .any(|owner| mentions_owner(text, owner, receivers, false))
+    };
     statements(masked).iter().any(|statement| {
         let lo = statement.as_ptr() as usize - masked.as_ptr() as usize;
         let hi = lo + statement.len();
@@ -977,16 +1064,25 @@ fn hands_mock_to_owner(
         if uses.is_empty() {
             return false;
         }
-        if owners
-            .iter()
-            .any(|owner| mentions_owner(statement, owner, receivers, false))
-        {
+        if runs_owner(statement) {
             return true;
         }
-        !is_simple_binding(statement)
-            && uses
-                .iter()
-                .any(|&(at, name)| !use_is_inert(masked, at, name, &owners, &carriers, &locals))
+        let binding = is_simple_binding(statement);
+        uses.iter().any(|&(at, name)| {
+            // A call that received the mock and spans several statements
+            // (a callback body) may run the owner in a later one.
+            if let Some((start, end)) = outermost_call_span(masked, at)
+                && runs_owner(&masked[start..end])
+            {
+                return true;
+            }
+            // A plain binding follows the flow through its carrier; a call
+            // inside it still has to be shown unrelated.
+            if binding && enclosing_callee(masked, at).is_none() {
+                return false;
+            }
+            !use_is_inert(masked, at, name, call_names, &owners, &carriers, &locals)
+        })
     })
 }
 
@@ -1275,6 +1371,44 @@ mod tests {
             "const local = (f, n) => n; local(fn, 2);",
         ] {
             assert!(!passes(call, &names, "fn"), "{call}");
+        }
+    }
+
+    fn wrapped(body: &str, mock: &str) -> bool {
+        let text = format!("it(\"x\", async () => {{\n{body}\n}});");
+        hands_mock_to_owner(
+            &ts_mask_literals_and_comments(&text),
+            &["withRetry"],
+            Receivers::Bare,
+            mock,
+        )
+    }
+
+    #[test]
+    fn unresolved_flow_abstains_and_unrelated_use_does_not() {
+        for body in [
+            "const h: any[] = [];\nconst n = h.push(fn);\nawait withRetry(h[0], 2);",
+            "const outer = vi.fn();\nouter.mockImplementation(fn);\nawait withRetry(outer, 2);",
+            "const reg: any = { list: [] as any[], register(f: any) { this.list.push(f); } };\nreg.register(fn);\nawait withRetry(reg.list[0], 2);",
+            "await Promise.all([fn].map(async (f) => {\n  await withRetry(f, 2);\n}));",
+            "await Promise.resolve(fn).then(async (f) => {\n  await withRetry(f, 2);\n});",
+            "h.use(fn);",
+            "emitter.on('x', fn);",
+        ] {
+            assert!(wrapped(body, "fn"), "{body}");
+        }
+        for body in [
+            "const lg = vi.fn();\nlg('x');",
+            "const lg = vi.fn();\nawait lg();",
+            "const lg = vi.fn();\nlg.mockReturnValue(1);\nlg.mockClear();",
+            "const lg = vi.fn();\nsetTimeout(lg, 0);",
+            "const lg = vi.fn();\nconsole.log(lg);\nassert.ok(lg);",
+            "const lg = vi.fn();\nother.withRetry(lg, 2);",
+        ] {
+            assert!(
+                !wrapped(&format!("{body}\nawait withRetry(real, 3);"), "lg"),
+                "{body}"
+            );
         }
     }
 
