@@ -587,6 +587,16 @@ stay `broad_error` / weak, as do `doesNotThrow` and `doesNotReject`.
 
 ### Reach
 
+Setup-derived receiver identity requires an unwritten setup-hook binding.
+Assignments, updates, destructuring and loop targets that write `beforeEach`
+or `beforeAll`, including direct properties of known global objects, withhold
+the hook's construction facts. A computed global target whose key is unreadable
+withholds every setup-hook binding. These facts come from the parsed AST, so
+comments, strings, regexes and an ordinary object's same-named property do not
+count as hook writes. The check is conservative across the file: it does not
+resolve local same-name writes, registration timing or restoration of a hook.
+It adds no relation or oracle credit.
+
 Candidates come from the first non-empty tier:
 
 1. **Owner-call relations**, over all tests with no package filter:

@@ -189,6 +189,7 @@ fn extract_tests_expanding_suite_factories(file: &Path, source: &str, expand: bo
             )
             .with_strict_matchers(strict_equality_matchers(&ret.program.body, source)),
             admission: TypeScriptAdmissionContext::of_program(&ret.program, &imports, file),
+            reassigned_setup_hooks: reassigned_setup_hooks(&ret.program),
             ..TestScope::default()
         };
         // One line index per source; every test and assertion line is a
@@ -883,12 +884,13 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
         ("beforeAll", Phase::BeforeAll),
         ("beforeEach", Phase::BeforeEach),
     ] {
-        let shadowed = scope
-            .levels
-            .iter()
-            .chain(std::iter::once(&level))
-            .flatten()
-            .any(|(name, _, entry_phase)| name == hook && *entry_phase == Phase::Declaration)
+        let shadowed = scope.reassigned_setup_hooks.iter().any(|name| name == hook)
+            || scope
+                .levels
+                .iter()
+                .chain(std::iter::once(&level))
+                .flatten()
+                .any(|(name, _, entry_phase)| name == hook && *entry_phase == Phase::Declaration)
             || imports.iter().any(|import| {
                 import.local == hook
                     && (!TEST_RUNNER_MODULES.contains(&import.source.as_str())
@@ -1088,7 +1090,10 @@ fn collect_mocha_setup_hooks(
             import.local == hook
                 && !(import.source == "mocha" && import.imported.as_deref() == Some(hook))
         });
-        if declared || imported_elsewhere {
+        if declared
+            || imported_elsewhere
+            || scope.reassigned_setup_hooks.iter().any(|name| name == hook)
+        {
             continue;
         }
         let Some(argument) = call.arguments.last() else {
@@ -1171,9 +1176,114 @@ fn member_use_in_text(text: &str, name: &str) -> bool {
 /// Modules whose `beforeEach`/`beforeAll` run before every test in scope.
 const TEST_RUNNER_MODULES: [&str; 4] = ["vitest", "@jest/globals", "bun:test", "node:test"];
 
+/// Hook registration is trusted only while the hook binding is unwritten.
+/// Read the existing AST once, including nested callbacks: an unmodeled write
+/// may replace an ambient hook before its registration. This deliberately
+/// withholds on local same-name writes too; it never establishes hook credit.
+fn reassigned_setup_hooks(program: &oxc_ast::ast::Program<'_>) -> Vec<String> {
+    use oxc_ast::ast::{AssignmentTargetPropertyIdentifier, SimpleAssignmentTarget};
+    use oxc_ast_visit::{Visit, walk};
+
+    #[derive(Default)]
+    struct Writes(Vec<String>);
+
+    impl Writes {
+        fn record(&mut self, name: &str) {
+            if matches!(name, "before" | "beforeEach" | "beforeAll")
+                && !self.0.iter().any(|recorded| recorded == name)
+            {
+                self.0.push(name.to_string());
+            }
+        }
+
+        fn member(&mut self, object: &Expression<'_>, property: Option<&str>) {
+            let global = match runtime_expression(object) {
+                Expression::Identifier(identifier) => matches!(
+                    identifier.name.as_str(),
+                    "globalThis" | "global" | "window" | "self"
+                ),
+                Expression::ThisExpression(_) => true,
+                _ => false,
+            };
+            if global {
+                if let Some(property) = property {
+                    self.record(property);
+                } else {
+                    for hook in ["before", "beforeEach", "beforeAll"] {
+                        self.record(hook);
+                    }
+                }
+            }
+        }
+
+        fn expression(&mut self, expression: &Expression<'_>) {
+            match runtime_expression(expression) {
+                Expression::Identifier(identifier) => self.record(identifier.name.as_str()),
+                Expression::StaticMemberExpression(member) => {
+                    self.member(&member.object, Some(member.property.name.as_str()));
+                }
+                Expression::ComputedMemberExpression(member) => self.member(
+                    &member.object,
+                    match runtime_expression(&member.expression) {
+                        Expression::StringLiteral(literal) => Some(literal.value.as_str()),
+                        _ => None,
+                    },
+                ),
+                _ => {}
+            }
+        }
+    }
+
+    impl<'a> Visit<'a> for Writes {
+        fn visit_simple_assignment_target(&mut self, target: &SimpleAssignmentTarget<'a>) {
+            match target {
+                SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) => {
+                    self.record(identifier.name.as_str());
+                }
+                SimpleAssignmentTarget::StaticMemberExpression(member) => {
+                    self.member(&member.object, Some(member.property.name.as_str()));
+                }
+                SimpleAssignmentTarget::ComputedMemberExpression(member) => self.member(
+                    &member.object,
+                    match runtime_expression(&member.expression) {
+                        Expression::StringLiteral(literal) => Some(literal.value.as_str()),
+                        _ => None,
+                    },
+                ),
+                SimpleAssignmentTarget::TSAsExpression(inner) => self.expression(&inner.expression),
+                SimpleAssignmentTarget::TSSatisfiesExpression(inner) => {
+                    self.expression(&inner.expression);
+                }
+                SimpleAssignmentTarget::TSNonNullExpression(inner) => {
+                    self.expression(&inner.expression);
+                }
+                SimpleAssignmentTarget::TSTypeAssertion(inner) => {
+                    self.expression(&inner.expression)
+                }
+                _ => {}
+            }
+            walk::walk_simple_assignment_target(self, target);
+        }
+
+        fn visit_assignment_target_property_identifier(
+            &mut self,
+            property: &AssignmentTargetPropertyIdentifier<'a>,
+        ) {
+            self.record(property.binding.name.as_str());
+            walk::walk_assignment_target_property_identifier(self, property);
+        }
+    }
+
+    let mut writes = Writes::default();
+    writes.visit_program(program);
+    writes.0
+}
+
 /// The enclosing scopes of the statements being walked.
 #[derive(Default)]
 pub(crate) struct TestScope {
+    /// Hook-name writes anywhere in the parsed file withhold setup facts.
+    reassigned_setup_hooks: Vec<String>,
     /// Describe names, outermost first.
     describe_names: Vec<String>,
     /// Name bindings of the file and each enclosing describe, outermost first.

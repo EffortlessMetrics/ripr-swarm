@@ -12455,6 +12455,29 @@
             "class": "exposed"
           }
         ]
-      }
+      },
+    {
+      "id": "ts_reassigned_setup_hook",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_reassigned_setup_hook",
+      "vector": "inert_hook_reassignment_cannot_construct_the_asserted_receiver",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        }
+      ]
+    }
   ]
 }

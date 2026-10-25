@@ -470,3 +470,29 @@ fn a_module_entry_reach_keeps_its_own_verdict() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// Hook-name writes must not hide a side-effect gap behind work that the
+/// runner never registered. This keeps the existing enabled-hook control.
+#[test]
+fn reassigned_mocha_setup_hook_does_not_abstain() -> Result<(), String> {
+    for hook in ["before", "beforeEach"] {
+        let active = suite(&format!(
+            "  {hook}(() => {{\n    register(\"  alpha \");\n  }});\n"
+        ));
+        assert_eq!(hook_bodies(&active).len(), 2, "{hook}: test setup");
+        assert!(hook_bodies(&active).iter().all(|hooks| hooks.len() == 1));
+        assert_abstained(&format!("hook-active-{hook}"), &active)?;
+
+        let rebound = suite(&format!(
+            "  {hook} = () => {{}};\n  {hook}(() => {{\n    register(\"  alpha \");\n  }});\n"
+        ));
+        let bodies = hook_bodies(&rebound);
+        assert_eq!(bodies.len(), 2, "{hook}: keep the enabled tests");
+        assert!(
+            bodies.iter().all(Vec::is_empty),
+            "{hook}: an inert function received the callback: {bodies:?}"
+        );
+        assert_gap_kept(&format!("hook-rebound-{hook}"), &rebound)?;
+    }
+    Ok(())
+}

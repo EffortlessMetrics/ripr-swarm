@@ -1,0 +1,54 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/typescript_reassigned_setup_hook/input
+config: <cwd>/fixtures/typescript_reassigned_setup_hook/input/ripr.toml
+
+Summary: 1 probe (0 exposed, 0 weak, 0 unrevealed, 1 no path); 1 of 1 finding unsuppressed
+
+Changed file(s) by language: typescript = 1
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+
+Start here:
+  State: preview language, advisory only
+  Safe next action: this TypeScript preview finding's repair packet is not ready (no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add a test that calls it by hand, then rerun `ripr check`
+  File: src/cart.ts:3
+  Language: typescript
+  Language status: preview
+  Static exposure: no path (severity: warning, confidence 0.40)
+  Why no path: no related test was found that reaches this change
+  Changed behavior: return 1;
+  Missing discriminator: No trusted TypeScript method receiver relation for `total`. Direct `new ClassName(...)` receiver calls are supported, but factories, dependency injection, mocked modules,…
+  Next step — TypeScript preview advisory: method receiver relation is missing context; use a direct
+    `new ClassName(...)` receiver observer when safe, and keep factories, dependency injection,
+    mocked modules, prototype aliases, and dynamic property access advisory
+  Evidence: reach no · infection unknown · propagation unknown · observation no · discriminator no
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+    - reach no: 0 related test(s) found for owner `total`
+    - infection unknown: TypeScript preview adapter does not yet model infection
+    - 4 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/typescript_reassigned_setup_hook/input --diff <cwd>/fixtures/typescript_reassigned_setup_hook/diff.patch --mode fast probe:src_cart.ts:typescript_preview:3b511579
+  ripr context --root <cwd>/fixtures/typescript_reassigned_setup_hook/input --diff <cwd>/fixtures/typescript_reassigned_setup_hook/diff.patch --mode fast --at probe:src_cart.ts:typescript_preview:3b511579
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_cart.ts:typescript_preview:3b511579 --root <cwd>/fixtures/typescript_reassigned_setup_hook/input` for the full gate's answer
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+
+Note: ripr found no static test path for any of the 1 changed expression(s) in this diff. Scope
+  analyzed: 1 changed expression(s) and 0 statically linked related test(s). This is not a coverage
+  assessment. A test may already exercise these changes through macros, helper-call chains, or
+  integration tests that ripr's static model does not yet trace; if none does, add co-located tests
+  that observe the changed behavior.
+
+Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

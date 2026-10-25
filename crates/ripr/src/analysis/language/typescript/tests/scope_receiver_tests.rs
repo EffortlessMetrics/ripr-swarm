@@ -534,3 +534,68 @@ fn return_inside_a_nested_closure_keeps_the_hook_write() -> Result<(), String> {
         ),
     )
 }
+
+/// An inert reassignment of the ambient hook cannot construct the receiver
+/// whose method the test calls. Keep the active hook and lexical-shadow controls.
+#[test]
+fn reassigned_setup_hook_does_not_establish_a_method_receiver() -> Result<(), String> {
+    for extension in ["ts", "js"] {
+        for (label, setup, expected) in [
+            (
+                "active",
+                "beforeEach(() => { cart = new Cart(); });",
+                ExposureClass::Exposed,
+            ),
+            (
+                "declared",
+                "const beforeEach = () => {}; beforeEach(() => { cart = new Cart(); });",
+                ExposureClass::NoStaticPath,
+            ),
+            (
+                "reassigned",
+                "beforeEach = () => {}; beforeEach(() => { cart = new Cart(); });",
+                ExposureClass::NoStaticPath,
+            ),
+        ] {
+            let root = ts_unique_tempdir(&format!("hook-receiver-{extension}-{label}"))?;
+            let owner_path = format!("src/cart.{extension}");
+            let test_path = format!("tests/cart.test.{extension}");
+            let annotation = if extension == "ts" { ": number" } else { "" };
+            let owner = format!(
+                "export class Cart {{\n  total(){annotation} {{\n    return 1;\n  }}\n}}\n"
+            );
+            let import_suffix = if extension == "js" { ".js" } else { "" };
+            let source = format!(
+                "import {{ expect }} from 'chai';\nimport {{ Cart }} from '../src/cart{import_suffix}';\ndescribe('cart', () => {{\n  let cart = {{ total: () => 1 }};\n  {setup}\n  it('observes cart total', () => {{ expect(cart.total()).to.equal(1); }});\n}});\n"
+            );
+            ts_write_file(&root.join(&owner_path), &owner)?;
+            ts_write_file(&root.join(&test_path), &source)?;
+            let changed = ChangedFile {
+                path: PathBuf::from(&owner_path),
+                added_lines: vec![crate::analysis::diff::ChangedLine {
+                    line: 3,
+                    text: "    return 1;".to_string(),
+                    new_side_line: 3,
+                }],
+                removed_lines: vec![crate::analysis::diff::ChangedLine {
+                    line: 3,
+                    text: "    return 0;".to_string(),
+                    new_side_line: 3,
+                }],
+            };
+            let result = TypeScriptAdapter.analyze_diff(
+                &ts_analysis_options(root.clone()),
+                &OraclePolicy::default(),
+                &[changed],
+            );
+            let _ = std::fs::remove_dir_all(&root);
+            let finding = result?
+                .findings
+                .into_iter()
+                .find(|finding| finding.probe.location.line == 3)
+                .ok_or_else(|| format!("{extension}/{label}: missing owner probe"))?;
+            assert_eq!(finding.class, expected, "{extension}/{label}");
+        }
+    }
+    Ok(())
+}

@@ -1041,3 +1041,55 @@ test("own skip", async t => {
     let names: Vec<&str> = tests.iter().map(|test| test.local_name.as_str()).collect();
     assert_eq!(names, ["async parent", "plain parent"], "{tests:?}");
 }
+
+#[test]
+fn reassigned_hook_targets_withhold_setup_facts() {
+    let source = |setup: &str| {
+        format!(
+            "import {{ expect }} from 'chai';\nimport {{ Cart }} from '../src/cart';\ndescribe('cart', () => {{\nlet cart = {{ total: () => 1 }};\n{setup}\nbeforeEach(() => {{ cart = new Cart(); }});\nit('total', () => {{ expect(cart.total()).to.equal(1); }});\n}});\n"
+        )
+    };
+    for setup in [
+        "beforeEach = () => {};",
+        "globalThis.beforeEach = () => {};",
+        "globalThis['beforeEach'] = () => {};",
+        "globalThis[key] = () => {};",
+        "([beforeEach] = [() => {}]);",
+        "({ beforeEach } = { beforeEach: () => {} });",
+        "(beforeEach as any) = () => {};",
+        "beforeEach! = () => {};",
+        "for (beforeEach of [() => {}]) {}",
+        "beforeEach++;",
+        r"before\u0045ach = () => {};",
+    ] {
+        let tests = extract_tests(Path::new("tests/cart.test.ts"), &source(setup));
+        assert_eq!(tests.len(), 1, "{setup}: preserve the enabled test");
+        assert!(tests[0].setup_hook_bodies.is_empty(), "{setup}");
+        assert!(
+            tests[0]
+                .scope_bindings
+                .iter()
+                .all(|binding| binding.constructed_by.is_none()),
+            "{setup}: {:?}",
+            tests[0].scope_bindings
+        );
+    }
+    for setup in [
+        "",
+        "// beforeEach = () => {};",
+        r#"const note = "beforeEach = () => {};";"#,
+        r"const pattern = /beforeEach =/;",
+        "const other = {}; other.beforeEach = () => {};",
+    ] {
+        let tests = extract_tests(Path::new("tests/cart.test.ts"), &source(setup));
+        assert_eq!(tests.len(), 1, "{setup}");
+        assert_eq!(tests[0].setup_hook_bodies.len(), 1, "{setup}");
+        assert!(
+            tests[0].scope_bindings.iter().any(|binding| {
+                binding.name == "cart" && binding.constructed_by.as_deref() == Some("Cart")
+            }),
+            "{setup}: {:?}",
+            tests[0].scope_bindings
+        );
+    }
+}

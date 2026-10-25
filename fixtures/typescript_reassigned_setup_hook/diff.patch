@@ -1,0 +1,6 @@
+diff --git a/src/cart.ts b/src/cart.ts
+--- a/src/cart.ts
++++ b/src/cart.ts
+@@ -3 +3 @@
+-    return 0;
++    return 1;

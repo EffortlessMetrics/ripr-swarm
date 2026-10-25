@@ -1,0 +1,1 @@
+{"name": "hook-receiver-probe", "private": true, "devDependencies": {"mocha": "^12.0.3", "chai": "^6.3.0"}}
