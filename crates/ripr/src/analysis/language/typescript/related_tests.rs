@@ -1684,6 +1684,10 @@ pub(crate) fn owner_method_receiver_names(
                     push_unique_string(&mut receivers, binding.name.clone());
                 }
             }
+            // An inline `new Cls().method()` is authenticated by its class.
+            for constructor in &constructor_names {
+                push_unique_string(&mut receivers, format!("new {constructor}"));
+            }
             receivers
         }
         _ => Vec::new(),

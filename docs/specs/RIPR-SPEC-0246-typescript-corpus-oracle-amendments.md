@@ -343,7 +343,7 @@ come from `ts_owner_call_names`, plus a local whose declaration, assignment,
 function or class mentions one (`const r = owner`, `const go = (f) =>
 owner(f)`, `function go(f) { return owner(f); }`, `class H { go(f) {...} }`).
 For methods, only receivers the test builds from the owner's class count
-(`svc.retry`), and a same-named local cannot shadow the property. The mock
+(`svc.retry`, or an inline `new Svc().retry`; a foreign `(new Other()).retry` is another binding, and a class that merely declares a method named like the owner does not mention it), and a same-named local cannot shadow the property. The mock
 and every local assigned from an expression that mentions it (declaration,
 assignment, destructuring, container, multi-line) are carriers, and a count
 read through a local built from plain references to the mock (`const spy =
@@ -353,16 +353,16 @@ carrier (including a callback body split across statements and its chained
 `.then(...)`) mentions the owner anywhere in its span, or when a carrier is
 used anywhere the rule cannot show is unrelated. The only unrelated uses are:
 a plain local binding with no call around the mock, a direct invocation
-(`m()`), a state read or configuration of the mock itself (`m.mock…`,
+(`m()`, but not inside a closure that is built to be handed on), a state read or configuration of the mock itself (`m.mock…`,
 `m.callCount`, `m.calledOnce`), `expect(m)`, an argument of a call on an
-observing receiver (`console`, `assert`, `expect`, `JSON`, `Math`, `t`) or of
-`setTimeout`/`setInterval`/`queueMicrotask`, an argument of a member that
+observing receiver (`console`, `assert`, `expect`, `JSON`, `Math`, `t.assert`) or of
+`assert(...)`, `String(...)`, `setTimeout`/`setInterval`/`queueMicrotask`, an argument of a member that
 shares the owner's name on another receiver (`other.owner(m)`), and an
 argument of a body-local function that does not reach the owner. Every other
 callee is unresolved flow and abstains, so a call that may store or forward
 the mock (`h.push(m)`, `outer.mockImplementation(m)`, `reg.register(m)`)
 abstains. A member value (`owner(other.m)`), an object key (`{ m: x }`), a
-callback or function parameter that rebinds the name (`async (m = g) =>
+callback or function parameter, or a `const`/`let`/`var` declared inside the callback, that rebinds the name (`async (m = g) =>
 m()`) and text in a comment or string are not uses of the mock. A call count
 on a mock that never leaves its declaration and its count reads stays an
 actionable gap. The rule fires only when the ladder's oracle is strong, so

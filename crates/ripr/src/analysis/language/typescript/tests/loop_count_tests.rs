@@ -446,6 +446,11 @@ fn a_callback_parameter_named_like_the_mock_is_not_the_mock() -> Result<(), Stri
         "loop-param-shadow",
         "  const fn = mock.fn();\n  assert.equal(await withRetry(async (fn = async () => \"ok\") => fn(), 3), \"ok\");\n  assert.equal(fn.mock.callCount(), 0);",
     )?;
+    // A local declared inside the callback shadows the outer mock.
+    assert_stays_a_gap(
+        "loop-callback-local",
+        "  const fn = mock.fn();\n  assert.equal(await withRetry(async () => { const fn = async () => \"ok\"; return fn(); }, 3), \"ok\");\n  assert.equal(fn.mock.callCount(), 0);",
+    )?;
     assert_stays_a_gap(
         "loop-function-shadow",
         "  const fn = mock.fn();\n  assert.equal(await withRetry(async function (fn: any) { return fn(); }, 3), \"ok\");\n  assert.equal(fn.mock.callCount(), 0);",
@@ -471,6 +476,14 @@ fn a_method_owner_keeps_its_receiver_identity() -> Result<(), String> {
     let other = "  const real = mock.fn(async () => \"ok\");\n  const fn = mock.fn();\n  const other = { retry: (f: unknown, n: number) => n };\n  assert.equal(await svc.retry(real, 3), \"ok\");\n  other.retry(fn, 2);\n  assert.equal(fn.mock.callCount(), 0);";
     let finding = run("loop-method-other", SVC, OLD, NEW, &svc_test(other))?;
     assert_gap("loop-method-other", &finding);
+    // A foreign inline constructor does not authenticate the receiver.
+    let foreign = "  class Other { retry(_task: unknown, attempts: number) { return attempts; } }\n  const real = mock.fn(async () => \"ok\");\n  const fn = mock.fn();\n  assert.equal(await svc.retry(real, 3), \"ok\");\n  (new Other()).retry(fn, 2);\n  assert.equal(fn.mock.callCount(), 0);";
+    let finding = run("loop-inline-foreign", SVC, OLD, NEW, &svc_test(foreign))?;
+    assert_gap("loop-inline-foreign", &finding);
+    // The owner's own inline constructor still hands the mock over.
+    let genuine = "  const fn = mock.fn(async () => { throw new Error(\"down\"); });\n  await assert.rejects(new Svc().retry(fn, 2), /down/);\n  assert.equal(fn.mock.callCount(), 2);";
+    let finding = run("loop-inline-genuine", SVC, OLD, NEW, &svc_test(genuine))?;
+    assert_abstains("loop-inline-genuine", &finding);
     Ok(())
 }
 
@@ -548,6 +561,18 @@ fn storing_the_mock_on_a_callee_or_in_a_callback_abstains() -> Result<(), String
         (
             "loop-callback-body",
             "await Promise.all([fn].map(async (f) => {\n    await assert.rejects(withRetry(f, 2), /down/);\n  }));",
+        ),
+        (
+            "loop-closure-install",
+            "mock.method(deps, \"fetch\", () => fn());\n  await assert.rejects(withRetry(() => deps.fetch(), 2), /down/);",
+        ),
+        (
+            "loop-closure-stash",
+            "const stash: any[] = [];\n  stash.push(() => fn());\n  await assert.rejects(withRetry(stash[0], 2), /down/);",
+        ),
+        (
+            "loop-t-mock-method",
+            "t.mock.method(deps, \"fetch\", fn);\n  await assert.rejects(withRetry(() => deps.fetch(), 2), /down/);",
         ),
     ] {
         let body = format!(

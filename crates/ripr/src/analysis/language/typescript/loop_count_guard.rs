@@ -356,6 +356,17 @@ enum Receivers<'a> {
     Namespaces(&'a [String]),
 }
 
+/// The class of an inline receiver `new Cls(...)` or `(new Cls(...))`.
+fn inline_constructed_class(receiver: &str) -> Option<&str> {
+    let at = receiver.rfind("new ")?;
+    if receiver[..at].chars().next_back().is_some_and(is_word) {
+        return None;
+    }
+    let rest = receiver[at + 4..].trim_start();
+    let end = rest.find(|c: char| !is_word(c)).unwrap_or(rest.len());
+    (end > 0).then(|| &rest[..end])
+}
+
 fn is_word(c: char) -> bool {
     c.is_alphanumeric() || matches!(c, '_' | '$')
 }
@@ -464,7 +475,7 @@ fn arrow_body_end(text: &str, start: usize) -> usize {
 /// Whether the mention of `name` at `at` sits in the parameters or body of
 /// an arrow function or function expression that binds `name` itself: a
 /// callback's own `fn` is not the outer mock.
-fn parameter_scoped(text: &str, at: usize, name: &str) -> bool {
+fn function_scopes(text: &str) -> Vec<(usize, usize, &str)> {
     let arrow_scopes = text.match_indices("=>").filter_map(|(arrow, _)| {
         let before = text[..arrow].trim_end();
         let (start, params) = if before.ends_with(')') {
@@ -497,11 +508,68 @@ fn parameter_scoped(text: &str, at: usize, name: &str) -> bool {
         let brace = close + text[close..].find('{')?;
         Some((open, group_end(text, brace), &text[open + 1..close - 1]))
     });
-    arrow_scopes
-        .chain(function_scopes)
+    arrow_scopes.chain(function_scopes).collect()
+}
+
+/// Whether the mention of `name` at `at` sits in the parameters or body of
+/// an arrow function or function expression that binds `name` itself: a
+/// callback's own `fn` is not the outer mock.
+fn parameter_scoped(text: &str, at: usize, name: &str) -> bool {
+    function_scopes(text)
+        .into_iter()
         .any(|(start, end, params)| {
-            start <= at && at < end && parameter_names(params).contains(&name)
+            start <= at
+                && at < end
+                && (parameter_names(params).contains(&name)
+                    || (declares_local(&text[start..end], name) && !is_test_callback(text, start)))
         })
+}
+
+/// Whether `body` declares `name` itself (`const name = …`, `let { name } = …`):
+/// inside a closure that is a new binding, not the outer value.
+fn declares_local(body: &str, name: &str) -> bool {
+    ["const", "let", "var"].iter().any(|keyword| {
+        body.match_indices(keyword).any(|(at, _)| {
+            let after = &body[at + keyword.len()..];
+            if body[..at].chars().next_back().is_some_and(is_word)
+                || !after.chars().next().is_some_and(char::is_whitespace)
+            {
+                return false;
+            }
+            let end = after.find(['=', ';', '\n']).unwrap_or(after.len());
+            after[..end]
+                .split(|c: char| !is_word(c))
+                .any(|word| word == name)
+        })
+    })
+}
+
+/// Whether `at` sits in a function body other than a test registration
+/// callback: a closure that can be handed on, so a call inside it runs only
+/// when the closure does.
+fn inside_nested_function(text: &str, at: usize) -> bool {
+    function_scopes(text)
+        .into_iter()
+        .any(|(start, end, _)| start <= at && at < end && !is_test_callback(text, start))
+}
+
+/// Whether the function starting at `start` is the argument of a test
+/// registration call: its nearest enclosing bracket is that call's `(`.
+fn is_test_callback(text: &str, start: usize) -> bool {
+    let mut depth = 0usize;
+    for (i, ch) in text[..start].char_indices().rev() {
+        match ch {
+            ')' | ']' | '}' => depth += 1,
+            '(' | '[' | '{' if depth > 0 => depth -= 1,
+            '(' => {
+                let callee = callee_chain(text[..i].trim_end());
+                return TEST_WRAPPERS.contains(&callee.split('.').next().unwrap_or(""));
+            }
+            '[' | '{' => return false,
+            _ => {}
+        }
+    }
+    false
 }
 
 /// A declaration, assignment or function whose name can carry what its body
@@ -808,7 +876,7 @@ fn mentions_owner(statement: &str, name: &str, receivers: Receivers<'_>, skip_ke
             return false;
         }
         match prefix.trim_end().strip_suffix('.') {
-            None => true,
+            None => !declares_method(statement, at, name.len()),
             Some(receiver) => {
                 let receiver = receiver.strip_suffix('?').unwrap_or(receiver).trim_end();
                 let chain: String = receiver
@@ -824,8 +892,8 @@ fn mentions_owner(statement: &str, name: &str, receivers: Receivers<'_>, skip_ke
                     Receivers::Namespaces(names) => {
                         names.contains(&chain)
                             || (chain.is_empty()
-                                && receiver.ends_with(')')
-                                && receiver.contains("new "))
+                                && inline_constructed_class(receiver)
+                                    .is_some_and(|class| names.contains(&format!("new {class}"))))
                     }
                 }
             }
@@ -833,11 +901,43 @@ fn mentions_owner(statement: &str, name: &str, receivers: Receivers<'_>, skip_ke
     })
 }
 
+/// `name(...) {` or `name(...): T {` at a class-body position declares a
+/// method; it is not a call of the owner.
+fn declares_method(statement: &str, at: usize, len: usize) -> bool {
+    let before = statement[..at].trim_end();
+    let before = [
+        "async",
+        "static",
+        "public",
+        "private",
+        "protected",
+        "override",
+    ]
+    .iter()
+    .fold(before, |text, word| {
+        text.strip_suffix(word).map_or(text, str::trim_end)
+    });
+    if !(before.is_empty() || before.ends_with(['{', '}', ';'])) {
+        return false;
+    }
+    let after = statement[at + len..].trim_start();
+    let Some(open) = after
+        .find('(')
+        .filter(|open| after[..*open].chars().all(|c| c != ';'))
+    else {
+        return false;
+    };
+    let close = group_end(after, open);
+    after[close..].trim_start().starts_with(['{', ':'])
+}
+
 /// Receivers whose member calls only observe their arguments.
-const INERT_RECEIVERS: [&str; 6] = ["console", "assert", "expect", "JSON", "Math", "t"];
+const INERT_RECEIVERS: [&str; 5] = ["console", "assert", "expect", "JSON", "Math"];
 
 /// Bare callees that only observe or schedule their arguments.
-const INERT_CALLEES: [&str; 4] = [
+const INERT_CALLEES: [&str; 6] = [
+    "assert",
+    "String",
     "setTimeout",
     "setInterval",
     "clearTimeout",
@@ -870,6 +970,17 @@ const STATE_READS: [&str; 9] = [
     ".calls",
     ".results",
 ];
+
+/// Whether `rhs` is a function or arrow literal (or a declared function's
+/// parameters and body), not a call whose result is a function.
+fn defines_a_function(rhs: &str) -> bool {
+    let rhs = rhs.trim_start();
+    if rhs.starts_with('(') || rhs.starts_with("function") || rhs.starts_with("async") {
+        return true;
+    }
+    let word = rhs.find(|c: char| !is_word(c)).unwrap_or(rhs.len());
+    word > 0 && rhs[word..].trim_start().starts_with("=>")
+}
 
 /// Whether `statement` declares or assigns a plain local (`const t = fn`,
 /// `t = fn`, `const { a } = fn`): the flow is followed through
@@ -918,6 +1029,11 @@ fn callee_chain(callee: &str) -> String {
 /// The call whose argument list holds position `at`: its callee text, or
 /// `None` when no call encloses it.
 fn enclosing_callee(text: &str, at: usize) -> Option<String> {
+    enclosing_call(text, at, true)
+}
+
+/// [`enclosing_callee`], optionally stopping at a test registration callee.
+fn enclosing_call(text: &str, at: usize, skip_wrappers: bool) -> Option<String> {
     let mut depth = 0usize;
     for (i, ch) in text[..at].char_indices().rev() {
         match ch {
@@ -928,7 +1044,7 @@ fn enclosing_callee(text: &str, at: usize) -> Option<String> {
                 } else if ch == '(' {
                     let callee = callee_chain(text[..i].trim_end());
                     let root = callee.split('.').next().unwrap_or("");
-                    if !TEST_WRAPPERS.contains(&root) {
+                    if !skip_wrappers || !TEST_WRAPPERS.contains(&root) {
                         return Some(callee);
                     }
                 }
@@ -964,7 +1080,7 @@ fn use_is_inert(
     }) {
         return true;
     }
-    if after.trim_start().starts_with('(') {
+    if after.trim_start().starts_with('(') && !inside_nested_function(masked, at) {
         return true;
     }
     if masked[..at].trim_end().ends_with("expect(") {
@@ -983,7 +1099,9 @@ fn use_is_inert(
         return false;
     }
     if segments.len() > 1 {
-        INERT_RECEIVERS.contains(&root) || call_names.contains(&last)
+        INERT_RECEIVERS.contains(&root)
+            || (root == "t" && matches!(segments[1], "assert" | "diagnostic"))
+            || call_names.contains(&last)
     } else {
         INERT_CALLEES.contains(&root) || locals.contains(&root)
     }
@@ -1041,8 +1159,11 @@ fn hands_mock_to_owner(
     let bindings = bindings(masked);
     let carriers = mock_carriers(&bindings, mock);
     let owners = owner_names(&bindings, call_names, receivers);
+    // Only a function or arrow defined in the body is known not to forward the
+    // mock; a name bound from a call, a destructuring or an import is unknown.
     let locals: Vec<&str> = bindings
         .iter()
+        .filter(|binding| defines_a_function(binding.rhs))
         .flat_map(|binding| binding.names.iter().copied())
         .collect();
     let runs_owner = |text: &str| {
@@ -1394,6 +1515,15 @@ mod tests {
             "await Promise.resolve(fn).then(async (f) => {\n  await withRetry(f, 2);\n});",
             "h.use(fn);",
             "emitter.on('x', fn);",
+            "mock.method(deps, 'fetch', () => fn());\nawait withRetry(() => deps.fetch(), 2);",
+            "stash.push(() => fn());\nawait withRetry(stash[0], 2);",
+            "cbs.a = () => fn();\nawait withRetry(cbs.a, 2);",
+            "Object.assign(deps, { fetch: () => fn() });",
+            "reg.fns.push(async () => { await fn(); });",
+            "const run = makeRunner();\nawait run(fn);",
+            "const { run } = makeRunner();\nawait run(fn);",
+            "const { withRetry: r } = await import('../src/retry');\nawait r(fn, 2);",
+            "t.mock.method(obj, 'x', fn);",
         ] {
             assert!(wrapped(body, "fn"), "{body}");
         }
@@ -1402,6 +1532,8 @@ mod tests {
             "const lg = vi.fn();\nawait lg();",
             "const lg = vi.fn();\nlg.mockReturnValue(1);\nlg.mockClear();",
             "const lg = vi.fn();\nsetTimeout(lg, 0);",
+            "const lg = vi.fn();\nassert(lg);\nt.assert.ok(lg);",
+            "const lg = vi.fn();\nconst helper = (x) => x;\nhelper(lg);",
             "const lg = vi.fn();\nconsole.log(lg);\nassert.ok(lg);",
             "const lg = vi.fn();\nother.withRetry(lg, 2);",
         ] {
