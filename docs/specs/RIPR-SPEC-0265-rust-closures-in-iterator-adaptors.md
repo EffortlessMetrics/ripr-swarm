@@ -392,7 +392,8 @@ pin, including when the numeric model is unestablished.
 - `fixtures/rust-verdict-corpus`: examples 1 to 3 (`grid-iter-exact`,
   `grid-iter-helper`, `grid-iter-table`), 4 (`trap-iter-boundary-missing`),
   5 (`trap-iter-empty-slice`), 6 (`grid-iter-property`) and 7
-  (`shape-collect-result-short-circuit`) and 8 (`shape-thread-join-result`).
+  (`shape-collect-result-short-circuit`), 8 (`shape-thread-join-result`) and
+  9 (`shape-closure-returned-adder`).
 
 ## Implementation Mapping
 

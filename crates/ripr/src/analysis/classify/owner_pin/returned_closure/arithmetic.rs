@@ -156,7 +156,12 @@ impl ArithmeticPin {
             }
         }
 
-        let holding_scope = function.syntax().parent()?;
+        // A bare path inside an associated fn names the enclosing module's
+        // item, never an associated const of the `impl` (that needs `Self::K`).
+        let mut holding_scope = function.syntax().parent()?;
+        if ast::AssocItemList::can_cast(holding_scope.kind()) {
+            holding_scope = holding_scope.parent()?.parent()?;
+        }
         let mut operators = Vec::new();
         let expression = Expression::parse(
             &closure.body()?,
