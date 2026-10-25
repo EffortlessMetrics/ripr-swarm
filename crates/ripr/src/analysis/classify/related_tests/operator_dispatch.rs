@@ -30,8 +30,8 @@ use super::equality_dispatch::{
     std_trait_is_unshadowed, type_scope_is_clear,
 };
 use super::{
-    FunctionSummary, RustIndex, TestSummary, is_ident_byte, mask_comments_and_strings,
-    matching_open,
+    FunctionSummary, RustIndex, TestSummary, is_ident_byte, last_let_statement,
+    mask_comments_and_strings, matching_open,
 };
 use crate::analysis::classify::implicit_call::{operator_positions, result_is_used};
 
@@ -197,6 +197,7 @@ pub(super) fn test_applies_operator_to_owner(
             };
             operand.is_some_and(|(start, text)| {
                 !bound_as_parameter_or_pattern(&masked, text)
+                    && !is_reference_operand(text, &masked[..start])
                     && operand_has_type(text, impl_type, &masked[..start], &returns_self)
             })
         });
@@ -228,6 +229,32 @@ fn workspace_macro_may_generate_impls(index: &RustIndex) -> bool {
 
 /// Whether the site sits inside an unclosed `<` of its statement, as in
 /// `let v: Vec<Result<u8, Money>> = ..`, where `>>` is no operator.
+/// Whether the operand is a reference: `&x`, or a binding whose last `let` is
+/// annotated `&T` or initialised by `&..`. `operand_has_type` looks through
+/// `&` because equality and formatting compare through references, but an
+/// operator picks the impl by the operand's exact type: `&a + &b` runs
+/// `impl Add<&T> for &T`, never the owned impl this relation credits.
+fn is_reference_operand(operand: &str, before: &str) -> bool {
+    let operand = operand.trim();
+    if operand.starts_with('&') {
+        return true;
+    }
+    if !operand.bytes().all(is_ident_byte) {
+        return false;
+    }
+    let Some(statement) = last_let_statement(before, operand) else {
+        return false;
+    };
+    let Some(eq) = statement.find('=') else {
+        return false;
+    };
+    let pattern = &statement[..eq];
+    match pattern.find(':') {
+        Some(colon) => pattern[colon + 1..].trim_start().starts_with('&'),
+        None => statement[eq + 1..].trim_start().starts_with('&'),
+    }
+}
+
 fn in_generic_arguments(masked: &str, at: usize) -> bool {
     let before = &masked[..at];
     let statement = before

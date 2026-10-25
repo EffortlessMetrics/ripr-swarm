@@ -530,3 +530,68 @@ fn a_comparison_before_a_plus_does_not_hide_the_operator() -> Result<(), String>
         Err(format!("expected the add credited, got {direct:?}"))
     }
 }
+
+/// `&a + &b` runs `impl Add<&Money> for &Money`, never the owned impl.
+const REFERENCE_IMPL: &str = "
+impl Add<&Money> for &Money {
+    type Output = Money;
+    fn add(self, other: &Money) -> Money {
+        Money(self.0 + other.0)
+    }
+}
+";
+
+#[test]
+fn an_owned_operand_reaches_the_owned_impl_beside_a_reference_impl() -> Result<(), String> {
+    let case = Case {
+        extra_items: REFERENCE_IMPL,
+        ..with_body(
+            ADD,
+            "owned operands beside a reference impl",
+            "let a = Money(2);\n        let b = Money(3);\n        assert_eq!(a + b, Money(5));",
+        )
+    };
+    let direct = direct_tests(&case)?;
+    if direct.is_empty() {
+        return Err("owned operands were not credited".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn reference_operands_do_not_reach_the_owned_impl() -> Result<(), String> {
+    let bodies: [(&'static str, &'static str); 4] = [
+        (
+            "annotated reference bindings",
+            "let a: &Money = &Money(2);\n        let b = &Money(3);\n        assert_eq!(a + b, Money(5));",
+        ),
+        (
+            "unannotated reference bindings",
+            "let a = &Money(2);\n        let b = &Money(3);\n        assert_eq!(a + b, Money(5));",
+        ),
+        (
+            "reference literal operands",
+            "assert_eq!(&Money(2) + &Money(3), Money(5));",
+        ),
+        (
+            "reference annotation on a constructor",
+            "let a: &Money = &Money(2);\n        assert_eq!(a + &Money(3), Money(5));",
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (label, body) in bodies {
+        let case = Case {
+            extra_items: REFERENCE_IMPL,
+            ..with_body(ADD, label, body)
+        };
+        let direct = direct_tests(&case)?;
+        if !direct.is_empty() {
+            failures.push(format!("{label}: credited the owned impl: {direct:?}"));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}
