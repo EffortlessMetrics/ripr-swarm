@@ -1,0 +1,19 @@
+//! RIPR-SPEC-0094 acceptance example 4.
+
+use std::cell::RefCell;
+
+#[derive(Default)]
+pub struct Notifier {
+    pub sent: RefCell<Vec<String>>,
+}
+
+impl Notifier {
+    pub fn send(&self, order_id: u32) {
+        self.sent.borrow_mut().push(format!("order-{order_id}"));
+    }
+}
+
+pub fn place(order_id: u32, notifier: &Notifier) -> bool {
+    notifier.send(order_id + 1);
+    true
+}
