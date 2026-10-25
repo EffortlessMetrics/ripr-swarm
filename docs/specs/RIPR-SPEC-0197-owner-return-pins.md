@@ -883,8 +883,22 @@ wrong credits.
    annotated with one, a numeric or bool literal, an arithmetic
    combination of established names and literals with the accepted operators
    and `as` casts to primitives, or a call whose every same-named
-   function in the index declares one bare primitive return (optionally
-   behind one reference). Anything else — a string, char literal or block
+   function in the index is a free function without a self parameter and
+   declares one bare primitive return (optionally behind one reference).
+   An unqualified call must be a direct function-body let initializer.
+   Parameters, preceding destructured/raw/declaration-only lets, hoisted
+   local items and imports of its name (or globs) refuse primitive proof.
+   A later let, or the pattern currently being initialized, does not bind
+   at the call. Opaque statement/item macros refuse proof, including explicit
+   function declarations in their token trees. Other call scopes are unread.
+   A qualified call such as `crate::shipping_cents(..)` is not shadowed by a
+   local value named `shipping_cents`. Same-named associated functions and
+   methods refuse proof even when their returns are primitive. This bounded
+   check refuses local imports rather than resolving their targets, and
+   refuses an unqualified name that a `use` in the owner's enclosing module
+   or file binds (unreadable enclosing scopes refuse too); it does not
+   resolve arbitrary module paths, globs outside the function body or expand
+   macros. Anything else - a string, char literal or block
    comment anywhere in the owner body, a callee missing from or ambiguous
    in the index, a non-primitive return, a binding that is not established — keeps the
    credit: a custom type can overload the operator, and an overloaded

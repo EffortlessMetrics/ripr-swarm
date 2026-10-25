@@ -39,6 +39,7 @@ pub(crate) mod drop_in;
 mod harness_registry;
 mod includes;
 mod index;
+mod local_test_alias;
 mod macro_generated_tests;
 pub(crate) mod macro_visibility;
 
