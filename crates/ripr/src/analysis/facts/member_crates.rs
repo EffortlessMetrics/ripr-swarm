@@ -1037,11 +1037,10 @@ mod tests {
     #[test]
     fn binary_macro_boundaries_read_the_selected_manifest_epoch() -> Result<(), String> {
         use crate::analysis::committed_source::{CommittedSourceOverlay, with_overlay};
-        let binary = format!("{PRICING}[[bin]]\nname='parse'\npath='parse.rs'\n");
-        let library = format!("{binary}[lib]\npath='parse.rs'\n");
-        for (worktree, committed, expected) in
-            [(&binary, &library, false), (&library, &binary, true)]
-        {
+        let binary =
+            "[package]\nname='pricing'\nversion='0.1.0'\n[[bin]]\nname='parse'\npath='parse.rs'\n";
+        let library = "[package]\nname='pricing'\nversion='0.1.0'\n[[bin]]\nname='parse'\npath='parse.rs'\n[lib]\npath='parse.rs'\n";
+        for (worktree, committed, expected) in [(binary, library, false), (library, binary, true)] {
             let root = temp_workspace("binary-macro-epoch", &[("Cargo.toml", worktree)])?;
             let overlay = CommittedSourceOverlay::from_entries(
                 &root,
