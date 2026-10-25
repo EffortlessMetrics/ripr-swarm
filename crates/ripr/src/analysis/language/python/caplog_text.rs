@@ -672,7 +672,7 @@ impl StringScan {
 /// `text` with each whole-word `name` outside a string literal replaced by its
 /// read, in one pass: an alias spelled inside a quoted literal is data, not the
 /// alias, and a read inserted for one alias (`caplog.text`) is never rescanned
-/// as another alias named `text`.
+/// as another alias named `text`. An attribute (`caplog.text`) is never a local.
 pub(super) fn replace_identifiers(text: &str, replacements: &[(&str, &str)]) -> String {
     let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
     let mut out = String::with_capacity(text.len());
@@ -687,6 +687,7 @@ pub(super) fn replace_identifiers(text: &str, replacements: &[(&str, &str)]) -> 
         }
         if let Some((name, with)) = replacements.iter().find(|(name, _)| {
             text[index..].starts_with(name)
+                && !text[..index].trim_end().ends_with('.')
                 && !text[..index].chars().next_back().is_some_and(is_word)
                 && !text[index + name.len()..]
                     .chars()

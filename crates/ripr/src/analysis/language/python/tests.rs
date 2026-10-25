@@ -8958,6 +8958,19 @@ fn two_aliases_whose_names_are_read_attributes_are_both_evaluated() -> Result<()
 }
 
 #[test]
+fn a_direct_read_beside_a_same_named_alias_stays_a_required_condition() -> Result<(), String> {
+    // Review of #10309: replacing the attribute in `caplog.text` turned a
+    // direct check into `caplog.caplog.text`, which the evaluator dropped.
+    let owner_edit = "log.warning(\"balance: %s low\", balance)";
+    let test = "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    msgs = caplog.text\n    text = caplog.text\n    assert \"low balance: 5\" in caplog.text and \"balance: 5\" in text\n";
+    assert_eq!(
+        classify_log_text_edit(AUDIT_OWNER, owner_edit, test)?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
+}
+
+#[test]
 fn a_comment_ending_in_a_backslash_does_not_extend_the_assertion() -> Result<(), String> {
     // #10309 review: the comment's trailing backslash is not a continuation,
     // so the `del` on the next line is an extra use and keeps the abstention.
@@ -8982,7 +8995,6 @@ fn alias_replacement_skips_string_literals_and_longer_names() {
             &[("msgs", "caplog.messages")]
         ),
         "assert \"msgs\" in caplog.messages and 'msgs' in caplog.messages and msgs2 and x.msgs"
-            .replace("x.msgs", "x.caplog.messages")
     );
     assert_eq!(
         replace_identifiers("\"a\\\"msgs\" in msgs", &[("msgs", "R")]),
