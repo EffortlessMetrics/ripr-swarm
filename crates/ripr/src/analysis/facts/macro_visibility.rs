@@ -547,6 +547,7 @@ mod tests {
             "assert!(x);\n#[macro_use]\nmod macros;\nt!(a);\n",
             "fn helper() { /* t!(earlier); */ }\n#[macro_use]\nmod macros;\nt!(a);\n",
             "const S: &str = \"t!(earlier)\";\n#[macro_use]\nmod macros;\nt!(a);\n",
+            "macro_rules! unused { () => { t!(earlier); } }\n#[macro_use]\nmod macros;\nt!(a);\n",
         ];
         for main in before {
             let files = [("tests/main.rs", main), ("tests/macros.rs", GENERATOR)];

@@ -106,6 +106,12 @@ pub(crate) fn first_macro_call(
         .descendants_with_tokens()
         .filter_map(|element| element.into_token())
         .filter(|token| !token.kind().is_trivia())
+        // A definition's body is a template, not an invocation.
+        .filter(|token| {
+            !token
+                .parent_ancestors()
+                .any(|node| matches!(node.kind(), SyntaxKind::MACRO_RULES | SyntaxKind::MACRO_DEF))
+        })
     {
         if token.kind() == SyntaxKind::BANG
             && let Some(name) = previous.as_ref().filter(|p| p.kind() == SyntaxKind::IDENT)
@@ -256,6 +262,9 @@ mod tests {
         let names: std::collections::BTreeSet<String> = ["t".to_string()].into();
         assert_eq!(first_macro_call("assert!(x); t!(a);", &names), Some(12));
         assert_eq!(first_macro_call("fn f() { /* t!(x) */ }", &names), None);
+        let inert =
+            "macro_rules! unused { () => { t!(earlier); } }\n#[macro_use] mod macros;\nt!(x);\n";
+        assert_eq!(first_macro_call(inert, &names), inert.rfind("t!(x)"));
         assert_eq!(first_macro_call("const S: &str = \"t!(x)\";", &names), None);
     }
 
