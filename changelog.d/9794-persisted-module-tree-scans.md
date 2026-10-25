@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- A warm `ripr check` no longer re-parses every Rust file the module-graph walk visits: the walk's per-file module-tree scans are kept in a new `repo-module-tree-scans` cache layer, keyed by exact content, integrity-checked, refused when the cache directory is tracked by Git, and cleared by `ripr cache clear`. On cargo's pinned commit this removes about 0.4 s of a 2.5 s warm check with byte-identical findings and flat peak memory (#9794).
