@@ -102,7 +102,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          prs="$(gh api "repos/$REPOSITORY/pulls?state=open&per_page=100" --paginate --jq '.[] | [.number, .head.sha, .head.ref, (.head.repo.full_name // ""), (.draft | tostring), ([.labels[].name | ascii_downcase] | index("merge-ready") != null | tostring), .base.ref] | @tsv')"
+          prs="$(gh api "repos/$REPOSITORY/pulls?state=open&per_page=100" --paginate --jq '.[] | [.number, .head.sha, .head.ref, (.head.repo.full_name // ""), (.draft | tostring), ([.labels[].name | ascii_downcase] | index("merge-ready") != null | tostring), .base.ref, .updated_at] | @tsv')"
 
           {
             echo "### PR Staleness Watchdog (alert-only)"
@@ -146,12 +146,20 @@ jobs:
             marker="<!-- merge-ready-dark:$2 -->"
             known="$(gh api --paginate "repos/$REPOSITORY/issues/$1/comments?per_page=100" --jq '.[].body' | grep -cF -- "$marker" || true)"
             [ "$known" = "0" ] || return 0
+            # A request run that finished without the required check (admission refused,
+            # cancelled) is a different cause from a push after the label.
+            ran="$(gh api --paginate "repos/$REPOSITORY/actions/workflows/routed-rust.yml/runs?event=pull_request&head_sha=$2&per_page=100" --jq '[.workflow_runs[] | select(.display_title | startswith("Merge-ready request "))] | length' | awk '{s+=$1} END{print s+0}')"
+            if [ "$ran" = "0" ]; then
+              cause="no qualification run exists for head \`${2:0:8}\`: it was pushed after the label was applied, or the label event was dropped"
+            else
+              cause="the qualification run for head \`${2:0:8}\` finished without the required check (for example admission was refused; see its run)"
+            fi
             gh api "repos/$REPOSITORY/issues/$1/comments" -f body="$marker
-          \`merge-ready\` is set, but no qualification run exists for head \`${2:0:8}\`: it was pushed after the label was applied, or the label event was dropped. Remove and re-apply \`merge-ready\` to request it again." > /dev/null
+          \`merge-ready\` is set, but $cause. Remove and re-apply \`merge-ready\` to request it again." > /dev/null
           }
 
           scanned=0 dark=0 in_progress=0 reported=0 cleared=0 told=0
-          while IFS=$'\t' read -r number head_sha head_ref head_repo draft requested base_ref; do
+          while IFS=$'\t' read -r number head_sha head_ref head_repo draft requested base_ref updated_at; do
             [ -n "${number:-}" ] || continue
             scanned=$((scanned + 1))
             mergeable_state="n/a" dark_kind=""
@@ -184,7 +192,8 @@ jobs:
                   echo "::warning title=Dark conflicted PR head::PR #$number head ${head_sha:0:8} is mergeable_state=dirty, so no pull_request run can exist (no merge ref); merge main into $head_ref first, then remove and re-apply the merge-ready label."
                 else
                   dark=$((dark + 1))
-                  [ "$mergeable_state" = "unknown" ] || dark_kind="push"
+                  # Quiet for 10 minutes after any PR activity: a label just applied has not run yet.
+                  [ "$mergeable_state" = "unknown" ] || [ $(($(date +%s) - $(date -d "$updated_at" +%s))) -lt 600 ] || dark_kind="push"
                   disposition="DARK; needs merge-ready re-applied (\`$head_ref\`)"
                   echo "::warning title=Dark merge-ready PR head::PR #$number head ${head_sha:0:8} has no $REQUIRED_CHECK check and no queued or in-progress merge-ready run (pushed after the request, or the label event was dropped); remove and re-apply the merge-ready label."
                 fi

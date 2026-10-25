@@ -54,6 +54,8 @@ struct Pr {
     later_state: Option<&'static str>,
     covered: bool,
     in_flight: bool,
+    completed_run: bool,
+    fresh: bool,
 }
 
 impl Pr {
@@ -70,6 +72,8 @@ impl Pr {
             later_state: None,
             covered: false,
             in_flight: false,
+            completed_run: false,
+            fresh: false,
         }
     }
     fn sha(&self) -> String {
@@ -115,12 +119,18 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
                 "[]"
             };
             format!(
-                r#"{{"number":{},"head":{{"sha":"{}","ref":"b{}","repo":{{"full_name":"{}"}}}},"base":{{"ref":"main"}},"draft":{},"labels":{labels}}}"#,
+                r#"{{"number":{},"head":{{"sha":"{}","ref":"b{}","repo":{{"full_name":"{}"}}}},"base":{{"ref":"main"}},"draft":{},"labels":{labels},"updated_at":"{}"}}"#,
                 pr.number,
                 pr.sha(),
                 pr.number,
                 pr.repo,
-                pr.draft
+                pr.draft,
+                // A far-future stamp stands in for "touched within the grace window".
+                if pr.fresh {
+                    "2999-01-01T00:00:00Z"
+                } else {
+                    "2026-01-01T00:00:00Z"
+                }
             )
         })
         .collect();
@@ -161,6 +171,13 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
             fs::write(
                 dir.join("runs.json"),
                 r#"{"workflow_runs":[{"status":"in_progress","display_title":"Merge-ready request abc"}]}"#,
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        if pr.completed_run {
+            fs::write(
+                dir.join("runs.json"),
+                r#"{"workflow_runs":[{"status":"completed","display_title":"Merge-ready request abc"}]}"#,
             )
             .map_err(|e| e.to_string())?;
         }
@@ -497,7 +514,9 @@ fn a_covered_in_flight_or_uncomputed_head_gets_no_re_apply_notice() -> Result<()
         in_flight: true,
         ..Pr::dirty(20)
     };
-    let outcome = run(&[covered, in_flight], "dark-quiet")?;
+    let outcome = run(&[covered], "dark-covered")?;
+    assert_eq!(outcome.comments, 0, "{}", outcome.summary);
+    let outcome = run(&[in_flight], "dark-in-flight")?;
     assert_eq!(
         (outcome.comments, outcome.failures, outcome.successes),
         (0, 0, 0),
@@ -517,5 +536,41 @@ fn a_covered_in_flight_or_uncomputed_head_gets_no_re_apply_notice() -> Result<()
         "{}",
         outcome.summary
     );
+    Ok(())
+}
+
+#[test]
+fn a_finished_run_without_the_check_is_named_and_a_fresh_or_moved_head_is_left_alone()
+-> Result<(), String> {
+    let ran = Pr {
+        state: "clean",
+        completed_run: true,
+        ..Pr::dirty(27)
+    };
+    let outcome = run(&[ran], "dark-ran")?;
+    assert_eq!(outcome.comments, 1, "{}", outcome.summary);
+    assert!(
+        outcome.log.contains("finished without the required check"),
+        "{}",
+        outcome.log
+    );
+
+    // Touched within the grace window: a label applied moments ago has not run yet.
+    let fresh = Pr {
+        state: "clean",
+        fresh: true,
+        ..Pr::dirty(28)
+    };
+    let outcome = run(&[fresh], "dark-fresh")?;
+    assert_eq!(outcome.comments, 0, "{}", outcome.summary);
+
+    // Pushed between the list call and the live read: the next sweep reads the new head.
+    let moved = Pr {
+        state: "clean",
+        moved: true,
+        ..Pr::dirty(29)
+    };
+    let outcome = run(&[moved], "dark-moved")?;
+    assert_eq!(outcome.comments, 0, "{}", outcome.summary);
     Ok(())
 }
