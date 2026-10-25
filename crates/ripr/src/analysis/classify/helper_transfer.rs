@@ -999,7 +999,7 @@ pub(crate) fn resolve_chain(
             arguments: Vec::new(),
             receiver: None,
             through_macro: true,
-            transparent_macros_rebound: transparent_macro_name_rebound(index),
+            transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
         };
         return extend_chain(hop, callee_name, index, workspace_complete, visited);
     }
@@ -1114,7 +1114,7 @@ fn chain_through_caller(
         arguments,
         receiver: None,
         through_macro: false,
-        transparent_macros_rebound: transparent_macro_name_rebound(index),
+        transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
     };
     extend_chain(hop, callee_name, index, workspace_complete, visited)
 }
@@ -1303,7 +1303,7 @@ fn method_hop(caller: &FunctionSummary, callee_name: &str, index: &RustIndex) ->
         arguments,
         receiver: Some(receiver.to_string()),
         through_macro: false,
-        transparent_macros_rebound: transparent_macro_name_rebound(index),
+        transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
     })
 }
 
@@ -2484,25 +2484,27 @@ const TRANSPARENT_STD_MACROS: &[&str] = &[
 /// Whether any indexed file binds a [`TRANSPARENT_STD_MACROS`] name to
 /// something other than the standard macro, by the parser-backed binding
 /// scan the trusted-assertion reading uses. An out-of-line module counts as
-/// unresolved, which only withholds forwarding credit.
-fn transparent_macro_name_rebound(index: &RustIndex) -> bool {
-    index.files().iter().any(|(path, file)| {
-        if file.macro_candidates.as_deref().is_some_and(|candidates| {
-            TRANSPARENT_STD_MACROS
-                .iter()
-                .all(|name| !candidates.may_bind(name))
-        }) {
-            return false;
-        }
-        !crate::analysis::syntax::trusted_macro_binding_sites(
-            &file.source,
-            index.macro_scope_crates(),
-            TRANSPARENT_STD_MACROS,
-            &|_, _| false,
-            &|krate| index.drop_in_manifests.verified_root(path, krate),
-        )
-        .is_empty()
-    })
+/// unresolved, which only withholds forwarding credit. A caller with no
+/// `!` invokes no macro, so the index scan is skipped for it.
+fn transparent_macro_name_rebound(caller_body: &str, index: &RustIndex) -> bool {
+    caller_body.contains('!')
+        && index.files().iter().any(|(path, file)| {
+            if file.macro_candidates.as_deref().is_some_and(|candidates| {
+                TRANSPARENT_STD_MACROS
+                    .iter()
+                    .all(|name| !candidates.may_bind(name))
+            }) {
+                return false;
+            }
+            !crate::analysis::syntax::trusted_macro_binding_sites(
+                &file.source,
+                index.macro_scope_crates(),
+                TRANSPARENT_STD_MACROS,
+                &|_, _| false,
+                &|krate| index.drop_in_manifests.verified_root(path, krate),
+            )
+            .is_empty()
+        })
 }
 
 /// Whether `body` invokes a macro whose expansion is not known to hold no
