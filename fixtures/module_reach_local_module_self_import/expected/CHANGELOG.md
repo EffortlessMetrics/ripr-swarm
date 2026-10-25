@@ -47,3 +47,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_local_module_self_import (5)
+
+Reason:
+RIPR-SPEC-0122: name the no-canonical-gap recovery instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless module_reach_local_module_self_import --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

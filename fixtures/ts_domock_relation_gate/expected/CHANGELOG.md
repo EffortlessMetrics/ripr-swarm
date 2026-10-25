@@ -252,3 +252,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_domock_relation_gate (22)
+
+Reason:
+RIPR-SPEC-0122: name the no-canonical-gap recovery instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless ts_domock_relation_gate --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

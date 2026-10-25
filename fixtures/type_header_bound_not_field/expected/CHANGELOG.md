@@ -49,3 +49,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — type_header_bound_not_field (5)
+
+Reason:
+RIPR-SPEC-0122: name the no-canonical-gap recovery instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless type_header_bound_not_field --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

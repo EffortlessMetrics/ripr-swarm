@@ -97,3 +97,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_conditional_assertion_credit (9)
+
+Reason:
+RIPR-SPEC-0122: name the no-canonical-gap recovery instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless typescript_conditional_assertion_credit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

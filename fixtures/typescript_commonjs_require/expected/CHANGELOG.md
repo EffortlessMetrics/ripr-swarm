@@ -531,3 +531,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_commonjs_require (26)
+
+Reason:
+RIPR-SPEC-0122: name the no-canonical-gap recovery instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless typescript_commonjs_require --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
