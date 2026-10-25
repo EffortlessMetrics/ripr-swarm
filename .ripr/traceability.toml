@@ -17726,7 +17726,7 @@ tests = [
   "crates/ripr/src/analysis/classifier/finding.rs::tests::refused_assertion_next_step_offers_a_static_limit_only_for_a_limit_refusal",
   "crates/ripr/tests/owner_pin_execution.rs::owner_pin_matched_static_and_runtime_controls",
   "crates/ripr/tests/owner_pin_execution.rs::macro_use_module_admission_matches_runtime",
-  "crates/ripr/tests/pinned_shape_limit.rs::an_exact_pin_through_a_spawned_closure_reads_as_a_shape_limit",
+  "crates/ripr/tests/pinned_shape_limit.rs::an_exact_pin_through_a_spawned_closure_is_credited",
   "crates/ripr/tests/pinned_shape_limit.rs::a_pin_that_is_not_exact_or_not_isolated_keeps_the_gap",
   "crates/ripr/tests/pinned_shape_limit.rs::an_applied_returned_closure_pin_is_no_longer_withheld",
   "crates/ripr/tests/pinned_shape_limit.rs::a_collected_iterator_chain_reads_as_a_shape_limit",
@@ -17987,6 +17987,14 @@ id = "RIPR-SPEC-0260"
 name = "Python guarded-arm activation gate for return-value credit"
 spec = "docs/specs/RIPR-SPEC-0260-python-guarded-arm-activation.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/dunder_entry_tests.rs::guarded_self_field_credit_refuses_native_escapes_and_binding_changes",
+  "crates/ripr/src/analysis/language/python/dunder_entry_tests.rs::guarded_self_field_credit_ignores_nonexecuting_keyword_text",
+  "crates/ripr/src/analysis/language/python/dunder_entry_tests.rs::guarded_self_field_credit_refuses_mixed_binding_targets_and_non_space_indents",
+  "crates/ripr/src/analysis/language/python/dunder_entry_tests.rs::guarded_self_field_credit_requires_the_value_to_survive_to_the_assertion",
+  "crates/ripr/src/analysis/language/python/dunder_entry_tests.rs::guarded_self_field_credit_keeps_unrelated_writes_and_read_only_uses",
+  "crates/ripr/src/analysis/language/python/dunder_entry_tests.rs::guarded_self_field_credit_preserves_benign_prefix_expressions_and_scopes",
+  "crates/ripr/src/analysis/language/python/dunder_entry_tests.rs::guarded_self_field_credit_refuses_native_binding_declarations",
+  "crates/ripr/src/analysis/language/python/dunder_entry_tests.rs::guarded_self_field_credit_refuses_same_line_masks_and_unresolved_native_literals",
   "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::condition_holds_fails_open_on_or_guard",
   "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::condition_holds_fails_open_on_not_guard",
   "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::condition_holds_still_excludes_simple_false_comparison",
@@ -18047,12 +18055,29 @@ tests = [
   "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::a_chained_method_rule_fails_open_when_the_result_is_read_otherwise",
 ]
 code = [
+  "crates/ripr/src/analysis/language/python/guard_credit.rs",
   "crates/ripr/src/analysis/language/python/arm_activation.rs",
   "crates/ripr/src/analysis/language/python/guard_activation.rs",
   "crates/ripr/src/analysis/language/python/boundary.rs",
   "crates/ripr/src/analysis/language/python/classify.rs",
 ]
 outputs = [
+  "fixtures/python_guarded_write_alias_overwrite/expected/check.json",
+  "fixtures/python_guarded_write_entered/expected/check.json",
+  "fixtures/python_guarded_write_escape/expected/check.json",
+  "fixtures/python_guarded_write_escaped_literal/expected/check.json",
+  "fixtures/python_guarded_write_formfeed_else/expected/check.json",
+  "fixtures/python_guarded_write_fstring_escape/expected/check.json",
+  "fixtures/python_guarded_write_mixed_numeric/expected/check.json",
+  "fixtures/python_guarded_write_mixed_targets/expected/check.json",
+  "fixtures/python_guarded_write_owner_overwrite/expected/check.json",
+  "fixtures/python_guarded_write_loop_overwrite/expected/check.json",
+  "fixtures/python_guarded_write_call_overwrite/expected/check.json",
+  "fixtures/python_guarded_write_read_only/expected/check.json",
+  "fixtures/python_guarded_write_parameter_rebound/expected/check.json",
+  "fixtures/python_guarded_write_receiver_rebound/expected/check.json",
+  "fixtures/python_guarded_write_same_line_mask/expected/check.json",
+  "fixtures/python_guarded_write_unicode_rebound/expected/check.json",
   "docs/specs/RIPR-SPEC-0260-python-guarded-arm-activation.md",
   "docs/OUTPUT_SCHEMA.md",
 ]
