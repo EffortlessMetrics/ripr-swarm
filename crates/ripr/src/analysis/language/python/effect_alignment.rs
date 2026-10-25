@@ -91,8 +91,13 @@ impl ChangedEffect {
             && direct
             && let Some((object, attr)) = object_attribute_write(line)
             && owner.class_facts.module_objects.iter().any(|name| name == object)
-            // A parameter of the same name shadows the module object.
-            && !owner.parameters.iter().any(|parameter| parameter.name == object)
+            // A parameter or local of the same name shadows the module object;
+            // a body whose bindings are unknown reads no effect.
+            && owner
+                .class_facts
+                .bound_names
+                .as_ref()
+                .is_some_and(|names| !names.iter().any(|name| name == object))
         {
             return Some(Self::ModuleField {
                 object: object.to_string(),

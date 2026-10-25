@@ -48,6 +48,9 @@ pub(in crate::analysis::language::python) struct PythonClassFacts {
     /// a call result and never rebound, objects the function can mutate
     /// through an attribute write. Filled after extraction; empty when unknown.
     pub(in crate::analysis::language::python) module_objects: Vec<String>,
+    /// For a function owner: the names its own body binds (parameters, locals,
+    /// walrus targets). None when unknown, which keeps every consumer closed.
+    pub(in crate::analysis::language::python) bound_names: Option<Vec<String>>,
 }
 
 /// Fills [`PythonClassFacts`] on each method owner from the owners that share

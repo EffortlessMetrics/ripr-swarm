@@ -148,6 +148,26 @@ pub(super) fn constants_visible_in_function(
         .collect()
 }
 
+/// The names a function body binds itself: its parameters, locals and walrus
+/// targets, so a module name spelled in it may refer to a local. None when the
+/// body nests a scope or lambda, or binds names the walk cannot enumerate.
+pub(super) fn function_bound_names(
+    args: &ast::Arguments,
+    body: &[Stmt],
+    body_text: &str,
+) -> Option<Vec<String>> {
+    if contains_nested_scope(body) || mentions_identifier(body_text, "lambda") {
+        return None;
+    }
+    let mut names = function_scope_names(args, body)?;
+    names.extend(
+        walrus_target_names(body_text)
+            .into_iter()
+            .map(str::to_string),
+    );
+    Some(names)
+}
+
 /// What a test file can do to a module constant's value, for one test.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct PythonTestRebinding {

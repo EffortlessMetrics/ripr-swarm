@@ -123,3 +123,42 @@ fn local_object_of_the_same_name_is_not_the_imported_one() -> Check {
     assert_ne!(class, ExposureClass::Exposed);
     Ok(())
 }
+
+#[test]
+fn local_binding_of_the_object_name_is_not_credited() -> Check {
+    for local in [
+        "response = SimpleNamespace()",
+        "for response in [SimpleNamespace()]:\n        pass",
+        "with open(\"f\") as response:\n        pass",
+    ] {
+        let shadowed = ROUTE.replace(
+            "    response.status_code = 422\n",
+            &format!("    {local}\n    response.status_code = 422\n"),
+        );
+        let owners = extract_owners(Path::new("shop/route.py"), &shadowed);
+        let owner = owners
+            .iter()
+            .find(|owner| owner.name == "checkout")
+            .ok_or("owner checkout must be extracted")?;
+        let tests = extract_tests(
+            Path::new("tests/test_route.py"),
+            "from shop.route import checkout, response\n\n\ndef test_it():\n    checkout(True)\n    assert response.status_code == 422\n",
+        );
+        let write_line = shadowed
+            .lines()
+            .position(|line| line == "    response.status_code = 422")
+            .ok_or("write line must exist")?
+            + 1;
+        let finding = classify_change_with_old(
+            Path::new("shop/route.py"),
+            write_line.max(owner.start_line + 1),
+            "    response.status_code = 400",
+            Some("    response.status_code = 422"),
+            &owners,
+            &tests,
+        )
+        .ok_or("the change must yield a finding")?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{local}");
+    }
+    Ok(())
+}
