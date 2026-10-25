@@ -119,23 +119,29 @@ fn bounded_legend_capture_projection_is_exact_and_preserves_evidence() -> Result
     Ok(())
 }
 
-/// Replace only the NoBindingSeam advisory sentence (the historical capture's
-/// or the current producer's) with a fixed slot, so that wording stays owned by
-/// `RepairRouteRefusal::advisory` (#9244). Every other advisory line, such as
-/// the captured Ineligible refusals, stays byte-exact. Returns the projected
+/// Replace only the NoBindingSeam and not-ready (RouteNotReady) advisory
+/// sentences (the historical capture's or the current producer's) with a fixed
+/// slot, so that wording stays owned by `RepairRouteRefusal::advisory`
+/// (#9244). Every other advisory line stays byte-exact. Returns the projected
 /// bytes and how many lines were blanked.
 fn blank_no_binding_seam_advisory(bytes: &[u8]) -> (Vec<u8>, usize) {
     const OLD: &str =
         "  no repair start offered: no seam in the finding's file binds this finding;";
     const NEW: &str =
         "  no repair start offered: ripr found no seam in this finding's file to bind it to,";
+    const OLD_NOT_READY: &str = "  no repair start offered: repair route not ready";
+    const NEW_NOT_READY: &str =
+        "  no repair start offered: ripr cannot build a repair packet for this finding yet";
     let mut blanked = 0;
     let projected = String::from_utf8_lossy(bytes)
         .split_inclusive('\n')
         .map(|line| {
-            if line.starts_with(OLD) || line.starts_with(NEW) {
+            if [OLD, NEW, OLD_NOT_READY, NEW_NOT_READY]
+                .iter()
+                .any(|prefix| line.starts_with(prefix))
+            {
                 blanked += 1;
-                "  no repair start offered: <no-binding-seam advisory>\n"
+                "  no repair start offered: <superseded advisory>\n"
             } else {
                 line
             }
