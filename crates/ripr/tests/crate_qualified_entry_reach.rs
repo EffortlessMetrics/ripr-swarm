@@ -1847,6 +1847,14 @@ fn an_in_file_test_module_import_resolves_from_its_own_scope() -> Result<(), Str
         ),
         "super from mod tests in a file module",
     )?;
+    // A grouped import resolves like the plain one.
+    assert_recovered(
+        &in_file(
+            LIB,
+            &tests_module("use super::{is_bulk, order_discount};", &test_file(BARE)),
+        ),
+        "grouped import",
+    )?;
     // A raw-identifier module name is the same scope.
     assert_recovered(
         &in_file(
