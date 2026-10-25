@@ -99,7 +99,7 @@ fn python_tests_are_discovered_only_for_human_output() -> Result<(), String> {
         .unlinked_python_tests
         .ok_or_else(|| "human output must record the Python tests".to_string())?;
     assert_eq!(python.count, 1);
-    assert_eq!(python.example, "tests/test_f.py");
+    assert_eq!(python.example, PathBuf::from("tests/test_f.py"));
     let python = Some(python);
     assert_eq!(
         run(OutputFormat::HumanFull)?.unlinked_python_tests,
@@ -172,7 +172,7 @@ fn python_test_note_preserves_literal_backslashes_on_unix() -> Result<(), Box<dy
             !note.contains(&format!("for example {slash}")),
             "{rendered}"
         );
-        assert_eq!(python.example, literal);
+        assert_eq!(python.example, PathBuf::from(literal));
     }
     assert_eq!(run(OutputFormat::Json)?.unlinked_python_tests, None);
     std::fs::remove_dir_all(root)?;
