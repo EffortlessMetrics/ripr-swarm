@@ -1441,6 +1441,109 @@ fn comments_and_compound_assignments_do_not_hide_a_key() -> Result<(), String> {
     Ok(())
 }
 
+/// RIPR-SPEC-0258 / #9951: decode JSON Unicode escapes before looking for
+/// command flags, including mixed-case hex, encoded flags and shell quotes.
+#[test]
+fn unicode_json_update_flags_stay_medium() -> Result<(), String> {
+    let jest = jest_snap(&[("price 1", "140")]);
+    let mut mismatches = Vec::new();
+    for script in [
+        r"jest\u000A-u",
+        r"jest\u000D-u",
+        r"jest\u000a-\u0075",
+        r"jest\u0020\u002Du",
+        r"jest -\u0075",
+        r"jest \u002d\u0075",
+        r"jest\u0022-u\u0022",
+        r"jest\u0027-u\u0027",
+        r"jest \u002di\u0075",
+        r"jest \u002d\u002dupdate",
+    ] {
+        let package = format!(r#"{{"scripts":{{"test":"{script}"}}}}"#);
+        let parsed: serde_json::Value = serde_json::from_str(&package)
+            .map_err(|err| format!("invalid package fixture {package}: {err}"))?;
+        assert!(parsed["scripts"]["test"].as_str().is_some());
+        let got = strengths(
+            "snap-unicode-update",
+            PRICE_TEST,
+            &[(SNAP_PATH, &jest), ("package.json", &package)],
+        )?;
+        if got != vec![OracleStrength::Medium] {
+            mismatches.push(format!("{package}: expected medium, got {got:?}"));
+        }
+    }
+    assert!(mismatches.is_empty(), "{mismatches:#?}");
+    Ok(())
+}
+
+/// #9951: config-path detection consumes the same decoded command text.
+#[test]
+fn unicode_json_config_flag_separators_stay_medium() -> Result<(), String> {
+    let jest = jest_snap(&[("price 1", "140")]);
+    let mut mismatches = Vec::new();
+    for script in [
+        r"jest\u000A--config cfg/jest.js",
+        r"jest\u000D--rootDir src",
+        r"jest --config\u000Acfg/jest.js",
+        r"jest --config\u000Dcfg/jest.js",
+        r"jest \u002d\u002dconfig cfg/jest.js",
+        r"jest\u0022--config\u0022 cfg/jest.js",
+        r"jest\u0027-c\u0027 cfg/jest.js",
+    ] {
+        let package = format!(r#"{{"scripts":{{"test":"{script}"}}}}"#);
+        let parsed: serde_json::Value = serde_json::from_str(&package)
+            .map_err(|err| format!("invalid package fixture {package}: {err}"))?;
+        assert!(parsed["scripts"]["test"].as_str().is_some());
+        let got = strengths(
+            "snap-unicode-config",
+            PRICE_TEST,
+            &[(SNAP_PATH, &jest), ("package.json", &package)],
+        )?;
+        if got != vec![OracleStrength::Medium] {
+            mismatches.push(format!("{package}: expected medium, got {got:?}"));
+        }
+    }
+    assert!(mismatches.is_empty(), "{mismatches:#?}");
+    Ok(())
+}
+
+/// #9951 negative controls: a JSON-escaped backslash is literal command
+/// text, including one produced by a Unicode escape; never decode it twice.
+#[test]
+fn unicode_json_literal_escapes_keep_snapshot_credit() -> Result<(), String> {
+    let jest = jest_snap(&[("price 1", "140")]);
+    let mut mismatches = Vec::new();
+    for script in [
+        r"jest\\u000A-u",
+        r"jest\\u000D-u",
+        r"jest\\n-u",
+        r"jest \\u002d\\u0075",
+        r"jest\\u0022-u\\u0022",
+        r"jest\u005cu000A-u",
+        r"jest -\u005cu0075",
+        r"jest\\u000A--config=cfg/jest.js",
+        r"jest\u005cu000D--rootDir src",
+        r"jest --ci\u000A--runInBand",
+        r"jest \u002d\u002dci",
+        r"jest\uD83D\uDE00-u",
+    ] {
+        let package = format!(r#"{{"scripts":{{"test":"{script}"}}}}"#);
+        let parsed: serde_json::Value = serde_json::from_str(&package)
+            .map_err(|err| format!("invalid package fixture {package}: {err}"))?;
+        assert!(parsed["scripts"]["test"].as_str().is_some());
+        let got = strengths(
+            "snap-unicode-literal",
+            PRICE_TEST,
+            &[(SNAP_PATH, &jest), ("package.json", &package)],
+        )?;
+        if got != vec![OracleStrength::Strong] {
+            mismatches.push(format!("{package}: expected strong, got {got:?}"));
+        }
+    }
+    assert!(mismatches.is_empty(), "{mismatches:#?}");
+    Ok(())
+}
+
 /// #8768 review: a `package.json` script that quotes the update flag
 /// (`'-u'`, JSON `\"-u\"`), bundles it (`-iu`), or separates a config flag
 /// with a JSON-escaped tab refuses. Flag-free scripts keep the credit.
