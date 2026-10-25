@@ -1708,6 +1708,10 @@ fn plain_inline_projects_keep_the_credit_and_every_other_spelling_refuses() -> R
             OracleStrength::Strong,
         ),
         (
+            "module.exports = { projects: [{ displayName: \"a...b\" }] };",
+            OracleStrength::Strong,
+        ),
+        (
             "module.exports = { projects: [{ displayName: \"my root\", name: 'workspace' }] };",
             OracleStrength::Strong,
         ),

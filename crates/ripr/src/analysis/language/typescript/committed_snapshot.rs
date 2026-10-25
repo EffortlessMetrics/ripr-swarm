@@ -691,7 +691,7 @@ fn without_plain_inline_projects(raw: &str) -> Option<String> {
     if delegates_to_other_config(inside_valued)
         || mentions_named_key(inside_valued, "rootDir")
         || mentions_named_key(inside_valued, "roots")
-        || inside.contains("...")
+        || inside_valued.contains("...")
         || preset_may_name_a_file(inside)
     {
         return None;
