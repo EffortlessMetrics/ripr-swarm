@@ -1237,3 +1237,9 @@ hashes only.
 The same snapshots follow corpus cache generation 1.103 to 1.104 for the
 returned loop-accumulator update (#6485), with the same scope: generation,
 content commitment, dependent verify commitments and receipt byte hashes only.
+
+### table-driven loop-accumulator classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.104 to 1.105 for the
+table-driven loop-accumulator pin (#6485), with the same scope: generation,
+content commitment, dependent verify commitments and receipt byte hashes only.

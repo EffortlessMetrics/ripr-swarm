@@ -33,7 +33,7 @@ use crate::analysis::syntax::loop_accumulator::loop_accumulator_at;
 use crate::analysis::syntax::parse_clean_source_file;
 use crate::analysis::test_grip_evidence::text_calls;
 use crate::domain::*;
-use ra_ap_syntax::{AstNode, SyntaxNode, WalkEvent, ast};
+use ra_ap_syntax::{AstNode, SyntaxNode, WalkEvent, ast, ast::HasLoopBody};
 use std::ops::Range;
 
 const LIMIT: StaticLimitKind = StaticLimitKind::RustPinnedShapeUnresolved;
@@ -76,14 +76,19 @@ pub(in crate::analysis) fn withhold_pinned_shape_gap(
     finding: &mut Finding,
     index: &RustIndex,
 ) -> bool {
-    if finding.static_limit_kind.is_some()
-        || finding.class != ExposureClass::WeaklyExposed
-        || !finding
-            .ripr
-            .reveal
-            .discriminate
-            .summary
-            .contains("(observation_unverified)")
+    if finding.static_limit_kind.is_some() {
+        return false;
+    }
+    let summary = &finding.ripr.reveal.discriminate.summary;
+    // RIPR-SPEC-0360: a pin inside a loop the table reader could not establish
+    // reads `reachable_unrevealed` with the assertion context unestablished;
+    // only the accumulator shape, whose table-driven pins credit when
+    // readable, is withheld there (checked below).
+    let loop_unestablished = finding.class == ExposureClass::ReachableUnrevealed
+        && summary.contains("(rust_assertion_context_unestablished)");
+    if !loop_unestablished
+        && (finding.class != ExposureClass::WeaklyExposed
+            || !summary.contains("(observation_unverified)"))
     {
         return false;
     }
@@ -114,6 +119,9 @@ pub(in crate::analysis) fn withhold_pinned_shape_gap(
     ) else {
         return false;
     };
+    if loop_unestablished && shape != Shape::AccumulatedLocal {
+        return false;
+    }
     // The accumulator's walked argument, so an empty literal elsewhere in the
     // call does not make the pin degenerate.
     let walked = loop_accumulator_at(&owner.body, changed_line - owner.start_line)
@@ -262,7 +270,12 @@ fn pins_owner_exactly(test: &TestFact, owner: &str, shape: Shape, walked: Option
         return false;
     }
     test.assertions.iter().any(|assertion| {
-        assertion_runs_unconditionally(&test.body, &assertion.text)
+        (assertion_runs_unconditionally(&test.body, &assertion.text)
+            // RIPR-SPEC-0360: a table loop's `assert_eq!` is how this shape is
+            // usually pinned. Credit reads the rows it can; a pin it cannot
+            // read is withheld, never left as a gap.
+            || (shape == Shape::AccumulatedLocal
+                && assertion_is_top_level_loop_statement(&test.body, &assertion.text)))
             && assertion.strength == OracleStrength::Strong
             && assertion.kind == OracleKind::ExactValue
             && assertion.text.trim_start().starts_with("assert_eq!")
@@ -315,6 +328,55 @@ fn assertion_runs_unconditionally(test_body: &str, assertion: &str) -> bool {
     }
     list.tail_expr()
         .is_some_and(|tail| squash(&tail.syntax().text().to_string()) == wanted)
+}
+
+/// Whether `assertion` is a statement of the body of a `for` loop that is
+/// itself a top-level statement of the test, before any `return`: it runs once
+/// per iteration, which the table-driven pin reads row by row.
+fn assertion_is_top_level_loop_statement(test_body: &str, assertion: &str) -> bool {
+    let squash = |text: &str| -> String {
+        text.chars()
+            .filter(|ch| !ch.is_whitespace())
+            .collect::<String>()
+            .trim_end_matches(';')
+            .to_string()
+    };
+    let Some(parse) = parse_clean_source_file(test_body) else {
+        return false;
+    };
+    let Some(list) = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)
+        .and_then(|function| function.body())
+        .and_then(|block| block.stmt_list())
+    else {
+        return false;
+    };
+    let wanted = squash(assertion);
+    let in_loop = |table: &ast::ForExpr| {
+        table
+            .loop_body()
+            .and_then(|body| body.stmt_list())
+            .is_some_and(|body| {
+                body.statements()
+                    .any(|inner| squash(&inner.syntax().text().to_string()) == wanted)
+                    || body
+                        .tail_expr()
+                        .is_some_and(|tail| squash(&tail.syntax().text().to_string()) == wanted)
+            })
+    };
+    for statement in list.statements() {
+        if let ast::Stmt::ExprStmt(expr) = &statement {
+            match expr.expr() {
+                Some(ast::Expr::ReturnExpr(_)) => return false,
+                Some(ast::Expr::ForExpr(table)) if in_loop(&table) => return true,
+                _ => {}
+            }
+        }
+    }
+    matches!(list.tail_expr(), Some(ast::Expr::ForExpr(table)) if in_loop(&table))
 }
 
 /// The operand is `owner(..)`, optionally applied again (`owner(..)(..)`) or

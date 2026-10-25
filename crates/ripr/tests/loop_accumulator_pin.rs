@@ -410,3 +410,81 @@ index 1111111..2222222 100644
     }
     Ok(())
 }
+
+/// `OWNER` pinned through `table_body`, a constant-row table loop.
+fn table_finding(table_body: &str) -> Result<Finding, String> {
+    accumulator_finding(OWNER, table_body)
+}
+
+#[test]
+fn a_table_row_with_a_nonempty_input_and_a_nonzero_total_credits_the_update() -> Result<(), String>
+{
+    for body in [
+        // A typed `let` table whose first row separates nothing.
+        "let cases: [(&[u32], u32); 2] = [(&[], 0), (&[3, 4], 7)];
+        for (items, want) in cases {
+            assert_eq!(total(items), want);
+        }",
+        // The same rows inline, and the single-row table.
+        "for (items, want) in [(&[3, 4], 7), (&[1, 2], 3)] {
+            assert_eq!(total(items), want);
+        }",
+        "for (items, want) in [(&[3, 4, 5], 12)] {
+            assert_eq!(total(items), want);
+        }",
+        // The loop is the last expression of the test, without a semicolon.
+        "let cases: [(&[u32], u32); 1] = [(&[5], 5)];
+        for (items, want) in cases {
+            assert_eq!(total(items), want)
+        }",
+    ] {
+        let found = table_finding(body)?;
+        assert_eq!(found.class, ExposureClass::Exposed, "{body}\n{found:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_table_that_separates_nothing_or_cannot_be_read_is_withheld_never_a_gap() -> Result<(), String>
+{
+    for body in [
+        // Every row is empty or sums to zero: nothing separates the update,
+        // but ripr does not claim the gap through a loop.
+        "let cases: [(&[u32], u32); 2] = [(&[], 0), (&[0, 0], 0)];
+        for (items, want) in cases {
+            assert_eq!(total(items), want);
+        }",
+        // A computed cell, a short row, a rebound name and a skipped row.
+        "for (items, want) in [(&[3, 4], 3 + 4), (&[1, 2], 3)] {
+            assert_eq!(total(items), want);
+        }",
+        "for (items, want) in [(&[3, 4], 7), (&[1, 2])] {
+            assert_eq!(total(items), want);
+        }",
+        "let cases: [(&[u32], u32); 1] = [(&[3, 4], 7)];
+        let items: &[u32] = &[];
+        for (items, want) in cases {
+            assert_eq!(total(items), want);
+        }",
+        "for (items, want) in [(&[3, 4], 7), (&[1, 2], 3)] {
+            if want == 3 {
+                continue;
+            }
+            assert_eq!(total(items), want);
+        }",
+    ] {
+        let found = table_finding(body)?;
+        assert_ne!(found.class, ExposureClass::Exposed, "{body}\n{found:?}");
+        assert_ne!(
+            found.class,
+            ExposureClass::WeaklyExposed,
+            "{body}\n{found:?}"
+        );
+        assert_ne!(
+            found.class,
+            ExposureClass::ReachableUnrevealed,
+            "{body}\n{found:?}"
+        );
+    }
+    Ok(())
+}
