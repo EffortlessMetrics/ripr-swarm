@@ -32,7 +32,7 @@ use super::discriminators::python_string_literal_value;
 use super::guard_activation::{condition_holds, leading_whitespace};
 use super::no_behavior::split_top_level_args;
 use super::related_tests::PythonRelatedCandidate;
-use super::static_limits::caplog_required_literals;
+use super::static_limits::{CaplogRead, caplog_required_literals};
 use super::{PythonOwner, PythonTest, expr_full_name};
 use crate::domain::{OwnerKind, ValueContext, ValueFact};
 use rustpython_parser::ast::{self, Expr};
@@ -166,13 +166,20 @@ pub(super) fn python_log_evidence(
                 },
             ));
         }
-        for literal in literals {
-            if !anchored_in_message(&literal) {
+        for membership in literals {
+            let literal = membership.literal;
+            // Only `caplog.text` carries the record header; a message read
+            // (`caplog.messages`, `record.message`) holds the message alone.
+            if membership.read == CaplogRead::Text && !anchored_in_message(&literal) {
                 return None;
             }
+            let holds = |text: &String| match membership.read {
+                CaplogRead::Text | CaplogRead::MessageContains => text.contains(&literal),
+                CaplogRead::MessageEquals => *text == literal,
+            };
             evaluations.push(Evaluation {
-                old_present: old_texts.iter().any(|text| text.contains(&literal)),
-                new_present: new_texts.iter().any(|text| text.contains(&literal)),
+                old_present: old_texts.iter().any(holds),
+                new_present: new_texts.iter().any(holds),
                 literal,
                 old_text: old_texts.first().cloned(),
                 new_text: new_texts.first().cloned(),
@@ -531,6 +538,10 @@ fn body_calls_only_the_owner(body: &str, test: &PythonTest, owner: &PythonOwner)
             || chain == test.name
             || chain == "caplog.at_level"
             || chain == "caplog.set_level"
+            // `any(...)` over `caplog.records` and `record.getMessage()` read
+            // captured records; neither logs.
+            || chain == "any"
+            || chain.ends_with(".getMessage")
             || matches!(
                 chain,
                 "assert" | "not" | "and" | "or" | "in" | "is" | "if" | "with"

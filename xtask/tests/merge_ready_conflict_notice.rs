@@ -29,6 +29,10 @@ case "$*" in
     while [ $# -gt 0 ]; do [ "$1" = "--jq" ] && expr="$2"; shift; done
     jq -r "$expr" < "$f" ;;
   *"/comments?"*) echo "${FAKE_EXISTING_COMMENTS:-0}" ;;
+  *"/statuses?"*)
+    expr=""
+    while [ $# -gt 0 ]; do [ "$1" = "--jq" ] && expr="$2"; shift; done
+    jq -r "$expr" <<< "${FAKE_PRIOR_STATUSES:-[]}" ;;
 esac
 "#;
 
@@ -68,6 +72,15 @@ struct Outcome {
 /// Run the block for an event on `main` at `HEAD` with the PR reads in `reads`
 /// (the last one repeats). `existing` is the count of marker comments present.
 fn run(reads: &[String], existing: &str, case: &str) -> Result<Outcome, String> {
+    run_with_statuses(reads, existing, "[]", case)
+}
+
+fn run_with_statuses(
+    reads: &[String],
+    existing: &str,
+    prior_statuses: &str,
+    case: &str,
+) -> Result<Outcome, String> {
     let dir =
         std::env::temp_dir().join(format!("merge-ready-notice-{}-{case}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
@@ -101,6 +114,7 @@ fn run(reads: &[String], existing: &str, case: &str) -> Result<Outcome, String> 
         .env("PATH", path)
         .env("FAKE_DIR", &dir)
         .env("FAKE_EXISTING_COMMENTS", existing)
+        .env("FAKE_PRIOR_STATUSES", prior_statuses)
         .env("GH_TOKEN", "unused")
         .env("REPOSITORY", "o/r")
         .env("PR_NUMBER", "1")
@@ -201,5 +215,61 @@ fn an_existing_marker_suppresses_the_comment_but_not_the_status() -> Result<(), 
         "{}",
         outcome.log
     );
+    Ok(())
+}
+
+fn status_count(outcome: &Outcome, state: &str) -> usize {
+    outcome
+        .log
+        .lines()
+        .filter(|l| l.starts_with(&format!("CALL api repos/o/r/statuses/{HEAD} ")))
+        .filter(|l| l.contains(&format!("state={state}")))
+        .count()
+}
+
+#[test]
+fn a_resolved_conflict_clears_only_its_own_earlier_failure() -> Result<(), String> {
+    let clean = pr_json("true", "clean", HEAD, "main");
+    let failed = r#"[{"context":"merge-ready conflict","state":"failure","creator":{"login":"github-actions[bot]"}},{"context":"merge-ready conflict","state":"failure","creator":{"login":"github-actions[bot]"}}]"#;
+    let outcome = run_with_statuses(std::slice::from_ref(&clean), "0", failed, "cleared")?;
+    assert_eq!(status_count(&outcome, "success"), 1, "{}", outcome.log);
+    assert_eq!(outcome.comments, 0);
+
+    let already_clear = r#"[{"context":"merge-ready conflict","state":"success","creator":{"login":"github-actions[bot]"}},{"context":"merge-ready conflict","state":"failure","creator":{"login":"github-actions[bot]"}}]"#;
+    let outcome = run_with_statuses(
+        std::slice::from_ref(&clean),
+        "0",
+        already_clear,
+        "already-clear",
+    )?;
+    assert_eq!(outcome.statuses, 0, "{}", outcome.log);
+
+    let foreign_creator =
+        r#"[{"context":"merge-ready conflict","state":"failure","creator":{"login":"someone"}}]"#;
+    let outcome = run_with_statuses(
+        std::slice::from_ref(&clean),
+        "0",
+        foreign_creator,
+        "foreign-creator",
+    )?;
+    assert_eq!(outcome.statuses, 0, "{}", outcome.log);
+
+    let other_context = r#"[{"context":"Ripr Rust Small Result","state":"failure"}]"#;
+    let outcome = run_with_statuses(&[clean], "0", other_context, "other-context")?;
+    assert_eq!(outcome.statuses, 0, "{}", outcome.log);
+    Ok(())
+}
+
+#[test]
+fn a_moved_head_never_clears_a_status_on_the_requested_head() -> Result<(), String> {
+    let moved = pr_json(
+        "true",
+        "clean",
+        "def67890def67890def67890def67890def67890",
+        "main",
+    );
+    let failed = r#"[{"context":"merge-ready conflict","state":"failure","creator":{"login":"github-actions[bot]"}}]"#;
+    let outcome = run_with_statuses(&[moved], "0", failed, "moved-with-failure")?;
+    assert_eq!(outcome.statuses, 0, "{}", outcome.log);
     Ok(())
 }

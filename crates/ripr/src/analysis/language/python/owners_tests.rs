@@ -179,6 +179,7 @@ fn owner_from_function(
         .unwrap_or_else(|| name.to_string());
     let route_paths = collect_static_route_paths(context.source, decorators);
     let route_methods = collect_static_route_methods(context.source, decorators);
+    let route_receivers = collect_static_route_receivers(context.source, decorators);
     let dynamic_route_decorators = collect_dynamic_route_decorators(context.source, decorators);
     let unplain_decorators = called_decorator_names(decorators);
     let decorator_lines = decorators
@@ -228,6 +229,7 @@ fn owner_from_function(
         cli_receiver_names: collect_static_cli_receiver_names(context.source, context.imports),
         route_paths,
         route_methods,
+        route_receivers,
         dynamic_route_decorators,
         unplain_decorators,
         decorator_lines,
@@ -248,6 +250,11 @@ fn owner_from_function(
         term_facts,
         class_facts: super::related_tests::PythonClassFacts {
             direct_statements: direct_expression_statements(context.source, body),
+            bound_names: super::module_constants::function_bound_names(
+                args,
+                body,
+                &text_for_range(context.source, range),
+            ),
             ..Default::default()
         },
     }
@@ -336,6 +343,7 @@ fn owner_from_class(
         cli_receiver_names: collect_static_cli_receiver_names(context.source, context.imports),
         route_paths: collect_static_route_paths(context.source, decorators),
         route_methods: collect_static_route_methods(context.source, decorators),
+        route_receivers: collect_static_route_receivers(context.source, decorators),
         dynamic_route_decorators: collect_dynamic_route_decorators(context.source, decorators),
         unplain_decorators: called_decorator_names(decorators),
         decorator_lines: None,
@@ -371,6 +379,7 @@ pub(super) fn module_owner(
         cli_receiver_names: collect_static_cli_receiver_names(source, imports),
         route_paths: Vec::new(),
         route_methods: Vec::new(),
+        route_receivers: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         unplain_decorators: Vec::new(),
         decorator_lines: None,
@@ -1257,6 +1266,26 @@ fn collect_static_route_paths(source: &str, decorators: &[Expr]) -> Vec<String> 
                 return None;
             }
             route_decorator_literal_argument(source, decorator, &name)
+        })
+        .collect()
+}
+
+/// The receiver each static route decorator hangs off (`app` in `@app.get`),
+/// index-aligned with `collect_static_route_paths`.
+fn collect_static_route_receivers(source: &str, decorators: &[Expr]) -> Vec<String> {
+    decorators
+        .iter()
+        .filter_map(|decorator| {
+            let name = expr_full_name(decorator)?;
+            if !is_static_route_decorator(&name) {
+                return None;
+            }
+            route_decorator_literal_argument(source, decorator, &name)?;
+            Some(
+                name.rsplit_once('.')
+                    .map(|(receiver, _)| receiver.to_string())
+                    .unwrap_or_default(),
+            )
         })
         .collect()
 }
