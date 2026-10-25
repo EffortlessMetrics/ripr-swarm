@@ -1,0 +1,6 @@
+use macro_modules::fits_path;
+
+path_table! {
+    path_small(1, 5, true)
+    path_large(9, 5, false)
+}

@@ -1,0 +1,33 @@
+{
+  "subject_id": "authored-macro-modules",
+  "origin": "authored",
+  "version_label": "authored 2026-10-25 for RIPR-SPEC-0117 example 9 (macro_rules! test tables whose generator is defined in another file, #6925)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "8f6c9093a32a2ca3cf79fe69748fc7fe9e95059235f062c1136cb4ee8c141e88"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "4695be383b9613af438bddff16dbf90b4daee4888d02300a782763a75d7256cb"
+    },
+    {
+      "path": "tests/support/mod.rs",
+      "sha256": "834ee2d4b9b8ca5907b5fc64cc1144ab3acbeee5e9a56faf0bc3828719f46f2e"
+    },
+    {
+      "path": "tests/modules.rs",
+      "sha256": "9ae6451e097a48fdace25829d7225cd170e8b6b3bfa6a54bf06dde1928e1f3fc"
+    },
+    {
+      "path": "tests/rows/mod.rs",
+      "sha256": "87c10b3fa066f4fbdfdd4778bce976a9dac2c0004d31b10eb10e154d6c8eb8c5"
+    },
+    {
+      "path": "tests/other/rows.rs",
+      "sha256": "14f914118378dff5567067781e0434f4082301e7fb36c5af30133c3403510c08"
+    }
+  ]
+}
