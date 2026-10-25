@@ -47,3 +47,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — returned_closure_arithmetic_masking (5)
+
+Reason:
+RIPR-SPEC-0265: ReturnValue next-step wording changed on main (#10115); verdicts unchanged
+
+Command:
+`cargo xtask goldens bless returned_closure_arithmetic_masking --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
