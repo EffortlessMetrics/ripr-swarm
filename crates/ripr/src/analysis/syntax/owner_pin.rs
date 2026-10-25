@@ -2257,8 +2257,11 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
         };
         if let Some(refusal) = refusal {
             // Only test functions are queried (`#[test]`, `#[tokio::test]`);
-            // a refused helper still counts toward duplicate detection.
-            if is_test_function(&function) {
+            // a refused helper still counts toward duplicate detection. A
+            // refused `#[test_case]` function stays unidentified: the
+            // `=> expected` form generates an assertion no scan reads, so
+            // it must keep reading as unknown rather than as a gap.
+            if is_test_function(&function) && !is_test_case_function(&function) {
                 insert_function(
                     &mut result.functions,
                     key,
@@ -2446,13 +2449,24 @@ fn root_divergence_start(function: &ast::Fn) -> Option<TextSize> {
 }
 
 /// `#[test]`, `#[tokio::test]` and other attributes whose last segment is
-/// `test`: the functions the admission is queried for.
+/// `test`, plus the `#[rstest]` and `#[test_case]` parameterizers: the
+/// functions the admission is queried for.
 fn is_test_function(function: &ast::Fn) -> bool {
     function.attrs().any(|attr| {
         attr.path()
             .and_then(|path| path.segment())
             .and_then(|segment| segment.name_ref())
-            .is_some_and(|name| name.text() == "test" || name.text() == "rstest")
+            .is_some_and(|name| matches!(name.text(), "test" | "rstest" | "test_case"))
+    })
+}
+
+/// A function carrying a `#[test_case]` attribute, in either spelling.
+fn is_test_case_function(function: &ast::Fn) -> bool {
+    function.attrs().any(|attr| {
+        attr.path()
+            .and_then(|path| path.segment())
+            .and_then(|segment| segment.name_ref())
+            .is_some_and(|name| name.text() == "test_case")
     })
 }
 
@@ -3060,6 +3074,9 @@ fn runs_body_unchanged(attr: &ast::Attr, test: &SyntaxNode) -> bool {
     if let Some(kind) = rstest_attribute(&path, &module) {
         return rstest_runs_body(attr, kind, test, &module);
     }
+    if is_test_case_path(&path, &module) {
+        return test_case_runs_body(attr, test, &module);
+    }
     let admitted = if path.contains("::") {
         serial_test_lock_leaf(&path).is_some() && serial_test_path_is_the_crate(&module)
     } else {
@@ -3348,6 +3365,96 @@ fn rstest_leaf_bound(name: &str, module: &SyntaxNode) -> Option<&'static str> {
     bound
 }
 
+/// Whether `path` names the `test_case` crate's attribute in `module`:
+/// `test_case::test_case` (rooted or not), or a bare `test_case` bound to it
+/// by exactly one explicit unrenamed `use test_case::test_case`. A rename is
+/// not discovered as a test, so it is not admitted here either; the caller
+/// still checks that `test_case` in that path is the crate.
+fn is_test_case_path(path: &str, module: &SyntaxNode) -> bool {
+    path.strip_prefix("::").unwrap_or(path) == "test_case::test_case"
+        || (path == "test_case" && test_case_leaf_bound(module))
+}
+
+/// Whether the bare name `test_case` is bound in `module` by exactly one
+/// explicit `use test_case::test_case`; globs and any second binding of the
+/// name refuse (compare [`rstest_leaf_bound`]).
+fn test_case_leaf_bound(module: &SyntaxNode) -> bool {
+    let mut bound = false;
+    for leaf in module_use_leaves(module) {
+        let UseBinding::Name(binding) = &leaf.binding else {
+            continue;
+        };
+        if unraw(binding) != "test_case" {
+            continue;
+        }
+        if bound || leaf.path != ["test_case", "test_case"] {
+            return false;
+        }
+        bound = true;
+    }
+    bound
+}
+
+/// Whether a `test_case` attribute on `test` leaves each generated test
+/// running the body unchanged with literal row values. `test_case` turns
+/// `#[test_case(3, 6)] fn t(n: u64, expected: u64)` into one `#[test]` per
+/// row that calls the function with the row's values. Admitted only when
+/// `test_case` is the crate in the test's module, every parameter is a plain
+/// immutable binding, and every row holds exactly one scalar literal per
+/// parameter. The `=> expected` form (which wraps the body in a generated
+/// comparison), `matches`/`with` forms, `;` descriptions, string or computed
+/// values (which could call the owner) all refuse.
+fn test_case_runs_body(attr: &ast::Attr, test: &SyntaxNode, module: &SyntaxNode) -> bool {
+    if attr.excl_token().is_some() {
+        return false;
+    }
+    let Some(function) = ast::Fn::cast(test.clone()) else {
+        return false;
+    };
+    extern_crate_path_holds(module, "test_case")
+        && test_case_parameters(&function)
+            .is_some_and(|parameters| case_row_literals(attr) == Some(parameters))
+}
+
+/// The number of parameters of a `#[test_case]` function when every one is a
+/// plain immutable `ident: Type` binding without attributes; `None`
+/// otherwise. Unlike rstest there are no fixtures: every parameter is filled
+/// from the row, and a `mut` one could be reassigned in the body where no
+/// binding scan sees it.
+fn test_case_parameters(function: &ast::Fn) -> Option<usize> {
+    if function.generic_param_list().is_some() || function.where_clause().is_some() {
+        return None;
+    }
+    let list = function.param_list()?;
+    if list.self_param().is_some() {
+        return None;
+    }
+    let mut count = 0;
+    for param in list.params() {
+        let ast::Pat::IdentPat(pat) = param.pat()? else {
+            return None;
+        };
+        if pat.ref_token().is_some()
+            || pat.mut_token().is_some()
+            || pat.pat().is_some()
+            || matches!(param.ty(), Some(ast::Type::ImplTraitType(_)))
+            || param.attrs().next().is_some()
+        {
+            return None;
+        }
+        count += 1;
+    }
+    Some(count)
+}
+
+/// Whether `attr` is the `test_case` crate's attribute, which emits a module
+/// named after the function it decorates and nothing else.
+fn test_case_attribute_trusted(attr: &ast::Attr, module: &SyntaxNode) -> bool {
+    attr.path().is_some_and(|path| {
+        is_test_case_path(&path.syntax().text().to_string().replace(' ', ""), module)
+    })
+}
+
 fn is_identifier(text: &str) -> bool {
     let mut chars = text.chars();
     chars
@@ -3583,7 +3690,7 @@ fn extern_crate_path_holds(module: &SyntaxNode, krate: &str) -> bool {
 
 /// Crates whose own attributes a module check may trust (see
 /// [`extern_crate_path_holds`]).
-const TRUSTED_ATTRIBUTE_CRATES: &[&str] = &["serial_test", "tokio", "rstest"];
+const TRUSTED_ATTRIBUTE_CRATES: &[&str] = &["serial_test", "tokio", "rstest", "test_case"];
 
 /// Whether a direct item of `module` carries an attribute of `krate`: a
 /// `krate::..` path, or for `serial_test` a bare name bound to a lock.
@@ -3603,6 +3710,7 @@ fn crate_attribute_appears(module: &SyntaxNode, krate: &str) -> bool {
                     && !path.contains("::")
                     && bare_lock_bound_in_module(&path, module))
                 || (krate == "rstest" && rstest_attribute_trusted(&attr, module))
+                || (krate == "test_case" && test_case_attribute_trusted(&attr, module))
         })
 }
 
@@ -3614,15 +3722,16 @@ fn extern_crate_holds_trusting(module: &SyntaxNode, krate: &str, trusted: &[&str
         {
             return false;
         }
-        // `#[rstest]` and `#[fixture]` emit items named after the function
-        // they decorate (a module of cases, a fixture struct).
+        // `#[rstest]`, `#[fixture]` and `#[test_case]` emit items named after
+        // the function they decorate (a module of cases, a fixture struct).
         if let ast::Item::Fn(function) = &item
             && function
                 .name()
                 .is_some_and(|name| unraw(name.text()) == krate)
-            && function
-                .attrs()
-                .any(|attr| rstest_attribute_trusted(&attr, module))
+            && function.attrs().any(|attr| {
+                rstest_attribute_trusted(&attr, module)
+                    || test_case_attribute_trusted(&attr, module)
+            })
         {
             return false;
         }
@@ -3655,10 +3764,11 @@ fn extern_crate_holds_trusting(module: &SyntaxNode, krate: &str, trusted: &[&str
     for leaf in module_use_leaves(module) {
         match &leaf.binding {
             UseBinding::Name(binding) => {
-                // `use rstest::rstest` binds the attribute macro, which
+                // `use rstest::rstest` (or `use test_case::test_case`) binds the attribute macro, which
                 // leaves the crate's path in the type namespace untouched.
                 let real = (leaf.path.len() == 1 && leaf.path[0] == krate)
-                    || (krate == "rstest" && leaf.path == ["rstest", "rstest"]);
+                    || (krate == "rstest" && leaf.path == ["rstest", "rstest"])
+                    || (krate == "test_case" && leaf.path == ["test_case", "test_case"]);
                 if unraw(binding) == krate && !real {
                     return false;
                 }
@@ -3733,6 +3843,9 @@ fn attribute_emits_no_items(attr: &ast::Attr, module: &SyntaxNode, trusted: &[&s
     }
     if rstest_attribute_trusted(attr, module) {
         return trusted.contains(&"rstest");
+    }
+    if test_case_attribute_trusted(attr, module) {
+        return trusted.contains(&"test_case");
     }
     if path == "derive" {
         let Some(ast::Meta::TokenTreeMeta(meta)) = attr.meta() else {
