@@ -447,7 +447,7 @@ mod tests {
         // An earlier arm shadowing one constituent of a later
         // alternative wins, exactly like the Rust match.
         let shadowed = BODY.replace(
-            "        \"text\" => \"beta\",",
+            "        \"word\" => \"alpha\",\n        \"text\" => \"beta\",",
             "        \"text\" => \"first\",\n        \"word\" | \"text\" => \"second\",",
         );
         assert_ne!(shadowed, BODY, "the shadowing substitution must apply");
