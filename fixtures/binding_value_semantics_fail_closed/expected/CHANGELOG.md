@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — binding_value_semantics_fail_closed (3)
+
+Reason:
+RIPR-SPEC-0158 and RIPR-SPEC-0319: compose with merged #9449 guidance by retaining the two current-main stop-reason Next lines; JSON, classifications, stages and default human output remain unchanged.
+
+Command:
+`cargo xtask goldens bless binding_value_semantics_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
