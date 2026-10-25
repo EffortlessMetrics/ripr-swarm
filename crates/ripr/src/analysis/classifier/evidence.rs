@@ -724,7 +724,30 @@ impl ClassifiedProbeEvidence {
             context.probe.before.as_deref(),
             context.probe.after.as_deref(),
         );
+        let map_callback_pin_required = matches!(
+            &propagation_witness,
+            Some(PropagationWitnessDiagnostic::Valid(witness))
+                if witness.limitations.iter().any(|limit| limit == "result_map_callback_payload")
+        );
+        let direct_owner_pin_admits = |test: &TestSummary, assertion: &OracleFact| {
+            owner_return_pin.as_ref().is_some_and(|pin| {
+                pin.admits(
+                    test,
+                    assertion,
+                    context.index,
+                    &|file, name| {
+                        context.index.files().get(file).is_some_and(|facts| {
+                            context.test_file_imports_foreign_callee_name(file, &facts.source, name)
+                        })
+                    },
+                    pin_syntax,
+                )
+            })
+        };
         let owner_pin_admits = |test: &TestSummary, assertion: &OracleFact| {
+            if map_callback_pin_required {
+                return direct_owner_pin_admits(test, assertion);
+            }
             // #5352: an exact assertion on the helper chain's entry pins
             // the owner's returned value when every observed hop
             // forwards it (the entry form of the owner-return pin).
@@ -758,23 +781,7 @@ impl ClassifiedProbeEvidence {
                 || fallible_checks.iter().any(|receipt| {
                     receipt.valid_for(context.probe) && receipt.admits(test, assertion)
                 })
-                || owner_return_pin.as_ref().is_some_and(|pin| {
-                    pin.admits(
-                        test,
-                        assertion,
-                        context.index,
-                        &|file, name| {
-                            context.index.files().get(file).is_some_and(|facts| {
-                                context.test_file_imports_foreign_callee_name(
-                                    file,
-                                    &facts.source,
-                                    name,
-                                )
-                            })
-                        },
-                        pin_syntax,
-                    )
-                })
+                || direct_owner_pin_admits(test, assertion)
         };
         let fallback_expansion = crate::analysis::classify::ImplicitExpansionMemo::default();
         let expansion = crate::analysis::classify::ImplicitExpansionContext::new(
@@ -790,6 +797,7 @@ impl ClassifiedProbeEvidence {
             &cross_package_defeats,
             &ReturnOracleAdmission {
                 owner_return_pin: &owner_pin_admits,
+                owner_return_pin_required: map_callback_pin_required,
                 assertion_admitted: &assertion_admitted,
                 assertion_has_known_implicit_observer: &|test, assertion| {
                     if !matches!(
@@ -894,38 +902,12 @@ impl ClassifiedProbeEvidence {
             arm_selector.as_ref(),
             context.diff_touched,
         );
-        let (observe, discriminate, mut related_tests, matched_total) = (
+        let (observe, discriminate, related_tests, matched_total) = (
             reveal.observe,
             reveal.discriminate,
             reveal.related,
             reveal.related_total,
         );
-        // #9870: an Ok observer in one test does not establish that an Err
-        // assertion in another test ran this callback. Preserve the existing
-        // pin's exact test/assertion admission on each new map-tail row,
-        // including when another row makes the finding exposed.
-        if matches!(
-            &propagation_witness,
-            Some(PropagationWitnessDiagnostic::Valid(witness))
-                if witness.limitations.iter().any(|limit| limit == "result_map_callback_payload")
-        ) {
-            for related in related_tests.iter_mut().filter(|row| row.miss.is_none()) {
-                let Some(text) = related.oracle.as_deref() else {
-                    continue;
-                };
-                let pinned = context.related_tests.iter().any(|(test, _)| {
-                    test.file == related.file
-                        && test.name == related.name
-                        && test.start_line == related.line
-                        && test.assertions.iter().any(|assertion| {
-                            assertion.text == text && owner_pin_admits(test, assertion)
-                        })
-                });
-                if !pinned {
-                    related.miss = Some(RelatedTestMiss::ObservationUnconfirmed);
-                }
-            }
-        }
         // #6692: a clone-field pin (`assert_eq!(recv.clone(), recv)` through
         // a derived `PartialEq`) observes the constructed field, so the
         // missing-field fact below no longer stands for this probe. Only an

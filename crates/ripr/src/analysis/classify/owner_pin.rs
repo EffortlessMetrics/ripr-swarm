@@ -5003,13 +5003,16 @@ enum CallShape<'a> {
 /// line. No parse, or no single match, reads as sync: an async owner then
 /// gets no `.await` credit, and its bare call (a future) does not compile.
 pub(super) fn declares_async(owner: &FunctionSummary, index: &RustIndex) -> bool {
-    let Some(facts) = index.files().get(&owner.file) else {
-        return false;
-    };
+    declared_async(owner, index).unwrap_or(false)
+}
+
+/// A positive source declaration receipt: unknown is distinct from sync.
+/// The callback Result reader requires Some(false), never absence of async
+/// evidence, because an async call returns a Future rather than its annotation.
+pub(super) fn declared_async(owner: &FunctionSummary, index: &RustIndex) -> Option<bool> {
+    let facts = index.files().get(&owner.file)?;
     let source: &str = &facts.source;
-    let Some(parse) = parse_clean_source_file(source) else {
-        return false;
-    };
+    let parse = parse_clean_source_file(source)?;
     let line_of = |offset: ra_ap_syntax::TextSize| {
         let at = (u32::from(offset) as usize).min(source.len());
         source.as_bytes()[..at]
@@ -5037,8 +5040,8 @@ pub(super) fn declares_async(owner: &FunctionSummary, index: &RustIndex) -> bool
                 .contains(&owner.start_line)
         });
     match (matches.next(), matches.next()) {
-        (Some(function), None) => function.async_token().is_some(),
-        _ => false,
+        (Some(function), None) => Some(function.async_token().is_some()),
+        _ => None,
     }
 }
 

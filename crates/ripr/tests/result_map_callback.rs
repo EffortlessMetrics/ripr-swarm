@@ -16,6 +16,15 @@ impl Drop for Subject {
     }
 }
 fn analyze(tail: &str, tests: &str, extra: &str) -> Result<Value, String> {
+    analyze_with_reader(tail, tests, extra, false, false)
+}
+fn analyze_with_reader(
+    tail: &str,
+    tests: &str,
+    extra: &str,
+    asynchronous: bool,
+    ambiguous: bool,
+) -> Result<Value, String> {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
         "ripr-result-map-{}-{}",
@@ -33,6 +42,22 @@ fn analyze(tail: &str, tests: &str, extra: &str) -> Result<Value, String> {
         .split("#[cfg(test)]")
         .next()
         .ok_or("production source")?;
+    let production = if asynchronous {
+        production.replace("fn try_get_uint", "async fn try_get_uint")
+    } else {
+        production.to_string()
+    };
+    let production = if ambiguous {
+        let declaration =
+            "    async fn try_get_uint(&mut self, nbytes: usize) -> Result<u64, TryGetError>;\n";
+        assert_eq!(production.matches(declaration).count(), 1);
+        let production = production.replace(declaration, "");
+        let boundary = "}\n\nimpl Buf for &[u8] {\n    async fn try_get_uint";
+        assert_eq!(production.matches(boundary).count(), 1);
+        production.replace(boundary, "    async fn try_get_uint(&mut self, nbytes: usize) -> Result<u64, TryGetError>; } impl Buf for &[u8] { async fn try_get_uint")
+    } else {
+        production
+    };
     assert_eq!(production.matches(ORIGINAL).count(), 1);
     let source = format!(
         "{}\n{extra}\n#[cfg(test)] mod tests {{ use super::*; {tests} }}",
@@ -112,6 +137,7 @@ fn result_map_refuses_discard_recompute_constant_and_changed_payloads() -> Resul
 fn result_map_requires_an_ok_pin_from_the_observing_test() -> Result<(), String> {
     for test in [
         ERROR_ONLY.to_string(),
+        "#[test] fn error_plus_unrelated_transform() { let mut a = &[][..]; assert_eq!(a.try_get_int(3), Err(TryGetError)); assert_eq!(sign_extend(0xffffff, 3), -1); }".to_string(),
         format!(
             "{ERROR_ONLY} #[test] fn merely_reaches() {{ let mut a = &[0xff, 0xff, 0xff][..]; let _ = a.try_get_int(3); }}"
         ),
@@ -147,6 +173,37 @@ fn result_map_refuses_rebound_standard_names() -> Result<(), String> {
         "type Result<T, E> = core::result::Result<T, E>;",
     )?;
     assert_ne!(finding["ripr"]["propagate"]["state"], "yes", "{finding}");
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn result_map_refuses_an_async_reader_with_a_discarding_future_map() -> Result<(), String> {
+    let extension = "trait FutureMap { fn map<F: FnOnce(u64) -> i64>(self, ignored: F) -> Result<i64, TryGetError>; } impl<T: core::future::Future<Output = Result<u64, TryGetError>>> FutureMap for T { fn map<F: FnOnce(u64) -> i64>(self, _ignored: F) -> Result<i64, TryGetError> { Ok(-1) } }";
+    let finding = analyze_with_reader(FORWARDED, GOOD, extension, true, false)?;
+    assert_ne!(finding["ripr"]["propagate"]["state"], "yes", "{finding}");
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn result_map_refuses_ambiguous_same_line_async_reader_declarations() -> Result<(), String> {
+    let extension = "trait FutureMap { fn map<F: FnOnce(u64) -> i64>(self, ignored: F) -> Result<i64, TryGetError>; } impl<T: core::future::Future<Output = Result<u64, TryGetError>>> FutureMap for T { fn map<F: FnOnce(u64) -> i64>(self, _ignored: F) -> Result<i64, TryGetError> { Ok(-1) } }";
+    let finding = analyze_with_reader(FORWARDED, GOOD, extension, true, true)?;
+    assert_ne!(finding["ripr"]["propagate"]["state"], "yes", "{finding}");
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn result_map_does_not_borrow_an_error_only_wrapper_pin() -> Result<(), String> {
+    let extra = "fn entry() -> Result<i64, TryGetError> { let mut a = &[][..]; a.try_get_int(3) } fn expected_error() -> Result<i64, TryGetError> { Err(TryGetError) }";
+    let finding = analyze(
+        FORWARDED,
+        "#[test] fn error_entry() { assert_eq!(entry(), expected_error()); }",
+        extra,
+    )?;
+    assert_ne!(finding["ripr"]["discriminate"]["state"], "yes", "{finding}");
     assert_ne!(finding["classification"], "exposed", "{finding}");
     Ok(())
 }

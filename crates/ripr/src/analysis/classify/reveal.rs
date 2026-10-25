@@ -36,6 +36,9 @@ use crate::domain::*;
 /// before token, strength, observation, or owner-pin confirmation.
 pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     pub(in crate::analysis) owner_return_pin: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
+    /// #9870: a Result.map callback runs only on Ok. Token coincidence in
+    /// an unrelated assertion cannot establish that callback's observation.
+    pub(in crate::analysis) owner_return_pin_required: bool,
     pub(in crate::analysis) assertion_admitted: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     /// Assertion-local binding for a known typed trait dispatch. `None` means
     /// no such dispatch; `Some(false)` withholds kind-only credit even on a
@@ -136,6 +139,7 @@ fn reveal_evidence(
         &|_, _| false,
         &|_, _| false,
         &ReturnOracleAdmission {
+            owner_return_pin_required: false,
             owner_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             assertion_has_known_implicit_observer: &|_, _| None,
@@ -178,6 +182,7 @@ fn reveal_evidence_with_exit(
         &|_, _| false,
         &ReturnOracleAdmission {
             assertion_has_known_implicit_observer: &|_, _| None,
+            owner_return_pin_required: false,
             owner_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             sibling_exclusion_admitted: &|_, _| true,
@@ -221,6 +226,7 @@ fn reveal_evidence_proximity_reach(
         &|_, _| false,
         &|_, _| false,
         &ReturnOracleAdmission {
+            owner_return_pin_required: false,
             owner_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             assertion_has_known_implicit_observer: &|_, _| None,
@@ -2449,7 +2455,15 @@ fn analyze_related_assertions(
                                             && effect_observer_confirms(assertion)
                                             && (return_admission.effect_state_carried)(
                                                 test, assertion,
-                                            )))))));
+                                            )))))))
+                    && (!return_admission.owner_return_pin_required
+                        || owner_return_pin_holds(
+                            &match_context,
+                            assertion,
+                            owner_pinned,
+                            import_defeats_owner,
+                            cross_package_defeats_owner,
+                        ));
                 proximity_confirmation_withheld |= !confirms_observation;
                 if confirm_required {
                     // Observation is confirmed when the assertion specifically
@@ -2501,9 +2515,10 @@ fn analyze_related_assertions(
                     oracle_strength: relative_strength,
                     relation_reason,
                     relation_confidence,
-                    miss: (!effect_kind_confirms
+                    miss: ((!effect_kind_confirms || return_admission.owner_return_pin_required)
                         && !observation_confirmed
-                        && (effect_observer_confirms(assertion)
+                        && (return_admission.owner_return_pin_required
+                            || effect_observer_confirms(assertion)
                             || implicit_observer == Some(false)))
                     .then_some(RelatedTestMiss::ObservationUnconfirmed),
                     miss_support: None,
@@ -5757,6 +5772,7 @@ mod tests {
         };
         let admission = ReturnOracleAdmission {
             assertion_has_known_implicit_observer: &|_, _| None,
+            owner_return_pin_required: false,
             owner_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             sibling_exclusion_admitted: &|_, _| true,
@@ -7197,6 +7213,7 @@ mod tests {
             &|_, _| false,
             &ReturnOracleAdmission {
                 assertion_has_known_implicit_observer: &|_, _| None,
+                owner_return_pin_required: false,
                 owner_return_pin: &pin,
                 assertion_admitted: &|_, _| true,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -7289,6 +7306,7 @@ mod tests {
                 &|_, _| false,
                 &ReturnOracleAdmission {
                     assertion_has_known_implicit_observer: &|_, _| None,
+                    owner_return_pin_required: false,
                     owner_return_pin: &pin,
                     assertion_admitted: &|_, _| true,
                     sibling_exclusion_admitted: &|_, _| true,
@@ -7467,6 +7485,7 @@ mod tests {
                 &|_, _| false,
                 &|_, _| false,
                 &ReturnOracleAdmission {
+                    owner_return_pin_required: false,
                     owner_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
@@ -7573,6 +7592,7 @@ mod tests {
                 import,
                 package,
                 &ReturnOracleAdmission {
+                    owner_return_pin_required: false,
                     owner_return_pin: &pin,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
@@ -7992,6 +8012,7 @@ mod tests {
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -8080,6 +8101,7 @@ mod tests {
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -9853,6 +9875,7 @@ return Err(\"typed pin\".into());
             &|_test, callee| file_imports_foreign_callee_name(test_source, callee, &crate_names),
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -9920,6 +9943,7 @@ return Err(\"typed pin\".into());
             &|_, callee| file_imports_foreign_callee_name(without_import, callee, &own_crate_names),
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -9958,6 +9982,7 @@ return Err(\"typed pin\".into());
             },
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -10015,6 +10040,7 @@ return Err(\"typed pin\".into());
             &|_, callee| file_imports_foreign_callee_name(aliased_import, callee, &crate_names),
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -10074,6 +10100,7 @@ return Err(\"typed pin\".into());
             &|_test, callee| file_imports_foreign_callee_name(test_source, callee, &crate_names),
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -10277,6 +10304,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| true,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -10318,6 +10346,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -10739,6 +10768,7 @@ return Err(\"typed pin\".into());
                         collection_argument_observed: &|_, _| false,
                         out_parameter_read: &|_, _| None,
                         assertion_has_known_implicit_observer: &|_, _| Some(false),
+                        owner_return_pin_required: false,
                         owner_return_pin: &|_, _| false,
                         assertion_admitted: &|_, _| true,
                         sibling_exclusion_admitted: &|_, _| true,
@@ -10814,6 +10844,7 @@ return Err(\"typed pin\".into());
                     getter_reads_key: &|_, _, _| None,
                     collection_argument_observed: &|_, _| false,
                     out_parameter_read: &|_, _| None,
+                    owner_return_pin_required: false,
                     owner_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|test, _| {
@@ -10900,6 +10931,7 @@ return Err(\"typed pin\".into());
                 &|_, _| false,
                 &|_, _| false,
                 &ReturnOracleAdmission {
+                    owner_return_pin_required: false,
                     owner_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
@@ -11187,6 +11219,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -11289,6 +11322,7 @@ return Err(\"typed pin\".into());
                 &|_, _| false,
                 &|_, _| false,
                 &ReturnOracleAdmission {
+                    owner_return_pin_required: false,
                     owner_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
@@ -11334,6 +11368,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -11830,6 +11865,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
@@ -12374,6 +12410,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,

@@ -659,14 +659,17 @@ wrong credits.
 Bounded Result.map rewrite (#9870). A changed return tail whose whole owner
 body rewrites `Ok(f(self.read(args)?, rest))` to
 `self.read(args).map(|v| f(v, rest))` completes its forwarding witness. The
-same-container, same-file `self.read` declaration and owner must return standard
+same-container, same-file `self.read` declaration must be uniquely established and synchronous, and it and the owner must return standard
 `Result`; rebound `Result`, `Ok` or `Err` names refuse. The callback must use
 one plain binding exactly once in one unconditional expression, optionally in
 a block with no statements. Replacing that binding by the exact receiver plus
 `?` must reconstruct the former `Ok` payload token for token. A matching `Ok`
 owner-return pin establishes callback execution separately for each observing
 test; an `Err`-only assertion, a reach-only sibling or a deferred assertion
-cannot borrow that provenance. Discarded, recomputed or constant callback
+cannot borrow that provenance. An unrelated assertion on a helper named in the
+callback cannot confirm aggregate discrimination either. This rule requires the
+direct owner-return Ok pin; generic helper-entry pins do not establish callback
+execution. Unknown declaration provenance, including same-line ambiguity, refuses. Discarded, recomputed or constant callback
 results, changed payloads, multiple binding reads, `move`/async callbacks,
 chained adaptors, aliases, `map_err` and unpaired rewrites retain the previous
 reading. This bounded rule does not change base-deleted findings or establish
