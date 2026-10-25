@@ -16787,6 +16787,11 @@ tests = [
   "crates/ripr/src/analysis/language/python/tests.rs::alias_replacement_skips_string_literals_and_longer_names",
   "crates/ripr/src/analysis/language/python/tests.rs::an_alias_spelled_inside_the_asserted_literal_is_not_substituted",
   "crates/ripr/src/analysis/language/python/tests.rs::an_alias_line_with_a_trailing_comment_is_still_an_alias",
+  "crates/ripr/src/analysis/language/python/tests.rs::a_caplog_that_is_not_the_builtin_fixture_keeps_abstaining",
+  "crates/ripr/src/analysis/language/python/fixtures_tests.rs::given_the_builtin_caplog_then_the_logged_text_is_credited",
+  "crates/ripr/src/analysis/language/python/fixtures_tests.rs::given_a_conftest_or_module_caplog_fixture_then_the_logged_text_abstains",
+  "crates/ripr/src/analysis/language/python/fixtures_tests.rs::given_a_directly_parametrized_caplog_then_the_logged_text_abstains",
+  "crates/ripr/src/analysis/language/python/fixtures_tests.rs::given_more_fixtures_than_the_attach_cap_then_a_caplog_override_is_still_found",
   "crates/ripr/src/analysis/language/python/tests.rs::overlapping_alias_names_do_not_corrupt_the_read",
   "crates/ripr/src/analysis/language/python/tests.rs::a_wrapped_assertion_using_an_alias_is_evaluated",
   "crates/ripr/src/analysis/language/python/tests.rs::a_direct_read_beside_a_same_named_alias_stays_a_required_condition",
@@ -16815,6 +16820,7 @@ tests = [
 ]
 fixtures = [
   "fixtures/python_caplog_alias_in_literal",
+  "fixtures/python_caplog_custom_fixture",
   "fixtures/python_assertion_helper_field",
   "fixtures/python_assertion_helper_wrong_receiver",
   "fixtures/python_assertion_helper_wrong_field",
