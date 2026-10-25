@@ -211,3 +211,43 @@ fn visible_class_override_withholds_authority_but_ordinary_setup_does_not() -> R
     assert_eq!(finding.class, ExposureClass::Exposed);
     Ok(())
 }
+
+#[test]
+fn unrelated_helper_and_standard_module_captures_preserve_authority() -> Result<(), String> {
+    let cases = [
+        "import unittest\nfrom shop import fee\n\nclass TestFee(unittest.TestCase):\n    def assert_unused(self):\n        pass\n    def test_fee(self):\n        self.assertEqual(fee(10), 12)\n",
+        "import unittest\nfrom shop import fee\n\ncase = unittest.TestCase()\nassertEqual = case.assertEqual\n\nclass TestFee(unittest.TestCase):\n    def test_fee(self):\n        assertEqual(fee(10), 12)\n",
+        "from unittest import TestCase as Case\nfrom shop import fee\n\nassertEqual = Case().assertEqual\n\nclass TestFee(Case):\n    def test_fee(self):\n        assertEqual(fee(10), 12)\n",
+    ];
+    for source in cases {
+        let finding = analyzed(source, "")?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{source}");
+        assert_eq!(
+            finding.related_tests[0].oracle_strength,
+            OracleStrength::Strong
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn replaced_module_capture_or_equality_dispatch_stays_unresolved() -> Result<(), String> {
+    let cases = [
+        "import unittest\nfrom shop import fee\nfrom helpers import Fake\n\ncase = Fake()\nassertEqual = case.assertEqual\n\nclass TestFee(unittest.TestCase):\n    def test_fee(self):\n        assertEqual(fee(10), 12)\n",
+        "import unittest\nfrom shop import fee\nfrom helpers import noop\n\ncase = unittest.TestCase()\nassertEqual = case.assertEqual\nassertEqual = noop\n\nclass TestFee(unittest.TestCase):\n    def test_fee(self):\n        assertEqual(fee(10), 12)\n",
+        "import unittest\nfrom shop import fee\nfrom helpers import noop\n\ncase = unittest.TestCase()\ncase.assertEqual = noop\nassertEqual = case.assertEqual\n\nclass TestFee(unittest.TestCase):\n    def test_fee(self):\n        assertEqual(fee(10), 12)\n",
+        "import unittest\nfrom shop import fee\n\nclass TestFee(unittest.TestCase):\n    def test_fee(self):\n        self._type_equality_funcs[int] = lambda *args, **kwargs: None\n        self.assertEqual(fee(10), 12)\n",
+    ];
+    for source in cases {
+        let finding = analyzed(
+            source,
+            "def noop(*args, **kwargs):\n    pass\n\nclass Fake:\n    assertEqual = staticmethod(noop)\n",
+        )?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{source}");
+        assert_ne!(
+            finding.related_tests[0].oracle_strength,
+            OracleStrength::Strong
+        );
+    }
+    Ok(())
+}

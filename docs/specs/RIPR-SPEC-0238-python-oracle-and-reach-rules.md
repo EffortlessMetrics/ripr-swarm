@@ -832,7 +832,10 @@ mutant calibrates the rule; ripr reports only the static shape.
     no visible receiver rebinding or equality-method/dispatch override.
     Ordinary setup and unrelated members do not remove that authority. A
     unique straight-line `assertEqual = self.assertEqual` capture on an
-    earlier line preserves it; a later alias rebinding does not. A bare or
+    earlier line preserves it; unique module captures from an unchanged,
+    no-argument standard `TestCase` instance also preserve it. A later alias
+    rebinding does not. Unrelated assertion helpers that standard equality
+    never dispatches to do not remove authority. A bare or
     unrelated same-name call stays `unknown_custom_helper` / unknown, so
     admission remains unresolved rather than claiming no assertion. The
     existing single-assert helper resolver may restore authority from a

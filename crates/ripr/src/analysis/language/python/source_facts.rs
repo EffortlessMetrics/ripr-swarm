@@ -748,7 +748,12 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         test.constant_rebinding.implicit_reach |= implicit_reach;
     }
     super::oracles::unittest_list::withhold_modified_oracles(&mut snapshot.tests);
-    super::unittest_equal::withhold_modified_equal(&mut snapshot.tests, source, &imports);
+    super::unittest_equal::apply_module_bindings(
+        &mut snapshot.tests,
+        source,
+        &imports,
+        &module.body,
+    );
     collect_source_facts_from_statements(
         file,
         source,

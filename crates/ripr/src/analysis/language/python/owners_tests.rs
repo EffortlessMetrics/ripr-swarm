@@ -1075,6 +1075,9 @@ impl<'a> LocalTestClasses<'a> {
                 super::unittest_equal::class_preserves_equality(class)
                     && !scope.redefined.contains(ancestor)
                     && class.bases.iter().all(|base| {
+                        if !super::unittest_equal::literal_path(base) {
+                            return false;
+                        }
                         if super::unittest_equal::standard_base(base, imports) {
                             authentic = true;
                             true
