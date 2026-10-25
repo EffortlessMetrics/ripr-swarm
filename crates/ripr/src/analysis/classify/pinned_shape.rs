@@ -367,13 +367,22 @@ fn assertion_is_top_level_loop_statement(test_body: &str, assertion: &str) -> bo
                         .is_some_and(|tail| squash(&tail.syntax().text().to_string()) == wanted)
             })
     };
+    // An earlier `return`, `?` or `panic` anywhere before the loop, in a
+    // branch too, may leave the test before the table runs: the assertion
+    // is then not established and its gap is not withheld.
+    let may_leave = |text: &str| {
+        let masked = text.replace(char::is_whitespace, "");
+        masked.contains("return") || masked.contains('?') || masked.contains("panic!")
+    };
     for statement in list.statements() {
         if let ast::Stmt::ExprStmt(expr) = &statement {
             match expr.expr() {
-                Some(ast::Expr::ReturnExpr(_)) => return false,
                 Some(ast::Expr::ForExpr(table)) if in_loop(&table) => return true,
                 _ => {}
             }
+        }
+        if may_leave(&statement.syntax().text().to_string()) {
+            return false;
         }
     }
     matches!(list.tail_expr(), Some(ast::Expr::ForExpr(table)) if in_loop(&table))

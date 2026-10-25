@@ -487,3 +487,34 @@ fn a_table_that_separates_nothing_or_cannot_be_read_is_withheld_never_a_gap() ->
     }
     Ok(())
 }
+
+#[test]
+fn a_table_after_a_possible_early_exit_keeps_its_gap() -> Result<(), String> {
+    // The test may return before the table runs, so its assertion is not
+    // established: ripr does not withhold the gap on its account, and does
+    // not credit it either.
+    for body in [
+        "let skip = false;
+        if skip {
+            return;
+        }
+        let cases: [(&[u32], u32); 1] = [(&[3, 4], 7)];
+        for (items, want) in cases {
+            assert_eq!(total(items), want);
+        }",
+        "let cases: [(&[u32], u32); 1] = [(&[3, 4], 7)];
+        let n: u32 = \"1\".parse().map_err(|_| ())?;
+        for (items, want) in cases {
+            assert_eq!(total(items) + n - 1, want);
+        }",
+    ] {
+        let found = table_finding(body)?;
+        assert_ne!(found.class, ExposureClass::Exposed, "{body}\n{found:?}");
+        assert_ne!(
+            found.class,
+            ExposureClass::StaticUnknown,
+            "{body}\n{found:?}"
+        );
+    }
+    Ok(())
+}
