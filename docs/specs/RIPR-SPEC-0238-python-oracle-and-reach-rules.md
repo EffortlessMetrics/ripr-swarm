@@ -863,11 +863,14 @@ mutant calibrates the rule; ripr reports only the static shape.
     `__bool__`, a bare `assert Class(integer)` (optionally `not`) is an exact
     discriminator only when its condition holds before and fails after the
     edit. The module must contain one plain, undecorated class without bases;
-    methods have no decorators, defaults or annotations, and object access
-    hooks are absent. Its constructor is one `self.field = parameter` and
+    methods have no decorators, defaults or annotations and are limited to
+    `__init__`, `__bool__`, `__add__`, `__eq__`, `__lt__`, `__repr__` and `__str__`.
+    Its constructor is one `self.field = parameter` and
     `__bool__` is one return comparing that field to a signed 64-bit integer
     literal with `==`, `!=`, `<`, `<=`, `>` or `>=`. Both old and new predicates
-    must resolve on the same field. The test's sole statement is that assertion,
+    must resolve on the same field. The test module contains one import and
+    one argument-free, undecorated function without annotations or defaults;
+    literal docstrings are allowed. Its sole statement is that assertion,
     the class import identifies the exact owner module, and no fixture, implicit
     setup, activation control, edited test, rebinding or known foreign write
     can replace the class, constructor, method or field. Other types and wider

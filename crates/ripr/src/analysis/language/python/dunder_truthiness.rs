@@ -10,6 +10,31 @@ use super::source_utils::{SourceText, text_for_range};
 use super::{PythonAssertion, PythonOwner, PythonTest};
 use rustpython_parser::ast::{self, Expr, Mod, Stmt};
 
+const PLAIN_METHODS: [&str; 7] = [
+    "__init__", "__bool__", "__add__", "__eq__", "__lt__", "__repr__", "__str__",
+];
+
+/// This capability accepts one import and one plain test definition. Extra
+/// definitions can execute defaults/annotations or supersede the selected test.
+/// Retain the fact once at extraction; other Python classifiers do not read it.
+pub(super) fn plain_test_module(statements: &[Stmt]) -> bool {
+    let mut imports = 0;
+    let mut functions = 0;
+    for statement in statements {
+        match statement {
+            Stmt::ImportFrom(_) => imports += 1,
+            Stmt::FunctionDef(function)
+                if plain_method(function) && function.args.args.is_empty() =>
+            {
+                functions += 1
+            }
+            Stmt::Expr(expr) if matches!(expr.value.as_ref(), Expr::Constant(_)) => {}
+            _ => return false,
+        }
+    }
+    imports == 1 && functions == 1
+}
+
 pub(super) struct BoolCredit<'a> {
     pub(super) test: &'a PythonTest,
     pub(super) assertion: &'a PythonAssertion,
@@ -56,18 +81,14 @@ pub(super) fn credit<'a>(
     let mut methods = Vec::new();
     for statement in &class.body {
         match statement {
-            Stmt::FunctionDef(method) if plain_method(method) => methods.push(method),
+            Stmt::FunctionDef(method)
+                if plain_method(method) && PLAIN_METHODS.contains(&method.name.as_str()) =>
+            {
+                methods.push(method)
+            }
             Stmt::Expr(expr) if matches!(expr.value.as_ref(), Expr::Constant(_)) => {}
             _ => return None,
         }
-    }
-    if methods.iter().any(|method| {
-        matches!(
-            method.name.as_str(),
-            "__new__" | "__getattribute__" | "__getattr__" | "__setattr__" | "__delattr__"
-        )
-    }) {
-        return None;
     }
     let init = unique_method(&methods, "__init__")?;
     let truth = unique_method(&methods, "__bool__")?;
@@ -112,6 +133,9 @@ pub(super) fn credit<'a>(
     for test in tests {
         if !test.decorators.is_empty()
             || !test.fixtures.is_empty()
+            || !test.constant_rebinding.plain_test_module
+            || test.imports.len() != 1
+            || test.constant_rebinding.module_rebinds(&test.name)
             || test.constant_rebinding.implicit_reach
             || test.constant_rebinding.edited_in_diff
             || test.constant_rebinding.module_opaque
@@ -136,6 +160,12 @@ pub(super) fn credit<'a>(
         let [Stmt::FunctionDef(function)] = body.body.as_slice() else {
             continue;
         };
+        if !plain_method(function)
+            || !function.args.args.is_empty()
+            || function.name.as_str() != test.name
+        {
+            continue;
+        }
         let [Stmt::Assert(assertion)] = function.body.as_slice() else {
             continue;
         };

@@ -25,7 +25,7 @@ fn classify(source: &str, old: &str, test_source: &str, sole: bool) -> Result<Fi
         }
     }
     let tests = extract_tests(test_file, test_source);
-    assert_eq!(tests.len(), 1, "nonempty parsed test subject");
+    assert!(!tests.is_empty(), "nonempty parsed test subject");
     let line = source
         .lines()
         .position(|line| line.trim() == NEW.trim())
@@ -135,6 +135,9 @@ fn integer_truthiness_requires_a_plain_constructor_and_field() -> Check {
         MONEY.replace("    def __bool__", "    @property\n    def __bool__"),
         format!("{MONEY}\n    def __getattribute__(self, name):\n        return 1\n"),
         format!("{MONEY}\nMoney.__bool__ = lambda self: True\n"),
+        format!("{MONEY}\n    def __slots__(self):\n        pass\n"),
+        format!("{MONEY}\n    def __classcell__(self):\n        pass\n"),
+        format!("{MONEY}\n    def __qualname__(self):\n        pass\n"),
     ] {
         assert_ne!(
             classify(&source, OLD, &test("    assert Money(-1)"), true)?.class,
@@ -191,6 +194,20 @@ fn integer_truthiness_requires_both_predicates_to_be_supported() -> Check {
             ExposureClass::StaticUnknown,
             "{old}"
         );
+    }
+    Ok(())
+}
+
+#[test]
+fn integer_truthiness_refuses_replaced_tests_and_definition_effects() -> Check {
+    for source in [
+        format!("{}\ndef test_it():\n    assert True\n", test("    assert Money(-1)")),
+        format!("{}\ntest_it = None\n", test("    assert Money(-1)")),
+        test("    assert Money(-1)").replace("def test_it():", "def test_it() -> type.__setattr__(Money, '__bool__', lambda self: True):"),
+        test("    assert Money(-1)").replace("def test_it():", "def helper() -> type.__setattr__(Money, '__bool__', lambda self: True):\n    pass\n\ndef test_it():"),
+        test("    assert Money(-1)").replace("def test_it():", "def test_it(self=type.__setattr__(Money, '__bool__', lambda self: True)):"),
+    ] {
+        assert_ne!(classify(MONEY, OLD, &source, true)?.class, ExposureClass::Exposed, "{source}");
     }
     Ok(())
 }

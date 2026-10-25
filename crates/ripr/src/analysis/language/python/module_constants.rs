@@ -252,6 +252,9 @@ pub(super) struct PythonTestRebinding {
     /// the directory chain that declares a fixture or hook. Decided by
     /// existence, never by reading what that code calls.
     pub(super) implicit_reach: bool,
+    /// One import and one argument-free test with no definition-time
+    /// expressions; only bounded dunder truthiness consumes this fact.
+    pub(super) plain_test_module: bool,
 }
 
 impl PythonTestRebinding {
@@ -290,6 +293,7 @@ pub(super) fn python_test_rebinding(
         attributes: Vec::new(),
         edited_in_diff: false,
         implicit_reach: false,
+        plain_test_module: false,
     }
 }
 
@@ -301,6 +305,7 @@ pub(super) fn with_module_rebinding(source: &str, statements: &[Stmt], tests: &m
     let mut module = ScopeBindings::default();
     collect_scope_bindings(statements, &mut module);
     let dynamic = writes_namespace_dynamically(source);
+    let plain_test_module = super::dunder_truthiness::plain_test_module(statements);
     // A `global NAME` in any function (an autouse fixture, a helper) can
     // rebind an imported name before another test in the module runs.
     let mut globals = Vec::new();
@@ -331,6 +336,7 @@ pub(super) fn with_module_rebinding(source: &str, statements: &[Stmt], tests: &m
         rebinding.module_names.sort();
         rebinding.module_names.dedup();
         rebinding.module_opaque = module.opaque || dynamic;
+        rebinding.plain_test_module = plain_test_module;
         rebinding.module_bound.clone_from(&module.names);
         rebinding.module_bound.sort();
         rebinding.module_bound.dedup();
