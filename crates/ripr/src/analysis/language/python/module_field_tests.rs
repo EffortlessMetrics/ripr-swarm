@@ -269,7 +269,7 @@ fn rebinding_in_the_live_readers_own_file_still_withholds() -> Check {
         "tests/test_both.py",
         "import importlib\nfrom shop import route\nfrom shop.route import checkout, response\n\n\ndef test_live():\n    checkout(True)\n    assert response.status_code == 422\n\n\ndef test_reload():\n    importlib.reload(route)\n",
     );
-    assert_ne!(classify_with_tests(&[both])?, ExposureClass::Exposed);
+    assert_eq!(classify_with_tests(&[both])?, ExposureClass::StaticUnknown);
     Ok(())
 }
 
