@@ -1218,9 +1218,16 @@ The same snapshots follow corpus cache generation 1.99 to 1.100 for the
 equal-valued arm sink limit (#9843), with the same scope: generation,
 content commitment, dependent verify commitments and receipt byte hashes only.
 
+### multi-line equal-valued arm sink limit classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.101 to 1.102 for the
+rustfmt-layout equal-valued arm sink limit (#10134), with the same scope:
+generation, content commitment, dependent verify commitments and receipt byte
+hashes only.
+
 ### indirect owner call limit classified-cache generation parity
 
-The same snapshots follow corpus cache generation 1.101 to 1.102 for owners
+The same snapshots follow corpus cache generation 1.102 to 1.103 for owners
 reached without a placeable call and the `cfg_attr` test reading
 (RIPR-SPEC-0240, #9442, #9443), with the same scope: generation, content
 commitment, dependent verify commitments and receipt byte hashes only.
