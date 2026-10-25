@@ -30,6 +30,7 @@
 
 use super::PythonTest;
 use super::boundary::literal_value;
+use super::source_facts::parse_module_result;
 use super::source_utils::{SourceText, line_for_range_start, text_for_range};
 use rustpython_parser::ast::{self, Expr, Ranged, Stmt};
 
@@ -104,7 +105,7 @@ impl StableNames {
                 .collect(),
             globals,
             // `alias.NAME = ...` can rebind the name through a self-import.
-            attributes: assigned_attributes(source),
+            attributes: assigned_attributes(source)?,
             walrus: walrus_target_names(source)
                 .into_iter()
                 .map(str::to_string)
@@ -117,6 +118,54 @@ impl StableNames {
             && !self.globals.iter().any(|global| global == name)
             && !self.attributes.iter().any(|attribute| attribute == name)
             && !self.walrus.iter().any(|target| target == name)
+    }
+}
+
+/// How a module binds its names, for the conditional-definition and
+/// module-value reads (#9423): whether a name is bound exactly once, with no
+/// `global`, walrus or attribute replacement, no star import and no dynamic
+/// namespace writer that could rebind it behind the walk's back.
+pub(super) struct ModuleBindingFacts {
+    counts: std::collections::HashMap<String, usize>,
+    rebound: std::collections::HashSet<String>,
+    attributes: std::collections::HashSet<String>,
+    opaque: bool,
+}
+
+impl ModuleBindingFacts {
+    /// The module's binding facts over `statements`.
+    pub(super) fn of(source: &str, statements: &[Stmt]) -> Self {
+        let mut bindings = ScopeBindings::default();
+        collect_scope_bindings(statements, &mut bindings);
+        let mut globals = Vec::new();
+        collect_global_declarations(statements, &mut globals);
+        let mut counts = std::collections::HashMap::new();
+        for name in bindings.names {
+            *counts.entry(name).or_insert(0) += 1;
+        }
+        Self {
+            counts,
+            rebound: globals
+                .into_iter()
+                .chain(walrus_target_names(source).into_iter().map(str::to_string))
+                .collect(),
+            attributes: assigned_attribute_names(statements).into_iter().collect(),
+            opaque: bindings.opaque || writes_namespace_dynamically(source),
+        }
+    }
+
+    /// Whether `name` is bound exactly once at module scope and nothing in
+    /// the module can rebind it.
+    pub(super) fn bound_once(&self, name: &str) -> bool {
+        !self.opaque
+            && !self.rebound.contains(name)
+            && !self.may_assign_attribute(name)
+            && self.counts.get(name) == Some(&1)
+    }
+
+    /// Whether an attribute may be replaced, even with its receiver still bound.
+    pub(super) fn may_assign_attribute(&self, name: &str) -> bool {
+        self.opaque || self.attributes.contains(name) || self.attributes.contains("*")
     }
 }
 
@@ -194,6 +243,9 @@ pub(super) struct PythonTestRebinding {
     /// The test or its module binds names this walk cannot enumerate, so no
     /// name is trusted.
     pub(super) opaque: bool,
+    /// The test's file is also changed in this diff, so its assertions may
+    /// have been written for the new value (`module_value.rs`, #9423).
+    pub(super) edited_in_diff: bool,
     /// Code outside the test function may run at the owner implicitly (#5491
     /// `missing_input` fails closed on it): an autouse fixture, `pytestmark`,
     /// a setup or teardown hook, a module-level call, or a `conftest.py` on
@@ -236,6 +288,7 @@ pub(super) fn python_test_rebinding(
         module_bound: Vec::new(),
         module_opaque: false,
         attributes: Vec::new(),
+        edited_in_diff: false,
         implicit_reach: false,
     }
 }
@@ -262,7 +315,7 @@ pub(super) fn with_module_rebinding(source: &str, statements: &[Stmt], tests: &m
     let attributes = if dynamic {
         vec!["*".to_string()]
     } else {
-        assigned_attributes(source)
+        assigned_attribute_names(statements)
     };
     for test in tests {
         let rebinding = &mut test.constant_rebinding;
@@ -382,28 +435,77 @@ fn writes_namespace_dynamically(source: &str) -> bool {
         || source.contains("sys.modules")
 }
 
-/// Attribute names assigned as `<expr>.NAME = ...` or `<expr>.NAME += ...`
-/// anywhere in `source`.
-fn assigned_attributes(source: &str) -> Vec<String> {
-    let mut attributes = Vec::new();
-    for (dot, _) in source.match_indices('.') {
-        let rest = &source[dot + 1..];
-        let end = rest
-            .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
-            .unwrap_or(rest.len());
-        // `=` or an augmented `+=`; a comparison such as `<=` also matches,
-        // which only fails closed.
-        let after = rest[end..]
-            .trim_start()
-            .trim_start_matches(|ch: char| "+-*/%&|^@<>".contains(ch));
-        let assigns = after.starts_with('=') && !after.starts_with("==");
-        if end > 0 && assigns {
-            attributes.push(rest[..end].to_string());
-        }
+/// Attribute assignment/deletion targets, including unpacking, annotations,
+/// parentheses and whitespace around dots. Reads and annotations without values
+/// do not replace an attribute. The caller retains parse uncertainty separately.
+pub(super) fn assigned_attributes(source: &str) -> Option<Vec<String>> {
+    match parse_module_result(std::path::Path::new("attribute-writes.py"), source) {
+        Ok(ast::Mod::Module(module)) => Some(assigned_attribute_names(&module.body)),
+        _ => None,
     }
+}
+
+fn assigned_attribute_names(statements: &[Stmt]) -> Vec<String> {
+    let mut attributes = Vec::new();
+    visit_statements(statements, &mut |stmt| match stmt {
+        Stmt::Assign(assign) => {
+            for target in &assign.targets {
+                attribute_target_names(target, &mut attributes);
+            }
+        }
+        Stmt::AnnAssign(assign) if assign.value.is_some() => {
+            attribute_target_names(&assign.target, &mut attributes);
+        }
+        Stmt::AugAssign(assign) => attribute_target_names(&assign.target, &mut attributes),
+        Stmt::Delete(delete) => {
+            for target in &delete.targets {
+                attribute_target_names(target, &mut attributes);
+            }
+        }
+        Stmt::For(stmt) => attribute_target_names(&stmt.target, &mut attributes),
+        Stmt::AsyncFor(stmt) => attribute_target_names(&stmt.target, &mut attributes),
+        Stmt::With(stmt) => {
+            for target in stmt
+                .items
+                .iter()
+                .filter_map(|item| item.optional_vars.as_deref())
+            {
+                attribute_target_names(target, &mut attributes);
+            }
+        }
+        Stmt::AsyncWith(stmt) => {
+            for target in stmt
+                .items
+                .iter()
+                .filter_map(|item| item.optional_vars.as_deref())
+            {
+                attribute_target_names(target, &mut attributes);
+            }
+        }
+        _ => {}
+    });
     attributes.sort();
     attributes.dedup();
     attributes
+}
+
+fn attribute_target_names(target: &Expr, out: &mut Vec<String>) {
+    match target {
+        Expr::Attribute(attribute) => out.push(attribute.attr.to_string()),
+        Expr::Tuple(tuple) => {
+            for element in &tuple.elts {
+                attribute_target_names(element, out);
+            }
+        }
+        Expr::List(list) => {
+            for element in &list.elts {
+                attribute_target_names(element, out);
+            }
+        }
+        Expr::Starred(starred) => attribute_target_names(&starred.value, out),
+        Expr::Subscript(subscript) => attribute_target_names(&subscript.value, out),
+        _ => {}
+    }
 }
 
 fn literal_assignment(source: &SourceText<'_>, stmt: &Stmt) -> Option<PythonModuleConstant> {
@@ -583,52 +685,60 @@ fn collect_target_names(target: &Expr, out: &mut ScopeBindings) {
     }
 }
 
-/// Every name any function or class body in the module declares `global`,
-/// at any nesting depth.
+/// Every name any function or class body in the module declares global.
 fn collect_global_declarations(statements: &[Stmt], out: &mut Vec<String>) {
+    visit_statements(statements, &mut |stmt| {
+        if let Stmt::Global(global) = stmt {
+            out.extend(global.names.iter().map(ToString::to_string));
+        }
+    });
+}
+
+/// Visit statement suites at every nesting depth, without crossing expressions.
+fn visit_statements<F: FnMut(&Stmt)>(statements: &[Stmt], out: &mut F) {
     for stmt in statements {
+        out(stmt);
         match stmt {
-            Stmt::Global(global) => out.extend(global.names.iter().map(ToString::to_string)),
-            Stmt::FunctionDef(function) => collect_global_declarations(&function.body, out),
-            Stmt::AsyncFunctionDef(function) => collect_global_declarations(&function.body, out),
-            Stmt::ClassDef(class) => collect_global_declarations(&class.body, out),
+            Stmt::FunctionDef(function) => visit_statements(&function.body, out),
+            Stmt::AsyncFunctionDef(function) => visit_statements(&function.body, out),
+            Stmt::ClassDef(class) => visit_statements(&class.body, out),
             Stmt::For(stmt) => {
-                collect_global_declarations(&stmt.body, out);
-                collect_global_declarations(&stmt.orelse, out);
+                visit_statements(&stmt.body, out);
+                visit_statements(&stmt.orelse, out);
             }
             Stmt::AsyncFor(stmt) => {
-                collect_global_declarations(&stmt.body, out);
-                collect_global_declarations(&stmt.orelse, out);
+                visit_statements(&stmt.body, out);
+                visit_statements(&stmt.orelse, out);
             }
             Stmt::While(stmt) => {
-                collect_global_declarations(&stmt.body, out);
-                collect_global_declarations(&stmt.orelse, out);
+                visit_statements(&stmt.body, out);
+                visit_statements(&stmt.orelse, out);
             }
             Stmt::If(stmt) => {
-                collect_global_declarations(&stmt.body, out);
-                collect_global_declarations(&stmt.orelse, out);
+                visit_statements(&stmt.body, out);
+                visit_statements(&stmt.orelse, out);
             }
-            Stmt::With(stmt) => collect_global_declarations(&stmt.body, out),
-            Stmt::AsyncWith(stmt) => collect_global_declarations(&stmt.body, out),
+            Stmt::With(stmt) => visit_statements(&stmt.body, out),
+            Stmt::AsyncWith(stmt) => visit_statements(&stmt.body, out),
             Stmt::Try(stmt) => {
-                collect_global_declarations(&stmt.body, out);
+                visit_statements(&stmt.body, out);
                 for ast::ExceptHandler::ExceptHandler(handler) in &stmt.handlers {
-                    collect_global_declarations(&handler.body, out);
+                    visit_statements(&handler.body, out);
                 }
-                collect_global_declarations(&stmt.orelse, out);
-                collect_global_declarations(&stmt.finalbody, out);
+                visit_statements(&stmt.orelse, out);
+                visit_statements(&stmt.finalbody, out);
             }
             Stmt::TryStar(stmt) => {
-                collect_global_declarations(&stmt.body, out);
+                visit_statements(&stmt.body, out);
                 for ast::ExceptHandler::ExceptHandler(handler) in &stmt.handlers {
-                    collect_global_declarations(&handler.body, out);
+                    visit_statements(&handler.body, out);
                 }
-                collect_global_declarations(&stmt.orelse, out);
-                collect_global_declarations(&stmt.finalbody, out);
+                visit_statements(&stmt.orelse, out);
+                visit_statements(&stmt.finalbody, out);
             }
             Stmt::Match(stmt) => {
                 for case in &stmt.cases {
-                    collect_global_declarations(&case.body, out);
+                    visit_statements(&case.body, out);
                 }
             }
             _ => {}

@@ -27,9 +27,10 @@ use super::seam_cache::CLASSIFIED_SEAM_CACHE_STORE_LIMIT;
 #[cfg(test)]
 use super::seam_cache::RepoSeamCountCache;
 use super::seam_cache::{
-    CacheLoad, CachedSeamLimitInfo, CorpusFingerprintLookup, FileFactCacheStats,
-    FilesContentHashBuilder, RepoCorpusFingerprintCache, RepoSeamCacheKey, RepoSeamFactCache,
-    WorkspaceKeyContext, classified_seam_cache_store_limit,
+    CLASSIFIED_SEAM_STORE_FAILURE_PATH, CORPUS_FINGERPRINT_STORE_FAILURE_PATH, CacheLoad,
+    CachedSeamLimitInfo, CorpusFingerprintLookup, FileFactCacheStats, FileFactStoreError,
+    FileFactStoreStage, FilesContentHashBuilder, RepoCorpusFingerprintCache, RepoSeamCacheKey,
+    RepoSeamFactCache, WorkspaceKeyContext, classified_seam_cache_store_limit,
     compact_classified_seam_cache_store_limit, corpus_fingerprint,
 };
 #[cfg(test)]
@@ -221,6 +222,27 @@ fn inventory_classified_seams_report_inner(
     config: &RiprConfig,
     changed_paths: Option<&[PathBuf]>,
 ) -> Result<ClassifiedSeamsReport, String> {
+    // Store failures of the classified-seam and corpus-fingerprint families
+    // are collected through the same bounded `{path, stage, error}` row
+    // owner as file-fact failures (#9633) and surfaced once per run, success
+    // or failure, on the opt-in trace channel.
+    let mut family_store_failures = FileFactCacheStats::zero_work();
+    let result = inventory_classified_seams_report_collect(
+        root,
+        config,
+        changed_paths,
+        &mut family_store_failures,
+    );
+    trace_cache_family_store_failures(&family_store_failures, result.as_ref().ok());
+    result
+}
+
+fn inventory_classified_seams_report_collect(
+    root: &Path,
+    config: &RiprConfig,
+    changed_paths: Option<&[PathBuf]>,
+    family_store_failures: &mut FileFactCacheStats,
+) -> Result<ClassifiedSeamsReport, String> {
     let total_started = Instant::now();
     let cache = RepoSeamFactCache::at(root);
     let store_limit = classified_seam_cache_store_limit()?;
@@ -315,7 +337,7 @@ fn inventory_classified_seams_report_inner(
         }
     };
     let key = state.cache_key();
-    store_corpus_fingerprint_mapping(&state, fingerprint, &key);
+    store_corpus_fingerprint_mapping(&state, fingerprint, &key, family_store_failures);
     // NOTE: the seam-limit key is baked into `key.filename()`, so a capped run
     // and an unbounded run never share a cache file — no fast-path bypass needed.
     let cache_started = Instant::now();
@@ -404,7 +426,15 @@ fn inventory_classified_seams_report_inner(
         }
         Err(reason) => {
             eprintln!("ripr: repo seam cache store ignored ({reason})");
-            cache_store_status_label(&reason)
+            let label = cache_store_status_label(&reason);
+            family_store_failures.record_store_failure(
+                PathBuf::from(CLASSIFIED_SEAM_STORE_FAILURE_PATH),
+                FileFactStoreError {
+                    stage: FileFactStoreStage::ClassifiedSeamStore,
+                    message: reason,
+                },
+            );
+            label
         }
     };
     trace_latency_phase("cache_store", &store_status, store_started.elapsed());
@@ -442,7 +472,14 @@ pub(crate) fn workspace_cache_key_at_with_config(
     let state = collect_workspace_state_from_files(root, config, corpus.analyzable)?;
     let key = state.cache_key();
     key.require_reusable()?;
-    store_corpus_fingerprint_mapping(&state, corpus.fingerprint, &key);
+    // This key-only entry point has no receipt channel; the failure still
+    // reaches the ordinary stderr sentence inside the store helper.
+    store_corpus_fingerprint_mapping(
+        &state,
+        corpus.fingerprint,
+        &key,
+        &mut FileFactCacheStats::zero_work(),
+    );
     Ok(key)
 }
 
@@ -460,9 +497,61 @@ fn trace_file_fact_cache(stats: &FileFactCacheStats) {
         return;
     }
     eprintln!(
-        "ripr_file_fact_cache_receipt {}",
+        "{}{}",
+        latency_trace::authenticated_receipt_prefix(FILE_FACT_CACHE_RECEIPT_PREFIX),
         file_fact_cache_receipt(stats)
     );
+}
+
+/// Prefix of the opt-in file-fact cache receipt line on stderr.
+const FILE_FACT_CACHE_RECEIPT_PREFIX: &str = "ripr_file_fact_cache_receipt ";
+
+/// Prefix of the opt-in classified-seam / corpus-fingerprint store receipt.
+const CACHE_FAMILY_STORE_RECEIPT_PREFIX: &str = "ripr_cache_family_store_receipt ";
+
+/// Emit the classified-seam and corpus-fingerprint store outcome once per run
+/// on the opt-in trace channel: the same bounded `{path, stage, error}` rows
+/// and dropped count as the file-fact receipt, always present (an empty row
+/// list is the healthy state, so a consumer can tell it from a missing line).
+fn trace_cache_family_store_failures(
+    stats: &FileFactCacheStats,
+    report: Option<&ClassifiedSeamsReport>,
+) {
+    if !latency_trace::latency_trace_enabled() {
+        return;
+    }
+    let mut receipt = cache_family_store_receipt(stats);
+    receipt["subject"] = report.map_or(serde_json::Value::Null, run_subject);
+    eprintln!(
+        "{}{}",
+        latency_trace::authenticated_receipt_prefix(CACHE_FAMILY_STORE_RECEIPT_PREFIX),
+        receipt
+    );
+}
+
+/// What this run analyzed, as the producer saw it: the cache key identity
+/// (sources, config, manifests, toolchain, seam limit) and digests of the
+/// generated, naming-only and declined file disclosures. A harness comparing
+/// two runs uses it to refuse to compare runs over different subjects.
+/// `cache_key` is `null` when the run had no reusable key.
+fn run_subject(report: &ClassifiedSeamsReport) -> serde_json::Value {
+    let digest = |text: String| super::seam_cache::stable_input_hash(text.as_bytes());
+    serde_json::json!({
+        "cache_key": report.corpus_key.as_ref().map(|key| digest(key.filename())),
+        "skipped_generated": digest(format!("{:?}", report.skipped_generated)),
+        "naming_only_skips": digest(format!("{:?}", report.naming_only_skips)),
+        "declined_rust_files": digest(format!("{:?}", report.declined_rust_files)),
+        "diff_bound_corpus": report.diff_bound_corpus,
+    })
+}
+
+fn cache_family_store_receipt(stats: &FileFactCacheStats) -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": "0.1",
+        "store_errors": stats.store_errors,
+        "store_failures": file_fact_store_failure_rows(stats),
+        "store_failures_dropped": stats.store_failures_dropped,
+    })
 }
 
 /// Bounded `{path, stage, error}` store-failure rows, shared by the opt-in
@@ -695,7 +784,14 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
 
     let state = collect_workspace_state_from_files(root, config, rust_files)?;
     let key = state.cache_key();
-    store_corpus_fingerprint_mapping(&state, fingerprint, &key);
+    // The compact (badge) path has no receipt channel yet; its store failures
+    // keep the ordinary stderr sentence.
+    store_corpus_fingerprint_mapping(
+        &state,
+        fingerprint,
+        &key,
+        &mut FileFactCacheStats::zero_work(),
+    );
     let cache_started = Instant::now();
     match cache.load_classified_seams_with_fallback(&key) {
         CacheLoad::Hit((cached, _limit_info, lexical_fallback_files)) => {
@@ -2952,6 +3048,7 @@ fn store_corpus_fingerprint_mapping(
     state: &OwnedWorkspaceState,
     pre_read_fingerprint: Option<String>,
     key: &RepoSeamCacheKey,
+    store_failures: &mut FileFactCacheStats,
 ) {
     let Some(fingerprint) = pre_read_fingerprint else {
         return;
@@ -2968,6 +3065,13 @@ fn store_corpus_fingerprint_mapping(
         &key.files_content_hash,
     ) {
         eprintln!("ripr: corpus fingerprint cache store ignored ({reason})");
+        store_failures.record_store_failure(
+            PathBuf::from(CORPUS_FINGERPRINT_STORE_FAILURE_PATH),
+            FileFactStoreError {
+                stage: FileFactStoreStage::CorpusFingerprintStore,
+                message: reason,
+            },
+        );
     }
 }
 
@@ -9201,7 +9305,12 @@ marker = "libtest_mimic::Trial"
             "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold || amount < 0 }\n",
         )?;
 
-        store_corpus_fingerprint_mapping(&state, pre_fingerprint.clone(), &key);
+        store_corpus_fingerprint_mapping(
+            &state,
+            pre_fingerprint.clone(),
+            &key,
+            &mut FileFactCacheStats::zero_work(),
+        );
         let Some(fingerprint) = pre_fingerprint else {
             // #3848: with no content-change witness there is no pre-read
             // signature, so the store is skipped before this guard is
@@ -9254,6 +9363,113 @@ marker = "libtest_mimic::Trial"
 
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
+    }
+
+    fn run_collect_with_family_failures(
+        root: &Path,
+    ) -> Result<(ClassifiedSeamsReport, FileFactCacheStats), String> {
+        let mut failures = FileFactCacheStats::zero_work();
+        let report = inventory_classified_seams_report_collect(
+            root,
+            &RiprConfig::default(),
+            None,
+            &mut failures,
+        )?;
+        Ok((report, failures))
+    }
+
+    /// #9633: a corpus-fingerprint store failure has a `{path, stage, error}`
+    /// row, not only a stderr sentence; the healthy run has none.
+    #[test]
+    fn given_fingerprint_store_blocked_then_failure_row_names_stage() -> Result<(), String> {
+        let root = make_tempdir("fingerprint-store-row")?;
+        write_file(
+            &root.join("src/foo.rs"),
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n",
+        )?;
+        let (_, healthy) = run_collect_with_family_failures(&root)?;
+        assert_eq!(healthy.store_errors, 0, "{:?}", healthy.store_failures);
+        assert!(healthy.store_failures.is_empty());
+
+        let fresh = make_tempdir("fingerprint-store-row-blocked")?;
+        write_file(
+            &fresh.join("src/foo.rs"),
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n",
+        )?;
+        write_file(
+            &fresh
+                .join("target")
+                .join("ripr")
+                .join("cache")
+                .join("repo-corpus-fingerprint"),
+            "not a directory",
+        )?;
+        let (report, failures) = run_collect_with_family_failures(&fresh)?;
+        assert!(!report.classified.is_empty(), "analysis must still run");
+        let rows = file_fact_store_failure_rows(&failures);
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0]["path"], "repo-corpus-fingerprint");
+        assert_eq!(rows[0]["stage"], "corpus_fingerprint_store");
+        assert!(
+            rows[0]["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("corpus fingerprint cache dir")),
+            "{rows:?}"
+        );
+        assert_eq!(failures.store_errors, 1);
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&fresh);
+        Ok(())
+    }
+
+    /// #9633: a classified-seam store failure has its own row and stage.
+    #[test]
+    fn given_classified_seam_store_blocked_then_failure_row_names_stage() -> Result<(), String> {
+        let root = make_tempdir("classified-store-row")?;
+        write_file(
+            &root.join("src/foo.rs"),
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n",
+        )?;
+        let cache = root.join("target").join("ripr").join("cache");
+        write_file(&cache.join("repo-seam-facts"), "not a directory")?;
+        let (report, failures) = run_collect_with_family_failures(&root)?;
+        assert!(!report.classified.is_empty(), "analysis must still run");
+        let rows = file_fact_store_failure_rows(&failures);
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0]["path"], "repo-seam-facts");
+        assert_eq!(rows[0]["stage"], "classified_seam_store");
+        assert_eq!(failures.store_errors, 1);
+        let receipt = cache_family_store_receipt(&failures);
+        assert_eq!(receipt["store_errors"], 1);
+        assert_eq!(
+            receipt["store_failures"][0]["stage"],
+            "classified_seam_store"
+        );
+        assert_eq!(receipt["store_failures_dropped"], 0);
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #9633: the family receipt reuses the 32-row cap and dropped count.
+    #[test]
+    fn cache_family_store_receipt_is_capped_with_dropped_count() {
+        let mut stats = FileFactCacheStats::zero_work();
+        for index in 0..40 {
+            stats.record_store_failure(
+                PathBuf::from(CLASSIFIED_SEAM_STORE_FAILURE_PATH),
+                FileFactStoreError {
+                    stage: FileFactStoreStage::ClassifiedSeamStore,
+                    message: format!("failure {index}"),
+                },
+            );
+        }
+        let receipt = cache_family_store_receipt(&stats);
+        assert_eq!(receipt["store_errors"], 40);
+        assert_eq!(receipt["store_failures"].as_array().map(Vec::len), Some(32));
+        assert_eq!(receipt["store_failures_dropped"], 8);
+        let healthy = cache_family_store_receipt(&FileFactCacheStats::zero_work());
+        assert_eq!(healthy["store_errors"], 0);
+        assert_eq!(healthy["store_failures"], serde_json::json!([]));
     }
 
     #[test]
