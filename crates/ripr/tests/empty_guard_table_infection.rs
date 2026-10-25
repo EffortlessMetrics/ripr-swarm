@@ -276,3 +276,22 @@ fn one_unreadable_row_among_readable_ones_stays_unknown() -> Result<(), String> 
     assert!(!infection_credited(&findings), "{findings:?}");
     Ok(())
 }
+
+#[test]
+fn a_table_beside_an_unread_direct_call_stays_unknown() -> Result<(), String> {
+    let test = format!(
+        "{}\n#[test]\nfn other() {{\n    assert_eq!(initial(unknown_name), 'X');\n}}\n",
+        table(BOTH_SIDES, ASSERT_ROW)
+    );
+    let findings = guard_findings(NEW, &test)?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn an_unasserted_empty_call_is_no_input_row() -> Result<(), String> {
+    let test = "use empty_guard::initial;\n\n#[test]\nfn initials() {\n    let _ = initial(\"\");\n    assert_eq!(initial(\"ada\"), 'A');\n    assert_eq!(initial(\"Bob\"), 'B');\n}\n";
+    let findings = guard_findings(NEW, test)?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}

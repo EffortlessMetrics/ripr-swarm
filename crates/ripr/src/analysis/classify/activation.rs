@@ -963,17 +963,37 @@ fn admits_closed_form(
         return false;
     }
     // A call whose argument ripr cannot read yields no row, and may be the
-    // input that sits on a neighbour of the guard. Every call of the owner
-    // must contribute at least one row (a table loop contributes one per row).
-    let owner_calls: usize = related_tests
-        .iter()
-        .map(|test| {
-            test.body_calls()
-                .filter(|call| call.name == owner.name)
-                .count()
+    // input that sits on a neighbour of the guard. Per test, either its one
+    // owner call supplies the rows (a table loop supplies one per row) or
+    // every direct call supplies exactly one; a table beside an unread call
+    // cannot hide it behind the table's extra rows.
+    for test in related_tests {
+        let calls = test
+            .body_calls()
+            .filter(|call| call.name == owner.name)
+            .count();
+        if calls == 0 {
+            continue;
+        }
+        let rows = call_values_for_owner(owner, &[], &[*test], None, index, true).len();
+        if rows == 0 || (calls > 1 && rows != calls) {
+            return false;
+        }
+    }
+    // Every row must sit on a line that carries a strong assertion, so an
+    // unasserted call (`let _ = initial("")`) is not an input row.
+    let asserted = |row: &[ParameterValue]| {
+        row.iter().all(|cell| {
+            related_tests.iter().any(|test| {
+                cell.file.as_deref().is_none_or(|file| test.file == file)
+                    && test.assertions.iter().any(|assertion| {
+                        assertion.line == cell.line
+                            && matches!(assertion.strength, OracleStrength::Strong)
+                    })
+            })
         })
-        .sum();
-    if call_values.len() < owner_calls {
+    };
+    if !call_values.iter().all(|row| asserted(row)) {
         return false;
     }
     let (mut empty, mut non_empty) = (false, false);
