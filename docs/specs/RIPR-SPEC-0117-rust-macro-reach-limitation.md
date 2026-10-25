@@ -292,6 +292,17 @@ body) applies to them unchanged:
 - the invoking file is a child module `mod name;` of a parent that defines
   the macro, or imports it with `#[macro_use]`, before that declaration.
 
+The definitions are hoisted ahead of the file's first item, so the position of
+a `#[macro_use] mod` relative to the invocation is not checked: a program
+rustc accepts never invokes a macro before the `mod` that brings it into
+scope, and a second definition of the same name anywhere in the file makes the
+name ambiguous and indexes nothing. A definition containing a token that spans
+lines (a multi-line string literal) is left out, a file that does not parse
+cleanly resolves nothing, and only a file that spells `name!` for a macro whose
+definition mentions `test` is resolved at all. `build.rs`, `main.rs` and
+`lib.rs` are crate roots. Parents are followed up to four modules, and
+`#[macro_use]` modules down to about four.
+
 A module resolves only to one file: `name.rs` or `name/mod.rs` under the
 declaring file's anchor (a crate root, `mod.rs`, or a file directly in
 `tests`, `benches` or `examples` has its children beside it; any other file
@@ -302,7 +313,7 @@ declaration has a `#[path]` or any attribute other than `macro_use`,
 match; when the child has no single declaring parent (two test crates
 declaring the same `mod cases;`); when a macro defined in the module is
 declared after the `mod` that would have to see it; when the chain is more
-than four modules; or when the imported text exceeds 64 KiB. `use`-imported
+than about four modules; or when the imported text exceeds 64 KiB. `use`-imported
 and `#[macro_export]` macros, `include!`, and generators in another crate are
 not followed.
 

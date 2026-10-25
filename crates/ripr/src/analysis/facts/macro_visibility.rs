@@ -83,13 +83,26 @@ impl MacroVisibility {
         {
             return String::new();
         }
-        let mut definitions = Vec::<String>::new();
-        let mut visited = BTreeSet::new();
-        self.collect_inherited(file, 0, &mut visited, &mut definitions);
-        self.collect_imports(file, usize::MAX, 0, &mut visited, &mut definitions);
+        // A `#[macro_use]` module declared after the first call is not in
+        // scope at it.
+        let first_call = self
+            .generators
+            .iter()
+            .filter_map(|name| source.find(&format!("{name}!")))
+            .min()
+            .unwrap_or(0);
+        let mut walk = Walk::default();
+        if self.scope(file).is_none_or(|scope| scope.opaque) {
+            return String::new();
+        }
+        self.collect_inherited(file, 0, &mut walk);
+        self.collect_imports(file, first_call, 0, &mut walk);
+        if walk.refused {
+            return String::new();
+        }
         let mut seen = BTreeSet::new();
-        definitions.retain(|text| seen.insert(text.clone()));
-        let joined = definitions.join(" ");
+        walk.out.retain(|text| seen.insert(text.clone()));
+        let joined = walk.out.join(" ");
         if joined.len() > MAX_IMPORTED_BYTES {
             return String::new();
         }
@@ -114,67 +127,72 @@ impl MacroVisibility {
 
     /// The `#[macro_use]` modules of `file` declared before byte `before`,
     /// with the definitions their files make visible.
-    fn collect_imports(
-        &self,
-        file: &Path,
-        before: usize,
-        depth: usize,
-        visited: &mut BTreeSet<PathBuf>,
-        out: &mut Vec<String>,
-    ) {
+    fn collect_imports(&self, file: &Path, before: usize, depth: usize, walk: &mut Walk) {
         if depth >= MAX_DEPTH {
+            walk.refused = true;
             return;
         }
         let Some(scope) = self.scope(file) else {
+            walk.refused = true;
             return;
         };
         for module in scope
             .modules
             .iter()
-            .filter(|module| module.macro_use && module.plain && module.offset < before)
+            .filter(|module| module.macro_use && module.offset < before)
         {
-            let Some(child) = self.child_file(file, &module.name) else {
+            // A `#[macro_use]` module that is not resolved could define a
+            // macro that shadows the one that is.
+            let child = module
+                .plain
+                .then(|| self.child_file(file, &module.name))
+                .flatten();
+            let child_scope = child.as_ref().and_then(|child| self.scope(child));
+            let (Some(child), Some(child_scope)) = (child, child_scope) else {
+                walk.refused = true;
                 continue;
             };
-            if !visited.insert(child.clone()) {
+            if child_scope.opaque {
+                walk.refused = true;
+            }
+            if !walk.visited.insert(child.clone()) {
                 continue;
             }
-            if let Some(child_scope) = self.scope(&child) {
-                out.extend(child_scope.macros.iter().map(|scoped| scoped.text.clone()));
-            }
-            self.collect_imports(&child, usize::MAX, depth + 1, visited, out);
+            walk.out
+                .extend(child_scope.macros.iter().map(|scoped| scoped.text.clone()));
+            self.collect_imports(&child, usize::MAX, depth + 1, walk);
         }
     }
 
     /// Definitions a parent makes visible to `file` through the position of
     /// its `mod` declaration, then the parent's own inheritance.
-    fn collect_inherited(
-        &self,
-        file: &Path,
-        depth: usize,
-        visited: &mut BTreeSet<PathBuf>,
-        out: &mut Vec<String>,
-    ) {
-        if depth >= MAX_DEPTH {
-            return;
-        }
+    fn collect_inherited(&self, file: &Path, depth: usize, walk: &mut Walk) {
         let Some((parent, offset)) = self.parent(file) else {
             return;
         };
-        if !visited.insert(parent.clone()) {
+        if depth >= MAX_DEPTH {
+            walk.refused = true;
             return;
         }
-        if let Some(scope) = self.scope(&parent) {
-            out.extend(
-                scope
-                    .macros
-                    .iter()
-                    .filter(|scoped| scoped.offset < offset)
-                    .map(|scoped| scoped.text.clone()),
-            );
+        if !walk.visited.insert(parent.clone()) {
+            return;
         }
-        self.collect_imports(&parent, offset, depth + 1, visited, out);
-        self.collect_inherited(&parent, depth + 1, visited, out);
+        let Some(scope) = self.scope(&parent) else {
+            walk.refused = true;
+            return;
+        };
+        if scope.opaque {
+            walk.refused = true;
+        }
+        walk.out.extend(
+            scope
+                .macros
+                .iter()
+                .filter(|scoped| scoped.offset < offset)
+                .map(|scoped| scoped.text.clone()),
+        );
+        self.collect_imports(&parent, offset, depth + 1, walk);
+        self.collect_inherited(&parent, depth + 1, walk);
     }
 
     /// The unique file whose top-level `mod name;` resolves to `file`, and
@@ -198,7 +216,18 @@ impl MacroVisibility {
                 found.push((candidate, module.offset));
             }
         }
-        (found.len() == 1).then(|| found.remove(0))
+        // A `#[path]` or cfg'd declaration of the name anywhere can include
+        // the same file in another crate, where the macros differ.
+        let other_declaration = self.sources.keys().any(|candidate| {
+            candidate != file
+                && self.scope(candidate).is_some_and(|scope| {
+                    scope
+                        .modules
+                        .iter()
+                        .any(|module| module.name == name && !module.plain)
+                })
+        });
+        (found.len() == 1 && !other_declaration).then(|| found.remove(0))
     }
 
     /// Files whose `mod name;` could resolve into `location`.
@@ -254,11 +283,26 @@ impl MacroVisibility {
     }
 }
 
+/// `tests/`, `benches/` or `examples/` of a package. A `src/tests/` is an
+/// ordinary module directory.
 fn is_root_directory(directory: &Path) -> bool {
     directory
         .file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| ROOT_DIRECTORIES.contains(&name))
+        && directory
+            .parent()
+            .and_then(Path::file_name)
+            .is_none_or(|parent| parent != "src")
+}
+
+/// State of one resolution walk.
+#[derive(Default)]
+struct Walk {
+    visited: BTreeSet<PathBuf>,
+    out: Vec<String>,
+    /// Something that could define or shadow a macro was not resolved.
+    refused: bool,
 }
 
 /// The module name a file would be declared as, and the directory that
@@ -378,5 +422,87 @@ mod tests {
             "the generator is {} modules up",
             MAX_DEPTH + 1
         );
+    }
+
+    fn imported(files: &[(&str, &str)], file: &str) -> String {
+        visibility(files).imported_definitions(Path::new(file))
+    }
+
+    #[test]
+    fn an_unresolved_macro_use_module_could_shadow_so_nothing_is_imported() {
+        let generator = |tag: &str| {
+            format!("macro_rules! t {{ ($n:ident) => {{ #[test] fn $n() {{ {tag} }} }}; }}\n")
+        };
+        let cases = "t!(a);\n";
+        let v1 = generator("1");
+        for declaration in [
+            "#[macro_use] #[path = \"m2.rs\"] mod m2;\n",
+            "#[cfg(feature = \"x\")] #[macro_use] mod m2;\n",
+            "#[macro_use] mod missing;\n",
+        ] {
+            let main = format!("{v1}{declaration}mod cases;\n");
+            let files = [
+                ("tests/main.rs", main.as_str()),
+                ("tests/m2.rs", "macro_rules! t { () => {} }\n"),
+                ("tests/cases.rs", cases),
+            ];
+            assert_eq!(imported(&files, "tests/cases.rs"), "", "{declaration}");
+        }
+        let inline = format!(
+            "{v1}#[macro_use]\nmod inner {{ macro_rules! t {{ () => {{}} }} }}\nmod cases;\n"
+        );
+        let files = [
+            ("tests/main.rs", inline.as_str()),
+            ("tests/cases.rs", cases),
+        ];
+        assert_eq!(imported(&files, "tests/cases.rs"), "", "inline macro_use");
+    }
+
+    #[test]
+    fn a_definition_that_cannot_be_listed_refuses_the_older_one() {
+        let main = format!(
+            "{GENERATOR}macro_rules! t {{ ($n:ident) => {{ #[test] fn $n() {{ \"a\nb\"; }} }}; }}\nmod cases;\n"
+        );
+        let files = [
+            ("tests/main.rs", main.as_str()),
+            ("tests/cases.rs", "t!(a);\n"),
+        ];
+        assert_eq!(imported(&files, "tests/cases.rs"), "");
+    }
+
+    #[test]
+    fn a_macro_use_module_declared_after_the_call_is_not_in_scope() {
+        let main = format!("t!(a);\n#[macro_use]\nmod macros;\n");
+        let files = [
+            ("tests/main.rs", main.as_str()),
+            ("tests/macros.rs", GENERATOR),
+        ];
+        assert_eq!(imported(&files, "tests/main.rs"), "");
+        let before = format!("#[macro_use]\nmod macros;\nt!(a);\n");
+        let files = [
+            ("tests/main.rs", before.as_str()),
+            ("tests/macros.rs", GENERATOR),
+        ];
+        assert!(defines_t(&imported(&files, "tests/main.rs")));
+    }
+
+    #[test]
+    fn a_path_or_cfg_declaration_of_the_module_elsewhere_makes_the_parent_ambiguous() {
+        let main = format!("{GENERATOR}mod cases;\n");
+        let other = "#[path = \"../tests/cases.rs\"]\nmod cases;\n";
+        let files = [
+            ("tests/main.rs", main.as_str()),
+            ("tests/other.rs", other),
+            ("tests/cases.rs", "t!(a);\n"),
+        ];
+        assert_eq!(imported(&files, "tests/cases.rs"), "");
+    }
+
+    #[test]
+    fn a_src_tests_directory_is_a_module_directory_not_a_crate_root() {
+        assert!(is_root_directory(Path::new("tests")));
+        assert!(is_root_directory(Path::new("crates/x/tests")));
+        assert!(!is_root_directory(Path::new("src/tests")));
+        assert!(!is_root_directory(Path::new("crates/x/src/tests")));
     }
 }

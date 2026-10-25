@@ -45,6 +45,11 @@ pub(crate) struct ScopedModule {
 pub(crate) struct MacroScope {
     pub macros: Vec<ScopedMacro>,
     pub modules: Vec<ScopedModule>,
+    /// A definition this scope could not list (a token spanning lines) or a
+    /// `#[macro_use]` inline module whose macros it does not list. Either can
+    /// shadow a name the listed definitions carry, so a resolver that reads
+    /// this file refuses to import.
+    pub opaque: bool,
 }
 
 /// The top-level definitions and module declarations of `source`. `None`
@@ -59,13 +64,17 @@ pub(crate) fn macro_scope(source: &str) -> Option<MacroScope> {
                 let Some(name) = rule.name().map(|name| name.text().to_string()) else {
                     continue;
                 };
-                // A definition that cannot be flattened is left out: a file
-                // that needs it then finds no generator and expands nothing.
-                if let Some(text) = flatten(rule.syntax()) {
-                    scope.macros.push(ScopedMacro { name, offset, text });
+                match flatten(rule.syntax()) {
+                    Some(text) => scope.macros.push(ScopedMacro { name, offset, text }),
+                    None => scope.opaque = true,
                 }
             }
-            ast::Item::Module(module) if module.item_list().is_none() => {
+            ast::Item::Module(module) if module.item_list().is_some() => {
+                if module_attributes(&module).0 {
+                    scope.opaque = true;
+                }
+            }
+            ast::Item::Module(module) => {
                 let Some(name) = module.name().map(|name| name.text().to_string()) else {
                     continue;
                 };
@@ -121,7 +130,11 @@ fn flatten(node: &ra_ap_syntax::SyntaxNode) -> Option<String> {
         .filter_map(|element| element.into_token())
     {
         match token.kind() {
-            SyntaxKind::COMMENT => continue,
+            SyntaxKind::COMMENT => {
+                if !text.ends_with(' ') {
+                    text.push(' ');
+                }
+            }
             SyntaxKind::WHITESPACE => {
                 if !text.ends_with(' ') {
                     text.push(' ');
@@ -198,18 +211,27 @@ mod tests {
     #[test]
     fn a_definition_with_a_multiline_token_is_not_flattened() {
         let scope = macro_scope("macro_rules! t {\n    () => { \"a\nb\" };\n}\n");
-        assert_eq!(scope.map(|scope| scope.macros.len()), Some(0));
+        assert_eq!(
+            scope.map(|scope| (scope.macros.len(), scope.opaque)),
+            Some((0, true))
+        );
+    }
+
+    #[test]
+    fn an_inline_macro_use_module_makes_the_scope_opaque() {
+        let scope = macro_scope("#[macro_use]\nmod inner { macro_rules! t { () => {} } }\n");
+        assert_eq!(scope.map(|scope| scope.opaque), Some(true));
+        let plain = macro_scope("mod inner { macro_rules! t { () => {} } }\n");
+        assert_eq!(plain.map(|scope| scope.opaque), Some(false));
     }
 
     #[test]
     fn splicing_lands_after_inner_attributes_and_adds_one_line() {
-        let source = "#![allow(dead_code)]\n\nfn first() {}\nfn second() {}\n";
+        let source = "#![no_std]\n\nfn first() {}\nfn second() {}\n";
         let spliced = splice_imported_macros(source, "macro_rules! m { () => {} }");
         assert_eq!(
             spliced.as_deref(),
-            Some(
-                "#![allow(dead_code)]\n\nmacro_rules! m { () => {} }\nfn first() {}\nfn second() {}\n"
-            )
+            Some("#![no_std]\n\nmacro_rules! m { () => {} }\nfn first() {}\nfn second() {}\n")
         );
         assert_eq!(splice_imported_macros("", "x"), None, "no item to precede");
         assert_eq!(splice_imported_macros(source, "a\nb"), None);
