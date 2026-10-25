@@ -31,6 +31,7 @@ impl HookCalls {
         let frame = Frame {
             anchor: 0,
             names,
+            literal_object_roots: literal_object_roots(&program.body),
             previous_mode: Mode::Registration,
             previous_strict: admission.block_functions_are_lexical,
         };
@@ -78,6 +79,7 @@ enum Mode {
 struct Frame {
     anchor: u64,
     names: Vec<String>,
+    literal_object_roots: Vec<String>,
     previous_mode: Mode,
     previous_strict: bool,
 }
@@ -111,10 +113,18 @@ impl Scan<'_> {
         }
     }
 
-    fn push(&mut self, anchor: u64, names: Vec<String>, mode: Mode, strict: bool) {
+    fn push(
+        &mut self,
+        anchor: u64,
+        names: Vec<String>,
+        mode: Mode,
+        strict: bool,
+        literal_object_roots: Vec<String>,
+    ) {
         self.frames.push(Frame {
             anchor,
             names,
+            literal_object_roots,
             previous_mode: self.mode,
             previous_strict: self.strict,
         });
@@ -146,7 +156,22 @@ impl Scan<'_> {
                 matches!(
                     identifier.name.as_str(),
                     "globalThis" | "global" | "window" | "self"
-                ) && self.binding(identifier.name.as_str()).frame.is_none()
+                ) && !self
+                    .frames
+                    .iter()
+                    .rev()
+                    .find(|frame| {
+                        frame
+                            .names
+                            .iter()
+                            .any(|name| name == identifier.name.as_str())
+                    })
+                    .is_some_and(|frame| {
+                        frame
+                            .literal_object_roots
+                            .iter()
+                            .any(|name| name == identifier.name.as_str())
+                    })
             }
             Expression::ThisExpression(_) => true,
             _ => false,
@@ -154,8 +179,9 @@ impl Scan<'_> {
         if global {
             for hook in ["before", "beforeEach", "beforeAll"] {
                 if property.is_none_or(|property| property == hook) {
-                    // A known global property cannot rebind a local/imported
-                    // identifier with the same spelling.
+                    // A local root may still alias the real global object.
+                    // Its possible property write affects ambient hooks, not
+                    // a distinct local/imported hook identifier.
                     self.write(Binding {
                         frame: None,
                         name: hook.to_string(),
@@ -205,8 +231,45 @@ impl Scan<'_> {
         } else {
             Mode::Deferred
         };
-        self.push((u64::from(span) << 3) | 1, names, mode, strict);
+        self.push(
+            (u64::from(span) << 3) | 1,
+            names,
+            mode,
+            strict,
+            literal_object_roots(body),
+        );
     }
+}
+
+/// Only an immutable empty literal proves a disjoint root here. A local name,
+/// parameter, mutable initializer or other value is not a non-alias proof.
+/// Nonempty literals can define forwarding setters; no value evaluator is added.
+fn literal_object_roots(body: &[Statement<'_>]) -> Vec<String> {
+    body.iter()
+        .filter_map(|statement| match statement {
+            Statement::VariableDeclaration(declaration) => Some(declaration.as_ref()),
+            Statement::ExportNamedDeclaration(export) => match &export.declaration {
+                Some(oxc_ast::ast::Declaration::VariableDeclaration(declaration)) => {
+                    Some(declaration.as_ref())
+                }
+                _ => None,
+            },
+            _ => None,
+        })
+        .filter(|declaration| {
+            declaration.kind == oxc_ast::ast::VariableDeclarationKind::Const && !declaration.declare
+        })
+        .flat_map(|declaration| declaration.declarations.iter())
+        .filter_map(|declaration| {
+            let oxc_ast::ast::BindingPattern::BindingIdentifier(identifier) = &declaration.id
+            else {
+                return None;
+            };
+            matches!(declaration.init.as_ref().map(runtime_expression),
+                Some(Expression::ObjectExpression(object)) if object.properties.is_empty())
+            .then(|| identifier.name.to_string())
+        })
+        .collect()
 }
 
 fn literal_key<'a>(expression: &'a Expression<'a>) -> Option<&'a str> {
@@ -297,6 +360,7 @@ impl<'a> Visit<'a> for Scan<'_> {
                     names,
                     self.mode,
                     self.strict,
+                    literal_object_roots(&block.body),
                 );
             }
             AstKind::ForStatement(loop_) => {
@@ -311,6 +375,7 @@ impl<'a> Visit<'a> for Scan<'_> {
                     names,
                     self.mode,
                     self.strict,
+                    Vec::new(),
                 );
             }
             AstKind::ForOfStatement(loop_) => {
@@ -325,6 +390,7 @@ impl<'a> Visit<'a> for Scan<'_> {
                     names,
                     self.mode,
                     self.strict,
+                    Vec::new(),
                 );
             }
             AstKind::ForInStatement(loop_) => {
@@ -339,6 +405,7 @@ impl<'a> Visit<'a> for Scan<'_> {
                     names,
                     self.mode,
                     self.strict,
+                    Vec::new(),
                 );
             }
             AstKind::CatchClause(catch) => {
@@ -353,6 +420,7 @@ impl<'a> Visit<'a> for Scan<'_> {
                     names,
                     self.mode,
                     self.strict,
+                    Vec::new(),
                 );
             }
             _ => {}

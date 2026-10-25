@@ -308,8 +308,10 @@ reason `gap_evidence_unresolved`:
   registration call, using the same parsed identity fact as receiver setup.
   A preceding write to the binding withholds the body; a later write cannot
   revoke an already registered callback, and a separate lexical binding does
-  not replace it. Known-global member writes affect ambient bindings only when
-  their root is unshadowed; unreadable global keys remain conservative.
+  not replace it. Known-global member writes affect ambient bindings even when
+  a local root may alias the global object. Only an immutable empty-object
+  literal binding in the nearest lexical frame proves a disjoint root here;
+  unreadable global keys and other local root values remain conservative.
   Comments and literal contents are not writes. Helper execution, uncertain or
   repeated registration order, self-referencing callbacks, hook-binding argument
   effects and restoration remain unresolved. This rule

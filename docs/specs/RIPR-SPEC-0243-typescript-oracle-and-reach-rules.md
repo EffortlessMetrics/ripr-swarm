@@ -589,8 +589,12 @@ stay `broad_error` / weak, as do `doesNotThrow` and `doesNotReject`.
 
 Setup-derived receiver identity requires a known hook callable at the registration
 call. Parsed assignment, update, destructuring and loop targets affect subsequent
-registrations of that binding, including properties of unshadowed known global
-objects. A later write cannot revoke an already registered callback; a separate
+registrations of that binding, including properties of known global roots.
+A local root can alias the actual global object: only a `const` binding to an
+empty object literal in that lexical frame proves a disjoint root here. Parameters,
+mutable bindings and other initializers keep possible ambient writes; nonempty
+literals may contain forwarding setters and remain unresolved.
+A later write cannot revoke an already registered callback; a separate
 lexical binding or an ambient property cannot rebind an imported hook identifier.
 An unreadable computed global target withholds affected ambient hook identities.
 Only ordinary statements and admitted synchronous suite callbacks have ordered

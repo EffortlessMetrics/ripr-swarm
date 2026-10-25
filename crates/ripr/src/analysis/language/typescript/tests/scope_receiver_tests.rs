@@ -781,6 +781,96 @@ describe('target', () => { let cart; beforeEach(() => { cart = new Cart(); }); i
             ExposureClass::NoStaticPath,
         ),
         (
+            "local_globalthis_alias",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+const globalThis = global; globalThis.beforeEach = () => {};
+describe('target', () => { let cart = new Decoy(); beforeEach(() => { cart = new Cart(); }); it('reads amount', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "local_global_alias",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+const global = globalThis; global.beforeEach = () => {};
+describe('target', () => { let cart = new Decoy(); beforeEach(() => { cart = new Cart(); }); it('reads amount', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "local_self_alias",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+const self = globalThis; self.beforeEach = () => {};
+describe('target', () => { let cart = new Decoy(); beforeEach(() => { cart = new Cart(); }); it('reads amount', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "local_window_alias",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+const window = globalThis; window.beforeEach = () => {};
+describe('target', () => { let cart = new Decoy(); beforeEach(() => { cart = new Cart(); }); it('reads amount', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "immutable_empty_literal_global_root",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+const globalThis = {}; globalThis.beforeEach = () => {};
+describe('target', () => { let cart = new Decoy(); beforeEach(() => { cart = new Cart(); }); it('reads amount', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::Exposed,
+        ),
+        (
+            "mutable_literal_global_root_can_alias",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+let globalThis = {}; globalThis = global; globalThis.beforeEach = () => {};
+describe('target', () => { let cart = new Decoy(); beforeEach(() => { cart = new Cart(); }); it('reads amount', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "literal_global_root_forwarding_setter",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+const globalThis = { set beforeEach(value) { global.beforeEach = value; } }; globalThis.beforeEach = () => {};
+describe('target', () => { let cart = new Decoy(); beforeEach(() => { cart = new Cart(); }); it('reads amount', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "nearest_alias_shadows_empty_literal",
+            r#"import { expect } from 'chai';
+import { Cart } from '../src/cart.js';
+class Decoy { total() { return 1; } }
+const globalThis = {};
+describe('noise', () => { const globalThis = global; globalThis.beforeEach = () => {}; });
+describe('target', () => { let cart = new Decoy(); beforeEach(() => { cart = new Cart(); }); it('reads amount', () => { expect(cart.total()).to.equal(1); }); });
+"#,
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "imported_hook_ignores_unresolved_root_alias",
+            r#"import { describe, it, beforeEach, expect } from 'vitest';
+import { Cart } from '../src/cart';
+const globalThis = global; globalThis.beforeEach = () => {};
+describe('target', () => { let cart; beforeEach(() => { cart = new Cart(); }); it('reads', () => { expect(cart.total()).toBe(1); }); });
+"#,
+            ExposureClass::Exposed,
+        ),
+        (
             "disabled_suite_keeps_old_unknown",
             r#"import { expect } from 'chai';
 import { Cart } from '../src/cart.js';
