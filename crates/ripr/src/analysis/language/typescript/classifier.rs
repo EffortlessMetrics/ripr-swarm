@@ -292,7 +292,20 @@ pub(crate) fn ts_changed_value_is_observed(
                 // Rule 7: the owner's names for this test are the owner name
                 // plus the alias-rename locals behind an
                 // `ImportAliasOwnerCall` relation.
-                let mut owner_names: Vec<&str> = vec![owner_name];
+                let decorated_reach =
+                    candidate.relation == TypeScriptRelationKind::DecoratedMethodCall;
+                let mut owner_names: Vec<&str> = if decorated_reach {
+                    // RIPR-SPEC-0243 rule 20: the test calls the decorated
+                    // method, whose result is the decorator's return value.
+                    owner
+                        .module_entries
+                        .iter()
+                        .filter(|entry| entry.decorated.is_some())
+                        .map(|entry| entry.name.as_str())
+                        .collect()
+                } else {
+                    vec![owner_name]
+                };
                 if candidate.relation == TypeScriptRelationKind::ImportAliasOwnerCall {
                     owner_names.extend(import_alias_owner_locals(
                         candidate.test,
@@ -329,8 +342,8 @@ pub(crate) fn ts_changed_value_is_observed(
                 // only those consumed occurrences, so a mixed assertion
                 // (`typeof price === 'function' ? price(150) : 0`) can
                 // still witness the later value check.
-                let owner_is_method =
-                    matches!(owner.owner_kind, OwnerKind::Method | OwnerKind::ClassMethod);
+                let owner_is_method = decorated_reach
+                    || matches!(owner.owner_kind, OwnerKind::Method | OwnerKind::ClassMethod);
                 // Method owners keep the legacy member-segment reading: their
                 // honest needle IS `receiver.method(...)`.
                 let namespace_receivers = if owner_is_method {
@@ -5705,6 +5718,16 @@ pub(crate) fn owner_line_context<'a>(
     }
 }
 
+/// `true` when `line` is inside the pass-through return a decorated-method
+/// entry of `owner` recorded (`decorated_entries`).
+fn decorated_return_changed(owner: &TypeScriptOwner, line: usize) -> bool {
+    owner.module_entries.iter().any(|entry| {
+        entry.decorated.as_ref().is_some_and(|decorated| {
+            (decorated.return_start_line..=decorated.return_end_line).contains(&line)
+        })
+    })
+}
+
 /// Classify a changed line whose owning production owner was already
 /// resolved. The per-changed-line driver resolves the owner against a
 /// per-file index (#10021) so the hot loop does not re-scan the workspace
@@ -5729,7 +5752,26 @@ pub(crate) fn classify_resolved_owner(
     alias_map: Option<&TsAliasMap>,
     alias_unavailable: Option<&TsAliasMapLoadGap>,
 ) -> Option<Finding> {
-    let related_candidates = &context.related_candidates;
+    // RIPR-SPEC-0243 rule 20: a decorated-method reach observes only an edit
+    // to the wrapper's pass-through return. Any other line of the decorator
+    // keeps the reading it had before the relation existed.
+    let decorated_gated: Vec<TypeScriptRelatedCandidate<'_>>;
+    let related_candidates = if !decorated_return_changed(owner, line)
+        && context
+            .related_candidates
+            .iter()
+            .any(|candidate| candidate.relation == TypeScriptRelationKind::DecoratedMethodCall)
+    {
+        decorated_gated = context
+            .related_candidates
+            .iter()
+            .filter(|candidate| candidate.relation != TypeScriptRelationKind::DecoratedMethodCall)
+            .copied()
+            .collect();
+        &decorated_gated
+    } else {
+        &context.related_candidates
+    };
     // The changed line's probe family selects which assertion of each
     // related test the public row shows (#5525, RIPR-SPEC-0224): the same
     // `ts_oracle_kind_matches_seam` filter that `strongest_family_matching_oracle`

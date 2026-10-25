@@ -43,6 +43,20 @@ pub(crate) struct TypeScriptModuleEntry {
     /// (`class_entries`), not an exported top-level name. `name` is then the
     /// method name (`constructor` for a constructor).
     pub(crate) class_member: Option<TypeScriptMethodKind>,
+    /// `Some` when the entry is an instance method that a bare `@owner`
+    /// decorator wraps (`decorated_entries`, RIPR-SPEC-0243 rule 20). `name`
+    /// is the method name.
+    pub(crate) decorated: Option<TypeScriptDecoratedMethod>,
+}
+
+/// The decorated method a pass-through decorator owner reaches, with the
+/// lines of the wrapper's final return, the only line whose change the
+/// method's call result carries.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct TypeScriptDecoratedMethod {
+    pub(crate) class_name: String,
+    pub(crate) return_start_line: usize,
+    pub(crate) return_end_line: usize,
 }
 
 /// One top-level declaration of the module.
@@ -191,6 +205,7 @@ fn record_export(
             name: exported.to_string(),
             exported_as_default: exported == "default",
             class_member: None,
+            decorated: None,
         });
 }
 

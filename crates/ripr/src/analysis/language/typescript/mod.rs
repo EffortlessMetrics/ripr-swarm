@@ -69,6 +69,7 @@ mod class_entries;
 mod classifier;
 mod committed_snapshot;
 mod custom_matcher_guard;
+mod decorated_entries;
 mod deleted_lines;
 #[cfg(test)]
 mod deleted_lines_tests;
@@ -176,6 +177,7 @@ pub(crate) use class_entries::*;
 pub(crate) use classifier::*;
 pub(crate) use committed_snapshot::*;
 pub(crate) use custom_matcher_guard::*;
+pub(crate) use decorated_entries::*;
 pub(crate) use discovery::*;
 pub(crate) use dropped_term_guard::*;
 pub(crate) use error_payload_guard::*;
