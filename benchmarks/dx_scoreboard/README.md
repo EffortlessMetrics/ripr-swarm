@@ -160,6 +160,8 @@ These native receipts are also accepted as-is:
 
 ### The ranking lane
 
+The `agent` board has no nightly lane, because the agent-as-user harness needs an agent. The committed receipt is gated instead: the xtask test `committed_agent_receipt_does_not_regress_the_agent_baseline` ingests `metrics/public-proof/agent-as-user.json` against `metrics/dx-scoreboard/agent-baseline.json` (same `--baseline`/gate comparison), and `agent_gate_fails_the_receipt_from_before_the_rerun` keeps the 2026-10-04 receipt as the negative control. After a rerun that improves a metric, rebuild the baseline with `cargo xtask dx-scoreboard --boards agent --ingest metrics/public-proof/agent-as-user.json` and copy `target/ripr/reports/dx-scoreboard.json` to `metrics/dx-scoreboard/agent-baseline.json`. A rerun is one run per target with different agents, so the margins (the larger of 25 percent of the baseline and 3 steps for commands and tool steps; no allowance for weak findings or white-box tests) absorb run-to-run variation. The test also fails when the receipt stops reporting a metric or a repository the baseline measured, because the generic gate lists missing evidence as uncompared and passes it.
+
 `.github/workflows/pilot-ranking.yml` runs nightly, on demand, and once when a
 pull request touching pilot ranking, seam grading or the answer key leaves
 draft. It never runs cargo-mutants; the labels are committed:

@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- The agent-as-user receipt is gated: a required xtask test ingests `metrics/public-proof/agent-as-user.json` and fails when it is worse than `metrics/dx-scoreboard/agent-baseline.json` past the `agent` board margins (commands or tool steps to fix, non-exposed verdicts left, white-box tests). The 2026-10-04 receipt is the negative control. Ratchet the baseline when a rerun improves (#10183).
