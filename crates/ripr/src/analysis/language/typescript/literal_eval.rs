@@ -44,6 +44,7 @@ pub(crate) fn return_expressions_agree(
     }
     let old = old_expression.to_string();
     let new = new_expression.to_string();
+    let (old_text, new_text) = (old.clone(), new.clone());
     let params = params.to_vec();
     let arguments = arguments.to_vec();
     parse_on_worker(file, "", move |file, _source, allocator| {
@@ -61,7 +62,28 @@ pub(crate) fn return_expressions_agree(
         ) {
             return Some(false);
         }
-        separated_on_probe_grid(&old.expression, &new.expression, &params, &values).then_some(true)
+        // The asserted input and its neighbours may sit far from the changed
+        // constant (`Math.min(100, ...)` edited to `200`, asserted at 40), so
+        // a second grid also tries each number the edit added or removed. An
+        // operator edit (`>=` to `>`) changes no number and keeps the
+        // boundary-witness reading instead.
+        let (old_numbers, new_numbers) = (numeric_literals(&old_text), numeric_literals(&new_text));
+        let constants: Vec<f64> = old_numbers
+            .iter()
+            .filter(|n| !new_numbers.contains(n))
+            .chain(new_numbers.iter().filter(|n| !old_numbers.contains(n)))
+            .copied()
+            .collect();
+        (separated_on_probe_grid(&old.expression, &new.expression, &params, &values, &[])
+            || (!constants.is_empty()
+                && separated_on_probe_grid(
+                    &old.expression,
+                    &new.expression,
+                    &params,
+                    &values,
+                    &constants,
+                )))
+        .then_some(true)
     })
     .ok()
     .flatten()
@@ -75,6 +97,7 @@ fn separated_on_probe_grid(
     new: &Expression<'_>,
     params: &[String],
     values: &[Val],
+    constants: &[f64],
 ) -> bool {
     const MAX_COMBINATIONS: usize = 4096;
     let axes: Vec<Vec<Val>> = values
@@ -82,7 +105,11 @@ fn separated_on_probe_grid(
         .map(|value| match value {
             Val::Num(n) => {
                 let mut axis = Vec::new();
-                for candidate in [*n, n - 1.0, n + 1.0, 0.0, 1.0, -1.0] {
+                let named = constants.iter().flat_map(|c| [*c, c - 1.0, c + 1.0]);
+                for candidate in [*n, n - 1.0, n + 1.0, 0.0, 1.0, -1.0]
+                    .into_iter()
+                    .chain(named)
+                {
                     if !axis.contains(&Val::Num(candidate)) {
                         axis.push(Val::Num(candidate));
                     }
@@ -114,6 +141,37 @@ fn separated_on_probe_grid(
         }
     }
     false
+}
+
+/// The decimal number literals in `text`, at most `MAX_CONSTANTS` of them,
+/// so the second probe grid stays within its combination bound.
+fn numeric_literals(text: &str) -> Vec<f64> {
+    const MAX_CONSTANTS: usize = 3;
+    let mut found: Vec<f64> = Vec::new();
+    let mut token = String::new();
+    let flush = |token: &mut String, found: &mut Vec<f64>| {
+        if let Ok(number) = token.parse::<f64>()
+            && number.is_finite()
+            && !found.contains(&number)
+            && found.len() < MAX_CONSTANTS
+        {
+            found.push(number);
+        }
+        token.clear();
+    };
+    let mut previous_word = false;
+    for c in text.chars().chain(std::iter::once(' ')) {
+        let word = c == '_' || c == '$' || c.is_alphanumeric();
+        if (c.is_ascii_digit() || (c == '.' && !token.is_empty()))
+            && (!token.is_empty() || !previous_word)
+        {
+            token.push(c);
+        } else {
+            flush(&mut token, &mut found);
+        }
+        previous_word = word;
+    }
+    found
 }
 
 /// `Object.is` equality: `0` and `-0` differ, so a sign-only change is never
@@ -309,6 +367,49 @@ mod tests {
         assert_eq!(agree(old, new, &params, &["15", "0", "10"]), Some(true));
         assert_eq!(agree(old, new, &params, &["0", "0", "10"]), Some(false));
         assert_eq!(agree(old, new, &params, &["-3", "0", "10"]), Some(false));
+    }
+
+    #[test]
+    fn a_changed_bound_far_from_the_asserted_input_still_separates() {
+        let old = "Math.min(100, Math.max(0, n))";
+        let new = "Math.min(200, Math.max(0, n))";
+        // Asserted at 40: both clamp to 40, and only an input past the old
+        // bound tells them apart, which the named constants supply.
+        assert_eq!(agree(old, new, &["n"], &["40"]), Some(true));
+        assert_eq!(agree(old, new, &["n"], &["250"]), Some(false));
+    }
+
+    #[test]
+    fn an_operator_edit_names_no_new_number_and_stays_unknown_far_from_the_bound() {
+        assert_eq!(
+            agree("total >= 100", "total > 100", &["total"], &["50"]),
+            None
+        );
+        assert_eq!(
+            agree("total >= 100", "total > 100", &["total"], &["20"]),
+            None
+        );
+        assert_eq!(
+            agree("total >= 100", "total > 100", &["total"], &["100"]),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn an_equivalent_rewrite_is_still_not_reported_as_unexercised() {
+        assert_eq!(
+            agree("Math.min(100, n)", "Math.min(n, 100)", &["n"], &["40"]),
+            None
+        );
+        // The literals differ (2 against 1 and 1), so the changed-number
+        // probes run, and the values still agree everywhere.
+        assert_eq!(agree("n + 2", "n + 1 + 1", &["n"], &["40"]), None);
+    }
+
+    #[test]
+    fn numeric_literals_skip_identifier_digits_and_cap_the_count() {
+        assert_eq!(numeric_literals("a1 + b2 * 3.5 - 7"), vec![3.5, 7.0]);
+        assert_eq!(numeric_literals("1 2 3 4 5").len(), 3);
     }
 
     #[test]
