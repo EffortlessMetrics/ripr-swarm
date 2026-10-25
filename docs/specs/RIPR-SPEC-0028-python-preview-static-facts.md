@@ -719,6 +719,16 @@ read-out: the boolean the classifier uses is derived from the surfaced
   `sorted`, `set` and `frozenset` erase the ordering the dunder determines and
   are not transparent here; any other wrapper may ignore the entry
   (`always_true(reversed(Range(0)))` stays `orthogonal`) (#8563).
+  `strong_oracle_observes_removed_type_guard` (`direct`) credits an `__eq__`
+  edit that deletes the leading `isinstance(other, <own class>) and` from the
+  method's only `return`, when the remaining expression reads `other.<attr>`
+  for names no builtin literal has (and uses `other` nowhere else), the class
+  defines neither `__ne__` nor `__getattr__`, and a protocol-entry test asserts
+  `Class(...) != <int, float, str, bool or None literal>` (or `not ... ==`).
+  Calling the edited method with such a literal raises `AttributeError`, so the
+  assertion fails after the edit. A literal on the left, a list or custom
+  operand, an early exit before the `return` or an `==` read that expects a
+  match keep the `dynamic_dispatch` abstention (#9619, #9421).
   `strong_oracle_observes_changed_effect_channel` (`direct`) credits a
   changed write (`print`, a file write, a call on a passed collaborator, or
   a `self` field) whose strong oracle compares the channel that write

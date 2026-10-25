@@ -230,6 +230,130 @@ fn weak_equality_read_of_an_eq_owner_abstains_instead_of_grading_a_gap() -> Chec
     Ok(())
 }
 
+const OLD_GUARD: &str = "        return isinstance(other, Money) and self.cents == other.cents";
+
+/// Classify the `__eq__` edit against the file as it reads after the edit,
+/// which is what the workspace pass hands the classifier.
+fn classify_guard_removal(
+    new_src: &str,
+    new_line: &str,
+    test_src: &str,
+) -> Result<Finding, String> {
+    let owners = owners_of(new_src, "shapes/money.py");
+    let line = owner(&owners, "__eq__")?.start_line + 1;
+    let tests = tests_of(test_src)?;
+    classify_change_with_source(
+        Path::new("shapes/money.py"),
+        line,
+        new_line,
+        Some(OLD_GUARD),
+        &owners,
+        &tests,
+        Some(new_src),
+    )
+    .ok_or_else(|| "the change must yield a finding".to_string())
+}
+
+fn money_without_guard() -> String {
+    MONEY.replace(OLD_GUARD.trim_start(), "return self.cents == other.cents")
+}
+
+const NEW_GUARD_LINE: &str = "        return self.cents == other.cents";
+
+#[test]
+fn removed_type_guard_is_credited_to_a_foreign_literal_comparison() -> Check {
+    for assertion in [
+        "assert Money(1) != 1",
+        "assert Money(1) != 'x'",
+        "assert not Money(1) == None",
+    ] {
+        let finding = classify_guard_removal(
+            &money_without_guard(),
+            NEW_GUARD_LINE,
+            &money_test(&format!("    {assertion}")),
+        )?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{assertion}");
+    }
+    Ok(())
+}
+
+#[test]
+fn removed_type_guard_stays_an_abstention_without_the_exact_shape() -> Check {
+    let unguarded = money_without_guard();
+    let foreign = money_test("    assert Money(1) != 1");
+    let with_ne = unguarded.replace(
+        "    def __lt__",
+        "    def __ne__(self, other):\n        return True\n\n    def __lt__",
+    );
+    let with_prelude = unguarded.replace(
+        "        return self.cents == other.cents",
+        "        if other is None:\n            return False\n        return self.cents == other.cents",
+    );
+    for (name, source, line, test_src) in [
+        (
+            "an __ne__ override",
+            with_ne.as_str(),
+            NEW_GUARD_LINE,
+            foreign.clone(),
+        ),
+        (
+            "an early exit before the return",
+            with_prelude.as_str(),
+            NEW_GUARD_LINE,
+            foreign.clone(),
+        ),
+        (
+            "a builtin attribute read",
+            &unguarded.replace("other.cents", "other.real"),
+            "        return self.cents == other.real",
+            foreign.clone(),
+        ),
+        (
+            "a same-type comparison",
+            unguarded.as_str(),
+            NEW_GUARD_LINE,
+            money_test("    assert Money(1) != Money(2)"),
+        ),
+        (
+            "an == read that expects a match",
+            unguarded.as_str(),
+            NEW_GUARD_LINE,
+            money_test("    assert Money(1) == Money(1)"),
+        ),
+        (
+            "a literal on the left, which the operator entry does not bind",
+            unguarded.as_str(),
+            NEW_GUARD_LINE,
+            money_test("    assert 1 != Money(1)"),
+        ),
+        (
+            "a list operand",
+            unguarded.as_str(),
+            NEW_GUARD_LINE,
+            money_test("    assert Money(1) != [1]"),
+        ),
+    ] {
+        let finding = classify_guard_removal(source, line, &test_src)?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{name}");
+    }
+    // A guard for another class is not this owner's operand guard.
+    let owners = owners_of(&unguarded, "shapes/money.py");
+    let line_no = owner(&owners, "__eq__")?.start_line + 1;
+    let tests = tests_of(&foreign)?;
+    let finding = classify_change_with_source(
+        Path::new("shapes/money.py"),
+        line_no,
+        NEW_GUARD_LINE,
+        Some("        return isinstance(other, Cash) and self.cents == other.cents"),
+        &owners,
+        &tests,
+        Some(&unguarded),
+    )
+    .ok_or("the change must yield a finding")?;
+    assert_ne!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
 #[test]
 fn ordering_dunder_with_a_relational_assertion_is_a_gap_not_an_abstention() -> Check {
     let finding = classify(

@@ -69,6 +69,7 @@ mod guard_credit;
 mod helper_inline;
 mod message_pin;
 mod module_value;
+mod type_guard;
 mod wrapped_call;
 use classify::{PythonNoBehaviorContext, classify_change_with_value_origins};
 #[cfg(test)]
