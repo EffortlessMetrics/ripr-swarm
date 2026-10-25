@@ -432,3 +432,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — observation_verified_return_value (37)
+
+Reason:
+RIPR-SPEC-0122: state that no seam binds the finding and name the Next step instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless observation_verified_return_value --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
