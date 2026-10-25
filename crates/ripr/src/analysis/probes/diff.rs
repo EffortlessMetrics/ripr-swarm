@@ -967,10 +967,21 @@ fn join_tokens(lines: &[&str]) -> String {
         // A wrap before `,` or `;` after another punct would join the two
         // into one joint punct (`-` `,` into `-,`) when the space drops,
         // which macro matching distinguishes, so that space is kept.
+        // Joining beside a dot can manufacture a float token: `1\n.0`
+        // and `1.\n0` are not the single literal `1.0` in a macro. Keep
+        // those boundaries; a named method continuation still joins.
+        let numeric_dot = (first == '.'
+            && last.is_some_and(|c| c.is_ascii_digit() || c == '_')
+            && line
+                .chars()
+                .nth(1)
+                .is_none_or(|c| c.is_ascii_digit() || !continues_identifier(c)))
+            || (last == Some('.') && before_last.is_some_and(|c| c.is_ascii_digit() || c == '_'));
         let joint = matches!(first, ',' | ';')
             && matches!(last, Some(c) if c.is_ascii_punctuation() && !matches!(c, '(' | '[' | '{'));
         if let Some(last) = last
             && (dots
+                || numeric_dot
                 || joint
                 || !(matches!(last, '(' | '[' | '{' | '.')
                     || matches!(first, ')' | ']' | '}' | '.' | ',' | ';')))
@@ -3139,6 +3150,51 @@ mod tests {
             &["let label = stringify!(i32::MAX);"],
             &["let label = stringify!(", "    core::i32::MAX);"],
         ));
+    }
+
+    /// Numeric-dot joins change the token stream even when joining the
+    /// raw text would make it identical. Exercise both production sides.
+    #[test]
+    fn numeric_dot_split_and_join_keep_their_probes() {
+        for (joined, split) in [
+            (
+                "pub fn value()->u32 { pick!(1.0) }",
+                ["pub fn value()->u32 { pick!(1", ".0) }"],
+            ),
+            (
+                "pub fn value()->u32 { pick!(1_.0) }",
+                ["pub fn value()->u32 { pick!(1_", ".0) }"],
+            ),
+        ] {
+            assert!(!is_behavior_neutral_rewrap(&split, &[joined]));
+            assert!(!is_behavior_neutral_rewrap(&[joined], &split));
+            assert_eq!(join_tokens(&["pick!(1", ".0)"]), "pick!(1 .0)");
+            assert_eq!(join_tokens(&["pick!(1.", "0)"]), "pick!(1. 0)");
+            assert_eq!(join_tokens(&["pick!(1_.", "0)"]), "pick!(1_. 0)");
+            assert_eq!(join_tokens(&["pick!(1.", "word)"]), "pick!(1. word)");
+            // Named methods (including a digit-ending receiver) and ordinary
+            // tuple fields still join when no numeric token can be formed.
+            assert_eq!(join_tokens(&["value2", ".method()"]), "value2.method()");
+            assert_eq!(join_tokens(&["value", ".0"]), "value.0");
+            for (source, added, removed) in [
+                (
+                    format!("{}\n{}\n", split[0], split[1]),
+                    vec![(1, split[0]), (2, split[1])],
+                    vec![(1, 1, joined)],
+                ),
+                (
+                    format!("{joined}\n"),
+                    vec![(1, joined)],
+                    vec![(1, 1, split[0]), (2, 1, split[1])],
+                ),
+            ] {
+                let probes = block_probes(&source, &added, &removed);
+                assert!(
+                    !probes.is_empty(),
+                    "changed float tokens keep probes: {probes:?}"
+                );
+            }
+        }
     }
 
     #[test]

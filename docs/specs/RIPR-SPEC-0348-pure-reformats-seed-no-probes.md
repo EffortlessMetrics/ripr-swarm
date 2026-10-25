@@ -118,7 +118,9 @@ Neutrality still requires all of:
   delimiters (a delimiter bounds its token group, so spacing beside it is
   invisible even in a token tree), and `join_tokens` keeps a wrap-point
   space before `,`/`;` when the preceding character is another punct
-  (`-` `,` never becomes `-,`).
+  (`-` `,` never becomes `-,`); numeric-dot wrap points retain their
+  whitespace so separate `1` / `.0` or `1.` / `0` tokens never become a
+  floating-point literal. Ambiguous numeric-dot contexts stay probed.
 
 Known residual: position sensitivity that no token names — a
 `#[track_caller]` callee returning `Location::caller()`, or the location a
@@ -177,6 +179,8 @@ A token change inside a rewrap (`a + b` -> `a + c`) still seeds its probe.
 - Existing guards keep their tests: `a_respelling_inside_stringify_is_not_neutral`,
   `a_prose_line_on_one_side_keeps_a_shifted_rewrap_probed`,
   `rewrap_keeps_separated_dots_apart` (example 5 family).
+- `numeric_dot_split_and_join_keep_their_probes` keeps changed numeric-dot
+  tokens probed in both directions through the production block route.
 
 ## Implementation Mapping
 

@@ -18626,6 +18626,7 @@ tests = [
   "crates/ripr/src/analysis/probes/diff.rs::tests::position_literal_and_joint_punct_guards_keep_reformats_probed",
   "crates/ripr/src/analysis/probes/diff.rs::tests::a_split_position_macro_keeps_its_rewrap_probed",
   "crates/ripr/src/analysis/probes/diff.rs::tests::a_reindented_split_position_macro_keeps_its_probe",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::numeric_dot_split_and_join_keep_their_probes",
 ]
 fixtures = []
 code = [
