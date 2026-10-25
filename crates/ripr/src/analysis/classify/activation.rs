@@ -391,9 +391,26 @@ fn observed_discriminator_values(
     ) {
         return element_boundary_observations(owner, &view, index);
     }
-    let call_values = call_values_for_owner(owner, &parameters, related_tests, helper_chain, index);
+    let text_cells = emptiness_guard_operand(probe, &left, &right).is_some();
+    let call_values = call_values_for_owner(
+        owner,
+        &parameters,
+        related_tests,
+        helper_chain,
+        index,
+        text_cells,
+    );
     let left_parameter = boundary_operand_parameter(owner, owner_source, &parameters, &left);
     let right_parameter = boundary_operand_parameter(owner, owner_source, &parameters, &right);
+    let closed_form = admits_closed_form(
+        owner,
+        probe,
+        &left,
+        &right,
+        related_tests,
+        &call_values,
+        index,
+    );
     // #3295: the operands resolve once per probe (initializer or
     // parameter); only the input row changes per call.
     let left_resolved = resolve_boundary_operand(
@@ -403,7 +420,7 @@ fn observed_discriminator_values(
         &parameters,
         index,
         workspace_complete,
-        ordering_predicate(&probe.expression),
+        closed_form,
     );
     let right_resolved = resolve_boundary_operand(
         owner,
@@ -412,7 +429,7 @@ fn observed_discriminator_values(
         &parameters,
         index,
         workspace_complete,
-        ordering_predicate(&probe.expression),
+        closed_form,
     );
     let right_constant = (right_resolved.is_none() && right_parameter.is_none())
         .then(|| boundary_constant(owner, &right, index))
@@ -871,6 +888,95 @@ fn ordering_predicate(expression: &str) -> bool {
         }
     }
     false
+}
+
+/// The length operand of an emptiness guard: the changed condition is the one
+/// comparison `text.len() == 0` or `text.len() != 0` (either orientation) and
+/// nothing else. A compound condition, a literal other than `0` or an ordering
+/// operator is not one.
+fn emptiness_guard_operand<'a>(probe: &Probe, left: &'a str, right: &'a str) -> Option<&'a str> {
+    let expression = probe.expression.as_str();
+    let equality_operators = expression.matches("==").count() + expression.matches("!=").count();
+    if equality_operators != 1
+        || ["&&", "||", "<", ">"]
+            .iter()
+            .any(|operator| expression.contains(operator))
+    {
+        return None;
+    }
+    match (left.trim(), right.trim()) {
+        (length, "0") | ("0", length) if length.ends_with(".len()") => Some(length),
+        _ => None,
+    }
+}
+
+/// Whether a closed-form operand (`text.len()`) may stand for the boundary.
+/// An ordering predicate always admits it. An emptiness guard, `text.len() ==
+/// 0` or `!= 0`, admits it only when the related calls give the operand both
+/// an empty and a non-empty value: the empty row separates the guard from
+/// `!=`, `== 1` and a constant `false`, the non-empty row from a constant
+/// `true`. A neighbour such as `len() < 2` survives unless the input of
+/// length one is asserted exactly, so every related test that calls the owner
+/// must also hold only strong assertions; a weakly asserted call may be the
+/// one that sits on that neighbour. Rows on one side only, other literals and
+/// unreadable rows keep the unknown reading. Rows reach this through the same
+/// call-value reader as every other boundary input, so a literal table loop
+/// counts row by row.
+fn admits_closed_form(
+    owner: &FunctionSummary,
+    probe: &Probe,
+    left: &str,
+    right: &str,
+    related_tests: &[&TestSummary],
+    call_values: &[Vec<ParameterValue>],
+    index: &crate::analysis::rust_index::RustIndex,
+) -> bool {
+    if ordering_predicate(&probe.expression) {
+        return true;
+    }
+    let Some(length) = emptiness_guard_operand(probe, left, right) else {
+        return false;
+    };
+    let Some(resolved @ ResolvedOperand::Expression(..)) = resolve_boundary_operand(
+        owner,
+        length,
+        probe.location.line,
+        &function_parameters(owner),
+        index,
+        true,
+        true,
+    ) else {
+        return false;
+    };
+    let every_call_pinned = related_tests
+        .iter()
+        .filter(|test| test.body_calls().any(|call| call.name == owner.name))
+        .all(|test| {
+            !test.assertions.is_empty()
+                && test
+                    .assertions
+                    .iter()
+                    .all(|assertion| matches!(assertion.strength, OracleStrength::Strong))
+        });
+    if !every_call_pinned {
+        return false;
+    }
+    let (mut empty, mut non_empty) = (false, false);
+    for row in call_values {
+        let inputs: super::value_transfer::ExactInputs = row
+            .iter()
+            .map(|cell| (cell.parameter.clone(), cell.value.clone()))
+            .collect();
+        let Some(exact) = exact_operand_for_row(&resolved, row, &inputs, index, true) else {
+            continue;
+        };
+        match exact.value.trim().parse::<u64>() {
+            Ok(0) => empty = true,
+            Ok(_) => non_empty = true,
+            Err(_) => return false,
+        }
+    }
+    empty && non_empty
 }
 
 /// The same-file constants a local's initializer names, as name and plain
@@ -1674,7 +1780,15 @@ fn missing_boundary_discriminator(
     ) {
         return element_boundary_discriminator(owner, &view, flow_sinks, index, unresolved);
     }
-    let call_values = call_values_for_owner(owner, &parameters, related_tests, helper_chain, index);
+    let text_cells = emptiness_guard_operand(probe, &left, &right).is_some();
+    let call_values = call_values_for_owner(
+        owner,
+        &parameters,
+        related_tests,
+        helper_chain,
+        index,
+        text_cells,
+    );
     if call_values.is_empty() {
         // Every related call passes only computed arguments (#6672): the
         // inputs exist but none is readable, so the boundary is
@@ -1731,6 +1845,15 @@ fn missing_boundary_discriminator(
     let left_parameter = boundary_operand_parameter(owner, owner_source, &parameters, &left);
     let right_parameter = boundary_operand_parameter(owner, owner_source, &parameters, &right);
 
+    let closed_form = admits_closed_form(
+        owner,
+        probe,
+        &left,
+        &right,
+        related_tests,
+        &call_values,
+        index,
+    );
     // #3295 exact path: when either operand is a computed local, the
     // bounded evaluator resolves its value from the row's exact
     // inputs; the boundary is observed when both sides compare equal
@@ -1742,7 +1865,7 @@ fn missing_boundary_discriminator(
         &parameters,
         index,
         workspace_complete,
-        ordering_predicate(&probe.expression),
+        closed_form,
     );
     let right_resolved = resolve_boundary_operand(
         owner,
@@ -1751,7 +1874,7 @@ fn missing_boundary_discriminator(
         &parameters,
         index,
         workspace_complete,
-        ordering_predicate(&probe.expression),
+        closed_form,
     );
     let right_constant = (right_resolved.is_none() && right_parameter.is_none())
         .then(|| boundary_constant(owner, &right, index))
@@ -3664,6 +3787,8 @@ fn owner_call_parameter_values(
 struct ReceiverParameters<'a> {
     names: Vec<String>,
     value: Option<&'a ReceiverReader<'a>>,
+    /// Read a string or char literal table cell as an exact input.
+    text_cells: bool,
 }
 
 type ReceiverReader<'a> = dyn Fn(&str) -> Option<String> + 'a;
@@ -3673,6 +3798,14 @@ impl<'a> ReceiverParameters<'a> {
         Self {
             names: Vec::new(),
             value: None,
+            text_cells: false,
+        }
+    }
+
+    fn reading_text_cells(text_cells: bool) -> Self {
+        Self {
+            text_cells,
+            ..Self::none()
         }
     }
 
@@ -3727,7 +3860,7 @@ fn owner_call_parameter_values_where(
                     if let Some(values) = receivers.cell(parameter, argument) {
                         return Some((parameter, values, argument.trim(), false));
                     }
-                    let values = owner_argument_values(test, argument);
+                    let values = owner_argument_values_in(test, argument, receivers.text_cells);
                     let table_column = !values.is_empty()
                         && crate::analysis::syntax::constant_table_column(
                             &test.body,
@@ -3795,6 +3928,7 @@ fn call_values_for_owner(
     related_tests: &[&TestSummary],
     helper_chain: Option<&super::helper_transfer::HelperChain>,
     index: &crate::analysis::rust_index::RustIndex,
+    text_cells: bool,
 ) -> Vec<Vec<ParameterValue>> {
     let parameters = if parameters.is_empty() {
         function_parameters(owner)
@@ -3811,7 +3945,7 @@ fn call_values_for_owner(
         |test, call| {
             super::call_identity::qualified_owner_calls_resolve(index, owner, test, &call.text)
         },
-        &ReceiverParameters::none(),
+        &ReceiverParameters::reading_text_cells(text_cells),
     );
     if !direct.is_empty() {
         return direct;
@@ -4180,6 +4314,7 @@ fn chain_entry_rows(
     let receivers = ReceiverParameters {
         names: entry.receiver.iter().cloned().collect(),
         value: Some(&receiver_reader),
+        text_cells: false,
     };
     owner_call_parameter_values_where(
         related_tests,
@@ -5127,6 +5262,15 @@ pub(in crate::analysis) fn owner_argument_values(
     test: &TestSummary,
     argument: &str,
 ) -> Vec<String> {
+    owner_argument_values_in(test, argument, false)
+}
+
+/// [`owner_argument_values`], optionally reading a whole string or char
+/// literal in a constant-row table column as the exact input it is. Only an
+/// emptiness guard asks for it (see [`admits_closed_form`]): a text cell
+/// settles whether the input is empty, but an equality between two text
+/// parameters needs rows on both sides that this reader does not check.
+fn owner_argument_values_in(test: &TestSummary, argument: &str, text_cells: bool) -> Vec<String> {
     // `order_discount(base + 1)` passes neither `1` nor `base`: a
     // computed argument is not an exact input value (RIPR-SPEC-0001,
     // #6672), so it yields nothing rather than one of its operands.
@@ -5158,9 +5302,14 @@ pub(in crate::analysis) fn owner_argument_values(
             .iter()
             .map(|cell| {
                 // The cell must be one whole scalar, as an rstest case is:
-                // `Some(1)` or `"1"` is not the value `1`.
+                // `Some(1)` or `"1"` is not the value `1`. With `text_cells`
+                // a whole string or char literal is the same exact input a
+                // direct call argument gives (`initial("")`) and stays
+                // quoted; a raw or byte string, or an escape the scalar
+                // reader would respell, is no whole scalar and yields
+                // nothing.
                 let cell = cell.trim();
-                (!cell.starts_with(['"', '\''])
+                ((text_cells || !cell.starts_with(['"', '\'']))
                     && scalar_values(cell).as_slice() == [cell.to_string()])
                 .then(|| cell.to_string())
             })

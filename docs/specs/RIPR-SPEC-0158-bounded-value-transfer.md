@@ -40,7 +40,18 @@ exercised boundary from a missing one.
   `&str`/`String`/integer owner parameters, same-file constants and
   literals resolves the same way, but only for ordering predicates
   (`<`, `<=`, `>`, `>=`): an `==` or `!=` guard never credits, because one
-  on-boundary row cannot discriminate its neighbours. Integer owner
+  on-boundary row cannot discriminate its neighbours. The one exception is
+  an emptiness guard (#9619): the whole changed condition is the single
+  comparison `text.len() == 0` or `text.len() != 0` over a `&str` or
+  `String` parameter. It credits only when the related calls give the
+  operand both an empty and a non-empty value, every related test that
+  calls the owner holds only strong assertions (a weakly asserted call may
+  be the one-character input that `len() < 2` would change), and each row is
+  readable. Rows may come from direct calls or from the cells of a constant
+  `for` table, where a whole string or char literal cell is an exact input
+  for this guard alone; any other string-valued column stays unread.
+  Rows on one side only, a literal other than `0`, a compound condition and
+  a loop that can leave a row early keep the unknown reading. Integer owner
   parameters must be 32 bits or wider (`u32`, `i32`, `u64`, `i64`,
   `u128`, `i128`, `usize`, `isize`); `u8`/`i8`/`u16`/`i16` stay unknown.
   A computed or call-result argument, a generic or slice receiver and a
