@@ -817,8 +817,7 @@ fn dedup_probe_ids(probes: &mut [SeededProbe]) {
             .map(|index| {
                 let probe = &probes[index].probe;
                 let owner = probe.owner.as_ref().map_or("", |owner| owner.0.as_str());
-                let key =
-                    collision_rank_key(&base, probe.family.as_str(), owner, &probe.expression);
+                let key = collision_rank_key(&base, owner, &probe.expression);
                 (key, index)
             })
             .collect::<Vec<_>>();
@@ -5984,6 +5983,18 @@ mod source_currentness_tests {
             ids_by_expression(&ab),
             ids_by_expression(&ba),
             "expression-to-id association must not follow encounter order"
+        );
+        // The real payload digests begin `10e1cf105ca4` (first) and
+        // `10e1cf10d8ef` (second): the first keeps the bare id it has always
+        // had in the order the diff listed it, so an existing suppression
+        // for it still names it.
+        let base = "probe:src_lib.rs:predicate:10e1cf10";
+        assert_eq!(
+            ids_by_expression(&ab),
+            vec![
+                (first.to_string(), base.to_string()),
+                (second.to_string(), format!("{base}.2"))
+            ]
         );
         Ok(())
     }
