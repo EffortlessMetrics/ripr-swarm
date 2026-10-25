@@ -8,4 +8,5 @@ tests = [
   "crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::exact_duplicate_expressions_keep_encounter_order_ordinals",
   "crates/ripr/src/analysis/language/typescript/tests.rs::analyze_diff_keeps_fp8_colliding_ids_under_diff_reorder",
   "crates/ripr/src/analysis/language/typescript/tests.rs::analyze_diff_keeps_fp8_colliding_enum_member_ids_under_diff_reorder",
+  "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::colliding_deleted_lines_keep_their_ids_under_reorder",
 ]
