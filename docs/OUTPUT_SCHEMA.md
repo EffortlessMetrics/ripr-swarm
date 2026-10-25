@@ -3695,10 +3695,10 @@ an operational error (exit `2`).
 
 ### Gap-Bound Repair Start
 
-For a TypeScript finding whose repair packet is complete, `ripr check` prints
-`ripr agent repair --gap-id <gap> --base <base> --phase before` as the start
-line (RIPR-SPEC-0311, #9103). The command re-runs the diff-scoped check against
-`--base`, requires the same shared packet validator to accept the finding, and
+For a TypeScript or Python finding whose repair packet is complete,
+`ripr check` prints `ripr agent repair --gap-id <gap> --base <base> --phase
+before` as the start line (RIPR-SPEC-0311, #9103; Python #10373). The command
+re-runs the diff-scoped check against `--base`, requires the same shared packet validator to accept the finding, and
 otherwise refuses with "the repair packet is not ready" and writes nothing.
 A refused start restores the shared workflow artifacts to the bytes they had
 before the invocation (removing only files it created). On
@@ -3717,8 +3717,10 @@ the edit cage. Absence from the after snapshot is never closure. An open or abse
 gap is a typed refusal (exit 3) recorded against the attempt's retry budget; it
 stays `awaiting_edit`. A compliant finish issues the gap-bound receipt below; the
 closure is also the `verify.bound_gap` of the `repair_after_result` envelope.
-Let-bound, imported and reach-barrier variants stay unrouted. Python keeps its
-terminal reason. The static result is exposure evidence only; it does not
+Let-bound, imported and reach-barrier TypeScript variants stay unrouted. A
+Python gap's seam routes (`ripr repair`, `agent repair --seam-id`) keep the
+Rust-only seam reason and point at this start; a Python finding whose record
+the validator refuses is offered no start. The static result is exposure evidence only; it does not
 claim a runtime mutation outcome.
 
 ### Gap-Bound Receipt
