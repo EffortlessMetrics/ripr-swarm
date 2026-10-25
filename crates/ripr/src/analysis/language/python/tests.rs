@@ -8124,6 +8124,12 @@ fn protocol_entry_nested_in_a_multi_argument_call_is_not_credited() -> Result<()
 /// Classifies a changed `x > 5` predicate of `price(x, k)` against one pytest
 /// test whose body is `body`, importing `price` from its package.
 fn classify_price_boundary_with_test_body(body: &str) -> Result<crate::domain::Finding, String> {
+    classify_price_boundary_with_test_body_and_origins(body).map(|(finding, _)| finding)
+}
+
+fn classify_price_boundary_with_test_body_and_origins(
+    body: &str,
+) -> Result<(crate::domain::Finding, crate::value_origins::ValueOrigins), String> {
     let owner_file = "src/pkg/mod.py";
     let owners = extract_owners(
         Path::new(owner_file),
@@ -8134,14 +8140,99 @@ fn classify_price_boundary_with_test_body(body: &str) -> Result<crate::domain::F
         &format!("from pkg.mod import price\n\n\ndef test_price():\n{body}\n"),
     );
     assert_eq!(tests.len(), 1, "fixture must parse exactly one pytest test");
-    classify_change(Path::new(owner_file), 2, "    if x > 5:", &owners, &tests)
-        .ok_or_else(|| "changed predicate should classify".to_string())
+    let mut origins = crate::value_origins::ValueOrigins::default();
+    let finding = classify::classify_change_with_value_origins(
+        Path::new(owner_file),
+        2,
+        "    if x > 5:",
+        None,
+        &owners,
+        &tests,
+        PythonNoBehaviorContext::default(),
+        None,
+        &mut origins,
+    )
+    .ok_or_else(|| "changed predicate should classify".to_string())?;
+    Ok((finding, origins))
+}
+
+/// #8389: identical calls in distinct files retain both source locations,
+/// independently of the order in which related tests are discovered.
+#[test]
+fn boundary_value_facts_preserve_identical_calls_from_two_files() -> Result<(), String> {
+    let owner_file = "src/pkg/mod.py";
+    let owners = extract_owners(
+        Path::new(owner_file),
+        "def price(x, k):\n    if x > 5:\n        return 1\n    return 0\n",
+    );
+    let source =
+        "from pkg.mod import price\n\n\ndef test_price():\n    assert price(5, 2) == 0\n\n";
+    let observed = |files: &[&str]| -> Result<
+        (
+            Vec<crate::domain::ValueFact>,
+            Vec<Option<std::path::PathBuf>>,
+        ),
+        String,
+    > {
+        let tests = files
+            .iter()
+            .flat_map(|file| extract_tests(Path::new(file), source))
+            .collect::<Vec<_>>();
+        assert_eq!(tests.len(), files.len(), "one pytest test per file");
+        let mut origins = crate::value_origins::ValueOrigins::default();
+        let finding = classify::classify_change_with_value_origins(
+            Path::new(owner_file),
+            2,
+            "    if x > 5:",
+            None,
+            &owners,
+            &tests,
+            PythonNoBehaviorContext::default(),
+            None,
+            &mut origins,
+        )
+        .ok_or_else(|| "changed predicate should classify".to_string())?;
+        let files = origins
+            .files(&finding)
+            .ok_or_else(|| "classifier must retain exact value origins".to_string())?
+            .to_vec();
+        Ok((finding.activation.observed_values, files))
+    };
+    let (single, single_files) = observed(&["tests/test_a.py"])?;
+    assert!(!single.is_empty());
+    assert_eq!(
+        single_files,
+        vec![Some(std::path::PathBuf::from("tests/test_a.py")); single.len()]
+    );
+    let expected = single
+        .iter()
+        .flat_map(|fact| [fact.clone(), fact.clone()])
+        .collect::<Vec<_>>();
+    let expected_files = single
+        .iter()
+        .flat_map(|_| {
+            [
+                Some(std::path::PathBuf::from("tests/test_a.py")),
+                Some(std::path::PathBuf::from("tests/test_b.py")),
+            ]
+        })
+        .collect::<Vec<_>>();
+    for order in [
+        ["tests/test_a.py", "tests/test_b.py"],
+        ["tests/test_b.py", "tests/test_a.py"],
+    ] {
+        let (both, files) = observed(&order)?;
+        assert_eq!(both.len(), 2 * single.len(), "{both:?}");
+        assert_eq!(both, expected);
+        assert_eq!(files, expected_files);
+    }
+    Ok(())
 }
 
 #[test]
 fn boundary_call_row_keeps_an_ordinary_assert_line_whole() -> Result<(), String> {
     let line = "    assert price(5, 2) == 0";
-    let finding = classify_price_boundary_with_test_body(line)?;
+    let (finding, origins) = classify_price_boundary_with_test_body_and_origins(line)?;
     assert!(
         finding
             .activation
@@ -8150,6 +8241,18 @@ fn boundary_call_row_keeps_an_ordinary_assert_line_whole() -> Result<(), String>
             .any(|fact| fact.text == line.trim()),
         "an ordinary line is shown whole: {:?}",
         finding.activation.observed_values
+    );
+    // #8389: the boundary value facts name the test file they were read from.
+    let files = origins
+        .files(&finding)
+        .ok_or_else(|| "classifier must retain exact value origins".to_string())?;
+    assert_eq!(files.len(), finding.activation.observed_values.len());
+    assert!(
+        !files.is_empty()
+            && files
+                .iter()
+                .all(|file| file.as_deref() == Some(Path::new("tests/test_mod.py"))),
+        "{files:?}"
     );
     Ok(())
 }
@@ -8697,4 +8800,297 @@ fn real_analyze_repo_output_flows_into_the_outcome_verbatim() -> Result<(), Stri
     assert_eq!(outcome.resources.files, result.file_accounting);
     assert_eq!(outcome.resources.files.omitted, Some(1));
     Ok(())
+}
+
+fn captured_records_test(assertion: &str) -> String {
+    format!(
+        "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    {assertion}\n"
+    )
+}
+
+const MESSAGE_READS: [&str; 4] = [
+    "assert \"low balance: 5\" in caplog.messages",
+    "assert any(\"low balance\" in r.message for r in caplog.records)",
+    "assert any(r.getMessage() == \"low balance: 5\" for r in caplog.records)",
+    "assert \"low balance: 5\" in [r.message for r in caplog.records]",
+];
+
+#[test]
+fn caplog_messages_and_records_the_edit_removes_are_credited() -> Result<(), String> {
+    // RIPR-SPEC-0238 rule 22: a message read holds the formatted message
+    // alone, with no record header.
+    for assertion in MESSAGE_READS {
+        for new_call in [
+            "log.warning(\"balance low: %s\", balance)",
+            "log.info(\"low balance: %s\", balance)",
+        ] {
+            assert_eq!(
+                classify_log_text_edit(AUDIT_OWNER, new_call, &captured_records_test(assertion))?,
+                (ExposureClass::Exposed, None),
+                "{assertion} / {new_call}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn caplog_messages_equality_and_records_containment_differ_on_a_suffix() -> Result<(), String> {
+    let retry = "log.warning(\"low balance: %s (retry)\", balance)";
+    // A whole-message comparison no longer matches once text is appended.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            retry,
+            &captured_records_test("assert \"low balance: 5\" in caplog.messages")
+        )?,
+        (ExposureClass::Exposed, None)
+    );
+    // A substring read still finds the text the edit keeps.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            retry,
+            &captured_records_test(
+                "assert any(\"low balance\" in r.message for r in caplog.records)"
+            )
+        )?,
+        (ExposureClass::WeaklyExposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn caplog_messages_and_records_outside_the_bounded_shape_keep_abstaining() -> Result<(), String> {
+    let unread = (
+        ExposureClass::StaticUnknown,
+        Some(StaticLimitKind::UnsupportedSyntax),
+    );
+    let removed = "log.warning(\"balance low: %s\", balance)";
+    for assertion in [
+        // Not the message the call emitted (a substring of it is not an element).
+        "assert \"low\" in caplog.messages",
+        // Indexed and whole-list forms are not evaluated.
+        "assert caplog.records[0].message == \"low balance: 5\"",
+        "assert caplog.messages == [\"low balance: 5\"]",
+        // A string is never an element of the record list, so it is no message read.
+        "assert \"low balance: 5\" in caplog.records",
+        // A filtered generator reads only some records.
+        "assert any(\"low balance: 5\" in r.message for r in caplog.records if r.levelno == 30)",
+    ] {
+        assert_eq!(
+            classify_log_text_edit(AUDIT_OWNER, removed, &captured_records_test(assertion))?,
+            unread,
+            "{assertion}"
+        );
+    }
+    // An `or` can pass on the other literal when the edited one disappears.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            removed,
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        check_balance(5)\n    assert \"low balance: 5\" in caplog.messages or \"balance low: 5\" in caplog.messages\n"
+        )?,
+        unread
+    );
+    let read = captured_records_test(MESSAGE_READS[0]);
+    // `exception` appends a traceback this reading does not evaluate.
+    assert_eq!(
+        classify_log_text_edit(
+            &AUDIT_OWNER.replace("log.warning", "log.exception"),
+            "log.exception(\"balance low: %s\", balance)",
+            &read.replace("logging.WARNING", "logging.ERROR")
+        )?,
+        unread
+    );
+    // A rebound `caplog` is not the object the level was pinned on.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            removed,
+            &read.replace(
+                "    assert \"low balance: 5\" in caplog.messages",
+                "    caplog = frozen\n    assert \"low balance: 5\" in caplog.messages"
+            )
+        )?,
+        unread
+    );
+    // A detached logger does not reach the root capture handler.
+    assert_eq!(
+        classify_log_text_edit(
+            &AUDIT_OWNER.replace("logging.getLogger(", "logging.Logger("),
+            removed,
+            &read
+        )?,
+        unread
+    );
+    // An unrecognized receiver is not a captured logger.
+    assert_eq!(
+        classify_log_text_edit(
+            &AUDIT_OWNER.replace("log = logging.getLogger(\"audit\")", "log = make_sink()"),
+            removed,
+            &read
+        )?,
+        unread
+    );
+    // No pinned level.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            removed,
+            "def test_low_balance(caplog):\n    assert check_balance(5) is False\n    assert \"low balance: 5\" in caplog.messages\n"
+        )?,
+        unread
+    );
+    Ok(())
+}
+
+const ABSENCE_READS: [&str; 4] = [
+    "assert \"deprecated warning\" not in caplog.text",
+    "assert \"deprecated warning\" not in caplog.messages",
+    "assert not any(\"deprecated warning\" in r.message for r in caplog.records)",
+    "assert \"deprecated warning\" not in [r.message for r in caplog.records]",
+];
+
+#[test]
+fn caplog_absence_reads_the_edit_breaks_are_credited() -> Result<(), String> {
+    // RIPR-SPEC-0238 rule 22: an assertion that a text is absent passes on
+    // the old message and fails once the edit puts the text in it.
+    for assertion in ABSENCE_READS {
+        // A whole-message read needs the message to equal the text; a
+        // substring read needs only to contain it.
+        let new_call = if assertion.contains("caplog.text") || assertion.contains("any(") {
+            "log.warning(\"deprecated warning: %s\", balance)"
+        } else {
+            "log.warning(\"deprecated warning\")"
+        };
+        assert_eq!(
+            classify_log_text_edit(AUDIT_OWNER, new_call, &captured_records_test(assertion))?,
+            (ExposureClass::Exposed, None),
+            "{assertion}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn caplog_absence_reads_the_edit_keeps_absent_stay_a_gap() -> Result<(), String> {
+    for assertion in ABSENCE_READS {
+        for new_call in [
+            // The text is still absent after the edit.
+            "log.warning(\"balance low: %s\", balance)",
+            // The text arrives below the pinned capture level, so no record
+            // holds it and the absence assertion keeps passing.
+            "log.info(\"deprecated warning: %s\", balance)",
+        ] {
+            assert_eq!(
+                classify_log_text_edit(AUDIT_OWNER, new_call, &captured_records_test(assertion))?,
+                (ExposureClass::WeaklyExposed, None),
+                "{assertion} / {new_call}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn caplog_absence_with_a_whole_message_compares_the_whole_message() -> Result<(), String> {
+    // `not in caplog.messages` holds the text only when a whole message equals
+    // it, so a longer message that contains the text keeps the assertion green.
+    let test = captured_records_test("assert \"deprecated\" not in caplog.messages");
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            "log.warning(\"deprecated: %s\", balance)",
+            &test
+        )?,
+        (ExposureClass::WeaklyExposed, None)
+    );
+    assert_eq!(
+        classify_log_text_edit(AUDIT_OWNER, "log.warning(\"deprecated\")", &test)?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn caplog_absence_inside_an_and_chain_is_required_and_inside_an_or_is_not() -> Result<(), String> {
+    let breaks = "log.warning(\"low balance: %s deprecated warning\", balance)";
+    // Both conjuncts must hold; the edit breaks the absence one.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            breaks,
+            &captured_records_test(
+                "assert \"deprecated warning\" not in caplog.text and \"low balance: 5\" in caplog.text"
+            )
+        )?,
+        (ExposureClass::Exposed, None)
+    );
+    // An `or` can pass on the other side, so nothing is credited or called a gap.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            breaks,
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        check_balance(5)\n    assert \"deprecated warning\" not in caplog.text or \"low balance: 5\" in caplog.text\n"
+        )?,
+        (
+            ExposureClass::StaticUnknown,
+            Some(StaticLimitKind::UnsupportedSyntax)
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn caplog_absence_that_already_fails_before_the_edit_is_not_evaluated() -> Result<(), String> {
+    // The old message contains the text, so the test cannot be reading the
+    // edit: it fails before and after.
+    let finding = classify_log_text_edit(
+        AUDIT_OWNER,
+        "log.warning(\"balance low: %s\", balance)",
+        &captured_records_test("assert \"low balance\" not in caplog.messages"),
+    )?;
+    assert_ne!(finding.0, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn not_any_over_other_output_keeps_its_assertion_shape() {
+    let tests = extract_tests(
+        Path::new("tests/test_audit.py"),
+        "def test_cli(result):\n    assert not any(\"low balance\" in line for line in result.stdout)\n",
+    );
+    let shapes: Vec<_> = tests
+        .iter()
+        .flat_map(|test| test.assertions.iter().map(|a| a.oracle_shape))
+        .collect();
+    assert!(!shapes.is_empty(), "assertions must be extracted");
+    assert!(
+        shapes
+            .iter()
+            .all(|shape| *shape != PythonOracleShape::OutputAssertion),
+        "{shapes:?}"
+    );
+}
+
+#[test]
+fn comprehension_over_other_output_keeps_its_assertion_shape() {
+    // Only `caplog.records` comprehensions became output observations; a loop
+    // over a subprocess result's lines is still the broad smoke it was.
+    let tests = extract_tests(
+        Path::new("tests/test_audit.py"),
+        "def test_cli(result):\n    assert any(\"low balance\" in line for line in result.stdout)\n    assert \"low balance\" in [line for line in result.stdout]\n",
+    );
+    let shapes: Vec<_> = tests
+        .iter()
+        .flat_map(|test| test.assertions.iter().map(|a| a.oracle_shape))
+        .collect();
+    assert!(!shapes.is_empty(), "assertions must be extracted");
+    assert!(
+        shapes
+            .iter()
+            .all(|shape| *shape != PythonOracleShape::OutputAssertion),
+        "{shapes:?}"
+    );
 }

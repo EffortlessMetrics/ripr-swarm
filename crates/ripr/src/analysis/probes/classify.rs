@@ -39,6 +39,9 @@ pub(super) fn added_header_bound_lines(
 /// or parse leaves the existing lexical/unknown evidence intact.
 pub(super) struct RemovedTypeBounds {
     pub lines: Vec<bool>,
+    /// Removed struct or enum-variant field declarations (#9183), admitted on
+    /// the reconstructed old syntax. Only set when `old_index` is available.
+    pub field_declarations: Vec<bool>,
     pub old_index: Option<RustIndex>,
 }
 
@@ -65,6 +68,7 @@ pub(super) fn removed_type_bounds(
 ) -> RemovedTypeBounds {
     let unavailable = || RemovedTypeBounds {
         lines: vec![false; changed.removed_lines.len()],
+        field_declarations: vec![false; changed.removed_lines.len()],
         old_index: None,
     };
     if changed.removed_lines.is_empty() {
@@ -74,7 +78,12 @@ pub(super) fn removed_type_bounds(
         return unavailable();
     };
     let lines = declarations::type_bound_lines(source, &changed.removed_lines);
-    if !lines.iter().any(|bound| *bound) {
+    let field_declarations = declarations::field_declaration_lines(source, &changed.removed_lines);
+    if !lines
+        .iter()
+        .chain(&field_declarations)
+        .any(|admitted| *admitted)
+    {
         return unavailable();
     }
     let Ok(facts) = RaRustSyntaxAdapter.summarize_file(&changed.path, source) else {
@@ -93,6 +102,7 @@ pub(super) fn removed_type_bounds(
     }
     RemovedTypeBounds {
         lines,
+        field_declarations,
         old_index: Some(old_index),
     }
 }

@@ -243,7 +243,9 @@ pub(crate) fn probes_for_file_with_relations(
             }
             continue;
         }
-        if should_ignore_changed_line(text) || added_attribute_lines.contains(&added.new_side_line)
+        if should_ignore_changed_line(text)
+            || added_attribute_lines.contains(&added.new_side_line)
+            || is_item_level_closing_brace(index, &changed.path, added.new_side_line, text)
         {
             continue;
         }
@@ -549,7 +551,9 @@ pub(crate) fn probes_for_file_with_relations(
         // line coincidences. External file context retains the index composer
         // authority used by the existing test-evidence exclusion.
         // Other families keep their existing candidate-coordinate handling.
-        let is_test_evidence = if removed_bounds.lines[removed_index] {
+        let is_test_evidence = if removed_bounds.lines[removed_index]
+            || removed_bounds.field_declarations[removed_index]
+        {
             file_is_composed_test_evidence(index, &changed.path)
                 || removed_bounds.old_index.as_ref().is_some_and(|old| {
                     changed_line_is_test_evidence(
@@ -625,6 +629,17 @@ pub(crate) fn probes_for_file_with_relations(
             {
                 continue;
             }
+            // #9183: a deleted field declaration with no replacement is type
+            // syntax in the old source, not a deleted construction. The
+            // replacement checks above ran on the lexical family, so an
+            // edited field keeps its before/after pairing.
+            let family = if family == ProbeFamily::FieldConstruction
+                && removed_bounds.field_declarations[removed_index]
+            {
+                ProbeFamily::StaticUnknown
+            } else {
+                family
+            };
             probes.push(SeededProbe::from_probe(build_probe(
                 &build_context,
                 removed,
@@ -940,6 +955,25 @@ fn join_tokens(lines: &[&str]) -> String {
         out.push_str(&line);
     }
     out
+}
+
+/// A changed line that is only closing braces (`}`, `};`, `},`) and lies
+/// outside every indexed function span, in a file that has indexed functions
+/// (#10090). Typically it closes a `trait`, `impl`, `mod` or `struct` body
+/// (diff alignment often reports an existing item's closer as added when new
+/// items are appended after it); the check is positional and does not look at
+/// the kind of item. It holds no expression, and the items it delimits are
+/// probed through their own changed lines. A closer on or inside a function
+/// span can end a branch that moves existing code, so it keeps its probe
+/// (#4216); so does a file with no indexed functions or no file facts, where
+/// "outside every function" is not established.
+fn is_item_level_closing_brace(index: &RustIndex, path: &Path, line: usize, text: &str) -> bool {
+    let masked = mask_comments_and_strings(text);
+    let body = masked.trim().trim_end_matches([';', ',']).trim_end();
+    !body.is_empty()
+        && body.chars().all(|ch| ch == '}' || ch.is_whitespace())
+        && find_file_facts(index, path).is_some_and(|facts| !facts.functions.is_empty())
+        && find_owner_function(index, path, line).is_none()
 }
 
 /// 1-based lines of `source` that continue a multi-line outer or inner
@@ -2487,6 +2521,97 @@ mod tests {
         assert!(lines("#[allow(\n    a,\nfn f() {}\n").is_empty());
         // A `#[` that is not the first token of its line starts nothing.
         assert!(lines("let v = x; #[allow(\n    a,\n)]\n").is_empty());
+    }
+
+    #[test]
+    fn an_item_level_closing_brace_seeds_no_probe_but_one_inside_a_function_does() {
+        // #10090, dogfood (itertools `b2a978a`): appending `fn two` and a
+        // struct after a trait method makes git report the trait's closing
+        // `}` as added. It closes an item, not a branch.
+        let path = PathBuf::from("src/lib.rs");
+        let function = |name: &str, start_line: usize, end_line: usize| FunctionFact {
+            id: SymbolId(name.to_string()),
+            name: name.to_string(),
+            file: path.clone(),
+            start_line,
+            end_line,
+            body: String::new().into(),
+            calls: vec![],
+            returns: vec![],
+            literals: vec![],
+            source_role: FunctionSourceRole::Production,
+            attrs: vec![],
+            impl_attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
+        };
+        let index = |functions: Vec<FunctionFact>| {
+            RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                files: BTreeMap::from([(
+                    path.clone(),
+                    FileFacts {
+                        path: path.clone(),
+                        functions,
+                        ..FileFacts::default()
+                    },
+                )]),
+                ..Default::default()
+            })
+        };
+        let probe_lines = |index: &RustIndex, added: &[(usize, &str)]| {
+            let changed = ChangedFile {
+                path: path.clone(),
+                added_lines: added
+                    .iter()
+                    .map(|(line, text)| ChangedLine {
+                        line: *line,
+                        new_side_line: *line,
+                        text: (*text).to_string(),
+                    })
+                    .collect(),
+                removed_lines: vec![],
+            };
+            probes_for_file(Path::new("workspace"), &changed, index)
+                .iter()
+                .map(|probe| probe.location.line)
+                .collect::<Vec<_>>()
+        };
+
+        // `trait Ext` is lines 1-9, `fn one` 2-4, the new `fn two` 6-8.
+        let trait_index = index(vec![function("one", 2, 4), function("two", 6, 8)]);
+        let appended = [
+            (7, "        self.one() + 1"),
+            (9, "}"),
+            (11, "pub struct Err {"),
+            (12, "    pub x: i32,"),
+        ];
+        let lines = probe_lines(&trait_index, &appended);
+        assert!(
+            lines.contains(&7),
+            "control: the body line stays: {lines:?}"
+        );
+        assert!(!lines.contains(&9), "{lines:?}");
+        for closer in ["}", "};", "},", "} // end"] {
+            let lines = probe_lines(&trait_index, &[(9, closer)]);
+            assert!(lines.is_empty(), "`{closer}`: {lines:?}");
+        }
+
+        // The same closer inside a function body keeps its probe (#4216): it
+        // can end a branch that moves existing code.
+        let body_index = index(vec![function("f", 1, 6)]);
+        let lines = probe_lines(&body_index, &[(3, "        a();"), (4, "    }")]);
+        assert!(lines.contains(&4), "{lines:?}");
+        // A closer exactly on a function's `end_line` is inside its span.
+        let lines = probe_lines(&body_index, &[(6, "}")]);
+        assert!(lines.contains(&6), "{lines:?}");
+        // A file with no indexed function cannot show "outside every function".
+        let lines = probe_lines(&index(vec![]), &[(9, "}")]);
+        assert!(lines.contains(&9), "{lines:?}");
+        // Nor can a file with no file facts at all.
+        let lines = probe_lines(&RustIndex::default(), &[(9, "}")]);
+        assert!(lines.contains(&9), "{lines:?}");
     }
 
     #[test]

@@ -1210,6 +1210,8 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         imports: Vec::new(),
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
+        route_methods: Vec::new(),
+        route_receivers: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         unplain_decorators: Vec::new(),
         decorator_lines: None,
@@ -1224,6 +1226,8 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
     };
 
     let comment_only = "    # apply_discount(100)\n    other()\n";
@@ -1711,6 +1715,8 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         imports: Vec::new(),
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
+        route_methods: Vec::new(),
+        route_receivers: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         unplain_decorators: Vec::new(),
         decorator_lines: None,
@@ -1725,6 +1731,8 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
     };
     let dotted = PythonImport {
         imported: "src.pricing".to_string(),
@@ -1773,6 +1781,8 @@ fn shared_src_layout_module_name_identifies_owner_only_from_its_project() -> Res
         imports: Vec::new(),
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
+        route_methods: Vec::new(),
+        route_receivers: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         unplain_decorators: Vec::new(),
         decorator_lines: None,
@@ -1787,6 +1797,8 @@ fn shared_src_layout_module_name_identifies_owner_only_from_its_project() -> Res
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
     };
     let sources = [
         PathBuf::from("a/src/shared/calc.py"),
@@ -1857,6 +1869,8 @@ fn nested_src_layout_rival_claims_tests_under_its_own_root() {
         imports: Vec::new(),
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
+        route_methods: Vec::new(),
+        route_receivers: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         unplain_decorators: Vec::new(),
         decorator_lines: None,
@@ -1871,6 +1885,8 @@ fn nested_src_layout_rival_claims_tests_under_its_own_root() {
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
     };
     let sources = [
         PathBuf::from("src/shared/calc.py"),
@@ -1908,6 +1924,8 @@ fn same_stem_related_handles_missing_stems() {
         imports: Vec::new(),
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
+        route_methods: Vec::new(),
+        route_receivers: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         unplain_decorators: Vec::new(),
         decorator_lines: None,
@@ -1922,6 +1940,8 @@ fn same_stem_related_handles_missing_stems() {
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
     };
     let test = PythonTest {
         setup_receivers: Vec::new(),
@@ -4035,6 +4055,8 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         imports: Vec::new(),
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
+        route_methods: Vec::new(),
+        route_receivers: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         unplain_decorators: Vec::new(),
         decorator_lines: None,
@@ -4049,6 +4071,8 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
     };
     let line = "return retry_state.attempt_number > self.max_attempt_number";
     let strong = |oracle: &str| RelatedTest {
@@ -4114,6 +4138,8 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         imports: Vec::new(),
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
+        route_methods: Vec::new(),
+        route_receivers: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         unplain_decorators: Vec::new(),
         decorator_lines: None,
@@ -4128,6 +4154,8 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
     };
     let line = "return amount + 2";
     let related = [RelatedTest {
@@ -4194,6 +4222,8 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         imports: Vec::new(),
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
+        route_methods: Vec::new(),
+        route_receivers: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         unplain_decorators: Vec::new(),
         decorator_lines: None,
@@ -4208,6 +4238,8 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
     }
 }
 
@@ -4734,6 +4766,89 @@ fn workspace_pass_withholds_relation_for_same_named_function_in_unimported_modul
     Ok(())
 }
 
+fn route_relation_for(decorator: &str, call: &str) -> Result<bool, String> {
+    let owners = extract_owners(
+        Path::new("app/items.py"),
+        &format!("api = object()\n\n{decorator}\ndef items(payload):\n    return payload\n"),
+    );
+    let owner = owners
+        .iter()
+        .find(|owner| owner.name == "items")
+        .ok_or_else(|| "expected items owner".to_string())?;
+    let tests = extract_tests(
+        Path::new("tests/test_items.py"),
+        &format!("def test_items(client):\n    response = client.{call}\n    assert response\n"),
+    );
+    Ok(related_test_candidates(owner, &tests)
+        .iter()
+        .any(|candidate| candidate.relation == PythonRelationKind::ApiClientRouteCall))
+}
+
+#[test]
+fn api_client_route_relation_requires_the_decorator_verb() -> Result<(), String> {
+    // Verb decorators relate only to a client call with the same verb.
+    assert!(route_relation_for(
+        "@api.post(\"/items\")",
+        "post(\"/items\")"
+    )?);
+    assert!(!route_relation_for(
+        "@api.post(\"/items\")",
+        "get(\"/items\")"
+    )?);
+    assert!(!route_relation_for(
+        "@api.delete(\"/items\")",
+        "put(\"/items\")"
+    )?);
+    // A GET route also serves HEAD.
+    assert!(route_relation_for(
+        "@api.get(\"/items\")",
+        "head(\"/items\")"
+    )?);
+    assert!(!route_relation_for(
+        "@api.get(\"/items\")",
+        "post(\"/items\")"
+    )?);
+    // A literal methods list names the accepted verbs.
+    let multi = "@api.route(\"/items\", methods=[\"POST\", \"PUT\"])";
+    assert!(route_relation_for(multi, "put(\"/items\")")?);
+    assert!(!route_relation_for(multi, "get(\"/items\")")?);
+    // A GET route declared through `methods` also serves HEAD.
+    assert!(route_relation_for(
+        "@api.route(\"/items\", methods=[\"GET\"])",
+        "head(\"/items\")"
+    )?);
+    // A path that contains the word does not hide the real keyword argument.
+    let tricky = "@api.route(\"/api/methods/list\", methods=[\"POST\"])";
+    assert!(route_relation_for(tricky, "post(\"/api/methods/list\")")?);
+    assert!(!route_relation_for(tricky, "get(\"/api/methods/list\")")?);
+    // Only the decorator's own `methods` keyword names verbs: another call's
+    // `methods=` keyword nested in its arguments is not the route's.
+    let nested =
+        "@api.api_route(\"/items\", openapi_extra=dict(methods=[\"POST\"]), methods=[\"GET\"])";
+    assert!(route_relation_for(nested, "get(\"/items\")")?);
+    assert!(!route_relation_for(nested, "post(\"/items\")")?);
+    // A comment inside a plain literal list does not make it unknown.
+    let commented =
+        "@api.api_route(\"/items\", methods=[\n    \"POST\",  # create\n    \"PUT\",\n])";
+    assert!(route_relation_for(commented, "put(\"/items\")")?);
+    assert!(!route_relation_for(commented, "get(\"/items\")")?);
+    // A concatenated list is not a plain literal, so the verb stays unknown
+    // rather than being truncated to its first half.
+    let joined = "@api.api_route(\"/items\", methods=[\"POST\"] + [\"PUT\"])";
+    assert!(route_relation_for(joined, "put(\"/items\")")?);
+    assert!(route_relation_for(joined, "get(\"/items\")")?);
+    // An unknown verb keeps the path-only relation instead of dropping it.
+    assert!(route_relation_for(
+        "@api.route(\"/items\")",
+        "post(\"/items\")"
+    )?);
+    assert!(route_relation_for(
+        "@api.api_route(\"/items\", methods=VERBS)",
+        "get(\"/items\")"
+    )?);
+    Ok(())
+}
+
 #[test]
 fn same_name_import_gate_keeps_independent_route_relation() -> Result<(), String> {
     let route = "api = object()\n\n@api.post(\"/checkout\")\ndef quote(payload):\n    return {\"detail\": \"coupon expired\"}\n";
@@ -4775,5 +4890,122 @@ fn same_name_import_gate_leaves_class_owners_alone() -> Result<(), String> {
         .find(|owner| owner.file == Path::new("pkg/b.py"))
         .ok_or_else(|| "expected class owner".to_string())?;
     assert!(owner.rival_definition_modules.is_empty());
+    Ok(())
+}
+
+/// Run the diff pipeline over a lone `LIMIT = 10` -> `LIMIT = 12` replacement
+/// with `extra` workspace files, optionally listing the test file as changed
+/// too, and return the finding's class (#9423).
+fn module_constant_pipeline_class(
+    label: &str,
+    extra: &[(&str, &str)],
+    test_also_changed: bool,
+) -> Result<ExposureClass, String> {
+    let root = unique_tempdir(label)?;
+    let write_all = || -> Result<(), String> {
+        write_file(
+            &root.join("hostile/settings.py"),
+            "LIMIT = 12\n\n\ndef over_limit(n):\n    return n > LIMIT\n",
+        )?;
+        write_file(
+            &root.join("tests/test_settings.py"),
+            "from hostile.settings import over_limit\n\n\ndef test_it():\n    assert over_limit(11)\n",
+        )?;
+        for (file, source) in extra {
+            write_file(&root.join(file), source)?;
+        }
+        Ok(())
+    };
+    let written = write_all();
+    let line = |text: &str| crate::analysis::diff::ChangedLine {
+        line: 1,
+        new_side_line: 1,
+        text: text.to_string(),
+    };
+    let mut changed_files = vec![ChangedFile {
+        path: PathBuf::from("hostile/settings.py"),
+        added_lines: vec![line("LIMIT = 12")],
+        removed_lines: vec![line("LIMIT = 10")],
+    }];
+    if test_also_changed {
+        changed_files.push(ChangedFile {
+            path: PathBuf::from("tests/test_settings.py"),
+            added_lines: vec![line("from hostile.settings import over_limit")],
+            removed_lines: Vec::new(),
+        });
+    }
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        perl_producer_failure: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
+    };
+    let result = written.and_then(|()| {
+        PythonAdapter.analyze_diff(&options, &OraclePolicy::default(), &changed_files)
+    });
+    let cleanup = std::fs::remove_dir_all(&root);
+    let result = result?;
+    cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+    match result.findings.as_slice() {
+        [finding] => Ok(finding.class.clone()),
+        other => Err(format!("expected one finding, got {}", other.len())),
+    }
+}
+
+#[test]
+fn module_constant_edit_credits_through_the_diff_pipeline_only_when_the_workspace_is_quiet()
+-> Result<(), String> {
+    let reader = (
+        "app/main.py",
+        "from hostile import settings\n\nprint(settings.LIMIT)\n",
+    );
+    assert_eq!(
+        module_constant_pipeline_class("module-value-read", &[reader], false)?,
+        ExposureClass::Exposed
+    );
+    for (label, file) in [
+        (
+            "module-value-production-write",
+            (
+                "app/main.py",
+                "import os\nfrom hostile import settings\n\nsettings.LIMIT = int(os.environ['L'])\n",
+            ),
+        ),
+        (
+            "module-value-conftest-patch",
+            (
+                "tests/conftest.py",
+                "import pytest\nfrom hostile import settings\n\n\n@pytest.fixture(autouse=True)\ndef big(monkeypatch):\n    monkeypatch.setattr(settings, 'LIMIT', 100)\n",
+            ),
+        ),
+        (
+            "module-value-helper-setattr",
+            (
+                "tests/support.py",
+                "from hostile import settings\n\n\ndef bump():\n    setattr(settings, 'LIMIT', 100)\n",
+            ),
+        ),
+    ] {
+        assert_ne!(
+            module_constant_pipeline_class(label, &[file], false)?,
+            ExposureClass::Exposed,
+            "{label}"
+        );
+    }
+    // The diff also edits the test file: its assertion is not a pre-existing oracle.
+    assert_ne!(
+        module_constant_pipeline_class("module-value-test-edited", &[reader], true)?,
+        ExposureClass::Exposed
+    );
     Ok(())
 }

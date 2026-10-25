@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-py-pytest-caplog-reads",
+  "origin": "authored",
+  "version_label": "authored@9ca14aac",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "pyproject.toml",
+      "sha256": "54b675c7092d503bfdbc1eac12497e6b8f71f9545f0af48db75191fcbb0a7c33"
+    },
+    {
+      "path": "reads/__init__.py",
+      "sha256": "a1928f943b755d825f64daa62bfd5fff7a5271391f37b9ffb0cb6080340d7f12"
+    },
+    {
+      "path": "reads/audit.py",
+      "sha256": "2c9217665f1b9b8b3ae253887c5507d2b9e7964d161ef38006da0eb284b7c4dc"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/test_audit.py",
+      "sha256": "5ddd0bd1021377d6dfc792eb68ceb821d44a3bd16af3ac70a28aed0013284032"
+    }
+  ]
+}

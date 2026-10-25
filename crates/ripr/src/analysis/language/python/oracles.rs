@@ -599,6 +599,24 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
     })
 }
 
+/// `any(<test> for record in caplog.records)`: a membership check over the
+/// captured log records, the same output observation as `in caplog.text`.
+fn any_over_captured_records(call: &ast::ExprCall) -> bool {
+    expr_full_name(call.func.as_ref()).is_some_and(|name| name == "any")
+        && matches!(
+            call.args.as_slice(),
+            [Expr::GeneratorExp(generator)] if iterates_captured_records(&generator.generators)
+        )
+}
+
+/// Whether a comprehension loops over `caplog.records` itself. Looping over
+/// any other output (`result.stdout.splitlines()`) keeps its prior shape.
+fn iterates_captured_records(generators: &[ast::Comprehension]) -> bool {
+    generators.iter().any(|comprehension| {
+        expr_full_name(&comprehension.iter).as_deref() == Some("caplog.records")
+    })
+}
+
 fn oracle_for_assert_expr(
     expr: &Expr,
     source: &str,
@@ -618,6 +636,26 @@ fn oracle_for_assert_expr(
                 OracleStrength::Smoke,
                 PythonOracleShape::BroadSmokeAssertion,
             )),
+        // `assert not any(... for record in caplog.records)` reads the same
+        // captured records as the positive form, asserted absent.
+        Expr::UnaryOp(unary)
+            if unary.op == ast::UnaryOp::Not
+                && matches!(
+                    unary.operand.as_ref(),
+                    Expr::Call(call) if any_over_captured_records(call)
+                ) =>
+        {
+            (
+                OracleKind::RelationalCheck,
+                OracleStrength::Weak,
+                PythonOracleShape::OutputAssertion,
+            )
+        }
+        Expr::Call(call) if any_over_captured_records(call) => (
+            OracleKind::RelationalCheck,
+            OracleStrength::Weak,
+            PythonOracleShape::OutputAssertion,
+        ),
         Expr::Call(call) => {
             if expr_full_name(call.func.as_ref()).is_some_and(|name| name == "isinstance") {
                 (
@@ -760,6 +798,8 @@ fn compare_observes_field(compare: &ast::ExprCompare) -> bool {
 fn expr_observes_output(expr: &Expr) -> bool {
     expr_full_name(expr).is_some_and(|name| {
         name == "caplog.text"
+            || name == "caplog.messages"
+            || name == "caplog.records"
             || name == "capsys.readouterr.out"
             || name.ends_with(".output")
             || name.ends_with(".stdout")
@@ -780,6 +820,10 @@ fn expr_observes_output(expr: &Expr) -> bool {
                 || expr_observes_output(subscript.slice.as_ref())
         }
         Expr::BoolOp(bool_op) => bool_op.values.iter().any(expr_observes_output),
+        // `any(... for record in caplog.records)` and `[... for record in
+        // caplog.records]` read the captured records.
+        Expr::GeneratorExp(generator) => iterates_captured_records(&generator.generators),
+        Expr::ListComp(list) => iterates_captured_records(&list.generators),
         _ => false,
     }
 }
