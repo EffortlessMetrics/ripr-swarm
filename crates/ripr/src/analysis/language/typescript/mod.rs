@@ -169,7 +169,9 @@ mod workspace_packages;
 // submodule's `use super::*;` resolves, and so that `tests.rs` which
 // uses `use super::*;` can access all items.
 pub(crate) use actionability::*;
-pub(crate) use admission::{TypeScriptAdmissionContext, TypeScriptAssertionAdmission};
+pub(crate) use admission::{
+    RegistrationNames, TypeScriptAdmissionContext, TypeScriptAssertionAdmission,
+};
 pub(crate) use annotation_only::*;
 pub(crate) use assertion_selection::{
     TypeScriptAssertionSelection, row_projection_move, select_family_relevant_assertion,
