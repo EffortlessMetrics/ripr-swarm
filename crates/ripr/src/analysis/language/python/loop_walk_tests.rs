@@ -38,6 +38,25 @@ fn unit_walk_rejects_past_bound_and_keeps_near_side_credit() -> Result<(), Strin
     ] {
         let finding = classify_loop(DOWN, 2, "    while start > 0:", input, expected)?;
         assert_eq!(finding.class, class, "input {input}");
+        assert!(
+            !finding
+                .evidence
+                .iter()
+                .any(|line| line.starts_with("boundary_activation_unresolved: ")),
+            "resolved input {input}: {:?}",
+            finding.evidence
+        );
+        if class == ExposureClass::Exposed && input == "3" {
+            assert!(
+                finding
+                    .activation
+                    .observed_values
+                    .iter()
+                    .any(|fact| fact.text.contains("unit-step generator walk")),
+                "{:?}",
+                finding.activation
+            );
+        }
     }
     let up = DOWN.replace(">=", "<=").replace("-=", "+=");
     assert_eq!(
@@ -78,5 +97,52 @@ fn uncertain_walks_keep_the_named_unresolved_limit() -> Result<(), String> {
             .iter()
             .any(|line| line.starts_with("boundary_activation_unresolved: "))
     );
+    Ok(())
+}
+
+#[test]
+fn reverse_walks_and_source_offsets_resolve_the_same_boundary() -> Result<(), String> {
+    let down = DOWN.replace(">=", ">");
+    assert_eq!(
+        classify_loop(&down, 2, "    while start >= 0:", "3", "[3, 2, 1, 0]")?.class,
+        ExposureClass::Exposed
+    );
+    assert_eq!(
+        classify_loop(&down, 2, "    while start >= 0:", "-2", "[]")?.class,
+        ExposureClass::WeaklyExposed
+    );
+    let up = DOWN.replace(">=", "<").replace("-=", "+=");
+    assert_eq!(
+        classify_loop(&up, 2, "    while start <= 0:", "-2", "[-2, -1, 0]")?.class,
+        ExposureClass::Exposed
+    );
+    assert_eq!(
+        classify_loop(&up, 2, "    while start <= 0:", "2", "[]")?.class,
+        ExposureClass::WeaklyExposed
+    );
+    let prefixed = format!("# preceding source\nVALUE = 7\n\n{DOWN}");
+    assert_eq!(
+        classify_loop(&prefixed, 5, "    while start > 0:", "-2", "[]")?.class,
+        ExposureClass::WeaklyExposed
+    );
+    Ok(())
+}
+
+#[test]
+fn a_readable_miss_cannot_hide_an_unreadable_call_row() -> Result<(), String> {
+    for suffix in [
+        "[]\n    args = (-2,)\n    assert list(countdown(*args)) == []",
+        "[]\n    opaque = int(\"-2\")\n    assert list(countdown(opaque)) == []",
+    ] {
+        let finding = classify_loop(DOWN, 2, "    while start > 0:", "-2", suffix)?;
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .any(|line| line.starts_with("boundary_activation_unresolved: ")),
+            "{:?}",
+            finding.evidence
+        );
+    }
     Ok(())
 }
