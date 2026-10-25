@@ -212,3 +212,45 @@ fn a_shadowed_require_does_not_reach_the_owner() -> Result<(), String> {
     }
     Ok(())
 }
+
+fn ts_imports_of(source: &str) -> usize {
+    let allocator = Allocator::default();
+    let parsed = Parser::new(&allocator, source, SourceType::ts()).parse();
+    extract_imports_from_statements(&parsed.program.body).len()
+}
+
+#[test]
+fn every_way_of_writing_a_mutable_require_binding_records_no_import() {
+    for source in [
+        "let s = require('./lib').f;\ns = other;\n",
+        "var s = require('./lib').f;\ns += 1;\n",
+        "let s = require('./lib').f;\ns++;\n",
+        "let s = require('./lib').f;\n[s] = list;\n",
+        "let s = require('./lib').f;\n({ s } = bag);\n",
+        "let s = require('./lib').f;\nfor (s of list) {}\n",
+        "let s = require('./lib').f;\nfunction swap() { s = other; }\n",
+        "let { f: s } = require('./lib');\ns = other;\n",
+        "let lib = require('./lib');\nlib = other;\n",
+    ] {
+        assert_eq!(imports_of(source), Vec::new(), "{source}");
+    }
+    assert_eq!(
+        ts_imports_of("let s = require('./lib').f;\n(s as any) = other;\n"),
+        0,
+        "a wrapped target is still a write"
+    );
+}
+
+#[test]
+fn bindings_that_are_not_rewritten_keep_their_import() {
+    // A `const` cannot be reassigned (a same-named parameter write is another
+    // binding); a member write does not rebind the local.
+    for source in [
+        "const s = require('./lib').f;\nfunction t(s) { s = 1; }\n",
+        "let s = require('./lib').f;\ns.prop = 1;\n",
+        "let lib = require('./lib');\nlib.value = 1;\n",
+        "let s = require('./lib').f;\nconsole.log(s);\n",
+    ] {
+        assert_eq!(imports_of(source).len(), 1, "{source}");
+    }
+}

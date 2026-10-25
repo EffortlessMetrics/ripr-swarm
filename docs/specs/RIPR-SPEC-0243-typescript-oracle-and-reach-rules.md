@@ -1113,9 +1113,9 @@ Two bindings this rule and the destructured form share are refused (#10401).
 A test file that binds its own `require` at top level (`const require = ...`,
 `function require() {}`) is not calling Node's loader, so no `require()` call
 in it records an import; `createRequire(import.meta.url)` keeps its reading. A
-local that the file writes again (`let s = require("./lib").s; s = other;`)
-may no longer hold the export, so it is dropped from the file's imports and no
-relation arm credits a call through it.
+`let` or `var` binding that the file assigns to again
+(`let s = require("./lib").s; s = other;`) may no longer hold the export, so it
+records no import. A `const` binding cannot be reassigned and is unchanged.
 
 **Rule 8. A mocked dependency on the changed line is `static_unknown`.**
 When the changed line calls a symbol imported (`imported_symbol_call`)

@@ -274,12 +274,6 @@ fn extract_tests_expanding_suite_factories(
         if !rewritten.is_empty() {
             for test in &mut tests {
                 test.written_locals_in_file = rewritten.clone();
-                // A `let`/`var` binding from `require()` that the file writes
-                // again may no longer hold the export; an ES import cannot be
-                // written at all. Either way no relation arm may credit it
-                // (#10401).
-                test.imports_in_file
-                    .retain(|import| !rewritten.contains(&import.local));
             }
         }
         let factories = mock_factories(&ret.program.body, &code);
