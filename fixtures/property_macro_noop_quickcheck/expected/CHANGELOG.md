@@ -213,3 +213,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — property_macro_noop_quickcheck (17)
+
+Reason:
+RIPR-SPEC-0319: unresolved-edge next steps are conditional on a test being able to name the owner
+
+Command:
+`cargo xtask goldens bless property_macro_noop_quickcheck --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

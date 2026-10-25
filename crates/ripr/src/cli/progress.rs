@@ -396,6 +396,14 @@ impl CliProgressSink {
         let Some(event) = projection.pending_success.take() else {
             return;
         };
+        if projection.user_fixable_failure {
+            // #9922: the held analysis succeeded and the command then refused
+            // a user-fixable input (a `context` selector miss); the caller
+            // prints the real error, so no `failed` line beside it.
+            projection.terminal = true;
+            Self::finish_in_place(projection);
+            return;
+        }
         Self::project_terminal(
             projection,
             AnalysisProgressEvent {
@@ -852,6 +860,32 @@ mod tests {
         assert!(text.contains("ripr progress: loading_input [diff]"));
         assert!(!text.contains("failed"), "#9922: got {text:?}");
         assert!(!text.contains("completed"));
+    }
+
+    #[test]
+    fn held_success_then_user_fixable_refusal_prints_no_failed_line_but_unflagged_drop_does() {
+        let flagged = Buffer::new();
+        {
+            let sink =
+                CliProgressSink::with_writer(Box::new(flagged.clone()), false, non_tty_policy());
+            sink.hold_success_terminal();
+            sink.emit(event(AnalysisProgressStage::BuildingOutput));
+            sink.emit(event(AnalysisProgressStage::Completed));
+            sink.user_fixable_failure();
+        }
+        let text = flagged.text();
+        assert!(!text.contains("failed"), "got {text:?}");
+        assert!(!text.contains("completed"), "got {text:?}");
+
+        let control = Buffer::new();
+        {
+            let sink =
+                CliProgressSink::with_writer(Box::new(control.clone()), false, non_tty_policy());
+            sink.hold_success_terminal();
+            sink.emit(event(AnalysisProgressStage::BuildingOutput));
+            sink.emit(event(AnalysisProgressStage::Completed));
+        }
+        assert!(control.text().contains("ripr progress: failed [diff]"));
     }
 
     #[test]
