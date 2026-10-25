@@ -12,7 +12,7 @@ use super::super::rust_index::{
 use super::activation::{
     call_arguments, comparison_operands, function_parameters, owner_argument_values,
 };
-use super::helper_transfer::{HelperChain, chain_forwards_owner_result};
+use super::helper_transfer::{HelperChain, asserting_method_entry, chain_forwards_owner_result};
 use super::owner_pin::closure_adaptor::{
     AdaptorTail, admitted_owner_adaptor_tail, argument_sequences, owner_adaptor_tail,
 };
@@ -21,6 +21,9 @@ use super::slice_boundary::literal_slice_length;
 use super::text::delimited_contents_at;
 use crate::analysis::syntax::HelperLoan;
 use crate::domain::*;
+use crate::value_origins::LocatedActivationEvidence as ActivationEvidence;
+#[cfg(test)]
+use crate::value_origins::LocatedValueFact as ValueFact;
 
 /// Token carried in the discriminate summary when a predicate would otherwise
 /// read `exposed` without an admitted oracle on the boundary call.
@@ -44,6 +47,11 @@ pub(in crate::analysis) type TestActivation<'a> = &'a dyn Fn(&TestSummary) -> Ac
 pub(in crate::analysis) struct WrapperEntryPairing<'a> {
     pub(in crate::analysis) chain: &'a HelperChain,
     pub(in crate::analysis) test_activation: TestActivation<'a>,
+    /// The check helper an admitted assertion is borrowed from, without the
+    /// owner-call identity gate of `helper_loan`: a method-hop chain's
+    /// asserting entry (#9329) reaches the owner through the method, so the
+    /// helper never names the owner. See [`entry_loan_pairs_boundary_call`].
+    pub(in crate::analysis) entry_loan: &'a dyn Fn(&TestSummary, &OracleFact) -> Option<HelperLoan>,
 }
 
 /// #9849: confirmation for the return-value twin of a whole boolean tail.
@@ -159,6 +167,12 @@ pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
                 .last()
                 .map(|hop| (hop.caller.name.as_str(), entry.test_activation))
         });
+    // #9329: a method-hop chain whose top hop is the check helper asserting
+    // the method's result, with every hop below forwarding the owner's.
+    let asserting_entry = wrapper_entry.and_then(|entry| {
+        asserting_method_entry(&owner.name, &entry.chain.hops, index)
+            .map(|top| (top.caller.name.as_str(), entry))
+    });
     related_tests.iter().any(|test| {
         test_pairs_boundary_input_with_oracle(
             probe,
@@ -166,6 +180,7 @@ pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
             test,
             activation,
             forwarding_entry,
+            asserting_entry,
             assertion_admitted,
             owner_pinned,
             helper_loan,
@@ -183,6 +198,7 @@ fn test_pairs_boundary_input_with_oracle(
     test: &TestSummary,
     activation: &ActivationEvidence,
     forwarding_entry: Option<(&str, TestActivation<'_>)>,
+    asserting_entry: Option<(&str, WrapperEntryPairing<'_>)>,
     assertion_admitted: &dyn Fn(&TestSummary, &OracleFact) -> bool,
     owner_pinned: &dyn Fn(&TestSummary, &OracleFact) -> bool,
     helper_loan: &dyn Fn(&TestSummary, &OracleFact) -> Option<HelperLoan>,
@@ -206,7 +222,19 @@ fn test_pairs_boundary_input_with_oracle(
         if !(test.start_line..=test.end_line).contains(&assertion.line) {
             return helper_loan(test, assertion).is_some_and(|loan| {
                 loan_pairs_boundary_call(owner, test, &loan, &assertion.text, activation)
-            });
+            }) || (assertion_is_discriminating(assertion)
+                && asserting_entry.is_some_and(|(helper, entry)| {
+                    (entry.entry_loan)(test, assertion).is_some_and(|loan| {
+                        loan.name == helper
+                            && loan.helper.contains(&assertion.text)
+                            && entry_loan_pairs_boundary_call(
+                                owner,
+                                test,
+                                &loan,
+                                own_rows.get_or_init(|| (entry.test_activation)(test)),
+                            )
+                    })
+                }));
         }
         let operands = crate::analysis::extract::assertion_oracle_text(&assertion.text)
             .unwrap_or_else(|| assertion.text.clone());
@@ -384,6 +412,54 @@ fn loan_pairs_boundary_call(
                 && !fact.text.is_empty()
                 && fact.text.contains(&*helper_call.text)
                 && fact_matches_fed_literals(&fact.value, &fed)
+        })
+    })
+}
+
+/// #9329: an assertion borrowed from the asserting entry of a method-hop
+/// chain pairs with a boundary input the test passes through that helper.
+/// The helper's body is one assertion whose operand is the method call, and
+/// the chain below it forwards the owner's result unchanged
+/// ([`asserting_method_entry`]), so the compared value is the owner's result.
+/// Activation's transferred `==` row on the line of an eager call to the
+/// helper (recomputed from this test alone) says that call carries the
+/// boundary into the owner. Fail closed as [`loan_pairs_boundary_call`]: the
+/// helper call must be the only call expression on its line, and the row's
+/// terms must name owner parameters only.
+fn entry_loan_pairs_boundary_call(
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    loan: &HelperLoan,
+    own_rows: &ActivationEvidence,
+) -> bool {
+    let owner_parameters = function_parameters(owner);
+    loan.eager_call_lines.iter().any(|line| {
+        if crate::analysis::extract::line_at_call_budget(test.calls.iter(), *line) {
+            return false;
+        }
+        // One call of the helper on the line; any other call there sits
+        // inside that call's own arguments (`Size::kib(1)`), so the line's
+        // activation row still describes this one call.
+        let mut on_line = test.calls.iter().filter(|call| call.line == *line);
+        let mut helper_calls = on_line.clone().filter(|call| call.name == loan.name);
+        let (Some(helper_call), None) = (helper_calls.next(), helper_calls.next()) else {
+            return false;
+        };
+        if on_line.any(|call| call.name != loan.name && !helper_call.text.contains(&*call.text))
+            || owner_call_count(&helper_call.text, &loan.name) != 1
+        {
+            return false;
+        }
+        own_rows.observed_values.iter().any(|fact| {
+            let call_line = fact.text.split(" | ").next().unwrap_or_default();
+            fact.line == *line
+                && call_line.contains(&*helper_call.text)
+                && !fact.value.contains("||")
+                && fact.value.split(" && ").all(|term| {
+                    term.split_once(" == ").is_some_and(|(parameter, _)| {
+                        owner_parameters.iter().any(|name| name == parameter.trim())
+                    })
+                })
         })
     })
 }
@@ -1309,6 +1385,7 @@ mod tests {
         chain.map(|chain| WrapperEntryPairing {
             chain,
             test_activation: rows,
+            entry_loan: &|_, _| None,
         })
     }
 
@@ -3294,6 +3371,7 @@ mod tests {
             helper: helper.to_string(),
             parameters: vec!["input".to_string(), "want".to_string()],
             call_lines: vec![2],
+            eager_call_lines: Vec::new(),
         };
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {

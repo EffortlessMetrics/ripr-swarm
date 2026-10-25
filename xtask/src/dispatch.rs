@@ -45,6 +45,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::PublicProof(args) => super::public_proof::run(&args),
         XtaskCommand::ModuleHealth(args) => super::reports::module_health(&args),
         XtaskCommand::WindowsAdvisorySummary(args) => super::windows_advisory::run(&args),
+        XtaskCommand::WindowsAdvisoryRun(args) => super::windows_advisory_run::run(&args),
         XtaskCommand::WindowsAdvisoryIsolatedSummary(args) => {
             super::windows_advisory::run_isolated(&args)
         }
@@ -131,6 +132,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::OperatorCockpitReport => super::reports::operator_cockpit_report(),
         XtaskCommand::ReleaseReadiness(args) => super::reports::release_readiness(&args),
         XtaskCommand::ReleaseNegativeCorpus(args) => super::reports::release_negative_corpus(&args),
+        XtaskCommand::ReleaseManifestProposal(args) => {
+            super::reports::release_manifest_proposal(&args)
+        }
         XtaskCommand::BumpVersion(args) => super::version::bump_version(&args),
         XtaskCommand::ReleaseControl(args) => super::reports::release_control(&args),
         XtaskCommand::ReleaseDenominator(args) => super::reports::release_denominator(&args),

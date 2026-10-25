@@ -28,10 +28,10 @@
 //!   `it.each([[owner, 1]])`), and even the affirmative shadow or unrelated
 //!   import rejections refute only the apparent call, not hooks, helpers,
 //!   re-exports or mocks. Those rows keep `miss: None`.
-//! - `assertion_not_observing`: `RelatedTest::is_unmatched` reads it as a
-//!   decision input (gap next-step choice, witness and row triage), so
-//!   emitting it would change TypeScript behavior. Rows that would have
-//!   carried it get `observation_unconfirmed` or no miss.
+//! - `assertion_not_observing`: withheld by this producer. Row eligibility is the
+//!   explicit `RelatedTest::role` (#5563), not this value, so a later
+//!   annotation cannot change decisions; rows that would have carried it
+//!   get `observation_unconfirmed` or no miss.
 //! - `observation_unconfirmed` on an unanchored or unresolved-alias owner
 //!   call: identity is unproved, so no row-to-owner relationship exists to
 //!   leave unconfirmed.
@@ -41,7 +41,9 @@
 //! - `missing_input`: the shared prose says "no test input reaches ...",
 //!   stronger than a single-file static reading supports. A row whose own
 //!   boundary fact says its input misses the boundary gets
-//!   `observation_unconfirmed` instead.
+//!   `observation_unconfirmed` instead. The renderer already words a
+//!   TypeScript or JavaScript `missing_input` row as "seen" (#10040), so a
+//!   future producer needs a row-owned input proof, not new prose.
 //! - `assertion_not_credited`: reserved for a typed established refusal
 //!   (#5446), which TypeScript does not produce;
 //! - `missing_exact_assertion`: the TypeScript model carries no row-owned

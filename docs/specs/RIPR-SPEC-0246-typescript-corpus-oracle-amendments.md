@@ -332,6 +332,56 @@ runs, so neither a gap nor a credit is established. `for...of`, `for...in`,
 `static_unknown`; it credits nothing. The credit, which needs an iteration
 count model, is tracked in #9874.
 
+**Rule 9. A callback that must settle a `done` test is read as the test's own.**
+(Added 2026-10-22.) When a test callback takes a first parameter `d` (mocha
+`done`), a call in the test, other than the forms rule 2 reads, passes an
+inline non-`async`, non-generator function whose body consists of
+expression and declaration statements up to a top-level `d()` call with no
+arguments, the statements before that call are collected as the test's own
+assertions. The runner cannot pass the test unless the callback runs and
+reaches `d()`, and an assertion before it either holds or throws, so a
+changed value that reaches the callback must hold up against it. `d` must
+be named exactly once in the whole test body, inside that callback, so no
+other path (a second `d()`, a sibling callback, a branch) settles the test.
+Refused,
+collecting nothing: a test callback without a parameter; a callback that
+never calls `d()`, calls it with arguments, or calls it behind an `if`,
+`try`, loop, `return` or `throw`; an assertion after `d()`; a callback
+parameter or declaration named `d`; an `async` or generator callback.
+
+**Rule 10. An expectation that pins the unchanged value at the boundary is a discriminator.**
+(Added 2026-10-22.) The boundary witness (RIPR-SPEC-0027) reads the two
+branch values of a changed `if (<comparison>) { return A; } return B;` at
+the witnessed input: the changed behavior's and the unchanged one's. An
+expectation equal to exactly one of them tells the two apart and keeps the
+witness. This includes a test that still pins the unchanged value, which
+fails against the changed code. An expectation equal to both or to neither
+is dead, as before. A test that still pins the unchanged value is a discriminator
+because RIPR-SPEC-0245 scores the diff as its own single mutant, and that
+test fails against it.
+
+**Rule 11. An edit to a ternary condition's comparison needs a tested input the
+two comparisons treat differently.** (Added 2026-10-22, #9437.) When the
+changed line is a return-value change and its removed and added text differ
+only in one `param <op> <number> ?` condition (`<op>` one of `===`, `!==`,
+`==`, `!=`, `<`, `<=`, `>`, `>=`; the operator, the literal, or both change; the
+comparison is the whole condition, so it follows `(`, `{`, `,`, `:`, `?`, a
+lone `=`, `return` or the start of the line, and ends at a single `?`, and it
+is code, not text inside a string or comment), the edit decides the result only
+for a value of `param` where the two comparisons disagree. The rule reads every
+observed owner call: each related test passes literal arguments, every owner
+parameter is never rebound or written (the rule 3 stability check), and the
+compared parameter's argument is a plain signed numeric literal. If any
+observed value separates the two comparisons, or any call cannot be read (a
+variable or expression argument, an omitted argument, a test file that feeds
+the owner another way), the ladder result stands. Otherwise an `exposed` ladder
+result reads `weakly_exposed`, and the missing line names a whole number where
+the comparisons differ. When the RIPR-SPEC-0243 rule 18 unexercised returned-
+expression arm demotes first, the ladder limitation carries this rule's
+condition and differing value instead of the generic changed-arm note; an
+argument only that arm's evaluator can read keeps the generic note. Rule 11
+runs after RIPR-SPEC-0248 rule 2 and removes credit only.
+
 ### Decisions
 
 The owner delegated these choices on 2026-10-04 ("make reasonable
@@ -403,6 +453,13 @@ and the rejected alternative.
    getter identity, hook exclusivity, unconditional execution and JavaScript
    evaluator divergence. Rejected for now: crediting the reading test, which
    stays gated on a second real mocha-hook corpus row. Recorded on #9496.
+
+10. **Condition comparison (rule 11, 2026-10-22).** Adopted: demote only when
+    every observed argument is a numeric literal that both comparisons treat
+    alike; anything unreadable fails open. Limited to a bare `param <op> number`
+    condition so no other operand can change the answer. Rejected: also
+    reading predicate-family changes, whose boundary evidence the RIPR-SPEC-0027
+    witness already owns. Recorded on #9437.
 
 ## Required Evidence
 
@@ -482,7 +539,6 @@ and the rejected alternative.
     `weakly_exposed`. With a test whose reader throws or rejects
     (`throw new Error(...)`, `Promise.reject(...)`): `exposed`. An edit
     outside the `catch` arm: the ladder result.
-
 16. A mocha file importing `chai`, `before(() => { register("  alpha "); })`
     in the `describe`, the owner `register` with the change `names.push(name.trim())`
     to `names.push(name)`, tests `expect(registered()).to.deep.equal(["alpha"])`
@@ -491,23 +547,48 @@ and the rejected alternative.
     sibling `describe`, `async`, taking `done`, calling another function,
     naming `register` only in a comment or string, or in a file that imports
     `vitest` or uses `jest.`: `weakly_exposed`.
+17. `it("x", (done) => { load((value) => { expect(value).toBe(3); done(); }); })`
+    with `load` calling `done(3)` changed to `done(4)`: one assertion,
+    observing `value`; the finding reads `exposed`. Without the `done`
+    parameter, with `done(value)`, with the assertion after `done()` or
+    behind an `if`, or with an `async` callback: no assertion.
+18. `if (weightGrams <= 500) { return 399; } return 899;` changed to
+    `<`, test `expect(shippingCents(500)).to.equal(399)`: the test pins the
+    unchanged value at the boundary input, so it keeps the witness and the
+    finding reads `exposed`. `.to.equal(500)`, equal to neither value, stays
+    `weakly_exposed`.
+
+19. `return \`${n} item${n === 1 ? "" : "s"}\`` becomes `n <= 1`, tests
+    `expect(plural(1)).toBe("1 item")` and `expect(plural(3)).toBe("3 items")`:
+    `weakly_exposed`. Adding `expect(plural(0)).toBe("0 items")`: `exposed`.
+    An argument the RIPR-SPEC-0243 rule 18 evaluator cannot read (a variable,
+    a missing argument): `exposed`; one only that evaluator can read
+    (`1 + 1`) reads `weakly_exposed` with the generic unexercised-arm note.
 
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs`
-  pins examples 1 to 14; `spread_override_guard.rs` unit tests pin the
+  pins examples 1 to 14 and 17; `spread_override_guard.rs` unit tests pin the
   rule 3 shape, input reads and member-write detection.
 - `fixtures/typescript-verdict-corpus` pins the four Problem rows; cases
   `jest-spec0246-ex07-then-rejection-handler` and
   `jest-spec0246-ex09-async-foreach` pin rule 4 (`limited`). The unit test
   `refused_nested_callback_assertion_reads_static_unknown` pins both shapes
   and a shadowed-`expect` negative.
+- Cases `mocha-done-callback-value`
+  (example 17) and `mocha-nested-describe-boundary` (example 18) pin rules 9
+  and 10; `expected_side_is_live_credits_an_expectation_pinning_the_unchanged_value`
+  pins rule 10's dead-expectation negatives.
 - `crates/ripr/src/analysis/language/typescript/tests/catch_arm_tests.rs` and
   `catch_arm_guard.rs` unit tests pin rule 6 (example 15); corpus case
   `shape-async-catch-fallback-unexercised` pins the row.
 - `crates/ripr/src/analysis/language/typescript/tests/mocha_hook_owner_tests.rs`
   pins rule 7 (example 16); corpus case `mocha-before-hook-trimmed-name`
   pins the row.
+- `crates/ripr/src/analysis/language/typescript/tests/comparison_edit_tests.rs`
+  pins rule 11 (example 19): the reader's shapes and refusals and the
+  classifier verdicts; corpus case `shape-template-plural-boundary` pins the
+  row.
 
 ## Implementation Mapping
 
@@ -524,12 +605,18 @@ and the rejected alternative.
   `SpreadOverride`, `ts_test_local_object`; `dropped_term_guard.rs`:
   `ts_members_written`; `classifier.rs`: `ts_spread_override_unseen`,
   `ts_owner_call_member_arguments` (rule 3).
+- `crates/ripr/src/analysis/language/typescript/oracle.rs`:
+  `collect_done_callback_assertions` (rule 9); `classifier.rs`:
+  `expected_side_is_live` (rule 10).
 - `crates/ripr/src/analysis/language/typescript/classifier.rs`:
   `unresolved_assertions_only`, `body_asserts_in_unmodeled_callback` (rule 4).
 - `crates/ripr/src/analysis/language/typescript/catch_arm_guard.rs`,
   `classifier.rs`: `ts_catch_arm_unreached` (rule 6).
 - `crates/ripr/src/analysis/language/typescript/loop_count_guard.rs`,
   `classifier.rs`: `ts_loop_count_unmodeled` (rule 8).
+- `crates/ripr/src/analysis/language/typescript/comparison_edit_guard.rs`,
+  `rounding_mode_guard.rs`: `observed_numeric_calls`; `classifier.rs`: the
+  rule 11 hook in `ts_apply_post_ladder_rules`.
 - `crates/ripr/src/analysis/language/typescript/table_rows.rs`:
   `callback_case_assertions`, shared with RIPR-SPEC-0243 rule 11.
 - `crates/ripr/src/analysis/language/typescript/literal_matcher_guard.rs`:

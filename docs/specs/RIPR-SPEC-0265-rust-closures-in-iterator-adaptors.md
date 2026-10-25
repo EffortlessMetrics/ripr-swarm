@@ -227,6 +227,18 @@ owner returns:
 Whether a test's input runs the closure is rules 1 and 2's question, not
 this edge's.
 
+### Rule 4: a spawned thread's closure
+
+A changed `return_value` probe whose expression is the owner's whole tail
+`std::thread::spawn(move || e).join().unwrap()` (a zero-parameter closure,
+the fully qualified `std::thread::spawn` path, and exactly `.join().unwrap()`
+after it) establishes the ordinary owner-return pin. The closure runs once on
+every call and the join returns its value, so the tail evaluates like a
+plain tail whose value is `e`; the closure's own `||` is not a short circuit.
+The change is read inside `e`, so a branch, short circuit, block or macro in
+`e` keeps the earlier reading, as do `thread::spawn` (a path `use` could
+rebind), `unwrap_or`, and any operator applied to the join (#9490).
+
 ### Decisions
 
 1. **Literal sequences only.** Adopted: an element is read only from a
@@ -300,6 +312,11 @@ this edge's.
    value reads `exposed`. With `&[]`, or when the owner's file declares
    its own `Result`, it keeps the pre-0265 reading (#9490).
 
+8. `std::thread::spawn(move || 2 * x).join().unwrap()` with
+   `assert_eq!(doubled(5), 10)`: the return value reads `exposed`. With
+   `if x > 0 { 2 * x } else { 0 }` in the closure, or the unqualified
+   `thread::spawn`, it keeps the earlier reading (#9490).
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/classify/owner_pin/closure_adaptor.rs`: the
@@ -311,12 +328,15 @@ this edge's.
   observed, missing, short-circuit and unreadable readings.
 - `crates/ripr/src/analysis/classify/boundary_pairing.rs` tests: rule 1's
   same-test pairing, including the constant-boundary refusal.
+- `crates/ripr/tests/pinned_shape_limit.rs`: rule 4's credited pin and its
+  keeping controls (branch or short circuit in the closure, unqualified
+  path, `unwrap_or`, an operator on the join).
 - `crates/ripr/tests/iterator_adaptor_propagation.rs`: rule 3 through
   `check_workspace`, and the `map` + `count` refusal.
 - `fixtures/rust-verdict-corpus`: examples 1 to 3 (`grid-iter-exact`,
   `grid-iter-helper`, `grid-iter-table`), 4 (`trap-iter-boundary-missing`),
   5 (`trap-iter-empty-slice`), 6 (`grid-iter-property`) and 7
-  (`shape-collect-result-short-circuit`).
+  (`shape-collect-result-short-circuit`) and 8 (`shape-thread-join-result`).
 
 ## Implementation Mapping
 
@@ -324,7 +344,8 @@ this edge's.
   `adaptor_tail_of`, `admitted_consumer`, `literal_sequence`, `argument_sequences`,
   `pinned_call_runs_closure`, `AdaptorTail::run_reaches_boundary`.
 - `crates/ripr/src/analysis/classify/owner_pin.rs`:
-  `ReturnPathGate::Adaptor` in `OwnerReturnPin::establish` and `admits`.
+  `ReturnPathGate::Adaptor` in `OwnerReturnPin::establish` and `admits`;
+  `spawn_join_body` in `return_path_gate_from` (rule 4).
 - `crates/ripr/src/analysis/classify/activation.rs`:
   `adaptor_element_view`, `element_boundary_discriminator`,
   `element_boundary_observations`.

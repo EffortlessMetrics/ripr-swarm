@@ -119,6 +119,11 @@ pub(in crate::analysis) struct OwnerReturnPin {
     /// integer, so `.min(K)`, `.max(K)`, `* 1` and `+ 0` keep their std
     /// meaning on it (trap-ceiling-wide-min-control).
     returns_integer: bool,
+    /// A masked integer tail needs an individually discriminating literal
+    /// pointer input; the direct-call mask guard reads original owner names.
+    pointer_mask_gate: super::mask_pin::PointerMaskGate,
+    /// A typed pointer must observe a value that differs from the baseline.
+    pointer_return_change: Option<crate::analysis::test_grip_evidence::PointerReturnChange>,
     /// The owner is an `async fn`, so a test reads its return value as
     /// `owner(..).await` (RIPR-SPEC-0197 rule 1, `#[tokio::test]`).
     awaited: bool,
@@ -232,6 +237,12 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     execution_contexts: SyncMemo<BTreeMap<PathBuf, Arc<Option<ExecutionContext>>>>,
     /// Workspace-wide inputs to [`TargetRoots::root`], computed once.
     target_roots: OnceLock<TargetRoots>,
+    /// Names of the workspace's `macro_rules!` macros, scanned once per run
+    /// (RIPR-SPEC-0351 out-parameter owner scan).
+    workspace_macro_names: OnceLock<Vec<String>>,
+    /// Whether a workspace trait could answer `write_str`-style calls on the
+    /// std buffers, scanned once per run.
+    user_buffer_traits: OnceLock<bool>,
     /// #6974: path-call memos. A path-shaped assertion is read once per
     /// probe, test and assertion, and each input below scans the workspace,
     /// so every answer is kept for the run under the key it depends on.
@@ -1654,7 +1665,8 @@ fn target_context_roots(
                     .parent()
                     .and_then(Path::file_name)
                     .is_some_and(|p| p == "tests"))
-                || !recognized_target_root(root, src_dirs)
+                || !(recognized_target_root(root, src_dirs)
+                    || index.member_crates.is_custom_lib_path_root(root))
         })
     {
         return None;
@@ -1681,6 +1693,20 @@ fn recognized_target_root(root: &Path, src_dirs: &BTreeSet<PathBuf>) -> bool {
 }
 
 impl OwnerPinSyntax {
+    /// Whether a workspace trait could answer `write_str`-style calls on
+    /// `String`/`Vec`/`VecDeque`, scanned once per run.
+    pub(in crate::analysis) fn user_buffer_traits(&self, index: &RustIndex) -> bool {
+        *self
+            .user_buffer_traits
+            .get_or_init(|| super::out_parameter::workspace_has_user_buffer_traits(index))
+    }
+
+    /// The workspace's `macro_rules!` macro names, scanned once per run.
+    pub(in crate::analysis) fn workspace_macro_names(&self, index: &RustIndex) -> &[String] {
+        self.workspace_macro_names
+            .get_or_init(|| super::out_parameter::workspace_macro_names(index))
+    }
+
     /// Workspace routing inputs, computed once per run.
     fn target_roots(&self, index: &RustIndex) -> &TargetRoots {
         self.target_roots.get_or_init(|| TargetRoots::new(index))
@@ -2933,6 +2959,17 @@ impl OwnerReturnPin {
             returns_integer: returns_primitive_scalar(owner, index)
                 && declared_return_type(&owner.body)
                     .is_some_and(|returned| INTEGER_TYPES.contains(&returned.as_str())),
+            pointer_mask_gate: super::mask_pin::PointerMaskGate::for_owner(
+                &probe.expression,
+                name,
+                &owner.body,
+                index,
+            ),
+            pointer_return_change: crate::analysis::test_grip_evidence::PointerReturnChange::new(
+                owner,
+                probe.before.as_deref(),
+                &probe.expression,
+            ),
             awaited: declares_async(owner, index),
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
@@ -3059,6 +3096,8 @@ impl OwnerReturnPin {
             returns_bool: false,
             returns_scalar: false,
             returns_integer: false,
+            pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
+            pointer_return_change: None,
             awaited: declares_async(owner, index),
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
@@ -3161,6 +3200,8 @@ impl OwnerReturnPin {
             returns_bool: false,
             returns_scalar: false,
             returns_integer: false,
+            pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
+            pointer_return_change: None,
             awaited: declares_async(owner, index),
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
@@ -3255,6 +3296,8 @@ impl OwnerReturnPin {
             returns_bool: false,
             returns_scalar: false,
             returns_integer: false,
+            pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
+            pointer_return_change: None,
             awaited: declares_async(owner, index),
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
@@ -3432,6 +3475,7 @@ impl OwnerReturnPin {
         let condition;
         let matches_operands: [String; 2];
         let expect_operands: [String; 2];
+        let pointer_call;
         // RIPR-SPEC-0197: `assert!(owner(..) == v)` and its guard twin
         // `if owner(..) != v { return Err(..) }` read like `assert_eq!`. A
         // guard reads only its condition, never a macro inside its body,
@@ -3505,6 +3549,45 @@ impl OwnerReturnPin {
         } else if reads_assert_eq {
             let Some(operands) = assertion_comparison_operands(&assertion.text) else {
                 return false;
+            };
+            // #9478: a typed immutable function pointer lends its exact call,
+            // not an arbitrary use of the owner as a value. Keep this bounded
+            // to a sync scalar free-function tail compared with a literal;
+            // every identity, expected-value and execution gate below remains.
+            pointer_call = (!self.awaited
+                && self.returns_scalar
+                && matches!(self.call, PinCall::Bare)
+                && matches!(self.path, ReturnPathGate::Any)
+                && (test.start_line..=test.end_line).contains(&assertion.line))
+            .then(|| {
+                [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
+                    if self.awaited_call_shape(operands[at], &self.name).is_some() {
+                        return None;
+                    }
+                    helper_arguments::expected_literal(operands[other], index)?;
+                    let call = crate::analysis::extract::local_fn_pointer_call(
+                        &test.body,
+                        operands[at],
+                        &assertion.text,
+                        assertion.line.checked_sub(test.start_line)?,
+                    )?;
+                    self.awaited_call_shape(&call, &self.name)?;
+                    self.pointer_mask_gate.admits(&call).then_some(())?;
+                    if self
+                        .pointer_return_change
+                        .as_ref()
+                        .is_some_and(|change| change.is_invisible_at_call(&call))
+                    {
+                        return None;
+                    }
+                    Some((at, call))
+                })
+            })
+            .flatten();
+            let operands = match &pointer_call {
+                Some((0, call)) => [call.as_str(), operands[1]],
+                Some((1, call)) => [operands[0], call.as_str()],
+                _ => operands,
             };
             // trap-shine-debug-exact-control: the std rendering of a
             // primitive scalar names its value, so an exact string pins it.
@@ -3650,15 +3733,15 @@ impl OwnerReturnPin {
                 (None, Some(call)) => (call, left.as_str(), Some(right.as_str())),
                 _ => return false,
             }
-        } else if !is_guard
-            && is_plain_assert_of_matches(&assertion.text)
-            && let Some(operands) = outer_assertion_condition(&assertion.text)
-                .as_deref()
-                .and_then(literal_matches_operands)
+        } else if let Some(operands) = matches_pin_condition(&assertion.text)
+            .as_deref()
+            .and_then(literal_matches_operands)
         {
             // RIPR-SPEC-0197 literal `matches!` pins: `assert!(matches!(owner(..), Ok(5)))`
             // with a literal-only pattern pins the value as
-            // `assert_eq!(owner(..), Ok(5))` does.
+            // `assert_eq!(owner(..), Ok(5))` does. #10121: so does its
+            // Err-return guard twin `if !matches!(owner(..), Ok(5)) { return
+            // Err(..) }` (RIPR-SPEC-0154 example 2).
             matches_operands = operands;
             let Some(call) = owner_call_shape(&matches_operands[0], &self.name) else {
                 return false;
@@ -4920,7 +5003,7 @@ enum CallShape<'a> {
 /// token of the one `fn <name>` item whose span holds the owner's start
 /// line. No parse, or no single match, reads as sync: an async owner then
 /// gets no `.await` credit, and its bare call (a future) does not compile.
-fn declares_async(owner: &FunctionSummary, index: &RustIndex) -> bool {
+pub(super) fn declares_async(owner: &FunctionSummary, index: &RustIndex) -> bool {
     let Some(facts) = index.files().get(&owner.file) else {
         return false;
     };
@@ -5294,7 +5377,7 @@ fn item_nesting_with_impl(
 }
 
 /// Whether `node` carries a `cfg` or `cfg_attr` attribute, outer or inner.
-fn has_cfg_attr(node: &impl ast::HasAttrs) -> bool {
+pub(super) fn has_cfg_attr(node: &impl ast::HasAttrs) -> bool {
     // `cfg` and `cfg_attr` parse to their own metas, which have no `path`.
     node.attrs().any(|attr| {
         matches!(
@@ -5586,7 +5669,15 @@ fn return_path_gate_from(
     let early_exits = inner.bytes().filter(|byte| *byte == b'?').count() + other_returns;
     // The uncollapsed expression: collapsing would also merge whitespace
     // inside a string literal that the change touched.
-    if changed_part_evaluates_conditionally(expression, before) {
+    // RIPR-SPEC-0265 rule 4: a `std::thread::spawn(move || e).join().unwrap()`
+    // tail runs `e` once on every input and returns its value, so the closure's
+    // own `||` is not a short circuit and the change is read inside `e`.
+    let thread_pair = spawn_join_body(expression).zip(before.and_then(spawn_join_body));
+    let conditional = match &thread_pair {
+        Some((body, before_body)) => changed_part_evaluates_conditionally(body, Some(before_body)),
+        None => changed_part_evaluates_conditionally(expression, before),
+    };
+    if conditional {
         // RIPR-SPEC-0197 rule 3: a pure `&&`/`||` chain is the one
         // conditional tail a pin may observe, and only on a pinned call
         // that evaluates every operand (checked per test).
@@ -5930,6 +6021,40 @@ const NEGATING_KEYWORDS: &[&str] = &[
     "if", "while", "return", "match", "in", "else", "break", "let", "mut", "move", "as", "yield",
     "ref", "unsafe", "async",
 ];
+
+/// The closure body of a tail that is exactly
+/// `std::thread::spawn(<zero-parameter closure>).join().unwrap()`: the spawned
+/// closure runs once on every call and the join returns its value. `None` for
+/// any other text, including a `thread::spawn` path that `use` could rebind.
+pub(in crate::analysis) fn spawn_join_body(text: &str) -> Option<String> {
+    // The masked text keeps the byte layout of `text`, so structure is read
+    // from it and the closure argument is cut from the unmasked text.
+    let masked = mask_comments_and_strings(text);
+    let start = masked.len() - masked.trim_start().len();
+    let end = masked.trim_end().trim_end_matches(';').trim_end().len();
+    let prefix = "std::thread::spawn";
+    let after = masked.get(start..end)?.strip_prefix(prefix)?;
+    let open = start + prefix.len() + (after.len() - after.trim_start().len());
+    if masked.as_bytes().get(open) != Some(&b'(') {
+        return None;
+    }
+    let close = matching_close(&masked, open, b'(', b')')?;
+    let rest: String = masked
+        .get(close + 1..end)?
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect();
+    if rest != ".join().unwrap()" {
+        return None;
+    }
+    let argument = text.get(open + 1..close)?.trim();
+    let body = argument
+        .strip_prefix("move")
+        .map_or(argument, str::trim_start)
+        .strip_prefix("||")?
+        .trim();
+    (!body.is_empty()).then(|| body.to_string())
+}
 
 /// #6578: whether the part of the changed tail that differs from its old
 /// text (`before`) is evaluated only on some inputs, or passes through code
@@ -12251,7 +12376,13 @@ fn is_trivial_expression(expression: &str, locals: bool) -> bool {
 /// nested `fn`'s parameters. Lexical and conservative: a `|` operator or an unrelated
 /// match arm that mentions the name also counts.
 fn binds_outside_let(masked: &str, name: &str) -> bool {
-    let fns = whole_word_offsets(masked, "fn");
+    // A function-pointer type has no item name: its `fn` is followed by
+    // `(`. Its parameter labels bind no values in the surrounding test.
+    // Keep the existing conservative refusal for actual nested fn items.
+    let fns: Vec<_> = whole_word_offsets(masked, "fn")
+        .into_iter()
+        .filter(|offset| !masked[offset + "fn".len()..].trim_start().starts_with('('))
+        .collect();
     if fns.len() > 1 {
         return true;
     }
@@ -13349,6 +13480,21 @@ fn top_level_semicolon(masked: &str) -> Option<usize> {
         }
     }
     None
+}
+
+/// The `matches!(scrutinee, pattern)` condition a literal `matches!` pin reads
+/// from `text`: a plain `assert!(matches!(..))`, or the assertion twin of a
+/// terminal Err-return guard over a negated `matches!`. Guards are read through
+/// the same twin, so both spellings take one admission (#10121).
+fn matches_pin_condition(text: &str) -> Option<String> {
+    if is_plain_assert_of_matches(text) {
+        return outer_assertion_condition(text);
+    }
+    let (_, twin) = err_return_guard_twin(text)?;
+    if !is_plain_assert_of_matches(&twin) {
+        return None;
+    }
+    outer_assertion_condition(&twin)
 }
 
 /// Whether `text` is one unqualified `assert!` whose only nested macro is a

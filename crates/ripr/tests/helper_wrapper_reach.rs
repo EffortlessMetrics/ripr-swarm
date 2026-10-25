@@ -1280,6 +1280,42 @@ fn unindexed_same_named_test_module_fn_is_caught_by_shadow_fallback() -> Result<
     Ok(())
 }
 
+// #9329: the bytesize shape. The owner has two direct callers (the method a
+// test helper reaches and a `Display::fmt` no test calls), the helper asserts
+// the method's result unchanged, and the boundary row arrives as a
+// const-constructor receiver.
+fn bytesize_source(helper_body: &str) -> String {
+    format!(
+        "pub const KB: u64 = 1_000;\npub const KIB: u64 = 1_024;\n\n#[derive(Clone, Copy)]\npub struct ByteSize(pub u64);\n\nimpl ByteSize {{\n    pub const fn kib(size: u64) -> Self {{\n        ByteSize(size * KIB)\n    }}\n\n    pub fn to_string_as(&self, si_unit: bool) -> String {{\n        to_string(self.0, si_unit)\n    }}\n}}\n\nimpl std::fmt::Display for ByteSize {{\n    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{\n        f.pad(&to_string(self.0, false))\n    }}\n}}\n\npub fn to_string(bytes: u64, si_prefix: bool) -> String {{\n    let unit = if si_prefix {{ KIB }} else {{ KB }};\n    if bytes <= unit {{\n        format!(\"{{}} B\", bytes)\n    }} else {{\n        format!(\"{{}} big\", bytes / unit)\n    }}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    fn assert_to_string(expected: &str, b: ByteSize, si: bool) {{\n        {helper_body}\n    }}\n\n    #[test]\n    fn test_to_string() {{\n        assert_to_string(\"215 B\", ByteSize(215), true);\n        assert_to_string(\"1 big\", ByteSize::kib(1), true);\n        assert_to_string(\"1 big\", ByteSize::kib(1), false);\n    }}\n}}\n"
+    )
+}
+
+const BYTESIZE_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -24,3 +24,3 @@ pub fn to_string(bytes: u64, si_prefix: bool) -> String {\n     let unit = if si_prefix { KIB } else { KB };\n-    if bytes < unit {\n+    if bytes <= unit {\n         format!(\"{} B\", bytes)\n";
+
+#[test]
+fn bytesize_shape_asserting_the_method_result_is_exposed() -> Result<(), String> {
+    let source = bytesize_source("assert_eq!(expected.to_string(), b.to_string_as(si));");
+    let finding = predicate_finding(&source, BYTESIZE_DIFF)?;
+    assert_eq!(finding["classification"], "exposed", "{finding}");
+    assert_eq!(
+        relation_of(&finding, "test_to_string"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
+    Ok(())
+}
+
+#[test]
+fn bytesize_shape_not_observing_the_method_result_is_not_exposed() -> Result<(), String> {
+    for helper in [
+        "b.to_string_as(si);\n        assert!(!expected.is_empty());",
+        "let shown = b.to_string_as(si);\n        assert_eq!(expected.to_string(), shown);",
+    ] {
+        let finding = predicate_finding(&bytesize_source(helper), BYTESIZE_DIFF)?;
+        assert_ne!(finding["classification"], "exposed", "{helper}: {finding}");
+    }
+    Ok(())
+}
 const WIDE_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n fn wide_x(input: &str) -> bool {\n-    input.len() > 3\n+    3 < input.len()\n }\n";
 
 /// RIPR-SPEC-0159 example 9 (#9889): the private helper `wide_x` is reached

@@ -344,7 +344,7 @@ pub(crate) fn render_full_with_config_and_navigation(
     // sharing only from visible donors; public library legacy bytes stay exact.
     // Decide once to avoid rescanning the catalogue for each finding.
     let shared = drill_in
-        .map(|_| shared::SharedReport::build(&visible))
+        .map(|_| shared::SharedReport::build_with_origins(&visible, Some(&output.value_origins)))
         .filter(shared::SharedReport::is_shared);
     if let Some(shared) = &shared {
         shared.render_catalogue(&mut out);
@@ -361,6 +361,7 @@ pub(crate) fn render_full_with_config_and_navigation(
             &output.root,
             JsonPointerWording::CheckFlag,
             shared_sections,
+            output.source_value_files(finding),
         ));
         if let Some(FindingDrillIn::Commands(navigation)) = drill_in {
             out.push_str("Drill in:\n");
@@ -1188,13 +1189,29 @@ pub(crate) fn render_finding_with_context_command(
     context_command: &str,
     root: &Path,
 ) -> String {
+    render_finding_with_context_command_and_files(finding, config, context_command, root, None)
+}
+
+pub(crate) fn render_finding_with_context_command_and_files(
+    finding: &Finding,
+    config: &RiprConfig,
+    context_command: &str,
+    root: &Path,
+    files: Option<&[Option<std::path::PathBuf>]>,
+) -> String {
     // #7476: explain reuses check's evidence window, but rejects the
     // `--format` flag that window names. The pointer wording is selected while
     // the evidence lines are built (`ExplainNamesCheck`), so it names check as
     // prose without rewriting anything else in the rendered finding — quoted
     // source fragments keep their exact bytes.
-    let mut out =
-        render_finding_with_config(finding, config, root, JsonPointerWording::ExplainNamesCheck);
+    let mut out = sections::render_finding_with_shared_sections(
+        finding,
+        config,
+        root,
+        JsonPointerWording::ExplainNamesCheck,
+        None,
+        files,
+    );
     // #7796: project the owner's observed call shape (the same producer
     // `ripr agent stub` reads) into the verdict-change recipe. Only when the
     // finding's recorded source still owns the analyzed root's checkout:
@@ -1241,7 +1258,7 @@ mod sections;
 mod shared;
 mod triage;
 
-pub(crate) use evidence_lines::JsonPointerWording;
+pub(crate) use evidence_lines::{JsonPointerWording, plain_observation_wording};
 pub(crate) use sections::render_finding_with_config;
 
 #[cfg(test)]
@@ -1277,6 +1294,7 @@ mod tests {
     #[test]
     fn render_includes_summary_counts_and_empty_findings_message() {
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -1340,6 +1358,7 @@ mod tests {
             Vec::new(),
         )?;
         Ok(CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -1499,6 +1518,7 @@ mod tests {
     #[test]
     fn header_names_the_loaded_config_path() {
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -1544,6 +1564,7 @@ mod tests {
         ] {
             let root = PathBuf::from(root_text);
             let output = CheckOutput {
+                value_origins: Default::default(),
                 harness_projections: Vec::new(),
                 schema_version: "0.1".to_string(),
                 tool: "ripr".to_string(),
@@ -1581,6 +1602,7 @@ mod tests {
     #[test]
     fn untracked_only_note_names_the_staging_repair() {
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -1634,6 +1656,7 @@ mod tests {
     #[test]
     fn untracked_note_escapes_control_bytes_in_named_paths() {
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -1672,6 +1695,7 @@ mod tests {
     #[test]
     fn tracked_only_note_qualifies_the_worktree_remedy() {
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -1711,6 +1735,7 @@ mod tests {
     #[test]
     fn ignored_only_committed_read_names_force_intent_to_add() {
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -1759,6 +1784,7 @@ mod tests {
     #[test]
     fn combined_untracked_and_ignored_note_names_both_repairs() {
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -1803,6 +1829,7 @@ mod tests {
     #[test]
     fn summary_header_keeps_the_unknown_classes_separate() {
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -1864,6 +1891,7 @@ mod tests {
         let mut suppressed = sample_finding();
         suppressed.id = "suppressed-finding".to_string();
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -1914,6 +1942,7 @@ mod tests {
     #[test]
     fn summary_header_names_every_class_with_its_canonical_token() {
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -2023,6 +2052,7 @@ mod tests {
             vec![limitation],
         )?;
         Ok(CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -2159,6 +2189,7 @@ mod tests {
             vec![limitation],
         )?;
         Ok(CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -2226,6 +2257,7 @@ mod tests {
         let finding = sample_finding();
         let finding_id = finding.id.clone();
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -2272,6 +2304,7 @@ mod tests {
         let finding = sample_finding();
         let finding_id = finding.id.clone();
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -2420,6 +2453,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }];
         } else {
             finding.activation.missing_discriminators.clear();
@@ -2571,6 +2606,7 @@ mod tests {
             vec![carded.clone(), uncarded.clone()],
         ] {
             let output = CheckOutput {
+                value_origins: Default::default(),
                 harness_projections: Vec::new(),
                 schema_version: "0.1".to_string(),
                 tool: "ripr".to_string(),
@@ -2618,6 +2654,7 @@ mod tests {
     #[test]
     fn render_replaces_hidden_block_with_more_when_nothing_is_omitted() {
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -2665,6 +2702,7 @@ mod tests {
             findings.push(finding);
         }
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -3322,6 +3360,7 @@ mod tests {
     #[test]
     fn render_omits_language_breakdown_for_rust_only_run() {
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -3363,6 +3402,7 @@ mod tests {
     #[test]
     fn render_emits_language_breakdown_when_non_rust_files_counted() {
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -3425,6 +3465,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -3478,6 +3519,7 @@ mod tests {
             Some("Add the missing discriminator assertion.".to_string());
 
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -3516,6 +3558,7 @@ mod tests {
     #[test]
     fn bounded_human_output_reports_missing_scope_as_start_here_state() {
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -3681,6 +3724,7 @@ mod tests {
 
     fn empty_live_output(no_scope_provided: bool) -> CheckOutput {
         CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -3821,6 +3865,7 @@ mod tests {
             .evidence
             .push("suggested_verify_command: npm test -- pricing".to_string());
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -4685,6 +4730,7 @@ mod tests {
 
     fn single_finding_output(finding: Finding) -> CheckOutput {
         CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -4765,6 +4811,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             });
         }
         finding
@@ -4787,6 +4835,7 @@ mod tests {
             .push("suggested_verify_command: npm test -- pricing".to_string());
 
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -4835,6 +4884,7 @@ mod tests {
         second.id = "second".to_string();
         second.probe.location.line = 8;
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -4954,6 +5004,7 @@ mod tests {
         second.id = "probe:src_lib.rs:error_path:9af31c02".to_string();
         second.probe.location.line = 8;
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -5026,6 +5077,7 @@ mod tests {
         let finding = sample_finding();
         let finding_id = finding.id.clone();
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -5082,6 +5134,7 @@ mod tests {
         second.id = "second".to_string();
         second.probe.location.line = 8;
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -5147,6 +5200,7 @@ mod tests {
         second.id = "second".to_string();
         second.probe.location.line = 8;
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -5258,6 +5312,7 @@ mod tests {
         let finding_id = finding.id.clone();
         let location = finding.probe.location.file.display().to_string();
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -5310,6 +5365,7 @@ mod tests {
         let finding = sample_finding();
         let finding_id = finding.id.clone();
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -5354,6 +5410,7 @@ mod tests {
     #[test]
     fn human_output_discloses_limited_partial_scope_run_state() -> Result<(), String> {
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -5443,6 +5500,7 @@ mod tests {
             PartialDiffStopReason::LineBudgetExceededOnFirstFile => (7, 60, None),
         };
         CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -5553,6 +5611,7 @@ mod tests {
         // terminal verbatim (#2142 review): the display is escaped while the
         // raw path stays on the scope record.
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -5613,6 +5672,7 @@ mod tests {
             relation_reason: Some(reason),
             relation_confidence: Some(reason.confidence()),
             miss: Some(RelatedTestMiss::NoCallPath),
+            miss_support: None,
             ..template.clone()
         };
         finding.related_tests = vec![
@@ -5679,7 +5739,8 @@ mod tests {
             Some(Some(crate::domain::RelationReason::WeakTokenSubstring))
         );
         assert!(
-            retained[0].contains("no call to the changed code found; linked by name only"),
+            retained[0]
+                .contains("no established call path to the changed code; linked by name only"),
             "disclosure stays visible: {}",
             retained[0]
         );
@@ -5769,27 +5830,35 @@ mod tests {
     /// single-file (`at line N`) and mixed-file (`at path:N`) spellings.
     #[test]
     fn render_finding_keeps_a_multi_line_observed_value_on_one_row() {
-        let fact = |file: &str, line: usize, value: &str| ValueFact {
-            file: Some(std::path::PathBuf::from(file)),
+        let fact = |line: usize, value: &str| ValueFact {
             line,
             text: "assert!(true);".to_string(),
             value: value.to_string(),
             context: ValueContext::AssertionArgument,
         };
+        let render_with_files = |finding: &Finding, files: &[&str]| {
+            let mut output = python_note_output(Summary::default(), None);
+            output.findings = vec![finding.clone()];
+            output.value_origins.record(
+                finding,
+                files
+                    .iter()
+                    .map(|file| Some(std::path::PathBuf::from(file)))
+                    .collect(),
+            );
+            super::render_full_with_config(&output, &RiprConfig::default())
+        };
         let mut finding = sample_finding();
-        finding.activation.observed_values = vec![fact("tests/pricing.rs", 7, "a\nb")];
-        let rendered = render_finding(&finding);
+        finding.activation.observed_values = vec![fact(7, "a\nb")];
+        let rendered = render_with_files(&finding, &["tests/pricing.rs"]);
         assert!(
             rendered.contains("source assertion argument value a b at line 7"),
             "{rendered}"
         );
         assert!(!rendered.contains("value a\nb"), "{rendered}");
 
-        finding.activation.observed_values = vec![
-            fact("tests/pricing.rs", 7, "a\nb"),
-            fact("tests/other.rs", 9, "c"),
-        ];
-        let rendered = render_finding(&finding);
+        finding.activation.observed_values = vec![fact(7, "a\nb"), fact(9, "c")];
+        let rendered = render_with_files(&finding, &["tests/pricing.rs", "tests/other.rs"]);
         assert!(
             rendered.contains("source assertion argument value a b at tests/pricing.rs:7"),
             "{rendered}"
@@ -5838,6 +5907,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             });
         }
         assert_eq!(finding.related_tests.len(), 9);
@@ -5864,7 +5935,6 @@ mod tests {
         // sample_finding already carries one observed value; 13 more make 14.
         for index in 0..13 {
             finding.activation.observed_values.push(ValueFact {
-                file: None,
                 line: 200 + index,
                 text: format!("sample({index})"),
                 value: format!("arg{index} = {index}"),
@@ -5891,12 +5961,23 @@ mod tests {
     /// file keeps `at line N`.
     #[test]
     fn source_value_lines_name_the_test_file_only_when_files_differ() {
-        let fact = |file: &str, line: usize, value: &str, context| ValueFact {
-            file: Some(std::path::PathBuf::from(file)),
+        let fact = |_file: &str, line: usize, value: &str, context| ValueFact {
             line,
             text: "assert!(true);".to_string(),
             value: value.to_string(),
             context,
+        };
+        let render_with_files = |finding: &Finding, files: &[&str]| {
+            let mut output = python_note_output(Summary::default(), None);
+            output.findings = vec![finding.clone()];
+            output.value_origins.record(
+                finding,
+                files
+                    .iter()
+                    .map(|file| Some(std::path::PathBuf::from(file)))
+                    .collect(),
+            );
+            super::render_full_with_config(&output, &RiprConfig::default())
         };
         let mut finding = sample_finding();
         finding.activation.observed_values = vec![
@@ -5908,7 +5989,7 @@ mod tests {
             ),
             fact("tests/other.rs", 9, "3", ValueContext::FunctionArgument),
         ];
-        let rendered = render_finding(&finding);
+        let rendered = render_with_files(&finding, &["tests/pricing.rs", "tests/other.rs"]);
         assert!(
             rendered.contains("source assertion argument value true at tests/pricing.rs:7"),
             "{rendered}"
@@ -5927,7 +6008,7 @@ mod tests {
             ),
             fact("tests/pricing.rs", 9, "3", ValueContext::FunctionArgument),
         ];
-        let rendered = render_finding(&finding);
+        let rendered = render_with_files(&finding, &["tests/pricing.rs", "tests/pricing.rs"]);
         assert!(
             rendered.contains("source assertion argument value true at line 7"),
             "{rendered}"
@@ -5945,7 +6026,6 @@ mod tests {
         // (over the 8-value human window and the 32-value ranked JSON cap).
         for index in 0..41 {
             finding.activation.observed_values.push(ValueFact {
-                file: None,
                 line: 300 + index,
                 text: format!("sample({index})"),
                 value: format!("arg{index} = {index}"),
@@ -5984,11 +6064,12 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             });
         }
         for index in 0..13 {
             finding.activation.observed_values.push(ValueFact {
-                file: None,
                 line: 200 + index,
                 text: format!("sample({index})"),
                 value: format!("arg{index} = {index}"),
@@ -6031,7 +6112,6 @@ mod tests {
 
         for index in 0..28 {
             finding.activation.observed_values.push(ValueFact {
-                file: None,
                 line: 400 + index,
                 text: format!("extra({index})"),
                 value: format!("extra{index} = {index}"),
@@ -6071,7 +6151,6 @@ mod tests {
         }
         for index in 0..13 {
             finding.activation.observed_values.push(ValueFact {
-                file: None,
                 line: 200 + index,
                 text: format!("sample({index})"),
                 value: format!("arg{index} = {index}"),
@@ -6134,6 +6213,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         });
 
         let digest = super::sections::render_finding_digest_with_config(
@@ -6179,6 +6260,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             })
             .collect();
         finding.related_tests_matched_total = Some(81);
@@ -7380,6 +7463,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }];
         finding.recommended_next_step = Some("Add a focused Perl assertion.".to_string());
         finding.language = Some(LanguageId::Perl);
@@ -7477,7 +7562,7 @@ mod tests {
                 .contains("(observation_unverified)")
         );
 
-        let rendered = super::evidence_lines::evidence_path_entries(&finding, false)
+        let rendered = super::evidence_lines::evidence_path_entries(&finding, false, None)
             .into_iter()
             .map(|entry| entry.text)
             .collect::<Vec<_>>()
@@ -7529,6 +7614,34 @@ mod tests {
             plain_observation_wording("Strong oracle found"),
             "Strong oracle found"
         );
+    }
+
+    // #9929: the human Weakness list drops the producer marker from the
+    // Python adapter's reason text, the JSON `missing` list keeps it, and an
+    // entry that merely embeds the token as source text is left alone.
+    #[test]
+    fn weakness_list_drops_producer_marker_but_keeps_embedded_token_and_json() -> Result<(), String>
+    {
+        let producer = "A strong Python oracle reaches `kind`, but static evidence does not place a related test input inside the guarding arm `case _`; every observed input leaves the changed line unexecuted (observation_unverified). Add a test input that satisfies the guarding condition.";
+        let embedded = "missing proof: `raise ValueError(\"observation_unverified\")`.";
+        let mut finding = sample_finding();
+        finding.activation.missing_discriminators.clear();
+        finding.missing = vec![producer.to_string(), embedded.to_string()];
+        let lines = super::evidence_lines::weakness_lines(&finding);
+        let expected_producer = "A strong Python oracle reaches `kind`, but static evidence does not place a related test input inside the guarding arm `case _`; every observed input leaves the changed line unexecuted. Add a test input that satisfies the guarding condition.";
+        assert_eq!(
+            lines,
+            vec![expected_producer.to_string(), embedded.to_string()],
+            "{lines:?}"
+        );
+        let full = render_finding(&finding);
+        if full.contains("(observation_unverified)") {
+            return Err(format!("rendered Weakness kept the marker:\n{full}"));
+        }
+        if finding.missing[0] != producer {
+            return Err("the structured missing list must keep the machine marker".to_string());
+        }
+        Ok(())
     }
 
     #[test]
@@ -7586,6 +7699,7 @@ mod tests {
     pub(super) fn bounded_output_with_findings(findings: Vec<Finding>) -> CheckOutput {
         let count = findings.len();
         CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -7651,7 +7765,6 @@ mod tests {
             }],
             activation: ActivationEvidence {
                 observed_values: vec![ValueFact {
-                    file: None,
                     line: 22,
                     text: "sample(false)".to_string(),
                     value: "enabled = false".to_string(),
@@ -7675,6 +7788,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }],
             recommended_next_step: Some("Add assertion for disabled path result.".to_string()),
             language: None,
@@ -7749,6 +7864,7 @@ mod tests {
     #[test]
     fn render_emits_preview_disclosure_when_typescript_files_in_scope() {
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -7795,6 +7911,7 @@ mod tests {
     #[test]
     fn render_emits_preview_disclosure_when_python_files_in_scope() {
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -7851,6 +7968,7 @@ mod tests {
     #[test]
     fn render_omits_preview_disclosure_for_pure_rust_scope() {
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -7888,6 +8006,7 @@ mod tests {
     fn render_preview_disclosure_count_matches_advisory_file_count() {
         // The file_count in the advisory must appear verbatim in the disclosure line.
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -7929,6 +8048,7 @@ mod tests {
         // is NOT enabled. The empty result must be broken by a disclosure that
         // says the files were not analyzed.
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -8023,6 +8143,7 @@ mod tests {
         // hardcoded string. This covers the Python path; Perl is covered by
         // render_emits_singular_perl_disclosure_when_adapter_disabled.
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -8099,6 +8220,7 @@ mod tests {
         )
         .map_err(|err| format!("write Cargo.toml: {err}"))?;
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -8179,6 +8301,7 @@ mod tests {
         // The cardinal case: bare `ripr check` produces an empty result.
         // `no_scope_provided: true` must emit the guidance note.
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -8234,6 +8357,7 @@ mod tests {
         // `no_scope_provided: false` must NOT emit the guidance — the result
         // is honest: that diff really had no probes.
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -8274,6 +8398,7 @@ mod tests {
         // the disclosure uses the approved phrasing ("does NOT mean your changed
         // behavior is covered") rather than any runtime claim.
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -8316,6 +8441,7 @@ mod tests {
         // exploration, NOT --mode fast (a speed tier on the diff path, which
         // does NOT provide scope) and not the repo-exposure check format.
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -8355,6 +8481,7 @@ mod tests {
     fn render_emits_all_no_path_disclosure_when_all_findings_are_no_path() {
         // Primary case: findings exist but none are exposed/weak/reachable.
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -8411,6 +8538,7 @@ mod tests {
         python: Option<crate::analysis::UnlinkedPythonTests>,
     ) -> CheckOutput {
         CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -8558,6 +8686,7 @@ mod tests {
             finding
         };
         let output_with = |findings: Vec<Finding>| CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -8624,6 +8753,7 @@ mod tests {
     fn render_emits_all_no_path_disclosure_for_infection_unknown_findings() {
         // Also fires for infection_unknown / propagation_unknown / static_unknown classes.
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -8674,11 +8804,14 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         };
         finding.related_tests.push(related_test.clone());
         let mut duplicate_finding = unknown_finding();
         duplicate_finding.related_tests.push(related_test);
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -8730,6 +8863,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         };
         let packed = |lines: std::ops::Range<usize>, total: usize| {
             let mut finding = unknown_finding();
@@ -8738,6 +8873,7 @@ mod tests {
             finding
         };
         let output = |findings: Vec<Finding>| CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             unlinked_python_tests: None,
             untracked_working_tree_source_paths: Vec::new(),
@@ -8831,6 +8967,7 @@ mod tests {
         let mut finding = unknown_finding();
         finding.ripr.reach.state = StageState::Yes;
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -8877,6 +9014,7 @@ mod tests {
             &format!("{CALLEE_ONLY_REACH_PREFIX}: observes_callee_outcome"),
         );
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -8916,6 +9054,7 @@ mod tests {
         // If any finding is exposed, the per-finding output carries the signal.
         // Do NOT emit the all-no-path note.
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -8954,6 +9093,7 @@ mod tests {
     #[test]
     fn render_omits_all_no_path_disclosure_when_weakly_exposed_finding_exists() {
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -8993,6 +9133,7 @@ mod tests {
         // Zero findings is a different case (handled by no-probes message).
         // The all-no-path disclosure must NOT fire here.
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -9026,6 +9167,7 @@ mod tests {
     fn render_all_no_path_disclosure_uses_finding_count_not_probe_count() {
         // The count shown must be the no-path/unknown total (= findings), not probes.
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -9065,6 +9207,7 @@ mod tests {
     fn render_all_no_path_disclosure_uses_conservative_static_language() {
         // Verify the disclosure does not use forbidden mutation-testing vocabulary.
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -9114,6 +9257,7 @@ mod tests {
             enabled,
         };
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -9185,6 +9329,7 @@ mod tests {
         };
         let render_one = |advisory: PreviewLanguageAdvisory| {
             render(&CheckOutput {
+                value_origins: Default::default(),
                 harness_projections: Vec::new(),
                 schema_version: "0.1".to_string(),
                 tool: "ripr".to_string(),
@@ -9269,10 +9414,10 @@ mod tests {
         let [direct, advisory] = finding.related_tests.as_slice() else {
             return Err(format!("expected two rows: {:?}", finding.related_tests));
         };
-        let why = related_test_miss_reason(direct, &finding.activation.missing_discriminators)
+        let why = related_test_miss_reason(direct, &finding.probe.family)
             .ok_or("the direct row should have a reason")?;
         assert_eq!(
-            related_test_miss_reason(advisory, &finding.activation.missing_discriminators),
+            related_test_miss_reason(advisory, &finding.probe.family),
             None
         );
         let config = crate::config::RiprConfig::default();

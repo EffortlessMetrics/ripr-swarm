@@ -787,7 +787,7 @@ fn scope_disclosure_schema() -> Value {
     })
 }
 
-fn status_success_schema() -> Value {
+pub(super) fn status_success_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
@@ -973,6 +973,31 @@ fn status_success_schema() -> Value {
                         "additionalProperties": false
                     },
                     "analysis_outcome": { "type": ["object", "null"] },
+                    "language_completeness": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "language": { "type": "string" },
+                                "status": {
+                                    "type": "string",
+                                    "enum": [
+                                        "complete",
+                                        "complete_zero",
+                                        "partial",
+                                        "unavailable",
+                                        "invalid",
+                                        "failed",
+                                        "unsupported",
+                                        "not_selected",
+                                        "no_current_scope"
+                                    ]
+                                }
+                            },
+                            "required": ["language", "status"],
+                            "additionalProperties": false
+                        }
+                    },
                     "profile": {
                         "type": "object",
                         "properties": {
