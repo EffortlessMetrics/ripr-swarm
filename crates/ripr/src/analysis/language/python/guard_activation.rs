@@ -28,7 +28,7 @@ use super::boundary::{
 use super::discriminators::python_string_literal_value;
 use super::module_constants::PythonModuleConstant;
 use super::related_tests::PythonRelatedCandidate;
-use crate::domain::{ValueContext, ValueFact};
+use crate::{domain::ValueContext, value_origins::LocatedValueFact as ValueFact};
 
 /// Why a guarded changed line never executes under any observed input.
 pub(super) struct GuardedArmGap {
@@ -132,7 +132,7 @@ pub(super) fn python_guarded_arm_gap(
                 .iter()
                 .filter(|(_, binding)| !binding.from_default)
                 .map(|(parameter, binding)| ValueFact {
-                    file: None,
+                    file: Some(row.file.clone()),
                     line: row.line,
                     text: row.text.clone(),
                     value: format!("{parameter} = {}", binding.value),
@@ -140,13 +140,7 @@ pub(super) fn python_guarded_arm_gap(
                 })
         })
         .collect();
-    observed_values.sort_by(|left, right| {
-        left.line
-            .cmp(&right.line)
-            .then(left.value.cmp(&right.value))
-            .then(left.text.cmp(&right.text))
-    });
-    observed_values.dedup();
+    crate::analysis::classify::sort_value_facts(&mut observed_values);
 
     let mut parts = Vec::new();
     if !early_exits.is_empty() {
@@ -1283,6 +1277,7 @@ mod tests {
     fn test_row(bindings: &[(&str, &str)]) -> CallRow {
         use super::super::boundary::Binding;
         CallRow {
+            file: std::path::PathBuf::from("tests/test_subject.py"),
             line: 1,
             text: "quote(..)".to_string(),
             elements: std::collections::BTreeMap::new(),

@@ -23,3 +23,16 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — asserting_same_file_test_positive_control (3)
+
+Reason:
+RIPR-SPEC-0108: fixture owner gains a caller (peek) so reach stays weak after #10160; marker class unchanged, line numbers shift
+
+Command:
+`cargo xtask goldens bless asserting_same_file_test_positive_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -28,7 +28,7 @@ Start here:
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
     - reach yes: Related tests appear to reach try_parse: rejects_at_sign
     - infection yes: Reachable tests can plausibly activate this changed behavior
-    - 9 more detail line(s) in --format human-full
+    - 10 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/proximity_name_oracle_not_credited/input --diff <cwd>/fixtures/proximity_name_oracle_not_credited/diff.patch --mode fast probe:src_lib.rs:error_path:e01f0ca9
