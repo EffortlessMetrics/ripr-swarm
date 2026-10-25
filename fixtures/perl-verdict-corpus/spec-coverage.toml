@@ -391,6 +391,27 @@ scope = "out"
 reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
 
 [[spec]]
+id = "RIPR-SPEC-0048"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a Perl case cannot label them"
+
+[[spec]]
+id = "RIPR-SPEC-0093"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a Perl case cannot label them"
+
+[[spec]]
+id = "RIPR-SPEC-0094"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a Perl case cannot label them"
+
+[[spec]]
+id = "RIPR-SPEC-0096"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a Perl case cannot label them"
+
+
+[[spec]]
 id = "RIPR-SPEC-0231"
 scope = "out"
 reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
@@ -644,6 +665,11 @@ reason = "release-process tooling (xtask release-ledger); its examples validate 
 id = "RIPR-SPEC-0351"
 scope = "out"
 reason = "Rust-only out-parameter oracle credit; not a perl verdict example"
+
+[[spec]]
+id = "RIPR-SPEC-0353"
+scope = "out"
+reason = "Rust-only bool truth-table infection; not a perl verdict example"
 
 [[spec]]
 id = "RIPR-SPEC-0356"

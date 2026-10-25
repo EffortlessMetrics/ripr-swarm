@@ -1,0 +1,10 @@
+diff --git a/shop/pricing.py b/shop/pricing.py
+--- a/shop/pricing.py
++++ b/shop/pricing.py
+@@ -1,5 +1,5 @@
+ def total(cents, tax):
+-    return tax + cents
++    return tax - cents
+ 
+ 
+ def subtotal(cents, tax):
