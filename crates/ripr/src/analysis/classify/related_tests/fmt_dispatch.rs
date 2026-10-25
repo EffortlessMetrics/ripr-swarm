@@ -1174,15 +1174,15 @@ mod tests {
     /// Related tests of a helper `sanitize_label` whose one caller is the
     /// `fmt` of `impls[0]`, reached through a one-hop helper chain (#8999).
     fn helper_reasons(impls: &[&str], bodies: &[&str]) -> Vec<(String, RelationReason)> {
-        helper_reasons_via(impls, bodies, false)
+        helper_reasons_via(impls, bodies, &[(true, false)])
     }
 
-    /// Like `helper_reasons`; `through_macro` marks the fmt hop as a local
-    /// `macro_rules!` identifier-argument hop (reach only, #6614).
+    /// Like `helper_reasons`, with the chain given from the helper upward as
+    /// `(is_fmt_hop, through_macro)`. A non-fmt hop is a free `wrapper`.
     fn helper_reasons_via(
         impls: &[&str],
         bodies: &[&str],
-        through_macro: bool,
+        hops: &[(bool, bool)],
     ) -> Vec<(String, RelationReason)> {
         use crate::analysis::classify::helper_transfer::{HelperChain, HelperHop};
         let mut files = std::collections::BTreeMap::new();
@@ -1203,13 +1203,23 @@ mod tests {
             .map(|header| fmt_function("src/error.rs", header))
             .collect();
         let chain = HelperChain {
-            hops: vec![HelperHop {
-                caller: fmts[0].clone(),
-                call_text: "sanitize_label(l)".to_string(),
-                arguments: vec!["l".to_string()],
-                receiver: None,
-                through_macro,
-            }],
+            hops: hops
+                .iter()
+                .map(|&(is_fmt, through_macro)| {
+                    let mut caller = fmts[0].clone();
+                    if !is_fmt {
+                        caller.id = SymbolId("src/error.rs::wrapper".to_string());
+                        caller.name = "wrapper".to_string();
+                    }
+                    HelperHop {
+                        caller,
+                        call_text: "sanitize_label(l)".to_string(),
+                        arguments: vec!["l".to_string()],
+                        receiver: None,
+                        through_macro,
+                    }
+                })
+                .collect(),
             stop_above: None,
         };
         let mut functions = vec![helper.clone()];
@@ -1271,14 +1281,39 @@ mod tests {
     #[test]
     fn a_macro_argument_hop_carries_no_formatting_reach() {
         let body = "let merge: Merge = Merge::new(vec![]);\nassert_eq!(merge.to_string(), \"a\");";
-        let direct = helper_reasons_via(&["fmt::Display for Merge"], &[body], false);
+        let direct = helper_reasons_via(&["fmt::Display for Merge"], &[body], &[(true, false)]);
         assert!(
             direct
                 .iter()
                 .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
             "premise: the same test reaches through a call hop: {direct:?}"
         );
-        let through_macro = helper_reasons_via(&["fmt::Display for Merge"], &[body], true);
+        let through_macro =
+            helper_reasons_via(&["fmt::Display for Merge"], &[body], &[(true, true)]);
+        // The macro hop sits below the fmt hop: the helper is only named as a
+        // macro token argument of `wrapper`, which `fmt` calls.
+        let below = helper_reasons_via(
+            &["fmt::Display for Merge"],
+            &[body],
+            &[(false, true), (true, false)],
+        );
+        assert!(
+            !below
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
+            "{below:?}"
+        );
+        let above = helper_reasons_via(
+            &["fmt::Display for Merge"],
+            &[body],
+            &[(false, false), (true, false)],
+        );
+        assert!(
+            above
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
+            "premise: direct hops below the fmt hop keep the reach: {above:?}"
+        );
         assert!(
             !through_macro
                 .iter()

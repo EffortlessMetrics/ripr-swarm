@@ -140,6 +140,15 @@ foreign type that shares the name). A factory receiver without a type
 annotation (`let merge = Merge::new(..)`), the other trait's placeholder, a
 different type and a type declared twice stay unrelated.
 
+The route applies the direct route's entity-identity refusals to the `fmt`
+caller's type: a `use other::Type as Merge` rename, a same-named type in the
+test's module scope or an out-of-line parent module, and a shadowing trait all
+refuse. Every hop from the helper up through the `fmt` caller must be a direct
+call; a macro-argument hop anywhere on that path carries no formatting reach.
+It is evaluated independently of a name-only call: an unrelated same-named
+method call (`other.sanitize_label()`) in the test neither blocks nor
+downgrades it.
+
 Named limit: the route does not look at how `fmt` uses the helper. A helper
 whose result is dropped (`let _ = sanitize_label(l);`) or called only in a
 conditional branch or loop body still reads as reached, because the existing

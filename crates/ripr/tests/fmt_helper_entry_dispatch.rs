@@ -94,6 +94,13 @@ index 1111111..2222222 100644
         Ok(Self { root, body_line })
     }
 
+    /// Writes an extra source file next to `src/lib.rs`.
+    fn with_file(self, name: &str, content: &str) -> Result<Self, String> {
+        std::fs::write(self.root.join("src").join(name), content)
+            .map_err(|error| format!("write {name} failed: {error}"))?;
+        Ok(self)
+    }
+
     /// Writes an integration test file under `tests/`.
     fn with_test_file(self, name: &str, content: &str) -> Result<Self, String> {
         std::fs::create_dir_all(self.root.join("tests"))
@@ -392,6 +399,88 @@ fn a_path_qualified_annotation_from_another_crate_stays_unrelated() -> Result<()
     assert_eq!(
         call_related(&findings),
         Vec::<String>::new(),
+        "{findings:?}"
+    );
+    assert_no_exposed(&findings);
+    Ok(())
+}
+
+#[test]
+fn a_renamed_foreign_import_named_like_the_type_stays_unrelated() -> Result<(), String> {
+    let repo = TempRepo::create(
+        "",
+        "    #[test]
+    fn renamed_foreign_type() {
+        use foreign::Other as Merge;
+        let merge: Merge = foreign::Other::new();
+        assert_eq!(
+            merge.to_string(),
+            \"\"
+        );
+    }
+",
+    )?;
+    let findings = repo.findings()?;
+    assert_eq!(
+        call_related(&findings),
+        Vec::<String>::new(),
+        "{findings:?}"
+    );
+    assert_no_exposed(&findings);
+    Ok(())
+}
+
+#[test]
+fn a_type_shadow_in_an_out_of_line_parent_module_stays_unrelated() -> Result<(), String> {
+    let repo = TempRepo::create("\nmod rendering;\n", "")?.with_file(
+        "rendering.rs",
+        "pub struct Merge;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shadowed_merge() {
+        let merge: Merge = Merge;
+        assert_eq!(
+            merge.to_string(),
+            \"\"
+        );
+    }
+}
+",
+    )?;
+    let findings = repo.findings()?;
+    assert_eq!(
+        call_related(&findings),
+        Vec::<String>::new(),
+        "{findings:?}"
+    );
+    assert_no_exposed(&findings);
+    Ok(())
+}
+
+#[test]
+fn an_unrelated_same_named_method_call_does_not_hide_the_formatting_reach() -> Result<(), String> {
+    let repo = TempRepo::create(
+        "",
+        "    #[test]
+    fn calls_a_lookalike_and_formats() {
+        let other = external::thing();
+        other.sanitize_label();
+        let merge: Merge = Merge::new(vec![]);
+        assert_eq!(
+            merge.to_string(),
+            \"\"
+        );
+    }
+",
+    )?;
+    let findings = repo.findings()?;
+    assert_eq!(
+        tests_by(&findings, RelationReason::HelperOwnerCall),
+        ["calls_a_lookalike_and_formats"],
         "{findings:?}"
     );
     assert_no_exposed(&findings);
