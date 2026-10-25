@@ -19,7 +19,8 @@ Start here:
   Static exposure: unknown (severity: note, confidence 0.20)
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: return client.total_with_retry()
-  Analyzer limit: Static limit `decorator_indirection`: owner `fetch_total` is decorated with `retry`; syntax-first preview evidence does not resolve decorator-modified call behavior
+  Analyzer limit: Static limit `decorator_indirection`: owner `fetch_total` is decorated with
+    `retry`; syntax-first preview evidence does not resolve decorator-modified call behavior
   Related test: tests/test_retry_total.py:4 test_fetch_total_uses_retry_path
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
