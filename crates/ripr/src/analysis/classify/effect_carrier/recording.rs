@@ -364,10 +364,10 @@ impl RecordingDouble {
                         .any(|n| ast::Module::cast(n).is_some())
                         || (text(&u) != "usesuper::*;" && text(&u) != "useself::*;")
                 })
-                || node
-                    .children()
-                    .filter_map(ast::Name::cast)
-                    .any(|n| matches!(n.text().trim_start_matches("r#"), "Vec" | "String"))
+                || node.children().filter_map(ast::Name::cast).any(|n| {
+                    !n.text().is_ascii()
+                        || matches!(n.text().trim_start_matches("r#"), "Vec" | "String")
+                })
         }) {
             return None;
         }

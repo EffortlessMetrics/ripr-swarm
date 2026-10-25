@@ -1,0 +1,18 @@
+diff --git a/src/owned_clone.rs b/src/owned_clone.rs
+--- a/src/owned_clone.rs
++++ b/src/owned_clone.rs
+@@ -13 +13 @@
+-    sink.send(format!("n={}", n));
++    sink.send(format!("n={n}"));
+diff --git a/src/raw_binding.rs b/src/raw_binding.rs
+--- a/src/raw_binding.rs
++++ b/src/raw_binding.rs
+@@ -13 +13 @@
+-    sink.send(format!("n={}", n));
++    sink.send(format!("n={n}"));
+diff --git a/src/unicode_binding.rs b/src/unicode_binding.rs
+--- a/src/unicode_binding.rs
++++ b/src/unicode_binding.rs
+@@ -13 +13 @@
+-    sink.send(format!("n={}", n));
++    sink.send(format!("n={n}"));

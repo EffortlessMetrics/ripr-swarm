@@ -47,6 +47,29 @@
       ]
     },
     {
+      "id": "rust_recording_double_observer_refusals",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/recording_double_observer_refusals",
+      "vector": "raw_owned_clone_and_raw_or_nfc_bindings_cannot_supply_recorded_field_observation",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 6
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
       "id": "rust_operand_callee_later_binding",
       "language": "rust",
       "tier": "pure",

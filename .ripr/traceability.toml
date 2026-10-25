@@ -17769,6 +17769,7 @@ fixtures = [
   "fixtures/parser_formatted_input_provenance",
   "fixtures/gap_withheld_feature_gated_test",
   "fixtures/gap_kept_ignored_test",
+  "fixtures/recording_double_observer_refusals",
 ]
 code = [
   "crates/ripr/src/analysis/classify/effect_carrier/recording.rs",
@@ -17784,6 +17785,7 @@ outputs = [
   "fixtures/macro_site_scoped_rest_limit/expected/check.json",
   "fixtures/gap_withheld_feature_gated_test/expected/check.json",
   "fixtures/gap_kept_ignored_test/expected/check.json",
+  "fixtures/recording_double_observer_refusals/expected/check.json",
 ]
 metrics = [
   "unit_test_pass_rate",
