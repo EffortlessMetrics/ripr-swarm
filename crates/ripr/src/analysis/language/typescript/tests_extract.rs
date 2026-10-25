@@ -2118,10 +2118,13 @@ pub(super) fn blank_ranges(source: &str, ranges: &[std::ops::Range<usize>]) -> S
 
 /// Identifiers written as an assignment target anywhere in `text`, each
 /// named once.
-fn assigned_identifier_names(text: &str) -> Vec<String> {
+pub(super) fn assigned_identifier_names(text: &str) -> Vec<String> {
+    // A set answers membership; `Vec::contains` rescans every earlier name per
+    // write, which is quadratic on a minified file with thousands of writes.
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut names: Vec<String> = Vec::new();
     for (name, _) in identifier_writes(text) {
-        if !names.contains(&name) {
+        if seen.insert(name.clone()) {
             names.push(name);
         }
     }
@@ -2130,11 +2133,18 @@ fn assigned_identifier_names(text: &str) -> Vec<String> {
 
 /// Names `text` writes at least twice: a declaration initializer counts as
 /// one write, so a second one is a reassignment, update or loop target.
-fn rewritten_identifier_names(text: &str) -> Vec<String> {
+pub(super) fn rewritten_identifier_names(text: &str) -> Vec<String> {
     let writes = strict_identifier_writes(text);
+    // One counting pass; the earlier per-name rescan of every write was
+    // quadratic in the number of writes. Order stays first-write order.
+    let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for (name, _) in &writes {
+        *counts.entry(name.as_str()).or_insert(0) += 1;
+    }
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
     let mut names: Vec<String> = Vec::new();
     for (name, _) in &writes {
-        if !names.contains(name) && writes.iter().filter(|(other, _)| other == name).count() > 1 {
+        if counts[name.as_str()] > 1 && seen.insert(name.as_str()) {
             names.push(name.clone());
         }
     }
@@ -4210,9 +4220,11 @@ fn extracted_span_starts(
     source: &str,
     extracted: &[TypeScriptTest],
     covered: &[std::ops::Range<usize>],
-) -> Vec<usize> {
+) -> std::collections::HashSet<usize> {
     let mut watermark = 0usize;
-    let mut starts = Vec::new();
+    // A set, not a Vec: the finder asks about every statement-position call, so
+    // a linear `contains` made this disclosure quadratic in the test count.
+    let mut starts = std::collections::HashSet::with_capacity(extracted.len());
     for test in extracted {
         // A covered factory's own registration is never what a test was
         // extracted from, but an expanded copy can read identically to it
@@ -4231,7 +4243,7 @@ fn extracted_span_starts(
             }
         };
         if let Some(start) = found {
-            starts.push(start);
+            starts.insert(start);
             // The next extracted test starts strictly after this one.
             watermark = start + 1;
         }
@@ -4246,7 +4258,7 @@ fn extracted_span_starts(
 /// object-property subtrees are out of scope for this disclosure slice.
 struct UnextractedTestFinder<'a> {
     source: &'a SourceText<'a>,
-    extracted_starts: &'a [usize],
+    extracted_starts: &'a std::collections::HashSet<usize>,
     /// Suite-factory declarations whose registrations the appended
     /// expansions already stand for.
     covered: &'a [std::ops::Range<usize>],

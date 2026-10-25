@@ -1,0 +1,10 @@
+//! RIPR-SPEC-0096 acceptance example 2.
+
+pub fn helper(x: i64) -> i64 {
+    x / 9
+}
+
+pub fn score(amount: i64) -> i64 {
+    let result = helper(amount * 9);
+    result
+}

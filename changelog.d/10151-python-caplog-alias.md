@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Python: a test that reads `caplog.text`, `caplog.messages` or `caplog.records` through a local alias (`msgs = caplog.messages`, then `assert "..." in msgs`) is evaluated like the direct read when the alias is a plain snapshot taken after every owner call at the assertion's own level. An alias that is mutated, rebound, bound twice, read elsewhere, or taken before the call abstains (`static_unknown`, `unsupported_syntax`) instead of reading a weak gap (#10151).

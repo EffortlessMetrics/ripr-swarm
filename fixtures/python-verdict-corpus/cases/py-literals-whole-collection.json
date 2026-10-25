@@ -1,0 +1,45 @@
+{
+  "case_id": "py-literals-whole-collection",
+  "subject_id": "authored-py-pytest-literals",
+  "diff": "cases/py-literals-whole-collection.diff",
+  "anchor": {
+    "file": "lits/cfg.py",
+    "line": 25
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "output_value",
+  "test_shape": "pytest_dict_whole_collection_pinned",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "\"level\": 3,",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_cfg.py::test_whole_config_is_pinned",
+        "equivalence_review": "not equivalent: the level changes"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The test compares the whole dict with a dict display, so any changed value fails it.",
+  "labeling_observation": {
+    "ripr_commit": "bb475e9f",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

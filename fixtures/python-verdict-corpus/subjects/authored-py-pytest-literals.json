@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-py-pytest-literals",
+  "origin": "authored",
+  "version_label": "authored@bb475e9f",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "lits/__init__.py",
+      "sha256": "372a14ed5a8167fc41195ef5b3a7e4b35f445750c04ab801a6db30ade14bb6c6"
+    },
+    {
+      "path": "lits/cfg.py",
+      "sha256": "d5f01ea4296697a423a16bbe41f5963d8244f4ad544944ef2c7d5c37c2604090"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "c6de3cf58d90f031d9334eefecd024513a74b2f3d16115f4b6d8ffd0c2d61520"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/test_cfg.py",
+      "sha256": "594685a67fa32a0331a2ab3d3b57a0a8f60c77296c53f98cabb7e07da9c0081c"
+    }
+  ]
+}
