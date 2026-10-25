@@ -830,8 +830,16 @@ impl PythonAdapter {
     ) -> Result<LanguageDiffResult, String> {
         let discovered =
             collect_workspace_python_files_with_handwritten(&options.root, handwritten);
+        // Changed files are the subject of the diff, so the cap only ever
+        // refuses context around them (#10461).
+        let changed_walk_paths: BTreeSet<String> = changed_files
+            .iter()
+            .map(|changed| normalized_path(&changed.path))
+            .collect();
         let (workspace_files, refused_files) =
-            truncate_workspace_files(discovered, walk_limits.max_workspace_files);
+            truncate_workspace_files(discovered, walk_limits.max_workspace_files, |file| {
+                changed_walk_paths.contains(&normalized_path(file))
+            });
         let workspace_read = read_workspace_sources_capped(
             &options.root,
             &workspace_files,
@@ -978,7 +986,7 @@ impl PythonAdapter {
                         .map_err(|err| format!("refused file count overflows u64: {err}"))?,
                 )?
                 .with_detail(format!(
-                    "python workspace walk stopped at the {}-file cap ({PYTHON_MAX_WORKSPACE_FILES_ENV}); {refused_files} discovered .py file(s) were not analyzed.",
+                    "python workspace walk stopped at the {}-file cap ({PYTHON_MAX_WORKSPACE_FILES_ENV}); {refused_files} discovered .py file(s) were not analyzed; changed files are always analyzed.",
                     walk_limits.max_workspace_files,
                 ))?,
             );
