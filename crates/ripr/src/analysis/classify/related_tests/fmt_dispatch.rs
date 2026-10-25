@@ -865,8 +865,15 @@ fn binding_has_type(scope: Scope<'_>, binding: &str, self_type: &str) -> bool {
     };
     let pattern = &statement[..eq];
     if let Some(colon) = pattern.find(':') {
-        return type_head(&pattern[colon + 1..])
-            .is_some_and(|(segments, _)| segments.last() == Some(&self_type));
+        // A path-qualified annotation (`other_crate::Merge`) may name a type
+        // of another crate or module that merely shares the local type's
+        // name; only an in-crate prefix keeps the annotation the local type.
+        return type_head(&pattern[colon + 1..]).is_some_and(|(segments, _)| {
+            segments.last() == Some(&self_type)
+                && segments[..segments.len() - 1]
+                    .iter()
+                    .all(|segment| matches!(*segment, "crate" | "self" | "super"))
+        });
     }
     let init = statement[eq + 1..].trim();
     initializer_is_one_head_expr(init)
@@ -1167,6 +1174,16 @@ mod tests {
     /// Related tests of a helper `sanitize_label` whose one caller is the
     /// `fmt` of `impls[0]`, reached through a one-hop helper chain (#8999).
     fn helper_reasons(impls: &[&str], bodies: &[&str]) -> Vec<(String, RelationReason)> {
+        helper_reasons_via(impls, bodies, false)
+    }
+
+    /// Like `helper_reasons`; `through_macro` marks the fmt hop as a local
+    /// `macro_rules!` identifier-argument hop (reach only, #6614).
+    fn helper_reasons_via(
+        impls: &[&str],
+        bodies: &[&str],
+        through_macro: bool,
+    ) -> Vec<(String, RelationReason)> {
         use crate::analysis::classify::helper_transfer::{HelperChain, HelperHop};
         let mut files = std::collections::BTreeMap::new();
         let source = "pub struct Merge;\npub struct Other;\n";
@@ -1191,7 +1208,7 @@ mod tests {
                 call_text: "sanitize_label(l)".to_string(),
                 arguments: vec!["l".to_string()],
                 receiver: None,
-                through_macro: false,
+                through_macro,
             }],
             stop_above: None,
         };
@@ -1230,6 +1247,11 @@ mod tests {
                 "let merge = Merge;\nassert_eq!(format!(\"{:?}\", merge), \"a\");",
                 "let merge = Merge::new(vec![]);\nassert_eq!(merge.to_string(), \"a\");",
                 "let merge = Merge;\nassert_eq!(merge.len(), 0);",
+                // A path-qualified annotation names the local type only with
+                // an in-crate prefix.
+                "let merge: crate::Merge = Merge;\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge: other_crate::Merge = Merge;\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge: shared::Merge = Merge;\nassert_eq!(merge.to_string(), \"a\");",
             ],
         );
         let helper_calls: Vec<&str> = reasons
@@ -1237,12 +1259,31 @@ mod tests {
             .filter(|(_, reason)| *reason == RelationReason::HelperOwnerCall)
             .map(|(name, _)| name.as_str())
             .collect();
-        assert_eq!(helper_calls, ["t0", "t1"], "{reasons:?}");
+        assert_eq!(helper_calls, ["t0", "t1", "t6"], "{reasons:?}");
         assert!(
             !reasons
                 .iter()
                 .any(|(_, reason)| *reason == RelationReason::DirectOwnerCall),
             "reaching a helper through fmt is never a direct owner call: {reasons:?}"
+        );
+    }
+
+    #[test]
+    fn a_macro_argument_hop_carries_no_formatting_reach() {
+        let body = "let merge: Merge = Merge::new(vec![]);\nassert_eq!(merge.to_string(), \"a\");";
+        let direct = helper_reasons_via(&["fmt::Display for Merge"], &[body], false);
+        assert!(
+            direct
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
+            "premise: the same test reaches through a call hop: {direct:?}"
+        );
+        let through_macro = helper_reasons_via(&["fmt::Display for Merge"], &[body], true);
+        assert!(
+            !through_macro
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
+            "{through_macro:?}"
         );
     }
 

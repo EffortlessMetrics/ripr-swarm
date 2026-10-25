@@ -7,3 +7,7 @@
   `weakly_exposed`; it never reads `exposed`. The receiver must be a struct
   literal or a `let` annotated with the type; `let merge = Merge::new(..)` stays
   unrelated (#8999).
+  A `let` annotated with a path-qualified type (`other_crate::Merge`) no longer
+  types a formatted value as the local type for `Display`/`Debug` dispatch, for
+  a direct `fmt` owner as well; only a bare name or a `crate`/`self`/`super`
+  prefix does.

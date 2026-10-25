@@ -94,6 +94,15 @@ index 1111111..2222222 100644
         Ok(Self { root, body_line })
     }
 
+    /// Writes an integration test file under `tests/`.
+    fn with_test_file(self, name: &str, content: &str) -> Result<Self, String> {
+        std::fs::create_dir_all(self.root.join("tests"))
+            .map_err(|error| format!("create tests directory failed: {error}"))?;
+        std::fs::write(self.root.join("tests").join(name), content)
+            .map_err(|error| format!("write {name} failed: {error}"))?;
+        Ok(self)
+    }
+
     /// Every finding the changed helper line produced.
     fn findings(&self) -> Result<Vec<Finding>, String> {
         let output = check_workspace(CheckInput {
@@ -328,6 +337,56 @@ mod elsewhere {
 }
 ",
         MULTI_LINE_PIN,
+    )?;
+    let findings = repo.findings()?;
+    assert_eq!(
+        call_related(&findings),
+        Vec::<String>::new(),
+        "{findings:?}"
+    );
+    assert_no_exposed(&findings);
+    Ok(())
+}
+
+#[test]
+fn a_test_in_a_separate_file_reaches_the_helper_through_display_fmt() -> Result<(), String> {
+    let repo = TempRepo::create("", "")?.with_test_file(
+        "rendering.rs",
+        "use merged::Merge;
+
+#[test]
+fn separate_file_pin() {
+    let merge: Merge = Merge::new(vec![\"a\\nb\".to_string()]);
+    assert_eq!(
+        merge.to_string(),
+        \"a b\\n\"
+    );
+}
+",
+    )?;
+    let findings = repo.findings()?;
+    assert_eq!(
+        tests_by(&findings, RelationReason::HelperOwnerCall),
+        ["separate_file_pin"],
+        "{findings:?}"
+    );
+    assert_no_exposed(&findings);
+    Ok(())
+}
+
+#[test]
+fn a_path_qualified_annotation_from_another_crate_stays_unrelated() -> Result<(), String> {
+    let repo = TempRepo::create(
+        "",
+        "    #[test]
+    fn foreign_merge() {
+        let merge: other_crate::Merge = other_crate::Merge::new(vec![]);
+        assert_eq!(
+            merge.to_string(),
+            \"\"
+        );
+    }
+",
     )?;
     let findings = repo.findings()?;
     assert_eq!(

@@ -134,9 +134,19 @@ qualifies.
 This is reach only. The helper's result is not shown to be forwarded into the
 pinned output, so the finding reads `propagation_unknown`
 (`helper_result_not_forwarded`) instead of `weakly_exposed` with "no test is
-seen calling", and never `exposed`. A factory receiver without a type
+seen calling", and never `exposed`. A type annotation must be bare or
+prefixed only by `crate`, `self` or `super` (`other_crate::Merge` may be a
+foreign type that shares the name). A factory receiver without a type
 annotation (`let merge = Merge::new(..)`), the other trait's placeholder, a
 different type and a type declared twice stay unrelated.
+
+Named limit: the route does not look at how `fmt` uses the helper. A helper
+whose result is dropped (`let _ = sanitize_label(l);`) or called only in a
+conditional branch or loop body still reads as reached, because the existing
+helper-transfer chain records one call site and no control-flow condition. This
+is acceptable only because the route credits reach and nothing else: such a
+finding stays `propagation_unknown`, never `exposed`. A hop through a local
+`macro_rules!` identifier argument carries no formatting reach.
 
 ## Required Evidence
 
@@ -150,7 +160,8 @@ different type and a type declared twice stay unrelated.
 - Helper entry (#8999): positive for `to_string()` in a multi-line
   `assert_eq!` on an annotated or struct-literal receiver; negative for an
   untyped factory receiver, another type, the other trait, a doubly declared
-  type, a second caller of the helper, and a non-Display/Debug `fmt` entry.
+  type, a path-qualified foreign annotation, a macro-argument hop, a test in a
+  separate file (positive), a second caller of the helper, and a non-Display/Debug `fmt` entry.
 
 ## Non-Goals
 
