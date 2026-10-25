@@ -120,7 +120,7 @@ pub(super) fn classify_sink_alignment(
     related: &[RelatedTest],
     all_tests: &[PythonTest],
 ) -> SinkAlignment {
-    classify_sink_alignment_with_old(owner, line_text, None, related, all_tests, false)
+    classify_sink_alignment_with_old(owner, line_text, None, related, all_tests, false, None)
 }
 
 /// Whether a strong related-test oracle actually observes the changed behavior's
@@ -250,9 +250,7 @@ pub(super) fn oracle_observes_changed_dict_element(
     // not when that literal only appears beside a sibling-key subscript
     // (`assert build()['timeout'] == 80` after `'port'` changed to `80`).
     for value in changed_values {
-        let literal = value.trim().trim_matches('"').trim_matches('\'');
-        if literal.len() >= 2
-            && oracle.contains(literal)
+        if oracle_contains_value_literal(oracle, value)
             && !oracle_solely_subscripts_unchanged_dict_key(oracle, changed_keys)
         {
             return true;
@@ -283,6 +281,89 @@ fn oracle_solely_subscripts_unchanged_dict_key(oracle: &str, changed_keys: &[Str
         && !changed_keys
             .iter()
             .any(|key| oracle_subscripts_dict_key(oracle, key))
+}
+
+/// Whether the oracle contains the changed element's value as a WHOLE literal
+/// token (RIPR-SPEC-0238 rule 10): a number not adjacent to a digit, letter, `_`
+/// or `.` (so `80` is not found inside `8080`), a string as a complete quoted
+/// literal (so `y` is not found inside `"yes"`). Any other value expression keeps
+/// the substring match.
+pub(super) fn oracle_contains_value_literal(oracle: &str, value: &str) -> bool {
+    let value = value.trim();
+    let literal = value.trim_matches('"').trim_matches('\'');
+    if literal.is_empty() || (literal.len() < 2 && literal.len() == value.len()) {
+        return false;
+    }
+    let quoted = value.len() >= 2
+        && literal.len() + 2 == value.len()
+        && (value.starts_with('"') && value.ends_with('"')
+            || value.starts_with('\'') && value.ends_with('\''));
+    if quoted {
+        return !literal.contains(['"', '\''])
+            && (oracle.contains(&format!("\"{literal}\""))
+                || oracle.contains(&format!("'{literal}'")));
+    }
+    let digits = literal.strip_prefix('-').unwrap_or(literal);
+    let numeric = digits.starts_with(|c: char| c.is_ascii_digit())
+        && digits
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == '.' || c == '_');
+    if !numeric {
+        return oracle.contains(literal);
+    }
+    let adjacent = |c: char| c.is_alphanumeric() || c == '_' || c == '.';
+    oracle.match_indices(literal).any(|(start, found)| {
+        let before = oracle[..start].chars().next_back();
+        let after = oracle[start + found.len()..].chars().next();
+        !before.is_some_and(adjacent) && !after.is_some_and(adjacent)
+    })
+}
+
+/// A multi-line dict or list literal element (`"retries": 3,` between `return {`
+/// and `}`) cannot be localized from its own line. Join the enclosing literal on
+/// the new side and, with the paired old line substituted, on the old side, so the
+/// dict-element and list-element gates judge the same changed element they judge
+/// for a one-line literal. `None` when the line is not one element line of a
+/// bracketed literal bound by `return` or an assignment.
+pub(super) fn enclosing_literal_pair(
+    source: &str,
+    line: usize,
+    line_text: &str,
+    old_line_text: Option<&str>,
+) -> Option<(String, String)> {
+    let old_line_text = old_line_text?;
+    let lines: Vec<&str> = source.lines().collect();
+    let index = line.checked_sub(1)?;
+    let changed = *lines.get(index)?;
+    if changed.trim() != line_text.trim() || changed.contains('#') || old_line_text.contains('#') {
+        return None;
+    }
+    let indent = |text: &str| text.len() - text.trim_start().len();
+    let element_indent = indent(changed);
+    let shallower = |i: &usize| !lines[*i].trim().is_empty() && indent(lines[*i]) < element_indent;
+    let opener_index = (0..index).rev().find(shallower)?;
+    let closer_index = (index + 1..lines.len()).find(shallower)?;
+    let opener = lines[opener_index].trim();
+    let closer = lines[closer_index].trim();
+    let (open, close) = match opener.chars().last()? {
+        '{' => ('{', '}'),
+        '[' => ('[', ']'),
+        _ => return None,
+    };
+    let prefix = opener[..opener.len() - 1].trim();
+    if !closer.starts_with(close)
+        || !(prefix == "return" || (prefix.ends_with('=') && !prefix.contains('(')))
+    {
+        return None;
+    }
+    let (first, last) = (opener_index + 1, closer_index);
+    let join = |replace: &str| {
+        let body: Vec<&str> = (first..last)
+            .map(|i| if i == index { replace } else { lines[i] }.trim())
+            .collect();
+        format!("{open}{}{close}", body.join(" "))
+    };
+    Some((join(line_text.trim()), join(old_line_text.trim())))
 }
 
 /// Parse a list-literal line (a `return [...]`) into its top-level element source
@@ -357,9 +438,7 @@ fn oracle_observes_changed_list_element(
         return true;
     }
     for value in changed_values {
-        let literal = value.trim().trim_matches('"').trim_matches('\'');
-        if literal.len() >= 2
-            && oracle.contains(literal)
+        if oracle_contains_value_literal(oracle, value)
             && !oracle_solely_subscripts_unchanged_list_index(oracle, changed_indices)
         {
             return true;
@@ -573,6 +652,7 @@ pub(super) fn classify_sink_alignment_with_old(
     related: &[RelatedTest],
     all_tests: &[PythonTest],
     guard_entered: bool,
+    literal_pair: Option<&(String, String)>,
 ) -> SinkAlignment {
     let prep = AlignmentPrep::new(owner, all_tests);
     classify_sink_alignment_prepared(
@@ -582,6 +662,7 @@ pub(super) fn classify_sink_alignment_with_old(
         related,
         &prep,
         guard_entered,
+        literal_pair,
     )
 }
 
@@ -592,6 +673,7 @@ pub(super) fn classify_sink_alignment_prepared(
     related: &[RelatedTest],
     prep: &AlignmentPrep<'_>,
     guard_entered: bool,
+    literal_pair: Option<&(String, String)>,
 ) -> SinkAlignment {
     // Whether the changed line is genuinely a control-flow construct gates the
     // empty-token-delta fallback below: only a control-flow change may credit
@@ -904,9 +986,13 @@ pub(super) fn classify_sink_alignment_prepared(
     // the changed key, or a whole-collection comparison. Non-dict changes (and)
     // changes whose changed keys cannot be localized from the paired old line) are
     // not gated and keep prior behavior (pass-through `true`).
-    let dict_change = dict_changed_keys_and_values(old_line_text, line_text);
+    let (gate_old, gate_new) = match literal_pair {
+        Some((new, old)) => (Some(old.as_str()), new.as_str()),
+        None => (old_line_text, line_text),
+    };
+    let dict_change = dict_changed_keys_and_values(gate_old, gate_new);
     let list_change = if dict_change.is_none() {
-        list_changed_indices_and_values(old_line_text, line_text)
+        list_changed_indices_and_values(gate_old, gate_new)
     } else {
         None
     };

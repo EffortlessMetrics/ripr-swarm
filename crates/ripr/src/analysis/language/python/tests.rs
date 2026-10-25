@@ -794,6 +794,7 @@ use super::bounded_read::{
     DEFAULT_PYTHON_MAX_WORKSPACE_READ_BYTES,
 };
 use super::owners_tests::{extract_owners, extract_tests};
+use super::sink_alignment::{enclosing_literal_pair, oracle_contains_value_literal};
 use super::*;
 use std::path::{Path, PathBuf};
 
@@ -8990,4 +8991,158 @@ fn comprehension_over_other_output_keeps_its_assertion_shape() {
             .all(|shape| *shape != PythonOracleShape::OutputAssertion),
         "{shapes:?}"
     );
+}
+
+const MULTILINE_CFG: &str =
+    "def labels():\n    return {\n        \"name\": \"x\",\n        \"label\": \"y\",\n    }\n";
+
+fn multiline_literal_class(
+    cfg_new: &str,
+    changed_line: usize,
+    new_text: &str,
+    old_text: &str,
+    test_body: &str,
+    owner: &str,
+) -> Result<ExposureClass, String> {
+    let owners = extract_owners(Path::new("src/cfg.py"), cfg_new);
+    let tests = extract_tests(
+        Path::new("tests/test_cfg.py"),
+        &format!("from src.cfg import {owner}\n\n\ndef test_it():\n    {test_body}\n"),
+    );
+    classify_change_with_source(
+        Path::new("src/cfg.py"),
+        changed_line,
+        new_text,
+        Some(old_text),
+        &owners,
+        &tests,
+        Some(cfg_new),
+    )
+    .map(|finding| finding.class)
+    .ok_or_else(|| "changed literal element should classify".to_string())
+}
+
+#[test]
+fn multiline_dict_element_joins_the_enclosing_literal() -> Result<(), String> {
+    let (new, old) = enclosing_literal_pair(
+        MULTILINE_CFG,
+        4,
+        "        \"label\": \"y\",",
+        Some("        \"tag\": \"y\","),
+    )
+    .ok_or("element line of a returned dict literal should join")?;
+    assert_eq!(new, "{\"name\": \"x\", \"label\": \"y\",}");
+    assert_eq!(old, "{\"name\": \"x\", \"tag\": \"y\",}");
+    Ok(())
+}
+
+#[test]
+fn multiline_literal_context_requires_a_bound_bracket_literal() {
+    // A call argument list, a mismatched closer, a comment inside the literal, a
+    // missing old line, and a line that is not the changed line all stay unjoined.
+    let call = "def f():\n    return build(\n        1,\n        2,\n    )\n";
+    assert!(enclosing_literal_pair(call, 3, "        1,", Some("        0,")).is_none());
+    let arg = "def f():\n    use({\n        \"a\": 1,\n    })\n";
+    assert!(
+        enclosing_literal_pair(arg, 3, "        \"a\": 1,", Some("        \"a\": 0,")).is_none()
+    );
+    let commented = "def f():\n    return {\n        \"a\": 1,  # one\n    }\n";
+    assert!(
+        enclosing_literal_pair(
+            commented,
+            3,
+            "        \"a\": 1,  # one",
+            Some("        \"a\": 0,")
+        )
+        .is_none()
+    );
+    assert!(enclosing_literal_pair(MULTILINE_CFG, 4, "        \"label\": \"y\",", None).is_none());
+    assert!(
+        enclosing_literal_pair(
+            MULTILINE_CFG,
+            3,
+            "        \"label\": \"y\",",
+            Some("        \"tag\": \"y\",")
+        )
+        .is_none()
+    );
+}
+
+#[test]
+fn multiline_dict_key_change_is_not_exposed_by_a_sibling_subscript() -> Result<(), String> {
+    let class = multiline_literal_class(
+        MULTILINE_CFG,
+        4,
+        "        \"label\": \"y\",",
+        "        \"tag\": \"y\",",
+        "assert labels()[\"name\"] == \"x\"",
+        "labels",
+    )?;
+    assert_ne!(class, ExposureClass::Exposed, "sibling-only oracle");
+    // Positive control: subscripting the changed key still discriminates.
+    let class = multiline_literal_class(
+        MULTILINE_CFG,
+        4,
+        "        \"label\": \"y\",",
+        "        \"tag\": \"y\",",
+        "assert labels()[\"label\"] == \"y\"",
+        "labels",
+    )?;
+    assert_eq!(class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn multiline_list_index_change_follows_the_changed_index() -> Result<(), String> {
+    let source = "def staff():\n    return [\n        \"founder\",\n        \"editor\",\n    ]\n";
+    let class = multiline_literal_class(
+        source,
+        3,
+        "        \"founder\",",
+        "        \"owner\",",
+        "assert staff()[1] == \"editor\"",
+        "staff",
+    )?;
+    assert_ne!(class, ExposureClass::Exposed, "unchanged index only");
+    let class = multiline_literal_class(
+        source,
+        3,
+        "        \"founder\",",
+        "        \"owner\",",
+        "assert staff()[0] == \"founder\"",
+        "staff",
+    )?;
+    assert_eq!(class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn changed_value_is_observed_only_as_a_whole_literal_token() {
+    // A number inside a longer number, a letter run or a decimal is not the value.
+    assert!(!oracle_contains_value_literal(
+        "assert \"8080\" in repr(x)",
+        "80"
+    ));
+    assert!(!oracle_contains_value_literal("assert x == 1.80", "80"));
+    assert!(!oracle_contains_value_literal("assert x == v80", "80"));
+    assert!(oracle_contains_value_literal("assert x == 80", "80"));
+    assert!(oracle_contains_value_literal(
+        "assert x[\"http\"] == 80",
+        "80"
+    ));
+    assert!(oracle_contains_value_literal("assert x == -5", "-5"));
+    // A string value must appear as a complete quoted literal.
+    assert!(!oracle_contains_value_literal(
+        "assert \"yes\" in out",
+        "\"es\""
+    ));
+    assert!(oracle_contains_value_literal(
+        "assert 'es' in out",
+        "\"es\""
+    ));
+    // A non-literal value expression keeps the substring match.
+    assert!(oracle_contains_value_literal(
+        "assert x == compute(a)",
+        "compute(a)"
+    ));
 }

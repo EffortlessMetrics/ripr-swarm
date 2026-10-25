@@ -190,6 +190,7 @@ fn strong_row_miss(
         std::slice::from_ref(row),
         prep,
         change.guard_entered,
+        None,
     );
     (!alignment.observes()).then_some(RelatedTestMiss::ObservationUnconfirmed)
 }

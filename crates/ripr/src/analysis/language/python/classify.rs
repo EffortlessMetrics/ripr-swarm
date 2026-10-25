@@ -23,7 +23,9 @@ use super::related_tests::{
     related_tests_for_candidates, verify_command_for_test,
 };
 use super::row_miss::{RowMissChange, annotate_row_misses};
-use super::sink_alignment::{SinkAlignment, classify_sink_alignment_with_old};
+use super::sink_alignment::{
+    SinkAlignment, classify_sink_alignment_with_old, enclosing_literal_pair,
+};
 use super::static_limits::{
     heuristic_only_relation_limit, implicit_dunder_dispatch_limit, static_limit_for_focused_change,
     unpinned_equality_dunder_limit,
@@ -318,6 +320,8 @@ pub(super) fn classify_change_for_owner(
             &focus,
         )
     });
+    let literal_pair = owner_source
+        .and_then(|source| enclosing_literal_pair(source, line, line_text, old_line_text));
     let alignment = classify_sink_alignment_with_old(
         owner,
         line_text,
@@ -325,6 +329,7 @@ pub(super) fn classify_change_for_owner(
         &related,
         all_tests,
         guard_entered,
+        literal_pair.as_ref(),
     );
     let log_evidence = python_log_evidence(
         old_line_text,
