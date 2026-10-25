@@ -2949,3 +2949,65 @@ fn loop_header_opening_a_multiline_string_fails_open() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn multiline_collection_identity_rejects_sibling_and_unrelated_oracles() -> Result<(), String> {
+    for (before, after, tail, oracle, expected) in [
+        ("        'tag': 'y',", "        'label': 'y',", "        'name': 'x',\n    }", "labels()['name'] == 'x'", ExposureClass::WeaklyExposed),
+        ("        'high': 11,", "        'high': 10,", "        'low': 10,\n    }", "labels()['low'] == 10", ExposureClass::WeaklyExposed),
+        ("        'high': 11,", "        'high': 80,", "        'low': 10,\n    }", "labels() is not None and 8080 == 8080", ExposureClass::WeaklyExposed),
+        ("        'high': 11,", "        'high': 80,", "        'low': 10,\n    }", "labels()['high'] == 80", ExposureClass::Exposed),
+        ("        'high': 11,", "        'high': 80,", "        'low': 10,\n    }", "labels().get('high') == 80", ExposureClass::Exposed),
+        ("        'high': 11,", "        'high': 80,", "        'low': 10,\n    }", "labels() == {'high': 80, 'low': 10}", ExposureClass::Exposed),
+        ("        'search',", "        'browse',", "        'detail',\n    ]", "labels()[1] == 'detail'", ExposureClass::WeaklyExposed),
+        ("        'search',", "        'browse',", "        'detail',\n    ]", "labels()[0] == 'browse'", ExposureClass::Exposed),
+        ("        'search',", "        'browse',", "        'detail',\n    ]", "labels() == ['browse', 'detail']", ExposureClass::Exposed),
+        ("        'high': 11,", "        'high': 80,", "        'low': 10,\n    }", "labels() is not None and [8080] == [8080]", ExposureClass::WeaklyExposed),
+        ("        'high': 11,", "        'high': 80,", "        'low': [10],\n    }", "labels()['low'] == [10]", ExposureClass::WeaklyExposed),
+    ] {
+        let opener = if tail.ends_with('}') { '{' } else { '[' };
+        let source = format!("def labels():\n    return {opener}\n{after}\n{tail}\n");
+        let tests = format!("from src.subject import labels\ndef test_labels():\n    assert {oracle}\n");
+        let owners = extract_owners(Path::new("src/subject.py"), &source);
+        let tests = extract_tests(Path::new("tests/test_subject.py"), &tests);
+        assert_eq!(tests.len(), 1);
+        let finding = classify_change_with_source(Path::new("src/subject.py"), 3, after, Some(before), &owners, &tests, Some(&source))
+            .ok_or_else(|| format!("missing finding: {oracle}"))?;
+        assert_eq!(finding.class, expected, "{oracle}");
+    }
+    Ok(())
+}
+
+#[test]
+fn multiline_collection_second_index_uses_its_actual_position() -> Result<(), String> {
+    let before = "        'search',";
+    let after = "        'browse',";
+    let source = format!("def labels():\n    return [\n        'detail',\n{after}\n    ]\n");
+    for (oracle, expected) in [("labels()[0] == 'detail'", ExposureClass::WeaklyExposed), ("labels()[1] == 'browse'", ExposureClass::Exposed)] {
+        let tests = format!("from src.subject import labels\ndef test_labels():\n    assert {oracle}\n");
+        let owners = extract_owners(Path::new("src/subject.py"), &source);
+        let tests = extract_tests(Path::new("tests/test_subject.py"), &tests);
+        let finding = classify_change_with_source(Path::new("src/subject.py"), 4, after, Some(before), &owners, &tests, Some(&source))
+            .ok_or_else(|| format!("missing finding: {oracle}"))?;
+        assert_eq!(finding.class, expected, "{oracle}");
+    }
+    Ok(())
+}
+
+#[test]
+fn multiline_collection_preserves_single_line_token_identity() -> Result<(), String> {
+    for (before, after, oracle, expected) in [
+        ("return {'high': 11, 'low': 10}", "return {'high': 80, 'low': 10}", "labels() is not None and 8080 == 8080", ExposureClass::WeaklyExposed),
+        ("return {'high': 'old', 'low': 'x'}", "return {'high': 'port', 'low': 'x'}", "labels() is not None and 'airport' == 'airport'", ExposureClass::WeaklyExposed),
+        ("return {'high': 11, 'low': 10}", "return {'high': 80, 'low': 10}", "labels()['high'] == 80", ExposureClass::Exposed),
+        ("return ['search', 'detail']", "return ['browse', 'detail']", "labels()[0] == 'browse'", ExposureClass::Exposed),
+    ] {
+        let before = format!("    {before}");
+        let after = format!("    {after}");
+        let source = format!("def labels():\n{after}\n");
+        let tests = format!("from src.subject import labels\ndef test_labels():\n    assert {oracle}\n");
+        let finding = classify_case(&source, &tests, 2, &before, &after)?;
+        assert_eq!(finding.class, expected, "{oracle}");
+    }
+    Ok(())
+}
