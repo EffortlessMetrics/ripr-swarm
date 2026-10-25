@@ -1360,6 +1360,27 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         ("assert_eq!(Option::Some(x == 3).unwrap(), true);", &exact),
         ("assert_eq!(Option::Some(x == 3), Some(flag));", &weak),
         ("assert_eq!(Some(x == 3), Option::Some(flag));", &weak),
+        // #8654: a trailing comma, a fully qualified path or a closure
+        // argument changes the spelling, not what is compared.
+        ("assert_eq!(Some(x == 3,), Some(true));", &exact),
+        ("assert_eq!(Some(x == 3), Some(true,));", &exact),
+        ("assert_eq!(Some(x == 3,), Some(flag));", &weak),
+        (
+            "assert_eq!(std::option::Option::Some(x == 3), Some(true));",
+            &exact,
+        ),
+        (
+            "assert_eq!(::core::option::Option::Some(x == 3), Some(true));",
+            &exact,
+        ),
+        (
+            "assert_eq!(Some(x == 3), core::option::Option::Some(true));",
+            &exact,
+        ),
+        ("assert_eq!(Foo::new(|v| v == 1), expected);", &exact),
+        ("assert_eq!(Wrapper(move |v| v == 1), expected);", &exact),
+        ("assert_eq!(Wrapper(|v| v == 1, y == 2), expected);", &weak),
+        ("assert_eq!((x == 1, /* note */).0, true);", &exact),
         // A trailing comma ends a list.
         ("assert_eq!(vec![x == 3,], vec![true,]);", &exact),
         ("assert_eq!(vec![x == 3], vec![true,]);", &exact),

@@ -151,12 +151,12 @@ unsupported state as unknown and fabricates no reason conforms.
 
 | miss | Rust | Python | TypeScript | Perl v1 |
 | --- | --- | --- | --- | --- |
-| `no_call_path` | yes | pending (blocked on #6657-class blind spots) | no (absence unprovable from one file) | no |
-| `no_assertion` | yes | no (#6657) | no (admission blind spots) | no |
+| `no_call_path` | yes | yes (closed-body reach fact on a function owner, name-only rows; residual limits below) | no (absence unprovable from one file) | no |
+| `no_assertion` | yes | yes (extraction-complete admission, fail-closed; residual limits below) | no (admission blind spots) | no |
 | `assertion_not_observing` | yes | no (credit-only alignment; withheld pending #5491) | no (withheld pending #5495) | no (#3223) |
 | `assertion_not_credited` | yes, unsplit until #5446 | no (#5446) | no (#5446) | no |
 | `weak_assertion` | yes | yes (weak and smoke only) | yes (weak and smoke only) | no |
-| `missing_input` | yes | yes (predicate boundary, row-owned) | no (shared prose over-claims) | no (#4061, perl-lsp-swarm#17237, #5562) |
+| `missing_input` | yes | yes (predicate boundary, row-owned) | no (no producer; the renderer already words a TypeScript or JavaScript row as "seen", #10040) | no (#4061, perl-lsp-swarm#17237, #5562) |
 | `missing_exact_assertion` | yes | no (no row-owned fact) | no (no row-owned fact) | no |
 | `observation_unconfirmed` | yes | yes (strong assertion not credited by its own row) | yes | yes |
 
@@ -171,7 +171,7 @@ mocked or spied owner call with an admitted assertion (an
 unanchored or unresolved-alias call keeps no miss: its identity is unproved), a
 strong assertion of another behavior family, and a strong row whose own
 boundary input misses the pinned boundary or whose changed-sink observation is
-unproven. Four reasons are withheld on purpose: `no_call_path` (a single-file
+unproven. Four reasons are withheld on purpose. The renderer already words a TypeScript or JavaScript `missing_input` row as "no input this test passes was seen ...", so a future producer cannot over-claim by prose (#10040). The four are: `no_call_path` (a single-file
 reading cannot prove a call path absent: a heuristic-only row may reach the
 owner through an alias, callback or table, and a shadow or unrelated-import
 rejection refutes only the apparent call, not hooks, helpers or re-exports),
@@ -223,6 +223,57 @@ static limit, one row at a time, in `python/row_miss.rs`:
   ones the owner body never rebinds; a relational change must keep the same
   operands; literals of mixed kind (`True` vs `1`) or with escapes are unknown,
   never unequal.
+- `no_assertion`: a call-bearing row (a relation that credits an oracle, never a
+  name- or location-only row) whose test is
+  `extraction_complete_no_assertion` after the workspace passes. Parametrize is
+  activation evidence, never an oracle, so a parametrized assertion-free test
+  carries it with no oracle. The row keeps `miss: None` instead when the test
+  has any skip / xfail / expected-failure control, when the finding is not a
+  `weakly_exposed` gap or carries a static limit (a `request` or other
+  unresolved fixture parameter is one), or when admission is anything but
+  established absence. Admission is withheld for:
+  - calls RIPR cannot resolve: helper, `self.` and same-module callees, unittest
+    and mock assertions, `pytest.raises`/`warns`/`fail`, `raise`, nested defs,
+    lambdas, comprehensions, dynamic callees, `request.getfixturevalue`,
+    `applymarker`, `node.add_marker` and `addfinalizer`, and any member of
+    `recwarn`, `pytester` or `testdir` (`recwarn.pop` raises `AssertionError`);
+    `capsys.readouterr` and `caplog.clear` stay inert;
+  - context managers and decorators imported from anywhere other than a short
+    standard-library or pytest list (`responses.RequestsMock()`, `respx.mock`,
+    `freeze_time`, a project guard), and a `pytest.param` carrying `marks=`;
+  - names imported from assertion libraries (`nose`, `pytest_check`,
+    `pytest_assume`, `hamcrest`, `responses`, `respx`, `httpretty`, `doctest`,
+    other `pytest_*` plugins), `subprocess.run`, `sys.exit`, `unittest.main`,
+    `importlib.import_module` and `runpy`;
+  - fixtures and hooks: a same-module autouse fixture, `usefixtures`,
+    `pytestmark`, an opaque fixture parameter, an asserting setup hook or an
+    asserting override of `__init__`, `__init_subclass__`, `doCleanups`, `run`,
+    `debug`, `__call__` or `_callTestMethod`/`_callSetUp`/`_callTearDown`/
+    `_callCleanup`/`_callAsync` in any class, and `pytest_plugins`;
+  - module-level effects in the test module itself: a call RIPR cannot
+    resolve (`warnings.filterwarnings("error")`, `pytest.skip(...,
+    allow_module_level=True)`, `pytest.importorskip`), a module-level `assert`
+    or `raise`, or a star import;
+  - any conftest on the directory chain that declares any fixture or `pytest_*`
+    hook, has a top-level call or attribute write, installs implicit setup, or
+    could not be read (this covers a built-in fixture override, including a
+    `name=` rename, `pytest_configure` adding `filterwarnings`, and
+    `pytest_generate_tests`, whether or not the test names it);
+  - a bare-importable module: a module or package beside the test file, in
+    a parent while each directory is a package up to the first one that is not
+    (pytest's rootdir insertion), or at the repository root (root conftest,
+    `python -m pytest`), is test support RIPR cannot read. The module
+    or package that contains the changed owner is exempt, so a flat layout
+    keeps the reason.
+  Residual limits that stay invisible, so the reason is explanation only and
+  never a proof: plugins or `usefixtures` set by `-p`, ini/`addopts`, entry
+  points or `filterwarnings = error` in an ini file, plugins registered
+  dynamically, an autouse fixture imported by name into the test module, a
+  helper in a path-configured (`pythonpath`) source root, a helper inside the
+  owner's own package, import-time effects in `__init__.py` files of the
+  package chain (not scanned), an assertion helper in a third-party library not named
+  above and not assertion-like by name, assertions raised inside an imported
+  project module, and a test that fails only by crashing the process.
 - `observation_unconfirmed`: a strong family-selected assertion that the row,
   evaluated alone, does not credit as observing the changed sink. Python's
   alignment only credits; no credit never becomes an affirmative mismatch.
@@ -232,18 +283,53 @@ static limit, one row at a time, in `python/row_miss.rs`:
 
 Python does not yet write:
 
-- `no_call_path`: pending, blocked on the same cross-file blind spots as
-  `no_assertion` (#6657). A `same_stem`, `test_name_similarity` or
-  `fixture_name` row is related by name or location only, and the absence of
-  a call cannot be established while a callback or alias (`map(owner, ...)`,
-  `f = owner`), a `parametrize` or fixture `params` list, `usefixtures`, a
-  module-level `pytestmark`, a conftest or a plugin may still reach the owner.
-  Those rows keep no miss (`no_call_path` and `missing_input` alike); `dunder_protocol`, fixture-owner, helper-owner and
-  activation-limited rows never carried the claim.
-- `no_assertion`: `extraction_complete_no_assertion` is not an established
-  absence while the cross-file blind spots of #6657 (conftest autouse
-  fixtures, plugins, ini `filterwarnings`, bare sibling imports) are
-  unaccounted for.
+- `no_call_path` (#10040): a `same_stem` or `test_name_similarity` row (a test
+  that references the owner without a recognized call) whose own closed body
+  proves it never reaches the owner. The proof is
+  `row_reach::row_cannot_reach_owner`, the closed reading of the guard behind
+  `missing_input`: every call in the test is a vouched builtin or
+  `unittest`/`pytest` API with closed arguments (no project callable by
+  reference); the test has no fixture parameter, no decorator beyond inert
+  marks, no `usefixtures`; the module has no autouse fixture, `pytestmark`,
+  `pytest_plugins`, hook, setup/teardown hook, module-level call or attribute
+  write, star import or non-`object`/`TestCase` base; no conftest on the
+  directory chain declares a fixture or hook, has a top-level effect, or is
+  unreadable; no dynamic construct (`getattr`, `eval`, `exec`, `globals`,
+  `importlib`, `__import__`, `lambda`, `partial`, `builtins`) appears; and
+  no module-level `def`/`class` header (decorator outside the inert list,
+  call in a default, annotation, return annotation, base or keyword) or
+  module-level statement outside a function body (headers included) holds a
+  call, an import, or any use of an imported object other than
+  `pytest`/`unittest` (`X = OBJ.attr`, `assert OBJ == 1`, `with CTX:`,
+  `for i in ITEMS:`, `if OBJ:`), since each runs code at import; a decorator
+  counts as inert only when its whole text is a dotted name with at most one
+  flat argument group (no nested call, no subscript or boolean hiding a call)
+  whose head is on the inert list and which mentions no import; any `(` in a
+  module statement, even `if (True):`, withholds, enforced by the shared
+  module-effect check and duplicated in the header check as defense in depth;
+  no `import` appears in the test body; no import other than the owner,
+  `pytest` and `unittest` is used in the body; and
+  every mention of the owner, strings and comments included, is one of
+  `callable(owner)`, `owner is [not] None`, `owner.__name__`/`__qualname__`/
+  `__module__`/`__doc__` or a bare `assert owner`. Only a function owner is
+  claimed (a method is reached through an instance whose constructor is
+  unread, a constant by a plain read), and only on a `weakly_exposed` finding
+  without a static limit. Accepted recall costs, all fail-closed: a module
+  docstring or string naming the owner, an imported name or the word `import`,
+  `X = sys.platform`, a def annotated with an imported type,
+  `skipif(sys.version_info < (3, 8))`, and any string holding `(`.
+  Withheld, so the row keeps no miss: any other
+  mention or use of the owner (alias, value, attribute, string), any
+  unvouched call (helper, project import, `map`), a fixture-name,
+  dunder-protocol, helper-owner, fixture-owner or activation-limited
+  relation, and every call-bearing row (its call path exists). Residual
+  limits that stay invisible, so the reason is explanation only and never a
+  proof: subscripted annotations (`Foo[int]`) and attribute reads in headers,
+  a bare module-level `import` of a module that calls the owner at load,
+  plugins or `usefixtures` set by `-p`, ini/`addopts` or entry points,
+  `sitecustomize`, import-time effects of imported modules and
+  `__init__.py` files, and an autouse fixture imported by name into the test
+  module.
 - `assertion_not_observing`: alignment cannot separate an affirmative sibling
   sink from an unresolved one, so the value stays withheld here until
   alignment can make the affirmative claim. It does not mark a row
@@ -421,8 +507,8 @@ The line is evidence only: it changes no verdict, ranking, miss or
 actionability. For Python, a `conftest.py` on the test's directory chain that
 declares an `autouse` fixture, a `pytest_runtest_*` hook or `pytest_plugins`,
 or a test-item hook (`pytest_collection_modifyitems` and similar), or that imports names from any module outside a short standard-library list (the name may be an autouse fixture or hook), builds an autouse fixture decorator, aliases the fixture decorator or an external fixture, star-imports or imports relatively, passes `**options` to `fixture`, or that could not be read, withholds `extraction_complete_no_assertion` from
-every test in its scope (#6657). Remaining blind spots (dynamically registered
-plugins, plugins or `usefixtures` set in pytest ini `addopts`, sibling-module helpers, TypeScript setup files) are tracked in #6657
+every test in its scope (#6657). For the Python `no_assertion` miss a conftest that declares any fixture or `pytest_*` hook, or has a top-level call, taints every test below it as well. Remaining blind spots (dynamically registered
+plugins, plugins or `usefixtures` set in pytest ini `addopts`, TypeScript setup files; Python bare sibling modules are recorded per test and withhold the Python `no_assertion` row) are tracked in #6657
 and #6889.
 
 ### Family-relevant assertion selection (Python)

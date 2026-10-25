@@ -1,0 +1,12 @@
+diff --git a/absence/audit.py b/absence/audit.py
+--- a/absence/audit.py
++++ b/absence/audit.py
+@@ -40,7 +40,7 @@ def archive(record):
+ 
+ def purge(record):
+     if record > 0:
+-        log.warning("purged: %s", record)
++        log.warning("purged: %s retry queued", record)
+         return True
+     return False
+ 

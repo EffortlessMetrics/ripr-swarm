@@ -15,6 +15,17 @@
 //!   (`python_row_boundary_omission`). Fail closed: an unbound call, an
 //!   unresolved or computed operand, or another row's input is unknown, never
 //!   an omission.
+//! - `no_call_path`: a `same_stem` or `test_name_similarity` row whose own
+//!   closed body provably never reaches the owner (`row_reach`, #10040):
+//!   only vouched builtin/API calls, no fixtures, hooks, conftest
+//!   declarations, module effects or dynamic construct, and no mention of the
+//!   owner at all. A function, method or classmethod owner only.
+//! - `no_assertion`: a call-bearing row whose test is
+//!   `extraction_complete_no_assertion` (#5571) after the conftest chain pass
+//!   (#6657), with no activation control and no unread bare sibling module.
+//!   Parametrize is activation evidence, never an oracle. Anything
+//!   assertion-like, custom or dynamic is unresolved admission and keeps the
+//!   row at `miss: None`.
 //! - `observation_unconfirmed`: a strong family-selected assertion that this
 //!   row alone does not credit as observing the changed sink. Python's
 //!   alignment is a credit-only model, so no credit is an unresolved
@@ -24,16 +35,12 @@
 //!
 //! Deliberately not emitted, so the row stays `miss: None`:
 //!
-//! - `no_call_path`: a name-or-location-only relation (`same_stem`,
-//!   `test_name_similarity`, `fixture_name`) cannot yet establish that the test
-//!   never reaches the owner. Hidden call paths the extractor does not model
-//!   (callbacks and aliases, parametrize and fixture `params`, `usefixtures`,
-//!   module `pytestmark`, conftest and plugins) are the same blind spots as
-//!   `no_assertion` (#6657), so the claim is withheld rather than guessed.
-//! - `no_assertion`: `extraction_complete_no_assertion` (#5571) still has the
-//!   cross-file blind spots of #6657 (conftest autouse fixtures, plugins, ini
-//!   `filterwarnings`, bare sibling imports); until they are accounted for the
-//!   state is not an established absence.
+//! - `no_call_path` on every other name-or-location-only row (and fixture,
+//!   helper, dunder and activation-limited relations): a body that calls
+//!   anything RIPR cannot vouch for, mentions the owner, or sits under hooks,
+//!   fixtures or conftest declarations can still reach it (callbacks and
+//!   aliases, parametrize and fixture `params`, `usefixtures`, module
+//!   `pytestmark`, plugins), so the claim is withheld rather than guessed.
 //! - `assertion_not_observing`: alignment cannot tell an affirmative sibling
 //!   sink from an unresolved one. Row eligibility is the explicit
 //!   `RelatedTest::role` (#5563), not this value, so emitting it no longer
@@ -50,9 +57,11 @@
 //! with no support and renders the generic wording. No other miss carries
 //! support.
 
+use super::admission::PythonAssertionAdmission;
 use super::assertion_selection::PythonAssertionFocus;
 use super::boundary::python_row_boundary_omission;
-use super::related_tests::PythonRelatedCandidate;
+use super::related_tests::{PythonRelatedCandidate, PythonRelationKind};
+use super::row_reach::row_cannot_reach_owner;
 use super::sink_alignment::{AlignmentPrep, classify_sink_alignment_prepared};
 use super::{PythonOwner, PythonTest};
 use crate::domain::{
@@ -65,6 +74,9 @@ pub(super) struct RowMissChange<'a> {
     pub(super) owner: &'a PythonOwner,
     pub(super) line_text: &'a str,
     pub(super) old_line_text: Option<&'a str>,
+    /// Every strong related call provably enters the guards around the line
+    /// (#9833), so a guarded write is read as run, as the finding read it.
+    pub(super) guard_entered: bool,
     pub(super) focus: &'a PythonAssertionFocus,
     /// The finding's changed-boundary fact. It describes the change, not a
     /// row: a row may carry it as `miss_support` only after that row's own
@@ -124,16 +136,54 @@ fn row_miss(
     // A row related by name or location only (or a fixture, helper or dunder
     // protocol relation) carries no reason here: see the module docs.
     if !candidate.relation.uses_oracle() {
-        return None;
+        return no_call_path_miss(candidate, change.owner);
     }
     // No selected assertion (none recognized, or none family-relevant):
-    // admission is the authority and nothing is emitted from it here.
-    row.oracle.as_ref()?;
+    // admission is the authority, and only its established-absence state
+    // writes `no_assertion`.
+    if row.oracle.is_none() {
+        return no_assertion_miss(candidate.test, change.owner);
+    }
     match row.oracle_strength {
         OracleStrength::Weak | OracleStrength::Smoke => Some(RelatedTestMiss::WeakAssertion),
         OracleStrength::Strong => strong_row_miss(row, candidate, candidates, change, prep),
         _ => None,
     }
+}
+
+/// `no_assertion`: the row calls the owner and its test is established to hold no
+/// assertion-like construct. Admission (`admission.rs`) is the authority, the
+/// conftest chain pass (`fixtures.rs`, #6657) has already withheld every test
+/// a conftest can assert around, and this adds the row-local fail-closed
+/// guards: a test with a skip / xfail / expected-failure control is never
+/// credited with a reason it cannot reach, and a bare-importable module
+/// beside the test (test support RIPR cannot read) other than the module or
+/// package under test keeps the row unknown. Invisible limits stay documented in RIPR-SPEC-0224.
+fn no_assertion_miss(test: &PythonTest, owner: &PythonOwner) -> Option<RelatedTestMiss> {
+    (test.assertion_admission == PythonAssertionAdmission::NoAssertionLike
+        && test.assertions.is_empty()
+        && test.activation_controls.is_empty()
+        && test
+            .bare_sibling_modules
+            .iter()
+            .all(|module| owner.file.starts_with(module)))
+    .then_some(RelatedTestMiss::NoAssertion)
+}
+
+/// `no_call_path` (#10040): a row related by file stem or test name only,
+/// whose own closed body (`row_cannot_reach_owner`) provably never reaches the
+/// owner. Every other name-only row, and every fixture, helper, dunder and
+/// activation-limited relation, keeps no miss: the claim is the row's own
+/// reachability fact, never absence of an extracted call.
+fn no_call_path_miss(
+    candidate: &PythonRelatedCandidate<'_>,
+    owner: &PythonOwner,
+) -> Option<RelatedTestMiss> {
+    (matches!(
+        candidate.relation,
+        PythonRelationKind::SameStem | PythonRelationKind::TestNameSimilarity
+    ) && row_cannot_reach_owner(owner, candidate.test))
+    .then_some(RelatedTestMiss::NoCallPath)
 }
 
 fn strong_row_miss(
@@ -161,6 +211,7 @@ fn strong_row_miss(
         change.old_line_text,
         std::slice::from_ref(row),
         prep,
+        change.guard_entered,
     );
     (!alignment.observes()).then_some(RelatedTestMiss::ObservationUnconfirmed)
 }

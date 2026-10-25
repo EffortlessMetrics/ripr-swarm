@@ -39,7 +39,10 @@ use super::related_tests::{PythonRelatedCandidate, python_text_hides_code};
 use super::source_utils::{SourceText, line_for_range_end, line_for_range_start, text_for_range};
 use super::static_limits::has_identifier_boundary;
 use super::{PythonAssertion, PythonOwner, PythonParameter, PythonTest, expr_full_name};
-use crate::domain::{OracleStrength, OwnerKind, ValueContext, ValueFact};
+use crate::{
+    domain::{OracleStrength, OwnerKind, ValueContext},
+    value_origins::LocatedValueFact as ValueFact,
+};
 use rustpython_parser::ast::{self, Expr, Mod, Ranged, Stmt};
 use rustpython_parser::text_size::TextSize;
 use rustpython_parser::{Mode, parse};
@@ -475,15 +478,14 @@ pub(super) fn python_inactive_term_evidence(
             return None;
         }
         observed_values.push(ValueFact {
-            file: None,
+            file: Some(row.file.clone()),
             line: row.line,
             text: row.text.clone(),
             value: format!("{argument} = {value}"),
             context: ValueContext::FunctionArgument,
         });
     }
-    observed_values.sort_by(|a, b| a.line.cmp(&b.line).then(a.value.cmp(&b.value)));
-    observed_values.dedup();
+    crate::analysis::classify::sort_value_facts(&mut observed_values);
     let values: Vec<&str> = observed_values
         .iter()
         .map(|fact| fact.value.as_str())
@@ -742,8 +744,8 @@ fn owner_call_names(owner: &PythonOwner, test: &PythonTest) -> Vec<String> {
 }
 
 fn return_change_has_no_effect_store(old_line: &str, new_line: &str, owner: &PythonOwner) -> bool {
-    ChangedEffect::of(old_line, Some(new_line), owner).is_none()
-        && ChangedEffect::of(new_line, Some(old_line), owner).is_none()
+    ChangedEffect::of(old_line, Some(new_line), owner, false).is_none()
+        && ChangedEffect::of(new_line, Some(old_line), owner, false).is_none()
         && return_line_is_value_expression(old_line)
         && return_line_is_value_expression(new_line)
 }

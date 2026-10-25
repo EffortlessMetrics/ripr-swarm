@@ -266,10 +266,13 @@ fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
     let markdown_path = out_dir.join(START_HERE_MD);
     let json_text = serde_json::to_string_pretty(&packet)
         .map_err(|err| format!("failed to serialize first-pr packet: {err}"))?;
-    fs::write(&json_path, format!("{json_text}\n"))
+    crate::output::file_write::write(&json_path, format!("{json_text}\n").as_bytes())
         .map_err(|err| crate::output::file_write::write_failure_message(&json_path, &err))?;
-    fs::write(&markdown_path, render_start_here_markdown(&packet))
-        .map_err(|err| crate::output::file_write::write_failure_message(&markdown_path, &err))?;
+    crate::output::file_write::write(
+        &markdown_path,
+        render_start_here_markdown(&packet).as_bytes(),
+    )
+    .map_err(|err| crate::output::file_write::write_failure_message(&markdown_path, &err))?;
     validate_start_here_packet(&json_path, &markdown_path)?;
     print!(
         "{}",
@@ -658,14 +661,14 @@ fn materialize_check_output_gap_ledger(
         fs::create_dir_all(parent)
             .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
     }
-    fs::write(&gap_ledger_path, json)
+    crate::output::file_write::write(&gap_ledger_path, json.as_bytes())
         .map_err(|err| crate::output::file_write::write_failure_message(&gap_ledger_path, &err))?;
     let gap_ledger_markdown = resolve_path(root, &with_extension(&options.gap_ledger, "md"));
     if let Some(parent) = gap_ledger_markdown.parent() {
         fs::create_dir_all(parent)
             .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
     }
-    fs::write(&gap_ledger_markdown, markdown).map_err(|err| {
+    crate::output::file_write::write(&gap_ledger_markdown, markdown.as_bytes()).map_err(|err| {
         crate::output::file_write::write_failure_message(&gap_ledger_markdown, &err)
     })?;
     Ok(())
@@ -1758,15 +1761,20 @@ impl RepoExposureLatencySummary {
     }
 }
 
+fn latency_report_schema_is_readable(version: Option<&str>) -> bool {
+    version
+        .and_then(|version| version.split_once('.'))
+        .is_some_and(|(major, minor)| major == "0" && minor.parse::<u32>().is_ok())
+}
+
 fn repo_exposure_latency_report_summary(root: &Path) -> Option<RepoExposureLatencySummary> {
     let report = read_json(&resolve_path(root, DEFAULT_REPO_EXPOSURE_LATENCY_JSON)).ok()?;
-    // 0.2 (#3864) only added the file-fact cache receipt and 0.3 (#5213) only
-    // added the analyzer's own resource cost; the run status and trace fields
-    // read here are unchanged, so every version stays usable.
-    if !matches!(
-        string_path(&report, &["schema_version"]).as_deref(),
-        Some("0.1" | "0.2" | "0.3")
-    ) || string_path(&report, &["tool"]).as_deref() != Some("ripr")
+    // Every 0.x revision so far only added fields (0.2 the file-fact cache
+    // receipt, 0.3 the analyzer's resource cost, 0.4 and 0.5 the output-parity
+    // and store receipts); the run status and trace fields read here are
+    // unchanged, so any 0.x version stays usable. A new major would not be.
+    if !latency_report_schema_is_readable(string_path(&report, &["schema_version"]).as_deref())
+        || string_path(&report, &["tool"]).as_deref() != Some("ripr")
         || string_path(&report, &["report"]).as_deref() != Some("repo-exposure-latency")
     {
         return None;
@@ -3503,11 +3511,21 @@ mod tests {
     }
 
     #[test]
+    fn latency_report_schema_readability_accepts_only_zero_dot_n() {
+        for ok in ["0.1", "0.5", "0.12"] {
+            assert!(latency_report_schema_is_readable(Some(ok)), "{ok}");
+        }
+        for rejected in [Some("1.0"), Some("0.x"), Some("0.1.2"), Some(""), None] {
+            assert!(!latency_report_schema_is_readable(rejected), "{rejected:?}");
+        }
+    }
+
+    #[test]
     fn missing_repo_exposure_uses_existing_latency_report_before_rerun() -> Result<(), String> {
-        // 0.2 is what `repo-exposure-latency-report` wrote since #3864 and
-        // 0.3 since #5213; 0.1 predates both. This consumer reads only status
+        // 0.2 is what `repo-exposure-latency-report` wrote since #3864, 0.3
+        // since #5213, 0.4 since #9503 and 0.5 since #9633; 0.1 predates all. This consumer reads only status
         // and trace fields, so it must accept every version rather than one.
-        for schema_version in ["0.1", "0.2", "0.3"] {
+        for schema_version in ["0.1", "0.2", "0.3", "0.4", "0.5"] {
             existing_latency_timeout_report_is_used(schema_version)?;
         }
         Ok(())

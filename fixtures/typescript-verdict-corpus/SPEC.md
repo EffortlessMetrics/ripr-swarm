@@ -24,6 +24,12 @@ under this repository's license, grouped by test runner:
 - vitest: `authored-ts-vitest-orders` (vitest 5) and `authored-ts-vitest-cart`
   (its older cases labeled under vitest 3.2.7; its `package.json` now pins
   4.1.11).
+- vitest spec-example cases: `authored-ts-vitest-unnum`, one module and one
+  isolated test file per example of RIPR-SPEC-0027 (1, 3, 4), 0095 (2 to 5),
+  0097 (2, 3, 5) and 0098 (1 to 3), labeled with vitest 4.1.11. Examples 0027#2,
+  0095#1 and 0097#1 and #4 are cited by cases of the subjects above. The
+  `ufo` module keeps its edited line out of a ternary on purpose: a ternary
+  arm change is RIPR-SPEC-0243 rule 15's question, not the barrel's.
 - vitest language shapes: `authored-ts-vitest-shapes`
   (class methods, getters and statics, inheritance, generics, async
   `try`/`catch` and `rejects`, enums, `export *` and `export * as` barrels,
@@ -71,7 +77,8 @@ Where the spec says "(today X)", the case keeps today's verdict in its
 labeling observation; where the mutant run contradicts it, the case scores
 it as false and its reasoning names the spec example.
 
-Each case that labels a numbered acceptance example cites it in
+Each case that labels an acceptance example (hand-numbered or slug-keyed,
+RIPR-SPEC-0245) cites it in
 `spec_examples`, and `spec-coverage.toml` gates those citations on a floor.
 In scope are RIPR-SPEC-0243, its amendments RIPR-SPEC-0246 to
 RIPR-SPEC-0252, RIPR-SPEC-0254, RIPR-SPEC-0256, RIPR-SPEC-0258 and RIPR-SPEC-0262. A case cites an example only when its diff and test have

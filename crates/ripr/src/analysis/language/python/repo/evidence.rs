@@ -36,7 +36,7 @@
 //!
 //! PR C projection: the same pass also emits the public `Finding`s
 //! ([`PythonRepoEvidence::findings`]) by running the diff-mode classifier
-//! (`classify_change_with_context`) over each representative behavior line,
+//! (`classify_change_with_value_origins`) over each representative behavior line,
 //! so repo-mode findings are indistinguishable in shape from diff-mode
 //! findings and retain native Python identity. [`partial_disclosure`]
 //! renders the typed partial/capped run state for the pipeline's shared
@@ -50,7 +50,7 @@
 //! [`PythonRepoLimitation::ParseFailure`] rows today.
 
 use super::super::assertion_selection::PythonAssertionFocus;
-use super::super::classify::{PythonNoBehaviorContext, classify_change_with_context};
+use super::super::classify::{PythonNoBehaviorContext, classify_change_with_value_origins};
 use super::super::probe_shape::{canonical_python_gap_for, classify_probe_shape};
 use super::super::reexports::apply_package_reexports_from;
 use super::super::related_tests::{
@@ -87,6 +87,7 @@ use std::path::{Path, PathBuf};
 /// disagree about what the run analyzed.
 #[derive(Clone, Debug, PartialEq)]
 pub(in crate::analysis::language::python) struct PythonRepoEvidence {
+    pub(in crate::analysis::language::python) value_origins: crate::value_origins::ValueOrigins,
     /// Post-analysis run status. Only [`PythonRepoRunStatus::Complete`] can
     /// back a full-denominator claim.
     pub(in crate::analysis::language::python) status: PythonRepoRunStatus,
@@ -108,7 +109,7 @@ pub(in crate::analysis::language::python) struct PythonRepoEvidence {
     pub(in crate::analysis::language::python) limitations: Vec<PythonRepoLimitation>,
     /// Public `Finding` projection over the production behavior items,
     /// in production-file order and ascending line order within each file.
-    /// Built by `classify_change_with_context` — the same classifier diff
+    /// Built by `classify_change_with_value_origins` — the same classifier diff
     /// mode uses — so findings are shape-identical to diff-mode findings
     /// with native Python identity (`language: python`, preview status,
     /// `gap:python:` canonical gaps); no Rust `SeamKind` bridge (#3039).
@@ -265,6 +266,7 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
     let mut limitations = Vec::new();
     let mut owners = Vec::new();
     let mut findings = Vec::new();
+    let mut value_origins = crate::value_origins::ValueOrigins::default();
 
     // No-subject and disabled runs analyze nothing: an honest zero with the
     // status reason, never fabricated limitations (#3554).
@@ -273,6 +275,7 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
         PythonRepoRunStatus::NoPythonSource | PythonRepoRunStatus::Disabled
     ) {
         return PythonRepoEvidence {
+            value_origins,
             status: input.status.clone(),
             counts,
             working_set_limit: input.working_set_limit,
@@ -355,6 +358,14 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
         &reach_conftests,
         |conftest| !read_conftests.contains(conftest) && root.join(conftest).is_file(),
     );
+    super::super::fixtures::taint_admission_by_conftest_declarations(
+        &mut all_tests,
+        &reach_conftests,
+        |conftest| !read_conftests.contains(conftest) && root.join(conftest).is_file(),
+    );
+    super::super::fixtures::record_bare_sibling_imports(&mut all_tests, |path| {
+        root.join(path).exists()
+    });
 
     // Production subjects: owners + behavior items, related against the
     // evidence pool built above. The public Finding projection is built in
@@ -427,6 +438,7 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
                     &all_tests,
                     &mut limitations,
                     &mut findings,
+                    &mut value_origins,
                 );
                 let behavior_item_count = owner_evidence
                     .iter()
@@ -505,6 +517,7 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
     };
 
     PythonRepoEvidence {
+        value_origins,
         status,
         counts,
         working_set_limit: input.working_set_limit,
@@ -589,7 +602,7 @@ fn load_facts_with_source(
 /// with relations matched once per owner against the evidence pool.
 ///
 /// The public `Finding`s are built in the same pass by
-/// [`classify_change_with_context`] — the same classifier diff mode runs on
+/// [`classify_change_with_value_origins`] — the same classifier diff mode runs on
 /// a changed line — so repo-mode findings are shape-identical to diff-mode
 /// findings (#3554 PR C). `old_line_text` is `None` (repo mode has no diff
 /// side); the classifier's currentness derivation then records
@@ -600,6 +613,7 @@ fn build_production_file_evidence(
     all_tests: &[PythonTest],
     limitations: &mut Vec<PythonRepoLimitation>,
     findings: &mut Vec<Finding>,
+    value_origins: &mut crate::value_origins::ValueOrigins,
 ) -> Vec<PythonRepoOwnerEvidence> {
     let file_owners = &facts.owners;
     let mut items_per_owner: Vec<Vec<PythonRepoBehaviorItem>> = vec![Vec::new(); file_owners.len()];
@@ -643,7 +657,8 @@ fn build_production_file_evidence(
             });
         }
         items_per_owner[index].push(item);
-        if let Some(mut finding) = classify_change_with_context(
+        let mut finding_origins = crate::value_origins::ValueOrigins::default();
+        if let Some(mut finding) = classify_change_with_value_origins(
             relative,
             line,
             &text,
@@ -655,7 +670,9 @@ fn build_production_file_evidence(
             // the guarded-arm gate (#7392) stays off, matching diff mode
             // before this fix and keeping repo verdicts unchanged.
             None,
+            &mut finding_origins,
         ) {
+            let original_probe = finding.probe.clone();
             // Repo mode classifies every representative behavior line, so
             // identical statements under one owner produce identical probe
             // ids. Suffix the duplicates (.2, .3, ...) the way the repo
@@ -678,6 +695,8 @@ fn build_production_file_evidence(
                 finding.id = suffixed.clone();
                 finding.probe.id.0 = suffixed;
             }
+            finding_origins.rebind_probe(&original_probe, &finding.probe);
+            value_origins.extend(finding_origins);
             // Scope stamp (#5531): consumers holding only a `Finding` look the
             // capability cell up from this, so repo-mode evidence can never
             // borrow the diff-mode repair-routing cell.
@@ -737,13 +756,13 @@ fn build_behavior_item(
     let focus = PythonAssertionFocus::for_change(family.clone(), text, None);
     let related = related_tests_for_candidates(candidates, Some(&focus));
     let related = related.as_slice();
-    let static_limit = static_limit_for_focused_change(text, None, &focus, owner, candidates)
+    let static_limit = static_limit_for_focused_change(text, None, None, &focus, owner, candidates)
         .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, candidates))
         .map(|limit| limit.kind);
     let canonical_gap = static_limit
         .is_none()
         .then(|| canonical_python_gap_for(relative, owner, &family, text));
-    let alignment = classify_sink_alignment_with_old(owner, text, None, related, all_tests);
+    let alignment = classify_sink_alignment_with_old(owner, text, None, related, all_tests, false);
     let strongest = related
         .iter()
         .max_by_key(|test| test.oracle_strength.rank())

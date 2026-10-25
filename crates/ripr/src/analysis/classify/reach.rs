@@ -134,6 +134,15 @@ pub(in crate::analysis) fn reach_evidence(
 /// when no workspace source names the owner outside its own `fn` line,
 /// nothing can reach it; when anything does, reach stays undecided.
 ///
+/// A name inside the owner's own body is not such a source (#10160). Running
+/// the owner's body needs the owner to have been entered already, and the
+/// entry spells the owner's name outside that body, so `fn get(&self) -> u32
+/// { self.inner.get() }` (a call of `Cell::get`, or even real recursion) is no
+/// path to `get`. Only parser-backed owners qualify (`item.has_body`: the body
+/// is the verbatim `fn`-to-end source slice), and every other naming (a
+/// caller, a same-named method elsewhere, a doc, a macro) still keeps reach
+/// undecided; a same-named call in a sibling is not told apart from the owner's.
+///
 /// The trait-impl allowance covers a trait the workspace does not declare
 /// (`Display`, `Add`, `Deref`): the language dispatches those without
 /// spelling the method. A method of a workspace-declared trait is called
@@ -145,10 +154,32 @@ pub(in crate::analysis) fn owner_may_be_reached_unseen(
     index: &RustIndex,
 ) -> bool {
     (is_trait_impl_method(owner) && !implements_workspace_trait(owner, index))
+        || named_outside_own_body(
+            owner,
+            index
+                .files()
+                .values()
+                .map(|file| count_identifier_outside_fn_definition(&file.source, &owner.name))
+                .sum(),
+        )
         || index.files().values().any(|file| {
-            names_identifier_outside_fn_definition(&file.source, &owner.name)
-                || includes_external_docs(&file.source)
+            includes_external_docs_with(&file.source, file.data().macro_candidates.is_some())
         })
+}
+
+/// Whether the workspace names `owner` anywhere but inside its own body, given
+/// `total` namings across every source. A body count above the total cannot
+/// come from an indexed verbatim body, so it reads as named (fail closed).
+fn named_outside_own_body(owner: &FunctionSummary, total: usize) -> bool {
+    if owner.name.is_empty() {
+        return false;
+    }
+    let own = if owner.item.has_body {
+        count_identifier_outside_fn_definition(&owner.body, &owner.name)
+    } else {
+        0
+    };
+    total.checked_sub(own).is_none_or(|outside| outside > 0)
 }
 
 /// [`owner_may_be_reached_unseen`] answered from one scan of the workspace,
@@ -172,8 +203,8 @@ pub(in crate::analysis) struct UnseenReachNames {
     member_traits: OnceLock<HashSet<String>>,
     /// The workspace member directories those sources live under.
     member_dirs: Vec<PathBuf>,
-    /// Every identifier some source names other than directly after `fn`.
-    named: HashSet<String>,
+    /// How often sources name each identifier other than directly after `fn`.
+    named: HashMap<String, usize>,
     /// Some file pulls external docs in as doctests.
     external_docs: bool,
 }
@@ -186,36 +217,55 @@ impl UnseenReachNames {
             .values()
             .map(|file| file.data().source.as_ref())
             .collect();
+        // The producer stores macro candidates only for a source it parsed
+        // without errors, which is what the external-docs gate may rely on.
+        let with_clean: Vec<(&str, bool)> = index
+            .files()
+            .values()
+            .map(|file| {
+                (
+                    file.data().source.as_ref(),
+                    file.data().macro_candidates.is_some(),
+                )
+            })
+            .collect();
         // The external-docs parse is most of this scan and every file is
         // independent, so the parses run on the rayon pool. `build` can also
         // be reached from a classification worker (through a `OnceLock`
         // init); there the scans run in line, as `memoize_many` does.
-        let external_docs = includes_external_docs_many(&sources)
+        let external_docs = includes_external_docs_many(&with_clean)
             .into_iter()
             .any(|includes| includes);
-        fn collect_names<'a>(mut names: HashSet<&'a str>, source: &'a str) -> HashSet<&'a str> {
-            names.extend(identifiers_outside_fn_definition(source));
+        fn collect_names<'a>(
+            mut names: HashMap<&'a str, usize>,
+            source: &'a str,
+        ) -> HashMap<&'a str, usize> {
+            for name in identifiers_outside_fn_definition(source) {
+                *names.entry(name).or_insert(0) += 1;
+            }
             names
         }
         fn merge_names<'a>(
-            mut left: HashSet<&'a str>,
-            mut right: HashSet<&'a str>,
-        ) -> HashSet<&'a str> {
+            mut left: HashMap<&'a str, usize>,
+            mut right: HashMap<&'a str, usize>,
+        ) -> HashMap<&'a str, usize> {
             if left.len() < right.len() {
                 std::mem::swap(&mut left, &mut right);
             }
-            left.extend(right);
+            for (name, count) in right {
+                *left.entry(name).or_insert(0) += count;
+            }
             left
         }
-        let named: HashSet<&str> = if super::owner_pin::nested_parallelism_allowed() {
+        let named: HashMap<&str, usize> = if super::owner_pin::nested_parallelism_allowed() {
             sources
                 .par_iter()
-                .fold(HashSet::new, |names, source| collect_names(names, source))
-                .reduce(HashSet::new, merge_names)
+                .fold(HashMap::new, |names, source| collect_names(names, source))
+                .reduce(HashMap::new, merge_names)
         } else {
             sources
                 .iter()
-                .fold(HashSet::new(), |names, source| collect_names(names, source))
+                .fold(HashMap::new(), |names, source| collect_names(names, source))
         };
         let workspace_traits = workspace_trait_names(index);
         let workspace_crates = index.workspace_member_crates().clone();
@@ -248,7 +298,10 @@ impl UnseenReachNames {
             workspace_crates,
             member_traits: OnceLock::new(),
             member_dirs: index.workspace_member_dirs.clone(),
-            named: named.into_iter().map(str::to_string).collect(),
+            named: named
+                .into_iter()
+                .map(|(name, count)| (name.to_string(), count))
+                .collect(),
             external_docs,
         }
     }
@@ -278,7 +331,7 @@ impl UnseenReachNames {
                 },
             ))
             || self.external_docs
-            || (!owner.name.is_empty() && self.named.contains(&owner.name))
+            || named_outside_own_body(owner, self.named.get(&owner.name).copied().unwrap_or(0))
     }
 }
 
@@ -294,8 +347,15 @@ pub(in crate::analysis) fn take_external_docs_parse_count() -> usize {
 
 /// Macro-derived documentation can produce unindexed doctest calls, including
 /// external files and names assembled by `concat!` or supplied by `env!`.
-pub(in crate::analysis) fn includes_external_docs(source: &str) -> bool {
-    if !may_include_external_docs(source) {
+#[cfg(test)]
+fn includes_external_docs(source: &str) -> bool {
+    includes_external_docs_with(source, false)
+}
+
+/// [`includes_external_docs`] for a source whose `clean` parse the caller
+/// already knows (see [`may_include_external_docs`]).
+pub(in crate::analysis) fn includes_external_docs_with(source: &str, clean: bool) -> bool {
+    if !may_include_external_docs(source, clean) {
         return false;
     }
     // Pure in the source text, and rescanned for every overlapping index a
@@ -312,21 +372,41 @@ pub(in crate::analysis) fn includes_external_docs(source: &str) -> bool {
     )
 }
 
-/// The cheap text gate in front of the parse: a source that never spells
-/// `doc` and `!` cannot include external docs.
-fn may_include_external_docs(source: &str) -> bool {
-    source.contains("doc") && source.contains('!')
+/// Whitespace the gate skips between `doc` and `=`: Unicode `White_Space`
+/// plus the two marks Rust's lexer also treats as whitespace
+/// (`Pattern_White_Space`) that `char::is_whitespace` leaves out.
+fn rust_or_unicode_whitespace(c: char) -> bool {
+    c.is_whitespace() || matches!(c, '\u{200E}' | '\u{200F}')
 }
 
-/// [`includes_external_docs`] for every source of a scan, in order. The
+/// The cheap text gate in front of the parse: a source that never spells
+/// `doc` and `!` cannot include external docs. A source known to parse
+/// cleanly (`clean`: the file-fact producer already parsed it without
+/// errors) also needs a `doc` followed by `=`, because a key-value `doc`
+/// attribute has the `=` token right after its name with only whitespace or
+/// a comment between. A following `/` (a possible comment) keeps the source
+/// a candidate. An unclean source stays a candidate on the first test alone:
+/// the scan answers `true` for a source it cannot parse.
+fn may_include_external_docs(source: &str, clean: bool) -> bool {
+    source.contains("doc")
+        && source.contains('!')
+        && (!clean
+            || source.match_indices("doc").any(|(at, name)| {
+                source[at + name.len()..]
+                    .trim_start_matches(rust_or_unicode_whitespace)
+                    .starts_with(['=', '/'])
+            }))
+}
+
+/// [`includes_external_docs_with`] for every `(source, clean)` of a scan, in order. The
 /// parses of the texts the run scope has not seen run on the rayon pool
 /// (see [`crate::analysis::syntax::run_memo::memoize_many`]); the answers and
 /// the memo's contents are those of calling the single form per source.
-pub(in crate::analysis) fn includes_external_docs_many(sources: &[&str]) -> Vec<bool> {
+pub(in crate::analysis) fn includes_external_docs_many(sources: &[(&str, bool)]) -> Vec<bool> {
     let candidates: Vec<&str> = sources
         .iter()
-        .copied()
-        .filter(|source| may_include_external_docs(source))
+        .filter(|(source, clean)| may_include_external_docs(source, *clean))
+        .map(|(source, _)| *source)
         .collect();
     #[cfg(test)]
     let parsed = std::sync::atomic::AtomicUsize::new(0);
@@ -347,7 +427,9 @@ pub(in crate::analysis) fn includes_external_docs_many(sources: &[&str]) -> Vec<
         .with(|count| count.set(count.get() + parsed.load(std::sync::atomic::Ordering::Relaxed)));
     sources
         .iter()
-        .map(|source| may_include_external_docs(source) && answers.next().unwrap_or(true))
+        .map(|(source, clean)| {
+            may_include_external_docs(source, *clean) && answers.next().unwrap_or(true)
+        })
         .collect()
 }
 
@@ -576,6 +658,17 @@ pub(in crate::analysis) fn names_identifier_outside_fn_definition(
     name: &str,
 ) -> bool {
     !name.is_empty() && identifiers_outside_fn_definition(source).any(|ident| ident == name)
+}
+
+/// How many times `source` names `name` as a whole identifier outside a `fn`
+/// definition (see [`names_identifier_outside_fn_definition`]).
+fn count_identifier_outside_fn_definition(source: &str, name: &str) -> usize {
+    if name.is_empty() {
+        return 0;
+    }
+    identifiers_outside_fn_definition(source)
+        .filter(|ident| *ident == name)
+        .count()
 }
 
 /// Each whole identifier in `source` (a Unicode alphanumeric or `_` run, so
@@ -1379,6 +1472,75 @@ mod tests {
         ));
     }
 
+    /// #10160: a name inside the owner's own body is no unseen caller (the body
+    /// cannot run before the owner is entered, and the entry spells the name
+    /// elsewhere); every naming outside that body still keeps reach undecided.
+    #[test]
+    fn a_name_inside_the_owners_own_body_is_not_an_unseen_caller() {
+        let own = "pub fn get(&self) -> u32 { self.inner.get() }";
+        let verdicts = |source: &str, parser_backed: bool| {
+            // The owner's body is the `fn get` item, up to its closing brace.
+            let start = source.find("fn get").unwrap_or(0);
+            let end = start + source[start..].find('}').map_or(0, |close| close + 1);
+            let mut owner = function("get");
+            owner.body = source[start..end].into();
+            owner.item.has_body = parser_backed;
+            let index = RustIndex::from_owned(OwnedRustIndex {
+                files: BTreeMap::from([(
+                    PathBuf::from("src/lib.rs"),
+                    FileFacts {
+                        path: PathBuf::from("src/lib.rs"),
+                        source: source.into(),
+                        ..FileFacts::default()
+                    },
+                )]),
+                functions: vec![owner.clone()],
+                ..Default::default()
+            });
+            let single = owner_may_be_reached_unseen(&owner, &index);
+            let batch = UnseenReachNames::build(&index).may_reach_unseen(&owner);
+            assert_eq!(single, batch, "{source}");
+            single
+        };
+        // Discriminating negative: the field call `Cell::get` and a plain
+        // recursion are the only namings, both inside the owner's body.
+        assert!(!verdicts(&format!("impl W {{ {own} }}\n"), true));
+        assert!(!verdicts(
+            "impl W { pub fn get(&self) -> u32 { self.get() } }\n",
+            true
+        ));
+        // Positive controls, each differing from the negative in one respect.
+        // A caller elsewhere names it.
+        assert!(verdicts(
+            &format!("impl W {{ {own} fn peek(&self) -> u32 {{ self.get() }} }}\n"),
+            true
+        ));
+        assert!(verdicts(
+            &format!("impl W {{ {own} }}\nfn t(w: W) {{ W::get(&w); }}\n"),
+            true
+        ));
+        // A same-named call on another receiver elsewhere is not told apart
+        // from a call of the owner (fail closed).
+        assert!(verdicts(
+            &format!("impl W {{ {own} }}\nfn other(c: Cell<u32>) {{ c.get(); }}\n"),
+            true
+        ));
+        // Two impls with the same method name in one file: `B::get`'s body names
+        // `get` outside `A::get`'s body, so `A::get` keeps the allowance. With
+        // only `A::get` present (the first negative) it stays withdrawn.
+        assert!(verdicts(
+            "impl A { fn get(&self) -> u32 { self.inner.get() } }\nimpl B { fn get(&self) -> u32 { a.get() } }\n",
+            true
+        ));
+        // External docs may call it.
+        assert!(verdicts(
+            &format!("#![doc = include_str!(\"../README.md\")]\nimpl W {{ {own} }}\n"),
+            true
+        ));
+        // Without parser facts the body is not trusted, so the allowance stays.
+        assert!(verdicts(&format!("impl W {{ {own} }}\n"), false));
+    }
+
     #[test]
     fn includes_external_docs_many_answers_like_the_single_form() {
         let sources = [
@@ -1394,21 +1556,22 @@ mod tests {
             .map(|source| includes_external_docs(source))
             .collect();
         assert_eq!(expected, vec![false, true, false, false, true, true]);
+        let unknown: Vec<(&str, bool)> = sources.iter().map(|source| (*source, false)).collect();
         let _ = take_external_docs_parse_count();
-        assert_eq!(includes_external_docs_many(&sources), expected);
+        assert_eq!(includes_external_docs_many(&unknown), expected);
         assert_eq!(
             take_external_docs_parse_count(),
             5,
             "without a scope every source that passes the text gate parses"
         );
         let _scope = crate::analysis::syntax::run_memo::enter();
-        assert_eq!(includes_external_docs_many(&sources), expected);
+        assert_eq!(includes_external_docs_many(&unknown), expected);
         assert_eq!(
             take_external_docs_parse_count(),
             4,
             "inside a scope a repeated text parses once"
         );
-        assert_eq!(includes_external_docs_many(&sources), expected);
+        assert_eq!(includes_external_docs_many(&unknown), expected);
         assert_eq!(
             take_external_docs_parse_count(),
             0,
@@ -1420,6 +1583,54 @@ mod tests {
             0,
             "the single form hits too"
         );
+    }
+
+    #[test]
+    fn a_clean_source_without_a_doc_assignment_skips_the_parse() {
+        let _ = take_external_docs_parse_count();
+        // `doc` and `!` appear, but no `doc` is followed by `=`.
+        let plain = "/// docs! mention\nfn a() { assert!(true); }\nfn doc() {}\n";
+        assert!(!includes_external_docs_with(plain, true));
+        assert_eq!(take_external_docs_parse_count(), 0, "clean: gated out");
+        assert!(!includes_external_docs_with(plain, false));
+        assert_eq!(take_external_docs_parse_count(), 1, "unknown: parsed");
+        // Whitespace, newlines and comments may sit between `doc` and `=`.
+        for source in [
+            "#![doc=include_str!(\"R.md\")]",
+            "#![doc\n  = include_str!(\"R.md\")]",
+            "#![doc /* why */ = include_str!(\"R.md\")]",
+            "#![cfg_attr(all(), doc = include_str!(\"R.md\"))]",
+        ] {
+            let _ = take_external_docs_parse_count();
+            assert!(includes_external_docs_with(source, true), "{source}");
+            assert_eq!(take_external_docs_parse_count(), 1, "{source}");
+        }
+        // Rust's lexer skips the left-to-right and right-to-left marks too.
+        for mark in ["\u{200E}", "\u{200F}"] {
+            let source = format!("#![doc{mark}= concat!(\"a\")] fn f() {{}}");
+            assert!(
+                crate::analysis::syntax::parse_clean_source_file(&source).is_some(),
+                "{mark:?}"
+            );
+            assert!(includes_external_docs_with(&source, true), "{mark:?}");
+        }
+        // The batch form applies the flag per source, and keeps its answers
+        // aligned with the sources it did not parse.
+        let batch = [
+            (plain, true),
+            ("#![doc = include_str!(\"R.md\")]", true),
+            (plain, false),
+            ("fn broken( { doc !", false),
+        ];
+        let _ = take_external_docs_parse_count();
+        assert_eq!(
+            includes_external_docs_many(&batch),
+            vec![false, true, false, true]
+        );
+        assert_eq!(take_external_docs_parse_count(), 3);
+        // An unparseable source is never gated out by the clean test: it
+        // answers `true` when it cannot be parsed.
+        assert!(includes_external_docs_with("fn broken( { doc !", false));
     }
 
     #[test]

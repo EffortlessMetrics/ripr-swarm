@@ -1,5 +1,7 @@
 use super::admission::PythonAdmissionContext;
-use super::module_constants::{module_literal_constants, with_module_rebinding};
+use super::module_constants::{
+    module_literal_constants, module_object_bindings, with_module_rebinding,
+};
 use super::owners_tests::{
     TestImportContext, collect_imports_from_statements, collect_owners_from_statements,
     collect_tests_from_statements, module_owner,
@@ -8,7 +10,7 @@ use super::source_utils::{
     SourceText, is_test_file, line_for_range_end, line_for_range_start, text_for_range,
 };
 use super::{PythonFramework, PythonOwner, PythonTest, expr_full_name};
-use crate::domain::{LanguageId as DomainLanguageId, StaticLimitKind};
+use crate::domain::{LanguageId as DomainLanguageId, OwnerKind, StaticLimitKind};
 use rustpython_parser::{
     Mode,
     ast::{self, Expr, Mod, Ranged, Stmt},
@@ -691,6 +693,12 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         &module_constants,
         &mut snapshot.owners,
     );
+    let module_objects = module_object_bindings(source, &module.body);
+    for owner in snapshot.owners.iter_mut().filter(|owner| {
+        owner.class_path.is_empty() && matches!(owner.owner_kind, Some(OwnerKind::Function))
+    }) {
+        owner.class_facts.module_objects = module_objects.clone();
+    }
     mark_rebound_decorators(source, &mut snapshot.owners);
     snapshot
         .owners
@@ -723,6 +731,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
     snapshot.conftest_declares_fixture_or_hook = snapshot.conftest_implicit_setup
         || (file.file_name().and_then(|name| name.to_str()) == Some("conftest.py")
             && (!snapshot.fixtures.is_empty()
+                || declares_renamed_or_any_fixture(&module.body)
                 || super::admission::module_level_effects(source, &module.body)
                 || module.body.iter().any(|statement| match statement {
                     Stmt::FunctionDef(function) => function.name.as_str().starts_with("pytest_"),
@@ -734,8 +743,10 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
     with_module_rebinding(source, &module.body, &mut snapshot.tests);
     super::test_activation::apply_module_controls(&module.body, &imports, &mut snapshot.tests);
     let implicit_reach = super::admission::module_implicit_reach(source, &module.body, &imports);
+    let header_reach = super::admission::module_header_effects(source, &module.body, &imports);
     for test in &mut snapshot.tests {
         test.constant_rebinding.implicit_reach |= implicit_reach;
+        test.constant_rebinding.header_reach |= header_reach;
     }
     super::oracles::unittest_list::withhold_modified_oracles(&mut snapshot.tests);
     collect_source_facts_from_statements(
@@ -2022,5 +2033,22 @@ fn contains_word(line: &str, word: &str) -> bool {
         let after = line[start + word.len()..].chars().next();
         let is_ident = |c: char| c.is_alphanumeric() || c == '_';
         !before.is_some_and(is_ident) && !after.is_some_and(is_ident)
+    })
+}
+
+/// A top-level def decorated as a fixture of any shape. `collect_fixture_defs`
+/// records only plain fixtures, so a renamed one
+/// (`@pytest.fixture(name="tmp_path")`) would otherwise leave a conftest
+/// looking fixture-free while it overrides a built-in fixture.
+fn declares_renamed_or_any_fixture(statements: &[Stmt]) -> bool {
+    statements.iter().any(|statement| {
+        let decorators = match statement {
+            Stmt::FunctionDef(function) => &function.decorator_list,
+            Stmt::AsyncFunctionDef(function) => &function.decorator_list,
+            _ => return false,
+        };
+        super::owners_tests::decorator_names(decorators)
+            .iter()
+            .any(|name| name.ends_with("fixture"))
     })
 }
