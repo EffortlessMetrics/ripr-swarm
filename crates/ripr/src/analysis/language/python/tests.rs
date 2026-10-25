@@ -8770,6 +8770,8 @@ fn caplog_messages_and_records_outside_the_bounded_shape_keep_abstaining() -> Re
         // Indexed and whole-list forms are not evaluated.
         "assert caplog.records[0].message == \"low balance: 5\"",
         "assert caplog.messages == [\"low balance: 5\"]",
+        // A string is never an element of the record list, so it is no message read.
+        "assert \"low balance: 5\" in caplog.records",
         // A filtered generator reads only some records.
         "assert any(\"low balance: 5\" in r.message for r in caplog.records if r.levelno == 30)",
     ] {
