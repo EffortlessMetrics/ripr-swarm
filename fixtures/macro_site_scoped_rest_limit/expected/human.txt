@@ -17,7 +17,10 @@ Start here:
     src/globs.rs:1 glob-imports from outside the workspace, which may bring in a different
     `assert_eq!`
   Changed behavior: 10 <= value
-  Analyzer limit: A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse,…
+  Analyzer limit: A related Rust test has an `assert_eq!`, but ripr could not read whether it runs
+    as the standard macro on the path that reaches this change (for example the file did not parse,
+    the test carries a feature `cfg`, or a glob import may rebind the macro). ripr does not claim a
+    gap; this is a named limitation, not a coverage claim
   Related test: tests/buf_tests.rs:10 pins (assertion not credited: ripr could not establish that this assertion counts here)
   Next step: ripr could not read whether the assertions in `pins` (tests/buf_tests.rs:10) run as the
     standard `assert_eq!`, so it does not report a gap. Check that one of them compares the changed
@@ -37,7 +40,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/macro_site_scoped_rest_limit/input --diff <cwd>/fixtures/macro_site_scoped_rest_limit/diff.patch --mode fast probe:src_lib.rs:predicate:d545be08
   ripr context --root <cwd>/fixtures/macro_site_scoped_rest_limit/input --diff <cwd>/fixtures/macro_site_scoped_rest_limit/diff.patch --mode fast --at probe:src_lib.rs:predicate:d545be08
-  no repair start offered: this finding names no missing discriminator (no canonical gap), so there is no seam to start a repair from; follow the Next step above and check the related test by hand
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.rs:predicate:d545be08 --root <cwd>/fixtures/macro_site_scoped_rest_limit/input` for the full gate's answer
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

@@ -18,7 +18,9 @@ Start here:
   Language status: preview
   Static exposure: exposed (severity: info, confidence 0.60)
   Changed behavior: if (total >= 100) {
-  Discriminator (observed, advisory): Related test reaches `applyDiscount` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant…
+  Discriminator (observed, advisory): Related test reaches `applyDiscount` with an `exact_value`
+    oracle. Static evidence suggests the changed behavior is observed under an exact-value or
+    exact-error-variant discriminator
   Related test: tests/pricing.test.ts:3 applyDiscount at the boundary via a local binding
   Next step — TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator yes
@@ -36,7 +38,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/ts_predicate_boundary_const_result_local/input --diff <cwd>/fixtures/ts_predicate_boundary_const_result_local/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:e23661f5
   ripr context --root <cwd>/fixtures/ts_predicate_boundary_const_result_local/input --diff <cwd>/fixtures/ts_predicate_boundary_const_result_local/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:e23661f5
-  no repair start offered: this finding names no missing discriminator (no canonical gap), so there is no seam to start a repair from; follow the Next step above and check the related test by hand
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_pricing.ts:typescript_preview:e23661f5 --root <cwd>/fixtures/ts_predicate_boundary_const_result_local/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

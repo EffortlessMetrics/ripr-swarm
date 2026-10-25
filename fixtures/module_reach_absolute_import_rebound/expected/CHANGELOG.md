@@ -47,15 +47,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — module_reach_absolute_import_rebound (5)
-
-Reason:
-RIPR-SPEC-0122: name the no-canonical-gap recovery instead of routing back to the gate (#9244)
-
-Command:
-`cargo xtask goldens bless module_reach_absolute_import_rebound --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`

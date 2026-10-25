@@ -11,15 +11,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — module_reach_super_import_nearer_shadow (2)
-
-Reason:
-RIPR-SPEC-0122: name the no-canonical-gap recovery instead of routing back to the gate (#9244)
-
-Command:
-`cargo xtask goldens bless module_reach_super_import_nearer_shadow --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`

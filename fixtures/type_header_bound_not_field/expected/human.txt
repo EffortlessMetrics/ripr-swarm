@@ -37,7 +37,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/type_header_bound_not_field/input --diff <cwd>/fixtures/type_header_bound_not_field/diff.patch --mode fast probe:src_lib.rs:static_unknown:7b804000
   ripr context --root <cwd>/fixtures/type_header_bound_not_field/input --diff <cwd>/fixtures/type_header_bound_not_field/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:7b804000
-  no repair start offered: this finding names no missing discriminator (no canonical gap), so there is no seam to start a repair from; follow the Next step above and check the related test by hand
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.rs:static_unknown:7b804000 --root <cwd>/fixtures/type_header_bound_not_field/input` for the full gate's answer
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.

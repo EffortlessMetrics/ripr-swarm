@@ -19,7 +19,9 @@ Start here:
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: return age > 18;
-  Missing discriminator (1 of 2): Related tests reach `isEligible` with a strong oracle, but no strong assertion observes a `isEligible(...)` call at the changed predicate boundary `age == 18`; inputs on one side…
+  Missing discriminator (1 of 2): Related tests reach `isEligible` with a strong oracle, but no
+    strong assertion observes a `isEligible(...)` call at the changed predicate boundary `age ==
+    18`; inputs on one side of the boundary do not discriminate the changed comparison
   Related test: tests/eligibility.test.ts:3 eligibility (ripr could not confirm that this assertion observes the changed behavior)
   Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `age == 18`; no actionable repair packet is emitted until verify, receipt, and
@@ -39,7 +41,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/ts_dead_assertion_after_try_finally/input --diff <cwd>/fixtures/ts_dead_assertion_after_try_finally/diff.patch --mode fast probe:src_eligibility.ts:typescript_preview:013a8947
   ripr context --root <cwd>/fixtures/ts_dead_assertion_after_try_finally/input --diff <cwd>/fixtures/ts_dead_assertion_after_try_finally/diff.patch --mode fast --at probe:src_eligibility.ts:typescript_preview:013a8947
-  no repair start offered: this finding names no missing discriminator (no canonical gap), so there is no seam to start a repair from; follow the Next step above and check the related test by hand
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_eligibility.ts:typescript_preview:013a8947 --root <cwd>/fixtures/ts_dead_assertion_after_try_finally/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

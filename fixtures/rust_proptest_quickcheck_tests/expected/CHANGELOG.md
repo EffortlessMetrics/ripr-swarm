@@ -209,15 +209,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — rust_proptest_quickcheck_tests (18)
-
-Reason:
-RIPR-SPEC-0122: name the no-canonical-gap recovery instead of routing back to the gate (#9244)
-
-Command:
-`cargo xtask goldens bless rust_proptest_quickcheck_tests --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`

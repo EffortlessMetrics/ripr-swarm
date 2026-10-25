@@ -19,7 +19,9 @@ Start here:
   Static exposure: no path (severity: warning, confidence 0.40)
   Why no path: no related test was found that reaches this change
   Changed behavior: return this.valid.has(token.trim());
-  Missing discriminator: No trusted TypeScript method receiver relation for `validate`. Direct `new ClassName(...)` receiver calls are supported, but factories, dependency injection, mocked modules,…
+  Missing discriminator: No trusted TypeScript method receiver relation for `validate`. Direct `new
+    ClassName(...)` receiver calls are supported, but factories, dependency injection, mocked
+    modules, prototype aliases, and dynamic property access stay ambiguous in preview
   Next step — TypeScript preview advisory: method receiver relation is missing context; use a direct
     `new ClassName(...)` receiver observer when safe, and keep factories, dependency injection,
     mocked modules, prototype aliases, and dynamic property access advisory
@@ -38,7 +40,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_adversarial_same_method_other_class/input --diff <cwd>/fixtures/typescript_adversarial_same_method_other_class/diff.patch --mode fast probe:src_auth.ts:typescript_preview:1091eef0
   ripr context --root <cwd>/fixtures/typescript_adversarial_same_method_other_class/input --diff <cwd>/fixtures/typescript_adversarial_same_method_other_class/diff.patch --mode fast --at probe:src_auth.ts:typescript_preview:1091eef0
-  no repair start offered: this finding names no missing discriminator (no canonical gap), so there is no seam to start a repair from; follow the Next step above and check the related test by hand
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_auth.ts:typescript_preview:1091eef0 --root <cwd>/fixtures/typescript_adversarial_same_method_other_class/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

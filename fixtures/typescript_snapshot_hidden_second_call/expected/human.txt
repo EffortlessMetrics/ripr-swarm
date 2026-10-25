@@ -19,7 +19,9 @@ Start here:
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: return amount - 20;
-  Missing discriminator (1 of 2): Related test reaches `price` with snapshot evidence; keep the snapshot as weak preview evidence and add an exact-value assertion for the changed discriminator before routing a…
+  Missing discriminator (1 of 2): Related test reaches `price` with snapshot evidence; keep the
+    snapshot as weak preview evidence and add an exact-value assertion for the changed discriminator
+    before routing a repair packet
   Related test: tests/lib.test.ts:3 price
   Next step — TypeScript preview advisory: add an exact-value assertion alongside the snapshot for
     missing discriminator `return value == amount - 20`; no actionable repair packet is emitted
@@ -39,7 +41,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_snapshot_hidden_second_call/input --diff <cwd>/fixtures/typescript_snapshot_hidden_second_call/diff.patch --mode fast probe:src_lib.ts:typescript_preview:c712a282
   ripr context --root <cwd>/fixtures/typescript_snapshot_hidden_second_call/input --diff <cwd>/fixtures/typescript_snapshot_hidden_second_call/diff.patch --mode fast --at probe:src_lib.ts:typescript_preview:c712a282
-  no repair start offered: this finding names no missing discriminator (no canonical gap), so there is no seam to start a repair from; follow the Next step above and check the related test by hand
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.ts:typescript_preview:c712a282 --root <cwd>/fixtures/typescript_snapshot_hidden_second_call/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

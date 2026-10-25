@@ -19,7 +19,9 @@ Start here:
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: return this.items.length + 1;
-  Missing discriminator (1 of 2): Related test reaches `total` with a smoke-only oracle; replace or augment the truthiness check with an exact-value assertion for the changed discriminator before routing a repair…
+  Missing discriminator (1 of 2): Related test reaches `total` with a smoke-only oracle; replace or
+    augment the truthiness check with an exact-value assertion for the changed discriminator before
+    routing a repair packet
   Related test: tests/owners.test.ts:7 cart total smoke (assertion too weak to tell the old behavior from the new)
   Next step — TypeScript preview advisory: replace or augment the smoke-only assertion with an
     exact-value assertion for missing discriminator `return value == this.items.length + 1`; no
@@ -40,7 +42,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_owner_kinds/input --diff <cwd>/fixtures/typescript_owner_kinds/diff.patch --mode fast probe:src_owners.ts:typescript_preview:bd728bcd
   ripr context --root <cwd>/fixtures/typescript_owner_kinds/input --diff <cwd>/fixtures/typescript_owner_kinds/diff.patch --mode fast --at probe:src_owners.ts:typescript_preview:bd728bcd
-  no repair start offered: this finding names no missing discriminator (no canonical gap), so there is no seam to start a repair from; follow the Next step above and check the related test by hand
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_owners.ts:typescript_preview:bd728bcd --root <cwd>/fixtures/typescript_owner_kinds/input` for the full gate's answer
 
 Hidden:
   3 lower-priority finding(s) omitted from default human output (TypeScript preview: 3).

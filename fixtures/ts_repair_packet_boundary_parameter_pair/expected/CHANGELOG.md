@@ -209,7 +209,7 @@ Updated:
 ## Pending — ts_repair_packet_boundary_parameter_pair (18)
 
 Reason:
-RIPR-SPEC-0122: name the no-canonical-gap recovery instead of routing back to the gate (#9244)
+RIPR-SPEC-0122: digest missing-discriminator prose wraps instead of one_line clipping (#4323 parity); the ellipsized cut dropped the operative tail silently
 
 Command:
 `cargo xtask goldens bless ts_repair_packet_boundary_parameter_pair --reason "..."`

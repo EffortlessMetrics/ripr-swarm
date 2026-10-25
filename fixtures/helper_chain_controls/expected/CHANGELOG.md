@@ -288,15 +288,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — helper_chain_controls (22)
-
-Reason:
-RIPR-SPEC-0122: name the no-canonical-gap recovery instead of routing back to the gate (#9244)
-
-Command:
-`cargo xtask goldens bless helper_chain_controls --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`

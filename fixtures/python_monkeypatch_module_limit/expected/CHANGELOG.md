@@ -565,15 +565,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — python_monkeypatch_module_limit (22)
-
-Reason:
-RIPR-SPEC-0122: name the no-canonical-gap recovery instead of routing back to the gate (#9244)
-
-Command:
-`cargo xtask goldens bless python_monkeypatch_module_limit --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
