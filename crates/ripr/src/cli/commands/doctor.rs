@@ -120,7 +120,7 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
         language_detection_elapsed,
     );
     report.segments = environment.facts.segments.clone();
-    let binary = output::doctor_binary::probe_binary_identity();
+    let binary = output::doctor_binary::probe_binary_identity(&root);
     ok &= add_language_runtime_probes(
         &root,
         &detected,
@@ -178,7 +178,7 @@ fn doctor_json(
     let evaluation =
         output::doctor::evaluate_doctor_core_with_config_for_profile(root, detected, profile);
     let mut report = evaluation.report;
-    report.binary = Some(output::doctor_binary::probe_binary_identity());
+    report.binary = Some(output::doctor_binary::probe_binary_identity(root));
     let enabled_languages = enabled_languages(&evaluation.config);
     let _ = add_language_runtime_probes(
         root,
@@ -625,7 +625,13 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
         lines.push(compact_tilde_line(&advisory));
     }
     for warning in &binary.warnings {
-        lines.push(format!("- warning: {}", display_text(warning)));
+        // #10347: a config that launches `ripr` by name with no `ripr` on PATH
+        // is an advisory repair signal, spelled like the other `~` advisories.
+        if binary.compact_path_advisory() == Some(warning.as_str()) {
+            lines.push(compact_tilde_line(warning));
+        } else {
+            lines.push(format!("- warning: {}", display_text(warning)));
+        }
     }
 
     // Compact passing groups, then leftover skip/advisory lines that tests
@@ -3666,6 +3672,7 @@ mod tests {
             path_ripr_is_cargo_build_output: false,
             path_ripr_is_running_executable: None,
             warnings: Vec::new(),
+            missing_path_dependents: Vec::new(),
         }
     }
 
@@ -3762,6 +3769,54 @@ mod tests {
             verbose,
             passed,
         })
+    }
+
+    #[test]
+    fn default_screen_warns_when_config_launches_ripr_missing_from_path() {
+        // #10347: advisory `~` line on the default screen, quiet without a
+        // dependent config, and the exit decision (`passed`) is untouched.
+        let report = passing_report();
+        let environment = empty_environment();
+        let binary = quiet_binary().with_path_dependents(vec![".mcp.json".to_string()]);
+        let screen = |binary: &output::doctor_binary::DoctorBinaryIdentity, verbose: bool| {
+            render_doctor_human_screen(DoctorHumanScreen {
+                root: Path::new("."),
+                profile: output::doctor::DoctorProfile::Analysis,
+                report: &report,
+                config: &Ok(RiprConfig::default()),
+                environment: &environment,
+                binary,
+                verbose,
+                passed: true,
+            })
+        };
+        let lines = screen(&binary, false);
+        assert!(
+            lines.iter().any(
+                |line| line.starts_with("~ `ripr` is not on this shell's PATH")
+                    && line.contains(".mcp.json")
+            ),
+            "{lines:?}"
+        );
+        assert_eq!(
+            lines.last().map(String::as_str),
+            Some("✓ doctor checks passed"),
+            "{lines:?}"
+        );
+        let verbose = screen(&binary, true);
+        assert!(
+            verbose
+                .iter()
+                .any(|line| line.starts_with("~ `ripr` is not on this shell's PATH")),
+            "{verbose:?}"
+        );
+        let quiet = screen(&quiet_binary().with_path_dependents(Vec::new()), false);
+        assert!(
+            !quiet
+                .iter()
+                .any(|line| line.contains("not on this shell's PATH")),
+            "{quiet:?}"
+        );
     }
 
     #[test]
