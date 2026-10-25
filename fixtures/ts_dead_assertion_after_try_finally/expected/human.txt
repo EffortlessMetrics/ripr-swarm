@@ -41,7 +41,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/ts_dead_assertion_after_try_finally/input --diff <cwd>/fixtures/ts_dead_assertion_after_try_finally/diff.patch --mode fast probe:src_eligibility.ts:typescript_preview:013a8947
   ripr context --root <cwd>/fixtures/ts_dead_assertion_after_try_finally/input --diff <cwd>/fixtures/ts_dead_assertion_after_try_finally/diff.patch --mode fast --at probe:src_eligibility.ts:typescript_preview:013a8947
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_eligibility.ts:typescript_preview:013a8947 --root <cwd>/fixtures/ts_dead_assertion_after_try_finally/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

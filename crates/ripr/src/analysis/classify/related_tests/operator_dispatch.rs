@@ -263,7 +263,7 @@ fn is_reference_operand(operand: &str, before: &str) -> bool {
 /// hide a real shift nor cancel a generic opener. A `;` inside `[..]`
 /// (`Vec<[Money; 2]>`) does not end the statement.
 fn in_generic_arguments(masked: &str, at: usize) -> bool {
-    let bytes = masked[..at].as_bytes();
+    let bytes = &masked.as_bytes()[..at];
     let mut generics = 0usize;
     let mut brackets = 0usize;
     for (i, &byte) in bytes.iter().enumerate() {
