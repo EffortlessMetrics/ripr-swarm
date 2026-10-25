@@ -1,0 +1,13 @@
+diff --git a/lib/Hostile.pm b/lib/Hostile.pm
+index 505b49c..b7b797c 100644
+--- a/lib/Hostile.pm
++++ b/lib/Hostile.pm
+@@ -40,7 +40,7 @@ sub AUTOLOAD {
+     (my $field = $AUTOLOAD) =~ s/.*:://;
+     return if $field eq 'DESTROY';
+     die "no field $field" unless exists $self->{$field};
+-    return $self->{$field} * 2;
++    return 2 * $self->{$field};
+ }
+ 
+ my %MULT = (double => 2, triple => 3);
