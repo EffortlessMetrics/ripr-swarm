@@ -719,7 +719,10 @@ Recording credit is exercised by `crates/ripr/tests/recording_double_credit.rs`:
 `the_changed_call_cannot_hide_execution_in_format_arguments`,
 `fixture_setup_owns_only_exclusively_acquired_roots`, and
 `plain_test_cfg_uses_the_shared_predicate_authority`.
-The existing framework suite retains the concrete/collection/count/order controls.
+The framework recorder positive is now
+`a_hand_written_recorder_compared_by_field_is_credited`; the older framework
+catalog below retains its original withholding name. The framework suite retains
+the concrete/collection/count/order controls.
 
 Tests in `crates/ripr/src/analysis/classify/gap_admission.rs`:
 
@@ -741,7 +744,7 @@ Tests in `crates/ripr/src/analysis/classify/framework_oracle.rs` and
 - `an_unredacted_insta_field_is_withheld` and its keeps-the-gap control
 - `a_helper_built_receiver_pinned_to_a_literal_is_withheld` and
   `a_fixture_receiver_shape_that_differs_keeps_the_finding`
-- `a_hand_written_recorder_compared_by_field_is_credited`,
+- `a_hand_written_recorder_compared_by_field_is_withheld`,
   `a_recorder_shape_that_differs_keeps_the_finding` and
   `a_vec_pushed_into_by_the_changed_call_keeps_the_gap`
 
