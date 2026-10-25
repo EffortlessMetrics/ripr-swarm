@@ -198,7 +198,7 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// RIPR-SPEC-0352: per package root, the names the package's own files
     /// make ambiguous without a scope (the unplaced receiver limit reads
     /// only these, never another package's sites).
-    own_package_macro_ambiguities: SyncMemo<BTreeMap<String, Arc<BTreeSet<String>>>>,
+    own_package_macro_ambiguities: SyncMemo<OwnScopeAmbiguities>,
     /// Definitions confined to one inline module or function body, keyed by
     /// file: they make a name ambiguous only for tests inside that scope.
     scoped_macro_bindings: SyncMemo<Option<ScopedMacroBindings>>,
@@ -274,6 +274,10 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     field_integer_memo: SyncMemo<BTreeMap<FieldIntegerKey, Option<&'static str>>>,
     withheld: WithheldMacroBindings,
 }
+
+/// RIPR-SPEC-0352: per (package, declaring parents of the test file), the
+/// names the test's own scope makes ambiguous.
+type OwnScopeAmbiguities = BTreeMap<(String, Vec<PathBuf>), Arc<BTreeSet<String>>>;
 
 /// #8051: one bare `debug_assert_eq!` call: its line and source text.
 type DebugAssertEqCall = (usize, String);
@@ -1028,14 +1032,17 @@ impl OwnerPinSyntax {
     ) -> Option<Arc<BTreeSet<String>>> {
         use crate::analysis::workspace::package_root;
         let package = package_root(&test.file)?;
-        if let Some(names) = self.own_package_macro_ambiguities.borrow().get(&package) {
-            return Some(names.clone());
-        }
-        let mut packages: BTreeSet<String> = BTreeSet::from([package.clone()]);
         let mut mounted: BTreeSet<PathBuf> = BTreeSet::new();
         if let Some(context) = self.execution_context(&test.file, index).as_ref() {
             mounted.extend(context.edges.iter().map(|edge| edge.parent.clone()));
         }
+        // The scope depends on the test file's declaring parents as well as
+        // its package, so both key the memo.
+        let key = (package.clone(), mounted.iter().cloned().collect::<Vec<_>>());
+        if let Some(names) = self.own_package_macro_ambiguities.borrow().get(&key) {
+            return Some(names.clone());
+        }
+        let mut packages: BTreeSet<String> = BTreeSet::from([package.clone()]);
         // Directory name of every package that holds an indexed file, the
         // crate name a path dependency is imported under.
         let directories: BTreeMap<String, String> = index
@@ -1082,9 +1089,12 @@ impl OwnerPinSyntax {
             // A workspace-owned crate imported under a name no package
             // directory carries (a renamed dependency) cannot be pinned to
             // one package, so every package is reached.
-            let reach_all = roots
-                .iter()
-                .any(|root| owned.contains(root) && !directories.values().any(|name| name == root));
+            let reach_all =
+                roots.iter().any(|root| {
+                    let matching = directories.values().filter(|name| *name == root).count();
+                    (owned.contains(root) || index.package_names.contains(root)) && matching == 0
+                        || matching > 1
+                }) || own_scope_manifests_defeat_names(index, &packages, &directories, &roots);
             for (directory, name) in &directories {
                 if (reach_all || roots.contains(name)) && packages.insert(directory.clone()) {
                     changed = true;
@@ -1120,7 +1130,7 @@ impl OwnerPinSyntax {
         let names = Arc::new(names);
         self.own_package_macro_ambiguities
             .borrow_mut()
-            .insert(package, names.clone());
+            .insert(key, names.clone());
         Some(names)
     }
 
@@ -2624,6 +2634,64 @@ fn absorb_macro_sites(
             global.insert(name);
         }
     }
+}
+
+/// Whether the manifests in the own scope make a directory name an unreliable
+/// stand-in for the crate an import names (RIPR-SPEC-0352). Fails closed: a
+/// manifest in scope (or the workspace root's) that renames a dependency
+/// (`package = ".."`), a manifest that cannot be read, or an imported name
+/// whose one matching directory holds a crate of another name, all send the
+/// import to every package.
+fn own_scope_manifests_defeat_names(
+    index: &RustIndex,
+    packages: &BTreeSet<String>,
+    directories: &BTreeMap<String, String>,
+    roots: &BTreeSet<String>,
+) -> bool {
+    let Some(workspace) = index.drop_in_manifests.root() else {
+        return true;
+    };
+    let read = |directory: &str| {
+        std::fs::read_to_string(workspace.join(directory).join("Cargo.toml")).ok()
+    };
+    let renames = |text: &str| {
+        text.match_indices("package").any(|(at, _)| {
+            let before = text[..at].chars().next_back();
+            let after = text[at + 7..].trim_start();
+            !before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') && after.starts_with('=')
+        })
+    };
+    let mut scope: Vec<&str> = packages.iter().map(String::as_str).collect();
+    scope.push("");
+    for directory in scope {
+        match read(directory) {
+            Some(text) if !renames(&text) => {}
+            // A workspace root with no package of its own may have no manifest
+            // in a narrowed checkout; a package directory without one cannot
+            // be trusted.
+            None if directory.is_empty() => {}
+            _ => return true,
+        }
+    }
+    for (directory, name) in directories {
+        if !roots.contains(name) {
+            continue;
+        }
+        let Some(table) = read(directory).and_then(|text| text.parse::<toml::Table>().ok()) else {
+            return true;
+        };
+        let declared = |section: &str| {
+            table
+                .get(section)
+                .and_then(|section| section.get("name"))
+                .and_then(toml::Value::as_str)
+                .map(|name| name.replace('-', "_"))
+        };
+        if declared("package").as_ref() != Some(name) && declared("lib").as_ref() != Some(name) {
+            return true;
+        }
+    }
+    false
 }
 
 /// The first path segment of every `use` item and `extern crate` in `source`,

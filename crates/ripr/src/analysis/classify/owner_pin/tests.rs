@@ -12952,3 +12952,76 @@ fn parameter_types_and_imported_variants_give_receiver_identity() {
         );
     }
 }
+
+/// RIPR-SPEC-0352: the own-scope ambiguity set depends on the test file's
+/// declaring parents, not only its package. `a/src/a_y.rs` is also mounted by
+/// `b`, whose root defines a no-op `assert_eq!`; `a/src/z_shared.rs` is plain.
+/// The plain file's answer must not depend on which file was judged first.
+#[test]
+fn the_own_scope_ambiguities_do_not_depend_on_which_test_file_ran_first() {
+    let test_source = "#[test]\nfn reads() { assert_eq!(1, 1); }\n";
+    let files = [
+        ("a/src/lib.rs", "mod a_y;\nmod z_shared;\n"),
+        ("a/src/a_y.rs", test_source),
+        ("a/src/z_shared.rs", test_source),
+        (
+            "b/src/lib.rs",
+            "macro_rules! assert_eq { ($($t:tt)*) => {}; }\n#[path = \"../../a/src/a_y.rs\"]\nmod a_y;\n",
+        ),
+    ];
+    let chain = SourceRoleProvenance {
+        edges: vec![module_edge("b/src/lib.rs", "a/src/a_y.rs", "a_y", 2, false)],
+        earliest_unresolved_reason: None,
+        ..Default::default()
+    };
+    let mut ix = index_with_provenance(&files, &[("a/src/a_y.rs", chain)]);
+    // The manifest read behind the import scan needs a real workspace root.
+    let root = std::env::temp_dir().join(format!("ripr-own-scope-{}", std::process::id()));
+    for package in ["a", "b"] {
+        let manifest = root.join(package).join("Cargo.toml");
+        assert!(
+            manifest
+                .parent()
+                .is_some_and(|dir| std::fs::create_dir_all(dir).is_ok())
+                && std::fs::write(
+                    &manifest,
+                    format!("[package]\nname = \"{package}\"\nversion = \"0.0.0\"\n")
+                )
+                .is_ok(),
+            "premise: manifest written"
+        );
+    }
+    ix.drop_in_manifests = crate::analysis::facts::drop_in::DropInManifests::new(&root);
+    let find = |file: &str| {
+        ix.tests()
+            .iter()
+            .find(|test| test.file == Path::new(file))
+            .cloned()
+    };
+    let (mounted, plain) = (find("a/src/a_y.rs"), find("a/src/z_shared.rs"));
+    assert!(
+        mounted.is_some() && plain.is_some(),
+        "premise: both test files are indexed"
+    );
+    let (mounted, plain) = (
+        mounted.unwrap_or_else(|| ix.tests().at(0).clone()),
+        plain.unwrap_or_else(|| ix.tests().at(0).clone()),
+    );
+    let names = |pin: &OwnerPinSyntax, test: &TestSummary| {
+        pin.own_package_ambiguities(test, &ix)
+            .map(|names| names.contains("assert_eq"))
+    };
+    let alone = names(&OwnerPinSyntax::default(), &plain);
+    assert_eq!(alone, Some(false), "premise: the plain file is unambiguous");
+    let pin = OwnerPinSyntax::default();
+    assert_eq!(
+        names(&pin, &mounted),
+        Some(true),
+        "premise: the mounted file sees b's macro through its declaring parent"
+    );
+    assert_eq!(names(&pin, &plain), alone, "mounted file judged first");
+    let pin = OwnerPinSyntax::default();
+    assert_eq!(names(&pin, &plain), alone, "plain file judged first");
+    assert_eq!(names(&pin, &mounted), Some(true));
+    drop(std::fs::remove_dir_all(&root));
+}

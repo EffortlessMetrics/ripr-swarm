@@ -635,40 +635,168 @@ fn a_mounted_file_under_a_nested_src_directory_keeps_the_gap() -> Result<(), Str
     assert_keeps_gap("mount under a nested src directory", &finding)
 }
 
+impl Workspace {
+    /// Members `a`, `mac` (package `mac_package`) and `other` (exporting a
+    /// no-op `assert_eq!`), `a` depending on `dependency` and starting with
+    /// `lib_head`.
+    fn with_siblings(
+        placement: Placement,
+        mac_package: &str,
+        other_package: &str,
+        dependency: &str,
+        lib_head: &str,
+    ) -> Result<Self, String> {
+        let workspace = Self::create(placement, "assert_eq!(Widget::new().read(), 4);")?;
+        workspace.write_file(
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"a\", \"b\", \"fakestd\", \"mac\", \"other\"]\nresolver = \"2\"\n",
+        )?;
+        workspace.write_file(
+            "a/Cargo.toml",
+            &format!(
+                "[package]\nname = \"a\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[lib]\ntest = false\ndoctest = false\n\n[dependencies]\n{dependency}\n"
+            ),
+        )?;
+        for (directory, package, source) in [
+            (
+                "mac",
+                mac_package,
+                // The directory `mac` exports the macro only where the
+                // dependency really points at it; elsewhere it is a decoy.
+                if dependency.contains("../mac") {
+                    "#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {}; }\n"
+                } else {
+                    "pub fn benign() {}\n"
+                },
+            ),
+            (
+                "other",
+                other_package,
+                "#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {}; }\n",
+            ),
+        ] {
+            workspace.write_file(
+                &format!("{directory}/Cargo.toml"),
+                &format!(
+                    "[package]\nname = \"{package}\"\nversion = \"0.0.0\"\nedition = \"2021\"\n"
+                ),
+            )?;
+            workspace.write_file(&format!("{directory}/src/lib.rs"), source)?;
+        }
+        workspace.write_file("a/src/lib.rs", &format!("{lib_head}\nmod shared;\n"))?;
+        Ok(workspace)
+    }
+}
+
 /// A glob import of a workspace crate that exports `assert_eq!` shadows the
 /// prelude macro in the importing package, so the crate's export is the test
 /// package's own doubt, not placement's. Contrast the `g` crate above, which
 /// the test package never imports.
 #[test]
 fn a_glob_import_of_a_dependency_macro_keeps_the_gap() -> Result<(), String> {
-    for import in [
+    let finding = Workspace::with_siblings(
+        Placement::Generated,
+        "mac",
+        "other",
+        "mac = { path = \"../mac\" }",
         "use mac::*;",
+    )?
+    .finding()?;
+    assert_keeps_gap("dependency macro via `use mac::*;`", &finding)
+}
+
+/// Refused by the lexical import scan alone: `#[macro_use] extern crate` is
+/// also a macro-use site in the test's own file, so both are kept as
+/// separate controls.
+#[test]
+fn a_macro_use_extern_crate_of_a_dependency_keeps_the_gap() -> Result<(), String> {
+    let finding = Workspace::with_siblings(
+        Placement::Generated,
+        "mac",
+        "other",
+        "mac = { path = \"../mac\" }",
         "#[macro_use]\nextern crate mac;",
+    )?
+    .finding()?;
+    assert_keeps_gap("dependency macro via `#[macro_use] extern crate`", &finding)
+}
+
+/// A plain `extern crate mac;` imports no macro by itself, so this gap is the
+/// conservative reading of the `extern crate` branch of the import scan, which
+/// is the only thing that refuses it.
+#[test]
+fn a_plain_extern_crate_of_a_dependency_keeps_the_gap_conservatively() -> Result<(), String> {
+    let finding = Workspace::with_siblings(
+        Placement::Generated,
+        "mac",
+        "other",
+        "mac = { path = \"../mac\" }",
+        "extern crate mac;",
+    )?
+    .finding()?;
+    assert_keeps_gap("dependency named by a plain `extern crate`", &finding)
+}
+
+/// An explicit `use mac::assert_eq;` is a private import site in the test's
+/// own file.
+#[test]
+fn an_explicit_import_of_a_dependency_macro_keeps_the_gap() -> Result<(), String> {
+    let finding = Workspace::with_siblings(
+        Placement::Generated,
+        "mac",
+        "other",
+        "mac = { path = \"../mac\" }",
         "use mac::assert_eq;",
-    ] {
-        let workspace =
-            Workspace::create(Placement::Generated, "assert_eq!(Widget::new().read(), 4);")?;
-        workspace.write_file(
-            "Cargo.toml",
-            "[workspace]\nmembers = [\"a\", \"b\", \"fakestd\", \"mac\"]\nresolver = \"2\"\n",
-        )?;
-        workspace.write_file(
-            "a/Cargo.toml",
-            "[package]\nname = \"a\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[lib]\ntest = false\ndoctest = false\n\n[dependencies]\nmac = { path = \"../mac\" }\n",
-        )?;
-        workspace.write_file(
-            "mac/Cargo.toml",
-            "[package]\nname = \"mac\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
-        )?;
-        workspace.write_file(
-            "mac/src/lib.rs",
-            "#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {}; }\n",
-        )?;
-        workspace.write_file("a/src/lib.rs", &format!("{import}\nmod shared;\n"))?;
-        let finding = workspace.finding()?;
-        assert_keeps_gap(&format!("dependency macro via `{import}`"), &finding)?;
-    }
-    Ok(())
+    )?
+    .finding()?;
+    assert_keeps_gap("dependency macro via an explicit import", &finding)
+}
+
+/// The decoy: `a` renames the macro-exporting `other` to `mac`, while a benign
+/// package lives in a directory also named `mac`. The directory name cannot
+/// stand for the crate, so the import reaches every package.
+#[test]
+fn a_renamed_dependency_behind_a_decoy_directory_keeps_the_gap() -> Result<(), String> {
+    let finding = Workspace::with_siblings(
+        Placement::Generated,
+        "benign",
+        "other",
+        "mac = { package = \"other\", path = \"../other\" }",
+        "use mac::*;",
+    )?
+    .finding()?;
+    assert_keeps_gap("renamed dependency behind a decoy directory", &finding)
+}
+
+/// A rename alone: the one directory named `mac` holds a crate named `mac`, but
+/// `a` renames `other` to `mac`, so the name does not stand for that directory.
+#[test]
+fn a_renamed_dependency_whose_alias_matches_a_real_directory_keeps_the_gap() -> Result<(), String> {
+    let finding = Workspace::with_siblings(
+        Placement::Generated,
+        "mac",
+        "other",
+        "mac = { package = \"other\", path = \"../other\" }",
+        "use mac::*;",
+    )?
+    .finding()?;
+    assert_keeps_gap("rename onto a matching directory name", &finding)
+}
+
+/// A crate-name mismatch alone: the crate named `mac` lives in directory
+/// `other`, while the directory named `mac` holds a benign crate. No manifest
+/// renames anything.
+#[test]
+fn an_imported_name_whose_directory_holds_another_crate_keeps_the_gap() -> Result<(), String> {
+    let finding = Workspace::with_siblings(
+        Placement::Generated,
+        "benign",
+        "mac",
+        "mac = { path = \"../other\" }",
+        "use mac::*;",
+    )?
+    .finding()?;
+    assert_keeps_gap("directory name differs from its crate name", &finding)
 }
 
 /// A file with no nameable package (outside every `src/`, `tests/` layout) is
@@ -684,31 +812,4 @@ fn an_unmounted_file_with_no_nameable_package_keeps_the_gap() -> Result<(), Stri
     )?;
     let finding = workspace.finding()?;
     assert_keeps_gap("file with no nameable package", &finding)
-}
-
-/// The dependency is imported under a rename no package directory carries, so
-/// the import cannot be pinned to one package and every package is reached.
-#[test]
-fn a_glob_import_of_a_renamed_dependency_macro_keeps_the_gap() -> Result<(), String> {
-    let workspace =
-        Workspace::create(Placement::Generated, "assert_eq!(Widget::new().read(), 4);")?;
-    workspace.write_file(
-        "Cargo.toml",
-        "[workspace]\nmembers = [\"a\", \"b\", \"fakestd\", \"mac\"]\nresolver = \"2\"\n",
-    )?;
-    workspace.write_file(
-        "a/Cargo.toml",
-        "[package]\nname = \"a\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[lib]\ntest = false\ndoctest = false\n\n[dependencies]\nm2 = { package = \"mac\", path = \"../mac\" }\n",
-    )?;
-    workspace.write_file(
-        "mac/Cargo.toml",
-        "[package]\nname = \"mac\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
-    )?;
-    workspace.write_file(
-        "mac/src/lib.rs",
-        "#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {}; }\n",
-    )?;
-    workspace.write_file("a/src/lib.rs", "use m2::*;\nmod shared;\n")?;
-    let finding = workspace.finding()?;
-    assert_keeps_gap("renamed dependency macro", &finding)
 }

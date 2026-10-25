@@ -131,8 +131,12 @@ unchanged. Where that consumer reaches the same cause it already reads
   under a nested `src/` directory; the declaring parents of the test file; and
   every package the scope reaches through an explicit import edge (`use dep::*`,
   `use dep::name`, `extern crate dep`, read lexically, to a fixpoint). An import
-  of a workspace-owned crate under a name no package directory carries reaches
-  every package. A site in any other package (a `pub use core::*` glob or an
+  is matched to a package by directory name and fails closed to every package
+  when: the name is a workspace crate name that no directory carries; more than
+  one directory carries it; the one matching directory holds a crate of another
+  name (`[package] name` or `[lib] name`, hyphens folded); any manifest in the
+  scope or the workspace root renames a dependency (`package = ".."`); or a
+  scope manifest or the workspace root path cannot be read. A site in any other package (a `pub use core::*` glob or an
   exported `macro_rules!` in a sibling crate the test's scope never imports or
   mounts) reaches this test only if that crate's file is mounted into the test's
   target, which unplaced placement can neither establish nor rule out; it is
@@ -182,8 +186,21 @@ unchanged. Where that consumer reaches the same cause it already reads
   own-crate, mount, nested-`src` and dependency-import negatives. Mount edges
   off: `a_literal_path_mount_of_another_packages_macro_keeps_the_gap` and
   `a_mounted_file_under_a_nested_src_directory_keeps_the_gap`. Import edges off:
-  `a_glob_import_of_a_dependency_macro_keeps_the_gap` (`use mac::*;`,
-  `#[macro_use] extern crate mac;` and `use mac::assert_eq;` cases). A file with
+  `a_glob_import_of_a_dependency_macro_keeps_the_gap` (`use mac::*;`); the
+  `use` branch of the lexical scan off: the same test; the `extern crate`
+  branch off: `a_plain_extern_crate_of_a_dependency_keeps_the_gap_conservatively`
+  (a plain `extern crate mac;` imports no macro by itself, so that gap is the
+  scan's conservative reading, and it is the only thing refusing it).
+  `#[macro_use] extern crate mac;` and `use mac::assert_eq;` are also refused by
+  macro-use and import sites in the test's own file, so their tests are
+  controls, not discriminators of the import scan. Rename detection:
+  `a_renamed_dependency_whose_alias_matches_a_real_directory_keeps_the_gap`;
+  crate-name mismatch: `an_imported_name_whose_directory_holds_another_crate_keeps_the_gap`;
+  both together (the decoy directory):
+  `a_renamed_dependency_behind_a_decoy_directory_keeps_the_gap`. The own-scope
+  memo keyed by package only: the unit test
+  `the_own_scope_ambiguities_do_not_depend_on_which_test_file_ran_first`
+  (plain and mounted test files judged in both orders). A file with
   no nameable package not counted as own:
   `an_unmounted_file_with_no_nameable_package_keeps_the_gap`.
   Judging every indexed test instead of the finding's related tests:
@@ -192,9 +209,11 @@ unchanged. Where that consumer reaches the same cause it already reads
   `a_visible_macro_that_replaces_the_bare_assertion_keeps_its_gap`.
   Unexercised, survive mutation, and are not claimed proved: (1) the
   "at least one assertion names the owner" guard; (2) the reach-every-package
-  rule for an owned crate imported under a rename (the renamed-dependency test
-  also keeps its gap with the rule removed, because the renamed glob is already
-  a foreign-glob site in the test's own file); (3) the declaring parents of the
+  rule for a workspace crate name no directory carries, the more-than-one
+  matching directory rule, and the unreadable-workspace-root rule (no test
+  removes them); hyphen-to-underscore normalisation of directory names (a
+  package that normalisation fails to match falls to the same reach-every-package
+  rule, so no test can tell them apart); (3) the declaring parents of the
   test file in the own scope (no constructible shape: the harness test file
   sits in the package of its own `lib.rs`); (4) the withheld-file refusals
   (`withheld.any_name`, `withheld.trusted`), which need a narrowed diff index
