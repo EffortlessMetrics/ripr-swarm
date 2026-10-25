@@ -794,6 +794,10 @@ use super::bounded_read::{
     DEFAULT_PYTHON_MAX_WORKSPACE_READ_BYTES,
 };
 use super::owners_tests::{extract_owners, extract_tests};
+use super::sink_alignment::{
+    enclosing_literal_pair, oracle_compares_whole_collection, oracle_contains_value_literal,
+    oracle_observes_changed_dict_element, oracle_observes_changed_list_element,
+};
 use super::*;
 use std::path::{Path, PathBuf};
 
@@ -4458,11 +4462,25 @@ fn classify_log_text_edit(
     new_call: &str,
     test_body: &str,
 ) -> Result<(ExposureClass, Option<StaticLimitKind>), String> {
+    classify_log_text_edit_from(
+        owner_source,
+        "log.warning(\"low balance: %s\", balance)",
+        new_call,
+        test_body,
+    )
+}
+
+fn classify_log_text_edit_from(
+    owner_source: &str,
+    old_call: &str,
+    new_call: &str,
+    test_body: &str,
+) -> Result<(ExposureClass, Option<StaticLimitKind>), String> {
     let finding = classify_change_with_source(
         Path::new("src/audit.py"),
         6,
         &format!("        {new_call}"),
-        Some("        log.warning(\"low balance: %s\", balance)"),
+        Some(&format!("        {old_call}")),
         &extract_owners(Path::new("src/audit.py"), owner_source),
         &extract_tests(
             Path::new("tests/test_audit.py"),
@@ -8834,6 +8852,141 @@ fn caplog_messages_and_records_the_edit_removes_are_credited() -> Result<(), Str
     Ok(())
 }
 
+fn aliased_records_test(read: &str, between: &str) -> String {
+    format!(
+        "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    msgs = {read}\n{between}    assert \"low balance: 5\" in msgs\n"
+    )
+}
+
+#[test]
+fn a_straight_line_alias_of_a_captured_log_read_is_evaluated() -> Result<(), String> {
+    // #10151: `msgs = caplog.messages` after the call is the same read as
+    // `caplog.messages`.
+    let removed = "log.warning(\"balance low: %s\", balance)";
+    let retry = "log.warning(\"low balance: %s (retry)\", balance)";
+    for read in ["caplog.messages", "caplog.text"] {
+        assert_eq!(
+            classify_log_text_edit(AUDIT_OWNER, removed, &aliased_records_test(read, ""))?,
+            (ExposureClass::Exposed, None),
+            "{read}: the edit removes the asserted message"
+        );
+    }
+    // The same evaluation calls a kept substring a gap instead of crediting it.
+    assert_eq!(
+        classify_log_text_edit(AUDIT_OWNER, retry, &aliased_records_test("caplog.text", ""))?,
+        (ExposureClass::WeaklyExposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn alias_replacement_skips_string_literals_and_longer_names() {
+    use super::caplog_text::replace_identifier;
+    assert_eq!(
+        replace_identifier(
+            "assert \"msgs\" in msgs and 'msgs' in msgs and msgs2 and x.msgs",
+            "msgs",
+            "caplog.messages"
+        ),
+        "assert \"msgs\" in caplog.messages and 'msgs' in caplog.messages and msgs2 and x.msgs"
+            .replace("x.msgs", "x.caplog.messages")
+    );
+    assert_eq!(
+        replace_identifier("\"a\\\"msgs\" in msgs", "msgs", "R"),
+        "\"a\\\"msgs\" in R"
+    );
+}
+
+#[test]
+fn an_alias_spelled_inside_the_asserted_literal_is_not_substituted() -> Result<(), String> {
+    // #10282 review: replacing `msgs` inside `"msgs: 5"` made the evaluator
+    // read the literal `caplog.text: 5`, which the edit did remove, and credit
+    // an assertion that still passes on the kept `msgs: 5`.
+    let owner = AUDIT_OWNER.replace("low balance: %s\", balance", "msgs: 5 caplog.text: 5\"");
+    let test = "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    msgs = caplog.text\n    assert \"msgs: 5\" in msgs\n";
+    for quoted in ["\"msgs: 5\"", "'msgs: 5'"] {
+        let test = test.replace("\"msgs: 5\"", quoted);
+        assert_eq!(
+            classify_log_text_edit_from(
+                &owner,
+                "log.warning(\"msgs: 5 caplog.text: 5\")",
+                "log.warning(\"msgs: 5\")",
+                &test
+            )?,
+            (ExposureClass::WeaklyExposed, None),
+            "{quoted}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn an_alias_line_with_a_trailing_comment_is_still_an_alias() -> Result<(), String> {
+    let removed = "log.warning(\"balance low: %s\", balance)";
+    let commented = aliased_records_test("caplog.messages  # type: ignore", "");
+    assert_eq!(
+        classify_log_text_edit(AUDIT_OWNER, removed, &commented)?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn an_alias_that_is_not_a_plain_snapshot_keeps_abstaining() -> Result<(), String> {
+    let unread = (
+        ExposureClass::StaticUnknown,
+        Some(StaticLimitKind::UnsupportedSyntax),
+    );
+    let removed = "log.warning(\"balance low: %s\", balance)";
+    // Mutated, rebound, deleted from, or read elsewhere between the snapshot
+    // and the assertion.
+    for between in [
+        "    msgs.append(\"low balance: 5\")\n",
+        "    msgs += [\"low balance: 5\"]\n",
+        "    msgs = frozen\n",
+        "    del msgs[0]\n",
+        "    seen = [m for m in msgs]\n",
+    ] {
+        assert_eq!(
+            classify_log_text_edit(
+                AUDIT_OWNER,
+                removed,
+                &aliased_records_test("caplog.messages", between)
+            )?,
+            unread,
+            "{between}"
+        );
+    }
+    // Taken before the call: the alias holds the records that existed then.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            removed,
+            "def test_low_balance(caplog):\n    msgs = caplog.messages\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    assert \"low balance: 5\" in msgs\n"
+        )?,
+        unread
+    );
+    // Taken inside the level block, not at the assertion's own level.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            removed,
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n        msgs = caplog.messages\n    assert \"low balance: 5\" in msgs\n"
+        )?,
+        unread
+    );
+    // Bound twice.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            removed,
+            &aliased_records_test("caplog.messages", "    msgs = caplog.messages\n")
+        )?,
+        unread
+    );
+    Ok(())
+}
+
 #[test]
 fn caplog_messages_equality_and_records_containment_differ_on_a_suffix() -> Result<(), String> {
     let retry = "log.warning(\"low balance: %s (retry)\", balance)";
@@ -9093,4 +9246,274 @@ fn comprehension_over_other_output_keeps_its_assertion_shape() {
             .all(|shape| *shape != PythonOracleShape::OutputAssertion),
         "{shapes:?}"
     );
+}
+
+const MULTILINE_CFG: &str =
+    "def labels():\n    return {\n        \"name\": \"x\",\n        \"label\": \"y\",\n    }\n";
+
+fn multiline_literal_class(
+    cfg_new: &str,
+    changed_line: usize,
+    new_text: &str,
+    old_text: &str,
+    test_body: &str,
+    owner: &str,
+) -> Result<ExposureClass, String> {
+    let owners = extract_owners(Path::new("src/cfg.py"), cfg_new);
+    let tests = extract_tests(
+        Path::new("tests/test_cfg.py"),
+        &format!("from src.cfg import {owner}\n\n\ndef test_it():\n    {test_body}\n"),
+    );
+    classify_change_with_source(
+        Path::new("src/cfg.py"),
+        changed_line,
+        new_text,
+        Some(old_text),
+        &owners,
+        &tests,
+        Some(cfg_new),
+    )
+    .map(|finding| finding.class)
+    .ok_or_else(|| "changed literal element should classify".to_string())
+}
+
+#[test]
+fn multiline_dict_element_joins_the_enclosing_literal() -> Result<(), String> {
+    let (new, old) = enclosing_literal_pair(
+        MULTILINE_CFG,
+        4,
+        "        \"label\": \"y\",",
+        Some("        \"tag\": \"y\","),
+    )
+    .ok_or("element line of a returned dict literal should join")?;
+    assert_eq!(new, "{\"name\": \"x\", \"label\": \"y\",}");
+    assert_eq!(old, "{\"name\": \"x\", \"tag\": \"y\",}");
+    Ok(())
+}
+
+#[test]
+fn multiline_literal_context_requires_a_bound_bracket_literal() {
+    // A call argument list, a mismatched closer, a comment inside the literal, a
+    // missing old line, and a line that is not the changed line all stay unjoined.
+    let call = "def f():\n    return build(\n        1,\n        2,\n    )\n";
+    assert!(enclosing_literal_pair(call, 3, "        1,", Some("        0,")).is_none());
+    let arg = "def f():\n    use({\n        \"a\": 1,\n    })\n";
+    assert!(
+        enclosing_literal_pair(arg, 3, "        \"a\": 1,", Some("        \"a\": 0,")).is_none()
+    );
+    let commented = "def f():\n    return {\n        \"a\": 1,  # one\n    }\n";
+    assert!(
+        enclosing_literal_pair(
+            commented,
+            3,
+            "        \"a\": 1,  # one",
+            Some("        \"a\": 0,")
+        )
+        .is_none()
+    );
+    assert!(enclosing_literal_pair(MULTILINE_CFG, 4, "        \"label\": \"y\",", None).is_none());
+    assert!(
+        enclosing_literal_pair(
+            MULTILINE_CFG,
+            3,
+            "        \"label\": \"y\",",
+            Some("        \"tag\": \"y\",")
+        )
+        .is_none()
+    );
+}
+
+#[test]
+fn multiline_dict_key_change_is_not_exposed_by_a_sibling_subscript() -> Result<(), String> {
+    let class = multiline_literal_class(
+        MULTILINE_CFG,
+        4,
+        "        \"label\": \"y\",",
+        "        \"tag\": \"y\",",
+        "assert labels()[\"name\"] == \"x\"",
+        "labels",
+    )?;
+    assert_ne!(class, ExposureClass::Exposed, "sibling-only oracle");
+    // Positive control: subscripting the changed key still discriminates.
+    let class = multiline_literal_class(
+        MULTILINE_CFG,
+        4,
+        "        \"label\": \"y\",",
+        "        \"tag\": \"y\",",
+        "assert labels()[\"label\"] == \"y\"",
+        "labels",
+    )?;
+    assert_eq!(class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn multiline_list_index_change_follows_the_changed_index() -> Result<(), String> {
+    let source = "def staff():\n    return [\n        \"founder\",\n        \"editor\",\n    ]\n";
+    let class = multiline_literal_class(
+        source,
+        3,
+        "        \"founder\",",
+        "        \"owner\",",
+        "assert staff()[1] == \"editor\"",
+        "staff",
+    )?;
+    assert_ne!(class, ExposureClass::Exposed, "unchanged index only");
+    let class = multiline_literal_class(
+        source,
+        3,
+        "        \"founder\",",
+        "        \"owner\",",
+        "assert staff()[0] == \"founder\"",
+        "staff",
+    )?;
+    assert_eq!(class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn changed_value_is_observed_only_as_a_whole_literal_token() {
+    // A number inside a longer number, a letter run or a decimal is not the value.
+    assert!(!oracle_contains_value_literal(
+        "assert \"8080\" in repr(x)",
+        "80"
+    ));
+    assert!(!oracle_contains_value_literal("assert x == 1.80", "80"));
+    assert!(!oracle_contains_value_literal("assert x == v80", "80"));
+    assert!(oracle_contains_value_literal("assert x == 80", "80"));
+    assert!(oracle_contains_value_literal(
+        "assert x[\"http\"] == 80",
+        "80"
+    ));
+    assert!(oracle_contains_value_literal("assert x == -5", "-5"));
+    // A string value must appear as a complete quoted literal.
+    assert!(!oracle_contains_value_literal(
+        "assert \"yes\" in out",
+        "\"es\""
+    ));
+    assert!(oracle_contains_value_literal(
+        "assert 'es' in out",
+        "\"es\""
+    ));
+    // A non-literal value expression keeps the substring match.
+    assert!(oracle_contains_value_literal(
+        "assert x == compute(a)",
+        "compute(a)"
+    ));
+}
+
+#[test]
+fn whole_collection_credit_needs_a_literal_display_compared_to_a_result() {
+    let dict_keys = vec!["high".to_string()];
+    let dict_values = vec!["80".to_string()];
+    let list_indices = vec![0usize];
+    let list_values = vec!["80".to_string()];
+    let unrelated_dict = "assert list((10,)) == [labels()['low']]";
+    let unrelated_list = "assert list((10,)) == [labels()[1]]";
+    assert!(!oracle_observes_changed_dict_element(
+        unrelated_dict,
+        &dict_keys,
+        &dict_values
+    ));
+    assert!(!oracle_observes_changed_list_element(
+        unrelated_list,
+        &list_indices,
+        &list_values
+    ));
+    // A display that reads other data, or a literal on both sides, is no whole-output compare.
+    assert!(!oracle_compares_whole_collection(
+        "assert labels() == {'low': labels()['low']}"
+    ));
+    assert!(!oracle_compares_whole_collection("assert [1] == [1]"));
+    assert!(!oracle_compares_whole_collection("assert x >= [1]"));
+    // Positives: a result compared with a literal display, with or without wrapper.
+    assert!(oracle_compares_whole_collection(
+        "assert labels() == {'high': 80, 'low': 10}"
+    ));
+    assert!(oracle_compares_whole_collection(
+        "assert list(staff()) == [80, 10]"
+    ));
+    assert!(oracle_compares_whole_collection(
+        "assert result=={'a': [1, 2]}"
+    ));
+}
+
+#[test]
+fn numeric_value_is_not_found_inside_a_quoted_string() {
+    assert!(!oracle_contains_value_literal(
+        "assert labels() is not None and str('80') == '80'",
+        "80"
+    ));
+    assert!(oracle_contains_value_literal(
+        "assert labels()['high'] == 80",
+        "80"
+    ));
+    assert!(oracle_contains_value_literal(
+        "assert labels()['high'] == -80",
+        "-80"
+    ));
+}
+
+#[test]
+fn unrelated_display_with_a_sibling_read_does_not_expose_a_multiline_change() -> Result<(), String>
+{
+    let dict = "def labels():\n    return {\n        \"high\": 80,\n        \"low\": 10,\n    }\n";
+    let class = multiline_literal_class(
+        dict,
+        3,
+        "        \"high\": 80,",
+        "        \"high\": 11,",
+        "assert list((10,)) == [labels()['low']]",
+        "labels",
+    )?;
+    assert_ne!(
+        class,
+        ExposureClass::Exposed,
+        "dict sibling in unrelated display"
+    );
+    let list = "def labels():\n    return [\n        80,\n        10,\n    ]\n";
+    let class = multiline_literal_class(
+        list,
+        3,
+        "        80,",
+        "        11,",
+        "assert list((10,)) == [labels()[1]]",
+        "labels",
+    )?;
+    assert_ne!(
+        class,
+        ExposureClass::Exposed,
+        "list sibling in unrelated display"
+    );
+    // Positive control: the owner result compared with the whole literal display.
+    let class = multiline_literal_class(
+        dict,
+        3,
+        "        \"high\": 80,",
+        "        \"high\": 11,",
+        "assert labels() == {'high': 80, 'low': 10}",
+        "labels",
+    )?;
+    assert_eq!(class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn tuple_valued_display_still_counts_as_a_whole_collection_compare() {
+    assert!(oracle_compares_whole_collection(
+        "assert config() == {'limits': (1, 2)}"
+    ));
+    assert!(oracle_compares_whole_collection(
+        "assert pairs() == [(1, 2), (3, 4)]"
+    ));
+    // A call inside the display still reads other data.
+    assert!(!oracle_compares_whole_collection(
+        "assert config() == {'limits': len(other())}"
+    ));
+}
+
+#[test]
+fn comma_in_a_literal_comment_declines_the_joined_literal() {
+    let source = "def f():\n    return [\n        10,\n        # note, note\n        21,\n    ]\n";
+    assert!(enclosing_literal_pair(source, 5, "        21,", Some("        20,")).is_none());
 }

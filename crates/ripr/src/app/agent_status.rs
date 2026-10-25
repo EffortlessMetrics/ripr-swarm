@@ -434,6 +434,9 @@ fn inspect_repair_attempts(
         return Some(Vec::new());
     }
     let current_head = crate::agent::artifact::current_git_head(root).ok();
+    // Finished attempts re-read one worktree; share a capture per policy for
+    // this call only (#9823).
+    let _capture_scope = crate::edit_cage::ReevaluationMemoScope::begin();
     let mut attempts = Vec::new();
     let mut trusted = true;
     for entry in entries {
