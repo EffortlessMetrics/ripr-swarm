@@ -21,7 +21,12 @@ pub(super) fn bind_workspace_observer(
     sources: &std::collections::HashMap<std::path::PathBuf, String>,
     incomplete: bool,
 ) {
-    let pair = workspace_admission::closed_sources(root, sources, incomplete);
+    let pair = workspace_admission::closed_sources(
+        root,
+        sources,
+        incomplete,
+        super::bounded_read::source_matches_capped,
+    );
     for owner in owners.iter_mut().filter(|owner| owner.name == "__bool__") {
         owner.class_facts.truthiness_observer = pair.as_ref().and_then(|pair| {
             if pair[0] == owner.file {

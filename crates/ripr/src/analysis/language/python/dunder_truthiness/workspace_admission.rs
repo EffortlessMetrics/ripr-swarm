@@ -3,7 +3,6 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 const MAX_ENTRIES: usize = 512;
@@ -17,12 +16,13 @@ pub(super) fn closed_sources(
     root: &Path,
     sources: &HashMap<PathBuf, String>,
     incomplete: bool,
+    source_matches: impl Fn(&Path, &str) -> bool,
 ) -> Option<[PathBuf; 2]> {
     if incomplete {
         return None;
     }
-    let root_type = fs::symlink_metadata(root).ok()?.file_type();
-    if !root_type.is_dir() || root_type.is_symlink() {
+    let root_metadata = fs::symlink_metadata(root).ok()?;
+    if !root_metadata.is_dir() || linked(&root_metadata) {
         return None;
     }
     let mut pending = vec![(PathBuf::new(), 0usize)];
@@ -43,8 +43,9 @@ pub(super) fn closed_sources(
                 return None;
             }
             let path = relative.join(&name);
-            let kind = entry.file_type().ok()?;
-            if kind.is_symlink() {
+            let metadata = fs::symlink_metadata(entry.path()).ok()?;
+            let kind = metadata.file_type();
+            if linked(&metadata) {
                 return None;
             }
             if kind.is_dir() {
@@ -65,10 +66,6 @@ pub(super) fn closed_sources(
             if extension != "py" {
                 continue;
             }
-            let metadata = fs::symlink_metadata(entry.path()).ok()?;
-            if !metadata.is_file() || metadata.file_type().is_symlink() {
-                return None;
-            }
             if name.to_str()?.eq_ignore_ascii_case("__init__.py") && metadata.len() == 0 {
                 continue;
             }
@@ -87,23 +84,22 @@ pub(super) fn closed_sources(
         if !expected.is_ascii() {
             return None;
         }
-        let absolute = root.join(path);
-        let metadata = fs::symlink_metadata(&absolute).ok()?;
-        if !metadata.is_file() || metadata.file_type().is_symlink() {
-            return None;
-        }
-        let limit = u64::try_from(expected.len().checked_add(1)?).ok()?;
-        let mut actual = Vec::new();
-        fs::File::open(absolute)
-            .ok()?
-            .take(limit)
-            .read_to_end(&mut actual)
-            .ok()?;
-        if actual != expected.as_bytes() {
+        if !source_matches(&root.join(path), expected) {
             return None;
         }
     }
     Some([first.clone(), second.clone()])
+}
+
+#[cfg(windows)]
+fn linked(metadata: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    metadata.file_type().is_symlink() || metadata.file_attributes() & 0x0000_0400 != 0
+}
+
+#[cfg(not(windows))]
+fn linked(metadata: &fs::Metadata) -> bool {
+    metadata.file_type().is_symlink()
 }
 
 #[cfg(test)]
@@ -113,6 +109,10 @@ mod tests {
 
     type Check = Result<(), Box<dyn std::error::Error>>;
     static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+    fn matches(path: &Path, expected: &str) -> bool {
+        fs::read(path).is_ok_and(|actual| actual == expected.as_bytes())
+    }
 
     struct Workspace(PathBuf, HashMap<PathBuf, String>);
 
@@ -144,7 +144,7 @@ mod tests {
         }
 
         fn admitted(&self) -> bool {
-            closed_sources(&self.0, &self.1, false).is_some()
+            closed_sources(&self.0, &self.1, false, matches).is_some()
         }
     }
 
@@ -159,7 +159,7 @@ mod tests {
         let workspace = Workspace::new()?;
         fs::write(workspace.0.join("src/__init__.py"), "")?;
         assert!(workspace.admitted());
-        assert!(closed_sources(&workspace.0, &workspace.1, true).is_none());
+        assert!(closed_sources(&workspace.0, &workspace.1, true, matches).is_none());
         Ok(())
     }
 
@@ -193,7 +193,9 @@ mod tests {
         let workspace = Workspace::new()?;
         fs::write(workspace.0.join("src/money.py"), "class Other: pass\n")?;
         assert!(!workspace.admitted());
-        assert!(closed_sources(&workspace.0.join("missing"), &workspace.1, false).is_none());
+        assert!(
+            closed_sources(&workspace.0.join("missing"), &workspace.1, false, matches).is_none()
+        );
         Ok(())
     }
 
@@ -219,7 +221,7 @@ mod tests {
         assert!(!workspace.admitted());
         let alias = workspace.0.join("root-alias");
         std::os::unix::fs::symlink(&workspace.0, &alias)?;
-        assert!(closed_sources(&alias, &workspace.1, false).is_none());
+        assert!(closed_sources(&alias, &workspace.1, false, matches).is_none());
         Ok(())
     }
 }

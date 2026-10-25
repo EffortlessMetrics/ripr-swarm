@@ -58,6 +58,13 @@ analysis knew.
 intent. There is no implicit cross-invocation cache and no background
 write.
 
+Python integer-dunder truthiness credit (RIPR-SPEC-0238 rule 26) depends on a
+fresh physical source audit beyond the v1 diff/config identity. Artifacts may
+retain that recorded finding, but `explain/context --from` refuses it with
+`check_artifact_unusable` and directs live analysis without `--from`. This
+producer-specific refusal leaves other artifact findings and identity checks
+unchanged; it does not claim to extend v1 identity to the whole workspace.
+
 `--write-artifact` records a diff-scoped findings run. It fails closed
 with a named limitation when combined with `--gap-ledger`, a repo-scoped
 format, or managed `[perl] producer` packet generation without an explicit

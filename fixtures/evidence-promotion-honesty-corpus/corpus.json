@@ -8,7 +8,7 @@
       "id": "py_dunder_truthiness_cross_file_writer",
       "language": "python",
       "tier": "pure",
-      "source_report": "fixtures/python_dunder_truthiness_integer/evidence/cross-file-direct.report.json",
+      "source_fixture": "fixtures/python_dunder_truthiness_cross_file_direct",
       "vector": "collected_project_mutation_does_not_discriminate_the_dunder_edit",
       "probe_family": "predicate",
       "assertions": [
@@ -32,7 +32,7 @@
       "id": "py_dunder_truthiness_hidden_member_writer",
       "language": "python",
       "tier": "pure",
-      "source_report": "fixtures/python_dunder_truthiness_integer/evidence/cross-file-hidden.report.json",
+      "source_fixture": "fixtures/python_dunder_truthiness_cross_file_hidden",
       "vector": "collected_project_mutation_does_not_discriminate_the_dunder_edit",
       "probe_family": "predicate",
       "assertions": [
@@ -56,7 +56,7 @@
       "id": "py_dunder_truthiness_normalized_member_writer",
       "language": "python",
       "tier": "pure",
-      "source_report": "fixtures/python_dunder_truthiness_integer/evidence/cross-file-unicode.report.json",
+      "source_fixture": "fixtures/python_dunder_truthiness_cross_file_unicode",
       "vector": "collected_project_mutation_does_not_discriminate_the_dunder_edit",
       "probe_family": "predicate",
       "assertions": [
@@ -80,7 +80,7 @@
       "id": "py_dunder_truthiness_generated_test_writer",
       "language": "python",
       "tier": "pure",
-      "source_report": "fixtures/python_dunder_truthiness_integer/evidence/cross-file-generated.report.json",
+      "source_fixture": "fixtures/python_dunder_truthiness_cross_file_generated",
       "vector": "collected_project_mutation_does_not_discriminate_the_dunder_edit",
       "probe_family": "predicate",
       "assertions": [

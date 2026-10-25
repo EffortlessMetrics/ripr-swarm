@@ -307,6 +307,10 @@ fn committed_source_capped(
 /// sentinel byte): the metadata length was checked above, but the file can
 /// grow between that check and this read, and an unclamped read would cache
 /// an over-budget source as a success.
+pub(super) fn source_matches_capped(path: &Path, expected: &str) -> bool {
+    read_source_capped(path, expected.len() as u64, None).is_ok_and(|actual| actual == expected)
+}
+
 fn read_source_capped(
     path: &Path,
     file_limit: u64,
