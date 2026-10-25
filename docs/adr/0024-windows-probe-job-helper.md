@@ -14,7 +14,7 @@ Job object. The Job gives kill-on-close descendant cleanup and typed exit-code
 and start-failure markers (#5891), so a probe that hangs or leaves children
 cannot outlive the extension.
 
-The cost is paid on every cold resolution. Measured on Windows runners, an empty
+The cost is paid on every cold resolution. Observed on Windows runners (ordered aggregate timings, see Consequences), an empty
 PowerShell start alone took 1.7 to 7 s cold and the full wrapper up to 14 s,
 while `ripr --version` itself takes 10 to 35 ms. The editor journey hung
 at the former 10 s budget (#9526). #9625 raised the Windows budget to 30 s and
@@ -57,9 +57,26 @@ Adopt option 3 from the alternatives above, narrowly.
 
 ## Consequences
 
-- Cold extension probe should drop from seconds to well under one second.
-  Acceptance is measured, not asserted: re-run the #9654 timing step on a
-  Windows runner and require a cold probe under 1 s.
+- The cold-probe cost is expected to drop from seconds to well under one
+  second, but that is a hypothesis until measured. The numbers quoted in this
+  ADR (empty PowerShell 1.7 to 7 s, wrapper up to 14 s, `--version` 10 to
+  35 ms) are ordered aggregate observations from the current timing step in
+  `.github/workflows/windows-editor-hang-hunt.yml`, not validated per-probe
+  measurements: that step drains target output and stderr, ignores
+  `close(code, signal)`, has no per-probe deadline, uses wall-clock duration,
+  and runs the direct-target and empty-PowerShell trials before the wrapped
+  ones, so an unsuccessful target can produce the same timing row as success
+  and first-in-series is not an isolated cold start (the instrument finding on
+  #9631).
+- Instrument repair is therefore a prerequisite to any latency criterion. The
+  "cold probe under 1 s" threshold applies only to a validated timing-only
+  probe with monotonic timing, exact target and helper identities, verified
+  target output and exit or start-failure markers, a per-probe deadline with an
+  owned cleanup outcome, and honest cold, cache and order labels.
+- Latency acceptance stays distinct from native Job-containment proof. Kill-on-
+  close and descendant cleanup are proved by the existing Job-contract tests in
+  `lsp_compatibility.test.ts`, which the helper must satisfy unchanged; reusing
+  the current timing step supplies neither proof.
 - A new dependency and the repository's first `unsafe` exception, which is the
   reason this is an ADR and not a PR.
 - Per-platform VSIX packaging and a Windows-qualified build and test lane for
@@ -71,5 +88,5 @@ Adopt option 3 from the alternatives above, narrowly.
 
 Crate location and name, the exact `windows-sys` feature list, and whether the
 helper also serves the CLI. Those are implementation choices for the slices
-after acceptance: helper plus tests, VSIX packaging, the `spawnProbeProcess`
-switch, then the timing check.
+after acceptance: timing-instrument repair, helper plus tests, VSIX packaging,
+the `spawnProbeProcess` switch, then the validated timing check.
