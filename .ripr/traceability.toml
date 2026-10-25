@@ -3728,6 +3728,8 @@ fixtures = [
   "fixtures/python_module_formatted_generator_test",
   "fixtures/python_module_same_line_prior_assert",
   "fixtures/python_module_generator_test",
+  "fixtures/python_multiline_literal_sibling_read",
+  "fixtures/python_literal_value_inside_longer_number",
   "fixtures/python_module_prior_failing_assert",
   "fixtures/python_module_test_reader_replacement",
   "fixtures/python_conditional_foreign_callable_write",

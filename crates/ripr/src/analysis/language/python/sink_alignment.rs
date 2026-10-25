@@ -339,7 +339,17 @@ pub(super) fn oracle_compares_whole_collection(oracle: &str) -> bool {
             return false;
         };
         let display = &right[..=end];
-        let reads_other_data = display.contains('(')
+        // A `(` is a call only after a name, `)` or `]`; a tuple display opens one
+        // after `:`, `,` or another bracket.
+        let calls = display.char_indices().any(|(i, c)| {
+            c == '('
+                && display[..i]
+                    .trim_end()
+                    .chars()
+                    .next_back()
+                    .is_some_and(|p| p.is_alphanumeric() || matches!(p, '_' | ')' | ']'))
+        });
+        let reads_other_data = calls
             || display.contains(".get")
             || display.char_indices().any(|(i, c)| {
                 c == '['
@@ -418,7 +428,7 @@ pub(super) fn enclosing_literal_pair(
     let lines: Vec<&str> = source.lines().collect();
     let index = line.checked_sub(1)?;
     let changed = *lines.get(index)?;
-    if changed.trim() != line_text.trim() || changed.contains('#') || old_line_text.contains('#') {
+    if changed.trim() != line_text.trim() || old_line_text.contains('#') {
         return None;
     }
     let indent = |text: &str| text.len() - text.trim_start().len();
@@ -440,6 +450,11 @@ pub(super) fn enclosing_literal_pair(
         return None;
     }
     let (first, last) = (opener_index + 1, closer_index);
+    // A comment would swallow the rest of the joined line and its commas would
+    // read as element separators, so any comment inside the literal declines.
+    if lines[first..last].iter().any(|text| text.contains('#')) {
+        return None;
+    }
     let join = |replace: &str| {
         let body: Vec<&str> = (first..last)
             .map(|i| if i == index { replace } else { lines[i] }.trim())

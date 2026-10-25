@@ -9348,3 +9348,23 @@ fn unrelated_display_with_a_sibling_read_does_not_expose_a_multiline_change() ->
     assert_eq!(class, ExposureClass::Exposed);
     Ok(())
 }
+
+#[test]
+fn tuple_valued_display_still_counts_as_a_whole_collection_compare() {
+    assert!(oracle_compares_whole_collection(
+        "assert config() == {'limits': (1, 2)}"
+    ));
+    assert!(oracle_compares_whole_collection(
+        "assert pairs() == [(1, 2), (3, 4)]"
+    ));
+    // A call inside the display still reads other data.
+    assert!(!oracle_compares_whole_collection(
+        "assert config() == {'limits': len(other())}"
+    ));
+}
+
+#[test]
+fn comma_in_a_literal_comment_declines_the_joined_literal() {
+    let source = "def f():\n    return [\n        10,\n        # note, note\n        21,\n    ]\n";
+    assert!(enclosing_literal_pair(source, 5, "        21,", Some("        20,")).is_none());
+}
