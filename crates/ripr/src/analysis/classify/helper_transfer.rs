@@ -1425,6 +1425,9 @@ pub(crate) fn helper_return_value(
             if !super::match_transfer::is_single_literal(raw_line.trim().trim_end_matches(';'))
                 || helper.body.contains("r#")
                 || helper.body.contains("r\"")
+                // Masking blanks block-comment text exactly like a string,
+                // so a quoted line inside `/* ... */` would read as a tail.
+                || helper.body.contains("/*")
                 || word("async")
                 || word("return")
                 || tail.is_some()

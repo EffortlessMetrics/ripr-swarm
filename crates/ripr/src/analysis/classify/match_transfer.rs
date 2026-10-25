@@ -695,6 +695,9 @@ mod tests {
             "fn pick(_k: &str) -> &'static str {\n    r#\"\n\"x\"\n\"#\n}",
             "async fn pick(_k: &str) -> &'static str {\n    \"x\"\n}",
             "fn pick(k: &str) -> &'static str {\n    \"x\";\n    return k;\n}",
+            // A quoted line inside a block comment is comment text, not a tail.
+            "fn pick(_k: &str) -> &'static str {\n    /*\n    \"x\"\n    */\n}",
+            "fn pick(_k: &str) -> &'static str {\n    /*\n    \"alpha\"\n    */\n    const { \"beta\" }\n}",
         ];
         for body in bodies {
             let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
