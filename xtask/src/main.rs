@@ -15065,6 +15065,10 @@ fn check_doc_index() -> Result<(), String> {
 }
 
 const DOC_ARTIFACT_LEDGER: &str = "policy/doc-artifacts.toml";
+/// Per-PR `[[artifact]]` fragments beside the ledger (`<ledger stem>.d/`), so a
+/// PR that registers a spec adds a file instead of appending to the ledger
+/// tail every other such PR edits (#9859).
+const DOC_ARTIFACT_FRAGMENT_EXTENSION: &str = "d";
 const DOC_ARTIFACT_SCHEMA_VERSION: &str = "1.0";
 /// Count of unregistered RIPR-SPEC files when the reverse-direction ratchet
 /// was added (#1718). Lower this as specs are registered.
@@ -15113,6 +15117,8 @@ struct DocArtifactLedger {
 #[derive(Clone, Debug, Default)]
 struct DocArtifactEntry {
     line: usize,
+    /// Fragment file the entry came from; `None` for the main ledger.
+    source: Option<String>,
     seen_fields: BTreeSet<String>,
     id: Option<String>,
     kind: Option<String>,
@@ -15275,16 +15281,19 @@ fn doc_artifact_violations(root: &Path, ledger_path: &Path) -> Result<Vec<String
 
     let mut ids_by_line = BTreeMap::new();
     for artifact in &ledger.artifacts {
+        let origin = artifact.source.as_deref().unwrap_or(&ledger_display);
         let Some(id) = artifact.id.as_deref() else {
             violations.push(format!(
-                "{ledger_display}:{} artifact is missing required field `id`",
+                "{origin}:{} artifact is missing required field `id`",
                 artifact.line
             ));
             continue;
         };
-        if let Some(previous_line) = ids_by_line.insert(id.to_string(), artifact.line) {
+        if let Some((previous_origin, previous_line)) =
+            ids_by_line.insert(id.to_string(), (origin.to_string(), artifact.line))
+        {
             violations.push(format!(
-                "{ledger_display}:{} duplicate artifact id `{id}`; first defined at line {previous_line}",
+                "{origin}:{} duplicate artifact id `{id}`; first defined at {previous_origin}:{previous_line}",
                 artifact.line
             ));
         }
@@ -15307,7 +15316,54 @@ fn doc_artifact_violations(root: &Path, ledger_path: &Path) -> Result<Vec<String
 fn parse_doc_artifact_ledger(path: &Path) -> Result<DocArtifactLedger, String> {
     let text = read_text_lossy(path)?;
     let display = normalize_path(path);
-    parse_doc_artifact_ledger_text(&display, &text)
+    let mut ledger = parse_doc_artifact_ledger_text(&display, &text)?;
+    ledger.artifacts.extend(parse_doc_artifact_fragments(path)?);
+    Ok(ledger)
+}
+
+/// Reads `<ledger stem>.d/*.toml` in file-name order. Only an absent directory
+/// is optional: an unreadable directory, a non-`.toml` entry, or a fragment
+/// that sets `schema_version` fails, so a fragment cannot be silently skipped.
+fn parse_doc_artifact_fragments(ledger_path: &Path) -> Result<Vec<DocArtifactEntry>, String> {
+    let dir = ledger_path.with_extension(DOC_ARTIFACT_FRAGMENT_EXTENSION);
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("{}: cannot read: {error}", normalize_path(&dir))),
+    };
+    let mut paths = Vec::new();
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| format!("{}: cannot list: {error}", normalize_path(&dir)))?;
+        let path = entry.path();
+        if path.extension().is_none_or(|extension| extension != "toml") {
+            return Err(format!(
+                "{} is not a .toml artifact fragment",
+                normalize_path(&path)
+            ));
+        }
+        paths.push(path);
+    }
+    paths.sort();
+    let mut artifacts = Vec::new();
+    for path in paths {
+        let display = normalize_path(&path);
+        let text = read_text_lossy(&path)?;
+        let fragment = parse_doc_artifact_ledger_text(&display, &text)?;
+        if fragment.schema_version.is_some() {
+            return Err(format!(
+                "{display} must not set schema_version; only the main ledger does"
+            ));
+        }
+        if fragment.artifacts.is_empty() {
+            return Err(format!("{display} has no [[artifact]] entries"));
+        }
+        for mut artifact in fragment.artifacts {
+            artifact.source = Some(display.clone());
+            artifacts.push(artifact);
+        }
+    }
+    Ok(artifacts)
 }
 
 fn parse_doc_artifact_ledger_text(display: &str, text: &str) -> Result<DocArtifactLedger, String> {
@@ -15426,6 +15482,7 @@ fn validate_doc_artifact_entry(
     artifact_ids: &BTreeSet<String>,
     violations: &mut Vec<String>,
 ) -> Result<(), String> {
+    let ledger_display = artifact.source.as_deref().unwrap_or(ledger_display);
     let id_label = artifact.id.as_deref().unwrap_or("<missing id>");
     let Some(id) = artifact.id.as_deref() else {
         return Ok(());

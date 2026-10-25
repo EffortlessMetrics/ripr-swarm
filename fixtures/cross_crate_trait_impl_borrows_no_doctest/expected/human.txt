@@ -29,6 +29,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach no: No test is seen calling size_hint; tests share only its file or a name token: util/src/io/take.rs - limit (line 6)
     - infection unknown: Predicate compares `x` with `self.remaining`, and ripr can read no literal or same-file constant for either, so it cannot tell which side of the boundary a test…
     - 6 more detail line(s) in --format human-full

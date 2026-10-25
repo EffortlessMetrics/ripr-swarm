@@ -98,3 +98,5 @@ items to that behavior, and a `[[behavior]]` entry registers a new spec. The
 checker folds the fragments into `.ripr/traceability.toml` before it validates,
 and an `[[extend]]` that names no behavior fails. Fragments exist so parallel
 PRs do not append to the same shared arrays and conflict.
+
+A PR registers a new document artifact (spec, proposal, plan) in `policy/doc-artifacts.d/<id>.toml`, one or more `[[artifact]]` entries with the same fields as `policy/doc-artifacts.toml`. `check-doc-artifacts` reads the fragments after the main ledger, in file-name order, and names the fragment file in any violation. A fragment must not set `schema_version`, and only an absent directory is optional (#9859).
