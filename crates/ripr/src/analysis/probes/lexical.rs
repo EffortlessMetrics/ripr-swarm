@@ -186,9 +186,9 @@ fn has_predicate_shape(text: &str) -> bool {
 /// Whether the line carries a logical `||`. An empty-parameter closure head
 /// (`unwrap_or_else(|| x)`, `thread::spawn(move || x)`) spells the same two
 /// characters but is no predicate (#10259). A binary `||` always has a left
-/// operand, so a `||` that follows `(`, `,`, `=`, `{`, `[`, `;`, `:`, `=>` or the
-/// `move` keyword can only open a closure. A line that starts with `||` is a
-/// wrapped boolean continuation (`    || other_condition`) and stays a logical or.
+/// operand, so a `||` that follows `(`, `,`, `=`, `{`, `[`, `;`, `:`, `=>`, a
+/// single `&` (a closure reference) or the `move`/`async` keyword can only open
+/// a closure. A line that starts with `||` is a wrapped boolean continuation (`    || other_condition`) and stays a logical or.
 fn has_logical_or(text: &str) -> bool {
     let mut from = 0;
     while let Some(found) = text[from..].find("||") {
@@ -196,8 +196,11 @@ fn has_logical_or(text: &str) -> bool {
         let before = text[..at].trim_end();
         let closure_head = before.ends_with(['(', ',', '=', '{', '[', ';', ':'])
             || before.ends_with("=>")
-            || before.strip_suffix("move").is_some_and(|rest| {
-                !rest.ends_with(|c: char| c.is_alphanumeric() || c == '_' || c == '#')
+            || (before.ends_with('&') && !before.ends_with("&&"))
+            || ["move", "async"].iter().any(|keyword| {
+                before.strip_suffix(keyword).is_some_and(|rest| {
+                    !rest.ends_with(|c: char| c.is_alphanumeric() || c == '_' || c == '#')
+                })
             });
         if !closure_head {
             return true;
@@ -1150,6 +1153,9 @@ mod tests {
             "let g = [|| 1, || 2];",
             "Some(x) => || x,",
             "MyStruct { field: || x }",
+            "let task = async || fetch().await;",
+            "let task = async move || fetch().await;",
+            "let r = &|| true;",
         ];
         for text in closure_heads {
             assert!(
