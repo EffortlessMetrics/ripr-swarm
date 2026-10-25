@@ -1334,7 +1334,10 @@ and the test is `tests/test_subject.py`, which imports each owner from
   39, and rules 1, 2, 4 and 9 alongside them);
   `python/hypothesis.rs` unit tests pin `@given` pairing and `@example`
   rows.
-- Corpus (#6597): `py-spec0233-ex05-and-chain` (rule 15),
+- Corpus (#6597): `py-spec0233-ex05-and-chain` (rule 15; the
+  `py-conjuncts-*` cases add an exact owner conjunct credited, an exact
+  conjunct on a constant, all-weak conjuncts, an `or` chain and a `not`
+  comparison scored as gaps),
   `py-pytest-shipping-threshold` and `py-unittest-fee-waiver-mixin`
   (rule 16), `py-fixtures-report-file`, `py-unittest-transfer-notify` and
   `py-unittest-deposit-add` (rule 17), `py-pytest-tax-self-computed`
