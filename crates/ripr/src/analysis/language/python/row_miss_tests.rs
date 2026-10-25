@@ -82,15 +82,401 @@ fn exposed_finding_keeps_every_row_miss_none_even_beside_a_weak_row() -> Result<
 }
 
 #[test]
-fn name_or_location_only_rows_never_get_no_call_path() -> Result<(), String> {
-    // Referenced but never called: related by file stem only. The test body
-    // cannot prove it never reaches the owner (callbacks, aliases, parametrize
-    // and fixture `params`, `usefixtures`, `pytestmark`, conftest, plugins), so
-    // the claim is withheld (#6657-class blind spots).
+fn name_or_location_only_rows_get_no_call_path_only_from_a_closed_reach_fact() -> Result<(), String>
+{
+    // Referenced but never called: related by file stem only. The closed
+    // body (only an inert `callable(score)`) proves no path (#10040) ...
     let finding = score_case("def test_score_is_importable():\n    assert callable(score)\n")?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
     assert_eq!(finding.related_tests.len(), 1);
+    assert_eq!(
+        finding.related_tests[0].miss,
+        Some(RelatedTestMiss::NoCallPath)
+    );
+    // ... while the same reference passed on as a value cannot (callbacks,
+    // aliases, parametrize, fixtures, conftest and plugins stay withheld).
+    let finding = score_case("def test_score_is_importable():\n    assert len([score]) == 1\n")?;
+    assert_eq!(finding.related_tests.len(), 1);
     assert_eq!(finding.related_tests[0].miss, None);
+    Ok(())
+}
+
+/// `no_call_path` (#10040): a name-only row whose own closed body provably
+/// never reaches the owner. Each pair is the same module with one reaching or
+/// unprovable construct added; the control emits, the shape never does.
+const NO_CALL_PATH_CONTROL: &str = "def test_defaults():\n    assert callable(score)\n";
+
+fn closed_row_case(prefix: &str, body: &str) -> Result<Finding, String> {
+    score_case(&format!(
+        "{prefix}def test_weak():\n    assert score(1)\n\n{body}"
+    ))
+}
+
+#[test]
+fn a_closed_name_only_row_gets_no_call_path_beside_a_weak_row() -> Result<(), String> {
+    let finding = closed_row_case("", NO_CALL_PATH_CONTROL)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(
+        miss_of(&finding, "test_defaults"),
+        Some(RelatedTestMiss::NoCallPath),
+        "{:?}",
+        misses(&finding)
+    );
+    // The call-bearing sibling keeps its own reason, never this one.
+    assert_eq!(
+        miss_of(&finding, "test_weak"),
+        Some(RelatedTestMiss::WeakAssertion)
+    );
+    // Outside a concrete gap class the row stays unannotated.
+    let exposed = score_case(
+        "def test_exact():\n    assert score(0) == 8\n\ndef test_defaults():\n    assert callable(score)\n",
+    )?;
+    assert_eq!(exposed.class, ExposureClass::Exposed);
+    assert!(exposed.related_tests.iter().all(|row| row.miss.is_none()));
+    Ok(())
+}
+
+#[test]
+fn no_call_path_is_withheld_for_every_hidden_or_unprovable_reach() -> Result<(), String> {
+    const REF: &str = "    assert callable(score)\n";
+    let cases: &[(&str, &str, String)] = &[
+        (
+            "owner named in a string",
+            "",
+            format!("def test_defaults():\n{REF}    assert 'score' == 'score'\n"),
+        ),
+        (
+            "owner named in a comment",
+            "",
+            format!("def test_defaults():\n    # score\n{REF}"),
+        ),
+        (
+            "owner attribute other than a dunder name",
+            "",
+            format!("def test_defaults():\n{REF}    assert score.__defaults__ is None\n"),
+        ),
+        (
+            "owner passed as a value",
+            "",
+            format!("def test_defaults():\n{REF}    assert len([score]) == 1\n"),
+        ),
+        (
+            "owner aliased",
+            "",
+            "def test_defaults():\n    f = score\n    assert callable(f)\n".to_string(),
+        ),
+        (
+            "owner compared by identity to another name",
+            "",
+            format!("def test_defaults():\n{REF}    assert score is other\n"),
+        ),
+        (
+            "helper call",
+            "def helper():\n    return score(0)\n\n",
+            format!("def test_defaults():\n{REF}    assert helper() == 8\n"),
+        ),
+        (
+            "imported project callable",
+            "from src.other import build\n",
+            format!("def test_defaults():\n{REF}    assert build() == 8\n"),
+        ),
+        (
+            "getattr on sys.modules",
+            "import sys\n",
+            format!(
+                "def test_defaults():\n{REF}    getattr(sys.modules['src.subject'], 'sc' + 'ore')(0)\n"
+            ),
+        ),
+        (
+            "lambda",
+            "",
+            format!("def test_defaults():\n{REF}    f = lambda: 1\n    assert f() == 1\n"),
+        ),
+        (
+            "fixture parameter",
+            "",
+            format!("def test_defaults(client):\n{REF}"),
+        ),
+        (
+            "autouse fixture in the module",
+            "import pytest\n\n@pytest.fixture(autouse=True)\ndef guard():\n    yield\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "module-level call",
+            "VALUE = compute()\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "pytestmark",
+            "import pytest\n\npytestmark = pytest.mark.usefixtures('db')\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "star import",
+            "from helpers import *\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "non-inert decorator",
+            "import pytest\n\n",
+            format!(
+                "@pytest.mark.parametrize('cb', [len])\ndef test_defaults(cb):\n{REF}"
+            ),
+        ),
+        (
+            "unittest setUp",
+            "import unittest\n\n",
+            "class TestD(unittest.TestCase):\n    def setUp(self):\n        self.x = 1\n    def test_defaults(self):\n        self.assertTrue(callable(score))\n".to_string(),
+        ),
+        (
+            "builtin callable rebound",
+            "",
+            "def test_defaults():\n    callable = len\n    assert callable(score)\n".to_string(),
+        ),
+        (
+            "module decorator that is the owner",
+            "@score\ndef helper():\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "module decorator calling the owner",
+            "@score(1)\ndef helper():\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "module decorator through an import alias",
+            "from src.subject import score as g\n\n@g\ndef helper():\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "module decorator through a module alias",
+            "import src.subject as m\n\n@m.score\ndef helper():\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "imported project decorator",
+            "from src.other import deco\n\n@deco\ndef helper():\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "default argument calling the owner",
+            "def helper(x=score(1)):\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "parameter annotation calling the owner",
+            "def helper(x: score(1) = 0):\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "return annotation calling the owner",
+            "def helper() -> score(1):\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "return annotation through a module alias",
+            "import src.subject as m\n\ndef helper() -> m.score(1):\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "class base calling the owner",
+            "class Box(score(1)):\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "module-level try import",
+            "try:\n    import src.other\nexcept ImportError:\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "import inside the test body",
+            "",
+            format!("def test_defaults():\n    import src.other\n{REF}"),
+        ),
+        (
+            "attribute of an imported project object",
+            "from src.other import OBJ\n",
+            format!("def test_defaults():\n{REF}    assert OBJ.attr == 1\n"),
+        ),
+        (
+            "comparison on an imported project object",
+            "from src.other import OBJ\n",
+            format!("def test_defaults():\n{REF}    assert OBJ == 1\n"),
+        ),
+        (
+            "with an imported project object",
+            "from src.other import OBJ\n",
+            format!("def test_defaults():\n{REF}    with OBJ:\n        pass\n"),
+        ),
+        (
+            "decorator subscript hides a call",
+            "import pytest\n\n@pytest.mark.x[score(1)]\ndef helper():\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "decorator boolean hides a call",
+            "import pytest\n\n@pytest.mark.slow or score()\ndef helper():\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "decorator attribute subscript hides a call",
+            "import pytest\n\n@pytest.mark.slow.args[score(1)]\ndef helper():\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "module statement reads an imported attribute",
+            "from src.other import OBJ\n\nX = OBJ.attr\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "module-level assert on an imported object",
+            "from src.other import OBJ\n\nassert OBJ == 1\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "module-level with an imported object",
+            "from src.other import CTX\n\nwith CTX:\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "module-level for over an imported object",
+            "from src.other import ITEMS\n\nfor i in ITEMS:\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "module-level if on an imported object",
+            "from src.other import OBJ\n\nif OBJ:\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "module statement adds to an imported object",
+            "from src.other import OBJ\n\nX = OBJ + 1\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "default reads an imported attribute",
+            "from src.other import OBJ\n\ndef helper(x=OBJ.attr):\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "default subscripts an imported object",
+            "from src.other import OBJ\n\ndef helper(x=OBJ[0]):\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "parenthesized module condition",
+            "if (True):\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "decorator boolean calls a local helper that calls the owner",
+            "import pytest\n\ndef helper2():\n    return score(1)\n\n@pytest.mark.slow or helper2()\ndef other():\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "decorator argument reads an imported object",
+            "import pytest\nfrom src.other import OBJ\n\n@pytest.mark.skipif(OBJ)\ndef helper():\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "dotted import used through a deeper attribute",
+            "import a.b.c\n\nX = a.b.d\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "dotted import used through its head",
+            "import a.b\n\nX = a.attr\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "dotted import used by a module-level with",
+            "import a.b\n\nwith a.b.ctx:\n    pass\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "aliased dotted import used at module level",
+            "import a.b as q\n\nX = q.attr\n\n",
+            NO_CALL_PATH_CONTROL.to_string(),
+        ),
+        (
+            "dotted import used in the test body",
+            "import a.b\n\n",
+            format!("def test_defaults():\n{REF}    assert a.attr == 1\n"),
+        ),
+        (
+            "owner called directly",
+            "",
+            format!("def test_defaults():\n{REF}    assert len([score(0)]) == 1\n"),
+        ),
+    ];
+    for (label, prefix, body) in cases {
+        let finding = closed_row_case(prefix, body)?;
+        let row = finding
+            .related_tests
+            .iter()
+            .find(|row| row.name == "test_defaults")
+            .ok_or_else(|| format!("{label}: the shape must stay a related row"))?;
+        assert_ne!(row.miss, Some(RelatedTestMiss::NoCallPath), "{label}");
+    }
+    // Controls: the module prefixes alone do not withhold; each shape's own
+    // construct does.
+    for prefix in [
+        "",
+        "import pytest\n\n",
+        "import sys\n",
+        "import pytest\n\n@pytest.mark.slow\ndef helper():\n    pass\n\n",
+        "def helper(x=1, y: int = 0) -> int:\n    return 0\n\n",
+        "from src.other import OBJ\n",
+        "import pytest\n\n@pytest.mark.parametrize('x', [1, 2])\ndef helper(x):\n    pass\n\n",
+        "LIMIT = 3\n\n",
+        "from src.other import OB\n\nOBJ = 1\n\n",
+        "import a.b.c\n\nLIMIT = 1\n\n",
+        "import pytest\n\n@pytest.mark.skipif(False, reason='x')\ndef helper():\n    pass\n\n",
+    ] {
+        let finding = closed_row_case(prefix, NO_CALL_PATH_CONTROL)?;
+        assert_eq!(
+            miss_of(&finding, "test_defaults"),
+            Some(RelatedTestMiss::NoCallPath),
+            "control with prefix {prefix:?}"
+        );
+    }
+    // The other inert reference spellings emit too.
+    for body in [
+        "def test_defaults():\n    assert score is not None\n",
+        "def test_defaults():\n    assert score.__name__ == 'x'\n",
+        "def test_defaults():\n    assert score\n",
+    ] {
+        let finding = closed_row_case("", body);
+        let finding = finding?;
+        // `assert score.__name__ == 'x'` mentions nothing else; the string is
+        // not the owner name, so only the inert references count.
+        assert_eq!(
+            miss_of(&finding, "test_defaults"),
+            Some(RelatedTestMiss::NoCallPath),
+            "{body}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn no_call_path_is_not_claimed_for_a_constant_or_an_unrelated_relation() -> Result<(), String> {
+    let constant = classify(
+        "BASE = 8\n",
+        "from src.subject import BASE\n\ndef test_defaults():\n    assert callable(BASE)\n\ndef test_weak():\n    assert BASE\n",
+        1,
+        "BASE = 7",
+        "BASE = 8",
+    )?;
+    assert!(
+        constant
+            .related_tests
+            .iter()
+            .all(|row| row.miss != Some(RelatedTestMiss::NoCallPath)),
+        "{:?}",
+        misses(&constant)
+    );
     Ok(())
 }
 
@@ -100,7 +486,10 @@ fn mixed_rows_keep_their_own_reasons() -> Result<(), String> {
         "def test_score_is_importable():\n    assert callable(score)\n\ndef test_weak():\n    assert score(1)\n",
     )?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
-    assert_eq!(miss_of(&finding, "test_score_is_importable"), None);
+    assert_eq!(
+        miss_of(&finding, "test_score_is_importable"),
+        Some(RelatedTestMiss::NoCallPath)
+    );
     assert_eq!(
         miss_of(&finding, "test_weak"),
         Some(RelatedTestMiss::WeakAssertion)
@@ -521,6 +910,11 @@ mod workspace {
         let is_unread = |conftest: &Path| unread.iter().any(|path| Path::new(path) == conftest);
         taint_admission_by_conftest(&mut parsed, &implicit, is_unread);
         taint_admission_by_conftest_declarations(&mut parsed, &reach, is_unread);
+        crate::analysis::language::python::fixtures::mark_implicit_reach_by_conftest(
+            &mut parsed,
+            &reach,
+            is_unread,
+        );
         record_bare_sibling_imports(&mut parsed, |path| {
             siblings.iter().any(|sibling| Path::new(sibling) == path)
         });
@@ -581,6 +975,47 @@ mod workspace {
             None
         );
         assert_eq!(bare_miss(&[], &["tests/conftest.py"], &[], BARE)?, None);
+        Ok(())
+    }
+
+    #[test]
+    fn a_conftest_or_unread_conftest_withholds_no_call_path_from_a_closed_row() -> Result<(), String>
+    {
+        const CLOSED: &str = "def test_closed():\n    assert callable(score)\n";
+        let tests = format!("{BARE}\n{CLOSED}");
+        let closed = |conftests: &[(&str, &str)], unread: &[&str]| -> Result<_, String> {
+            let rows = row_misses(conftests, unread, &[], &tests)?;
+            rows.into_iter()
+                .find(|(name, _)| name == "test_closed")
+                .map(|(_, miss)| miss)
+                .ok_or_else(|| "test_closed row".to_string())
+        };
+        // Control: an inert conftest keeps the claim.
+        assert_eq!(
+            closed(&[("tests/conftest.py", "import pytest\n")], &[])?,
+            Some(RelatedTestMiss::NoCallPath)
+        );
+        assert_eq!(closed(&[], &[])?, Some(RelatedTestMiss::NoCallPath));
+        for (label, conftest) in [
+            ("autouse", AUTOUSE),
+            (
+                "plain fixture",
+                "import pytest\n\n@pytest.fixture\ndef other():\n    return 1\n",
+            ),
+            ("hook", "def pytest_configure(config):\n    pass\n"),
+            (
+                "top-level call",
+                "import warnings\n\nwarnings.simplefilter('error')\n",
+            ),
+        ] {
+            assert_eq!(
+                closed(&[("tests/conftest.py", conftest)], &[])?,
+                None,
+                "{label}"
+            );
+        }
+        assert_eq!(closed(&[("conftest.py", AUTOUSE)], &[])?, None);
+        assert_eq!(closed(&[], &["tests/conftest.py"])?, None);
         Ok(())
     }
 
@@ -1378,6 +1813,24 @@ mod direct {
             "    return amount + 2",
         )?;
         let rows = run(&fixture, &ExposureClass::WeaklyExposed, false);
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0].0, PythonRelationKind::FixtureName);
+        assert_eq!(rows[0].1, None);
+        // The relation gate: a fixture-name row with an otherwise inert body
+        // stays unclaimed. (Admitting `FixtureName` to the gate is an
+        // equivalent mutant: the relation requires a fixture parameter, and
+        // the closed-body proof rejects every fixture parameter itself; this
+        // pins both halves.)
+        let inert_fixture = case_in(
+            "src/pricing.py",
+            "tests/test_checkout.py",
+            "def calculate_fee(amount):\n    return amount + 2\n",
+            "from src.pricing import calculate_fee\n\n\ndef test_checkout_total(pricing):\n    assert callable(calculate_fee)\n",
+            2,
+            "    return amount + 1",
+            "    return amount + 2",
+        )?;
+        let rows = run(&inert_fixture, &ExposureClass::WeaklyExposed, false);
         assert_eq!(rows.len(), 1, "{rows:?}");
         assert_eq!(rows[0].0, PythonRelationKind::FixtureName);
         assert_eq!(rows[0].1, None);
