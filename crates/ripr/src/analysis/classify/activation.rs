@@ -4918,28 +4918,39 @@ fn visible_operand(operand: &str, constant: Option<&BoundaryConstant>) -> Option
 /// unresolved side) leaves the operand unresolved as before, and a
 /// SCREAMING_CASE tail stays a constant, not a state.
 fn scanner_state_path_operand(operand: &str, lefts: &[ExactOperand]) -> Option<ExactOperand> {
-    let token = operand.trim();
-    let segments: Vec<&str> = token.split("::").collect();
-    let identifier = |segment: &&str| {
+    let identifier = |segment: &str| {
         let mut chars = segment.chars();
         chars
             .next()
             .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
             && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
     };
-    if segments.len() < 2
-        || !segments.iter().all(identifier)
+    let is_path = |text: &str| {
+        let segments: Vec<&str> = text.split("::").collect();
+        segments.len() >= 2 && segments.iter().all(|segment| identifier(segment))
+    };
+    let token = operand.trim();
+    // A `crate::`, `self::` or `super::` prefix is a spelling the scanner
+    // never returns, so it could only miss; leave such an operand unresolved.
+    if !is_path(token)
+        || token.starts_with("crate::")
+        || token.starts_with("self::")
+        || token.starts_with("super::")
         || super::text::path_value_is_constant(token)
     {
         return None;
     }
-    let rendered = format!("\"{token}\"");
     lefts
         .iter()
-        .any(|left| left.value.starts_with("\"") && left.value.contains("::"))
+        .any(|left| {
+            left.value
+                .strip_prefix('"')
+                .and_then(|rest| rest.strip_suffix('"'))
+                .is_some_and(is_path)
+        })
         .then(|| ExactOperand {
             provenance: format!("scanner state path {token}"),
-            value: rendered,
+            value: format!("\"{token}\""),
         })
 }
 
@@ -8004,14 +8015,15 @@ assert_eq!(input.amount, 100);"#
             operand.map(|operand| operand.value),
             Some("\"Scan::Word\"".to_string())
         );
-        assert!(scanner_state_path_operand("crate::Scan::Word", &lefts).is_some());
+        // A prefixed spelling can never equal the scanner's token.
+        assert!(scanner_state_path_operand("crate::Scan::Word", &lefts).is_none());
     }
 
     #[test]
     fn scanner_state_path_operand_stays_unresolved_without_a_path_state_left() {
         // No left, an integer, a plain string state and an unquoted path
         // are not scanner path states: the operand keeps its old reading.
-        for left in ["", "7", "\"word\"", "Scan::Word"] {
+        for left in ["", "7", "\"word\"", "Scan::Word", "\"error: a::b\""] {
             let lefts = if left.is_empty() {
                 Vec::new()
             } else {

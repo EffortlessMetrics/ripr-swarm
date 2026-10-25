@@ -31,24 +31,30 @@ impl Drop for Scratch {
 
 const MANIFEST: &str = "[package]\nname = \"scanner_path\"\nversion = \"0.1.0\"\nedition = \"2021\"\npublish = false\n";
 
-fn source(compared: &str, tests: &str) -> String {
+fn source(comparison: &str, tests: &str) -> String {
     format!(
-        "#[derive(Clone, Copy, PartialEq, Eq)]\npub enum Scan {{\n    Text,\n    Word,\n}}\n\npub fn scan_path(input: &str) -> Scan {{\n    let mut state = Scan::Text;\n    for symbol in input.chars() {{\n        state = match (state, symbol) {{\n            (Scan::Text, ' ') => Scan::Text,\n            (Scan::Text, _) => Scan::Word,\n            (Scan::Word, ' ') => Scan::Text,\n            (Scan::Word, _) => Scan::Word,\n        }};\n    }}\n    state\n}}\n\npub fn classify_path(input: &str) -> &'static str {{\n    let final_state = scan_path(input);\n    if final_state == {compared} {{\n        \"word\"\n    }} else {{\n        \"blank\"\n    }}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn classify_reads_the_last_state() {{\n{tests}\n    }}\n}}\n"
+        "#[derive(Clone, Copy, PartialEq, Eq)]\npub enum Scan {{\n    Text,\n    Word,\n}}\n\npub fn scan_path(input: &str) -> Scan {{\n    let mut state = Scan::Text;\n    for symbol in input.chars() {{\n        state = match (state, symbol) {{\n            (Scan::Text, ' ') => Scan::Text,\n            (Scan::Text, _) => Scan::Word,\n            (Scan::Word, ' ') => Scan::Text,\n            (Scan::Word, _) => Scan::Word,\n        }};\n    }}\n    state\n}}\n\npub fn classify_path(input: &str) -> &'static str {{\n    let final_state = scan_path(input);\n    if final_state {comparison} {{\n        \"word\"\n    }} else {{\n        \"blank\"\n    }}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn classify_reads_the_last_state() {{\n{tests}\n    }}\n}}\n"
     )
 }
 
-/// The compared line is always line 22.
-const DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -20,6 +20,6 @@\n pub fn classify_path(input: &str) -> &'static str {\n     let final_state = scan_path(input);\n-    if final_state == Scan::Word {\n+    if final_state == Scan::Text {\n         \"word\"\n     } else {\n         \"blank\"\n";
+/// The compared line is always line 22; the diff changes `Scan::Word` to the
+/// compared operand.
+fn diff(compared: &str) -> String {
+    format!(
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -20,6 +20,6 @@\n pub fn classify_path(input: &str) -> &'static str {{\n     let final_state = scan_path(input);\n-    if final_state == Scan::Word {{\n+    if final_state {compared} {{\n         \"word\"\n     }} else {{\n         \"blank\"\n"
+    )
+}
 
 const BOTH_ROWS: &str = "        assert_eq!(classify_path(\"ab\"), \"word\");\n        assert_eq!(classify_path(\"ab \"), \"blank\");";
 const WORD_ROW_ONLY: &str = "        assert_eq!(classify_path(\"ab\"), \"word\");";
 
-fn predicate_finding(source: &str) -> Result<Value, String> {
+fn predicate_finding(comparison: &str, tests: &str) -> Result<Value, String> {
+    let source = source(comparison, tests);
     let scratch = Scratch::create()?;
     std::fs::write(scratch.0.join("Cargo.toml"), MANIFEST).map_err(|error| error.to_string())?;
-    std::fs::write(scratch.0.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
+    std::fs::write(scratch.0.join("src/lib.rs"), &source).map_err(|error| error.to_string())?;
     let diff_file = scratch.0.join("change.diff");
-    std::fs::write(&diff_file, DIFF).map_err(|error| error.to_string())?;
+    std::fs::write(&diff_file, diff(comparison)).map_err(|error| error.to_string())?;
     let report = check_workspace(CheckInput {
         root: scratch.0.clone(),
         diff_file: Some(diff_file),
@@ -71,7 +77,7 @@ fn predicate_finding(source: &str) -> Result<Value, String> {
 // Both states are pinned by a row, so the changed comparison is observed.
 #[test]
 fn variant_operand_beside_a_path_state_scanner_exposes() -> Result<(), String> {
-    let finding = predicate_finding(&source("Scan::Text", BOTH_ROWS))?;
+    let finding = predicate_finding("== Scan::Text", BOTH_ROWS)?;
     assert_eq!(finding["classification"], "exposed", "{finding}");
     Ok(())
 }
@@ -80,7 +86,25 @@ fn variant_operand_beside_a_path_state_scanner_exposes() -> Result<(), String> {
 // variant operand must not manufacture an observed equality.
 #[test]
 fn variant_operand_does_not_credit_a_row_that_misses_the_changed_state() -> Result<(), String> {
-    let finding = predicate_finding(&source("Scan::Text", WORD_ROW_ONLY))?;
+    let finding = predicate_finding("== Scan::Text", WORD_ROW_ONLY)?;
     assert_ne!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+// Control: a variant of another enum is not the scanner's state, even when its
+// last segment matches; the operand reads as its own full path and never equals
+// the scanner's token, so no equality is observed.
+#[test]
+fn variant_operand_of_another_enum_is_not_credited() -> Result<(), String> {
+    let finding = predicate_finding("== Other::Text", BOTH_ROWS)?;
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+// `!=` takes the same exact-operand path as `==`.
+#[test]
+fn variant_operand_under_not_equal_reads_the_same_way() -> Result<(), String> {
+    let finding = predicate_finding("!= Scan::Text", BOTH_ROWS)?;
+    assert_eq!(finding["classification"], "exposed", "{finding}");
     Ok(())
 }
