@@ -19,14 +19,11 @@ schema_version = "ripr_verdict_corpus_spec_coverage.v1"
 # regression fails `verdict-corpus check`; an improvement passes with a note
 # to lower this number (not a failure, so concurrent fixes do not collide).
 # Raising it is a reviewed edit with a reason.
-# 145: the 144 baseline plus the one abstention #10143 added (the private-predicate-via-wrapper
-# shape, spec0186-ex06, now abstains as limited and is no longer known-false). Measured on the combined tree.
-# 146: plus the one abstention #10163 added (spec0171-ex05, cross-package wrapper now limited). Measured on the combined tree.
-# 147 (#9197): plus `strsim-sorensen-dice-equal`, which compares a local rebound
-# from the parameter (`let a = a.chars()..collect()`), so the name-only credit
-# is withheld and the row abstains; fail-closed by design. Measured on the
-# combined tree.
-missed_credit_ceiling = 147
+# 149 = 147 on main + 2 new measured rows (spec0096-named-binding-used,
+# spec0048-label-rendered-observed) whose initializer-call and const shapes
+# abstain today; analyzer fix tracked in #9871.
+# 148: minus the one row RIPR-SPEC-0353 credits (grid-bool-exact). Measured on the combined tree.
+missed_credit_ceiling = 148
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
@@ -709,12 +706,12 @@ reason = "acceptance examples are prose, not numbered; corpus cases cite the spe
 # Test Efficiency and Vacuity Signals
 [[unmeasured]]
 id = "RIPR-SPEC-0004"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+reason = "classifies tests (smoke_only, duplicative) in a test-efficiency report; corpus rows score diff verdicts and carry no test-efficiency fields (#9872)"
 
 # Repo Seam Inventory and Test Grip
 [[unmeasured]]
 id = "RIPR-SPEC-0005"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+reason = "repo-scope seam rows, seam-id determinism and badge counting; a corpus row carries no seam fields (#9872)"
 
 # Evidence Quality Benchmark Corpus
 [[unmeasured]]
@@ -724,27 +721,35 @@ reason = "acceptance examples are prose, not numbered; corpus cases cite the spe
 # Static/Runtime Confidence Expansion
 [[unmeasured]]
 id = "RIPR-SPEC-0040"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+reason = "runtime-sample join rows of the calibration report; not a diff verdict (#9872)"
 
 # Config And Policy Constant Evidence
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0048"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+scope = "in"
+
+[[spec.waived]]
+example = 1
+reason = "policy suppression, not a discriminator: a constant read only by an internal allowlist or metadata table has no test-visible behavior, so every mutant survives and the runtime label is a gap, which contradicts the example's `no_action_internal`; the verdict vocabulary has no label for \"no user debt by policy\""
+
+[[spec.waived]]
+example = 6
+reason = "a constant with no supported config, policy, output or behavior-selector shape carries no behavior a mutant could change, so no discriminating runtime truth exists"
 
 # Match-Arm Blind-Reach Downgrade
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0093"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+scope = "in"
 
 # observation_unverified Guard Generalization
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0094"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+scope = "in"
 
 # INFECT/PROPAGATE Fail-Closed (Parts A, B, C)
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0096"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+scope = "in"
 
 # Error-Seam unwrap_err / expect_err Variant Binding
 [[spec]]
@@ -759,7 +764,7 @@ scope = "in"
 # Evidence-Promotion Honesty Meta-Gate
 [[unmeasured]]
 id = "RIPR-SPEC-0108"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+reason = "the meta-gate's own pass/fail messages over charter fixtures; the Rust rows it guards are measured through their owning specs (#9872)"
 
 # Rust bounded value-propagation limitation
 [[unmeasured]]
@@ -866,7 +871,7 @@ scope = "in"
 # Labeled Rust verdict corpus
 [[unmeasured]]
 id = "RIPR-SPEC-0219"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+reason = "describes the corpus's own rows and scoring; the cases it names are rows already (#9872)"
 
 # Owner call shape projection for drill-in surfaces
 [[spec]]
@@ -973,6 +978,19 @@ reason = "release-process tooling (xtask release-ledger); its examples validate 
 id = "RIPR-SPEC-0351"
 scope = "out"
 reason = "Rust out-parameter oracle credit is proved by crates/ripr/tests/out_parameter_oracle.rs; no corpus case labels it yet"
+
+# Pure bool chain infection from literal truth-table rows
+[[spec]]
+id = "RIPR-SPEC-0353"
+scope = "in"
+
+[[spec.waived]]
+example = 2
+reason = "an abstain-when-rows-cannot-separate negative; pinned by crates/ripr/tests/bool_truth_table_infection.rs, and a corpus case would need an abstain-ideal row with no catching test"
+
+[[spec.waived]]
+example = 3
+reason = "an abstain-when-another-caller-exists negative; pinned by crates/ripr/tests/bool_truth_table_infection.rs"
 
 [[spec]]
 id = "RIPR-SPEC-0356"

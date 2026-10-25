@@ -1,0 +1,5 @@
+//! RIPR-SPEC-0094 acceptance example 1.
+
+pub fn compute_score(base: i64) -> i64 {
+    base * 3
+}
