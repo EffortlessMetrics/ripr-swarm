@@ -1,0 +1,7 @@
+use spec0096_1::{Store, process};
+
+#[test]
+fn process_returns_the_amount() {
+    let mut store = Store::default();
+    assert_eq!(process(&mut store, 42), 42);
+}

@@ -223,9 +223,7 @@ mod tests {
     use super::*;
 
     fn ledger(entries: &str) -> Result<Ledger, String> {
-        let text = format!(
-            "schema_version = \"ripr_verdict_corpus_spec_coverage.v1\"\nfloor = 0\n{entries}"
-        );
+        let text = format!("schema_version = \"ripr_verdict_corpus_spec_coverage.v1\"\n{entries}");
         toml::from_str(&text).map_err(|err| err.to_string())
     }
 
@@ -354,9 +352,10 @@ mod tests {
         std::fs::create_dir_all(&empty).map_err(|err| err.to_string())?;
         std::fs::write(
             empty.join(coverage::LEDGER_FILE),
-            "schema_version = \"ripr_verdict_corpus_spec_coverage.v1\"\nfloor = 0\n",
+            "schema_version = \"ripr_verdict_corpus_spec_coverage.v1\"\n",
         )
         .map_err(|err| err.to_string())?;
+        std::fs::write(empty.join(coverage::LOCK_FILE), "").map_err(|err| err.to_string())?;
         let alone = apply_known_false_gate(&empty, false, &rows, None)?.unwrap_or_default();
         assert!(alone.contains("is a false verdict"), "{alone}");
         let joined = apply_known_false_gate(&empty, false, &rows, Some("oracle failed".into()))?
@@ -415,9 +414,7 @@ mod tests {
         std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
         std::fs::write(
             dir.join(coverage::LEDGER_FILE),
-            format!(
-                "schema_version = \"ripr_verdict_corpus_spec_coverage.v1\"\nfloor = 0\n{ENTRY}"
-            ),
+            format!("schema_version = \"ripr_verdict_corpus_spec_coverage.v1\"\n{ENTRY}"),
         )
         .map_err(|err| err.to_string())?;
         let err = coverage::load_ledger(&dir).err().unwrap_or_default();

@@ -2777,17 +2777,28 @@ fn ripr_artifact_ignore(
              `git add -A` would commit ripr's own reports into your history. \
              Add this line to .gitignore: {}",
             artifact_roots_display(&uncovered),
-            artifact_gitignore_entries(&uncovered),
+            artifact_gitignore_entries(root, &uncovered),
         ),
     }
 }
 
 /// The exact `.gitignore` entries for the uncovered roots, one wording on
 /// every surface that names the repair.
-fn artifact_gitignore_entries(uncovered: &[String]) -> String {
+fn artifact_gitignore_entries(root: &Path, uncovered: &[String]) -> String {
+    // A Cargo project's repair preflight requires the whole build directory
+    // `target/` to be Git-ignored (a child-only rule is insufficient), so
+    // advising `/target/ripr/` there would pass this check and then fail the
+    // preflight. Advise `/target/`, which covers both.
+    let cargo_project = root.join("Cargo.toml").is_file();
     uncovered
         .iter()
-        .map(|root| analysis::artifact_root_gitignore_entry(Path::new(root)))
+        .map(|artifact_root| {
+            if cargo_project && artifact_root == "target/ripr" {
+                "/target/".to_string()
+            } else {
+                analysis::artifact_root_gitignore_entry(Path::new(artifact_root))
+            }
+        })
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -2877,7 +2888,7 @@ fn preemptive_artifact_ignore(
              git ignore rules); `git add -A` would commit ripr's own reports \
              into your history. Add this line to .gitignore: {}",
             artifact_roots_display(&uncovered),
-            artifact_gitignore_entries(&uncovered),
+            artifact_gitignore_entries(root, &uncovered),
         ),
     }
 }
@@ -5027,6 +5038,60 @@ mod tests {
             ripr_artifact_ignore(&root, &default_artifact_roots(&root)),
             DoctorArtifactIgnore::Ignored
         );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_artifact_ignore_advises_the_whole_target_dir_for_a_cargo_project() -> Result<(), String>
+    {
+        use output::doctor::DoctorArtifactIgnore;
+        let root = unique_command_test_dir("artifact-cargo-target");
+        std::fs::create_dir_all(root.join("target/ripr/pilot"))
+            .map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"x\"\nversion = \"0.0.0\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let empty_excludes = root.join("empty-excludes");
+        std::fs::write(&empty_excludes, "").map_err(|error| error.to_string())?;
+        for args in [
+            ["init"].as_slice(),
+            [
+                "config",
+                "core.excludesFile",
+                empty_excludes.to_str().ok_or("non-utf8 excludes path")?,
+            ]
+            .as_slice(),
+        ] {
+            crate::git::run_git(&root, args).map_err(|error| error.to_string())?;
+        }
+        // The repair preflight needs `target/` itself ignored, so the advice
+        // for a Cargo project is `/target/`, not the child-only `/target/ripr/`.
+        let DoctorArtifactIgnore::Unignored { warning } =
+            ripr_artifact_ignore(&root, &default_artifact_roots(&root))
+        else {
+            return Err("expected Unignored".to_string());
+        };
+        let entry = warning
+            .split_once("Add this line to .gitignore: ")
+            .ok_or("missing advice")?
+            .1;
+        assert_eq!(entry, "/target/", "{warning}");
+        std::fs::write(root.join(".gitignore"), format!("{entry}\n"))
+            .map_err(|error| error.to_string())?;
+        assert_eq!(
+            ripr_artifact_ignore(&root, &default_artifact_roots(&root)),
+            DoctorArtifactIgnore::Ignored
+        );
+        let build_output = crate::git::run_git_output_with_deadline(
+            &root,
+            &["check-ignore", "--no-index", "-q", "--", "target"],
+            Some(std::time::Duration::from_secs(5)),
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(build_output.status.code(), Some(0), "{build_output:?}");
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
