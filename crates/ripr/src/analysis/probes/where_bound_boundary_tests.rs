@@ -752,6 +752,34 @@ fn inline_impl_bound_removed_stays_unknown() -> Result<(), String> {
 }
 
 #[test]
+fn wrapped_impl_header_first_line_seeds_only_static_unknown() -> Result<(), String> {
+    // rustfmt wraps a long header so its first line opens no body (#10244).
+    for source in [
+        "struct Holder<Item, const N: usize>(Item);\nimpl<Item, const N: usize> Drop\n    for Holder<Item, N>\n{\n    fn drop(&mut self) {}\n}\n",
+        "struct H<T>(T);\nimpl<#[cfg_attr(feature = \"x\", may_dangle)] T, const N: usize> Drop\n    for H<T>\n{\n    fn drop(&mut self) {}\n}\n",
+    ] {
+        let result = added(source, 2)?;
+        assert!(!result.is_empty(), "header vanished: {source}");
+        for probe in &result {
+            assert_eq!(
+                probe.family,
+                ProbeFamily::StaticUnknown,
+                "wrapped header first line must stay declaration-only: {source}"
+            );
+        }
+    }
+    // A statement that merely starts with the letters `impl` keeps its probes.
+    let result = added("fn impl_run(x: u32) {}\nfn f() {\n    impl_run(3);\n}\n", 3)?;
+    assert!(
+        result
+            .iter()
+            .any(|p| p.family != ProbeFamily::StaticUnknown),
+        "behavior line must keep a runtime family: {result:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn inline_type_alias_bound_added_stays_unknown() -> Result<(), String> {
     inline_item_bound("type Packet<T: Clone> = Vec<T>;", "", false)
 }
