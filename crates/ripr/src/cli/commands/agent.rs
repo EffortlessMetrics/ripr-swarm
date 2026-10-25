@@ -3324,8 +3324,8 @@ fn after_phase_human_stdout(
     // still find the files these lines name.
     out.push_str(&format!(
         "  receipt: {}\n  verify result (JSON): {}; add --json to print the result document here\n",
-        receipt_path.display(),
-        verify_path.display()
+        crate::output::path::human_path(receipt_path),
+        crate::output::path::human_path(verify_path)
     ));
     out
 }
