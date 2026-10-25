@@ -70,7 +70,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "missing_input",
-          "why": "no input this test passes was seen reaching the changed boundary"
+          "why": "no input this test passes was seen reaching `amount == DISCOUNT_THRESHOLD`"
         },
         {
           "name": "discounts far above threshold",
@@ -82,7 +82,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "missing_input",
-          "why": "no input this test passes was seen reaching the changed boundary"
+          "why": "no input this test passes was seen reaching `amount == DISCOUNT_THRESHOLD`"
         }
       ],
       "typescript_preview_card": {

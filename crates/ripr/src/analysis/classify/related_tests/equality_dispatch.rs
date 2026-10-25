@@ -77,27 +77,35 @@ pub(super) fn equality_owner<'a>(
     })
 }
 
-/// The self type of the plain `impl PartialEq for T` whose `eq`/`ne` is
-/// `owner`; `None` for any other function.
-fn partial_eq_impl_type(owner: &FunctionSummary) -> Option<&str> {
-    if !matches!(owner.name.as_str(), "eq" | "ne") {
-        return None;
-    }
-    // A second `::impl ` segment means the impl is nested in another impl or
-    // a fn body; the id no longer names one type unambiguously.
+/// The trait and self type text of the trait-impl method `owner`
+/// (`Add<Money>` and `Money` for `impl Add<Money> for Money { fn add }`).
+/// `None` for any other function, and for an impl nested in another impl or a
+/// fn body: a second `::impl ` segment means the id no longer names one type
+/// unambiguously.
+pub(super) fn impl_header(owner: &FunctionSummary) -> Option<(&str, &str)> {
     if owner.id.0.matches("::impl ").count() != 1 {
         return None;
     }
     let rest = owner.id.0.split("::impl ").nth(1)?;
     let head = rest.rsplit_once("::")?.0;
     let (trait_ty, self_ty) = head.rsplit_once(" for ")?;
+    Some((trait_ty.trim(), self_ty.trim()))
+}
+
+/// The self type of the plain `impl PartialEq for T` whose `eq`/`ne` is
+/// `owner`; `None` for any other function.
+fn partial_eq_impl_type(owner: &FunctionSummary) -> Option<&str> {
+    if !matches!(owner.name.as_str(), "eq" | "ne") {
+        return None;
+    }
+    let (trait_ty, self_ty) = impl_header(owner)?;
     if !matches!(
-        trait_ty.trim(),
+        trait_ty,
         "PartialEq" | "cmp::PartialEq" | "std::cmp::PartialEq" | "core::cmp::PartialEq"
     ) {
         return None;
     }
-    plain_type_name(self_ty.trim())
+    plain_type_name(self_ty)
 }
 
 /// Whether `owner` is shaped like `eq`/`ne` of a plain `impl PartialEq for T`.
@@ -122,10 +130,20 @@ pub(in crate::analysis) fn is_partial_eq_method(
 /// owner's file imports none by a non-standard path or glob. Any doubt reads
 /// as a shadow.
 fn partial_eq_trait_is_std(owner: &FunctionSummary, index: &RustIndex) -> bool {
+    std_trait_is_unshadowed(owner, index, "PartialEq")
+}
+
+/// [`partial_eq_trait_is_std`] for any standard trait `trait_name`: the bare
+/// name can only mean the standard trait for the owner's file.
+pub(super) fn std_trait_is_unshadowed(
+    owner: &FunctionSummary,
+    index: &RustIndex,
+    trait_name: &str,
+) -> bool {
+    let declare = format!("trait {trait_name}");
     let declares_local_trait = index.files().values().any(|facts| {
         let source = facts.data().source.as_ref();
-        source.contains("trait PartialEq")
-            && declares_trait(&mask_comments_and_strings(source), "PartialEq")
+        source.contains(&declare) && declares_trait(&mask_comments_and_strings(source), trait_name)
     });
     if declares_local_trait {
         return false;
@@ -140,22 +158,22 @@ fn partial_eq_trait_is_std(owner: &FunctionSummary, index: &RustIndex) -> bool {
             return false;
         }
         let glob = words.contains(&"*");
-        words.contains(&"PartialEq") || (glob && !(words.len() == 2 && is_local_root(&words)))
+        words.contains(&trait_name) || (glob && !(words.len() == 2 && is_local_root(&words)))
     })
 }
 
-fn is_local_root(words: &[&str]) -> bool {
+pub(super) fn is_local_root(words: &[&str]) -> bool {
     matches!(words.first(), Some(&("super" | "self" | "crate")))
 }
 
-fn path_words(path: &str) -> Vec<&str> {
+pub(super) fn path_words(path: &str) -> Vec<&str> {
     path.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '*'))
         .filter(|word| !word.is_empty())
         .collect()
 }
 
 /// Whether the masked source declares `trait name`.
-fn declares_trait(masked: &str, name: &str) -> bool {
+pub(super) fn declares_trait(masked: &str, name: &str) -> bool {
     declares_item(masked, &["trait"], name)
 }
 
@@ -186,7 +204,7 @@ fn declares_item(masked: &str, keywords: &[&str], name: &str) -> bool {
 /// parameters (`Key`, `Key<'k>`, `Key<'_>`): no path, type or const
 /// parameters and no reference, so the impl is the one `PartialEq<Self>` of
 /// that type and cannot be one of several specialisations.
-fn plain_type_name(ty: &str) -> Option<&str> {
+pub(super) fn plain_type_name(ty: &str) -> Option<&str> {
     let (name, generics) = match ty.split_once('<') {
         Some((name, rest)) => (name, Some(rest.strip_suffix('>')?)),
         None => (ty, None),
@@ -252,18 +270,7 @@ pub(super) fn test_asserts_equality_through_owner(
     if reaching.is_empty() {
         return false;
     }
-    let raw_impl_type = format!("r#{impl_type}");
-    let owner_scope = OwnerScope::new(owner.name.as_str(), owner.start_line, &owner.file);
-    if test_module_shadows_type(
-        test,
-        source,
-        impl_type,
-        owner_scope.in_file(&test.file),
-        index,
-    ) || file_renames_to(source, impl_type)
-        || file_renames_to(source, raw_impl_type.as_str())
-        || parent_chain_shadows_type(test, impl_type, owner_scope, index)
-    {
+    if !type_scope_is_clear(test, owner, source, impl_type, index) {
         return false;
     }
     *equality.file_level_clear.get_or_init(|| {
@@ -300,6 +307,28 @@ pub(super) fn test_asserts_equality_through_owner(
     })
 }
 
+/// Whether no scope between `test` and the owner's file declares or renames
+/// another `impl_type`, so the name means the owner's impl type there.
+pub(super) fn type_scope_is_clear(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    source: &str,
+    impl_type: &str,
+    index: &RustIndex,
+) -> bool {
+    let raw_impl_type = format!("r#{impl_type}");
+    let owner_scope = OwnerScope::new(owner.name.as_str(), owner.start_line, &owner.file);
+    !(test_module_shadows_type(
+        test,
+        source,
+        impl_type,
+        owner_scope.in_file(&test.file),
+        index,
+    ) || file_renames_to(source, impl_type)
+        || file_renames_to(source, raw_impl_type.as_str())
+        || parent_chain_shadows_type(test, impl_type, owner_scope, index))
+}
+
 /// Whether the file may bring a different `T` into scope. The owner id
 /// carries no module path, so identity is only established when the file
 /// leaves no second candidate: more than one `struct`/`enum`/`union`/`type`
@@ -309,7 +338,11 @@ pub(super) fn test_asserts_equality_through_owner(
 /// named path, and any glob other than `super::*`/`self::*`/`crate::*` or the
 /// standard library's, may name another `T`. Over-refusal only withholds the
 /// relation.
-fn imports_other_type(masked_source: &str, impl_type: &str, file: &std::path::Path) -> bool {
+pub(super) fn imports_other_type(
+    masked_source: &str,
+    impl_type: &str,
+    file: &std::path::Path,
+) -> bool {
     let declarations = count_items(
         masked_source,
         &["struct", "enum", "union", "type"],
@@ -342,7 +375,7 @@ fn imports_other_type(masked_source: &str, impl_type: &str, file: &std::path::Pa
 }
 
 /// The text of every `use` item up to its `;`, from the masked source.
-fn use_paths(masked: &str) -> Vec<&str> {
+pub(super) fn use_paths(masked: &str) -> Vec<&str> {
     let bytes = masked.as_bytes();
     let mut paths = Vec::new();
     let mut from = 0usize;
@@ -578,7 +611,7 @@ fn split_arguments(masked: &str, open: usize) -> Option<Vec<&str>> {
 /// last `let` is annotated `: T` or initialised by one of those. A
 /// constructor-shaped name is not a return type: `T::new()` may return
 /// another type. `before` is the masked body up to the assertion.
-fn operand_has_type(
+pub(super) fn operand_has_type(
     operand: &str,
     impl_type: &str,
     before: &str,
@@ -661,7 +694,7 @@ fn expression_has_type(expr: &str, impl_type: &str, returns_self: &dyn Fn(&str) 
 /// `Self` or `impl_type` as its return type, and at least one exists. The
 /// signature is read from the function's own file, from its line up to the
 /// body or `;`.
-fn associated_fn_returns_self(index: &RustIndex, impl_type: &str, name: &str) -> bool {
+pub(super) fn associated_fn_returns_self(index: &RustIndex, impl_type: &str, name: &str) -> bool {
     let mut found = false;
     for function in index.functions().iter() {
         let in_impl = matches!(
