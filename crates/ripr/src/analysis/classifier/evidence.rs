@@ -351,13 +351,18 @@ impl ClassifiedProbeEvidence {
         });
         // The truth-table reading takes `assert_eq!(owner(..), want)` as a
         // comparison by the macro's name; a rebound name compares nothing.
+        // Only a `&&`/`||` owner reaches that reading, so other owners skip the
+        // per-file macro scan.
         let assertion_macros_rebound = matches!(
             context.probe.family,
             ProbeFamily::Predicate | ProbeFamily::ReturnValue
-        ) && crate::analysis::classify::macro_names_rebound(
-            context.index,
-            &["assert", "assert_eq", "assert_ne"],
-        );
+        ) && context
+            .owner_fn
+            .is_some_and(|owner| owner.body.contains("&&") || owner.body.contains("||"))
+            && crate::analysis::classify::macro_names_rebound(
+                context.index,
+                &["assert", "assert_eq", "assert_ne"],
+            );
         let infect = infection_evidence_for_owner(
             context.probe,
             &test_summaries,
