@@ -4528,6 +4528,32 @@ fn owner_call_parameter_values_where(
     rows
 }
 
+/// True when the owner call's argument text runs no call of its own beyond
+/// the plain conversions (`.to_string()`, `.to_owned()`, `.into()`,
+/// `String::from(..)`). The cell reader takes a literal it finds inside a call
+/// chain as the argument (`std::env::var("WHO")` reads as `"WHO"`, #10484), so
+/// where several calls share one test this gate declines such a call instead of
+/// counting the invented row.
+fn argument_text_calls_nothing(call_text: &str, owner_name: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(call_text);
+    let Some(start) = masked.find(owner_name) else {
+        return false;
+    };
+    let mut arguments = masked[start + owner_name.len()..].replace("String::from(", "(");
+    for conversion in [".to_string()", ".to_owned()", ".into()"] {
+        arguments = arguments.replace(conversion, "");
+    }
+    // The owner's own opening parenthesis follows the name directly; any later
+    // parenthesis that follows an identifier or `]` is a call.
+    let chars: Vec<char> = arguments.chars().collect();
+    !chars.iter().enumerate().skip(1).any(|(idx, ch)| {
+        *ch == '('
+            && chars
+                .get(idx - 1)
+                .is_some_and(|prev| prev.is_alphanumeric() || matches!(prev, '_' | ']'))
+    })
+}
+
 /// True when each owner call in `test` yields at least one input row on its
 /// own, so a call whose argument ripr cannot read is never hidden behind the
 /// extra rows another call's table supplies.
@@ -4540,23 +4566,24 @@ fn every_owner_call_reads_a_row(
     test.body_calls()
         .filter(|call| call.name == owner.name)
         .all(|target| {
-            !owner_call_parameter_values_where(
-                &[test],
-                &owner.name,
-                is_free(owner),
-                &parameters,
-                |candidate_test, call| {
-                    std::ptr::eq(call, target)
-                        && super::call_identity::qualified_owner_calls_resolve(
-                            index,
-                            owner,
-                            candidate_test,
-                            &call.text,
-                        )
-                },
-                &ReceiverParameters::reading_text_cells(true),
-            )
-            .is_empty()
+            argument_text_calls_nothing(&target.text, &owner.name)
+                && !owner_call_parameter_values_where(
+                    &[test],
+                    &owner.name,
+                    is_free(owner),
+                    &parameters,
+                    |candidate_test, call| {
+                        std::ptr::eq(call, target)
+                            && super::call_identity::qualified_owner_calls_resolve(
+                                index,
+                                owner,
+                                candidate_test,
+                                &call.text,
+                            )
+                    },
+                    &ReceiverParameters::reading_text_cells(true),
+                )
+                .is_empty()
         })
 }
 

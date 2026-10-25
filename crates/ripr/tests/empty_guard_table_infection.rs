@@ -306,6 +306,26 @@ fn a_table_and_an_unread_direct_call_in_the_same_test_stay_unknown() -> Result<(
 }
 
 #[test]
+fn a_table_and_a_call_chain_holding_a_literal_stay_unknown() -> Result<(), String> {
+    // `std::env::var("WHO")` is a runtime input; the cell reader takes the
+    // literal inside it for the argument (#10484), so the row must not count.
+    let test = two_row_table_then(
+        "    assert_eq!(initial(&std::env::var(\"WHO\").unwrap_or_default()), 'B');\n",
+    );
+    let findings = guard_findings(NEW, &test)?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_table_and_a_converted_literal_call_still_credit() -> Result<(), String> {
+    let test = two_row_table_then("    assert_eq!(initial(&\"Bob\".to_string()), 'B');\n");
+    let findings = guard_findings(NEW, &test)?;
+    assert!(infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
+
+#[test]
 fn a_table_and_a_read_direct_call_in_the_same_test_still_credit() -> Result<(), String> {
     let test = two_row_table_then("    assert_eq!(initial(\"Bob\"), 'B');\n");
     let findings = guard_findings(NEW, &test)?;
