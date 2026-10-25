@@ -474,15 +474,14 @@ fn a_table_that_separates_nothing_or_cannot_be_read_is_withheld_never_a_gap() ->
         }",
     ] {
         let found = table_finding(body)?;
-        assert_ne!(found.class, ExposureClass::Exposed, "{body}\n{found:?}");
-        assert_ne!(
+        assert_eq!(
             found.class,
-            ExposureClass::WeaklyExposed,
+            ExposureClass::StaticUnknown,
             "{body}\n{found:?}"
         );
-        assert_ne!(
-            found.class,
-            ExposureClass::ReachableUnrevealed,
+        assert_eq!(
+            limit(&found),
+            Some("rust_pinned_shape_unresolved"),
             "{body}\n{found:?}"
         );
     }
