@@ -110,8 +110,8 @@ check in JSON; it never changes the exit status. The repair advice follows
 what `ripr init --mcp` can do: run it when the entry is missing (including a
 missing `mcpServers` key), add `--force` to replace a customized `ripr` entry,
 and fix or remove the file first when it is not a JSON object or `mcpServers`
-is not an object, which init refuses. A `.mcp.json` that is a symlink or over
-1 MiB is not verified.
+is not an object, which init refuses. A `.mcp.json` that is a symlink is not
+verified; one over 1 MiB is reported as unreadable.
 
 ### Suppression manifest declarations
 

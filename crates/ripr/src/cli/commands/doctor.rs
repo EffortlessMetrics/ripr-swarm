@@ -6156,6 +6156,16 @@ mod tests {
                     .is_some_and(|(_, line)| line.contains(advice)),
                 "{name}: {verdict:?}"
             );
+            // Advice that only needs `ripr init --mcp` must not tell the user
+            // to fix the file first (that wording also contains the command).
+            if !advice.contains("fix or remove") {
+                assert!(
+                    verdict
+                        .as_ref()
+                        .is_some_and(|(_, line)| !line.contains("fix or remove")),
+                    "{name}: {verdict:?}"
+                );
+            }
         }
         Ok(())
     }
