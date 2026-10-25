@@ -2129,6 +2129,61 @@ pub(crate) fn debug_assert_eq_calls(source: &str) -> Vec<(usize, String)> {
 }
 
 pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAssertions {
+    owner_pin_assertions_with_matches(source, trusted, false)
+}
+
+/// The same execution authority for return/error `assert!(matches!(..))`.
+/// A sole assertion can discriminate through an expected panic's inverted
+/// success condition. This establishes execution only, never a value pin.
+pub(crate) fn owner_pin_matches_assertions(source: &str, trusted: &[&str]) -> OwnerPinAssertions {
+    owner_pin_assertions_with_matches(source, trusted, true)
+}
+
+fn matches_preserves_assertion_execution(attr: &ast::Attr, function: &ast::Fn) -> bool {
+    if let Some(ast::Meta::CfgAttrMeta(meta)) = attr.meta()
+        && meta.metas().next().is_some()
+        && let Some(condition) = meta.cfg_predicate()
+        && attribute_test_build_availability(&format!("#[cfg({})]", condition.syntax().text()))
+            == Some(false)
+    {
+        return true;
+    }
+    if attr.simple_name().as_deref() != Some("should_panic") {
+        return false;
+    }
+    let Some(list) = function.body().and_then(|body| body.stmt_list()) else {
+        return false;
+    };
+    if list.tail_expr().is_some() {
+        return false;
+    }
+    let mut statements = list.statements();
+    let (Some(ast::Stmt::ExprStmt(statement)), None) = (statements.next(), statements.next())
+    else {
+        return false;
+    };
+    let Some(ast::Expr::MacroExpr(expression)) = statement.expr() else {
+        return false;
+    };
+    let Some(call) = expression.macro_call() else {
+        return false;
+    };
+    call.path()
+        .and_then(|path| path.segment())
+        .and_then(|segment| segment.name_ref())
+        .is_some_and(|name| name.text() == "assert")
+        && invoked_macro_names(call.syntax())
+            .iter()
+            .map(|path| path.rsplit("::").next().unwrap_or(path))
+            .collect::<BTreeSet<_>>()
+            == BTreeSet::from(["assert", "matches"])
+}
+
+fn owner_pin_assertions_with_matches(
+    source: &str,
+    trusted: &[&str],
+    matches_context: bool,
+) -> OwnerPinAssertions {
     let mut result = OwnerPinAssertions::default();
     let Some(parse) = parse_clean_source_file(source) else {
         return result;
@@ -2203,10 +2258,10 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
         *identities.entry(key.clone()).or_default() += 1;
         // An outcome-settling attribute is named first wherever it sits: it
         // is evidence of a gap, which RIPR-SPEC-0240 must not withhold.
-        let refusal = if let Some(attr) = function
-            .attrs()
-            .find(|attr| attribute_settles_test_outcome(&attr.syntax().text().to_string()))
-        {
+        let refusal = if let Some(attr) = function.attrs().find(|attr| {
+            attribute_settles_test_outcome(&attr.syntax().text().to_string())
+                && !(matches_context && matches_preserves_assertion_execution(attr, &function))
+        }) {
             Some(AssertionContextRefusal::TestAttribute(
                 attr.syntax().text().to_string(),
             ))
@@ -2216,13 +2271,18 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
                 .any(|attr| tokio_test_runs_body(&attr, function.syntax()))
         {
             Some(AssertionContextRefusal::AsyncTest)
-        } else if let Some(refusal) = has_escape(body.syntax(), trusted, &empty_macros, &json_uses)
-        {
+        } else if let Some(refusal) = has_escape(
+            body.syntax(),
+            trusted,
+            &empty_macros,
+            &json_uses,
+            matches_context,
+        ) {
             Some(refusal)
-        } else if let Some(attr) = function
-            .attrs()
-            .find(|attr| !runs_body_unchanged(attr, function.syntax()))
-        {
+        } else if let Some(attr) = function.attrs().find(|attr| {
+            !(runs_body_unchanged(attr, function.syntax())
+                || matches_context && matches_preserves_assertion_execution(attr, &function))
+        }) {
             Some(AssertionContextRefusal::TestAttribute(
                 attr.syntax().text().to_string(),
             ))
@@ -2708,7 +2768,7 @@ fn plain_check_helper(
         && !body.syntax().descendants().any(|node| {
             ast::ReturnExpr::can_cast(node.kind()) || ast::TryExpr::can_cast(node.kind())
         })
-        && has_escape(body.syntax(), trusted, empty_macros, json_uses).is_none()
+        && has_escape(body.syntax(), trusted, empty_macros, json_uses, false).is_none()
         && supported_item_context(helper.syntax())
 }
 
@@ -3897,6 +3957,7 @@ fn has_escape(
     trusted: &[&str],
     empty: &BTreeMap<String, ast::MacroRules>,
     json_uses: &[ast::Use],
+    qualified_matches: bool,
 ) -> Option<AssertionContextRefusal> {
     body.descendants().find_map(|node| {
         if let Some(call) = ast::MacroCall::cast(node.clone()) {
@@ -3923,7 +3984,11 @@ fn has_escape(
             // Macro operands are opaque to AST descendant walks. Refuse
             // hidden exits and nested expansion, but not boolean negation.
             if call.token_tree().is_some_and(|tree| {
-                opaque_macro_operand_with_json(&tree, trusted.contains(&"json") && json_visible)
+                opaque_macro_operand_with_json(
+                    &tree,
+                    trusted.contains(&"json") && json_visible,
+                    qualified_matches,
+                )
             }) {
                 return Some(AssertionContextRefusal::MacroOperandExit(path));
             }
@@ -3959,22 +4024,30 @@ fn has_escape(
 /// (#9981) gates its credit on this before copying any facts, so diff output
 /// and the repo-exposure consumer agree on what may have exited.
 pub(crate) fn node_has_macro_escape(node: &SyntaxNode) -> bool {
-    has_escape(node, TRUSTED_MACRO_NAMES, &BTreeMap::new(), &[]).is_some()
+    has_escape(node, TRUSTED_MACRO_NAMES, &BTreeMap::new(), &[], false).is_some()
 }
 
 fn opaque_macro_operand(tree: &ast::TokenTree) -> bool {
-    opaque_macro_operand_with_json(tree, false)
+    opaque_macro_operand_with_json(tree, false, false)
 }
 
-fn opaque_macro_operand_with_json(tree: &ast::TokenTree, literal_json: bool) -> bool {
+fn opaque_macro_operand_with_json(
+    tree: &ast::TokenTree,
+    literal_json: bool,
+    qualified_matches: bool,
+) -> bool {
     let tokens = operand_tokens(tree);
     tokens.iter().any(|token| {
         matches!(
             token.text(),
             "return" | "break" | "continue" | "yield" | "?"
         )
-    }) || nested_invocations(&tokens).any(|(name, plain)| {
-        !(plain && (NESTED_EXPANSIONS.contains(&name) || name == "json" && literal_json))
+    }) || nested_invocation_sites(&tokens).any(|(at, name, plain)| {
+        !(plain && (NESTED_EXPANSIONS.contains(&name) || name == "json" && literal_json)
+            || qualified_matches
+                && name == "matches"
+                && qualified_matches_path(&tokens, at)
+                    .is_some_and(|path| std_macro_root_is_unrebound(&path, tree.syntax())))
     }) || tokens.windows(3).enumerate().any(|(at, window)| {
         window[0].text() == "json"
             && window[1].text() == "!"
@@ -4002,6 +4075,12 @@ fn operand_tokens(tree: &ast::TokenTree) -> Vec<ra_ap_syntax::SyntaxToken> {
 fn nested_invocations(
     tokens: &[ra_ap_syntax::SyntaxToken],
 ) -> impl Iterator<Item = (&str, bool)> + '_ {
+    nested_invocation_sites(tokens).map(|(_, name, plain)| (name, plain))
+}
+
+fn nested_invocation_sites(
+    tokens: &[ra_ap_syntax::SyntaxToken],
+) -> impl Iterator<Item = (usize, &str, bool)> + '_ {
     tokens
         .windows(3)
         .enumerate()
@@ -4024,8 +4103,37 @@ fn nested_invocations(
             };
             let qualified =
                 before(1) == Some("::") || (before(1) == Some(":") && before(2) == Some(":"));
-            Some((name.text(), !qualified))
+            Some((at, name.text(), !qualified))
         })
+}
+
+fn qualified_matches_path(tokens: &[ra_ap_syntax::SyntaxToken], at: usize) -> Option<String> {
+    let prefix: Vec<_> = tokens[..at]
+        .iter()
+        .rev()
+        .take_while(|token| {
+            token.kind() == ra_ap_syntax::SyntaxKind::IDENT || matches!(token.text(), ":" | "::")
+        })
+        .collect();
+    let prefix: String = prefix.into_iter().rev().map(|token| token.text()).collect();
+    matches!(prefix.as_str(), "std::" | "core::" | "::std::" | "::core::")
+        .then(|| format!("{prefix}matches"))
+}
+
+/// Qualified nested matches! calls need the same workspace root proof as
+/// the enclosing assertion, in addition to the file-local escape check.
+pub(crate) fn qualified_matches_paths(root: &SyntaxNode) -> BTreeSet<String> {
+    root.descendants()
+        .filter_map(ast::MacroCall::cast)
+        .filter_map(|call| call.token_tree())
+        .flat_map(|tree| {
+            let tokens = operand_tokens(&tree);
+            nested_invocation_sites(&tokens)
+                .filter(|(_, name, plain)| *name == "matches" && !plain)
+                .filter_map(|(at, _, _)| qualified_matches_path(&tokens, at))
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 /// The macros `node` invokes: every macro call's path, plus every name
