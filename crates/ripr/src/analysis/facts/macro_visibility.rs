@@ -128,7 +128,7 @@ impl MacroVisibility {
         // Parsing is the cost: most files never spell a generator's name as
         // a call, and `first_macro_call` would parse each of them to say so.
         if !may_call_generator(source, &self.generators) {
-            return String::new();
+            return ImportedMacros::default();
         }
         // A `#[macro_use]` module declared after the first call is not in
         // scope at it.
