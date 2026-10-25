@@ -11,6 +11,9 @@
       "count": 1
     },
     {
+      "type": "must_promote"
+    },
+    {
       "type": "expected_class",
       "class": "exposed"
     }
