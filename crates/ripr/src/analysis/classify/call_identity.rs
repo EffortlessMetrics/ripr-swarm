@@ -1208,7 +1208,7 @@ pub(super) fn unit_test_relative_import_names_entry(
             if let Some(module) = ast::Module::cast(ancestor) {
                 let name = module.name()?;
                 let text = name.text();
-                inline.push(text.strip_prefix("r#").unwrap_or(&text).to_string());
+                inline.push(text.strip_prefix("r#").unwrap_or(text).to_string());
             }
         }
         inline.reverse();
