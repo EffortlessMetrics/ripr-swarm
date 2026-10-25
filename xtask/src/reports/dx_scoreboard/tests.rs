@@ -4603,6 +4603,17 @@ fn corpus_pins_python_commits_and_rejects_unknown_languages() -> Result<(), Stri
             "expected click and poetry Python rows, got {ids:?}"
         ));
     }
+    let shas: Vec<_> = python.iter().map(|entry| entry.sha.as_str()).collect();
+    if shas
+        != [
+            "f67c2bb6c2f055c1c7a57cd46c3697fc26a7742e",
+            "a416efd1be6b6787019e751e7c4f6fa1a0911050",
+        ]
+    {
+        return Err(format!(
+            "Python pins moved off the commits verified to edit Python and its test: {shas:?}"
+        ));
+    }
     if python[0].heavy || !python[1].heavy {
         return Err("click must be the light Python row and poetry the heavy one".to_string());
     }
@@ -4672,11 +4683,13 @@ fn repo_view_rows_carry_the_corpus_language() -> Result<(), String> {
     Ok(())
 }
 
-/// TypeScript rows (#10338): the small one is a complete sample; the larger
-/// one is pinned knowing it is partial today, so its note must say so rather
-/// than let the row read as a gated population.
+/// TypeScript row (#10338). The exact pin is asserted so moving it is a
+/// deliberate two-place edit that re-asks whether the commit still edits
+/// TypeScript source and its test. No larger row is pinned: every larger
+/// TypeScript repository tried is partial today, and a repository that stops
+/// short fails the completion gate even when new.
 #[test]
-fn corpus_pins_typescript_commits() -> Result<(), String> {
+fn corpus_pins_the_typescript_commit() -> Result<(), String> {
     let config = parse_config(include_str!(
         "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
     ))?;
@@ -4685,18 +4698,17 @@ fn corpus_pins_typescript_commits() -> Result<(), String> {
         .corpus
         .iter()
         .filter(|entry| entry.language() == "typescript")
+        .map(|entry| (entry.id.as_str(), entry.sha.as_str(), entry.heavy))
         .collect();
-    let ids: Vec<_> = typescript.iter().map(|entry| entry.id.as_str()).collect();
-    if ids != ["defu-typescript", "zod-typescript"] {
+    let expected = [(
+        "defu-typescript",
+        "11ba02213d4b1c6b02dd686041f75edc479c98e9",
+        false,
+    )];
+    if typescript != expected {
         return Err(format!(
-            "expected defu and zod TypeScript rows, got {ids:?}"
+            "expected only the verified defu TypeScript row, got {typescript:?}"
         ));
-    }
-    if typescript[0].heavy || !typescript[1].heavy {
-        return Err("defu must be the light row and zod the heavy one".to_string());
-    }
-    if !typescript[1].note.contains("partial today") {
-        return Err("zod-typescript must say it is a partial, incomplete sample".to_string());
     }
     Ok(())
 }
