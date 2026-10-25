@@ -18,7 +18,9 @@ Start here:
   Language status: preview
   Static exposure: exposed (severity: info, confidence 0.60)
   Changed behavior: return amount - 20;
-  Discriminator (observed, advisory): Related test reaches `price` with a `snapshot` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator
+  Discriminator (observed, advisory): Related test reaches `price` with a `snapshot` oracle. Static
+    evidence suggests the changed behavior is observed under an exact-value or exact-error-variant
+    discriminator
   Related test: tests/lib.test.ts:3 price
   Next step — TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator yes
@@ -36,7 +38,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_snapshot_single_call_control/input --diff <cwd>/fixtures/typescript_snapshot_single_call_control/diff.patch --mode fast probe:src_lib.ts:typescript_preview:c712a282
   ripr context --root <cwd>/fixtures/typescript_snapshot_single_call_control/input --diff <cwd>/fixtures/typescript_snapshot_single_call_control/diff.patch --mode fast --at probe:src_lib.ts:typescript_preview:c712a282
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.ts:typescript_preview:c712a282 --root <cwd>/fixtures/typescript_snapshot_single_call_control/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

@@ -19,7 +19,9 @@ Start here:
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: db.write(v + 2);
-  Missing discriminator (1 of 2): Related test reaches `save` with bounded mock payload evidence `expect(db.write).toHaveBeenCalledWith(2)`; keep the item advisory until mock-shape actionability can name verify…
+  Missing discriminator (1 of 2): Related test reaches `save` with bounded mock payload evidence
+    `expect(db.write).toHaveBeenCalledWith(2)`; keep the item advisory until mock-shape
+    actionability can name verify command, receipt command, evidence refs, and edit boundaries
   Related test: tests/save.test.ts:7 save
   Next step — TypeScript preview advisory: related mock payload evidence
     `expect(db.write).toHaveBeenCalledWith(2)` is syntax-bounded for `call db.write includes v + 2`,
@@ -40,7 +42,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_mock_payload_iife_impl/input --diff <cwd>/fixtures/typescript_mock_payload_iife_impl/diff.patch --mode fast probe:src_save.ts:typescript_preview:0730bad0
   ripr context --root <cwd>/fixtures/typescript_mock_payload_iife_impl/input --diff <cwd>/fixtures/typescript_mock_payload_iife_impl/diff.patch --mode fast --at probe:src_save.ts:typescript_preview:0730bad0
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_save.ts:typescript_preview:0730bad0 --root <cwd>/fixtures/typescript_mock_payload_iife_impl/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

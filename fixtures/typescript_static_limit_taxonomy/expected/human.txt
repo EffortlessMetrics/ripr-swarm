@@ -19,7 +19,9 @@ Start here:
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: actions[key]();
-  Missing discriminator (1 of 2): Only heuristic TypeScript test links were found for `dispatch`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion
+  Missing discriminator (1 of 2): Only heuristic TypeScript test links were found for `dispatch`;
+    verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value
+    assertion
   Related test: tests/dispatch.test.ts:1 dispatch smoke
   Next step — TypeScript preview advisory: static limit `dynamic_dispatch`; Repair route: inspect
     the concrete dispatch key or add analyzer support for explicit dispatch-map resolution before
@@ -39,7 +41,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_static_limit_taxonomy/input --diff <cwd>/fixtures/typescript_static_limit_taxonomy/diff.patch --mode fast probe:src_dispatch.ts:typescript_preview:dd0f8848
   ripr context --root <cwd>/fixtures/typescript_static_limit_taxonomy/input --diff <cwd>/fixtures/typescript_static_limit_taxonomy/diff.patch --mode fast --at probe:src_dispatch.ts:typescript_preview:dd0f8848
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_dispatch.ts:typescript_preview:dd0f8848 --root <cwd>/fixtures/typescript_static_limit_taxonomy/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 Hidden:
   3 lower-priority finding(s) omitted from default human output (TypeScript preview: 1, JavaScript preview: 2).

@@ -41,6 +41,7 @@ mod includes;
 mod index;
 mod local_test_alias;
 mod macro_generated_tests;
+pub(crate) mod macro_visibility;
 
 /// The index builder's macro-generated test registration, for fixtures that
 /// assemble an index by hand.
@@ -52,6 +53,7 @@ pub(crate) mod member_crates;
 mod model;
 mod parameterized_tests;
 mod role_composition;
+mod stray_files;
 
 #[cfg(test)]
 pub(crate) fn compose_fixture_source_roles(index: &mut RustIndex, root: &Path) {

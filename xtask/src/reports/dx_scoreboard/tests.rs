@@ -3344,18 +3344,19 @@ fn spec_example_coverage_resolves_from_the_committed_fixtures() -> Result<(), St
         ));
     };
 
-    // Independent of the coverage function: the ledger floor is the covered
-    // count `verdict-corpus check` protects, so a live board reading must
-    // report that numerator rather than `not_measured`.
-    let ledger = fs::read_to_string(root.join(dir).join("spec-coverage.toml"))
+    // Independent of the coverage function: the lock lists the covered
+    // examples `verdict-corpus check` protects, so a live board reading must
+    // report that count as its numerator rather than `not_measured`.
+    let lock = fs::read_to_string(root.join(dir).join("spec-examples.lock"))
         .map_err(|err| err.to_string())?;
-    let floor: usize = ledger
+    let floor = lock
         .lines()
-        .find_map(|line| line.trim().strip_prefix("floor = ")?.parse().ok())
-        .ok_or("spec-coverage.toml has no floor")?;
+        .filter(|line| !line.trim().is_empty() && !line.trim().starts_with('#'))
+        .count();
+    assert!(floor > 0, "spec-examples.lock lists no example");
     assert!(
         sample.detail.contains(&format!("{pointer}: {floor}/")),
-        "board must report the ledger floor as the covered count: {}",
+        "board must report the locked examples as the covered count: {}",
         sample.detail
     );
     assert!(
@@ -4441,6 +4442,71 @@ fn agent_coverage_check_names_dropped_metrics_and_samples() -> Result<(), String
         gaps.iter()
             .any(|gap| gap.starts_with("agent.tool_steps_to_fix")),
         "dropping one repository's sample was not reported: {gaps:?}"
+    );
+    Ok(())
+}
+
+/// The nightly `first-run-main` job gates the committed
+/// `first-run-main-baseline.json` against the rows `cargo xtask first-run`
+/// writes. This runs the same comparison on rows built here, so a baseline
+/// refresh or a converter change cannot silently stop failing the lane on a
+/// crate that stops ending decisive (#9276).
+#[test]
+fn first_run_main_gate_fails_a_crate_that_ends_unknown() -> Result<(), String> {
+    let config = load_config(&committed_config())?;
+    let baseline = check_baseline(
+        serde_json::from_str(include_str!(
+            "../../../../metrics/dx-scoreboard/first-run-main-baseline.json"
+        ))
+        .map_err(|err| err.to_string())?,
+    )?;
+    let boards = vec!["first_run".to_string()];
+    let gate = |third: (&str, &str)| -> Result<Value, String> {
+        let mut lines = Vec::new();
+        for (case, verdict, reading) in [
+            ("semver-1.0.23", "exposed", "agrees with the tests"),
+            ("fastrand-2.3.0", "exposed", "agrees with the tests"),
+            ("bytesize-1.3.0", third.0, third.1),
+        ] {
+            lines.push(format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"{case}","step":"check","metric":"secs","value":3.0,"budget":60,"better":"lower"}}"#));
+            lines.push(format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"{case}","step":"check","metric":"exit","value":0,"budget":0,"better":"equal"}}"#));
+            lines.push(format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"{case}","step":"check","metric":"verdict","value":"{verdict}","budget":null,"better":"review_on_change"}}"#));
+            lines.push(format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"{case}","step":"check","metric":"verdict_reading","value":"{reading}","budget":null,"better":"review_on_change"}}"#));
+        }
+        let samples = parse_ingest(&parse_ingest_text(&lines.join("\n"))?, &config)?;
+        // A runner class the baseline was not recorded on, as on a hosted
+        // runner: only the verdict rows are compared.
+        Ok(build_report(
+            &config,
+            &boards,
+            &samples,
+            &context("hosted-runner"),
+            Some(&baseline),
+            true,
+        ))
+    };
+    let healthy = gate(("exposed", "agrees with the tests"))?;
+    assert_eq!(
+        healthy["gate"]["status"].as_str(),
+        Some("pass"),
+        "{}",
+        gate_failure_message(&healthy)
+    );
+    let regressed = gate(("infection_unknown", "unresolved"))?;
+    assert_eq!(regressed["gate"]["status"].as_str(), Some("fail"));
+    let message = gate_failure_message(&regressed);
+    // The decisive count is what fails the gate; the changed verdict list
+    // is listed for review on the unknown-verdict row.
+    assert!(
+        message.contains("first_run.decisive_verdicts"),
+        "decisive_verdicts not named in: {message}"
+    );
+    assert!(
+        regressed["gate"]["review"]
+            .to_string()
+            .contains("first_run.unknown_verdicts"),
+        "unknown_verdicts not listed for review: {}",
+        regressed["gate"]["review"]
     );
     Ok(())
 }

@@ -19,7 +19,10 @@ Start here:
   Static exposure: no path (severity: warning, confidence 0.40)
   Why no path: no related test was found that reaches this change
   Changed behavior: export const DEFAULT_FEE_RULE: FeeRule = { bps: 300, cap: 50 };
-  Missing discriminator: No trusted TypeScript module-initializer observer for `DEFAULT_FEE_RULE`. Direct `expect(IMPORTED_CONST)...` and `expect(namespace.EXPORT)...` observers are supported, but…
+  Missing discriminator: No trusted TypeScript module-initializer observer for `DEFAULT_FEE_RULE`.
+    Direct `expect(IMPORTED_CONST)...` and `expect(namespace.EXPORT)...` observers are supported,
+    but helper-derived values, shadowed aliases, dynamic initialization, and non-expect references
+    stay advisory in preview
   Next step — TypeScript preview advisory: module initializer observer is missing context; add a
     direct `expect(IMPORTED_CONST).toBe(...)` or `expect(namespace.EXPORT).toEqual(...)` observer
     when safe, and keep helper-derived or dynamic initialization evidence advisory
@@ -38,7 +41,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/input --diff <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:fff3ea84
   ripr context --root <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/input --diff <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:fff3ea84
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_pricing.ts:typescript_preview:fff3ea84 --root <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (TypeScript preview: 1).
