@@ -1,0 +1,85 @@
+name: Linux Nextest Shards
+
+# Manual trial of the required Rust test step split into four nextest partitions
+# (#10341). The required run spends ~21 minutes in one `cargo nextest run
+# --workspace --profile ci` on a 4-core hosted runner; this runs the same tests as
+# four `--partition count:N/4` jobs so the wall-clock of a sharded form can be
+# measured before the required workflow changes. It is advisory evidence only: it
+# does not replace the required gates, is not wired to pull_request events, and
+# never restores a cache it could save over the required run's.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-shard:
+    name: linux-shard-${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      # Full history, like the required test step: base-resolving tests refuse on
+      # a shallow clone (#10344).
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.95
+        with:
+          toolchain: 1.95.0
+
+      - name: Install CI tools
+        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: nextest
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: ripr-swarm-rust-small-${{ runner.os }}
+          save-if: false
+
+      - name: Prepare locked owner-return fixture dependencies
+        run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
+
+      # The policy tests spawn `cargo test --no-run -p xtask` themselves; warming
+      # it here keeps that build out of the measured test time, as the required
+      # run's policy preflight does.
+      - name: Warm the cargo builds the policy tests spawn
+        timeout-minutes: 20
+        run: cargo xtask check-covered-by
+
+      - name: Run workspace tests (shard ${{ matrix.shard }} of 4)
+        timeout-minutes: 40
+        run: |
+          mkdir -p target/nextest/ci
+          start=$(date +%s)
+          set +e
+          cargo nextest run --workspace --profile ci --no-fail-fast --partition count:${{ matrix.shard }}/4
+          status=$?
+          set -e
+          end=$(date +%s)
+          tests=$(grep -Eo '<testsuites [^>]*tests="[0-9]+"' target/nextest/ci/junit.xml | grep -Eo 'tests="[0-9]+"' | grep -Eo '[0-9]+' || echo 0)
+          printf '%s\n' "$status" > target/nextest/ci/shard-${{ matrix.shard }}.status
+          { echo "### Shard ${{ matrix.shard }} of 4"; echo "nextest exit status: $status"; echo "tests in junit: $tests"; echo "test step seconds (build plus run): $((end - start))"; } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      - name: Upload shard results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-shard-${{ matrix.shard }}
+          path: |
+            target/nextest/ci/junit.xml
+            target/nextest/ci/shard-${{ matrix.shard }}.status
+          if-no-files-found: warn
+          retention-days: 7
