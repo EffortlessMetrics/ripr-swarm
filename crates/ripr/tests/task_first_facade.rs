@@ -11,9 +11,6 @@ use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-#[path = "common/printed_words.rs"]
-mod printed_words;
-
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn unique_temp_workspace(label: &str) -> PathBuf {
@@ -1860,6 +1857,20 @@ fn repair_human_paths_preserve_literal_backslash_root_identity() -> Result<(), S
     repair_human_path_identity_journey(r"repo\literal", "repo/literal")
 }
 
+/// How the product spells a root it prints or persists: slash-unified on
+/// Windows, and a drive-letter verbatim prefix (`//?/D:/`) folded to its plain
+/// spelling (#9660). Elsewhere the text is unchanged.
+fn product_root_spelling(text: &str) -> String {
+    if !cfg!(windows) {
+        return text.to_string();
+    }
+    let unified = text.replace('\\', "/");
+    match unified.strip_prefix("//?/") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => rest.to_string(),
+        _ => unified,
+    }
+}
+
 fn repair_human_path_identity_journey(name: &str, sibling: &str) -> Result<(), String> {
     let parent = Fixture::dir("facade-human-path")?;
     let root = parent.root.join(name);
@@ -1892,11 +1903,7 @@ fn repair_human_path_identity_journey(name: &str, sibling: &str) -> Result<(), S
             .map_err(|e| e.to_string())?,
         canonical
     );
-    let expected_persisted = if cfg!(windows) {
-        canonical.to_string_lossy().replace('\\', "/")
-    } else {
-        canonical.to_string_lossy().into_owned()
-    };
+    let expected_persisted = product_root_spelling(&canonical.to_string_lossy());
     assert_eq!(
         persisted_root, expected_persisted,
         "canonical identity spelling must stay unchanged"
@@ -2532,25 +2539,12 @@ fn repeated_repair_resumes_the_awaiting_attempt_instead_of_duplicating() -> Resu
         stderr.contains(&ids[0]) && stderr.contains("already awaiting"),
         "must name the resumed attempt:\n{stderr}"
     );
-    // Decode the printed command the way this host's shell would: on Windows
-    // the root prints with `/` separators (and quoted when it needs it), so a
-    // raw `--root {root_arg}` substring does not match (#9272).
-    let printed = stderr
-        .lines()
-        .find_map(|line| line.strip_prefix("ripr: attempt next command: "))
-        .ok_or_else(|| {
-            format!("must print the continue command for the existing attempt:\n{stderr}")
-        })?;
-    let words = printed_words::printed_words(printed)?;
-    let printed_root = words
-        .iter()
-        .skip_while(|word| *word != "--root")
-        .nth(1)
-        .map(PathBuf::from);
     assert!(
-        words.get(..2) == Some(&["ripr".to_string(), "continue".to_string()][..])
-            && printed_root.as_deref() == Some(root.as_path())
-            && words.ends_with(&["--attempt".to_string(), ids[0].clone()]),
+        stderr.contains(&format!(
+            "ripr continue --root {} --attempt {}",
+            product_root_spelling(&root_arg),
+            ids[0]
+        )),
         "must print the continue command for the existing attempt:\n{stderr}"
     );
     assert!(

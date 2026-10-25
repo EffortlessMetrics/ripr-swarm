@@ -64,6 +64,7 @@ mod caplog_text;
 mod classify;
 mod deleted_lines;
 mod guard_activation;
+mod guard_credit;
 mod helper_inline;
 mod message_pin;
 mod wrapped_call;
@@ -1263,6 +1264,9 @@ mod fixtures_tests;
 
 #[cfg(test)]
 mod dunder_entry_tests;
+
+#[cfg(test)]
+mod module_field_tests;
 
 #[cfg(test)]
 mod helper_assertions_tests;

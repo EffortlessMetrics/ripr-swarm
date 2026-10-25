@@ -2708,7 +2708,7 @@ pub(super) fn text_binds_name(text: &str, name: &str) -> bool {
 /// [`test_binds_local`] for an imported alias: the test body's own
 /// `import pkg.mod as alias` statement is the import being checked (#4567
 /// records it among the test's imports), not a rebinding of it.
-fn test_rebinds_import_alias(test: &PythonTest, alias: &str) -> bool {
+pub(super) fn test_rebinds_import_alias(test: &PythonTest, alias: &str) -> bool {
     test.fixtures.iter().any(|fixture| fixture == alias)
         || assignment_count(&test.body_text, alias) > 0
         || keyword_or_operator_binds_text(&test.body_text, alias, false)
