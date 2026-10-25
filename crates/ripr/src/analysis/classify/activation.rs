@@ -9426,6 +9426,7 @@ assert_eq!(input.amount, 100);"#
                     arguments: vec![owner_argument.to_string()],
                     receiver: None,
                     through_macro: false,
+                    transparent_macros_rebound: false,
                 },
                 super::super::helper_transfer::HelperHop {
                     caller: entry.clone(),
@@ -9433,6 +9434,7 @@ assert_eq!(input.amount, 100);"#
                     arguments: vec!["x".to_string()],
                     receiver: None,
                     through_macro: false,
+                    transparent_macros_rebound: false,
                 },
             ],
             stop_above: None,

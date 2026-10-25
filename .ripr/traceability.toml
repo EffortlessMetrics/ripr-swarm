@@ -13026,6 +13026,7 @@ fixtures = [
   "fixtures/rust_wrapper_boolean_return_discarded",
   "fixtures/rust_wrapper_user_macro_guard",
   "fixtures/rust_wrapper_closure_shadowed_callee",
+  "fixtures/rust_wrapper_crate_alias_logging_macro",
   "fixtures/predicate_pairing_reassigned_binding",
   "fixtures/predicate_pairing_compound_assigned_binding",
   "fixtures/predicate_pairing_mutably_borrowed_binding",
@@ -13047,6 +13048,8 @@ outputs = [
   "fixtures/rust_wrapper_user_macro_guard/expected/human.txt",
   "fixtures/rust_wrapper_closure_shadowed_callee/expected/check.json",
   "fixtures/rust_wrapper_closure_shadowed_callee/expected/human.txt",
+  "fixtures/rust_wrapper_crate_alias_logging_macro/expected/check.json",
+  "fixtures/rust_wrapper_crate_alias_logging_macro/expected/human.txt",
   "fixtures/split_test_boundary_oracle/expected/check.json",
   "fixtures/split_test_boundary_oracle/expected/human.txt"
 ]

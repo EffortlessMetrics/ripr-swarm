@@ -428,6 +428,7 @@ mod tests {
                 arguments: vec!["&mut errors".to_string()],
                 receiver: None,
                 through_macro: false,
+                transparent_macros_rebound: false,
             }],
             stop_above: None,
         };

@@ -1,0 +1,5 @@
+[package]
+name = "rust_wrapper_crate_alias_logging_macro_fixture"
+version = "0.1.0"
+edition = "2024"
+publish = false

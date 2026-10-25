@@ -287,8 +287,41 @@ fn shadowed_or_macro_guarded_wrappers_confirm_neither_twin() -> Result<(), Strin
             assert_ne!(finding["classification"], "exposed", "{name}\n{finding}");
         }
     }
+    // #10351 review: a crate alias routes a qualified logging path to an
+    // exported user macro, and a local `println!` shadows the standard one.
+    for (prelude, call) in [
+        (
+            "use crate as tracing;\n#[macro_export]\nmacro_rules! info { ($q:expr) => { if $q == 10 { return 5; } }; }",
+            "tracing::info!(qty);",
+        ),
+        (
+            "macro_rules! println { ($q:expr) => { if $q == 10 { return 5; } }; }\n",
+            "println!(qty);",
+        ),
+    ] {
+        let source = format!(
+            "{prelude}\n{}",
+            bulk_source(
+                &format!("    {call}\n    if is_bulk(qty) {{ 5 }} else {{ 0 }}"),
+                BOUNDARY_TESTS,
+            )
+        );
+        let first = source
+            .lines()
+            .position(|line| line.contains("10 <= qty"))
+            .ok_or("probe")?;
+        let diff = BULK_DIFF.replace("@@ -1,3 +1,3 @@", &format!("@@ -{0},3 +{0},3 @@", first));
+        for finding in [
+            predicate_finding(&source, &diff)?,
+            family_finding(&source, &diff, "return_value")?,
+        ] {
+            assert_eq!(finding["probe"]["line"], first + 1, "{call}\n{finding}");
+            assert_ne!(finding["classification"], "exposed", "{call}\n{finding}");
+        }
+    }
+    // Positive control: the standard `println!`, unshadowed, stays transparent.
     let logged = bulk_source(
-        "    println!(\"{qty}\");\n    tracing::info!(qty);\n    if is_bulk(qty) { 5 } else { 0 }",
+        "    println!(\"{qty}\");\n    if is_bulk(qty) { 5 } else { 0 }",
         BOUNDARY_TESTS,
     );
     assert_eq!(

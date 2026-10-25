@@ -160,6 +160,11 @@ pub(crate) struct HelperHop {
     /// forwards the callee's result, binds no argument rows, and has no
     /// `arguments`.
     pub(crate) through_macro: bool,
+    /// Some indexed file binds a [`TRANSPARENT_STD_MACROS`] name to
+    /// something other than the standard macro (a `macro_rules!`, an
+    /// import, a glob or `#[macro_use]`), so no bare macro in the caller
+    /// is trusted to be transparent (#10351).
+    pub(crate) transparent_macros_rebound: bool,
 }
 
 /// The resolved chain for one helper. `stop_above` names the first
@@ -994,6 +999,7 @@ pub(crate) fn resolve_chain(
             arguments: Vec::new(),
             receiver: None,
             through_macro: true,
+            transparent_macros_rebound: transparent_macro_name_rebound(index),
         };
         return extend_chain(hop, callee_name, index, workspace_complete, visited);
     }
@@ -1108,6 +1114,7 @@ fn chain_through_caller(
         arguments,
         receiver: None,
         through_macro: false,
+        transparent_macros_rebound: transparent_macro_name_rebound(index),
     };
     extend_chain(hop, callee_name, index, workspace_complete, visited)
 }
@@ -1296,6 +1303,7 @@ fn method_hop(caller: &FunctionSummary, callee_name: &str, index: &RustIndex) ->
         arguments,
         receiver: Some(receiver.to_string()),
         through_macro: false,
+        transparent_macros_rebound: transparent_macro_name_rebound(index),
     })
 }
 
@@ -2433,7 +2441,7 @@ fn hops_forward_owner_result(owner_name: &str, hops: &[HelperHop]) -> bool {
                 // user macro may expand to an early `return` the textual
                 // return scan cannot see.
                 && !caller_rebinds_parameter(&hop.caller.body, callee)
-                && !caller_invokes_opaque_macro(&hop.caller.body)
+                && !caller_invokes_opaque_macro(&hop.caller.body, hop.transparent_macros_rebound)
                 && hop.arguments.iter().all(|argument| {
                     !is_identifier(argument.trim())
                         || !caller_rebinds_parameter(&hop.caller.body, argument.trim())
@@ -2444,7 +2452,9 @@ fn hops_forward_owner_result(owner_name: &str, hops: &[HelperHop]) -> bool {
 /// Standard macros whose expansion holds no `return` of its own: any
 /// `return` in their arguments is caller text the return scan already
 /// reads. Panicking ones (`assert!`, `panic!`) end the test, they do not
-/// change the forwarded value. Trusted bare or under `std`/`core`/`alloc`.
+/// change the forwarded value. Each is a parser-checked
+/// [`TRUSTED_MACRO_NAMES`](crate::analysis::syntax::TRUSTED_MACRO_NAMES)
+/// entry, so [`transparent_macro_name_rebound`] can establish its identity.
 const TRANSPARENT_STD_MACROS: &[&str] = &[
     "assert",
     "assert_eq",
@@ -2471,16 +2481,37 @@ const TRANSPARENT_STD_MACROS: &[&str] = &[
     "stringify",
 ];
 
-/// Logging macros, trusted only under a `tracing::` or `log::` path: a
-/// bare `info!` may be a crate's own `macro_rules! info` that returns
-/// early, and ripr does not resolve macro bindings here.
-const TRANSPARENT_LOG_MACROS: &[&str] =
-    &["trace", "debug", "info", "warn", "error", "event", "span"];
+/// Whether any indexed file binds a [`TRANSPARENT_STD_MACROS`] name to
+/// something other than the standard macro, by the parser-backed binding
+/// scan the trusted-assertion reading uses. An out-of-line module counts as
+/// unresolved, which only withholds forwarding credit.
+fn transparent_macro_name_rebound(index: &RustIndex) -> bool {
+    index.files().iter().any(|(path, file)| {
+        if file.macro_candidates.as_deref().is_some_and(|candidates| {
+            TRANSPARENT_STD_MACROS
+                .iter()
+                .all(|name| !candidates.may_bind(name))
+        }) {
+            return false;
+        }
+        !crate::analysis::syntax::trusted_macro_binding_sites(
+            &file.source,
+            index.macro_scope_crates(),
+            TRANSPARENT_STD_MACROS,
+            &|_, _| false,
+            &|krate| index.drop_in_manifests.verified_root(path, krate),
+        )
+        .is_empty()
+    })
+}
 
-/// Whether `body` invokes a macro other than a trusted standard or logging
-/// macro (#10284). Unknown, re-pathed (`helpers::info!`) or bare logging
-/// names fail closed: they only withhold forwarding credit.
-fn caller_invokes_opaque_macro(body: &str) -> bool {
+/// Whether `body` invokes a macro whose expansion is not known to hold no
+/// `return` (#10284). Only a bare [`TRANSPARENT_STD_MACROS`] name, with no
+/// rebinding anywhere in the index, is transparent. A path-qualified macro
+/// is opaque even under `std::` or `tracing::`: a crate alias
+/// (`use crate as tracing;`) can route the path to an exported user macro,
+/// and ripr does not resolve path roots here (#10351).
+fn caller_invokes_opaque_macro(body: &str, transparent_macros_rebound: bool) -> bool {
     // Expression keywords may precede a prefix `!` (`if !(a)`, `return !(b)`);
     // any other path before `!` and a delimiter is a macro path, even with
     // whitespace between (`bail ! (qty)` is valid Rust).
@@ -2500,24 +2531,12 @@ fn caller_invokes_opaque_macro(body: &str) -> bool {
             .find(|(_, c)| !(c.is_ascii_alphanumeric() || *c == '_' || *c == ':'))
             .map(|(index, c)| index + c.len_utf8())
             .unwrap_or(0);
-        let segments: Vec<&str> = head
-            .get(path_start..)
-            .unwrap_or_default()
-            .split("::")
-            .filter(|segment| !segment.is_empty())
-            .collect();
-        let (Some(&root), Some(&name)) = (segments.first(), segments.last()) else {
+        let path = head.get(path_start..).unwrap_or_default();
+        if path.is_empty() || PREFIX_KEYWORDS.contains(&path) {
             return false;
-        };
-        let transparent = match segments.len() {
-            1 => PREFIX_KEYWORDS.contains(&name) || TRANSPARENT_STD_MACROS.contains(&name),
-            _ => {
-                (["std", "core", "alloc"].contains(&root) && TRANSPARENT_STD_MACROS.contains(&name))
-                    || (["tracing", "log"].contains(&root)
-                        && TRANSPARENT_LOG_MACROS.contains(&name))
-            }
-        };
-        !transparent
+        }
+        let name = path.trim_start_matches("r#");
+        path.contains(':') || transparent_macros_rebound || !TRANSPARENT_STD_MACROS.contains(&name)
     })
 }
 
@@ -3744,6 +3763,7 @@ mod tests {
                 arguments: Vec::new(),
                 receiver: None,
                 through_macro: false,
+                transparent_macros_rebound: false,
             }],
             stop_above: None,
         }
@@ -3759,24 +3779,30 @@ mod tests {
             "while !(done) {}",
             "let same = a != b;",
             "assert_eq!(a, b); write!(out, \"x\"); vec![1]",
-            "tracing::info!(qty); log::warn!(\"x\"); std::println!()",
             "let s = \"bail!(x)\"; // bail!(x)",
         ] {
-            assert!(!caller_invokes_opaque_macro(body), "{body}");
+            assert!(!caller_invokes_opaque_macro(body, false), "{body}");
         }
         for body in [
             "bail!(x);",
             "bail ! (x);",
             "bail !\n{ x };",
             "crate::m::bail![x];",
-            // #10351 review: a bare or re-pathed logging name may be a
-            // crate's own early-returning macro.
+            // #10351 review: a bare logging name may be a crate's own
+            // early-returning macro, and a path root may be a crate alias
+            // (`use crate as tracing;`), so no path-qualified macro is
+            // trusted.
             "info!(qty);",
             "helpers::info!(qty);",
-            "crate::assert!(qty);",
+            "tracing::info!(qty);",
+            "log::warn!(qty);",
+            "std::println!(\"x\");",
         ] {
-            assert!(caller_invokes_opaque_macro(body), "{body}");
+            assert!(caller_invokes_opaque_macro(body, false), "{body}");
         }
+        // Once any file rebinds a standard name, no bare macro is trusted.
+        assert!(caller_invokes_opaque_macro("println!(\"x\");", true));
+        assert!(!caller_invokes_opaque_macro("let same = a != b;", true));
     }
 
     // #6694 / #6672: an exact oracle on the wrapper's result stands for the
@@ -3790,7 +3816,7 @@ mod tests {
             "pub fn w(qty: u32) -> u32 {\n    let _unused = 3;\n    capped(qty, 10)\n}",
             // #10284 controls: standard and logging macros expand to no
             // `return` of their own, and a `!=` is not a macro.
-            "pub fn w(qty: u32) -> u32 {\n    println!(\"{qty}\");\n    tracing::info!(qty);\n    if is_bulk(qty) { 5 } else { 0 }\n}",
+            "pub fn w(qty: u32) -> u32 {\n    println!(\"{qty}\");\n    if is_bulk(qty) { 5 } else { 0 }\n}",
             "pub fn w(qty: u32) -> u32 {\n    debug_assert!(qty != 0);\n    if !is_bulk(qty) { 0 } else { 5 }\n}",
             // Controls for the value comparison: distinct values forward.
             "pub fn w(qty: u32) -> u32 {\n    if is_bulk(qty) { 05 } else { 6 }\n}",
@@ -4030,6 +4056,7 @@ mod tests {
             arguments: Vec::new(),
             receiver: None,
             through_macro: false,
+            transparent_macros_rebound: false,
         };
         let chain = HelperChain {
             hops: vec![hop(lower.clone()), hop(upper)],
@@ -4112,6 +4139,7 @@ mod tests {
                     arguments: Vec::new(),
                     receiver: None,
                     through_macro: false,
+                    transparent_macros_rebound: false,
                 }],
                 stop_above: None,
             }
