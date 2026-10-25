@@ -1,7 +1,7 @@
 mod calls;
 mod groups;
 mod literals;
-mod mask;
+pub(super) mod mask;
 mod oracles;
 pub(crate) mod property_macros;
 mod returns;

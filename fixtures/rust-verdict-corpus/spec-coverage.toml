@@ -21,8 +21,11 @@ floor = 220
 # 145: the 144 baseline plus the one abstention #10143 added (the private-predicate-via-wrapper
 # shape, spec0186-ex06, now abstains as limited and is no longer known-false). Measured on the combined tree.
 # 146: plus the one abstention #10163 added (spec0171-ex05, cross-package wrapper now limited). Measured on the combined tree.
-# 145: minus the one row RIPR-SPEC-0353 credits (grid-bool-exact). Measured on the combined tree.
-missed_credit_ceiling = 145
+# 146: main's 147 (#9197) minus the one row RIPR-SPEC-0353 credits (grid-bool-exact).
+# 147 (#9197): `strsim-sorensen-dice-equal` compares a local rebound from the parameter,
+# so the name-only credit is withheld and the row abstains; fail-closed by design.
+# Measured on the combined tree.
+missed_credit_ceiling = 146
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
@@ -982,6 +985,11 @@ reason = "an abstain-when-rows-cannot-separate negative; pinned by crates/ripr/t
 [[spec.waived]]
 example = 3
 reason = "an abstain-when-another-caller-exists negative; pinned by crates/ripr/tests/bool_truth_table_infection.rs"
+
+[[spec]]
+id = "RIPR-SPEC-0356"
+scope = "out"
+reason = "Rust uncompiled-file test withholding is proved by crates/ripr/tests/outside_target_haystack.rs; no corpus case labels it yet"
 
 # Every false verdict the corpus still scores, with its owning issue.
 # `verdict-corpus check` fails when a false row is not listed here and when a

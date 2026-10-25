@@ -2052,6 +2052,7 @@ impl RustAdapter {
         // narrowing can apply, so non-narrowing paths pay nothing. A
         // `limited`/`unavailable` graph is disclosed, never silently treated
         // as a complete reach.
+        let mut scope_graph_limitation = None;
         let (dependent_package_roots, manifest_dir_prefixes) =
             if matches!(options.mode, AnalysisMode::Draft | AnalysisMode::Fast)
                 && options.include_unchanged_tests
@@ -2088,6 +2089,8 @@ impl RustAdapter {
                     if let Some(disclosure) = expansion.scope_disclosure() {
                         eprintln!("{disclosure}");
                     }
+                    // #10182: stderr is not a consumer; the report carries it.
+                    scope_graph_limitation = expansion.scope_limitation()?;
                     let manifest_dir_prefixes = expansion.manifest_dir_prefixes().to_vec();
                     let mut dependent_package_roots = expansion.into_dependent_package_roots();
                     dependent_package_roots
@@ -2399,6 +2402,7 @@ impl RustAdapter {
         // loses its probe shapes and its tests, so the related-test search for
         // the changed code can miss evidence there. One aggregate limitation
         // keeps the run from reading complete by omission.
+        limitations.extend(scope_graph_limitation);
         limitations.extend(declined_unchanged_file_limitation(
             &index,
             analyzable_changed_files
