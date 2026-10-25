@@ -9555,6 +9555,10 @@ fn protocol_entry_receiver_rebound_by_a_spelling_the_scan_missed_is_not_credited
         "    (r\n     := [1])\n",
         "    with (a\tas (r)): pass\n",
         "    with a as\tr : pass\n",
+        // An import or `nonlocal` declaration names the receiver too.
+        "    import os as\tr\n",
+        "    import r\n",
+        "    def inner():\n        nonlocal r\n",
         "    for \\\n        r in [[1]]:\n        pass\n",
         // `in` directly after the closing bracket, and blank runs after a keyword.
         "    for (r)in [[1]]:\n        pass\n",
@@ -9625,6 +9629,10 @@ fn match_case_capture_of_the_receiver_counts_as_a_binding_target() {
         "r = make()\ncase (r):\n    pass\n",
         "r = make()\ncase [r]:\n    pass\n",
         "r = make()\n    case (r):\n        pass\n",
+        "r = make()\ncase {\"k\": r}:\n    pass\n",
+        "r = make()\ncase Foo(x=r):\n    pass\n",
+        "r = make()\ncase (1 | r):\n    pass\n",
+        "r = make()\ncase Foo(a=1, b=(r)):\n    pass\n",
     ] {
         assert!(binds_in_target_list(body, "r"), "{body:?}");
     }
@@ -9632,6 +9640,9 @@ fn match_case_capture_of_the_receiver_counts_as_a_binding_target() {
         "r = make()\nif (r):\n    pass\n",
         "r = make()\nif [r]:\n    pass\n",
         "r = make()\ncase_count = (r)\n",
+        "r = make()\ncase r.A:\n    pass\n",
+        "r = make()\ncase r(1):\n    pass\n",
+        "r = make()\ncase other:\n    pass\n",
     ] {
         assert!(!binds_in_target_list(body, "r"), "{body:?}");
     }

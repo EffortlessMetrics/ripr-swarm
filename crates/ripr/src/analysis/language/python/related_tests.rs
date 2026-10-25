@@ -745,6 +745,20 @@ fn protocol_entry_calls(text: &str, body: &str, local: &str, builtin: &str) -> V
         .collect()
 }
 
+/// Whether the name at `idx` sits on a `case` pattern line where it may be a
+/// capture (`case {"k": r}:`, `case Foo(x=r):`, `case (1 | r):`). Any such
+/// mention withholds credit, which also demotes a guard read
+/// (`case x if r:`); a dotted value pattern (`case r.A:`) or a class pattern
+/// (`case r(1):`) is a read and is not matched.
+fn is_case_capture(body: &str, idx: usize, after: &str) -> bool {
+    let line_start = body[..idx].rfind('\n').map_or(0, |at| at + 1);
+    let is_case_line = body[line_start..idx]
+        .trim_start()
+        .strip_prefix("case")
+        .is_some_and(|tail| tail.starts_with([' ', '\t', '(', '[', '{']));
+    is_case_line && !after.starts_with(['.', '('])
+}
+
 /// Whether `var` appears in a position that can bind it through a target list
 /// or an annotation (`x, r = ...`, `for i, r in ...`, `with a as (b, r)`,
 /// `r: list = ...`). Any `var,` / `, var` / `var:` occurrence counts, which
@@ -767,6 +781,7 @@ pub(super) fn binds_in_target_list(body: &str, var: &str) -> bool {
                     || before.ends_with(',')
                     || before.ends_with('*')
                     || (continued && (plain_assign(after) || augmented_assign_op(after)))
+                    || is_case_capture(body, idx, after)
                     || chained_or_bracketed_target(body, idx, before, after)
             }
     })
@@ -3032,25 +3047,27 @@ pub(super) fn test_rebinds_import_alias(test: &PythonTest, alias: &str) -> bool 
 fn keyword_or_operator_binds_text(body: &str, name: &str, import_as_binds: bool) -> bool {
     augmented_assignment(body, name)
         || walrus_binds(body, name)
-        || ["def", "class", "for", "as"].into_iter().any(|keyword| {
-            body.match_indices(keyword).any(|(idx, _)| {
-                let after_keyword = idx + keyword.len();
-                let spaced = &body[after_keyword..];
-                // Any run of blanks (or a backslash continuation) may separate
-                // the keyword from the name: `for  r  in`, `as\tr`.
-                let rest = skip_blank_forward(spaced, false);
-                let name_at = body.len() - rest.len();
-                let line_start = body[..idx].rfind('\n').map_or(0, |offset| offset + 1);
-                let line = body[line_start..].trim_start();
-                let import_line = line.starts_with("import ") || line.starts_with("from ");
-                rest.len() != spaced.len()
-                    && rest.starts_with(name)
-                    && python_callee_start_has_boundary(body, idx)
-                    && !next_char_is_identifier(body, name_at + name.len())
-                    && !python_text_hides_code(body, idx)
-                    && (import_as_binds || keyword != "as" || !import_line)
+        || ["def", "class", "for", "as", "import", "nonlocal"]
+            .into_iter()
+            .any(|keyword| {
+                body.match_indices(keyword).any(|(idx, _)| {
+                    let after_keyword = idx + keyword.len();
+                    let spaced = &body[after_keyword..];
+                    // Any run of blanks (or a backslash continuation) may separate
+                    // the keyword from the name: `for  r  in`, `as\tr`.
+                    let rest = skip_blank_forward(spaced, false);
+                    let name_at = body.len() - rest.len();
+                    let line_start = body[..idx].rfind('\n').map_or(0, |offset| offset + 1);
+                    let line = body[line_start..].trim_start();
+                    let import_line = line.starts_with("import ") || line.starts_with("from ");
+                    rest.len() != spaced.len()
+                        && rest.starts_with(name)
+                        && python_callee_start_has_boundary(body, idx)
+                        && !next_char_is_identifier(body, name_at + name.len())
+                        && !python_text_hides_code(body, idx)
+                        && (import_as_binds || !matches!(keyword, "as" | "import") || !import_line)
+                })
             })
-        })
 }
 
 /// A line that starts with `name <op>=` (`total += 1`, `x //= 2`).

@@ -1,6 +1,7 @@
 <!-- section: Fixed -->
 - A Python protocol-entry receiver rebound by `(r) += ...`, `(r): list = ...`,
-  `if c: r += ...`, a `case (r):` capture, a comment or backslash continuation
+  `if c: r += ...`, a `case` pattern capture (`case (r):`, `case {"k": r}:`),
+  `import r`, `nonlocal r`, a comment or backslash continuation
   inside or before a bracketed target, `for (r)in ...`, a run of blanks after
   `for`/`as`/`def`/`class`, a split walrus, or a header holding a `'''it's'''`
   string is no longer credited `exposed` through `protocol_entry_call`. A quoted

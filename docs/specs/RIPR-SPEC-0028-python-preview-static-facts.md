@@ -402,7 +402,10 @@ comments, strings, and docstrings:
   `for ((r), x) in ...`; #9178), loop, `with`, walrus or augmented target
   (`(r) += ...` and `(r): list = ...` included), or not the whole bound value,
   is not credited, as is an augmented assignment after a header or `;`
-  (`if c: r += 1`) and a `case (r):` / `case [r]:` match capture. Within one
+  (`if c: r += 1`), an `import r` or `nonlocal r`, and any `case` pattern line that
+  mentions the name other than as a dotted value or class pattern (`case (r):`,
+  `case {"k": r}:`, `case Foo(x=r):`; a guard read such as `case x if r:` is
+  demoted too, a deliberate miss). Within one
   bracketed target, a comment, a backslash continuation or a run of blanks
   before the name, its closing bracket or the `=` / `in` / `as` after it, and
   a run of blanks after `for`, `as`, `def` or `class`, do not hide the rebind.
