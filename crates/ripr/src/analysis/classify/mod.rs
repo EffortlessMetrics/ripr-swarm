@@ -89,7 +89,7 @@ pub(in crate::analysis) use helper_transfer::{
 };
 pub(in crate::analysis) use implicit_call::withhold_implicit_call_gap;
 pub(in crate::analysis) use infection::{
-    exercised_bool_chain_return_sink, infection_evidence_for_owner, is_bool_chain_owner,
+    exercised_bool_chain_return_sink, infection_evidence_for_owner,
 };
 pub(in crate::analysis) use mask_pin::unexercised_mask_bits;
 pub(in crate::analysis) use operand_pin::{operand_only_pin, outer_imported_names};
