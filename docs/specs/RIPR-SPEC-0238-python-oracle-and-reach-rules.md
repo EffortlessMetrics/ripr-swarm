@@ -803,9 +803,18 @@ mutant calibrates the rule; ripr reports only the static shape.
     `any(<text> in r.message for r in caplog.records)` finds the text
     inside one message (`any(r.message == <text> ...)`, in either operand
     order, compares a whole one). Indexed or whole-list forms (`caplog.records[0].message == ...`,
-    `caplog.messages == [...]`), a filtered `any(...)`, and `not in`
-    abstain when they share a word with the changed message. The
-    membership is read from the parsed assertion, not its text layout:
+    `caplog.messages == [...]`) and a filtered `any(...)` abstain when
+    they share a word with the changed message.
+    An absence assertion reads the same way with the outcome inverted:
+    `"<text>" not in caplog.text`, `... not in caplog.messages`,
+    `... not in [r.message for r in caplog.records]` and
+    `not any(<text> in r.message for r in caplog.records)` pass while no
+    captured text matches. A text absent from the old message and present
+    in the new one is `exposed`; absent from both (including a new call
+    below the pinned level, which records nothing) is a weak gap; a text
+    already present in the old message means the test fails before the
+    edit and is not read. An absence literal under `or` is not required,
+    as for a presence literal. The membership is read from the parsed assertion, not its text layout:
     extra spacing, parentheses, line breaks, implicit literal
     concatenation, an assertion message and a membership joined by `and`
     all read the same way, while a membership against any other receiver

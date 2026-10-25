@@ -544,7 +544,31 @@ Updated:
 ## Pending — python_api_json_field_repair_gap (25)
 
 Reason:
-RIPR-SPEC-0238: the fixture's test now builds its client over the route's own app so the route relation stays oracle-eligible; only the related test's line number moved
+RIPR-SPEC-0122: digest missing-discriminator prose wraps instead of one_line clipping (#4323 parity); the ellipsized cut dropped the operative tail silently
+
+Command:
+`cargo xtask goldens bless python_api_json_field_repair_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_api_json_field_repair_gap (26)
+
+Reason:
+RIPR-SPEC-0122: digest missing-discriminator prose wraps instead of one_line clipping (#4323 parity); the ellipsized cut dropped the operative tail silently
+
+Command:
+`cargo xtask goldens bless python_api_json_field_repair_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_api_json_field_repair_gap (27)
+
+Reason:
+RIPR-SPEC-0238 R3: re-bless after merging main (#10258 wrapping) over test line shift
 
 Command:
 `cargo xtask goldens bless python_api_json_field_repair_gap --reason "..."`

@@ -1,7 +1,7 @@
 use super::*;
 use crate::analysis::extract::extract_call_facts;
 use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
-use crate::domain::{MissingDiscriminatorFact, ValueFact};
+use crate::domain::MissingDiscriminatorFact;
 use std::path::PathBuf;
 
 fn test_with_line_of(distinct: usize) -> TestSummary {
@@ -46,7 +46,7 @@ fn evidence(states: [StageState; 5], missing: usize) -> TestGripEvidence {
         propagate: stage(states[2].clone()),
         observe: stage(states[3].clone()),
         discriminate: stage(states[4].clone()),
-        observed_values: Vec::<ValueFact>::new(),
+        observed_values: Vec::new(),
         missing_discriminators: (0..missing)
             .map(|_| MissingDiscriminatorFact {
                 value: "index == 100".to_string(),

@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0186-ex06-private-predicate-via-wrapper",
+  "subject_id": "authored-spec0186-6",
+  "origin": "authored",
+  "anchor": "src/lib.rs:3",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "private_predicate_pinned_through_public_wrapper",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}
