@@ -26,8 +26,11 @@ jobs:
       matrix:
         shard: [1, 2, 3, 4]
     steps:
+      # Full history, like the Linux test lanes: base-resolving tests refuse
+      # on a shallow clone (#10344).
       - uses: actions/checkout@v6
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.95

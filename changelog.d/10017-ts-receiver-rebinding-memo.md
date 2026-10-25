@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- TypeScript test extraction computes the receiver-rebinding check once per constructor and per name instead of rescanning the file for every test, so a file with hundreds of constructed file-level bindings and as many tests no longer costs cubic time (400 tests with `new Class()` bindings took 27 s in a debug build and now take under 1 s, with byte-identical output) (#10017).

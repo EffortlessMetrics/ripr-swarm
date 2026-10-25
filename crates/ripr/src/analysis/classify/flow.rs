@@ -370,6 +370,20 @@ fn return_value_sink(
             owner,
         );
     }
+    // RIPR-SPEC-0360: a zero-initialized accumulator the owner returns as its
+    // tail carries the update's change to the return.
+    if let Some(function) = owner_fn
+        && let Some(offset) = probe.location.line.checked_sub(function.start_line)
+        && let Some(accumulator) =
+            crate::analysis::syntax::loop_accumulator::loop_accumulator_at(&function.body, offset)
+    {
+        return flow_sink(
+            FlowSinkKind::ReturnValue,
+            return_sink_text(&accumulator.local),
+            probe.location.line,
+            owner,
+        );
+    }
     if !is_obvious_return_expression(&probe.expression) {
         return flow_sink(
             FlowSinkKind::Unknown,

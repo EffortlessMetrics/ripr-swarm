@@ -8,6 +8,9 @@
 # Process spawning belongs in adapters, smoke tests, and xtask. New occurrences
 # must name the owner and reason instead of drifting into domain or analysis
 # logic unnoticed.
+#
+# New rows go in their own file under policy/process_allowlist.d/ (same
+# format) so parallel PRs do not append to this list's tail (#9859).
 
 crates/ripr/src/analysis/language/python/admission.rs|subprocess.run|1|python-admission-data|#5491: string-literal entry in the assertion-like callee list so an imported subprocess exit-code check withholds no_assertion; the analyzer never spawns a process.
 crates/ripr/src/analysis/language/python/row_miss_tests.rs|subprocess.run|1|python-admission-data|#5491: Python source text in a fixture string proving a subprocess exit-code check withholds no_assertion; nothing is executed.
@@ -65,6 +68,8 @@ crates/ripr/tests/inherent_receiver_parsing_cost.rs|use std::process::Command|1|
 crates/ripr/tests/cache_clear_safety.rs|use std::process::Command|1|cli-tests|#3843: import for the exact-binary cache-clear invocation described above.
 crates/ripr/tests/chaos_interrupted_runs.rs|Command::new|2|cli-tests|Chaos runs: the two spawn sites run the built ripr binary (`check --diff` and `doctor`) against an isolated temp workspace and cache supplied through RIPR_CACHE_DIR, so terminated, corrupted, concurrent and unwritable-cache scenarios compare against a cold reference. No shell, network, or user-repository mutation.
 crates/ripr/tests/chaos_interrupted_runs.rs|use std::process::Command|1|cli-tests|Chaos runs: import for the exact-binary spawn site described above.
+crates/ripr/tests/broken_manifest_limitation.rs|Command::new|1|cli-tests|Runs the built ripr binary (`check --diff`) against an isolated temp workspace with a broken, missing or hostile Cargo.toml and a private RIPR_CACHE_DIR. No shell, network, or user-repository mutation.
+crates/ripr/tests/broken_manifest_limitation.rs|use std::process::Command|1|cli-tests|Import for the exact-binary spawn site described above.
 crates/ripr/tests/stale_temp_sweep.rs|Command::new|1|cli-tests|Stranded-temp sweep: runs the built ripr binary (`check --diff`) against an isolated temp workspace and cache supplied through RIPR_CACHE_DIR, plants an aged and a young `.ripr-atomic-*.tmp` in a cache directory, and proves the next run removes only the aged one. No shell, network, or user-repository mutation.
 crates/ripr/tests/stale_temp_sweep.rs|use std::process::Command|1|cli-tests|Stranded-temp sweep: import for the exact-binary spawn site described above.
 crates/ripr/tests/capabilities_command.rs|Command::new|1|cli-tests|#5531: the capabilities command test runs the worktree-built binary (CARGO_BIN_EXE_ripr) directly with fixed read-only arguments; no shell, network or repository mutation.
@@ -147,6 +152,7 @@ xtask/tests/merge_ready_conflict_notice.rs|Command::new|1|merge-ready-notice-tes
 xtask/tests/merge_ready_conflict_notice.rs|use std::process::Command|1|merge-ready-notice-test|#9842: import for the single bash spawn above.
 xtask/tests/pr_staleness_watchdog_conflicts.rs|Command::new|1|watchdog-conflict-test|#10136: runs the watchdog's script block with bash against a fake gh in a private temp directory to prove which PRs the sweep tells and clears; no production spawn and no network.
 xtask/tests/pr_staleness_watchdog_conflicts.rs|use std::process::Command|1|watchdog-conflict-test|#10136: import for the single bash spawn above.
+xtask/tests/rust_gate_merge_ref_check.rs|Command::new|2|merge-ref-check-test|#10341: runs the rust-gates merge-ref step script with bash against throwaway local Git repositories in a private temp directory to prove it fails only on a real conflict; no production spawn and no network.
 xtask/tests/spec_format_determinism.rs|Command::new|3|spec-format-determinism|#3455: the integration harness runs the built xtask command and creates one bounded temporary Git fixture with a pinned historical commit; no user repository is mutated.
 xtask/tests/spec_format_determinism.rs|use std::process::Command|1|spec-format-determinism|#3455: the deterministic spec-format integration harness imports Command only for the bounded xtask and temporary-Git probes described above.
 xtask/tests/spec_template_contract.rs|Command::new|1|spec-format-template-test|#3464: the integration harness runs the built xtask validator in an isolated temporary fixture; no user repository is mutated.

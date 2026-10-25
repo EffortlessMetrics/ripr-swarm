@@ -44,7 +44,8 @@ with the braces of a newly added function or branch. A structural line that
 closes a block opened outside its run (a lone inserted or removed
 `} else {`, or one inserted with other lines between existing statements)
 moves existing code between branches, so it keeps its probe and the change
-never reads as "no behavioral candidates" (#4216 row 5).
+never reads as "no behavioral candidates" (#4216 row 5). The one exception is
+a braces-only added line outside every indexed function span (#10090, below).
 
 A line that Git reports as both removed and added inside one replacement block
 seeds no probe on either side when its text is byte-identical (leading
@@ -126,8 +127,11 @@ identity input invalidates the
 ID so an earlier suppression cannot silently select a different value. Genuine
 repeated expressions retain distinct ordinal-suffixed IDs. The public-path
 metamorphic and stale-suppression controls are in
-`crates/ripr/tests/finding_identity_contract.rs` (#8832). The distinct-payload
-fp8 collision witnesses in #8838 remain unmet acceptance; duplicate-expression
+`crates/ripr/tests/finding_identity_contract.rs` (#8832). Distinct expressions
+that share an fp8 at one owner take their collision ordinals from a full
+payload digest, so their IDs do not depend on diff order (#8838). The
+sole-expression half of #8838, a lone changed expression whose fp8 equals a
+different earlier expression's, remains unmet acceptance; duplicate-expression
 ordinal tests do not establish collision stability or waive this requirement.
 
 Each finding should carry:
@@ -648,6 +652,7 @@ Fixture coverage:
 - `structural_delimiter_lines_are_recognized`
 - `probes_for_file_skips_brace_and_else_lines_of_new_function`
 - `probes_for_file_keeps_lone_structural_line_hunks`
+- `an_item_level_closing_brace_seeds_no_probe_but_one_inside_a_function_does`
 - `probes_for_file_keeps_structural_line_closing_outside_block_in_mixed_run`
 - `lone_else_split_hunk_is_not_no_behavioral_candidates`
 - `multi_line_attribute_entries_seed_no_probe_but_the_same_text_as_code_does`
@@ -670,6 +675,24 @@ the substring fallback applies the same generic/common-word gate as the
 word-boundary path (#9172), so a test named `ready_return` or `wait_while` does
 not make an uncalled owner read `weakly_exposed`. Words inside string literals
 remain name tokens; that residual is tracked in #9172.
+
+An added line of only closing braces (`}`, `};`, `},`) that lies outside every
+indexed function span, in a file that has indexed functions, seeds no probe
+(#10090). It is an exception to the structural-line rule above (a line closing
+a block opened outside its run keeps its probe): at item level such a closer
+delimits a `trait`, `impl`, `mod` or `struct` body, and diff alignment often
+reports an existing item's closer as added when items are appended after it. A
+closer on or inside a function span (including its `end_line`) keeps its probe
+(#4216), and so does any file with no indexed function or no file facts. The
+helper checks the line's position, not the kind of item it closes. The removed
+side is unchanged.
+
+A changed line that opens with the `impl` keyword (optionally `unsafe`) and holds
+no body brace, `;` or `fn ` is the first line of a rustfmt-wrapped `impl` header
+(`impl<Item, const N: usize> Drop` before `for Holder<Item, N>` and `{` on later
+lines). It declares only, so it seeds a single `static_unknown` probe like a
+one-line `impl ... {` header (#8389) and never `field_construction` for a
+const-generic bound or `call_deletion` for a generic attribute (#10244).
 
 ## Implementation Mapping
 

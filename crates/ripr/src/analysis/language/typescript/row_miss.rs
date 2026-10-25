@@ -18,7 +18,8 @@
 //!
 //! `weak_assertion` is limited to weak and smoke oracles; a medium oracle keeps no miss.
 //!
-//! Shipped tokens: `weak_assertion` and `observation_unconfirmed`.
+//! Shipped tokens: `weak_assertion`, `missing_input` (only from the row-owned
+//! `MissedBoundary` fact, #10040) and `observation_unconfirmed`.
 //!
 //! Deliberately not emitted:
 //!
@@ -27,7 +28,11 @@
 //!   callback or table (`const f = owner; f(1)`, `[1].map(owner)`,
 //!   `it.each([[owner, 1]])`), and even the affirmative shadow or unrelated
 //!   import rejections refute only the apparent call, not hooks, helpers,
-//!   re-exports or mocks. Those rows keep `miss: None`.
+//!   re-exports or mocks. Those rows keep `miss: None`. A sound fact needs a
+//!   reach mode of the admission scan that treats production imports, barrel
+//!   and `export *` re-exports, side-effect imports, module mock factories,
+//!   `it.each` tables, dynamic `import()`/`require`, class and instance
+//!   owners, hooks and runner config as reaching (#10040).
 //! - `assertion_not_observing`: withheld by this producer. Row eligibility is the
 //!   explicit `RelatedTest::role` (#5563), not this value, so a later
 //!   annotation cannot change decisions; rows that would have carried it
@@ -38,10 +43,6 @@
 //! - `no_assertion`: the admission scan sees one file and cannot see project
 //!   setup files or runner plugins (`admission.rs` known blind spots), so
 //!   `NoAssertionLike` is not strong enough to claim absence.
-//! - `missing_input`: the shared prose says "no test input reaches ...",
-//!   stronger than a single-file static reading supports. A row whose own
-//!   boundary fact says its input misses the boundary gets
-//!   `observation_unconfirmed` instead.
 //! - `assertion_not_credited`: reserved for a typed established refusal
 //!   (#5446), which TypeScript does not produce;
 //! - `missing_exact_assertion`: the TypeScript model carries no row-owned
@@ -183,10 +184,14 @@ fn established_path_miss(
         OracleStrength::Strong => {}
     }
     // 4. Predicate activation: the row's own module-derived boundary fact
-    // says its input misses the boundary. The stronger `missing_input` prose
-    // is withheld, so the row reports the unconfirmed observation.
+    // says its input misses the boundary (#10040). `MissedBoundary` is the
+    // closed-body fact (trusted owner import, owner named once in its module
+    // and only in test bodies, every reference a call, literal integer
+    // arguments that all miss the pinned boundary), so it is the one state
+    // that may carry `missing_input`. The renderer words a TypeScript row as
+    // "seen", never the absolute "no test input".
     if activation == TypeScriptPredicateActivation::MissedBoundary {
-        return Some(RelatedTestMiss::ObservationUnconfirmed);
+        return Some(RelatedTestMiss::MissingInput);
     }
     // 7. Observation. A module entry's own code stands between the assertion
     // and the owner, so observation is never confirmed from here.

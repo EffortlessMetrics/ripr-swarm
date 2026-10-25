@@ -117,7 +117,7 @@ contradicting limitation. The rest is either correct but unstated
 ## Behavior
 
 Paths are relative to `crates/ripr/src/analysis/language/typescript/`.
-Paragraphs headed Rule 1 to Rule 19 mark behavior changes. Rules 1 to 8
+Paragraphs headed Rule 1 to Rule 22 mark behavior changes. Rules 1 to 8
 are numbered in reading order; rules 9 to 11 were added later. Every other statement below is current behavior and is
 normative.
 
@@ -1026,6 +1026,98 @@ require(...)`, `k.triple`) is a property of the function, not the owner.
 The gate text keeps strings, templates and regex literals visible beside the
 two masks, so a string spelling `module.exports = x` refuses the file (fail
 closed). Known limits: a default binding of a function export (`const { default: f } = require(...)`, and an ES `import f from` of the same module, which the adapter cannot tell apart) is refused rather than credited; overload-style repeated `function name` declarations and any `require.resolve` use refuse the file.
+
+**Rule 21. A method decorator that passes the original result through
+lends `exposed` to the decorated method's tests (design decision, #10189).**
+A changed line inside `D(target, key, descriptor)` is reached by no test
+that calls `D`, because tests call the class the decorator is applied to.
+The `decorated_method_call` relation links the decorator owner to the tests
+of each method it decorates. Unlike `module_entry_call`, it may lend
+`exposed`, because the decorated method's call result *is* the wrapper's
+return value. That is only true under all of these conditions, and any
+other shape keeps today's `decorator_indirection` limit (`no_static_path`
+or `static_unknown`, never `exposed`):
+
+1. `D` is a function declaration with a `descriptor` parameter that
+   assigns `descriptor.value = function (...) { ... }` once, and the
+   changed line is the wrapper's final top-level `return`. Statements
+   before it are plain expression statements: no earlier `return`, `throw`,
+   `if`, loop, `try` or `await`, so the return runs on every call. The
+   decorator body itself has only variable declarations and expression
+   statements: a `return` of a replacement descriptor, outer control flow,
+   `Object.defineProperty` and `Reflect` use all refuse. The original is
+   captured with `const` (a `let` or `var` capture can be rebound before the
+   wrapper is installed), and no wrapper parameter reuses its name.
+2. The returned expression is the original's result and nothing that can
+   replace or discard it: exactly one `original.apply(this, ...)` or
+   `original.call(this, ...)`, combined only by `+` or `-` with literals or
+   wrapper parameters, through parentheses and `as` casts. A wrapper that
+   returns a cached or stored value (`return cache.get(n)`), a sequence
+   (`return (original.apply(this, args) + 1, 99)`), an array, a logical or
+   conditional expression, or a second call keeps the old reading.
+3. The decorator is applied as a bare `@D` (or an import alias of it) on
+   an ordinary instance method that is the only decorator on that method,
+   in a class whose methods the owner relation can name. A decorator
+   factory (`@D(3)`), a stacked decorator, a class, property, accessor or
+   parameter decorator, a static method, and a decorator that also assigns
+   `descriptor.get`, `descriptor.set` or `descriptor.writable` keep the old
+   reading. A class with an instance field or accessor of the method's name,
+   a computed field, a `this.<method> = ...` assignment or a `this[...]`
+   access also keeps the old reading, because the own property hides the
+   prototype wrapper.
+4. A test reaches the method by the existing `class_method_call` identity
+   gates. The assertion must be a strong exact oracle of the whole call
+   result, so the same exactness rules as a direct return-value owner apply.
+   The asserted call must be on a receiver of the decorated class
+   (`new Ledger().add(...)`, or `x.add(...)` with `const x = new Ledger(...)`
+   in the test): an assertion on another class's same-named method sees
+   nothing of the decorator; a callback parameter that reuses the receiver's
+   name (`(l: Other) => ...`, `l => ...`) is a different binding and refuses.
+   On the return line only decorated-method tests lend reach: an ordinary
+   exported caller's assertion never credits it. A test that replaces the method
+   (`ledger.add = ...`, `Ledger.prototype.add = ...`, `spyOn(l, "add")`,
+   `defineProperty(l, "add", ...)`) bypasses the wrapper and earns nothing.
+   The relation is admitted only when no test calls `D` itself.
+5. Tests of every decorated method count; a decorated method nobody tests
+   is not a path.
+
+Negatives pinned by tests: a memoizing wrapper that returns
+`cache.get(n)` (`deco-decorator-wrapper-value`), a wrapper with a
+conditional return, an `await`ing wrapper, a side-effect-only change
+(`calls.push(key)`), a factory decorator, a stacked decorator, and a
+`@D` that resolves to a different function than the owner.
+
+Decision record: the alternative was to widen `module_entry_call` for
+decorators, which can never be `exposed` and so cannot clear a
+discriminated row. A narrow kind with these conditions is reversible
+(deleting the relation restores the old reading) and fails closed on every
+shape it does not match, which the actionability rule requires.
+
+**Rule 22. A member of a literal `require()` is a named import (#9188).**
+`const f = require("<module>").f` (also `var`, a renamed local, and the
+string-key spelling `require("<module>")["f"]`) picks one export out of a
+CommonJS module, so it records the import `const { f } = require("<module>")`
+records: source `<module>`, imported `f`, local `f` (or the rename). A call
+through the local then relates by rules 5 and 7 as the destructured form does.
+Only a plain member of a call to `require` with a string-literal argument is
+read: a call on the member (`require("./lib").make()`), an optional chain, a
+computed key that is not a string literal, a deeper member (`.a.b`), the
+`.default` member (a native CommonJS module has none) and a dynamic
+`require` argument record nothing and keep the old reading. The identity gates
+of rule 5 still apply (the specifier must resolve to the owner module, the
+imported name must be the owner's name, a shadow or a mock blocks it), and a
+member read off a function export (rule 19) is a property of the function, not
+the owner.
+
+Two bindings this rule and the destructured form share are refused (#10401).
+A test file that binds its own `require` at top level (`const require = ...`,
+`function require() {}`, also a block-level function, which hoists in sloppy
+CommonJS) is not calling Node's loader, so no `require()` call in it records an
+import; `createRequire(import.meta.url)` keeps its reading wherever its import
+sits. A
+`let` or `var` binding that the file assigns to again
+(`let s = require("./lib").s; s = other;`) may no longer hold the export, so it
+records no import. A `const` binding cannot be reassigned and is unchanged.
 
 **Rule 8. A mocked dependency on the changed line is `static_unknown`.**
 When the changed line calls a symbol imported (`imported_symbol_call`)

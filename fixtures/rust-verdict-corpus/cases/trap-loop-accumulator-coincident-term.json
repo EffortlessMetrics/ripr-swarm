@@ -1,0 +1,47 @@
+{
+  "case_id": "trap-loop-accumulator-coincident-term",
+  "subject_id": "authored-trap-loop-accumulator",
+  "diff": "cases/trap-loop-accumulator-coincident-term.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 22
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "loop_accumulator",
+  "test_shape": "exact_pin_on_coincident_term",
+  "hard_case": "The edited statement's term `w * w` equals `w + w` for the pinned element 2, so a mutant of the term passes; the term has an operator, so ripr keeps the update out of the credited shape instead of crediting it.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "sum += w + w;",
+        "mutated_line": "sum += w + w;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: square_total(&[3]) is 9 but the mutant gives 6; the test passes only 2, where 2 * 2 == 2 + 2"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "two_squared_is_four pins 4 for [2], and 2 * 2 equals 2 + 2, so changing the term inside the update passes. A total pin cannot separate a mutant inside an operator term, so ripr must not credit the update.",
+  "labeling_observation": {
+    "ripr_commit": "cf8be83",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0360#5"
+  ]
+}

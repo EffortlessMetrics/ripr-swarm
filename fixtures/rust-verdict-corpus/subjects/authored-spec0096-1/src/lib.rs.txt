@@ -1,0 +1,18 @@
+//! RIPR-SPEC-0096 acceptance example 1.
+
+#[derive(Default)]
+pub struct Store {
+    pub fees: Vec<i64>,
+}
+
+impl Store {
+    fn put(&mut self, fee: i64) -> usize {
+        self.fees.push(fee);
+        self.fees.len()
+    }
+}
+
+pub fn process(store: &mut Store, amount: i64) -> i64 {
+    let _ = store.put(amount * 9);
+    amount
+}

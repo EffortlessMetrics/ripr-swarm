@@ -8,13 +8,18 @@ use super::binding_predicate::{
     BindingPredicateResolution, masked_brace_delta, masked_paren_delta,
     resolve_changed_binding_uses,
 };
+use super::binding_return::{
+    ChangedBindingReturnFlow, is_single_statement, resolve_changed_binding_return,
+};
 use super::classify::{
     added_header_bound_lines, added_type_bound_lines, is_structural_delimiter_line,
     parser_probe_shapes_for_changed_line_against, removed_type_bounds, should_ignore_changed_line,
 };
 use super::expectations::{expected_sinks, required_oracles};
 use super::family::delta_for_family;
-use super::ids::diff_probe_id;
+use super::ids::{
+    collision_ordinals, collision_rank_key, diff_probe_id, normalize_rust_expression,
+};
 use super::lexical::{
     classify_changed_line, classify_changed_line_against, is_accumulator_rewrite_of,
 };
@@ -243,7 +248,9 @@ pub(crate) fn probes_for_file_with_relations(
             }
             continue;
         }
-        if should_ignore_changed_line(text) || added_attribute_lines.contains(&added.new_side_line)
+        if should_ignore_changed_line(text)
+            || added_attribute_lines.contains(&added.new_side_line)
+            || is_item_level_closing_brace(index, &changed.path, added.new_side_line, text)
         {
             continue;
         }
@@ -522,16 +529,24 @@ pub(crate) fn probes_for_file_with_relations(
             probes.extend(retargeted);
             continue;
         }
+        // RIPR-SPEC-0357: a changed `let` whose binding reaches the returned
+        // expression unchanged keeps its generic static-unknown probe and
+        // only gains the named flow as evidence.
+        let return_flow = (families == [ProbeFamily::StaticUnknown])
+            .then(|| changed_binding_return_flow(&build_context, added, text))
+            .flatten();
         for family in families {
             let before = removed_before(added.new_side_line, text, changed, &added_run_starts)
                 .map(|line| arm_before(&family, line, changed, old_source));
-            probes.push(SeededProbe::from_probe(build_probe(
+            let mut seeded = SeededProbe::from_probe(build_probe(
                 &build_context,
                 added,
                 family,
                 before,
                 Some(text.to_string()),
-            )));
+            ));
+            seeded.binding_return = return_flow.clone();
+            probes.push(seeded);
         }
     }
 
@@ -774,6 +789,30 @@ fn retarget_changed_binding_predicates(
     (!retargeted.is_empty()).then_some(retargeted)
 }
 
+/// Name the return flow of a changed complete single-line `let` (RIPR-SPEC-0357).
+fn changed_binding_return_flow(
+    context: &ProbeBuildContext<'_>,
+    added: &ChangedLine,
+    text: &str,
+) -> Option<ChangedBindingReturnFlow> {
+    let (binding, initializer) = changed_let_binding(text)?;
+    if !text.ends_with(';') || masked_paren_delta(text) != 0 || masked_brace_delta(text) != 0 {
+        return None;
+    }
+    // One statement on the line: a second `let` after `;` could shadow it.
+    if !is_single_statement(initializer) {
+        return None;
+    }
+    let owner = find_owner_function(context.index, &context.changed.path, added.new_side_line)?;
+    resolve_changed_binding_return(
+        binding,
+        initializer,
+        &owner.body,
+        owner.start_line,
+        added.new_side_line,
+    )
+}
+
 fn canonical_probe_text(changed_head: &str, parser_expression: &str) -> String {
     let changed_head = changed_head.trim();
     if changed_head.starts_with("let _ =") {
@@ -793,16 +832,33 @@ fn parser_span_for_canonical_shape(
     ParserByteSpan::same_line(shape.text, shape.start_byte)
 }
 
-/// Scan `probes` in order; for any id that appears more than once, rewrite the
-/// 2nd+ occurrences to append `.2`, `.3`, … (ordinal-based collision suffix).
+/// For any id that appears more than once, rewrite the 2nd+ occurrences to
+/// append `.2`, `.3`, … (ordinal-based collision suffix).
+///
+/// Occurrences of one expression keep encounter order, so repeated identical
+/// lines get the ordinals they always did. Distinct expressions that share an
+/// eight-hex fingerprint (#8838) rank by their full payload digest instead:
+/// the same pair gets the same two ids whichever the diff lists first.
 fn dedup_probe_ids(probes: &mut [SeededProbe]) {
-    use std::collections::HashMap;
-    let mut seen: HashMap<String, u32> = HashMap::new();
-    for seeded in probes.iter_mut() {
-        let count = seen.entry(seeded.probe.id.0.clone()).or_insert(0);
-        *count += 1;
-        if *count > 1 {
-            seeded.probe.id.0 = format!("{}.{}", seeded.probe.id.0, count);
+    let keyed = probes
+        .iter()
+        .map(|seeded| {
+            let probe = &seeded.probe;
+            let owner = probe.owner.as_ref().map_or("", |owner| owner.0.as_str());
+            let expression = normalize_rust_expression(&probe.expression);
+            (
+                probe.id.0.clone(),
+                collision_rank_key(&probe.id.0, owner, &expression),
+            )
+        })
+        .collect::<Vec<_>>();
+    let entries = keyed
+        .iter()
+        .map(|(base, key)| (base.as_str(), *key))
+        .collect::<Vec<_>>();
+    for (seeded, ordinal) in probes.iter_mut().zip(collision_ordinals(&entries)) {
+        if ordinal > 1 {
+            seeded.probe.id.0 = format!("{}.{ordinal}", seeded.probe.id.0);
         }
     }
 }
@@ -953,6 +1009,25 @@ fn join_tokens(lines: &[&str]) -> String {
         out.push_str(&line);
     }
     out
+}
+
+/// A changed line that is only closing braces (`}`, `};`, `},`) and lies
+/// outside every indexed function span, in a file that has indexed functions
+/// (#10090). Typically it closes a `trait`, `impl`, `mod` or `struct` body
+/// (diff alignment often reports an existing item's closer as added when new
+/// items are appended after it); the check is positional and does not look at
+/// the kind of item. It holds no expression, and the items it delimits are
+/// probed through their own changed lines. A closer on or inside a function
+/// span can end a branch that moves existing code, so it keeps its probe
+/// (#4216); so does a file with no indexed functions or no file facts, where
+/// "outside every function" is not established.
+fn is_item_level_closing_brace(index: &RustIndex, path: &Path, line: usize, text: &str) -> bool {
+    let masked = mask_comments_and_strings(text);
+    let body = masked.trim().trim_end_matches([';', ',']).trim_end();
+    !body.is_empty()
+        && body.chars().all(|ch| ch == '}' || ch.is_whitespace())
+        && find_file_facts(index, path).is_some_and(|facts| !facts.functions.is_empty())
+        && find_owner_function(index, path, line).is_none()
 }
 
 /// 1-based lines of `source` that continue a multi-line outer or inner
@@ -2500,6 +2575,97 @@ mod tests {
         assert!(lines("#[allow(\n    a,\nfn f() {}\n").is_empty());
         // A `#[` that is not the first token of its line starts nothing.
         assert!(lines("let v = x; #[allow(\n    a,\n)]\n").is_empty());
+    }
+
+    #[test]
+    fn an_item_level_closing_brace_seeds_no_probe_but_one_inside_a_function_does() {
+        // #10090, dogfood (itertools `b2a978a`): appending `fn two` and a
+        // struct after a trait method makes git report the trait's closing
+        // `}` as added. It closes an item, not a branch.
+        let path = PathBuf::from("src/lib.rs");
+        let function = |name: &str, start_line: usize, end_line: usize| FunctionFact {
+            id: SymbolId(name.to_string()),
+            name: name.to_string(),
+            file: path.clone(),
+            start_line,
+            end_line,
+            body: String::new().into(),
+            calls: vec![],
+            returns: vec![],
+            literals: vec![],
+            source_role: FunctionSourceRole::Production,
+            attrs: vec![],
+            impl_attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
+        };
+        let index = |functions: Vec<FunctionFact>| {
+            RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                files: BTreeMap::from([(
+                    path.clone(),
+                    FileFacts {
+                        path: path.clone(),
+                        functions,
+                        ..FileFacts::default()
+                    },
+                )]),
+                ..Default::default()
+            })
+        };
+        let probe_lines = |index: &RustIndex, added: &[(usize, &str)]| {
+            let changed = ChangedFile {
+                path: path.clone(),
+                added_lines: added
+                    .iter()
+                    .map(|(line, text)| ChangedLine {
+                        line: *line,
+                        new_side_line: *line,
+                        text: (*text).to_string(),
+                    })
+                    .collect(),
+                removed_lines: vec![],
+            };
+            probes_for_file(Path::new("workspace"), &changed, index)
+                .iter()
+                .map(|probe| probe.location.line)
+                .collect::<Vec<_>>()
+        };
+
+        // `trait Ext` is lines 1-9, `fn one` 2-4, the new `fn two` 6-8.
+        let trait_index = index(vec![function("one", 2, 4), function("two", 6, 8)]);
+        let appended = [
+            (7, "        self.one() + 1"),
+            (9, "}"),
+            (11, "pub struct Err {"),
+            (12, "    pub x: i32,"),
+        ];
+        let lines = probe_lines(&trait_index, &appended);
+        assert!(
+            lines.contains(&7),
+            "control: the body line stays: {lines:?}"
+        );
+        assert!(!lines.contains(&9), "{lines:?}");
+        for closer in ["}", "};", "},", "} // end"] {
+            let lines = probe_lines(&trait_index, &[(9, closer)]);
+            assert!(lines.is_empty(), "`{closer}`: {lines:?}");
+        }
+
+        // The same closer inside a function body keeps its probe (#4216): it
+        // can end a branch that moves existing code.
+        let body_index = index(vec![function("f", 1, 6)]);
+        let lines = probe_lines(&body_index, &[(3, "        a();"), (4, "    }")]);
+        assert!(lines.contains(&4), "{lines:?}");
+        // A closer exactly on a function's `end_line` is inside its span.
+        let lines = probe_lines(&body_index, &[(6, "}")]);
+        assert!(lines.contains(&6), "{lines:?}");
+        // A file with no indexed function cannot show "outside every function".
+        let lines = probe_lines(&index(vec![]), &[(9, "}")]);
+        assert!(lines.contains(&9), "{lines:?}");
+        // Nor can a file with no file facts at all.
+        let lines = probe_lines(&RustIndex::default(), &[(9, "}")]);
+        assert!(lines.contains(&9), "{lines:?}");
     }
 
     #[test]
@@ -5474,6 +5640,78 @@ mod tests {
         assert!(probes.is_empty());
     }
 
+    // RIPR-SPEC-0357: a changed `let` whose binding reaches the returned
+    // slice keeps its generic probe on the changed line; the flow rides along.
+    #[test]
+    fn changed_binding_return_flow_keeps_the_probe_on_the_changed_line() -> Result<(), String> {
+        let path = PathBuf::from("src/lib.rs");
+        let body = "pub fn family(sku: &str) -> &str {\n    let end = sku.find('-').unwrap_or_else(|| sku.len());\n    &sku[..end]\n}";
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![ChangedLine {
+                line: 2,
+                new_side_line: 2,
+                text: "let end = sku.find('-').unwrap_or_else(|| sku.len());".to_string(),
+            }],
+            removed_lines: vec![ChangedLine {
+                line: 2,
+                new_side_line: 2,
+                text: "let end = sku.find('-').unwrap_or(sku.len());".to_string(),
+            }],
+        };
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            files: BTreeMap::from([(
+                path.clone(),
+                FileFacts {
+                    path: path.clone(),
+                    functions: vec![FunctionFact {
+                        id: SymbolId("src/lib.rs::family".to_string()),
+                        name: "family".to_string(),
+                        file: path.clone(),
+                        start_line: 1,
+                        end_line: 4,
+                        body: body.into(),
+                        calls: vec![],
+                        returns: vec![],
+                        literals: vec![],
+                        source_role: FunctionSourceRole::Production,
+                        attrs: vec![],
+                        impl_attrs: Vec::new(),
+                        nested_fn_names: Vec::new(),
+                        let_bindings: Vec::new(),
+                        item: Default::default(),
+                        impl_context: Default::default(),
+                    }],
+                    ..FileFacts::default()
+                },
+            )]),
+            ..Default::default()
+        });
+
+        let probes = probes_for_file_with_relations(Path::new("workspace"), &changed, &index, &[]);
+
+        let [seeded] = probes.as_slice() else {
+            return Err(format!("expected one probe, got {probes:?}"));
+        };
+        if seeded.probe.family != ProbeFamily::StaticUnknown || seeded.probe.location.line != 2 {
+            return Err(format!(
+                "probe must stay on the changed line: {:?}",
+                seeded.probe
+            ));
+        }
+        if seeded.binding_relation.is_some() {
+            return Err("no predicate relation applies".to_string());
+        }
+        let flow = seeded
+            .binding_return
+            .as_ref()
+            .ok_or_else(|| "expected a return flow".to_string())?;
+        if flow.return_expression != "&sku[..end]" || flow.return_line != 3 {
+            return Err(format!("unexpected flow: {flow:?}"));
+        }
+        Ok(())
+    }
+
     // #3294: the changed `let` initializer retargets to its same-function
     // predicate use. The probe is predicate-shaped at the predicate line,
     // the initializers stay causal before/after evidence, and the typed
@@ -5803,6 +6041,89 @@ mod source_currentness_tests {
         };
         assert_ne!(probe.id.0, other_probe.id.0);
         Ok(())
+    }
+
+    /// #8838: `x >= 34804` and `x >= 44638` share the eight-hex fingerprint
+    /// `10e1cf10` at one owner. Which of the two takes the `.2` suffix must
+    /// not depend on the order the diff presents them in, and exact
+    /// duplicates of one expression keep their encounter-order ordinals.
+    fn collision_probe(expression: &str) -> SeededProbe {
+        let path = PathBuf::from("src/lib.rs");
+        let owner = SymbolId("src/lib.rs::collision".to_string());
+        SeededProbe::from_probe(Probe {
+            id: diff_probe_id(&path, &ProbeFamily::Predicate, Some(&owner), expression, 1),
+            location: SourceLocation::new(path, 1, 1),
+            owner: Some(owner),
+            family: ProbeFamily::Predicate,
+            delta: super::super::family::delta_for_family(&ProbeFamily::Predicate),
+            before: None,
+            after: Some(expression.to_string()),
+            expression: expression.to_string(),
+            expected_sinks: vec![],
+            required_oracles: vec![],
+        })
+    }
+
+    fn ids_by_expression(probes: &[SeededProbe]) -> Vec<(String, String)> {
+        let mut pairs = probes
+            .iter()
+            .map(|seeded| (seeded.probe.expression.clone(), seeded.probe.id.0.clone()))
+            .collect::<Vec<_>>();
+        pairs.sort();
+        pairs
+    }
+
+    #[test]
+    fn colliding_distinct_expressions_keep_their_ids_under_reorder() -> Result<(), String> {
+        let first = "x >= 34804";
+        let second = "x >= 44638";
+        let mut ab = vec![collision_probe(first), collision_probe(second)];
+        let mut ba = vec![collision_probe(second), collision_probe(first)];
+        assert_eq!(
+            ab[0].probe.id.0, ab[1].probe.id.0,
+            "fixture must be an actual fp8 collision"
+        );
+        dedup_probe_ids(&mut ab);
+        dedup_probe_ids(&mut ba);
+        assert_ne!(ab[0].probe.id.0, ab[1].probe.id.0);
+        assert_eq!(
+            ids_by_expression(&ab),
+            ids_by_expression(&ba),
+            "expression-to-id association must not follow encounter order"
+        );
+        // The real payload digests begin `10e1cf105ca4` (first) and
+        // `10e1cf10d8ef` (second): the first keeps the bare id it has always
+        // had in the order the diff listed it, so an existing suppression
+        // for it still names it.
+        let base = "probe:src_lib.rs:predicate:10e1cf10";
+        assert_eq!(
+            ids_by_expression(&ab),
+            vec![
+                (first.to_string(), base.to_string()),
+                (second.to_string(), format!("{base}.2"))
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn exact_duplicate_expressions_keep_encounter_order_ordinals() {
+        let line = "x >= 34804";
+        let mut probes = vec![
+            collision_probe(line),
+            collision_probe(line),
+            collision_probe(line),
+        ];
+        let base = probes[0].probe.id.0.clone();
+        dedup_probe_ids(&mut probes);
+        let ids = probes
+            .iter()
+            .map(|seeded| seeded.probe.id.0.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ids,
+            vec![base.clone(), format!("{base}.2"), format!("{base}.3")]
+        );
     }
 
     #[test]

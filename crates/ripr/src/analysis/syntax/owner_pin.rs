@@ -712,7 +712,7 @@ fn macro_binding_ambiguity_sets(
             allowed_empty,
             module_resolved,
             drop_in_verified,
-            (&tree, &binding_free),
+            &binding_free,
         )
     };
     let union = scan(trusted);
@@ -732,7 +732,7 @@ fn macro_binding_sites_in_tree(
     allowed_empty: &BTreeSet<String>,
     module_resolved: &dyn Fn(usize, &str) -> bool,
     drop_in_verified: &dyn Fn(&str) -> bool,
-    (file_tree, binding_free): (&ast::SourceFile, &BindingFreeFileIndex),
+    binding_free: &BindingFreeFileIndex,
 ) -> NamedMacroSites {
     let mut ambiguous = Vec::new();
     let all = |line: usize, kind: MacroBindingKind, crate_local: bool| {
@@ -777,7 +777,7 @@ fn macro_binding_sites_in_tree(
         packages
             .iter()
             .any(|package| package.replace('-', "_") == root)
-            || file_tree.syntax().descendants().any(|node| {
+            || binding_free.site_nodes.iter().cloned().any(|node| {
                 ast::Rename::cast(node.clone())
                     .and_then(|rename| rename.name())
                     .is_some_and(named)
@@ -793,10 +793,9 @@ fn macro_binding_sites_in_tree(
     let plain_imports = std::cell::OnceCell::new();
     let plain_import_names = || -> &BTreeSet<String> {
         plain_imports.get_or_init(|| {
-            file_tree
-                .syntax()
-                .descendants()
-                .filter_map(ast::UseTree::cast)
+            binding_free
+                .uses
+                .iter()
                 .filter(|item| {
                     item.star_token().is_none()
                         && item.use_tree_list().is_none_or(|list| {
@@ -814,7 +813,7 @@ fn macro_binding_sites_in_tree(
                 .collect()
         })
     };
-    for node in file_tree.syntax().descendants() {
+    for node in &binding_free.site_nodes {
         // `extern crate other as std;` at a crate root rebinds the name for
         // every file, so a standard-root glob elsewhere cannot be trusted.
         if let Some(rename) = ast::ExternCrate::cast(node.clone()).and_then(|k| k.rename())
@@ -825,15 +824,15 @@ fn macro_binding_sites_in_tree(
                 )
             })
         {
-            ambiguous.extend(all(line_of(&node), MacroBindingKind::Import, false));
+            ambiguous.extend(all(line_of(node), MacroBindingKind::Import, false));
         }
         // An extern-crate alias or module in another file can defeat this
         // import's root even when that file never mentions `json` itself.
-        if trusted.contains(&"json") && json_namespace_rebound(&node) {
+        if trusted.contains(&"json") && json_namespace_rebound(node) {
             ambiguous.push((
                 "json".to_string(),
                 MacroBindingSite {
-                    line: line_of(&node),
+                    line: line_of(node),
                     kind: MacroBindingKind::Import,
                     scope: None,
                     crate_local: false,
@@ -849,21 +848,21 @@ fn macro_binding_sites_in_tree(
             let admitted_declaration = allowed_empty.contains(name)
                 && ast::MacroRules::cast(node.clone()).is_some_and(|item| empty_catch_all(&item));
             if trusted.contains(&name) && !admitted_declaration {
-                let line = line_of(&node);
-                let scope = scope_of(textual_scope(&node));
+                let line = line_of(node);
+                let scope = scope_of(textual_scope(node));
                 ambiguous.push((
                     name.to_string(),
                     MacroBindingSite {
                         line,
                         kind: MacroBindingKind::Definition,
                         scope,
-                        crate_local: !is_exported_macro(&node),
+                        crate_local: !is_exported_macro(node),
                     },
                 ));
             }
         }
         if let Some(body) = macro_body_bindings(
-            &node,
+            node,
             &|name| trusted.contains(&name),
             // The same rule as a `use` item outside a macro: a verified,
             // unshadowed drop-in import keeps the assertion's meaning (#8149).
@@ -887,9 +886,9 @@ fn macro_binding_sites_in_tree(
                 // `no_implicit_prelude` body stays in its own target root,
                 // like a direct site there; an exported macro, or one whose
                 // body exports another, reaches other crates.
-                let crate_local = !body.exports && !is_exported_macro(&node);
+                let crate_local = !body.exports && !is_exported_macro(node);
                 return all(
-                    line_of(&node),
+                    line_of(node),
                     MacroBindingKind::BodyBindsAny {
                         macro_name,
                         binding,
@@ -900,12 +899,12 @@ fn macro_binding_sites_in_tree(
             // The expansion lands wherever the macro is invoked, so no
             // textual scope bounds it, and an exported macro or a
             // `#[macro_export]` in the body reaches other crates.
-            let crate_local = !body.exports && !is_exported_macro(&node);
+            let crate_local = !body.exports && !is_exported_macro(node);
             for name in body.names {
                 ambiguous.push((
                     name,
                     MacroBindingSite {
-                        line: line_of(&node),
+                        line: line_of(node),
                         kind: MacroBindingKind::MacroBody(macro_name.clone()),
                         scope: None,
                         crate_local,
@@ -924,7 +923,7 @@ fn macro_binding_sites_in_tree(
                 .any(|token| token.text().trim_start_matches("r#") == "no_implicit_prelude")
             {
                 ambiguous.extend(all(
-                    line_of(&node),
+                    line_of(node),
                     MacroBindingKind::NoImplicitPrelude,
                     true,
                 ));
@@ -956,7 +955,7 @@ fn macro_binding_sites_in_tree(
                     let line = attr
                         .syntax()
                         .parent()
-                        .map_or_else(|| line_of(&node), |parent| item_line(&parent, source));
+                        .map_or_else(|| line_of(node), |parent| item_line(&parent, source));
                     // `#[macro_use] extern crate` only imports into this crate. An
                     // unresolved `#[macro_use] mod` may `#[macro_export]` its macros,
                     // which other crates reach through a glob, so it stays
@@ -989,7 +988,7 @@ fn macro_binding_sites_in_tree(
                 matches!(word, "macro_use" | "no_implicit_prelude").then_some(word)
             }) {
                 return all(
-                    line_of(&node),
+                    line_of(node),
                     MacroBindingKind::ArgumentAttribute {
                         wrapper: path.syntax().text().to_string(),
                         attribute: attribute.to_string(),
@@ -1019,7 +1018,7 @@ fn macro_binding_sites_in_tree(
             for token in &tokens {
                 let name = token.text().trim_start_matches("r#");
                 if trusted.contains(&name) {
-                    let line = line_of(&node);
+                    let line = line_of(node);
                     ambiguous.push((
                         name.to_string(),
                         MacroBindingSite {
@@ -1034,7 +1033,7 @@ fn macro_binding_sites_in_tree(
         }
         if let Some(import) = ast::Use::cast(node.clone()) {
             let Some(tree) = import.use_tree() else {
-                return all(line_of(&node), MacroBindingKind::Unparsed, false);
+                return all(line_of(node), MacroBindingKind::Unparsed, false);
             };
             let private = import.visibility().is_none();
             let root = tree
@@ -1146,7 +1145,7 @@ fn macro_binding_sites_in_tree(
                 }
                 if item.star_token().is_some() && !own {
                     let path = import.syntax().text().to_string();
-                    let line = line_of(&node);
+                    let line = line_of(node);
                     let Some(scope) = scope_of(import_scope(&import)) else {
                         ambiguous.extend(all(line, MacroBindingKind::ForeignGlob(path), private));
                         continue;
@@ -1188,7 +1187,7 @@ fn macro_binding_sites_in_tree(
                         None
                     };
                     if let Some(kind) = kind {
-                        let line = line_of(&node);
+                        let line = line_of(node);
                         ambiguous.push((
                             name.to_string(),
                             MacroBindingSite {
@@ -1215,7 +1214,7 @@ fn macro_binding_sites_in_tree(
     // are no `MacroCall` nodes: the parser keeps `vec ! (..)` flat beside a
     // nested tree. They count as calls of their bare name too (#8446).
     let mut sites = Vec::new();
-    for node in file_tree.syntax().descendants() {
+    for node in &binding_free.call_nodes {
         if let Some(call) = ast::MacroCall::cast(node.clone()) {
             if let (Some(path), Some(tree)) = (call.path(), call.token_tree()) {
                 sites.push((
@@ -1394,6 +1393,12 @@ struct BindingFreeFileIndex {
     rules: Vec<ast::MacroRules>,
     modules: Vec<SyntaxNode>,
     calls: Vec<ast::MacroCall>,
+    /// Every node a binding-site scan can react to, in source order. The scan
+    /// runs once per queried name set over the same tree, so it walks this
+    /// short list instead of every node of the file.
+    site_nodes: Vec<SyntaxNode>,
+    /// Macro calls and token trees, in source order, for the call fixpoint.
+    call_nodes: Vec<SyntaxNode>,
     /// Calls accepted as the identity over literal `fn` items (#8999).
     passthrough: BTreeSet<ra_ap_syntax::TextSize>,
 }
@@ -1416,7 +1421,26 @@ impl BindingFreeFileIndex {
         let mut rules = Vec::new();
         let mut modules = Vec::new();
         let mut calls = Vec::new();
+        let mut site_nodes = Vec::new();
+        let mut call_nodes = Vec::new();
         for node in root.descendants() {
+            use ra_ap_syntax::SyntaxKind as K;
+            match node.kind() {
+                K::EXTERN_CRATE
+                | K::RENAME
+                | K::MODULE
+                | K::USE_TREE
+                | K::MACRO_RULES
+                | K::MACRO_DEF
+                | K::ATTR
+                | K::USE => site_nodes.push(node.clone()),
+                K::MACRO_CALL => {
+                    site_nodes.push(node.clone());
+                    call_nodes.push(node.clone());
+                }
+                K::TOKEN_TREE => call_nodes.push(node.clone()),
+                _ => {}
+            }
             if let Some(tree) = ast::UseTree::cast(node.clone()) {
                 uses.push(tree);
                 continue;
@@ -1438,6 +1462,8 @@ impl BindingFreeFileIndex {
             rules,
             modules,
             calls,
+            site_nodes,
+            call_nodes,
             passthrough: super::passthrough_item_macros::passthrough_invocation_starts(root),
         }
     }
@@ -2259,10 +2285,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             // `debug_assert_eq!` for its profile limit (#8051); the classify
             // side decides which spelling a pin may use.
             if call.path().is_none_or(|path| {
-                !names_candidate_assertion(
-                    &path.syntax().text().to_string(),
-                    &["assert_eq", "assert", "debug_assert_eq"],
-                )
+                !names_candidate_assertion(&path.syntax().text().to_string(), &ASSERTION_CANDIDATES)
             }) {
                 continue;
             }
@@ -2607,10 +2630,7 @@ fn local_helper_assertions(
             // The same candidate spellings as the test's own assertions.
             // Their execution and bindings still pass the shared helper gate.
             if call.path().is_none_or(|path| {
-                !names_candidate_assertion(
-                    &path.syntax().text().to_string(),
-                    &["assert_eq", "assert"],
-                )
+                !names_candidate_assertion(&path.syntax().text().to_string(), &ASSERTION_CANDIDATES)
             }) {
                 continue;
             }
@@ -4056,6 +4076,17 @@ fn is_trusted_macro(path: &str, trusted: &[&str]) -> bool {
     trusted.contains(&path)
 }
 
+/// The assertion macros the owner-pin collectors read (#8983), in the test body
+/// and in the check helpers it calls.
+const ASSERTION_CANDIDATES: [&str; 6] = [
+    "assert_eq",
+    "assert",
+    "debug_assert_eq",
+    "assert_ne",
+    "debug_assert_ne",
+    "debug_assert",
+];
+
 /// A macro path that may be one of the `leaves` assertions: the bare name,
 /// or `assert_eq` / `assert` under a `std`/`core` root (#7857, #8927). A qualified candidate
 /// is admitted only when [`has_escape`] finds its root unrebound, so a
@@ -4064,7 +4095,11 @@ fn names_candidate_assertion(path: &str, leaves: &[&str]) -> bool {
     let path: String = path.split_whitespace().collect();
     let unrooted = path.strip_prefix("::").unwrap_or(&path);
     match unrooted.split_once("::") {
-        Some(("std" | "core", leaf @ ("assert_eq" | "assert"))) => leaves.contains(&leaf),
+        Some((
+            "std" | "core",
+            leaf @ ("assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne" | "assert"
+            | "debug_assert"),
+        )) => leaves.contains(&leaf),
         Some(_) => false,
         None => leaves.contains(&unrooted),
     }
@@ -4072,16 +4107,22 @@ fn names_candidate_assertion(path: &str, leaves: &[&str]) -> bool {
 
 /// `std::assert_eq!` or `::core::assert_eq!` under a root nothing in the
 /// file can rebind runs as the standard macro, so it is no escape (#7857).
-/// Only `assert_eq` and `assert` qualify: the pin reads no other qualified
-/// macro, and the classify side adds the workspace root proof for the
-/// credited one.
+/// Only the six admitted assertion macros qualify (#8983): the classify side
+/// adds the workspace root proof for the credited one.
 fn is_standard_qualified_macro(path: &str, call: &ast::MacroCall, trusted: &[&str]) -> bool {
     // The parser keeps the spacing of `std :: assert_eq`.
     let path: String = path.split_whitespace().collect();
-    path.rsplit("::")
-        .next()
-        .is_some_and(|leaf| matches!(leaf, "assert_eq" | "assert") && trusted.contains(&leaf))
-        && std_macro_root_is_unrebound(&path, call.syntax())
+    path.rsplit("::").next().is_some_and(|leaf| {
+        matches!(
+            leaf,
+            "assert_eq"
+                | "assert_ne"
+                | "debug_assert_eq"
+                | "debug_assert_ne"
+                | "assert"
+                | "debug_assert"
+        ) && trusted.contains(&leaf)
+    }) && std_macro_root_is_unrebound(&path, call.syntax())
 }
 
 /// `Ok` when the invocation runs on every execution of the test body;

@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- `.ripr/traceability.d/*.toml` fragments: a PR registers its tests, fixtures, code, outputs and metrics in a file of its own (`[[extend]]` for an existing behavior, `[[behavior]]` for a new spec) instead of appending to the shared arrays in `.ripr/traceability.toml`, which about a third of recent PRs edited and which conflicted. `check-traceability` folds the fragments in; an `[[extend]]` naming no behavior fails. (#9859)

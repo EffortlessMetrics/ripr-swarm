@@ -1663,6 +1663,42 @@ fn normalized_path_strips_dot_prefix_and_normalizes_separators() {
 }
 
 #[test]
+fn normalized_path_eq_matches_plain_paths() {
+    // gemini-code-assist review on #10283: assert the allocating and
+    // alloc-free forms on the SAME corpus so the two cannot drift apart
+    // (normalized_path_eq must be exactly normalized_path(path) == n).
+    for (path, expected) in [
+        ("src/a/b.ts", "src/a/b.ts"),
+        ("./src/a.ts", "src/a.ts"),
+        ("././x.ts", "x.ts"),
+    ] {
+        assert!(normalized_path_eq(Path::new(path), expected), "{path:?}");
+        assert_eq!(normalized_path(Path::new(path)), expected, "{path:?}");
+    }
+    assert!(!normalized_path_eq(Path::new("src/a.ts"), "src/b.ts"));
+    assert!(!normalized_path_eq(Path::new("src/a.ts"), "other/a.ts"));
+}
+
+#[test]
+fn normalized_path_eq_agrees_with_normalized_path_on_backslash_spellings() {
+    // #10024: a literal backslash-spelled path collides with the
+    // forward-slash spelling under normalized_path; the eq helper must keep
+    // recognizing it through the allocating slow path.
+    for (path, expected) in [
+        (r"src\a\b.ts", "src/a/b.ts"),
+        (r".\src\b.ts", "src/b.ts"),
+        (r"src/a\b.ts", "src/a/b.ts"),
+    ] {
+        assert!(
+            normalized_path_eq(Path::new(path), expected),
+            "{path:?} must equal {expected:?}"
+        );
+        assert_eq!(normalized_path(Path::new(path)), expected);
+    }
+    assert!(!normalized_path_eq(Path::new(r"src\a\b.ts"), "src/a/c.ts"));
+}
+
+#[test]
 fn extract_owners_recognizes_function_declaration() {
     let owners = extract_owners(
         Path::new("src/lib.ts"),
@@ -18160,7 +18196,9 @@ mod class_entry_tests;
 mod committed_snapshot_tests;
 mod commonjs_default_function_tests;
 mod commonjs_export_tests;
+mod comparison_edit_tests;
 mod custom_matcher_tests;
+mod decorated_reach_tests;
 mod default_object_member_tests;
 mod directory_specifier_tests;
 mod dropped_term_tests;
@@ -18189,6 +18227,7 @@ mod out_dir_specifier_tests;
 mod playwright_unit_tests;
 mod reexport_chain_tests;
 mod registration_binding_tests;
+mod require_member_import_tests;
 mod rethrow_catch_tests;
 mod returned_dataflow_tests;
 mod returned_expression_tests;
@@ -18408,6 +18447,218 @@ fn file_owner_plan_uses_the_index_for_monotonic_groups() -> Result<(), String> {
     assert_eq!(
         plan.owner_for_line(11).map(|owner| owner.name.as_str()),
         Some("short_first")
+    );
+    Ok(())
+}
+
+/// The per-owner context memo is keyed by plan index. The added-lines pass
+/// gets that index from `owner_index_and_ref_for_line`; the removed-lines
+/// pass resolves owners by scanning the extraction-order workspace vec and
+/// maps back through `owner_index_by_span`. Both must produce the SAME
+/// index for the same owner, or the two passes would not share one
+/// memoized context. Monotonic group: the binary-search path.
+#[test]
+fn owner_index_by_span_agrees_with_line_resolution_on_indexed_plans() {
+    let owner_at = |name: &str, start: usize, end: usize| {
+        let mut owner = test_owner(name, "src/lib.ts");
+        owner.start_line = start;
+        owner.end_line = end;
+        owner
+    };
+    let plan = FileOwnerPlan::build(vec![
+        owner_at("short_first", 10, 12),
+        owner_at("outer", 10, 100),
+        owner_at("inner", 50, 60),
+    ]);
+    // Extraction order survives the stable sort on a monotonic group, so
+    // indices match the build input.
+    assert_eq!(plan.owner_index_by_span("short_first", 10, 12), Some(0));
+    assert_eq!(plan.owner_index_by_span("outer", 10, 100), Some(1));
+    assert_eq!(plan.owner_index_by_span("inner", 50, 60), Some(2));
+    // Same index from line resolution as from the span identity.
+    assert_eq!(
+        plan.owner_index_and_ref_for_line(11).map(|(idx, _)| idx),
+        plan.owner_index_by_span("short_first", 10, 12)
+    );
+    assert_eq!(
+        plan.owner_index_and_ref_for_line(55).map(|(idx, _)| idx),
+        plan.owner_index_by_span("outer", 10, 100)
+    );
+    // Unknown identities resolve to nothing.
+    assert_eq!(plan.owner_index_by_span("outer", 10, 101), None);
+    assert_eq!(plan.owner_index_by_span("nope", 10, 100), None);
+}
+
+/// Non-monotonic group (the #10024 path-collision shape): the plan keeps
+/// extraction order and the span lookup must resolve each owner to its
+/// index in that order — still the same index line resolution returns.
+#[test]
+fn owner_index_by_span_agrees_with_line_resolution_on_linear_plans() {
+    let mut slash = test_owner("slash", "src/a/b.ts");
+    slash.start_line = 10;
+    slash.end_line = 12;
+    let mut backslash = test_owner("backslash", "src/a\\b.ts");
+    backslash.start_line = 1;
+    backslash.end_line = 12;
+    let plan = FileOwnerPlan::build(vec![slash, backslash]);
+    assert_eq!(plan.owner_index_by_span("slash", 10, 12), Some(0));
+    assert_eq!(plan.owner_index_by_span("backslash", 1, 12), Some(1));
+    assert_eq!(
+        plan.owner_index_and_ref_for_line(11).map(|(idx, _)| idx),
+        plan.owner_index_by_span("slash", 10, 12)
+    );
+    assert_eq!(
+        plan.owner_index_and_ref_for_line(5).map(|(idx, _)| idx),
+        plan.owner_index_by_span("backslash", 1, 12)
+    );
+    // A span the plan contains but with the wrong name: not an identity.
+    assert_eq!(plan.owner_index_by_span("slash", 1, 12), None);
+}
+
+/// #8838 mirror: `if (x > 39113) {` and `if (x > 60939) {` share the
+/// eight-hex fingerprint `21e51c17` at one owner. Which of them takes the
+/// `.2` suffix must not depend on the order the diff lists them in; the
+/// full payload digest ranks `60939` (`21e51c1782f4…`) before `39113`
+/// (`21e51c17e5ef…`).
+#[test]
+fn analyze_diff_keeps_fp8_colliding_ids_under_diff_reorder() -> Result<(), String> {
+    let root = ts_unique_tempdir("probe-collision-order")?;
+    ts_write_file(
+        &root.join("src/lib.ts"),
+        "export function classify(x: number): number {\n  if (x > 39113) {\n    return 1;\n  }\n  if (x > 60939) {\n    return 2;\n  }\n  return 0;\n}\n",
+    )?;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        perl_producer_failure: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
+    };
+    let policy = OraclePolicy::default();
+    let low = crate::analysis::diff::ChangedLine {
+        line: 2,
+        new_side_line: 2,
+        text: "  if (x > 39113) {".to_string(),
+    };
+    let high = crate::analysis::diff::ChangedLine {
+        line: 5,
+        new_side_line: 5,
+        text: "  if (x > 60939) {".to_string(),
+    };
+    let ids_in_order = |added_lines: Vec<crate::analysis::diff::ChangedLine>| {
+        let changed_files = vec![ChangedFile {
+            path: PathBuf::from("src/lib.ts"),
+            added_lines,
+            removed_lines: Vec::new(),
+        }];
+        let result = TypeScriptAdapter.analyze_diff(&options, &policy, &changed_files)?;
+        let mut ids = result
+            .findings
+            .iter()
+            .map(|finding| {
+                (
+                    finding.probe.expression.trim().to_string(),
+                    finding.id.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        ids.sort();
+        Ok::<_, String>(ids)
+    };
+    let low_first = ids_in_order(vec![low.clone(), high.clone()]);
+    let high_first = ids_in_order(vec![high, low]);
+    let _ = std::fs::remove_dir_all(&root);
+    let (low_first, high_first) = (low_first?, high_first?);
+
+    let base = "probe:src_lib.ts:typescript_preview:21e51c17";
+    assert_eq!(
+        low_first,
+        vec![
+            ("if (x > 39113) {".to_string(), format!("{base}.2")),
+            ("if (x > 60939) {".to_string(), base.to_string()),
+        ],
+        "fixture must be an actual fp8 collision ranked by payload digest"
+    );
+    assert_eq!(
+        low_first, high_first,
+        "expression-to-id association must not follow diff order"
+    );
+    Ok(())
+}
+
+/// #10349: identical enum-member lines in two enums mint over an
+/// `Enum::Member` identity the finding's probe does not carry. `High = 1,`
+/// in `Enum20990` and `Enum62211` share the eight-hex fingerprint `1a061247`;
+/// ranking must use the minted identity, so the full payload digest puts
+/// `Enum62211` (`1a06124726cd…`) before `Enum20990` (`1a0612476682…`) in
+/// either diff order.
+#[test]
+fn analyze_diff_keeps_fp8_colliding_enum_member_ids_under_diff_reorder() -> Result<(), String> {
+    let root = ts_unique_tempdir("enum-collision-order")?;
+    ts_write_file(
+        &root.join("src/lib.ts"),
+        "export enum Enum20990 {\n  High = 1,\n}\nexport enum Enum62211 {\n  High = 1,\n}\n",
+    )?;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        perl_producer_failure: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
+    };
+    let policy = OraclePolicy::default();
+    let member = |line: usize| crate::analysis::diff::ChangedLine {
+        line,
+        new_side_line: line,
+        text: "  High = 1,".to_string(),
+    };
+    let ids_by_line = |added_lines: Vec<crate::analysis::diff::ChangedLine>| {
+        let changed_files = vec![ChangedFile {
+            path: PathBuf::from("src/lib.ts"),
+            added_lines,
+            removed_lines: Vec::new(),
+        }];
+        let result = TypeScriptAdapter.analyze_diff(&options, &policy, &changed_files)?;
+        let mut ids = result
+            .findings
+            .iter()
+            .map(|finding| (finding.probe.location.line, finding.id.clone()))
+            .collect::<Vec<_>>();
+        ids.sort();
+        Ok::<_, String>(ids)
+    };
+    let first_enum_first = ids_by_line(vec![member(2), member(5)]);
+    let second_enum_first = ids_by_line(vec![member(5), member(2)]);
+    let _ = std::fs::remove_dir_all(&root);
+    let (first_enum_first, second_enum_first) = (first_enum_first?, second_enum_first?);
+
+    let base = "probe:src_lib.ts:typescript_preview_enum_member:1a061247";
+    assert_eq!(
+        first_enum_first,
+        vec![(2, format!("{base}.2")), (5, base.to_string())],
+        "fixture must be an actual fp8 collision ranked by payload digest"
+    );
+    assert_eq!(
+        first_enum_first, second_enum_first,
+        "line-to-id association must not follow diff order"
     );
     Ok(())
 }

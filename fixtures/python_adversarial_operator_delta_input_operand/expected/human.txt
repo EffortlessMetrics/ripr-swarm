@@ -20,7 +20,9 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Canonical gap: gap:python:src/counter.py:next_value:return_value:return_value:count-1
   Changed behavior: return count - 1
-  Missing discriminator (1 of 2): A strong Python oracle reaches `next_value`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated.…
+  Missing discriminator (1 of 2): A strong Python oracle reaches `next_value`, but its assertion
+    does not observe the changed owner's output; static evidence cannot confirm the changed behavior
+    is discriminated. Add an assertion on the changed owner's output
   Related test: tests/test_counter.py:4 test_next (ripr could not confirm that this assertion observes the changed behavior)
   Suggested test file: tests/test_counter.py
   Suggested test: test_next
@@ -35,6 +37,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach yes: 1 related Python test(s) found for owner `next_value`
     - infection yes: Changed Python return expression can alter the owner return value: `return count - 1`
     - 5 more detail line(s) in --format human-full

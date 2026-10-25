@@ -157,6 +157,7 @@ mod source_utils;
 use source_utils::{is_test_file, normalized_path};
 mod fixtures;
 mod helper_assertions;
+mod literal_patch;
 mod module_callees;
 mod same_class_callees;
 mod static_limits;
@@ -440,7 +441,12 @@ struct PythonTest {
 /// relation rules as a test body when a test names it as a parameter (#4563).
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PythonFixtureDef {
+    /// The public name a test requests; differs from `binding` when the
+    /// decorator renames the fixture (`name=`).
     name: String,
+    /// The module attribute the def binds, which a later def of the same name
+    /// replaces.
+    binding: String,
     file: PathBuf,
     body_text: String,
     imports: Vec<PythonImport>,
@@ -1334,6 +1340,8 @@ mod capability_disposition_tests;
 
 #[cfg(test)]
 mod helper_inline_tests;
+#[cfg(test)]
+mod literal_patch_tests;
 
 #[cfg(test)]
 mod helper_owner_call_tests;

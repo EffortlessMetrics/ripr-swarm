@@ -81,6 +81,37 @@ pub(crate) fn expand_local_test_macros(source: &str) -> Vec<ExpandedLocalTestMac
     })
 }
 
+/// [`expand_local_test_macros`] for a file that sees `imported` macro
+/// definitions defined elsewhere (#6925): one line of `macro_rules!` items
+/// the facts pass resolved from the file's `#[macro_use]` modules and its
+/// parent modules. They are spliced in front of the first item, so every
+/// check the expander makes (unique name, precedes the invocation, no
+/// `use` of the name, no local macro in the body) covers them too, and the
+/// reported lines are the file's own.
+pub(crate) fn expand_local_test_macros_with(
+    source: &str,
+    imported: &super::macro_scope::ImportedMacros,
+) -> Vec<ExpandedLocalTestMacro> {
+    if imported.is_empty() {
+        return expand_local_test_macros(source);
+    }
+    let Some(spliced) = super::macro_scope::splice_imported_macros(source, imported) else {
+        return expand_local_test_macros(source);
+    };
+    expand_local_test_macros(&spliced)
+        .into_iter()
+        .map(|mut expansion| {
+            expansion.start_line = expansion
+                .start_line
+                .saturating_sub(super::macro_scope::SPLICED_LINES);
+            expansion.end_line = expansion
+                .end_line
+                .saturating_sub(super::macro_scope::SPLICED_LINES);
+            expansion
+        })
+        .collect()
+}
+
 fn expand_local_test_macros_uncached(source: &str) -> Vec<ExpandedLocalTestMacro> {
     let Some(parse) = parse_clean_source_file(source) else {
         return Vec::new();
@@ -151,9 +182,10 @@ pub(crate) struct GeneratedTestPins {
 pub(crate) fn generated_test_pins(
     path: &Path,
     source: &str,
+    imported: &super::macro_scope::ImportedMacros,
     trusted: &[&str],
 ) -> Vec<GeneratedTestPins> {
-    expand_local_test_macros(source)
+    expand_local_test_macros_with(source, imported)
         .into_iter()
         .filter_map(|expansion| {
             let tests = summarize_file_with_parser(path, &expansion.text)

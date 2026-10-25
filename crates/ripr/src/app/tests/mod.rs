@@ -91,7 +91,7 @@ fn sample_finding(file: &str, line: usize) -> Finding {
     }
 }
 
-fn check_output_with(findings: Vec<Finding>) -> CheckOutput {
+pub(crate) fn check_output_with(findings: Vec<Finding>) -> CheckOutput {
     CheckOutput {
         value_origins: Default::default(),
         harness_projections: Vec::new(),

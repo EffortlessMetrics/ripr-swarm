@@ -1,0 +1,61 @@
+{
+  "case_id": "spec0186-ex07-overwritten-result-binding",
+  "subject_id": "authored-spec0186-7",
+  "diff": "cases/spec0186-ex07-overwritten-result-binding.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 3
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "boundary_result_overwritten_before_assert",
+  "hard_case": "RIPR-SPEC-0186 example 7: `got = true` after `let mut got = gate(10)` breaks the pairing.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "pub fn gate(input: u32) -> bool { input > 10 }",
+        "mutated_line": "pub fn gate(input: u32) -> bool { input > 10 }",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: gate(10) turns false, but the binding is overwritten"
+      },
+      {
+        "replacement": "pub fn gate(input: u32) -> bool { input < 10 }",
+        "mutated_line": "pub fn gate(input: u32) -> bool { input < 10 }",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: gate(10) turns false, but the binding is overwritten"
+      },
+      {
+        "replacement": "pub fn gate(input: u32) -> bool { input <= 10 }",
+        "mutated_line": "pub fn gate(input: u32) -> bool { input <= 10 }",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: gate(10) stays true; gate(9) is never called"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The asserted binding is reassigned to true, so no mutant of the predicate can fail the test. Spec cells: RIPR-SPEC-0186 example 7.",
+  "labeling_observation": {
+    "ripr_commit": "2939c0d6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0186#7"
+  ]
+}

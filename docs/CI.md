@@ -1197,6 +1197,21 @@ third-party actions, and holds job-level `pull-requests: write` and
 `statuses: write` only. It is a notice, not a required check; the author merges
 the base branch, resolves the conflict, and re-applies `merge-ready`.
 
+### Base Still Merges Cleanly (rust-gates)
+
+`actions/checkout` tests the merge ref as it stood when a pull-request run was
+admitted. The `Base still merges cleanly` step of `rust-gates.yml` (`pull_request`
+events only) runs just before `Required Rust tests`, fetches the current base and
+runs `git merge-tree --write-tree HEAD^2 origin/<base>`. If the base moved and now
+conflicts with the PR head, the step fails with an error naming the base, the PR head
+and the remedy (merge the base, resolve, re-apply `merge-ready`), so the required
+check goes red before the ~18-minute test step instead of after it (#10341). It cannot
+cancel the run (that needs `actions: write`) and it only looks once, so a conflict
+that appears later still finishes the run. It fails open: a failed fetch, or a Git
+older than 2.38 (no `merge-tree --write-tree`), emits a warning and passes. Its
+outcome has its own row in the gate summary. `xtask/tests/rust_gate_merge_ref_check.rs`
+runs the step's script against real Git repositories.
+
 ### PR Staleness Watchdog
 
 GitHub sometimes silently drops the `pull_request` event delivery that creates
@@ -1229,7 +1244,7 @@ minutes), so before calling a head dark the watchdog also lists
 in-progress run is reported as in flight. Re-applying `merge-ready` on such a
 head would cancel the real run, so the watchdog never recommends it. This uses
 `actions: read` only. Drafts and fork heads are
-skipped, as are PRs without the `merge-ready` label (no request was made). The one write is the conflict report (#10136): a labeled, non-draft, same-repo PR that is `dirty` and whose head has no `merge-ready conflict` failure from the actions bot gets one comment per head and base plus that failing status (the same marker and context the label-time notice uses, so the two never double up), and a PR that is no longer conflicting and still carries that failure gets a success status. The job holds `pull-requests: write` and `statuses: write` and still never dispatches. Each sweep's summary table is the audit
+not qualified, as are PRs without the `merge-ready` label (no request was made); the sweep still clears their stale conflict status, as described below. The one write is the conflict report (#10136): a labeled, non-draft, same-repo PR that is `dirty` and whose head has no `merge-ready conflict` failure from the actions bot gets one comment per head and base plus that failing status (the same marker and context the label-time notice uses, so the two never double up), and a PR that is no longer conflicting and still carries that failure gets a success status. The job holds `pull-requests: write` and `statuses: write` and still never dispatches. A labeled, non-draft, same-repo head that is not conflicting (mergeability computed), has no required check and no merge-ready run in flight was pushed after the label or lost its label event: the sweep comments once per head (marker `merge-ready-dark`) asking the author to remove and re-apply `merge-ready` (#10136). The comment names the cause (no run exists, or a run finished without the check, for example an admission refusal), and the sweep stays quiet for 10 minutes after any PR activity so a label just applied is not mistaken for a dropped one. A draft or unlabeled same-repo PR whose head still carries the actions bot's failing `merge-ready conflict` status gets a success status, so a removed label or a draft conversion does not leave a stale red status (#10136). Each sweep's summary table is the audit
 trail. `xtask/tests/pr_readiness_workflow_contract.rs` pins the alert-only
 shape (no dispatch command, no `actions: write`), the in-flight check, and
 the `mergeable_state` column.
