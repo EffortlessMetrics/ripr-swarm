@@ -226,16 +226,21 @@ impl EffectReads {
             }
             ChangedEffect::CallOnParameter { .. } => {}
             ChangedEffect::ModuleField { object, attr } => {
-                reads.operands = test
-                    .imports
-                    .iter()
-                    .filter(|import| {
-                        import.imported == *object
-                            && import_source_module_matches_owner(import, owner, &test.file)
-                            && !test_rebinds_import_alias(test, &import.alias)
-                    })
-                    .map(|import| format!("{}.{attr}", import.alias))
-                    .collect();
+                // A test that assigns the object onto its module
+                // (`route.response = fake`) or writes a dynamic namespace
+                // reads a different object than the owner mutates.
+                if !test.constant_rebinding.assigns_attribute(object) {
+                    reads.operands = test
+                        .imports
+                        .iter()
+                        .filter(|import| {
+                            import.imported == *object
+                                && import_source_module_matches_owner(import, owner, &test.file)
+                                && !test_rebinds_import_alias(test, &import.alias)
+                        })
+                        .map(|import| format!("{}.{attr}", import.alias))
+                        .collect();
+                }
             }
             ChangedEffect::SelfField { attr } => {
                 if let Some((class, _)) = owner.qualified_name.rsplit_once('.') {
