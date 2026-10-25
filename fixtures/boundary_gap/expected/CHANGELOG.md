@@ -1224,3 +1224,9 @@ The same snapshots follow corpus cache generation 1.101 to 1.102 for the
 rustfmt-layout equal-valued arm sink limit (#10134), with the same scope:
 generation, content commitment, dependent verify commitments and receipt byte
 hashes only.
+
+### loop accumulator classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.102 to 1.103 for the
+returned loop-accumulator update (#6485), with the same scope: generation,
+content commitment, dependent verify commitments and receipt byte hashes only.
