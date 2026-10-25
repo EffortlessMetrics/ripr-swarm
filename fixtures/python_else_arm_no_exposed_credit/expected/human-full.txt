@@ -41,7 +41,7 @@ Evidence
   - source function argument value x = 5 at line 5
 
 Weakness
-  - A strong Python oracle reaches `sign`, but static evidence does not place a related test input inside the guarding arm `not (x > 0)`; every observed input leaves the changed line unexecuted (observation_unverified). Add a test input that satisfies the guarding condition
+  - A strong Python oracle reaches `sign`, but static evidence does not place a related test input inside the guarding arm `not (x > 0)`; every observed input leaves the changed line unexecuted. Add a test input that satisfies the guarding condition
   - missing discriminator not (x > 0): the changed line sits in the `else` arm of an `if`/`elif` chain (`x > 0`) that is entered only when none of them hold, and each strong related test input is kept off it by this chain or an enclosing guard; observed x = 5; the changed line never executes under an observed input
 
 Python repair card (preview/advisory)

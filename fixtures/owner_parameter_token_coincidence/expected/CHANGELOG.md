@@ -219,3 +219,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — owner_parameter_token_coincidence (18)
+
+Reason:
+RIPR-SPEC-0224
+
+Command:
+`cargo xtask goldens bless owner_parameter_token_coincidence --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

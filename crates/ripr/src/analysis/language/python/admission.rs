@@ -51,7 +51,7 @@
 
 use super::expr_full_name;
 use super::{PythonAssertion, PythonImport, PythonOracleShape};
-use rustpython_parser::ast::{self, Expr, Stmt};
+use rustpython_parser::ast::{self, Expr, Ranged, Stmt};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Assertion admission for one extracted Python test.
@@ -94,6 +94,12 @@ pub(super) struct PythonAdmissionContext {
     /// ...) in this file whose body is assertion-like. The runner calls it
     /// around tests without the test naming it.
     has_assertion_like_lifecycle: bool,
+    /// A module-level statement outside any definition that can fail or
+    /// reconfigure the run at import (`warnings.filterwarnings("error")`,
+    /// `pytest.skip(..., allow_module_level=True)`, `pytest.importorskip`, a
+    /// module-level `assert` or `raise`, a call RIPR cannot resolve), or a
+    /// star import that may bring an autouse fixture or hook into the module.
+    has_module_effect: bool,
     /// The dotted directory of the file (see `TestScope::module_dir`).
     module_dir: String,
     /// Class-base spellings known to be unittest's own test classes.
@@ -144,6 +150,28 @@ impl PythonAdmissionContext {
             scan.statements(body);
             scan.assertion_like
         });
+        let module_scope = TestScope::of_body(module_dir, &[], &[], None);
+        let top_level: Vec<Stmt> = statements
+            .iter()
+            .filter(|stmt| {
+                !matches!(
+                    stmt,
+                    Stmt::FunctionDef(_) | Stmt::AsyncFunctionDef(_) | Stmt::ClassDef(_)
+                )
+            })
+            .cloned()
+            .collect();
+        let mut module_scan = BodyScan {
+            context: &context,
+            imports,
+            scope: &module_scope,
+            assertion_like: false,
+        };
+        module_scan.statements(&top_level);
+        context.has_module_effect = module_scan.assertion_like
+            || imports
+                .iter()
+                .any(|import| import.alias == "*" || import.imported == "*");
         context
     }
 
@@ -247,6 +275,20 @@ impl PythonAdmissionContext {
                             })
                             .map(std::slice::from_ref),
                     );
+                    for member in &class.body {
+                        let (name, body) = match member {
+                            Stmt::FunctionDef(function) => {
+                                (function.name.as_str(), &function.body)
+                            }
+                            Stmt::AsyncFunctionDef(function) => {
+                                (function.name.as_str(), &function.body)
+                            }
+                            _ => continue,
+                        };
+                        if CLASS_LIFECYCLE_HOOKS.contains(&name) {
+                            lifecycle.push(body);
+                        }
+                    }
                     self.collect(&class.body, lifecycle);
                 }
                 Stmt::Assign(assign)
@@ -710,17 +752,142 @@ fn is_test_support_path(path: &str) -> bool {
     })
 }
 
+/// `request` members that bring in fixtures, marks or finalizers at run time.
+const REQUEST_ESCAPES: &[&str] = &[
+    "add_marker",
+    "addfinalizer",
+    "applymarker",
+    "getfixturevalue",
+    "getfuncargvalue",
+];
+
+/// A call on a built-in fixture that can assert or run arbitrary code:
+/// `request` escapes, and any member of `recwarn` (`pop` raises
+/// `AssertionError`) or `pytester`/`testdir` (`runpytest`, `assert_outcomes`).
+fn builtin_member_is_assertion_like(root: &str, member: &str) -> bool {
+    REQUEST_ESCAPES.contains(&member) || matches!(root, "recwarn" | "pytester" | "testdir")
+}
+
+/// Methods that wrap or replace unittest's own test execution; an override
+/// can assert around `super().run(...)`.
+const CLASS_LIFECYCLE_HOOKS: &[&str] = &[
+    "__init__",
+    "__init_subclass__",
+    "doCleanups",
+    "run",
+    "debug",
+    "__call__",
+    "_callTestMethod",
+    "_callSetUp",
+    "_callTearDown",
+    "_callCleanup",
+    "_callAsync",
+];
+
+/// Modules whose context managers do not assert on exit. A `with` callee
+/// imported from any other module (`responses.RequestsMock()`, `respx.mock`,
+/// a project guard) may check on exit.
+fn is_inert_with_module(qualified: &str) -> bool {
+    let root = qualified.split('.').next().unwrap_or(qualified);
+    matches!(
+        root,
+        "contextlib"
+            | "tempfile"
+            | "unittest"
+            | "mock"
+            | "os"
+            | "pathlib"
+            | "io"
+            | "threading"
+            | "decimal"
+            | "warnings"
+            | "sys"
+            | "time"
+            | "datetime"
+            | "logging"
+            | "socket"
+            | "zipfile"
+            | "tarfile"
+            | "sqlite3"
+            | "shutil"
+            | "asyncio"
+            | "concurrent"
+            | "multiprocessing"
+            | "typing"
+    )
+}
+
+/// Third-party assertion, matcher and soft-check libraries (and the pytest
+/// plugin namespace). Their entry points often carry no assertion-like name
+/// (`nose.tools.eq_`, `pytest_check.check.equal`, `pytest_assume.assume`), so
+/// a name imported from one is assertion-like by origin.
+const ASSERTION_LIBRARY_ROOTS: &[&str] = &[
+    "aioresponses",
+    "assertpy",
+    "doctest",
+    "expects",
+    "grappa",
+    "hamcrest",
+    "httpretty",
+    "nose",
+    "nose2",
+    "pytest_assume",
+    "pytest_check",
+    "respx",
+    "responses",
+    "should_dsl",
+    "softest",
+    "sure",
+    "testfixtures",
+    "testtools",
+    "twisted",
+];
+
+/// Whether a qualified import comes from an assertion library or a pytest
+/// plugin module (`pytest_*`, other than `pytest_asyncio`).
+fn is_assertion_library(qualified: &str) -> bool {
+    let root = qualified.split('.').next().unwrap_or(qualified);
+    ASSERTION_LIBRARY_ROOTS.contains(&root)
+        || (root.starts_with("pytest_") && root != "pytest_asyncio")
+}
+
+/// Modules whose decorators wrap a test without asserting around it. Any other
+/// imported decorator (`responses.activate`, `freeze_time`) can check on exit.
+fn is_inert_decorator_module(qualified: &str) -> bool {
+    let root = qualified.split('.').next().unwrap_or(qualified);
+    matches!(
+        root,
+        "pytest"
+            | "pytest_asyncio"
+            | "functools"
+            | "contextlib"
+            | "hypothesis"
+            | "unittest"
+            | "typing"
+            | "typing_extensions"
+            | "dataclasses"
+            | "abc"
+            | "anyio"
+            | "asyncio"
+    )
+}
+
 /// Qualified callees that end or fail a test without an `assert`.
 /// `warnings.simplefilter("error")` turns any later warning into a failure;
 /// the filter action is not read, so every filter call counts.
 const FAILING_CALLEES: &[&str] = &[
     "_thread.interrupt_main",
+    "importlib.import_module",
     "os._exit",
     "os.abort",
     "os.kill",
     "os.killpg",
+    "runpy.run_module",
+    "runpy.run_path",
     "signal.raise_signal",
+    "subprocess.run",
     "sys.exit",
+    "unittest.main",
     "warnings.filterwarnings",
     "warnings.simplefilter",
 ];
@@ -802,7 +969,7 @@ const INERT_BUILTINS: &[&str] = &[
 /// pytest's built-in fixtures. They supply inputs and capture state; they do
 /// not assert on their own, so requesting one does not make admission
 /// unresolved. Every other requested fixture might.
-const PYTEST_BUILTIN_FIXTURES: &[&str] = &[
+pub(super) const PYTEST_BUILTIN_FIXTURES: &[&str] = &[
     "cache",
     "capfd",
     "capfdbinary",
@@ -1041,6 +1208,7 @@ pub(super) fn assertion_admission(
         || context.has_implicit_fixture
         || context.has_plugins
         || context.has_assertion_like_lifecycle
+        || context.has_module_effect
         || opaque_class
     {
         return PythonAssertionAdmission::Unresolved;
@@ -1388,6 +1556,17 @@ impl BodyScan<'_> {
     }
 
     fn decorator(&mut self, decorator: &Expr) {
+        // An imported decorator wraps the test and may check around it.
+        let head = match decorator {
+            Expr::Call(call) => call.func.as_ref(),
+            other => other,
+        };
+        if let Some(name) = dotted_name(head)
+            && let Some(qualified) = self.imported_name(&name)
+            && !is_inert_decorator_module(&qualified)
+        {
+            self.assertion_like = true;
+        }
         if let Expr::Call(_) = decorator {
             self.expr(decorator);
         } else if let Some(name) = dotted_name(decorator) {
@@ -1401,6 +1580,17 @@ impl BodyScan<'_> {
 
     fn with_items(&mut self, items: &[ast::WithItem]) {
         for item in items {
+            let head = match &item.context_expr {
+                Expr::Call(call) => call.func.as_ref(),
+                other => other,
+            };
+            if let Some(name) = dotted_name(head)
+                && let Some(qualified) = self.imported_name(&name)
+                && !is_inert_with_module(&qualified)
+                && !qualified.starts_with("pytest.")
+            {
+                self.assertion_like = true;
+            }
             self.expr(&item.context_expr);
             self.opt_expr(item.optional_vars.as_deref());
         }
@@ -1562,6 +1752,18 @@ impl BodyScan<'_> {
     /// not to assert. Calling the result of a call (`make_checker()(x)`) or a
     /// subscript (`checks[kind](x)`) is dynamic and so assertion-like.
     fn call_is_assertion_like(&self, call: &ast::ExprCall) -> bool {
+        // `pytest.param(..., marks=pytest.mark.xfail(strict=True))` applies a
+        // mark to one case: only `id=` is inert.
+        if dotted_name(call.func.as_ref())
+            .and_then(|name| self.imported_name(&name))
+            .is_some_and(|qualified| qualified == "pytest.param")
+            && call
+                .keywords
+                .iter()
+                .any(|keyword| keyword.arg.as_ref().is_none_or(|arg| arg.as_str() != "id"))
+        {
+            return true;
+        }
         if matches!(call.func.as_ref(), Expr::Call(_)) {
             return true;
         }
@@ -1608,7 +1810,7 @@ impl BodyScan<'_> {
             return true;
         }
         if self.scope.builtin_fixtures.contains(root) {
-            return matches!(last, "getfixturevalue" | "getfuncargvalue");
+            return builtin_member_is_assertion_like(root, last);
         }
         if self.context.root_relative_aliases.contains(root) {
             // `from . import checks` in a root-level test file (#6657).
@@ -1628,6 +1830,7 @@ impl BodyScan<'_> {
 
     fn import_is_assertion_like(&self, qualified: &str) -> bool {
         is_test_support_path(qualified)
+            || is_assertion_library(qualified)
             || (!self.scope.module_dir.is_empty()
                 && qualified.starts_with(&format!("{}.", self.scope.module_dir)))
             || FAILING_CALLEES.contains(&qualified)
@@ -1652,8 +1855,10 @@ impl BodyScan<'_> {
             return false;
         }
         if self.scope.builtin_fixtures.contains(root) {
-            // `request.getfixturevalue("name")` pulls in any fixture.
-            return matches!(last, "getfixturevalue" | "getfuncargvalue");
+            // `request.getfixturevalue("name")` pulls in any fixture and
+            // `request.applymarker(...)` / `request.node.add_marker(...)`
+            // attach marks (`xfail`, `usefixtures`) after collection.
+            return builtin_member_is_assertion_like(root, last);
         }
         if self.scope.argnames.contains(root) {
             // Calling a parameter runs whatever the case supplies.
@@ -1700,4 +1905,111 @@ impl BodyScan<'_> {
                 }
             })
     }
+}
+
+/// Whether code outside any test function can run at the owner implicitly in
+/// this module, from evidence RIPR can see (#5491 `missing_input`): an autouse
+/// fixture, any `pytestmark`, `pytest_plugins`, a runtest hook, any setup or
+/// teardown hook or class-body statement, a class with a base other than
+/// `object`/`unittest.TestCase`/none or with a decorator (it can inherit or
+/// install hooks), or a module-level effect. Decided by existence so the row
+/// pass fails closed without reading what that code calls. Autouse fixtures
+/// imported by name, import side effects, plugins from ini/addopts and
+/// `sitecustomize` stay invisible.
+pub(super) fn module_implicit_reach(
+    source: &str,
+    statements: &[Stmt],
+    imports: &[PythonImport],
+) -> bool {
+    let mut context = PythonAdmissionContext {
+        safe_bases: safe_base_spellings(imports),
+        ..PythonAdmissionContext::default()
+    };
+    let mut lifecycle = Vec::new();
+    context.collect(statements, &mut lifecycle);
+    context.has_implicit_fixture
+        || context.has_plugins
+        || context.has_runtest_hook
+        || !context.opaque_classes.is_empty()
+        || !lifecycle.is_empty()
+        // A star import can bring an autouse fixture or hook into the module.
+        || imports
+            .iter()
+            .any(|import| import.alias == "*" || import.imported == "*")
+        || defines_assertion_like_helper(statements)
+        || has_non_test_class_method(statements)
+        || statements.iter().any(|statement| match statement {
+            // A `pytest_*` function in a test module is a live hook, like conftest's.
+            Stmt::FunctionDef(function) => function.name.as_str().starts_with("pytest_"),
+            Stmt::AsyncFunctionDef(function) => function.name.as_str().starts_with("pytest_"),
+            _ => false,
+        })
+        || module_level_effects(source, statements)
+}
+
+/// A function defined in the module whose name suggests an assertion helper
+/// (`assert_*`, `check_*`, `verify_*`): a test calling it through `self` hides
+/// the owner call inside it.
+fn defines_assertion_like_helper(statements: &[Stmt]) -> bool {
+    statements.iter().any(|statement| match statement {
+        Stmt::FunctionDef(function) => is_assertion_like_name(function.name.as_str()),
+        Stmt::AsyncFunctionDef(function) => is_assertion_like_name(function.name.as_str()),
+        Stmt::ClassDef(class) => defines_assertion_like_helper(&class.body),
+        _ => false,
+    })
+}
+
+fn is_assertion_like_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    ["assert", "check", "verify"]
+        .iter()
+        .any(|prefix| lower.starts_with(prefix))
+}
+
+/// A method of a class in the module whose name does not start with `test`: a
+/// helper the tests may call through `self` (hooks and fixtures are handled
+/// separately).
+fn has_non_test_class_method(statements: &[Stmt]) -> bool {
+    statements.iter().any(|statement| match statement {
+        Stmt::ClassDef(class) => class.body.iter().any(|member| match member {
+            Stmt::FunctionDef(function) => !function.name.as_str().starts_with("test"),
+            Stmt::AsyncFunctionDef(function) => !function.name.as_str().starts_with("test"),
+            Stmt::ClassDef(_) => has_non_test_class_method(std::slice::from_ref(member)),
+            _ => false,
+        }),
+        _ => false,
+    })
+}
+
+/// A module-level statement that can run code or rewrite another module at
+/// import: any `pytestmark`, a statement whose source holds a call, or an
+/// attribute or subscript assignment (`s.can_reserve = fake`). Imports,
+/// definitions, docstrings and plain constants do not count.
+pub(super) fn module_level_effects(source: &str, statements: &[Stmt]) -> bool {
+    let writes_through = |target: &Expr| matches!(target, Expr::Attribute(_) | Expr::Subscript(_));
+    statements.iter().any(|statement| match statement {
+        Stmt::FunctionDef(_)
+        | Stmt::AsyncFunctionDef(_)
+        | Stmt::ClassDef(_)
+        | Stmt::Import(_)
+        | Stmt::ImportFrom(_)
+        | Stmt::Pass(_) => false,
+        Stmt::Expr(expr) if matches!(expr.value.as_ref(), Expr::Constant(_)) => false,
+        Stmt::Assign(assign)
+            if assign.targets.iter().any(|target| {
+                writes_through(target)
+                    || matches!(target, Expr::Name(name) if name.id.as_str() == "pytestmark")
+            }) =>
+        {
+            true
+        }
+        Stmt::AugAssign(assign) if writes_through(&assign.target) => true,
+        Stmt::AnnAssign(assign) if writes_through(&assign.target) => true,
+        other => {
+            let range = other.range();
+            source
+                .get(usize::from(range.start())..usize::from(range.end()))
+                .is_none_or(|text| text.contains('('))
+        }
+    })
 }

@@ -960,13 +960,15 @@ mod tests {
                     Confidence::Unknown,
                     "boundary value missing",
                 ),
-                observed_values: vec![ValueFact {
-                    file: None,
-                    line: 12,
-                    text: "discounted_total(150)".to_string(),
-                    value: "150".to_string(),
-                    context: ValueContext::FunctionArgument,
-                }],
+                observed_values: vec![
+                    ValueFact {
+                        line: 12,
+                        text: "discounted_total(150)".to_string(),
+                        value: "150".to_string(),
+                        context: ValueContext::FunctionArgument,
+                    }
+                    .into(),
+                ],
                 missing_discriminators: vec![MissingDiscriminatorFact {
                     value: "amount == threshold".to_string(),
                     reason: "equality boundary not observed".to_string(),

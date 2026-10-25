@@ -124,9 +124,13 @@ pub(crate) fn render_context_packet_dto(packet: &ContextPacket) -> String {
         packet.related_tests_total,
         true,
     );
+    // An unrecognized token falls back to `static_unknown`, whose rows keep
+    // generic miss wording.
+    let packet_family = &crate::domain::ProbeFamily::from_wire(&packet.probe.family)
+        .unwrap_or(crate::domain::ProbeFamily::StaticUnknown);
     out.push_str("  \"related_tests\": [\n");
     for (idx, test) in packet.related_tests.iter().enumerate() {
-        related_test_json(&mut out, test, &packet.missing_discriminators, 2);
+        related_test_json(&mut out, test, packet_family, 2);
         if idx + 1 != related_test_count {
             out.push(',');
         }
@@ -260,7 +264,6 @@ mod tests {
     fn context_packet_escapes_observed_values_and_discriminator_reasons() {
         let mut finding = sample_finding();
         finding.activation.observed_values.push(ValueFact {
-            file: None,
             line: 11,
             text: "assert!(x)".to_string(),
             value: "line \"a\"\nnext".to_string(),
@@ -399,6 +402,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }
     }
 

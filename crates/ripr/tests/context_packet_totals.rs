@@ -176,6 +176,8 @@ fn related(name: &str) -> RelatedTest {
         relation_reason: None,
         relation_confidence: None,
         miss: None,
+        miss_support: None,
+        role: ripr::domain::RelatedTestRole::Contributing,
     }
 }
 

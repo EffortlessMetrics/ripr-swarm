@@ -1,0 +1,22 @@
+{
+  "case_id": "unnum-0028-ex2-raises-error-path",
+  "subject_id": "authored-py-pytest-unnum",
+  "origin": "authored",
+  "anchor": "unnum/negative.py:3",
+  "behavior_family": "error_message",
+  "test_shape": "pytest_raises_class_only",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

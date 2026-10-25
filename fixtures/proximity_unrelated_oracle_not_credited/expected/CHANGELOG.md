@@ -37,3 +37,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — proximity_unrelated_oracle_not_credited (4)
+
+Reason:
+RIPR-SPEC-0224
+
+Command:
+`cargo xtask goldens bless proximity_unrelated_oracle_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

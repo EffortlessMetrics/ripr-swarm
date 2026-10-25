@@ -440,7 +440,7 @@ fn gap_evidence_core(
                 "miss": test.miss.map(|miss| miss.as_str()),
                 "why": crate::output::related_test_miss::related_test_miss_reason(
                     test,
-                    &finding.activation.missing_discriminators,
+                    &finding.probe.family,
                 ),
             })
         })
@@ -739,6 +739,8 @@ pub(crate) fn test_finding() -> Result<Finding, String> {
             relation_reason: Some(crate::domain::RelationReason::DirectOwnerCall),
             relation_confidence: Some(crate::domain::RelationConfidence::High),
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }],
         recommended_next_step: Some("add a boundary assertion for 10000".to_string()),
         language: Some(crate::domain::LanguageId::Rust),
@@ -905,6 +907,7 @@ mod tests {
         }
 
         let output = crate::app::CheckOutput {
+            value_origins: Default::default(),
             schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
             harness_projections: Vec::new(),
             tool: "ripr".to_string(),
@@ -1842,7 +1845,7 @@ mod tests {
         let [direct, advisory] = finding.related_tests.as_slice() else {
             return Err(format!("expected two rows: {:?}", finding.related_tests));
         };
-        let why = related_test_miss_reason(direct, &finding.activation.missing_discriminators)
+        let why = related_test_miss_reason(direct, &finding.probe.family)
             .ok_or("the direct row should have a reason")?;
         let item = GapItem::from_finding(&finding, Path::new("/test-root"))?;
         let rows = item.evidence_core["related_tests"]
