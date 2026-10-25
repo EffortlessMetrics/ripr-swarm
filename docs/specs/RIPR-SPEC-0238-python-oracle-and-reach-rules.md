@@ -346,10 +346,19 @@ Relations, first match wins (rank, oracle-eligible):
   module that is not where the owner's application comes from is a rival and
   does not relate: the owner's file imports the receiver from a module (the
   test must import it from that module), or defines it itself (the test must
-  import it from that module or a package above it). A client built
-  elsewhere (a fixture, an unresolved, dotted or called application name, a
-  rebound name, a router an application includes under another name) is
-  unidentified and keeps the path-and-verb match (#10110);
+  import it from that module or a package above it) and so is one built over
+  another symbol of the owner's module. A client's application comes from the
+  test body or, for a fixture parameter, from the nearest `@pytest.fixture` of
+  that name (the test's module, then `conftest.py` up the directory chain)
+  whose every `return` or `yield` builds a client over one imported name. Only
+  a client built over the owner's own application is `api_client_route_call`.
+  A client whose application is not resolved (a fixture it cannot read or that
+  builds on another fixture, an unresolved, dotted or called application name
+  such as a factory, a rebound name, a router an application includes under
+  another name, a decorator on a receiver the adapter does not recognise) that
+  still calls the route's path and verb is `api_client_route_unidentified_app`
+  (2, reach only, never an oracle) and reads as the static limit
+  `missing_import_graph`, not as a gap or a credit (#10110);
 - R4: `construct_call` (4, eligible): a `__call__` owner invoked as
   `Class(...)(...)`;
 - R5: `local_binding` (4, eligible): a `__call__` owner invoked through
@@ -490,6 +499,9 @@ same-named call neither supplies nor cancels the refusal. Pinned by the
     whole-collection comparison counts only when a dict or list display is
     the other compared operand of the assertion, not when `== {` or `== [`
     appears anywhere in its text.
+    A changed element on its own line of a multi-line literal bound by
+    `return` or an assignment is judged as the joined enclosing literal, so
+    the same rules apply as for a one-line literal.
 11. **The f-string length gate reads the crediting assertion.** For a
     changed f-string whose literal text changed and whose interpolations
     did not, an assertion that is a pure `len(...)` aggregate cannot

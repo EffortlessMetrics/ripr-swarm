@@ -1750,6 +1750,7 @@ mod direct {
                 line_text: &case.after,
                 old_line_text: Some(&case.before),
                 guard_entered: false,
+                literal_pair: None,
                 focus: &focus,
                 boundary_fact: None,
             },
@@ -2481,6 +2482,7 @@ mod direct {
                 old_line_text: Some(&case.before),
                 focus: &focus,
                 guard_entered: false,
+                literal_pair: None,
                 boundary_fact: Some(&fact),
             },
             &case.tests,
@@ -2533,6 +2535,7 @@ mod direct {
                     line_text: &case.after,
                     old_line_text: Some(&case.before),
                     guard_entered: false,
+                    literal_pair: None,
                     focus: &focus,
                     boundary_fact: None,
                 },
@@ -2585,6 +2588,7 @@ mod direct {
                 line_text: &case.after,
                 old_line_text: Some(&case.before),
                 guard_entered: false,
+                literal_pair: None,
                 focus: &focus,
                 boundary_fact: None,
             },
@@ -2679,4 +2683,32 @@ mod direct {
         assert_eq!(row.miss, None);
         Ok(())
     }
+}
+
+#[test]
+fn multiline_sibling_only_row_is_observation_unconfirmed() -> Result<(), String> {
+    // The row is rechecked against the same joined-literal element gate as the finding.
+    let source =
+        "def labels():\n    return {\n        \"name\": \"x\",\n        \"label\": \"y\",\n    }\n";
+    let owners = extract_owners(Path::new("src/subject.py"), source);
+    let tests = extract_tests(
+        Path::new("tests/test_subject.py"),
+        "from src.subject import labels\n\ndef test_name():\n    assert labels()[\"name\"] == \"x\"\n",
+    );
+    let finding = super::classify::classify_change_with_source(
+        Path::new("src/subject.py"),
+        4,
+        "        \"label\": \"y\",",
+        Some("        \"tag\": \"y\","),
+        &owners,
+        &tests,
+        Some(source),
+    )
+    .ok_or("changed literal element should classify")?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(
+        miss_of(&finding, "test_name"),
+        Some(RelatedTestMiss::ObservationUnconfirmed)
+    );
+    Ok(())
 }
