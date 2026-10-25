@@ -1,5 +1,6 @@
 use super::PythonFramework;
 use super::admission::{PythonAdmissionContext, PythonTestFunction, assertion_admission};
+use super::conditional_defs::live_conditional_functions;
 use super::module_constants::{
     PythonModuleConstant, constants_visible_in_function, python_test_rebinding,
 };
@@ -36,41 +37,28 @@ pub(super) fn collect_owners_from_statements(
     module_constants: &[PythonModuleConstant],
     out: &mut Vec<PythonOwner>,
 ) {
+    let function_context = PythonOwnerContext {
+        file,
+        source,
+        class_context,
+        imports,
+        module_constants,
+    };
+    // A definition under a statically decided module-level `if` runs on every
+    // interpreter, so it is an owner like a top-level one (#9423).
+    if class_context.is_none() {
+        for stmt in live_conditional_functions(source, statements) {
+            let first = out.len();
+            push_function_owner(stmt, function_context, out);
+            for owner in &mut out[first..] {
+                owner.version_conditional = true;
+            }
+        }
+    }
     for stmt in statements {
         match stmt {
-            Stmt::FunctionDef(function) => {
-                out.push(owner_from_function(
-                    PythonOwnerContext {
-                        file,
-                        source,
-                        class_context,
-                        imports,
-                        module_constants,
-                    },
-                    function.name.as_str(),
-                    function.range,
-                    &function.decorator_list,
-                    &function.args,
-                    &function.body,
-                    false,
-                ));
-            }
-            Stmt::AsyncFunctionDef(function) => {
-                out.push(owner_from_function(
-                    PythonOwnerContext {
-                        file,
-                        source,
-                        class_context,
-                        imports,
-                        module_constants,
-                    },
-                    function.name.as_str(),
-                    function.range,
-                    &function.decorator_list,
-                    &function.args,
-                    &function.body,
-                    true,
-                ));
+            Stmt::FunctionDef(_) | Stmt::AsyncFunctionDef(_) => {
+                push_function_owner(stmt, function_context, out);
             }
             Stmt::ClassDef(class) => {
                 let class_path = class_context.map_or_else(
@@ -121,6 +109,30 @@ pub(super) fn collect_owners_from_statements(
             }
             _ => {}
         }
+    }
+}
+
+fn push_function_owner(stmt: &Stmt, context: PythonOwnerContext<'_>, out: &mut Vec<PythonOwner>) {
+    match stmt {
+        Stmt::FunctionDef(function) => out.push(owner_from_function(
+            context,
+            function.name.as_str(),
+            function.range,
+            &function.decorator_list,
+            &function.args,
+            &function.body,
+            false,
+        )),
+        Stmt::AsyncFunctionDef(function) => out.push(owner_from_function(
+            context,
+            function.name.as_str(),
+            function.range,
+            &function.decorator_list,
+            &function.args,
+            &function.body,
+            true,
+        )),
+        _ => {}
     }
 }
 
@@ -179,6 +191,7 @@ fn owner_from_function(
         .unwrap_or_else(|| name.to_string());
     let route_paths = collect_static_route_paths(context.source, decorators);
     let route_methods = collect_static_route_methods(context.source, decorators);
+    let route_receivers = collect_static_route_receivers(context.source, decorators);
     let dynamic_route_decorators = collect_dynamic_route_decorators(context.source, decorators);
     let unplain_decorators = called_decorator_names(decorators);
     let decorator_lines = decorators
@@ -228,6 +241,7 @@ fn owner_from_function(
         cli_receiver_names: collect_static_cli_receiver_names(context.source, context.imports),
         route_paths,
         route_methods,
+        route_receivers,
         dynamic_route_decorators,
         unplain_decorators,
         decorator_lines,
@@ -248,8 +262,15 @@ fn owner_from_function(
         term_facts,
         class_facts: super::related_tests::PythonClassFacts {
             direct_statements: direct_expression_statements(context.source, body),
+            bound_names: super::module_constants::function_bound_names(
+                args,
+                body,
+                &text_for_range(context.source, range),
+            ),
             ..Default::default()
         },
+        foreign_writes: Default::default(),
+        version_conditional: false,
     }
 }
 
@@ -336,6 +357,7 @@ fn owner_from_class(
         cli_receiver_names: collect_static_cli_receiver_names(context.source, context.imports),
         route_paths: collect_static_route_paths(context.source, decorators),
         route_methods: collect_static_route_methods(context.source, decorators),
+        route_receivers: collect_static_route_receivers(context.source, decorators),
         dynamic_route_decorators: collect_dynamic_route_decorators(context.source, decorators),
         unplain_decorators: called_decorator_names(decorators),
         decorator_lines: None,
@@ -350,6 +372,8 @@ fn owner_from_class(
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
     }
 }
 
@@ -371,6 +395,7 @@ pub(super) fn module_owner(
         cli_receiver_names: collect_static_cli_receiver_names(source, imports),
         route_paths: Vec::new(),
         route_methods: Vec::new(),
+        route_receivers: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         unplain_decorators: Vec::new(),
         decorator_lines: None,
@@ -385,6 +410,8 @@ pub(super) fn module_owner(
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
     }
 }
 
@@ -1257,6 +1284,26 @@ fn collect_static_route_paths(source: &str, decorators: &[Expr]) -> Vec<String> 
                 return None;
             }
             route_decorator_literal_argument(source, decorator, &name)
+        })
+        .collect()
+}
+
+/// The receiver each static route decorator hangs off (`app` in `@app.get`),
+/// index-aligned with `collect_static_route_paths`.
+fn collect_static_route_receivers(source: &str, decorators: &[Expr]) -> Vec<String> {
+    decorators
+        .iter()
+        .filter_map(|decorator| {
+            let name = expr_full_name(decorator)?;
+            if !is_static_route_decorator(&name) {
+                return None;
+            }
+            route_decorator_literal_argument(source, decorator, &name)?;
+            Some(
+                name.rsplit_once('.')
+                    .map(|(receiver, _)| receiver.to_string())
+                    .unwrap_or_default(),
+            )
         })
         .collect()
 }

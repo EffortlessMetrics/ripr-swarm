@@ -1,0 +1,44 @@
+{
+  "case_id": "py-caplog-absence-text-still-absent",
+  "subject_id": "authored-py-pytest-caplog-absence",
+  "diff": "cases/py-caplog-absence-text-still-absent.diff",
+  "anchor": {
+    "file": "absence/audit.py",
+    "line": 36
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "output_text",
+  "test_shape": "pytest_caplog_text_absence_unreached",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "log.warning(\"archive done: %s\", record)",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the message wording changes"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The edit does not put the asserted-absent text into the message, so the absence assertion cannot notice it.",
+  "labeling_observation": {
+    "ripr_commit": "9ca14aac",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

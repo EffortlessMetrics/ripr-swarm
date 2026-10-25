@@ -1480,6 +1480,25 @@ The evidence-first fields are additive in schema `0.2`:
   evidence-path prose therefore says `source ... value`; the separate admitted
   `ripr.observe` and `ripr.discriminate` stages retain their own meaning. Field
   names, typed values, provenance, ordering and caps are unchanged.
+- The shared activation value-fact sorter used by Rust activation/slice and
+  Python boundary/guard/term evidence treats the recorded file as part of fact
+  identity (#8935). Equal line, text, value and context from distinct files
+  remain separate, with deterministic ordering; exact duplicates within one
+  file collapse. Machine value objects still omit the file field, so distinct
+  source locations can produce identical serialized entries and increase
+  counts or consume capped slots. This does not change the line-keyed
+  `assertion_texts` limitation below or the separate test-grip sorter.
+- The Rust library `ValueFact` retains its original four public fields:
+  `line`, `text`, `value`, and `context`. File-aware classification uses an
+  internal located representation. `CheckOutput::source_value_files(finding)`
+  provides producer-recorded files in the same occurrence order as that
+  finding's complete source-value vector. Unknown individual files remain
+  `None`. The accessor returns `None` when no matching producer receipt exists,
+  the full probe or ordered value payload changed, or receipts conflict.
+  Unchanged clones can use the same receipt. Fresh human check and explain
+  rendering use this context; detached/deserialized four-field findings retain
+  honest bare-line rendering. Paths are never reconstructed from tokens,
+  coincident line numbers, or short finding IDs.
 - `identity.git_candidate_subject` (additive, no `schema_version` bump,
   #3278) appears in the `analysis_outcome.outcome.identity` object
   as a non-null object exactly when the run analyzed an immutable Git
@@ -7778,15 +7797,27 @@ schemas.
 
 ```json
 {
-  "schema_version": "0.4",
+  "schema_version": "0.5",
   "tool": "ripr",
   "report": "repo-exposure-latency",
   "status": "warn",
   "output_parity": "not_checked",
+  "output_parity_checks": [
+    {
+      "format": "repo-exposure-json",
+      "status": "not_checked",
+      "reason": "served_run_timeout"
+    },
+    {
+      "format": "repo-exposure-md",
+      "status": "pass",
+      "reason": null
+    }
+  ],
   "status_reasons": [
     "repo-exposure-json: file_fact_cache_cache_phase_not_observed",
     "repo-exposure-md: file_fact_cache_cache_phase_not_observed",
-    "output_parity_not_checked"
+    "repo-exposure-json: output_parity_not_checked_served_run_timeout"
   ],
   "timeout_ms": 30000,
   "binary": "target/debug/ripr.exe",
@@ -7800,6 +7831,13 @@ schemas.
       "stderr_bytes": 152,
       "file_fact_cache": null,
       "file_fact_cache_limitation": "cache_phase_not_observed",
+      "cache_family_store": {
+        "schema_version": "0.1",
+        "store_errors": 0,
+        "store_failures": [],
+        "store_failures_dropped": 0
+      },
+      "cache_family_store_limitation": null,
       "resource_cost": {
         "schema_version": "0.1",
         "observer": "ripr_process_self",
@@ -7848,6 +7886,8 @@ schemas.
       "stderr_bytes": 138,
       "file_fact_cache": null,
       "file_fact_cache_limitation": "cache_phase_not_observed",
+      "cache_family_store": null,
+      "cache_family_store_limitation": "cache_family_store_not_observed",
       "resource_cost": null,
       "resource_cost_limitation": "resource_cost_receipt_not_observed",
       "trace": []
@@ -7863,24 +7903,70 @@ shape; the second run stands for any format that produced no receipt.
 
 Field contract:
 
-- `schema_version` - currently `"0.4"` for the diagnostic report. `0.3` adds
+- `schema_version` - currently `"0.5"` for the diagnostic report. `0.3` adds
   the analyzer's own `resource_cost` block; `0.4` adds `output_parity` and
-  `status_reasons` (#9503). No earlier field changed.
-- `status` - `fail` when a format exits unsuccessfully before timeout; `warn`
-  when a format times out, a later format is skipped after timeout, any run
-  has cache `store_errors` or `corrupt_ignored` entries, any run has no
-  observed cache receipt, or output parity is unchecked; otherwise `pass`.
-  Exit codes alone never earn `pass`. Output parity is currently always
-  unchecked, so today's reports are `warn` at best; `cargo xtask
-  release-readiness` carries that as a non-required `warn` and forwards
-  `status_reasons` into its detail.
-- `output_parity` - `not_checked`: this report runs each format once and does
-  not compare cache-served output with a cold recomputation, so until it does
-  `status` cannot be `pass`.
+  `status_reasons` (#9503); `0.5` makes `output_parity` a real comparison, adds
+  `output_parity_checks` and the per-run `cache_family_store` receipt (#9633).
+  No earlier field was removed.
+- `status` - `fail` when a format exits unsuccessfully before timeout or when
+  output parity found a `mismatch`; `warn` when a format times out, a later
+  format is skipped after timeout, any run has cache `store_errors` or
+  `corrupt_ignored` entries (file-fact or classified-seam / corpus-fingerprint),
+  any run has no observed cache receipt, or output parity is `not_checked`;
+  otherwise `pass`. Exit codes alone never earn `pass`. `pass` is reachable
+  only when every completed format has a `pass` parity check, both receipts
+  are observed and clean, and no format timed out or was skipped.
+- `output_parity` - `pass`, `mismatch`, `fail` or `not_checked`. The primary
+  runs themselves use a private empty cache per format
+  (`target/ripr/reports/repo-exposure-primary-cache/<fmt>`), so each computes
+  cold and emits its cache receipts; their durations are cold-cache durations.
+  For each format the primary run completed, the report runs
+  `ripr check --root . --format <fmt>`
+  twice against a private `RIPR_CACHE_DIR` under
+  `target/ripr/reports/repo-exposure-parity-cache/<fmt>`: first cold (empty
+  cache, so the output is computed), then served (the cache the cold run just
+  wrote). The served run must show a final `cache_load` trace status of `hit`
+  and the cold run must not, so equality is never claimed for a comparison
+  that did not actually exercise the cache. For JSON, the artifact envelope's
+  `generated_at` and `content_sha256` (stamped per run, the digest covering the
+  timestamp) are the only fields ignored; Markdown is compared byte for byte.
+  `pass` needs both expected formats (`repo-exposure-json` and
+  `repo-exposure-md`) present exactly once and every one `pass`; an omitted,
+  skipped or duplicated expected format blocks the aggregate `pass`
+  (`output_parity_not_checked_missing_format:<fmt>` or
+  `..._duplicate_format:<fmt>` in `status_reasons`). Empty output, or JSON that is not a
+  document with an `artifact` object, is `not_checked` (`output_unparseable`),
+  never a vacuous `pass`. Any `mismatch` makes the overall value `mismatch`,
+  and a served run that errors or exits nonzero after a passing cold run is
+  `fail` (`served_run_fail`, a real nonzero exit code); both make `status`
+  `fail`. A served-run timeout, a primary run that did not complete, or any
+  other unverified comparison is `not_checked`. The check compares one repository state
+  across cold and cache-served runs; it does not claim runtime mutation
+  outcomes or that the output is correct, only that the cache did not change it.
+- `output_parity_checks[]` - per format: `format`, `status` (`pass`,
+  `mismatch`, `fail`, `not_checked`) and `reason` (`null` for `pass`;
+  `served_output_differs_from_cold` for `mismatch`; `served_run_fail` for
+  `fail`; for `not_checked` one of
+  `primary_run_<status>`, `cold_run_error: <text>`, `cold_run_<status>`,
+  `cold_run_served_from_cache`, `served_run_error: <text>`,
+  `served_run_killed`, `served_run_timeout`,
+  `served_run_not_cache_hit`, `comparison_subject_moved` (the producer's own
+  subject receipt for the cold and served legs differ: source, config or
+  generated-disclosure movement, decided before outputs are compared),
+  `comparison_subject_unobserved`, `output_unparseable`) and `diagnostics`
+  (named store failures or receipt limitations from the two comparison legs'
+  own authenticated receipts, e.g. `served_cache_family_store_errors=1`).
 - `status_reasons` - the named, per-run reasons `status` is not `pass`
   (`<format>: file_fact_cache_store_errors=N`,
   `<format>: file_fact_cache_corrupt_ignored=N`,
-  `<format>: file_fact_cache_<limitation>`, `output_parity_not_checked`).
+  `<format>: file_fact_cache_<limitation>`,
+  `<format>: cache_family_store_errors=N`,
+  `<format>: <cache_family_store limitation>`,
+  `<format>: output_parity_mismatch`,
+  `<format>: output_parity_fail_<reason>`,
+  `<format>: output_parity_not_checked_<reason>`,
+  `<format>: parity_<cold|served>_<leg diagnostic>`, or
+  `output_parity_not_checked` when no check ran).
 - `timeout_ms` - timeout budget per repo-exposure format. Override with
   `RIPR_REPO_EXPOSURE_LATENCY_TIMEOUT_MS`.
 - `runs[].format` - `repo-exposure-json` or `repo-exposure-md`.
@@ -7907,6 +7993,33 @@ Field contract:
   file name has no portable spelling (not UTF-8, or a literal backslash in a
   Unix name); its counters still count. A cache hit that skips the file-fact phase
   does not fabricate zero counters.
+- `runs[].cache_family_store` - the bounded store outcome of the other two
+  best-effort cache families, the classified-seam store and the
+  corpus-fingerprint store (#9633): `store_errors`, up to 32
+  `{path, stage, error}` rows and `store_failures_dropped`, under the same
+  cap and `rows + dropped == store_errors` accounting as the file-fact
+  receipt. `stage` is `classified_seam_store` or `corpus_fingerprint_store`
+  and `path` is the cache family directory (`repo-seam-facts`,
+  `repo-corpus-fingerprint`), never an absolute path; a `null` path or a
+  file-fact stage is refused as an invalid receipt. A healthy run emits the
+  receipt with no rows (the row `error` is free text from the failing store
+  and may contain absolute paths), so an empty list is an observation and a missing
+  receipt is `cache_family_store_not_observed`. The analyzer's compact (badge)
+  classified path does not emit this receipt yet.
+- `runs[].cache_family_store_limitation` - `null` when the receipt is present;
+  otherwise `cache_family_store_not_observed`, `format_skipped`, or a
+  `malformed_`, `duplicate_`, `invalid_` or `untrusted_` receipt state.
+- Receipt authentication: the harness passes a fresh random token in
+  `RIPR_REPO_EXPOSURE_LATENCY_RECEIPT_TOKEN`; the analyzer then writes
+  `ripr_file_fact_cache_receipt`, `ripr_cache_family_store_receipt` and
+  `ripr_resource_cost_receipt` lines as `<prefix> token=<token> <json>`. A line
+  that starts with a receipt prefix but lacks the token (for example text
+  injected through a hostile file name echoed by a diagnostic) is ignored, and
+  when no authenticated receipt remains the limitation is `untrusted_*`. The
+  phase lines emitted through `trace_latency_phase` (which includes
+  `cache_load`) carry the token too, and the parity check accepts a
+  `cache_load` status only from a tokened line, in addition to comparing the
+  real outputs. The separate `index_phase` lines are not tokened.
 - `runs[].file_fact_cache_limitation` - `null` when the receipt is present;
   otherwise a named unavailable state, including skipped, missing, malformed,
   duplicate, or invalid cache receipts. Completed rows survive a later timeout.
@@ -14942,6 +15055,15 @@ Field contract:
   `not_run` and non-required until the version bump and clean release-prep tree
   make them safe to execute.
 - `checks[].command` - command or dry-run surface that produced the signal.
+  The `repo-exposure-latency` check is `pass` only when the latency report's
+  `status` is `pass` (its `output_parity` compared cache-served output with a
+  cold recomputation and found them equal). A report `output_parity` of
+  `mismatch` or `fail` is a required `fail`; so is a report whose per-format
+  `output_parity_checks[]` contradict its summary (a failing check under any
+  summary, or a summary `pass` without exactly one passing check per expected
+  format); any other non-pass report (unchecked parity,
+  cache store errors, timeouts) is a non-required `warn` whose details carry the
+  report's `output parity` and `status reason:` lines (#9633).
 - `checks[].summary` - short human-readable status.
 - `checks[].artifacts` - generated or inspected artifacts for the check.
 - `checks[].details` - optional bounded command output, missing fields, or
@@ -18529,7 +18651,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.100",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.102",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -19297,7 +19419,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.100",
+      "schema_version": "1.102",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
@@ -19501,7 +19623,13 @@ content invalidations that caused this command to rebuild facts.
 when the file name has no portable spelling. Retained rows plus
 `cache.store_failures_dropped` equal `cache.store_errors`; a healthy run emits
 `[]` and `0`. The rows describe file-fact store failures only; results are
-recomputed, never served stale.
+recomputed, never served stale. A read through a path component that is a file
+(the entry directory is blocked) is a plain cache miss, not `corrupt_ignored`:
+the failed write that follows is the one reported store failure (#9633). The
+classified-seam and corpus-fingerprint store failures have `{path, stage,
+error}` rows (`stage` `classified_seam_store` or `corpus_fingerprint_store`) on
+the opt-in latency trace and in `cargo xtask repo-exposure-latency-report`,
+not in this receipt.
 `invalidation_status: "file_content_changed"` is emitted only when a prior
 same-path file-fact envelope is found under a different content key.
 Every targeted receipt also carries `cache.input_fingerprint`, an owned hash

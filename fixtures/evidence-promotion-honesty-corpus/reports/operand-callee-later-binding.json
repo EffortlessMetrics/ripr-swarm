@@ -1,0 +1,12 @@
+{
+  "kind": "operand_callee_expected_test_projection",
+  "summary": { "findings": 1 },
+  "findings": [
+    {
+      "classification": "weakly_exposed",
+      "probe": { "family": "field_construction" },
+      "discriminate": "weak",
+      "operand_pin": true
+    }
+  ]
+}
