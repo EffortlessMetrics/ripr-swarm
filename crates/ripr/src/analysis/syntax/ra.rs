@@ -1061,7 +1061,10 @@ fn function_item_fact(function: &ast::Fn) -> FunctionItemFact {
     let has_self_param = function
         .param_list()
         .is_some_and(|params| params.self_param().is_some());
+    // An `async fn` hands the caller an unpolled `Future`, not the type its
+    // signature writes, so it never establishes a receiver type (#10301).
     let returns_owner_type = !has_self_param
+        && function.async_token().is_none()
         && match (&container, function.ret_type().and_then(|ret| ret.ty())) {
             (FunctionContainer::Inherent { self_ty }, Some(ret)) => {
                 let ret = compact_syntax_text(ret.syntax().text().to_string());

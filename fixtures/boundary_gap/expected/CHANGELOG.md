@@ -1160,6 +1160,13 @@ The same snapshots follow corpus cache generation 1.102 to 1.103 for
 (RIPR-SPEC-0117 example 9, #6925), with the same scope: generation, content
 commitment, dependent verify commitments and receipt byte hashes only.
 
+### Declared Self-returning factory classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.103 to 1.104 for
+`Type::with_*`/`from_*`/`new_*` factories the indexed inherent `impl` declares
+returning `Self` (RIPR-SPEC-0005, #10301), with the same scope: generation,
+content commitment, dependent verify commitments and receipt byte hashes only.
+
 ## Pending — boundary_gap (25)
 
 Reason:

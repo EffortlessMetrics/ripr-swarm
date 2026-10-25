@@ -515,7 +515,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.103`: a `macro_rules!` test table whose generator is defined in another
 /// file (`#[macro_use] mod`, or a parent module) indexes its tests (#6925).
 /// Old entries read the table's owner as unreached.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.103";
+/// `1.104`: a `Type::with_*`/`from_*`/`new_*` factory the indexed inherent
+/// impl declares returning `Self` credits its receiver (#10301). Old entries
+/// leave those receivers unresolved.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.104";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -665,7 +668,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.103";
 /// `0.108`: same macro table tests as full `1.101`.
 /// `0.109`: same multi-line equal-arm sink limit as full `1.102`.
 /// `0.110`: same cross-file macro table tests as full `1.103`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.110";
+/// `0.111`: same declared Self-returning factory credit as full `1.104` (#10301).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.111";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -817,7 +821,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.110";
 /// `0.108`: same macro table tests as full `1.101`.
 /// `0.109`: same multi-line equal-arm sink limit as full `1.102`.
 /// `0.110`: same cross-file macro table tests as full `1.103`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.110";
+/// `0.111`: same declared Self-returning factory credit as full `1.104` (#10301).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.111";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1003,7 +1008,10 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `1.45`: oracle facts drop statements that never run (RIPR-SPEC-0231
 /// rule 8, #7638); `1.44` facts still credit them.
 /// `1.46`: call facts retain safe typed function-pointer aliases (#9478).
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.46";
+/// `1.47`: function item facts record whether an inherent associated function
+/// is declared returning `Self` or its own type (#10301); `1.46` facts read
+/// every prefixed factory as unresolved.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.47";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -4833,7 +4841,7 @@ mod tests {
         // 1.43 -> 1.44: `extern crate x as std` binding candidates (#8388).
         // 1.44 -> 1.45: never-executed oracle statements dropped (#7638).
         // 1.45 -> 1.46: typed function-pointer alias facts (#9478).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.46");
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.47");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -4961,8 +4969,8 @@ mod tests {
         // 1.99 -> 1.100: equal-valued arms leave the first condition without a sink (#9843).
         // 1.100 -> 1.101: macro_rules! test tables index one test per row (#6925).
         // 1.101 -> 1.102: equal-valued arms of a rustfmt-layout chain (#10134).
-        // 1.102 -> 1.103: cross-file macro_rules! test tables (#6925).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.103");
+        // 1.103 -> 1.104: declared Self-returning factories credit receivers (#10301).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.104");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5053,9 +5061,9 @@ mod tests {
         // 0.106 -> 0.107: same equal-arm sink limit as full 1.100.
         // 0.107 -> 0.108: same macro table tests as full 1.101 (#6925).
         // 0.108 -> 0.109: same multi-line equal-arm sink limit as full 1.102.
-        // 0.109 -> 0.110: same cross-file macro tables as full 1.103 (#6925).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.110");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.110");
+        // 0.110 -> 0.111: same declared factory credit as full 1.104 (#10301).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.111");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.111");
     }
 
     #[test]

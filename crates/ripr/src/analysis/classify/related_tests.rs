@@ -983,6 +983,12 @@ fn find_related_tests_with_candidates<'a>(
         && owner_fn.is_some_and(|owner| {
             owner.item.container == crate::analysis::facts::FunctionContainer::Free
         });
+    // Read at most once per owner, and only when a receiver must be bound to
+    // this impl; a scan per (test, owner) pair would walk the index each time.
+    let owner_receiver_index = OwnerReceiverIndex {
+        index,
+        factories: std::cell::OnceCell::new(),
+    };
     for test_index in candidate_indices {
         let test = index.tests().at(test_index);
         // Compute calls_owner BEFORE the package-prefix guard so a cross-crate
@@ -1320,7 +1326,7 @@ fn find_related_tests_with_candidates<'a>(
                 owner_name,
                 &indexed_same_name_ids,
                 test_source,
-                index,
+                &owner_receiver_index,
                 dispatches_to_fmt,
             )
         } else if helper_chain_reaches {
@@ -3607,13 +3613,17 @@ pub(in crate::analysis) fn owner_dispatch_trait(owner: &FunctionSummary) -> Opti
 }
 
 fn compact_impl_type_name(ty: &str) -> Option<String> {
+    compact_impl_type_name_ref(ty).map(str::to_string)
+}
+
+fn compact_impl_type_name_ref(ty: &str) -> Option<&str> {
     let ty = ty.trim();
     let ty = ty.strip_prefix('&').unwrap_or(ty).trim();
     let ty = ty.strip_prefix("mut ").unwrap_or(ty).trim();
     let ty = ty.strip_prefix("dyn ").unwrap_or(ty).trim();
     let ty = ty.split('<').next()?.trim();
     let name = ty.rsplit("::").next()?.trim();
-    (!name.is_empty()).then(|| name.to_string())
+    (!name.is_empty()).then_some(name)
 }
 
 fn last_let_statement<'a>(body: &'a str, binding: &str) -> Option<&'a str> {
@@ -3806,7 +3816,7 @@ fn initializer_is_one_head_expr(init: &str) -> bool {
 }
 
 /// Associated functions of one impl type whose declared return type is that
-/// type (`fn with_langs(..) -> Self`), read from the indexed impl rather than
+/// type (`fn with_langs(..) -> Self`, any name), read from the indexed impl rather than
 /// guessed from a `new_*`/`from_*`/`with_*` spelling (#10301). A receiver
 /// matcher without this authority treats only the conventional constructors as
 /// producing the type, so [`SelfFactories::NONE`] fails closed.
@@ -3841,14 +3851,14 @@ pub(in crate::analysis) fn self_factories_by_type(
         let FunctionContainer::Inherent { self_ty } = &function.item.container else {
             continue;
         };
-        let Some(ty) = compact_impl_type_name(self_ty) else {
+        let Some(ty) = compact_impl_type_name_ref(self_ty) else {
             continue;
         };
         if only.is_some_and(|only| only != ty) {
             continue;
         }
         let all_return_owner = seen
-            .entry(ty)
+            .entry(ty.to_string())
             .or_default()
             .entry(function.name.clone())
             .or_insert(true);
@@ -3869,11 +3879,11 @@ pub(in crate::analysis) fn self_factories_by_type(
 /// `Site(..)`, one of the conventional constructors (`Site::new(..)`,
 /// `Site::default()`, `Site::from(..)`), an enum tuple variant
 /// (`Shape::Circle(..)`) or an associated item (`Shape::Circle`).
-/// Any other associated call (`Site::make_cache()`) may return another type
-/// and fails closed. So do the `new_*`/`from_*`/`with_*` spellings: the prefix
-/// is a naming convention, not a return type, and `Site::with_cache()` may
-/// return a `Cache` (#8782 item 2). Only a name in `factories`, whose declared
-/// return type the index established, reads as the type (#10301).
+/// Any other associated call (`Site::make_cache()`, `Site::with_cache()`) may
+/// return another type and fails closed: a name or prefix is a convention, not
+/// a return type (#8782 item 2). Only a name in `factories`, whose declared
+/// return type the index established as `Self` or the type, reads as the type
+/// (#10301).
 /// Module-qualified heads stay unresolved: this matcher receives only a
 /// compact impl name, so the final segment cannot establish type identity.
 fn initializer_type_head<'a>(expr: &'a str, factories: SelfFactories<'_>) -> Option<&'a str> {
@@ -4604,15 +4614,23 @@ fn dispatch_operand_has_type(expr: &str, preceding: &str, impl_type: &str) -> bo
     )
 }
 
+/// The index and the owner's declared `Self`-returning factories, read at most
+/// once per owner (#10301) so a scan per (test, owner) pair never happens.
+struct OwnerReceiverIndex<'a> {
+    index: &'a RustIndex,
+    factories: std::cell::OnceCell<BTreeSet<String>>,
+}
+
 fn owner_call_relation_reason(
     test: &TestSummary,
     owner_fn: Option<&FunctionSummary>,
     owner_name: &str,
     same_name_ids: &[&str],
     test_source: Option<&str>,
-    index: &RustIndex,
+    receiver_index: &OwnerReceiverIndex<'_>,
     fmt_dispatch_resolved: bool,
 ) -> RelationReason {
+    let index = receiver_index.index;
     let indexed_same_name_count = same_name_ids.len();
     let Some(owner) = owner_fn else {
         return RelationReason::DirectOwnerCall;
@@ -4755,21 +4773,18 @@ fn owner_call_relation_reason(
         return RelationReason::DirectOwnerCall;
     }
     let impl_trait = owner_dispatch_trait(owner);
-    // The declared-return-type authority is read only when the test names
-    // `Type::` at all, so the index scan stays off the common path.
-    let factory_names = if test.body.contains(&format!("{impl_type}::")) {
+    // The declared-return-type authority (#10301) is read once per owner.
+    let factory_names = receiver_index.factories.get_or_init(|| {
         self_factories_by_type(index, Some(&impl_type))
             .remove(&impl_type)
             .unwrap_or_default()
-    } else {
-        BTreeSet::new()
-    };
+    });
     if method_call_resolves_to_impl(
         test,
         owner_name,
         &impl_type,
         impl_trait.as_deref(),
-        SelfFactories::of(&factory_names),
+        SelfFactories::of(factory_names),
     ) {
         RelationReason::DirectOwnerCall
     } else {
@@ -5655,6 +5670,48 @@ mod tests {
             "proptest! { fn gate() {} } gate(1);",
             "gate"
         ));
+    }
+
+    // (#10301) End to end: with two `build` owners, a receiver bound through a
+    // factory the indexed impl declares returning `Self` is a direct owner
+    // call; one bound through a same-impl factory returning another type is not.
+    #[test]
+    fn declared_self_factory_receivers_bind_the_owner_impl() {
+        let lib = "pub struct Site;\npub struct Cache;\nimpl Site {\n    pub fn with_langs(n: u8) -> Self { Site }\n    pub fn with_cache() -> Cache { Cache }\n    pub fn build(&self) -> u8 { 1 }\n}\nimpl Cache {\n    pub fn build(&self) -> u8 { 2 }\n}\n";
+        let tests = "#[test]\nfn langs() {\n    let s = Site::with_langs(1);\n    assert_eq!(s.build(), 1);\n}\n\n#[test]\nfn cache() {\n    let c = Site::with_cache();\n    assert_eq!(c.build(), 2);\n}\n";
+        let mut index = RustIndex::default();
+        for (path, text) in [("src/lib.rs", lib), ("tests/site.rs", tests)] {
+            let facts =
+                crate::analysis::rust_index::summarize_file(PathBuf::from(path), text.to_string());
+            index.extend_functions(facts.functions.iter().cloned());
+            index.extend_tests(facts.tests.iter().cloned());
+            index.insert_file_only(PathBuf::from(path), facts);
+        }
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "build" && function.id.0.contains("impl Site"))
+            .cloned();
+        assert!(owner.is_some(), "Site::build is indexed");
+        let probe = probe("src/lib.rs", "1");
+        let candidate_index = RelatedTestCandidateIndex::new(&index);
+        let related = find_related_tests_with_candidate_index(
+            &probe,
+            owner.as_ref(),
+            &index,
+            true,
+            None,
+            None,
+            &candidate_index,
+        );
+        let reason = |name: &str| {
+            related
+                .iter()
+                .find(|(test, _)| test.name == name)
+                .map(|(_, reason)| *reason)
+        };
+        assert_eq!(reason("langs"), Some(RelationReason::DirectOwnerCall));
+        assert_ne!(reason("cache"), Some(RelationReason::DirectOwnerCall));
     }
 
     #[test]
