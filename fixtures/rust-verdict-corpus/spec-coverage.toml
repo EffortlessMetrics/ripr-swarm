@@ -12,13 +12,13 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 201
+floor = 202
 
 # Most abstained rows whose tests do catch the change (missed credit). A
 # regression fails `verdict-corpus check`; an improvement passes with a note
 # to lower this number (not a failure, so concurrent fixes do not collide).
 # Raising it is a reviewed edit with a reason.
-missed_credit_ceiling = 146
+missed_credit_ceiling = 147
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
@@ -543,6 +543,12 @@ reason = "pilot presentation ordering, not an analyzer verdict"
 # Python oracle and reach rules
 [[spec]]
 id = "RIPR-SPEC-0238"
+scope = "out"
+reason = "non-Rust language or packaging surface"
+
+# Python Preview Static Facts
+[[spec]]
+id = "RIPR-SPEC-0028"
 scope = "out"
 reason = "non-Rust language or packaging surface"
 
