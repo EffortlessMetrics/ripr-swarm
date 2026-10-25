@@ -1735,6 +1735,22 @@ fn plain_inline_projects_keep_the_credit_and_every_other_spelling_refuses() -> R
             OracleStrength::Strong,
         ),
         (
+            "module.exports = { projects: [{ displayName: \"a\", globals: { tag: /a(b)[)/]/i } }] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { projects: [{ globals: { tag: /a(b)/ }, rootDir: \"pkg\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ globals: { tag: /a(b) } }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ globals: { tag: f(/a/) } }] };",
+            OracleStrength::Medium,
+        ),
+        (
             "module.exports = { projects: [{ preset: \"review-snapshot-preset\" }] };",
             OracleStrength::Medium,
         ),

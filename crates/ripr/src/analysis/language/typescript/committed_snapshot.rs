@@ -533,8 +533,31 @@ fn without_plain_inline_projects(raw: &str) -> Option<String> {
     let mut depth = 1usize;
     let mut end = None;
     let mut chars = array.char_indices().peekable();
+    let mut last_significant = '[';
     while let Some((at, ch)) = chars.next() {
+        let before_this = last_significant;
+        if !ch.is_whitespace() {
+            last_significant = ch;
+        }
         match ch {
+            // A regex literal in value position (`tag: /a(b)/`) holds
+            // parentheses and brackets that are not calls or nesting.
+            '/' if depth >= 2 && before_this == ':' => {
+                let mut in_class = false;
+                loop {
+                    let (_, inner) = chars.next()?;
+                    match inner {
+                        '\\' => {
+                            chars.next()?;
+                        }
+                        '\n' => return None,
+                        '[' => in_class = true,
+                        ']' => in_class = false,
+                        '/' if !in_class => break,
+                        _ => {}
+                    }
+                }
+            }
             '"' | '\'' | '`' => {
                 // A string at the array's top level names another config.
                 if depth == 1 {

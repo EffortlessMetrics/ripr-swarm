@@ -4,6 +4,7 @@ module.exports = {
       displayName: "unit",
       preset: "ts-jest",
       testEnvironment: "node",
+      globals: { tag: /a(b)/ },
       testMatch: ["<rootDir>/test/**/*.test.ts"],
     },
   ],

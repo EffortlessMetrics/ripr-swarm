@@ -7,7 +7,7 @@
   "retained_files": [
     {
       "path": "jest.config.js",
-      "sha256": "1f3b6fb993c8247f728fbdd2be1ce478adbe3dbb41d77713788045f4d4f74e7b"
+      "sha256": "427e9c4f83c3c18e65a50a1da80f421a1797038148e0400004ba9d153933a25a"
     },
     {
       "path": "package.json",
