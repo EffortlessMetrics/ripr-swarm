@@ -3,13 +3,17 @@ pub(crate) mod fn_signature;
 pub(crate) mod lexical;
 mod local_assertion_macros;
 mod local_test_macros;
+pub(crate) mod loop_accumulator;
+mod macro_scope;
 mod module_tree;
+mod mut_parameter;
 mod name_scope;
 mod nesting;
 mod owner_pin;
 mod passthrough_item_macros;
 mod pattern_pin;
 pub(crate) mod run_memo;
+pub(crate) use mut_parameter::mut_parameter_unwritten_at;
 pub(crate) use owner_pin::debug_assert_eq_calls;
 pub(crate) use owner_pin::macro_binding_candidates;
 pub(crate) use owner_pin::{
@@ -31,11 +35,18 @@ pub use adapter::{
     LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RustSyntaxAdapter, SyntaxNodeFact, TextRange,
 };
 pub(crate) use local_assertion_macros::{LocalMacroCall, MacroArm, local_macro_calls};
+#[cfg(test)]
+pub(crate) use local_test_macros::expand_local_test_macros;
 pub(crate) use local_test_macros::{
-    GeneratedTestPins, expand_local_test_macros, generated_test_pins,
+    GeneratedTestPins, expand_local_test_macros_with, generated_test_pins,
+};
+pub(crate) use macro_scope::{
+    ImportedMacros, MacroScope, calls_only_at_top_level, first_macro_call, macro_scope,
 };
 pub(crate) use module_tree::{RustModuleTreeEdge, RustModuleTreeScan, rust_module_tree_scan};
-pub(crate) use name_scope::{NameScope, NameScopes, UseBinding, name_scopes_for_fn};
+pub(crate) use name_scope::{
+    NameScope, NameScopes, UseBinding, fn_call_has_local_binding, name_scopes_for_fn,
+};
 pub(crate) use nesting::{
     block_comment_only_lines, non_code_token_end, parse_clean_source_file, rust_nesting_refusal,
 };

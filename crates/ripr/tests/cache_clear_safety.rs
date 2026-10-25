@@ -695,16 +695,17 @@ fn root_flag_fixture(label: &str) -> Result<PathBuf, String> {
     Ok(root)
 }
 
-/// Whether a `cache status --json` document names `expected`. The report
-/// prints the plain host spelling while `expected` is built from a
-/// canonicalized root, which carries a `\\?\` prefix and mixed separators on
-/// Windows, so the two are compared as resolved paths, not as text.
-fn reports_cache_dir(json: &serde_json::Value, expected: &Path) -> bool {
-    let (Some(reported), Ok(expected)) = (json["cache_dir"].as_str(), fs::canonicalize(expected))
-    else {
+/// Whether a reported `cache_dir` names `dir` as a filesystem identity, not
+/// a spelling: on Windows the product prints the resolved root as given while
+/// the oracle's canonical path carries `\\?\` and mixed separators (#9660).
+fn names_dir(reported: &serde_json::Value, dir: &Path) -> bool {
+    let Some(text) = reported.as_str() else {
         return false;
     };
-    fs::canonicalize(reported).is_ok_and(|reported| reported == expected)
+    match (fs::canonicalize(text), fs::canonicalize(dir)) {
+        (Ok(reported), Ok(dir)) => reported == dir,
+        _ => false,
+    }
 }
 
 #[test]
@@ -749,7 +750,7 @@ fn cache_status_and_clear_root_flag_target_the_checked_root_from_a_different_cwd
     let without = run_ripr_default_cache(&elsewhere, &["cache", "status", "--json"], &[])?;
     let without_json: serde_json::Value =
         serde_json::from_slice(&without.stdout).map_err(|error| error.to_string())?;
-    if reports_cache_dir(&without_json, &real_cache) {
+    if names_dir(&without_json["cache_dir"], &real_cache) {
         return Err("cwd without --root unexpectedly resolved the checked root".to_string());
     }
 
@@ -762,7 +763,7 @@ fn cache_status_and_clear_root_flag_target_the_checked_root_from_a_different_cwd
     let with_json: serde_json::Value =
         serde_json::from_slice(&with.stdout).map_err(|error| error.to_string())?;
     if !(with.status.success()
-        && reports_cache_dir(&with_json, &real_cache)
+        && names_dir(&with_json["cache_dir"], &real_cache)
         && with_json["entry_count"].as_u64().unwrap_or(0) > 0
         && with_json["status"] != "not_found")
     {
@@ -775,8 +776,8 @@ fn cache_status_and_clear_root_flag_target_the_checked_root_from_a_different_cwd
         &run_ripr_default_cache(&elsewhere, &["cache", "status", "--root", root_arg], &[])?.stderr,
     )
     .into_owned();
-    // The product quotes the root for the host's console (`shell_arg`): a
-    // Windows drive path is not in the bare-token set, so it prints in double quotes.
+    // Windows quotes the printed root for cmd/PowerShell; a plain temp path
+    // needs no quoting on Unix.
     let printed_root = if cfg!(windows) {
         format!("\"{root_arg}\"")
     } else {

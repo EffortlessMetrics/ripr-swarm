@@ -343,6 +343,13 @@ pub(crate) enum TypeScriptRelationKind {
     /// Admitted only when no test calls the owner itself. Reach is real but
     /// indirect, so the classifier never promotes it to `exposed`.
     ModuleEntryCall,
+    /// Test calls an instance method that a bare `@owner` method decorator
+    /// wraps, where the owner is a straight-line pass-through decorator
+    /// (RIPR-SPEC-0243 rule 21, #10189). Unlike `ModuleEntryCall`, the
+    /// decorated method's call result *is* the wrapper's return value, so
+    /// the classifier may lend `exposed` when the changed line is that
+    /// return. Entries only exist for shapes `decorated_entries` proves.
+    DecoratedMethodCall,
     /// Test imports a module-level value (`export const stop =
     /// Symbol('stop')`) from the owner's module and uses it as a value
     /// outside a direct `expect(...)` subject (#8568). Heuristic: the use
@@ -366,7 +373,7 @@ impl TypeScriptRelationKind {
             // genuinely exercises the owner, just via an intermediate file.
             Self::ReExportChainFollowed => 4,
             // Below every relation that calls the owner itself.
-            Self::ModuleEntryCall => 3,
+            Self::ModuleEntryCall | Self::DecoratedMethodCall => 3,
             Self::SameFileProximity => 3,
             Self::ModuleValueUse => 2,
             Self::DescribeName => 2,
@@ -385,6 +392,7 @@ impl TypeScriptRelationKind {
                 | Self::ClassMethodCall
                 | Self::ReExportChainFollowed
                 | Self::ModuleEntryCall
+                | Self::DecoratedMethodCall
         )
     }
 
@@ -402,6 +410,7 @@ impl TypeScriptRelationKind {
             Self::ClassMethodCall => "class_method_call",
             Self::ReExportChainFollowed => "re_export_chain_followed",
             Self::ModuleEntryCall => "module_entry_call",
+            Self::DecoratedMethodCall => "decorated_method_call",
             Self::ModuleValueUse => "module_value_use",
             Self::SameFileProximity => "same_file_proximity",
             Self::DescribeName => "describe_name",
@@ -718,14 +727,18 @@ impl TypeScriptErrorPayload {
             TypeScriptErrorPayloadKind::RejectsMatchObject => {
                 format!("await expect(...).rejects.toMatchObject({})", self.expected)
             }
-            TypeScriptErrorPayloadKind::ChaiThrowLiteral => {
+            TypeScriptErrorPayloadKind::ChaiThrowLiteral
+            | TypeScriptErrorPayloadKind::ChaiThrowClass
+            | TypeScriptErrorPayloadKind::ChaiThrowClassLiteral => {
                 format!("expect(...).to.throw({})", self.expected)
             }
             TypeScriptErrorPayloadKind::AssertThrowsRegex
+            | TypeScriptErrorPayloadKind::AssertThrowsContainsRegex
             | TypeScriptErrorPayloadKind::AssertThrowsObject => {
                 format!("assert.throws(..., {})", self.expected)
             }
             TypeScriptErrorPayloadKind::AssertRejectsRegex
+            | TypeScriptErrorPayloadKind::AssertRejectsContainsRegex
             | TypeScriptErrorPayloadKind::AssertRejectsObject => {
                 format!("await assert.rejects(..., {})", self.expected)
             }
@@ -758,12 +771,22 @@ pub(crate) enum TypeScriptErrorPayloadKind {
     RejectsMatchObject,
     /// chai `expect(...).to.throw("message")` (RIPR-SPEC-0243 rule 10).
     ChaiThrowLiteral,
+    /// chai `expect(...).to.throw(SomeError)` (RIPR-SPEC-0243 rule 10).
+    ChaiThrowClass,
+    /// chai `expect(...).to.throw(SomeError, "message")`: both the class and
+    /// the message substring must match (RIPR-SPEC-0243 rule 10).
+    ChaiThrowClassLiteral,
     /// `node:assert` `throws(fn, /^...$/)` (RIPR-SPEC-0243 rule 10).
     AssertThrowsRegex,
+    /// `node:assert` `throws(fn, /text/)`: an unanchored regex of plain text,
+    /// a substring test of `String(err)` (RIPR-SPEC-0243 rule 20).
+    AssertThrowsContainsRegex,
     /// `node:assert` `throws(fn, { message: "..." })` (RIPR-SPEC-0243 rule 10).
     AssertThrowsObject,
     /// `node:assert` `rejects(p, /^...$/)` (RIPR-SPEC-0243 rule 10).
     AssertRejectsRegex,
+    /// `node:assert` `rejects(p, /text/)` (RIPR-SPEC-0243 rule 20).
+    AssertRejectsContainsRegex,
     /// `node:assert` `rejects(p, { message: "..." })` (RIPR-SPEC-0243 rule 10).
     AssertRejectsObject,
 }

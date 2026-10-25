@@ -15,7 +15,10 @@ Start here:
   Why unknown: the change reaches a sink but infection could not be determined statically
   Canonical gap: gap:rust:src/lib.rs:parse_note:predicate_boundary:predicate:reason==lit727573745f6d6f64756c655f756e7265736f6c7665645f746172676574
   Changed behavior: reason == "rust_module_unresolved_target"
-  Missing discriminator (1 of 2): Changed boundary input is unresolved: boundary operand `reason` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the…
+  Missing discriminator (1 of 2): Changed boundary input is unresolved: boundary operand `reason` is
+    a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which
+    side of the boundary a test reaches; activation/infection is unknown; a related test that passes
+    literal inputs on each side of the boundary would let ripr decide
   Related test (1 of 4 matched rows): src/lib.rs:62 unresolved_target_location_is_required_and_positive
   Next step: Open the related test and trace its input through the local or computed operand
     (including default and empty cases) to see which side of the changed condition it exercises,
@@ -39,7 +42,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/parser_formatted_input_provenance/input --diff <cwd>/fixtures/parser_formatted_input_provenance/diff.patch --mode fast probe:src_lib.rs:predicate:7ed3887e
   ripr context --root <cwd>/fixtures/parser_formatted_input_provenance/input --diff <cwd>/fixtures/parser_formatted_input_provenance/diff.patch --mode fast --at probe:src_lib.rs:predicate:7ed3887e
-  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: boundary_value; incomplete evidence stage: activation); run `ripr repair probe:src_lib.rs:predicate:7ed3887e --root <cwd>/fixtures/parser_formatted_input_provenance/input` for the full gate's answer
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: producer-owned missing discriminator fact: boundary_value; incomplete evidence stage: activation; follow the Next step above, then rerun `ripr check`
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/parser_formatted_input_provenance/input --at src/lib.rs:44 --kind predicate
 

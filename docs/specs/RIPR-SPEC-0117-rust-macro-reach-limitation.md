@@ -242,11 +242,29 @@ otherwise indexes nothing for it:
   `$name:fragment` metavariables only; the selected arm is the first whose
   metavariable count matches the invocation's top-level arguments, and an
   `ident`, `literal`, `block` or `tt` argument must have that shape;
-- the selected transcriber contains `#[test]`, no repetition and no call to
-  another macro defined in the file, and no argument invokes one;
+- the selected transcriber contains `#[test]` and no call to another macro
+  defined in the file, and no argument invokes one; its only repetition is
+  the table form below;
 - no `use` in the file imports the generator's name (rustc rejects that
   invocation as ambiguous), and the expansion carries no `cfg` other than
   `cfg(test)` and no `cfg_attr`.
+
+A generator that is a table, itoa's `test! { name(value, expected) ... }`
+(#6925), is the one repetition shape: the whole matcher is
+`$( row ) sep? *` (or `+`), where a row is `$name:ident`, `literal`, `tt`
+or `block` variables, literal `,`, `;` or `:` tokens, and delimited groups of
+comma-separated metavariables (an `expr` outside a group needs a `,`, `;` or
+`:` after it, or the row separator); the transcriber is exactly one
+separator-free `$( body )*` over those variables. The invocation must split
+into rows with nothing left over, and every fragment must fit as for a plain
+arm. Each row becomes one expansion of the body, so a table of ten rows
+indexes ten tests, up to 512 rows and 128 KiB of expansion text per
+invocation; a larger table indexes nothing. Any other row layout (`=>`,
+nested repetition, a trailing separator, a leftover token, a group of the
+wrong arity) indexes nothing. A matcher that ends in a literal `,`, or an
+invocation that ends in one the matcher does not take, indexes nothing for
+that arm, because rustc would match a different arm. A row group is the same:
+`edge(10,)` does not fit `($v:expr)`.
 
 Each metavariable is replaced by its argument's source text and `$crate` by
 `crate`; an `expr` or `literal` argument of more than one element (`-1`) is
@@ -260,9 +278,66 @@ over the expansion text with the same rules as a hand-written test, so a
 deferred or escaping assertion inside the transcriber is refused exactly as it
 would be written by hand.
 
-This is not macro expansion in general. Generators defined in another file,
-`#[macro_use]` imports, repetition and procedural macros stay unindexed, and
-reach through them keeps the limitations above. A generated test whose
+### Generators Defined In Another File (#6925)
+
+A generator can sit in a different file of the same crate, such as
+`tests/support/mod.rs`, and reach the invoking file through Rust's textual
+macro scope. ripr resolves exactly two routes and splices the definitions
+into the invoking file before its first item, so every check above (unique
+name, precedes the invocation, no `use` of the name, no local macro in the
+body) applies to them unchanged:
+
+- the invoking file declares `#[macro_use] mod name;` at the top level, and
+  `name`'s file (or its own `#[macro_use]` modules) defines the macro;
+- the invoking file is a child module `mod name;` of a parent that defines
+  the macro, or imports it with `#[macro_use]`, before that declaration.
+
+The definitions are hoisted ahead of the file's first item. A `#[macro_use]
+mod` declared after the first generator call is not imported. A program rustc
+accepts never invokes a macro before the `mod` that brings it into scope, and a
+second definition of the same name anywhere in the file makes the name
+ambiguous and indexes nothing. A definition containing a token that spans
+lines (a multi-line string literal) is left out, a file that does not parse
+cleanly resolves nothing, and only a file that spells `name!` for a macro whose
+definition mentions `test` is resolved at all. `build.rs`, `main.rs` and
+`lib.rs` are crate roots. Parents are followed up to four modules, and
+`#[macro_use]` modules down to about four.
+
+A module resolves only to one file: `name.rs` or `name/mod.rs` under the
+declaring file's anchor (a crate root, `mod.rs`, or a file directly in
+`tests`, `benches` or `examples` has its children beside it; any other file
+has them under `<stem>/`; a file in a root directory is tried under both).
+Nothing is resolved, and the invocation indexes nothing, when the
+declaration has a `#[path]` or any attribute other than `macro_use`,
+`cfg(test)`, `allow`, `warn`, `deny` or `doc`; when zero or several files
+match; when the child has no single declaring parent (two test crates
+declaring the same `mod cases;`); when a macro defined in the module is
+declared after the `mod` that would have to see it; when the chain is more
+than about four modules; or when the imported text exceeds 64 KiB. Renamed,
+grouped and glob `use` imports, `include!`, and generators in another crate
+are not followed.
+
+A third route names the generator by path (#10298). The file spells an
+attribute-free `use crate::name;` at the top level, and in the file's crate
+(the crate root its `mod` declarations lead up to: `lib.rs`, `main.rs`,
+`build.rs`, or a file directly in `tests`, `benches` or `examples` that no
+other module declares) exactly one macro of that name exists and it carries a
+plain `#[macro_export]` (only `doc`, `allow`, `warn` or `deny` besides it).
+ripr hoists that definition like the others and blanks the `use` so the
+expander does not read the import as a second source of the name. It
+indexes nothing when a second macro of the name, exported or not, exists
+anywhere in the crate; when the macro is not exported; when `macro_export` is
+spelled anywhere the scope cannot list as a top-level plain export (inside a
+module or function, behind a `cfg`, with arguments, in a macro body); or when
+a file that could belong to the crate has no known crate root; when the
+sole definition sits in a module that is `cfg`'d, `#[path]`'d or not declared
+at all; or when any `name!` call is not directly at the file's top level (a
+`use` is not visible in a child module). A `crate::name!` call written as a
+path is not read.
+
+This is not macro expansion in general. Repetition other than the table form,
+generators reached by anything but the routes above, and procedural macros stay
+unindexed, and reach through them keeps the limitations above. A generated test whose
 transcriber calls a helper macro from another file is indexed for reach, but
 an assertion inside that helper is refused like any untrusted macro.
 
@@ -405,6 +480,31 @@ end of the file, which is an approximation for an edit in progress.
    #7549) keeps the prior evidence, and no edge forms
    for an owner named only in a string literal, a caller that binds a local
    or parameter of the owner's name, or a second invocation site.
+8. **Same-file test table** (#6925): a file defines `macro_rules! edge_table`
+   with `$($name:ident($width:expr, $limit:expr, $want:expr))*` whose
+   transcriber emits one `#[test] fn $name` asserting `fits_edge($width,
+   $limit)` per row, and invokes it with rows under, on and over the limit.
+   The owner is reached through the generated tests and the boundary row
+   discriminates it, so it reads `exposed`, exactly as the same three tests
+   written by hand. Rows that never touch the boundary read `weakly_exposed`;
+   rows that discard the result read `reachable_unrevealed`; a row layout
+   outside the table form (`name => (..)`) registers no test and keeps
+   `no_static_path`.
+9. **Table generated by a macro defined in another file** (#6925):
+   `tests/support/mod.rs` defines the `imported_table!` table macro and
+   `tests/modules.rs` declares `#[macro_use] mod support;` and invokes it with
+   rows under, on and over the limit (or a child module `mod rows;` declared
+   after the import invokes it). The rows are the same generated tests as in
+   example 8, so the owner reads `exposed` and rows that never touch the
+   boundary read `weakly_exposed`. The same table invoked from a module
+   declared with `#[path = ".."]` indexes nothing and keeps `no_static_path`.
+10. **Table generated by an exported macro named by path** (#10298):
+   `tests/export_support/mod.rs` defines `exported_table!` with
+   `#[macro_export]`, and `tests/export_rows/mod.rs` names it with `use
+   crate::exported_table;` and invokes it with rows under, on and over the
+   limit. The owner reads `exposed`, as in example 9. When another module of
+   the same crate defines a macro of that name, the table indexes nothing
+   and keeps `no_static_path`.
 
 ## Required Evidence
 
@@ -454,6 +554,26 @@ end of the file, which is an approximation for an edit in progress.
 - `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::expands_each_invocation_with_its_arguments_and_lines`
 - `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::repetition_shadowing_scope_and_order_refuse`
 - `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::arm_selection_follows_count_and_fragment_shape`
+- `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::a_table_invocation_expands_one_test_per_row`
+- `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::separators_groups_and_plus_repetition_expand`
+- `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::tables_the_expander_cannot_split_exactly_refuse`
+- `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::a_local_macro_in_a_table_row_or_body_refuses`
+- `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::a_table_arm_follows_simple_arms_that_do_not_fit`
+- `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::a_trailing_comma_must_agree_between_matcher_and_invocation`
+- `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::a_row_group_ending_in_a_comma_does_not_fit_a_group_without_one`
+- `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::row_and_expansion_size_are_bounded`
+- `crates/ripr/tests/macro_generated_tests.rs::a_table_generated_test_reads_like_the_hand_written_test`
+- `crates/ripr/tests/macro_generated_tests.rs::a_table_the_expander_cannot_split_exactly_adds_no_test`
+- `crates/ripr/src/analysis/syntax/macro_scope.rs::tests::scope_lists_top_level_definitions_and_plain_module_declarations`
+- `crates/ripr/src/analysis/syntax/macro_scope.rs::tests::a_definition_with_a_multiline_token_is_not_flattened`
+- `crates/ripr/src/analysis/syntax/macro_scope.rs::tests::splicing_lands_after_inner_attributes_and_adds_one_line`
+- `crates/ripr/src/analysis/facts/macro_visibility.rs::tests::a_module_file_inherits_through_every_anchor_layout`
+- `crates/ripr/src/analysis/facts/macro_visibility.rs::tests::a_file_with_no_generator_call_resolves_nothing`
+- `crates/ripr/src/analysis/facts/macro_visibility.rs::tests::a_chain_deeper_than_the_limit_is_refused`
+- `crates/ripr/tests/macro_imported_tests.rs::a_table_from_a_macro_use_module_reads_like_the_hand_written_test`
+- `crates/ripr/tests/macro_imported_tests.rs::a_table_in_a_child_module_sees_the_macros_its_parent_defines_first`
+- `crates/ripr/tests/macro_imported_tests.rs::a_module_the_resolver_cannot_name_exactly_adds_no_test`
+- Verdict corpus cases `macro-table-boundary-rows`, `macro-table-semicolon-rows`, `macro-table-far-rows`, `macro-table-smoke-rows` and `macro-table-arrow-rows-refused`.
 - `crates/ripr/src/analysis/facts/macro_generated_tests.rs::tests::macro_generated_tests_are_indexed_at_their_invocations`
 - `crates/ripr/tests/macro_generated_tests.rs::a_macro_generated_test_reads_like_the_hand_written_test`
 - `crates/ripr/tests/macro_generated_tests.rs::refused_shapes_and_uninvoked_generators_add_no_test`
@@ -497,6 +617,8 @@ end of the file, which is an approximation for an edit in progress.
 | Macro witness producer | `crates/ripr/src/analysis/classify/transitive_reach.rs` |
 | Same-file test generator expansion | `crates/ripr/src/analysis/syntax/local_test_macros.rs` |
 | Generated test indexing | `crates/ripr/src/analysis/facts/macro_generated_tests.rs` |
+| Macro scope of one file | `crates/ripr/src/analysis/syntax/macro_scope.rs` |
+| Cross-file macro visibility | `crates/ripr/src/analysis/facts/macro_visibility.rs` |
 | Pass-through item macro expansion | `crates/ripr/src/analysis/syntax/passthrough_item_macros.rs` |
 | Macro definition extents | `crates/ripr/src/analysis/probes/macro_definition.rs` |
 | Generated test assertion admission | `crates/ripr/src/analysis/classify/owner_pin.rs` |

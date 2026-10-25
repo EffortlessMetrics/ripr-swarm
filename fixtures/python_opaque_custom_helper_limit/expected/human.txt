@@ -19,7 +19,9 @@ Start here:
   Static exposure: unknown (severity: note, confidence 0.20)
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: if amount >= threshold:
-  Analyzer limit: Static limit `opaque_custom_assertion_helper`: a related Python test uses a custom assertion helper such as `assert_*(...)`; the preview adapter cannot inspect the helper body or…
+  Analyzer limit: Static limit `opaque_custom_assertion_helper`: a related Python test uses a custom
+    assertion helper such as `assert_*(...)`; the preview adapter cannot inspect the helper body or
+    determine whether it already observes the changed discriminator
   Related test: tests/test_pricing.py:9 test_apply_discount_custom_helper
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
@@ -36,7 +38,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_opaque_custom_helper_limit/input --diff <cwd>/fixtures/python_opaque_custom_helper_limit/diff.patch --mode fast probe:src_pricing.py:python_preview:ca00849b
   ripr context --root <cwd>/fixtures/python_opaque_custom_helper_limit/input --diff <cwd>/fixtures/python_opaque_custom_helper_limit/diff.patch --mode fast --at probe:src_pricing.py:python_preview:ca00849b
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_pricing.py:python_preview:ca00849b --root <cwd>/fixtures/python_opaque_custom_helper_limit/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

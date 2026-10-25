@@ -296,6 +296,8 @@ PROOF_INPUTS_JSON="${PROOF_INPUTS_JSON:?set accepted proof-input reference list}
 # Supplied by the trusted controller from exact native owner decisions, not generated here.
 OWNER_ACCEPTANCE_JSON="${OWNER_ACCEPTANCE_JSON:?set reviewed selection/denominator/audit acceptance envelopes}"
 CONTROLLER_ROOT="${CONTROLLER_ROOT:?set absolute independent controller root}"
+# The producer resolves --input against CONTROLLER_ROOT, so jq writes there.
+MANIFEST_INPUT="${MANIFEST_INPUT:-live-head-selection-input.json}"
 CANDIDATE_TREE="$(git -C "$SWARM_ROOT" rev-parse "$SWARM_PARENT^{tree}")"
 test "$(git -C "$SWARM_ROOT" rev-parse HEAD)" = "$SWARM_PARENT"
 test -z "$(git -C "$SWARM_ROOT" status --porcelain=v1 --untracked-files=all)"
@@ -323,16 +325,19 @@ jq --arg sha "$SWARM_PARENT" --arg tree "$CANDIDATE_TREE" --arg ref "$SWARM_REF"
   .pin = {remote_ref_readback: {owner_issue: 1609, path: $readback, sha256: $readback_sha},
     ruleset: {owner_issue: 1609, path: $ruleset, sha256: $ruleset_sha}} |
   .qualification.proof_inputs = $proof[0] |
-  .source_parent = null' "$PACKET_ROOT/live-head-selection-template.json" > "$PACKET_ROOT/live-head-selection.json"
-# Generate the handoff from this same DTO; no independent hand-authored identity projection.
-jq -r '["# Swarm candidate manifest", "", ("Candidate: " + .candidate.repository + "@" + .candidate.sha),
-  ("Tree: " + .candidate.tree), ("Ref: " + .candidate.ref),
-  ("Qualification: " + .qualification.state), "Source parent: unbound until source #1769", "", "Non-claims:"]
-  + (.non_claims | map("- " + .)) | .[]' "$PACKET_ROOT/live-head-selection.json" > "$PACKET_ROOT/live-head-selection.md"
+  .source_parent = null' "$PACKET_ROOT/live-head-selection-template.json" > "$CONTROLLER_ROOT/$MANIFEST_INPUT"
+# jq only assembles proposed inputs. The existing Rust DTO validates all typed
+# fields and retained owner/pin bytes, then emits both projections. OUT must be
+# a new directory below CONTROLLER_ROOT; it is not a standalone controller root.
+MANIFEST_OUTPUT="${MANIFEST_OUTPUT:?set new controller-relative proposal directory}"
+cargo xtask release-manifest-proposal --controller-root "$CONTROLLER_ROOT" \
+  --version 0.11.0 --input "$MANIFEST_INPUT" --out "$MANIFEST_OUTPUT"
+# Keep the original controller root for consumers: evidence paths are unchanged.
+PACKET_MANIFEST="$CONTROLLER_ROOT/$MANIFEST_OUTPUT/manifest.json"
 # STOP: retain this proposed output for #1609 acceptance. Hashing it is not approval.
 # Only after independent #1609 review, the trusted release operator supplies the accepted digest.
 ACCEPTED_MANIFEST_SHA256="${ACCEPTED_MANIFEST_SHA256:?obtain from the reviewed #1609 handoff, not this producer}"
-test "$(sha256sum "$PACKET_ROOT/live-head-selection.json" | awk '{print $1}')" = "$ACCEPTED_MANIFEST_SHA256"
+test "$(sha256sum "$PACKET_MANIFEST" | awk '{print $1}')" = "$ACCEPTED_MANIFEST_SHA256"
 ```
 
 At every later receipt, read `refs/tags/$PIN_TAG` again and require the
@@ -417,7 +422,7 @@ assert_live_pin_guard
   --swarm-ref "$SWARM_REF" --source-repo "$SOURCE_ROOT" --swarm-repo "$SWARM_ROOT" \
   --source-main "$SOURCE_PARENT" --swarm-main "$SWARM_PARENT" \
   --version "$VERSION" --resolved-tree "$JOIN_TREE" \
-  --controller-root "$PACKET_ROOT" --candidate-manifest live-head-selection.json \
+  --controller-root "$CONTROLLER_ROOT" --candidate-manifest "$MANIFEST_OUTPUT/manifest.json" \
   --selection-decision "$SELECTION_DECISION" \
   --qualification-bundle "$QUALIFICATION_BUNDLE" \
   --qualification-decision "$QUALIFICATION_DECISION" \

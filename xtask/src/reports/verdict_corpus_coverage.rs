@@ -4,7 +4,8 @@
 //! heading, named `RIPR-SPEC-NNNN#K`. Cases cite the examples they label in
 //! `spec_examples`; `spec-coverage.toml` puts every spec with numbered
 //! examples in or out of scope, waives in-scope examples a corpus case
-//! cannot label, and records the covered count the gate protects. Coverage
+//! cannot label, and `spec-examples.lock` lists the covered examples the
+//! gate protects, one per line. Coverage
 //! says which spec examples carry a runtime-labeled case; it says nothing
 //! about whether ripr's verdict on that case is right.
 
@@ -16,6 +17,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub(crate) const LEDGER_FILE: &str = "spec-coverage.toml";
+pub(crate) const LOCK_FILE: &str = "spec-examples.lock";
 pub(crate) const SPECS_DIR: &str = "docs/specs";
 const LEDGER_SCHEMA: &str = "ripr_verdict_corpus_spec_coverage.v1";
 const SPEC_PREFIX: &str = "RIPR-SPEC-";
@@ -25,8 +27,11 @@ const EXAMPLES_HEADING: &str = "## Acceptance Examples";
 #[serde(deny_unknown_fields)]
 pub(crate) struct Ledger {
     pub(crate) schema_version: String,
-    /// The covered-example count `verdict-corpus check` protects.
-    pub(crate) floor: usize,
+    /// The covered examples `verdict-corpus check` protects, read from
+    /// `spec-examples.lock` (one line each, so parallel PRs that cover
+    /// different examples never edit the same line).
+    #[serde(skip)]
+    pub(crate) locked: BTreeSet<(String, ExampleKey)>,
     #[serde(default)]
     pub(crate) spec: Vec<LedgerSpec>,
     /// In-scope specs whose acceptance examples are prose, not numbered:
@@ -85,7 +90,7 @@ pub(crate) enum Scope {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Waiver {
-    pub(crate) example: usize,
+    pub(crate) example: ExampleKey,
     pub(crate) reason: String,
 }
 
@@ -96,15 +101,45 @@ pub(crate) struct UnmeasuredSpec {
     pub(crate) reason: String,
 }
 
-/// Spec id to its numbered acceptance examples; a spec without any maps to
-/// an empty set.
-pub(crate) type SpecExamples = BTreeMap<String, BTreeSet<usize>>;
+/// One acceptance example of a spec: a legacy hand-numbered item (`K. `) or
+/// a slug-keyed item (``- example `slug`: ``). New examples take a slug, so two PRs
+/// adding examples never fight over the next number or the end of the list.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(untagged)]
+pub(crate) enum ExampleKey {
+    Number(usize),
+    Slug(String),
+}
 
-/// The numbers of the items written `K. ` at the start of a line between
-/// `## Acceptance Examples` and the next second-level heading. Continuation
+impl std::fmt::Display for ExampleKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Number(number) => write!(f, "{number}"),
+            Self::Slug(slug) => f.write_str(slug),
+        }
+    }
+}
+
+/// Spec id to its acceptance examples (numbered and slug-keyed); a spec
+/// without any maps to an empty set.
+pub(crate) type SpecExamples = BTreeMap<String, BTreeSet<ExampleKey>>;
+
+/// A slug is lowercase ASCII words joined by single hyphens, starting with a
+/// letter, so one example has one spelling and never reads as a number.
+fn is_slug(text: &str) -> bool {
+    text.chars().next().is_some_and(|c| c.is_ascii_lowercase())
+        && !text.ends_with('-')
+        && !text.contains("--")
+        && text
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// The items of `## Acceptance Examples` in file order: `K. ` numbered
+/// items and ``- example `slug`: `` slug items at the start of a line. Continuation
 /// lines are indented, so they never start an item; fenced code is skipped.
-pub(crate) fn numbered_examples(markdown: &str) -> BTreeSet<usize> {
-    let mut found = BTreeSet::new();
+pub(crate) fn acceptance_items(markdown: &str) -> Vec<ExampleKey> {
+    let mut found = Vec::new();
     let mut inside = false;
     // The open fence's character and length: Markdown fences use backticks or
     // tildes, and only a run of the same character at least as long closes one.
@@ -133,6 +168,15 @@ pub(crate) fn numbered_examples(markdown: &str) -> BTreeSet<usize> {
         if !inside {
             continue;
         }
+        if let Some(slug) = line
+            .strip_prefix("- example `")
+            .and_then(|rest| rest.split_once("`:"))
+            .map(|(slug, _)| slug)
+            .filter(|slug| is_slug(slug))
+        {
+            found.push(ExampleKey::Slug(slug.to_string()));
+            continue;
+        }
         let digits: String = line.chars().take_while(char::is_ascii_digit).collect();
         if !digits.is_empty()
             && line
@@ -140,10 +184,47 @@ pub(crate) fn numbered_examples(markdown: &str) -> BTreeSet<usize> {
                 .is_some_and(|rest| rest.starts_with(". "))
             && let Ok(number) = digits.parse::<usize>()
         {
-            found.insert(number);
+            found.push(ExampleKey::Number(number));
         }
     }
     found
+}
+
+/// The numbers of the items written `K. ` under `## Acceptance Examples`.
+#[cfg(test)]
+pub(crate) fn numbered_examples(markdown: &str) -> BTreeSet<usize> {
+    acceptance_items(markdown)
+        .into_iter()
+        .filter_map(|key| match key {
+            ExampleKey::Number(number) => Some(number),
+            ExampleKey::Slug(_) => None,
+        })
+        .collect()
+}
+
+/// Slug items must be unique and listed alphabetically: an example inserted
+/// where its slug sorts lands away from every other PR's insertion, so the
+/// list has no shared end to conflict on. Returns the first violation.
+fn slug_order_violation(items: &[ExampleKey]) -> Option<String> {
+    let slugs: Vec<&str> = items
+        .iter()
+        .filter_map(|key| match key {
+            ExampleKey::Slug(slug) => Some(slug.as_str()),
+            ExampleKey::Number(_) => None,
+        })
+        .collect();
+    slugs.windows(2).find_map(|pair| {
+        if pair[0] == pair[1] {
+            Some(format!("slug example `{}` is listed twice", pair[0]))
+        } else if pair[0] > pair[1] {
+            Some(format!(
+                "slug example `{}` is listed before `{}`; keep slug examples alphabetical",
+                pair[0], pair[1]
+            ))
+        } else {
+            None
+        }
+    })
 }
 
 /// The spec id a file name carries: `RIPR-SPEC-NNNN-<slug>.md` or
@@ -170,7 +251,14 @@ pub(crate) fn scan_specs(dir: &Path) -> Result<SpecExamples, String> {
         let path = entry.path();
         let text = fs::read_to_string(&path)
             .map_err(|err| format!("read {}: {err}", normalize_path(&path)))?;
-        if specs.insert(id.clone(), numbered_examples(&text)).is_some() {
+        let items = acceptance_items(&text);
+        if let Some(problem) = slug_order_violation(&items) {
+            return Err(format!("{}: {problem}", normalize_path(&path)));
+        }
+        if specs
+            .insert(id.clone(), items.into_iter().collect())
+            .is_some()
+        {
             return Err(format!("two spec files carry the id `{id}`"));
         }
     }
@@ -191,27 +279,81 @@ pub(crate) fn load_ledger(corpus_dir: &Path) -> Result<Ledger, String> {
         ));
     }
     ledger.known_false = super::known_false::load_entries(corpus_dir)?;
+    ledger.locked = load_lock(corpus_dir)?;
     Ok(ledger)
 }
 
-/// `RIPR-SPEC-NNNN#K` as (`RIPR-SPEC-NNNN`, K). K is a positive integer
-/// without leading zeros, so one example has one spelling.
-pub(crate) fn parse_example_id(id: &str) -> Option<(String, usize)> {
-    let (spec, number) = id.split_once('#')?;
+/// Parse `spec-examples.lock`: `RIPR-SPEC-NNNN#K` or `#slug` per line, `#`
+/// comments and blank lines ignored. Entries must be sorted and unique, so
+/// an insertion lands at its sorted place and two PRs that lock different
+/// examples do not touch the same line.
+pub(crate) fn load_lock(corpus_dir: &Path) -> Result<BTreeSet<(String, ExampleKey)>, String> {
+    let path = corpus_dir.join(LOCK_FILE);
+    let label = normalize_path(&path);
+    let text = fs::read_to_string(&path).map_err(|err| format!("read {label}: {err}"))?;
+    parse_lock(&text, &label)
+}
+
+fn parse_lock(text: &str, label: &str) -> Result<BTreeSet<(String, ExampleKey)>, String> {
+    let mut locked = BTreeSet::new();
+    let mut previous: Option<(String, ExampleKey)> = None;
+    for (index, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let number = index + 1;
+        let Some(entry) = parse_example_id(line) else {
+            return Err(format!(
+                "{label}:{number}: `{line}` is not `RIPR-SPEC-NNNN#<number or slug>`"
+            ));
+        };
+        if let Some(before) = &previous {
+            if *before == entry {
+                return Err(format!("{label}:{number}: `{line}` is listed twice"));
+            }
+            if *before > entry {
+                return Err(format!(
+                    "{label}:{number}: `{line}` is out of order; keep the lock sorted by spec, then numbers before slugs"
+                ));
+            }
+        }
+        previous = Some(entry.clone());
+        locked.insert(entry);
+    }
+    Ok(locked)
+}
+
+/// The lock line for one example.
+pub(crate) fn lock_line(spec: &str, key: &ExampleKey) -> String {
+    format!("{spec}#{key}")
+}
+
+/// `RIPR-SPEC-NNNN#K` or `RIPR-SPEC-NNNN#slug` as (`RIPR-SPEC-NNNN`, key).
+/// K is a positive integer without leading zeros and a slug is lowercase
+/// hyphenated words, so one example has one spelling.
+pub(crate) fn parse_example_id(id: &str) -> Option<(String, ExampleKey)> {
+    let (spec, example) = id.split_once('#')?;
     let digits = spec.strip_prefix(SPEC_PREFIX)?;
-    let spec_ok = digits.len() == 4 && digits.chars().all(|c| c.is_ascii_digit());
-    let number_ok = !number.is_empty()
-        && !number.starts_with('0')
-        && number.chars().all(|c| c.is_ascii_digit());
-    if !spec_ok || !number_ok {
+    if digits.len() != 4 || !digits.chars().all(|c| c.is_ascii_digit()) {
         return None;
     }
-    Some((spec.to_string(), number.parse().ok()?))
+    let key = if is_slug(example) {
+        ExampleKey::Slug(example.to_string())
+    } else if !example.is_empty()
+        && !example.starts_with('0')
+        && example.chars().all(|c| c.is_ascii_digit())
+    {
+        ExampleKey::Number(example.parse().ok()?)
+    } else {
+        return None;
+    };
+    Some((spec.to_string(), key))
 }
 
 /// Every spec example a case cites, after id validation.
-fn citations(corpus: &Corpus) -> BTreeMap<(String, usize), Vec<String>> {
-    let mut cited: BTreeMap<(String, usize), Vec<String>> = BTreeMap::new();
+fn citations(corpus: &Corpus) -> BTreeMap<(String, ExampleKey), Vec<String>> {
+    let mut cited: BTreeMap<(String, ExampleKey), Vec<String>> = BTreeMap::new();
     for case in &corpus.cases {
         for id in &case.spec_examples {
             if let Some(key) = parse_example_id(id) {
@@ -222,13 +364,13 @@ fn citations(corpus: &Corpus) -> BTreeMap<(String, usize), Vec<String>> {
     cited
 }
 
-fn examples_text(examples: &BTreeSet<usize>) -> String {
+fn examples_text(examples: &BTreeSet<ExampleKey>) -> String {
     if examples.is_empty() {
         return "none".to_string();
     }
     examples
         .iter()
-        .map(usize::to_string)
+        .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -286,7 +428,7 @@ pub(crate) fn coverage_violations(
         }
         let mut waived = BTreeSet::new();
         for waiver in &entry.waived {
-            if !waived.insert(waiver.example) {
+            if !waived.insert(waiver.example.clone()) {
                 violations.push(format!(
                     "{LEDGER_FILE} waives `{}#{}` twice",
                     entry.id, waiver.example
@@ -294,7 +436,7 @@ pub(crate) fn coverage_violations(
             }
             if !examples.contains(&waiver.example) {
                 violations.push(format!(
-                    "{LEDGER_FILE} waives `{}#{}`, which is not a numbered acceptance example (numbered: {})",
+                    "{LEDGER_FILE} waives `{}#{}`, which is not an acceptance example (examples: {})",
                     entry.id,
                     waiver.example,
                     examples_text(examples)
@@ -346,7 +488,7 @@ pub(crate) fn coverage_violations(
             }
             let Some((spec, number)) = parse_example_id(id) else {
                 violations.push(format!(
-                    "case `{}` spec example `{id}` is not `RIPR-SPEC-NNNN#K`",
+                    "case `{}` spec example `{id}` is not `RIPR-SPEC-NNNN#K` or `RIPR-SPEC-NNNN#slug`",
                     case.case_id
                 ));
                 continue;
@@ -360,7 +502,7 @@ pub(crate) fn coverage_violations(
             };
             if !examples.contains(&number) {
                 violations.push(format!(
-                    "case `{}` cites `{id}`, but `{spec}` has no numbered acceptance example {number} (numbered: {})",
+                    "case `{}` cites `{id}`, but `{spec}` has no acceptance example {number} (examples: {})",
                     case.case_id,
                     examples_text(examples)
                 ));
@@ -382,12 +524,16 @@ pub(crate) fn coverage_violations(
         }
     }
     violations.extend(axis_violations(corpus, ledger));
-    let coverage = spec_example_coverage(corpus, ledger, specs);
-    if ledger.floor > coverage.coverage.denominator {
-        violations.push(format!(
-            "{LEDGER_FILE} floor {} exceeds the {} coverable examples",
-            ledger.floor, coverage.coverage.denominator
-        ));
+    for (spec, key) in &ledger.locked {
+        if !specs
+            .get(spec)
+            .is_some_and(|examples| examples.contains(key))
+        {
+            violations.push(format!(
+                "{LOCK_FILE} locks `{}`, but no docs/specs file carries that example; drop the line or restore the example",
+                lock_line(spec, key)
+            ));
+        }
     }
     violations
 }
@@ -491,7 +637,12 @@ pub(crate) fn axis_note(
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct SpecExampleCoverage {
     pub(crate) ledger: String,
-    pub(crate) floor: usize,
+    /// Examples listed in `spec-examples.lock`.
+    pub(crate) locked_examples: usize,
+    /// Locked examples no case covers now: the regression the gate fails on.
+    pub(crate) lost: Vec<String>,
+    /// Covered examples the lock does not list yet; passes with a note.
+    pub(crate) unlocked: Vec<String>,
     /// Covered over in-scope examples minus waived ones.
     pub(crate) coverage: Ratio,
     /// Covered plus waived over all in-scope examples. Waived examples are
@@ -512,7 +663,7 @@ pub(crate) struct SpecCoverageRow {
     pub(crate) in_scope_examples: usize,
     pub(crate) covered: usize,
     pub(crate) waived: usize,
-    pub(crate) uncovered: Vec<usize>,
+    pub(crate) uncovered: Vec<ExampleKey>,
 }
 
 /// Coverage for one corpus directory without going through `expected_report()`.
@@ -580,6 +731,7 @@ pub(crate) fn spec_example_coverage(
     let cited = citations(corpus);
     let mut by_spec = Vec::new();
     let (mut total, mut covered, mut waived) = (0, 0, 0);
+    let mut covered_keys: BTreeSet<(String, ExampleKey)> = BTreeSet::new();
     let mut in_scope_specs = 0;
     let mut out_of_scope_specs = 0;
     for entry in &ledger.spec {
@@ -589,10 +741,10 @@ pub(crate) fn spec_example_coverage(
         }
         in_scope_specs += 1;
         let examples = specs.get(&entry.id).cloned().unwrap_or_default();
-        let waivers: BTreeSet<usize> = entry
+        let waivers: BTreeSet<ExampleKey> = entry
             .waived
             .iter()
-            .map(|w| w.example)
+            .map(|w| w.example.clone())
             .filter(|n| examples.contains(n))
             .collect();
         let mut row_covered = 0;
@@ -601,10 +753,11 @@ pub(crate) fn spec_example_coverage(
             if waivers.contains(number) {
                 continue;
             }
-            if cited.contains_key(&(entry.id.clone(), *number)) {
+            if cited.contains_key(&(entry.id.clone(), number.clone())) {
                 row_covered += 1;
+                covered_keys.insert((entry.id.clone(), number.clone()));
             } else {
-                uncovered.push(*number);
+                uncovered.push(number.clone());
             }
         }
         total += examples.len();
@@ -623,7 +776,16 @@ pub(crate) fn spec_example_coverage(
     unmeasured.sort();
     SpecExampleCoverage {
         ledger: format!("{}/{LEDGER_FILE}", super::CORPUS_DIR),
-        floor: ledger.floor,
+        locked_examples: ledger.locked.len(),
+        lost: ledger
+            .locked
+            .difference(&covered_keys)
+            .map(|(spec, key)| lock_line(spec, key))
+            .collect(),
+        unlocked: covered_keys
+            .difference(&ledger.locked)
+            .map(|(spec, key)| lock_line(spec, key))
+            .collect(),
         coverage: ratio(covered, total - waived),
         accounted: ratio(covered + waived, total),
         in_scope_examples: total,
@@ -636,36 +798,50 @@ pub(crate) fn spec_example_coverage(
     }
 }
 
-/// The floor gate. Below the floor fails with what to do; above it passes
-/// and says the floor can be raised.
+/// The lock gate. A locked example no case covers fails with what to do;
+/// covered examples the lock lacks pass and say which lines to add.
 pub(crate) fn floor_gate(coverage: &SpecExampleCoverage) -> Result<Option<String>, String> {
-    let covered = coverage.covered_examples;
-    let floor = coverage.floor;
-    if covered < floor {
+    if !coverage.lost.is_empty() {
         return Err(format!(
-            "verdict-corpus: spec-example coverage fell to {covered}/{} below the floor {floor} in {}; restore the `spec_examples` citations a case lost, or lower `floor` with the reason in the PR when a case was deliberately retired",
-            coverage.coverage.denominator, coverage.ledger
+            "verdict-corpus: {} locked spec example(s) lost their case in {}: {}; restore the `spec_examples` citation a case lost, or drop the line from {} with the reason in the PR when a case was deliberately retired",
+            coverage.lost.len(),
+            coverage.ledger,
+            coverage.lost.join(", "),
+            LOCK_FILE
         ));
     }
-    if covered > floor {
-        return Ok(Some(format!(
-            "verdict-corpus: spec-example coverage {covered}/{} is above the floor {floor}; raise `floor` in {} to {covered} to protect it",
-            coverage.coverage.denominator, coverage.ledger
-        )));
+    if coverage.unlocked.is_empty() {
+        return Ok(None);
     }
-    Ok(None)
+    let shown: Vec<&str> = coverage
+        .unlocked
+        .iter()
+        .take(20)
+        .map(String::as_str)
+        .collect();
+    let more = coverage.unlocked.len() - shown.len();
+    Ok(Some(format!(
+        "verdict-corpus: {} covered spec example(s) are not in {LOCK_FILE} yet; add these lines at their sorted places to protect them: {}{}",
+        coverage.unlocked.len(),
+        shown.join(", "),
+        if more > 0 {
+            format!(" (and {more} more)")
+        } else {
+            String::new()
+        }
+    )))
 }
 
 pub(crate) fn render_coverage_markdown(coverage: &SpecExampleCoverage) -> String {
     let mut out = String::new();
     out.push_str("\n## Spec example coverage\n\n");
     out.push_str(&format!(
-        "Numbered acceptance examples of in-scope specs that at least one case cites in `spec_examples` ({}). Covered {}/{} ({}); floor {}. Waived {} and accounted (covered plus waived) {}/{}. In-scope specs {}, out-of-scope specs {}.\n",
+        "Numbered acceptance examples of in-scope specs that at least one case cites in `spec_examples` ({}). Covered {}/{} ({}); locked {}. Waived {} and accounted (covered plus waived) {}/{}. In-scope specs {}, out-of-scope specs {}.\n",
         coverage.ledger,
         coverage.coverage.numerator,
         coverage.coverage.denominator,
         coverage.coverage.rate,
-        coverage.floor,
+        coverage.locked_examples,
         coverage.waived_examples,
         coverage.accounted.numerator,
         coverage.accounted.denominator,
@@ -694,7 +870,7 @@ pub(crate) fn render_coverage_markdown(coverage: &SpecExampleCoverage) -> String
             } else {
                 row.uncovered
                     .iter()
-                    .map(usize::to_string)
+                    .map(ToString::to_string)
                     .collect::<Vec<_>>()
                     .join(", ")
             }

@@ -31,8 +31,12 @@ its own row set.
 
 The corpus is a fixed list of real repositories pinned to exact commits. Each
 pin is a commit whose own change touches production Rust, so the warm
-`ripr check --base HEAD~1` measures a real small edit. Entries marked
-`heavy = true` (ripr-swarm at two sizes, cargo) run only with `--include-heavy`.
+`ripr check --base HEAD~1` measures a real small edit. The `serde-no-rust` and `cargo-no-rust` entries pin commits that touch no `.rs` file
+(a CI workflow, a changelog), so a docs-or-CI edit has its own warm-check row, memory row and
+trend; `cargo-no-rust` pins its first parent as the base because its commit is a merge. Those rows are wall time, so they gate only against a same-runner baseline; the runner-independent guard is `crates/ripr/tests/no_rust_diff_reads_no_rust.rs`, which fails on any runner if a docs-only diff indexes the workspace's Rust sources (a discarded read is outside what it observes) in `instant`, `draft` or `fast` mode. Entries marked
+`heavy = true` (ripr-swarm at two sizes, cargo, `cargo-no-rust`, `poetry-python`) run only with `--include-heavy`.
+
+Entries may set `language` (`rust` when absent; `python`, `typescript` or `perl`), which the report carries on each repository row so a non-Rust edit is its own population. `click-python` (small) and `poetry-python` (larger) pin single-parent commits that edit Python and its test; both complete under `--mode draft`. The editor-refresh samples stay `not_measured` for them, because that instrument opens a changed Rust file. `django` was tried and stops at the Python workspace-file cap (partial), so it would not measure a complete check. TypeScript and Perl rows follow in separate changes (#10338).
 Checkouts live under `target/ripr/dx-scoreboard/corpus/`; cloning is opt-in:
 
 ```bash
@@ -160,6 +164,8 @@ These native receipts are also accepted as-is:
 
 ### The ranking lane
 
+The `agent` board has no nightly lane, because the agent-as-user harness needs an agent. The committed receipt is gated instead: the xtask test `committed_agent_receipt_does_not_regress_the_agent_baseline` ingests `metrics/public-proof/agent-as-user.json` against `metrics/dx-scoreboard/agent-baseline.json` (same `--baseline`/gate comparison), and `agent_gate_fails_the_receipt_from_before_the_rerun` keeps the 2026-10-04 receipt as the negative control. After a rerun that improves a metric, rebuild the baseline with `cargo xtask dx-scoreboard --boards agent --ingest metrics/public-proof/agent-as-user.json` and copy `target/ripr/reports/dx-scoreboard.json` to `metrics/dx-scoreboard/agent-baseline.json`. A rerun is one run per target with different agents, so the margins (the larger of 25 percent of the baseline and 3 steps for commands and tool steps; no allowance for weak findings or white-box tests) absorb run-to-run variation. The test also fails when the receipt stops reporting a metric or a repository the baseline measured, because the generic gate lists missing evidence as uncompared and passes it.
+
 `.github/workflows/pilot-ranking.yml` runs nightly, on demand, and once when a
 pull request touching pilot ranking, seam grading or the answer key leaves
 draft. It never runs cargo-mutants; the labels are committed:
@@ -269,6 +275,8 @@ ingests the receipt. It gates against
 lane records the report ungated. To start gating, dispatch the workflow on
 `ubuntu-latest`, review the `dx-scoreboard.json` artifact, and commit it as the
 baseline file. Install seconds compare only against a same-runner baseline.
+
+The same workflow's `first-run-main` job walks the first-run crates with a ripr built from the checked-out commit and gates the verdict rows against `metrics/dx-scoreboard/first-run-main-baseline.json` (3 of 3 decisive verdicts on a main build, #9276). Wall-time rows in that baseline came from a local run and are skipped on `ubuntu-latest`; refresh the baseline with `cargo xtask first-run --ripr target/debug/ripr --out target/ripr/first-run-main`, then `cargo xtask dx-scoreboard --boards first_run --ingest target/ripr/first-run-main/first-run-rows.jsonl`, and copy `target/ripr/reports/dx-scoreboard.json` over the baseline when a verdict improves.
 
 ## Claim boundary
 

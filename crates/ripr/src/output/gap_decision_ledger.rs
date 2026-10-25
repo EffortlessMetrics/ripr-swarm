@@ -4908,7 +4908,17 @@ mod tests {
         // #9185: `python_message_pin_no_exposed_credit` downgrades a message-only
         // `raise` edit under a pattern that fits both messages to `weakly_exposed`
         // (RIPR-SPEC-0238); the card is direct-aligned.
-        if (direct, no_strong, orthogonal, family_selection) != (10, 26, 14, 1) {
+        // #9868: fourteen guarded self-field negative fixtures carry an
+        // orthogonal card and stay packet-ineligible; the entering/read-only
+        // positives are exposed and carry no card. Preserve the literal inventory.
+        // #10184 / #10289: a dynamic-namespace fixture's module-object write is a
+        // `mocked_module` static limit, not a weak finding, so it carries no
+        // card that would assert on the stale imported object. Its unresolved
+        // constant has no repair target and contributes no card either.
+        // #10151: `python_caplog_alias_in_literal` keeps a captured-log alias
+        // spelled inside the asserted literal a weak gap (RIPR-SPEC-0238 rule
+        // 22), which carries one no-strong-oracle card.
+        if (direct, no_strong, orthogonal, family_selection) != (10, 27, 28, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

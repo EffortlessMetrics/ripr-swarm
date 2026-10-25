@@ -1,0 +1,10 @@
+diff --git a/src/values.rs b/src/values.rs
+--- a/src/values.rs
++++ b/src/values.rs
+@@ -1,5 +1,5 @@
+ pub fn inc(x: u32) -> u32 {
+-    x + 1
++    1 + x
+ }
+ 
+ #[cfg(test)]

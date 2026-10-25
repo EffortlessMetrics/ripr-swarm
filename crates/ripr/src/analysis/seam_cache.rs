@@ -506,7 +506,25 @@ pub(crate) struct CachedSeamLimitInfo {
 /// scalar owner return (RIPR-SPEC-0115/0197, #9478). Old entries lack the pin.
 /// `1.99`: a one-line `else if` ladder tail flows its first arm to the
 /// returned value (#9630). Old entries keep the unknown propagation.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.99";
+/// `1.100`: arms that return the first arm's value leave the first condition
+/// without a returned-value sink (#9843). Old entries keep the exposed verdict.
+/// `1.101`: a same-file `macro_rules!` test table indexes one generated test
+/// per row (#6925). Old entries read the table's owner as unreached.
+/// `1.102`: the same equal-arm sink limit reads a rustfmt-layout branch
+/// chain (#10134). Old entries keep the exposed verdict.
+/// `1.103`: a `macro_rules!` test table whose generator is defined in another
+/// file (`#[macro_use] mod`, or a parent module) indexes its tests (#6925).
+/// Old entries read the table's owner as unreached.
+/// `1.104`: a returned zero-initialized loop accumulator's update is a
+/// `return_value` change credited by a literal non-empty nonzero pin
+/// (RIPR-SPEC-0360, #6485). Old entries keep it `static_unknown`.
+/// `1.105`: the generator may also be a `#[macro_export]` macro named by
+/// `use crate::name;` (#10298). Old entries read the owner as unreached.
+/// `1.106`: a returned loop accumulator pinned through a constant-row table
+/// is credited by a row that walks a non-empty literal input and pins a
+/// nonzero total; a table that separates nothing or cannot be read is
+/// withheld (RIPR-SPEC-0360, #6485). Old entries read it as a gap.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.106";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -652,7 +670,14 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.99";
 /// `0.104`: same effect-assertion execution admission as full `1.97` (#8927).
 /// `0.105`: same typed function-pointer pins as full `1.98` (#9478).
 /// `0.106`: same one-line ladder tail as full `1.99`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.106";
+/// `0.107`: same equal-arm sink limit as full `1.100`.
+/// `0.108`: same macro table tests as full `1.101`.
+/// `0.109`: same multi-line equal-arm sink limit as full `1.102`.
+/// `0.110`: same cross-file macro table tests as full `1.103`.
+/// `0.111`: same loop-accumulator update as full `1.104` (#6485).
+/// `0.112`: same exported-macro table tests as full `1.105`.
+/// `0.113`: same table-driven loop-accumulator pin as full `1.106` (#6485).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.113";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -800,7 +825,14 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.106";
 /// `0.104`: same effect-assertion execution admission as full `1.97` (#8927).
 /// `0.105`: same typed function-pointer pins as full `1.98` (#9478).
 /// `0.106`: same one-line ladder tail as full `1.99`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.106";
+/// `0.107`: same equal-arm sink limit as full `1.100`.
+/// `0.108`: same macro table tests as full `1.101`.
+/// `0.109`: same multi-line equal-arm sink limit as full `1.102`.
+/// `0.110`: same cross-file macro table tests as full `1.103`.
+/// `0.111`: same loop-accumulator update as full `1.104` (#6485).
+/// `0.112`: same exported-macro table tests as full `1.105`.
+/// `0.113`: same table-driven loop-accumulator pin as full `1.106` (#6485).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.113";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -2488,13 +2520,18 @@ pub(crate) struct FileFactCacheStats {
     pub(crate) store_failures_dropped: usize,
 }
 
-/// Pipeline stage at which a file-fact store failed. Assigned at the exact
-/// `?` site inside `store_file_facts`, never parsed back out of a message.
+/// Pipeline stage at which a cache store failed. The first three are assigned
+/// at the exact `?` site inside `store_file_facts`, never parsed back out of a
+/// message. The last two name the other best-effort store families whose
+/// failures were previously only a stderr sentence (#9633): they carry the
+/// family as the stage because those stores report one opaque reason.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FileFactStoreStage {
     CreateDir,
     Encode,
     Write,
+    ClassifiedSeamStore,
+    CorpusFingerprintStore,
 }
 
 impl FileFactStoreStage {
@@ -2503,9 +2540,17 @@ impl FileFactStoreStage {
             FileFactStoreStage::CreateDir => "create_dir",
             FileFactStoreStage::Encode => "encode",
             FileFactStoreStage::Write => "write",
+            FileFactStoreStage::ClassifiedSeamStore => "classified_seam_store",
+            FileFactStoreStage::CorpusFingerprintStore => "corpus_fingerprint_store",
         }
     }
 }
+
+/// Row identity for a classified-seam store failure: the cache family
+/// directory (relative to the cache root), never an absolute path.
+pub(crate) const CLASSIFIED_SEAM_STORE_FAILURE_PATH: &str = "repo-seam-facts";
+/// Row identity for a corpus-fingerprint store failure.
+pub(crate) const CORPUS_FINGERPRINT_STORE_FAILURE_PATH: &str = "repo-corpus-fingerprint";
 
 /// Typed file-fact store failure. Renders as the bare message so every
 /// existing `?` and `format!("{err}")` call site keeps working through the
@@ -2733,6 +2778,15 @@ impl RepoFileFactCache {
         let bytes = match std::fs::read(&path) {
             Ok(bytes) => bytes,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return CacheLoad::Miss,
+            // A path component that is a file is a missing entry, not a
+            // corrupt one: nothing was read, and the store that follows fails
+            // for the same reason and is reported once as a store failure
+            // row. Counting it here too made one cause two anonymous
+            // counters (#9633, audit F-C4-4). Windows already reports this
+            // as `NotFound`.
+            Err(err) if err.kind() == std::io::ErrorKind::NotADirectory => {
+                return CacheLoad::Miss;
+            }
             Err(err) => {
                 return corrupt_entry(&path, format!("read failed: {err}"));
             }
@@ -4919,7 +4973,14 @@ mod tests {
         // 1.96 -> 1.97: effect assertions require execution admission (#8927).
         // 1.97 -> 1.98: typed function-pointer owner pins (#9478).
         // 1.98 -> 1.99: one-line `else if` ladder tail (#9630).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.99");
+        // 1.99 -> 1.100: equal-valued arms leave the first condition without a sink (#9843).
+        // 1.100 -> 1.101: macro_rules! test tables index one test per row (#6925).
+        // 1.101 -> 1.102: equal-valued arms of a rustfmt-layout chain (#10134).
+        // 1.102 -> 1.103: cross-file macro_rules! test tables (#6925).
+        // 1.103 -> 1.104: loop-accumulator update credit (#6485).
+        // 1.104 -> 1.105: exported macro tables named by path (#10298).
+        // 1.104 -> 1.106: table-driven loop-accumulator pin (#6485).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.106");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5007,8 +5068,15 @@ mod tests {
         // 0.103 -> 0.104: same effect assertion admission as full 1.97 (#8927).
         // 0.104 -> 0.105: same typed function-pointer pins as full 1.98.
         // 0.105 -> 0.106: same one-line ladder tail as full 1.99.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.106");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.106");
+        // 0.106 -> 0.107: same equal-arm sink limit as full 1.100.
+        // 0.107 -> 0.108: same macro table tests as full 1.101 (#6925).
+        // 0.108 -> 0.109: same multi-line equal-arm sink limit as full 1.102.
+        // 0.109 -> 0.110: same cross-file macro tables as full 1.103 (#6925).
+        // 0.110 -> 0.111: same loop-accumulator update as full 1.104 (#6485).
+        // 0.111 -> 0.112: same exported macro tables as full 1.105 (#10298).
+        // 0.111 -> 0.113: same table-driven loop-accumulator pin as full 1.106.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.113");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.113");
     }
 
     #[test]
@@ -8701,6 +8769,35 @@ mod tests {
         Ok(())
     }
 
+    /// #9633 (audit F-C4-4): a file where the entry directory should be is a
+    /// missing entry for the read, not corrupt data; the failed write is the
+    /// one reported store failure.
+    #[test]
+    fn read_through_file_component_is_miss_and_write_is_the_store_failure() -> Result<(), String> {
+        let dir = isolated_dir("read-through-file");
+        ignore_remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|err| format!("fixture setup failed: {err}"))?;
+        let blocker = dir.join("blocker");
+        std::fs::write(&blocker, b"not a directory")
+            .map_err(|err| format!("fixture setup failed: {err}"))?;
+        let cache = RepoFileFactCache::at_dir(blocker.join("entries"));
+        let key = RepoFileFactCacheKey::new(Path::new("src/lib.rs"), b"fn main() {}");
+        match cache.load_file_facts(&key) {
+            CacheLoad::Miss => {}
+            CacheLoad::CorruptIgnored { reason } => {
+                return Err(format!("read through a file counted as corrupt: {reason}"));
+            }
+            CacheLoad::Hit(_) => return Err("unexpected hit".to_string()),
+        }
+        let error = match cache.store_file_facts(&key, &FileFacts::default()) {
+            Ok(()) => return Err("store under a file path should fail".to_string()),
+            Err(error) => error,
+        };
+        assert_eq!(error.stage, FileFactStoreStage::CreateDir);
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
     #[test]
     fn store_failure_rows_bound_overflow_with_count() {
         let mut stats = FileFactCacheStats::default();
@@ -8728,6 +8825,14 @@ mod tests {
         assert_eq!(FileFactStoreStage::CreateDir.as_str(), "create_dir");
         assert_eq!(FileFactStoreStage::Encode.as_str(), "encode");
         assert_eq!(FileFactStoreStage::Write.as_str(), "write");
+        assert_eq!(
+            FileFactStoreStage::ClassifiedSeamStore.as_str(),
+            "classified_seam_store"
+        );
+        assert_eq!(
+            FileFactStoreStage::CorpusFingerprintStore.as_str(),
+            "corpus_fingerprint_store"
+        );
     }
 
     #[test]

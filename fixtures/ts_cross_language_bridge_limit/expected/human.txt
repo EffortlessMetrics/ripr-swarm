@@ -19,7 +19,10 @@ Start here:
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: if (input.length >= 0) {
-  Missing discriminator (1 of 2): Related tests reach `processData` with a strong oracle, but no strong assertion observes a `processData(...)` call at the changed predicate boundary `input.length == 0`; inputs on…
+  Missing discriminator (1 of 2): Related tests reach `processData` with a strong oracle, but no
+    strong assertion observes a `processData(...)` call at the changed predicate boundary
+    `input.length == 0`; inputs on one side of the boundary do not discriminate the changed
+    comparison
   Related test: tests/bridge.test.ts:6 processData trims and lowercases
   Next step — TypeScript preview advisory: static limit `mocked_module`; Repair route: add
     mock-shape support or validate the real substitution under test before issuing a repair packet.;
@@ -39,7 +42,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/ts_cross_language_bridge_limit/input --diff <cwd>/fixtures/ts_cross_language_bridge_limit/diff.patch --mode fast probe:src_bridge.ts:typescript_preview:d73aaece
   ripr context --root <cwd>/fixtures/ts_cross_language_bridge_limit/input --diff <cwd>/fixtures/ts_cross_language_bridge_limit/diff.patch --mode fast --at probe:src_bridge.ts:typescript_preview:d73aaece
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_bridge.ts:typescript_preview:d73aaece --root <cwd>/fixtures/ts_cross_language_bridge_limit/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

@@ -15,7 +15,9 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Canonical gap: gap:rust:src/lib.rs:gate:predicate_boundary:predicate:input==10
   Changed behavior: input >= 10
-  Missing discriminator: Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do…
+  Missing discriminator: Discriminator unconfirmed: no admitted discriminating oracle is paired with
+    the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact
+    oracle do not establish that discriminator
   Related test (1 of 2 matched rows): tests/split.rs:4 boundary (has no assertion)
   Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
@@ -33,7 +35,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/split_test_boundary_oracle/input --diff <cwd>/fixtures/split_test_boundary_oracle/diff.patch --mode fast probe:src_lib.rs:predicate:fa1d51d0
   ripr context --root <cwd>/fixtures/split_test_boundary_oracle/input --diff <cwd>/fixtures/split_test_boundary_oracle/diff.patch --mode fast --at probe:src_lib.rs:predicate:fa1d51d0
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:predicate:fa1d51d0 --root <cwd>/fixtures/split_test_boundary_oracle/input` for the full gate's answer
+  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/split_test_boundary_oracle/input --at src/lib.rs:2 --kind predicate
 

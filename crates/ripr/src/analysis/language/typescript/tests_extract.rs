@@ -100,49 +100,71 @@ pub(crate) fn extract_tests_with_expansion(
     Option<TypeScriptConditionalCreditGap>,
     Option<super::suite_factory::SuiteFactoryExpansion>,
 ) {
+    try_extract_tests_with_expansion(file, source).unwrap_or((Vec::new(), None, None))
+}
+
+/// [`extract_tests_with_expansion`], but a parse-worker failure (the thread
+/// could not spawn, or it panicked) is an `Err` instead of an empty result.
+/// Those depend on the environment, not on `(file, source)`, so the
+/// content-keyed cache must not store them (#10017). The deterministic
+/// nesting-budget refusal stays an empty `Ok`.
+pub(crate) fn try_extract_tests_with_expansion(
+    file: &Path,
+    source: &str,
+) -> Result<Extraction, String> {
     // RIPR-SPEC-0243 decision 19: a same-file assertion helper's call is
     // replaced by its assertion, on the same line, before extraction. One pass
     // only, so self-referential or mutually recursive helpers cannot loop.
     // A wrapper that only rethrows its callback's failure is unwrapped the
     // same way (decision 20), first, so a helper call inside the callback is
     // still seen by the helper pass.
-    if source.contains("function ")
-        && let Ok(Some(expanded)) = parse_on_worker(file, source, move |file, source, allocator| {
-            let ret = Parser::new(allocator, source, source_type_for(file)).parse();
-            if !ret.errors.is_empty() {
-                return None;
-            }
-            let unwrapped =
-                super::rethrow_wrapper::expand_rethrow_wrappers(&ret.program.body, source);
-            let Some(unwrapped) = unwrapped else {
-                return super::assertion_helper::expand_assertion_helpers(
-                    &ret.program.body,
-                    source,
-                );
-            };
-            let reparsed = Parser::new(allocator, &unwrapped, source_type_for(file)).parse();
-            if !reparsed.errors.is_empty() {
-                return Some(unwrapped);
-            }
-            Some(
-                super::assertion_helper::expand_assertion_helpers(
-                    &reparsed.program.body,
-                    &unwrapped,
+    let prepass = if source.contains("function ") {
+        Some(parse_on_worker(
+            file,
+            source,
+            move |file, source, allocator| {
+                let ret = Parser::new(allocator, source, source_type_for(file)).parse();
+                if !ret.errors.is_empty() {
+                    return None;
+                }
+                let unwrapped =
+                    super::rethrow_wrapper::expand_rethrow_wrappers(&ret.program.body, source);
+                let Some(unwrapped) = unwrapped else {
+                    return super::assertion_helper::expand_assertion_helpers(
+                        &ret.program.body,
+                        source,
+                    );
+                };
+                let reparsed = Parser::new(allocator, &unwrapped, source_type_for(file)).parse();
+                if !reparsed.errors.is_empty() {
+                    return Some(unwrapped);
+                }
+                Some(
+                    super::assertion_helper::expand_assertion_helpers(
+                        &reparsed.program.body,
+                        &unwrapped,
+                    )
+                    .unwrap_or(unwrapped),
                 )
-                .unwrap_or(unwrapped),
-            )
-        })
-        && expanded != source
-    {
-        let extraction = extract_tests_expanding_suite_factories(file, &expanded, true);
-        if !extraction.0.is_empty() {
-            return extraction;
+            },
+        ))
+    } else {
+        None
+    };
+    match prepass {
+        Some(Err(reason)) if super::parse::is_worker_failure(&reason) => return Err(reason),
+        Some(Ok(Some(expanded))) if expanded != source => {
+            let extraction = extract_tests_expanding_suite_factories(file, &expanded, true)?;
+            if !extraction.0.is_empty() {
+                return Ok(extraction);
+            }
         }
+        _ => {}
     }
     extract_tests_expanding_suite_factories(file, source, true)
 }
 
-type Extraction = (
+pub(crate) type Extraction = (
     Vec<TypeScriptTest>,
     Option<TypeScriptConditionalCreditGap>,
     Option<super::suite_factory::SuiteFactoryExpansion>,
@@ -150,11 +172,15 @@ type Extraction = (
 
 /// `expand` is off for the rerun on an already-expanded source, whose
 /// factory calls are still present.
-fn extract_tests_expanding_suite_factories(file: &Path, source: &str, expand: bool) -> Extraction {
+fn extract_tests_expanding_suite_factories(
+    file: &Path,
+    source: &str,
+    expand: bool,
+) -> Result<Extraction, String> {
     // Same guard as owner extraction (#4101): a file under the nesting
     // budget can still overflow the caller stack, so the parse must
     // not run on the main thread.
-    let Ok(out) = parse_on_worker(file, source, move |file, source, allocator| {
+    let parsed = parse_on_worker(file, source, move |file, source, allocator| {
         let ret = Parser::new(allocator, source, source_type_for(file)).parse();
         if !ret.errors.is_empty() {
             return (Vec::new(), None, None);
@@ -277,17 +303,20 @@ fn extract_tests_expanding_suite_factories(file: &Path, source: &str, expand: bo
             None
         };
         (tests, conditional_credit_gap, None)
-    }) else {
-        return (Vec::new(), None, None);
+    });
+    let out = match parsed {
+        Ok(out) => out,
+        Err(reason) if super::parse::is_worker_failure(&reason) => return Err(reason),
+        Err(_) => return Ok((Vec::new(), None, None)),
     };
     let (tests, gap, expansion) = out;
     let Some(expansion) = expansion else {
-        return (tests, gap, None);
+        return Ok((tests, gap, None));
     };
     // Rerun on the source with the factory calls expanded; a test found in
     // an appended expansion reports its call's line.
     let (mut tests, mut gap, _) =
-        extract_tests_expanding_suite_factories(file, &expansion.source, false);
+        extract_tests_expanding_suite_factories(file, &expansion.source, false)?;
     // A substitution that lands inside a string can leave the expanded source
     // unparsable, which would drop every test the file yielded before
     // expansion; fall back to the unexpanded extraction then.
@@ -310,7 +339,7 @@ fn extract_tests_expanding_suite_factories(file: &Path, source: &str, expand: bo
     if let Some(gap) = &mut gap {
         gap.sample_line = expansion.reported_line(gap.sample_line);
     }
-    (tests, gap, Some(expansion))
+    Ok((tests, gap, Some(expansion)))
 }
 
 /// Walk a list of statements and collect every syntactic owner-module mock
@@ -2118,10 +2147,13 @@ pub(super) fn blank_ranges(source: &str, ranges: &[std::ops::Range<usize>]) -> S
 
 /// Identifiers written as an assignment target anywhere in `text`, each
 /// named once.
-fn assigned_identifier_names(text: &str) -> Vec<String> {
+pub(super) fn assigned_identifier_names(text: &str) -> Vec<String> {
+    // A set answers membership; `Vec::contains` rescans every earlier name per
+    // write, which is quadratic on a minified file with thousands of writes.
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut names: Vec<String> = Vec::new();
     for (name, _) in identifier_writes(text) {
-        if !names.contains(&name) {
+        if seen.insert(name.clone()) {
             names.push(name);
         }
     }
@@ -2130,11 +2162,18 @@ fn assigned_identifier_names(text: &str) -> Vec<String> {
 
 /// Names `text` writes at least twice: a declaration initializer counts as
 /// one write, so a second one is a reassignment, update or loop target.
-fn rewritten_identifier_names(text: &str) -> Vec<String> {
+pub(super) fn rewritten_identifier_names(text: &str) -> Vec<String> {
     let writes = strict_identifier_writes(text);
+    // One counting pass; the earlier per-name rescan of every write was
+    // quadratic in the number of writes. Order stays first-write order.
+    let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for (name, _) in &writes {
+        *counts.entry(name.as_str()).or_insert(0) += 1;
+    }
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
     let mut names: Vec<String> = Vec::new();
     for (name, _) in &writes {
-        if !names.contains(name) && writes.iter().filter(|(other, _)| other == name).count() > 1 {
+        if counts[name.as_str()] > 1 && seen.insert(name.as_str()) {
             names.push(name.clone());
         }
     }
@@ -2455,7 +2494,7 @@ fn name_literal_span(stmt: &Statement<'_>) -> Option<std::ops::Range<usize>> {
 /// guard only sees a declaration that starts its line, so a destructured or
 /// inline declaration would otherwise leave an assertion binding credited
 /// while shadowed (#4638 review). Over-collecting only withholds credit.
-fn collect_block_declared_names(statements: &[Statement<'_>], out: &mut Vec<String>) {
+pub(crate) fn collect_block_declared_names(statements: &[Statement<'_>], out: &mut Vec<String>) {
     for statement in statements {
         collect_statement_declared_names(statement, out);
     }
@@ -2780,7 +2819,7 @@ fn collect_hoisted_names(
     }
 }
 
-fn argument_parameter_names(argument: &oxc_ast::ast::Argument<'_>) -> Vec<String> {
+pub(crate) fn argument_parameter_names(argument: &oxc_ast::ast::Argument<'_>) -> Vec<String> {
     let params = match argument {
         oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) => &arrow.params,
         oxc_ast::ast::Argument::FunctionExpression(function) => &function.params,
@@ -3687,9 +3726,82 @@ fn expression_is_active_declaration(
         Expression::StaticMemberExpression(member) => {
             is_active_declaration_modifier(member.property.name.as_str())
                 && expression_is_active_declaration(&member.object, root)
+                || is_playwright_describe_member(member, root)
         }
         _ => false,
     }
+}
+
+/// Playwright Test registers a suite as `test.describe(...)`, with the
+/// `serial` / `parallel` / `only` modifiers (`test.describe.serial(...)`).
+/// Jest, Vitest and mocha have no `test.describe`, so the spelling is not a
+/// suite there. `.skip` / `.fixme` stay inactive like every other skip.
+fn is_playwright_describe_member(
+    member: &oxc_ast::ast::StaticMemberExpression<'_>,
+    root: TestDeclarationRoot,
+) -> bool {
+    if !matches!(root, TestDeclarationRoot::Describe) {
+        return false;
+    }
+    match (member.property.name.as_str(), &member.object) {
+        ("describe", Expression::Identifier(object)) => {
+            TestDeclarationRoot::Test.matches_identifier(object.name.as_str())
+        }
+        ("serial" | "parallel", Expression::StaticMemberExpression(object)) => {
+            is_playwright_describe_member(object, root)
+        }
+        _ => false,
+    }
+}
+
+/// A `describe`-root call the runner skips: a `.skip` / `.fixme`
+/// modifier on the root (alone or after active modifiers), or an options
+/// object that turns the suite off.
+fn callee_is_skipped_describe(call: &oxc_ast::ast::CallExpression<'_>) -> bool {
+    fn skipped_modifier_on_describe(expression: &Expression<'_>) -> bool {
+        match expression {
+            Expression::StaticMemberExpression(member) => {
+                (matches!(member.property.name.as_str(), "skip" | "fixme")
+                    && expression_is_active_declaration(
+                        &member.object,
+                        TestDeclarationRoot::Describe,
+                    ))
+                    || (is_active_declaration_modifier(member.property.name.as_str())
+                        && skipped_modifier_on_describe(&member.object))
+            }
+            _ => false,
+        }
+    }
+    // Only a literal `skip: true` turns the suite off; a
+    // dynamic value, a spread or any other key (`fails`) leaves it active.
+    let literally_off = |call: &oxc_ast::ast::CallExpression<'_>| {
+        call.arguments.iter().take(3).any(|argument| {
+            let oxc_ast::ast::Argument::ObjectExpression(options) = argument else {
+                return false;
+            };
+            // A later spread or computed key may override `skip`, so the
+            // literal counts only when nothing after it can.
+            let mut off = false;
+            for property in &options.properties {
+                let oxc_ast::ast::ObjectPropertyKind::ObjectProperty(property) = property else {
+                    off = false;
+                    continue;
+                };
+                if property.computed {
+                    off = false;
+                } else if property.key.static_name().as_deref() == Some("skip") {
+                    off = matches!(
+                        &property.value,
+                        Expression::BooleanLiteral(literal) if literal.value
+                    );
+                }
+            }
+            off
+        })
+    };
+    skipped_modifier_on_describe(&call.callee)
+        || (expression_is_active_declaration(&call.callee, TestDeclarationRoot::Describe)
+            && literally_off(call))
 }
 
 fn is_active_declaration_modifier(name: &str) -> bool {
@@ -4137,9 +4249,11 @@ fn extracted_span_starts(
     source: &str,
     extracted: &[TypeScriptTest],
     covered: &[std::ops::Range<usize>],
-) -> Vec<usize> {
+) -> std::collections::HashSet<usize> {
     let mut watermark = 0usize;
-    let mut starts = Vec::new();
+    // A set, not a Vec: the finder asks about every statement-position call, so
+    // a linear `contains` made this disclosure quadratic in the test count.
+    let mut starts = std::collections::HashSet::with_capacity(extracted.len());
     for test in extracted {
         // A covered factory's own registration is never what a test was
         // extracted from, but an expanded copy can read identically to it
@@ -4158,7 +4272,7 @@ fn extracted_span_starts(
             }
         };
         if let Some(start) = found {
-            starts.push(start);
+            starts.insert(start);
             // The next extracted test starts strictly after this one.
             watermark = start + 1;
         }
@@ -4173,7 +4287,7 @@ fn extracted_span_starts(
 /// object-property subtrees are out of scope for this disclosure slice.
 struct UnextractedTestFinder<'a> {
     source: &'a SourceText<'a>,
-    extracted_starts: &'a [usize],
+    extracted_starts: &'a std::collections::HashSet<usize>,
     /// Suite-factory declarations whose registrations the appended
     /// expansions already stand for.
     covered: &'a [std::ops::Range<usize>],
@@ -4427,6 +4541,12 @@ impl UnextractedTestFinder<'_> {
                     return;
                 }
             }
+            return;
+        }
+        // A skipped suite (`describe.skip(...)`, `describe('x', { skip: true },
+        // ...)`) registers nothing and its callback never runs, so a
+        // registration inside it is not one the extractor dropped.
+        if callee_is_skipped_describe(call) {
             return;
         }
         if statement_position && self.gap.is_none() {

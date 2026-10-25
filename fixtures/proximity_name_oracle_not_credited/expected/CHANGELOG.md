@@ -287,3 +287,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — proximity_name_oracle_not_credited (25)
+
+Reason:
+RIPR-SPEC-0001 / #8935 / #8389: preserve the enum source fact from each distinct test file at line 6 under file-aware identity and update the omitted-detail count. Origins ride internal located facts; the public ValueFact stays four-field. Unchanged IDs, exposure classes, stages, missing discriminators and repair guidance.
+
+Command:
+`cargo xtask goldens bless proximity_name_oracle_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — proximity_name_oracle_not_credited (26)
+
+Reason:
+RIPR-SPEC-0122: state the missing evidence and the rerun for a not-ready repair route instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless proximity_name_oracle_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

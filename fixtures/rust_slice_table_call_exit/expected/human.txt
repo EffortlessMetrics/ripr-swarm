@@ -15,7 +15,9 @@ Start here:
   Why unknown: the change reaches a sink but infection could not be determined statically
   Canonical gap: gap:rust:src/lib.rs:mean_latency:predicate_boundary:predicate:samples.len==0
   Changed behavior: samples.len() == 0
-  Missing discriminator (1 of 2): Changed boundary input is unresolved: slice length `samples.len()` is outside the bounded eager immutable literal table family; not every input cardinality is established;…
+  Missing discriminator (1 of 2): Changed boundary input is unresolved: slice length `samples.len()`
+    is outside the bounded eager immutable literal table family; not every input cardinality is
+    established; activation/infection is unknown
   Related test (1 of 6 matched rows): src/lib.rs:57 mean_lies_between_min_and_max
   Next step: Open the related test and trace its input through the local or computed operand
     (including default and empty cases) to see which side of the changed condition it exercises,
@@ -39,7 +41,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_slice_table_call_exit/input --diff <cwd>/fixtures/rust_slice_table_call_exit/diff.patch --mode fast probe:src_lib.rs:predicate:2639b14d
   ripr context --root <cwd>/fixtures/rust_slice_table_call_exit/input --diff <cwd>/fixtures/rust_slice_table_call_exit/diff.patch --mode fast --at probe:src_lib.rs:predicate:2639b14d
-  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: boundary_value; incomplete evidence stage: activation); run `ripr repair probe:src_lib.rs:predicate:2639b14d --root <cwd>/fixtures/rust_slice_table_call_exit/input` for the full gate's answer
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: producer-owned missing discriminator fact: boundary_value; incomplete evidence stage: activation; follow the Next step above, then rerun `ripr check`
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/rust_slice_table_call_exit/input --at src/lib.rs:18 --kind predicate
 

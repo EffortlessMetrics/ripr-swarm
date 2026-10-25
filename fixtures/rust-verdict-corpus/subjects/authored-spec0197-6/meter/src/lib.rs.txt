@@ -1,0 +1,9 @@
+//! The gauge whose reading the panel integration test pins through an exact import.
+
+pub struct Gauge;
+
+impl Gauge {
+    pub fn reading() -> u32 {
+        42
+    }
+}

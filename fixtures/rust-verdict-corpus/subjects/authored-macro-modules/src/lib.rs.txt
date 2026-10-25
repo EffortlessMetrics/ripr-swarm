@@ -1,0 +1,26 @@
+//! Width checks tested only through `macro_rules!` tables whose generator
+//! lives in `tests/support/mod.rs`, not in the file that invokes it.
+
+pub fn fits_imported(width: usize, limit: usize) -> bool {
+    width <= limit
+}
+
+pub fn fits_child(width: usize, limit: usize) -> bool {
+    width <= limit
+}
+
+pub fn fits_child_far(width: usize, limit: usize) -> bool {
+    width <= limit
+}
+
+pub fn fits_path(width: usize, limit: usize) -> bool {
+    width <= limit
+}
+
+pub fn fits_exported(width: usize, limit: usize) -> bool {
+    width <= limit
+}
+
+pub fn fits_shadowed(width: usize, limit: usize) -> bool {
+    width <= limit
+}

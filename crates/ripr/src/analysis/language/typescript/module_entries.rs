@@ -43,6 +43,20 @@ pub(crate) struct TypeScriptModuleEntry {
     /// (`class_entries`), not an exported top-level name. `name` is then the
     /// method name (`constructor` for a constructor).
     pub(crate) class_member: Option<TypeScriptMethodKind>,
+    /// `Some` when the entry is an instance method that a bare `@owner`
+    /// decorator wraps (`decorated_entries`, RIPR-SPEC-0243 rule 21). `name`
+    /// is the method name.
+    pub(crate) decorated: Option<TypeScriptDecoratedMethod>,
+}
+
+/// The decorated method a pass-through decorator owner reaches, with the
+/// lines of the wrapper's final return, the only line whose change the
+/// method's call result carries.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct TypeScriptDecoratedMethod {
+    pub(crate) class_name: String,
+    pub(crate) return_start_line: usize,
+    pub(crate) return_end_line: usize,
 }
 
 /// One top-level declaration of the module.
@@ -51,7 +65,8 @@ struct ModuleNode<'s> {
     /// Function texts whose bare calls count as this node's calls.
     call_texts: Vec<CallText<'s>>,
     /// Factory whose returned function this node's value is (`const p = f()`).
-    factory: Option<String>,
+    /// Borrowed from an AST atom — no per-node allocation (#10087).
+    factory: Option<&'s str>,
     /// Function texts the declaration returns directly, when it is a factory.
     returned_texts: Vec<CallText<'s>>,
 }
@@ -71,19 +86,21 @@ struct CallText<'s> {
 }
 
 /// Exported entries per top-level owner name.
-pub(crate) fn module_entries_by_owner(
-    statements: &[Statement<'_>],
-    source: &str,
+pub(crate) fn module_entries_by_owner<'a>(
+    statements: &'a [Statement<'a>],
+    source: &'a str,
 ) -> BTreeMap<String, Vec<TypeScriptModuleEntry>> {
-    let mut nodes: BTreeMap<String, ModuleNode<'_>> = BTreeMap::new();
+    // Node keys and factories are AST atoms or string literals, so the graph
+    // borrows them instead of owning a String per node (#10087 follow-up).
+    let mut nodes: BTreeMap<&'a str, ModuleNode<'a>> = BTreeMap::new();
     let mut exports: BTreeMap<String, BTreeSet<TypeScriptModuleEntry>> = BTreeMap::new();
     for statement in statements {
         collect_statement(statement, source, &mut nodes, &mut exports);
     }
-    let names: std::collections::HashSet<&str> = nodes.keys().map(String::as_str).collect();
-    let callees: BTreeMap<&str, BTreeSet<&str>> = nodes
+    let names: std::collections::HashSet<&'a str> = nodes.keys().copied().collect();
+    let callees: BTreeMap<&'a str, BTreeSet<&'a str>> = nodes
         .iter()
-        .map(|(name, node)| (name.as_str(), node_callees(node, &nodes, &names)))
+        .map(|(name, node)| (*name, node_callees(node, &nodes, &names)))
         .collect();
     let mut entries: BTreeMap<String, Vec<TypeScriptModuleEntry>> = BTreeMap::new();
     for (local, exported) in &exports {
@@ -105,10 +122,10 @@ pub(crate) fn module_entries_by_owner(
     entries
 }
 
-fn collect_statement<'s>(
-    statement: &Statement<'_>,
-    source: &'s str,
-    nodes: &mut BTreeMap<String, ModuleNode<'s>>,
+fn collect_statement<'a>(
+    statement: &'a Statement<'a>,
+    source: &'a str,
+    nodes: &mut BTreeMap<&'a str, ModuleNode<'a>>,
     exports: &mut BTreeMap<String, BTreeSet<TypeScriptModuleEntry>>,
 ) {
     match statement {
@@ -125,12 +142,12 @@ fn collect_statement<'s>(
             match export.declaration.as_ref() {
                 Some(Declaration::FunctionDeclaration(func)) => {
                     if let Some(name) = collect_function(func, source, nodes) {
-                        record_export(exports, &name, &name);
+                        record_export(exports, name, name);
                     }
                 }
                 Some(Declaration::VariableDeclaration(decl)) => {
                     for name in collect_variables(decl, source, nodes) {
-                        record_export(exports, &name, &name);
+                        record_export(exports, name, name);
                     }
                 }
                 Some(_) => {}
@@ -158,12 +175,9 @@ fn collect_statement<'s>(
             ExportDefaultDeclarationKind::FunctionDeclaration(func) => {
                 // An anonymous default function is a node of its own; no
                 // declaration can be named `default`, so the key is free.
-                let name = func
-                    .id
-                    .as_ref()
-                    .map_or_else(|| "default".to_string(), |id| id.name.to_string());
-                if collect_function_as(func, &name, source, nodes) {
-                    record_export(exports, &name, "default");
+                let name = func.id.as_ref().map_or("default", |id| id.name.as_str());
+                if collect_function_as(func, name, source, nodes) {
+                    record_export(exports, name, "default");
                 }
             }
             ExportDefaultDeclarationKind::ArrowFunctionExpression(arrow) => {
@@ -191,25 +205,26 @@ fn record_export(
             name: exported.to_string(),
             exported_as_default: exported == "default",
             class_member: None,
+            decorated: None,
         });
 }
 
-fn collect_function<'s>(
-    func: &Function<'_>,
-    source: &'s str,
-    nodes: &mut BTreeMap<String, ModuleNode<'s>>,
-) -> Option<String> {
-    let name = func.id.as_ref()?.name.to_string();
-    collect_function_as(func, &name, source, nodes).then_some(name)
+fn collect_function<'a>(
+    func: &'a Function<'a>,
+    source: &'a str,
+    nodes: &mut BTreeMap<&'a str, ModuleNode<'a>>,
+) -> Option<&'a str> {
+    let name = func.id.as_ref()?.name.as_str();
+    collect_function_as(func, name, source, nodes).then_some(name)
 }
 
 /// Record `func` as node `name`; `false` for an overload signature, which
 /// carries no body.
-fn collect_function_as<'s>(
-    func: &Function<'_>,
-    name: &str,
-    source: &'s str,
-    nodes: &mut BTreeMap<String, ModuleNode<'s>>,
+fn collect_function_as<'a>(
+    func: &'a Function<'a>,
+    name: &'a str,
+    source: &'a str,
+    nodes: &mut BTreeMap<&'a str, ModuleNode<'a>>,
 ) -> bool {
     let Some(body) = func.body.as_ref() else {
         return false;
@@ -219,11 +234,11 @@ fn collect_function_as<'s>(
     true
 }
 
-fn collect_arrow_as<'s>(
-    arrow: &ArrowFunctionExpression<'_>,
-    name: &str,
-    source: &'s str,
-    nodes: &mut BTreeMap<String, ModuleNode<'s>>,
+fn collect_arrow_as<'a>(
+    arrow: &'a ArrowFunctionExpression<'a>,
+    name: &'a str,
+    source: &'a str,
+    nodes: &mut BTreeMap<&'a str, ModuleNode<'a>>,
 ) {
     let returned = if arrow.expression {
         // `(m) => (...args) => ...`: the expression body is the returned value.
@@ -239,12 +254,12 @@ fn collect_arrow_as<'s>(
 
 /// A function node: its own calls exclude the functions it returns, which
 /// become the calls of any value it builds.
-fn add_function_node<'s>(
-    name: &str,
+fn add_function_node<'a>(
+    name: &'a str,
     span: oxc_span::Span,
     returned: &[oxc_span::Span],
-    source: &'s str,
-    nodes: &mut BTreeMap<String, ModuleNode<'s>>,
+    source: &'a str,
+    nodes: &mut BTreeMap<&'a str, ModuleNode<'a>>,
 ) {
     let scope = span_text(source, span);
     // Blank the returned functions by building the owned text once from
@@ -290,7 +305,7 @@ fn add_function_node<'s>(
         own.push_str(&scope[cursor..]);
         std::borrow::Cow::Owned(own)
     };
-    let node = nodes.entry(name.to_string()).or_default();
+    let node = nodes.entry(name).or_default();
     node.call_texts.push(CallText { calls, scope });
     node.returned_texts
         .extend(returned.iter().map(|inner| CallText {
@@ -301,11 +316,11 @@ fn add_function_node<'s>(
 
 /// Top-level `const`/`let`/`var` declarators this module can follow; returns
 /// the bound names that became graph nodes.
-fn collect_variables<'s>(
-    decl: &VariableDeclaration<'_>,
-    source: &'s str,
-    nodes: &mut BTreeMap<String, ModuleNode<'s>>,
-) -> Vec<String> {
+fn collect_variables<'a>(
+    decl: &'a VariableDeclaration<'a>,
+    source: &'a str,
+    nodes: &mut BTreeMap<&'a str, ModuleNode<'a>>,
+) -> Vec<&'a str> {
     let mut names = Vec::new();
     for declarator in &decl.declarations {
         let Some(name) = binding_identifier_name(&declarator.id) else {
@@ -317,19 +332,17 @@ fn collect_variables<'s>(
         match unwrap_type_wrappers(init) {
             Expression::ArrowFunctionExpression(arrow) => {
                 collect_arrow_as(arrow, name, source, nodes);
-                names.push(name.to_string());
+                names.push(name);
             }
             Expression::FunctionExpression(func) => {
-                names.extend(
-                    collect_function_as(func, name, source, nodes).then(|| name.to_string()),
-                );
+                names.extend(collect_function_as(func, name, source, nodes).then_some(name));
             }
             Expression::CallExpression(call) => {
                 let Expression::Identifier(callee) = unwrap_type_wrappers(&call.callee) else {
                     continue;
                 };
-                nodes.entry(name.to_string()).or_default().factory = Some(callee.name.to_string());
-                names.push(name.to_string());
+                nodes.entry(name).or_default().factory = Some(callee.name.as_str());
+                names.push(name);
             }
             _ => {}
         }
@@ -385,12 +398,12 @@ fn span_text(source: &str, span: oxc_span::Span) -> &str {
 
 /// Top-level names a node calls. A factory product calls what its factory's
 /// returned function calls.
-fn node_callees<'n>(
-    node: &ModuleNode<'_>,
-    nodes: &BTreeMap<String, ModuleNode<'_>>,
-    names: &std::collections::HashSet<&'n str>,
-) -> BTreeSet<&'n str> {
-    let texts: Vec<&CallText<'_>> = match node.factory.as_deref() {
+fn node_callees<'a>(
+    node: &ModuleNode<'a>,
+    nodes: &BTreeMap<&'a str, ModuleNode<'a>>,
+    names: &std::collections::HashSet<&'a str>,
+) -> BTreeSet<&'a str> {
+    let texts: Vec<&CallText<'_>> = match node.factory {
         Some(factory) => nodes
             .get(factory)
             .map(|factory_node| factory_node.returned_texts.iter().collect())

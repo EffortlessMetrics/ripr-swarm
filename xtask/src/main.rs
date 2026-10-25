@@ -88,6 +88,7 @@ mod schema_producer_sweep;
 mod verification_contracts;
 mod version;
 mod windows_advisory;
+mod windows_advisory_run;
 
 use command::{
     CommandCatalogEntry, XtaskCommand, command_catalog, known_command_root, known_commands,
@@ -211,8 +212,8 @@ pub(crate) use evidence_promotion::{
     evidence_promotion_external_failure_kind, evidence_promotion_external_semantic_violations,
     evidence_promotion_human_class_line_matches, evidence_promotion_human_oracle_line_matches,
     evidence_promotion_pure_failure_kind, evidence_promotion_semantic_violations,
-    evidence_promotion_semantic_violations_scoped, validate_evidence_promotion_honesty_corpus_at,
-    write_evidence_promotion_external_report,
+    evidence_promotion_semantic_violations_scoped, read_evidence_promotion_corpus,
+    validate_evidence_promotion_honesty_corpus_at, write_evidence_promotion_external_report,
 };
 pub(crate) use evidence_promotion::{
     check_evidence_promotion_honesty, validate_evidence_promotion_honesty_corpus,
@@ -6461,11 +6462,26 @@ fn validate_spec_references(
     ids: &BTreeMap<String, Vec<String>>,
     violations: &mut Vec<String>,
 ) -> Result<(), String> {
-    for relative in [
-        ".ripr/traceability.toml",
-        "metrics/capabilities.toml",
-        "docs/CAPABILITY_MATRIX.md",
-    ] {
+    let mut references = vec![
+        ".ripr/traceability.toml".to_string(),
+        "metrics/capabilities.toml".to_string(),
+        "docs/CAPABILITY_MATRIX.md".to_string(),
+    ];
+    if let Ok(entries) = fs::read_dir(root.join(TRACEABILITY_FRAGMENT_DIR)) {
+        let mut fragments: Vec<String> = entries
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "toml"))
+            .map(|entry| {
+                format!(
+                    "{TRACEABILITY_FRAGMENT_DIR}/{}",
+                    entry.file_name().to_string_lossy()
+                )
+            })
+            .collect();
+        fragments.sort();
+        references.extend(fragments);
+    }
+    for relative in &references {
         let path = root.join(relative);
         if !path.exists() {
             continue;
@@ -6528,7 +6544,7 @@ fn check_traceability() -> Result<(), String> {
         return finish_traceability_report(&violations, &advisories);
     }
 
-    let (behaviors, parse_violations) = parse_traceability_manifest(manifest)?;
+    let (behaviors, parse_violations) = load_traceability_behaviors(manifest)?;
     violations.extend(parse_violations);
     if behaviors.is_empty() {
         violations.push(".ripr/traceability.toml has no [[behavior]] entries".to_string());
@@ -6876,6 +6892,76 @@ fn is_ascii_digits(value: &str) -> bool {
     value.bytes().all(|byte| byte.is_ascii_digit())
 }
 
+/// Directory of traceability fragments. A PR registers its tests, fixtures,
+/// code, outputs and metrics, or a whole new behavior, in a file of its own
+/// here instead of editing the shared `.ripr/traceability.toml` arrays that
+/// every PR otherwise appends to.
+const TRACEABILITY_FRAGMENT_DIR: &str = ".ripr/traceability.d";
+
+/// The base manifest plus every fragment, with `[[extend]]` entries folded
+/// into the behavior they name. An `[[extend]]` whose id no behavior carries
+/// is a violation, and a fragment may not set `name` or `spec` on an extend.
+fn load_traceability_behaviors(
+    manifest: &Path,
+) -> Result<(Vec<TraceBehavior>, Vec<String>), String> {
+    let (mut all, mut violations) = parse_traceability_manifest(manifest)?;
+    let dir = manifest
+        .parent()
+        .map(|parent| parent.join("traceability.d"))
+        .unwrap_or_else(|| PathBuf::from(TRACEABILITY_FRAGMENT_DIR));
+    if dir.is_dir() {
+        let mut fragments: Vec<PathBuf> = fs::read_dir(&dir)
+            .map_err(|error| format!("failed to read {}: {error}", dir.display()))?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
+            .collect();
+        fragments.sort();
+        for fragment in fragments {
+            let (behaviors, fragment_violations) = parse_traceability_manifest(&fragment)?;
+            violations.extend(fragment_violations);
+            all.extend(behaviors);
+        }
+    }
+
+    let mut merged: Vec<TraceBehavior> = Vec::new();
+    let mut extends = Vec::new();
+    for behavior in all {
+        if behavior.extends {
+            extends.push(behavior);
+        } else {
+            merged.push(behavior);
+        }
+    }
+    for extend in extends {
+        let location = format!("{}:{}", extend.source, extend.line);
+        let Some(id) = extend.id.as_ref() else {
+            violations.push(format!("{location} [[extend]] is missing `id`"));
+            continue;
+        };
+        if extend.name.is_some() || extend.spec.is_some() {
+            violations.push(format!(
+                "{location} [[extend]] for {id} sets `name` or `spec`; those belong to its [[behavior]]"
+            ));
+        }
+        let Some(base) = merged
+            .iter_mut()
+            .find(|behavior| behavior.id.as_ref() == Some(id))
+        else {
+            violations.push(format!(
+                "{location} [[extend]] names {id}, which no [[behavior]] carries"
+            ));
+            continue;
+        };
+        base.tests.extend(extend.tests);
+        base.fixtures.extend(extend.fixtures);
+        base.code.extend(extend.code);
+        base.outputs.extend(extend.outputs);
+        base.metrics.extend(extend.metrics);
+    }
+    Ok((merged, violations))
+}
+
 fn parse_traceability_manifest(path: &Path) -> Result<(Vec<TraceBehavior>, Vec<String>), String> {
     let text = read_text_lossy(path)?;
     let mut behaviors = Vec::new();
@@ -6920,12 +7006,14 @@ fn parse_traceability_manifest(path: &Path) -> Result<(Vec<TraceBehavior>, Vec<S
             }
             continue;
         }
-        if trimmed == "[[behavior]]" {
+        if trimmed == "[[behavior]]" || trimmed == "[[extend]]" {
             if let Some(behavior) = current.take() {
                 behaviors.push(behavior);
             }
             current = Some(TraceBehavior {
                 line: line_number,
+                extends: trimmed == "[[extend]]",
+                source: normalize_path(path),
                 ..TraceBehavior::default()
             });
             continue;
@@ -10470,6 +10558,7 @@ const REPO_EXPOSURE_LATENCY_DEFAULT_TIMEOUT_MS: u64 = 30_000;
 #[derive(Clone, Debug)]
 struct RepoExposureLatencyReport {
     status: String,
+    output_parity: RepoExposureOutputParity,
     timeout_ms: u64,
     binary: String,
     runs: Vec<RepoExposureLatencyRun>,
@@ -10486,8 +10575,85 @@ struct RepoExposureLatencyRun {
     trace: Vec<RepoExposureLatencyTrace>,
     file_fact_cache: Option<RepoExposureFileFactCache>,
     file_fact_cache_limitation: Option<String>,
+    /// Classified-seam and corpus-fingerprint store outcome (#9633).
+    cache_family_store: Option<RepoExposureCacheFamilyStore>,
+    cache_family_store_limitation: Option<String>,
     resource_cost: Option<RepoExposureResourceCost>,
     resource_cost_limitation: Option<String>,
+}
+
+/// The analyzer's end-of-run classified-seam / corpus-fingerprint store
+/// receipt: the same bounded `{path, stage, error}` rows as the file-fact
+/// receipt, without the file-fact counters (#9633).
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct RepoExposureCacheFamilyStore {
+    schema_version: String,
+    store_errors: usize,
+    store_failures: Vec<RepoExposureStoreFailure>,
+    store_failures_dropped: usize,
+    /// Producer-observed subject of the run (cache key identity and file
+    /// disclosure digests); `None` from a producer that does not report one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    subject: Option<Value>,
+}
+
+/// Whether cache-served output equals a cold recomputation, per format.
+/// `pass` needs every format checked and equal; any difference is `mismatch`;
+/// anything unchecked keeps the report from `pass` with a named reason.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct RepoExposureOutputParity {
+    checks: Vec<RepoExposureParityCheck>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RepoExposureParityCheck {
+    /// Named diagnostics from the comparison legs' receipts (store errors,
+    /// unobserved or invalid receipts); any makes the report non-`pass`.
+    diagnostics: Vec<String>,
+    format: String,
+    /// `pass`, `mismatch`, `fail` (the served run failed after a passing cold
+    /// run) or `not_checked`.
+    status: &'static str,
+    reason: Option<String>,
+}
+
+/// The formats a complete latency report covers; an aggregate parity `pass`
+/// needs each exactly once.
+const REPO_EXPOSURE_EXPECTED_FORMATS: [&str; 2] = ["repo-exposure-json", "repo-exposure-md"];
+
+impl RepoExposureOutputParity {
+    /// Why the checks do not cover the expected formats exactly once.
+    fn coverage_gap(&self) -> Option<String> {
+        for format in REPO_EXPOSURE_EXPECTED_FORMATS {
+            match self
+                .checks
+                .iter()
+                .filter(|check| check.format == format)
+                .count()
+            {
+                1 => {}
+                0 => return Some(format!("missing_format:{format}")),
+                _ => return Some(format!("duplicate_format:{format}")),
+            }
+        }
+        (self.checks.len() != REPO_EXPOSURE_EXPECTED_FORMATS.len())
+            .then(|| "unexpected_format".to_string())
+    }
+
+    fn label(&self) -> &'static str {
+        if self.checks.iter().any(|check| check.status == "mismatch") {
+            "mismatch"
+        } else if self.checks.iter().any(|check| check.status == "fail") {
+            "fail"
+        } else if self.coverage_gap().is_none()
+            && self.checks.iter().all(|check| check.status == "pass")
+        {
+            "pass"
+        } else {
+            "not_checked"
+        }
+    }
 }
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
@@ -10579,20 +10745,40 @@ enum RepoExposureMeasurement {
 /// the operator lane indefinitely.
 pub(crate) fn repo_exposure_latency_report_impl() -> Result<(), String> {
     let timeout_ms = repo_exposure_latency_timeout_ms();
-    run("cargo", &["build", "-p", "ripr"])?;
-    let binary = ripr_debug_binary();
-    write_repo_exposure_latency_report(&binary, timeout_ms, repo_exposure_latency_run)
+    // `RIPR_REPO_EXPOSURE_LATENCY_BINARY` names an already built `ripr` (for
+    // example to run the report against a small fixture root); otherwise the
+    // workspace debug binary is built and used.
+    let binary = match std::env::var_os("RIPR_REPO_EXPOSURE_LATENCY_BINARY") {
+        Some(path) => PathBuf::from(path),
+        None => {
+            run("cargo", &["build", "-p", "ripr"])?;
+            ripr_debug_binary()
+        }
+    };
+    write_repo_exposure_latency_report(
+        &binary,
+        timeout_ms,
+        repo_exposure_latency_run,
+        repo_exposure_parity_run,
+    )
 }
 
-fn write_repo_exposure_latency_report<F>(
+fn write_repo_exposure_latency_report<F, P>(
     binary: &Path,
     timeout_ms: u64,
     run_format: F,
+    run_parity: P,
 ) -> Result<(), String>
 where
     F: FnMut(&Path, &str, Duration) -> Result<RepoExposureLatencyRun, String>,
+    P: FnMut(
+        &Path,
+        &str,
+        RepoExposureParityPhase,
+        Duration,
+    ) -> Result<RepoExposureParityRun, String>,
 {
-    let report = build_repo_exposure_latency_report(binary, timeout_ms, run_format)?;
+    let report = build_repo_exposure_latency_report(binary, timeout_ms, run_format, run_parity)?;
     write_report(
         "repo-exposure-latency.json",
         &repo_exposure_latency_json(&report),
@@ -10603,13 +10789,20 @@ where
     )
 }
 
-fn build_repo_exposure_latency_report<F>(
+fn build_repo_exposure_latency_report<F, P>(
     binary: &Path,
     timeout_ms: u64,
     mut run_format: F,
+    mut run_parity: P,
 ) -> Result<RepoExposureLatencyReport, String>
 where
     F: FnMut(&Path, &str, Duration) -> Result<RepoExposureLatencyRun, String>,
+    P: FnMut(
+        &Path,
+        &str,
+        RepoExposureParityPhase,
+        Duration,
+    ) -> Result<RepoExposureParityRun, String>,
 {
     let binary_display = binary.display().to_string();
     let timeout = Duration::from_millis(timeout_ms);
@@ -10631,13 +10824,17 @@ where
             trace: Vec::new(),
             file_fact_cache: None,
             file_fact_cache_limitation: Some("format_skipped".to_string()),
+            cache_family_store: None,
+            cache_family_store_limitation: Some("format_skipped".to_string()),
             resource_cost: None,
             resource_cost_limitation: Some("format_skipped".to_string()),
         });
     }
 
+    let output_parity = repo_exposure_output_parity(binary, &runs, timeout, &mut run_parity);
     let report = RepoExposureLatencyReport {
-        status: repo_exposure_latency_status(&runs),
+        status: repo_exposure_latency_status(&runs, &output_parity),
+        output_parity,
         timeout_ms,
         binary: binary_display,
         runs,
@@ -10665,22 +10862,428 @@ fn ripr_debug_binary_in(target_dir: Option<PathBuf>) -> PathBuf {
         .join(binary_name)
 }
 
-fn repo_exposure_latency_run(
-    binary: &Path,
-    format: &str,
-    timeout: Duration,
-) -> Result<RepoExposureLatencyRun, String> {
-    let args = vec![
+/// Environment variable the analyzer reads to authenticate its stderr
+/// receipts (mirrors the producer's `RECEIPT_TOKEN_ENV`).
+const REPO_EXPOSURE_RECEIPT_TOKEN_ENV: &str = "RIPR_REPO_EXPOSURE_LATENCY_RECEIPT_TOKEN";
+
+/// A per-process unpredictable token: receipts are machine data only when
+/// they carry it, so a stderr line that merely starts with a receipt prefix
+/// (for example injected through a hostile file name echoed by a diagnostic)
+/// cannot forge cache or resource evidence (#9633, audit F-C4-3). The value is
+/// fixed under `cfg(test)` so unit tests can build authenticated lines; the
+/// verification path is the same.
+fn repo_exposure_receipt_token() -> &'static str {
+    #[cfg(test)]
+    {
+        "unittesttoken"
+    }
+    #[cfg(not(test))]
+    {
+        use std::hash::{BuildHasher, Hasher};
+        static TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        TOKEN.get_or_init(|| {
+            use std::io::Read;
+            // Prefer the OS entropy source; fall back to std's randomly keyed
+            // hasher where `/dev/urandom` is absent (for example Windows).
+            let mut bytes = [0u8; 16];
+            if fs::File::open("/dev/urandom")
+                .and_then(|mut file| file.read_exact(&mut bytes))
+                .is_ok()
+            {
+                return bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+            }
+            let mut token = String::new();
+            for _ in 0..2 {
+                let value = std::collections::hash_map::RandomState::new()
+                    .build_hasher()
+                    .finish();
+                token.push_str(&format!("{value:016x}"));
+            }
+            token
+        })
+    }
+}
+
+/// Receipt records on `stderr` for `prefix` (which ends in a space). Only
+/// lines carrying this process's token are records; a line with the bare
+/// prefix is counted as untrusted and never parsed.
+fn repo_exposure_authenticated_receipts<'a>(
+    stderr: &'a str,
+    prefix: &str,
+) -> (Vec<&'a str>, usize) {
+    let trusted = format!("{prefix}token={} ", repo_exposure_receipt_token());
+    let mut records = Vec::new();
+    let mut untrusted = 0;
+    for line in stderr.lines() {
+        if let Some(record) = line.strip_prefix(trusted.as_str()) {
+            records.push(record);
+        } else if line.starts_with(prefix) {
+            untrusted += 1;
+        }
+    }
+    (records, untrusted)
+}
+
+/// Final `cache_load` status from phase lines that carry this process's
+/// token; a bare phase line (forgeable like a bare receipt line) is ignored.
+fn repo_exposure_authenticated_cache_load(stderr: &str) -> Option<String> {
+    let prefix = format!(
+        "ripr_repo_exposure_latency token={} phase=cache_load status=",
+        repo_exposure_receipt_token()
+    );
+    stderr
+        .lines()
+        .filter_map(|line| line.strip_prefix(prefix.as_str()))
+        .filter_map(|rest| rest.split_whitespace().next())
+        .rfind(|status| matches!(*status, "hit" | "miss" | "corrupt_ignored"))
+        .map(str::to_string)
+}
+
+fn repo_exposure_latency_envs(token: &str) -> [(&str, &str); 2] {
+    [
+        (REPO_EXPOSURE_LATENCY_TRACE_ENV, "1"),
+        (REPO_EXPOSURE_RECEIPT_TOKEN_ENV, token),
+    ]
+}
+
+fn repo_exposure_latency_args(format: &str) -> Vec<String> {
+    vec![
         "check".to_string(),
         "--root".to_string(),
         ".".to_string(),
         "--format".to_string(),
         format.to_string(),
-    ];
+    ]
+}
+
+fn repo_exposure_latency_run(
+    binary: &Path,
+    format: &str,
+    timeout: Duration,
+) -> Result<RepoExposureLatencyRun, String> {
+    let args = repo_exposure_latency_args(format);
     let binary_text = binary.display().to_string();
-    let envs = [(REPO_EXPOSURE_LATENCY_TRACE_ENV, "1")];
-    let output = capture_output_with_timeout(&binary_text, &args, &envs, timeout, format)?;
-    Ok(repo_exposure_latency_run_from_output(format, output))
+    // A private, empty cache per format: every primary run is cold, so it
+    // computes and emits the file-fact receipt. With the shared default cache
+    // the second format (or a warm first one) takes the classified-seam cache
+    // hit, never reaches the file-fact phase, and `pass` would be unreachable.
+    let cache_dir = repo_exposure_private_cache_dir("primary", format)?;
+    repo_exposure_reset_dir(&cache_dir)?;
+    let cache_dir_text = cache_dir
+        .to_str()
+        .ok_or_else(|| format!("{} is not valid UTF-8", cache_dir.display()))?
+        .to_string();
+    let mut envs = repo_exposure_latency_envs(repo_exposure_receipt_token()).to_vec();
+    envs.push(("RIPR_CACHE_DIR", cache_dir_text.as_str()));
+    let output = capture_output_with_timeout(&binary_text, &args, &envs, timeout, format);
+    // Best effort: a leftover private cache is ignored build output.
+    let _ = fs::remove_dir_all(&cache_dir);
+    Ok(repo_exposure_latency_run_from_output(format, output?))
+}
+
+/// One half of a parity comparison: the same `ripr check` as the latency run,
+/// against a private cache directory under `target/ripr/reports`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RepoExposureParityPhase {
+    /// Fresh, empty cache: the output is computed, nothing is served.
+    Cold,
+    /// The cache the cold run just populated: the output should be served.
+    Served,
+}
+
+#[derive(Clone, Debug, Default)]
+struct RepoExposureParityRun {
+    /// `pass`, `fail` or `timeout`, as for a latency run.
+    status: String,
+    stdout: String,
+    /// Final `cache_load` trace status (`hit`, `miss`, `corrupt_ignored`).
+    cache_load: Option<String>,
+    /// Producer-observed subject identity from the leg's family receipt.
+    subject: Option<Value>,
+    /// Named store-failure / limitation diagnostics from the leg's
+    /// authenticated receipts.
+    diagnostics: Vec<String>,
+}
+
+fn repo_exposure_private_cache_dir(kind: &str, format: &str) -> Result<PathBuf, String> {
+    let cwd = std::env::current_dir()
+        .map_err(|err| format!("failed to read the current directory: {err}"))?;
+    Ok(cwd
+        .join("target")
+        .join("ripr")
+        .join("reports")
+        .join(format!("repo-exposure-{kind}-cache"))
+        .join(format))
+}
+
+fn repo_exposure_reset_dir(dir: &Path) -> Result<(), String> {
+    match fs::remove_dir_all(dir) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(format!("failed to clear {}: {err}", dir.display())),
+    }
+    fs::create_dir_all(dir).map_err(|err| format!("failed to create {}: {err}", dir.display()))
+}
+
+fn repo_exposure_parity_run(
+    binary: &Path,
+    format: &str,
+    phase: RepoExposureParityPhase,
+    timeout: Duration,
+) -> Result<RepoExposureParityRun, String> {
+    let cache_dir = repo_exposure_private_cache_dir("parity", format)?;
+    if phase == RepoExposureParityPhase::Cold {
+        repo_exposure_reset_dir(&cache_dir)?;
+    }
+    let cache_dir_text = cache_dir
+        .to_str()
+        .ok_or_else(|| format!("{} is not valid UTF-8", cache_dir.display()))?
+        .to_string();
+    let args = repo_exposure_latency_args(format);
+    let binary_text = binary.display().to_string();
+    let envs = [
+        (REPO_EXPOSURE_LATENCY_TRACE_ENV, "1"),
+        (
+            REPO_EXPOSURE_RECEIPT_TOKEN_ENV,
+            repo_exposure_receipt_token(),
+        ),
+        ("RIPR_CACHE_DIR", cache_dir_text.as_str()),
+    ];
+    let output = capture_output_with_timeout(&binary_text, &args, &envs, timeout, format);
+    if phase == RepoExposureParityPhase::Served {
+        // Best effort: a leftover private cache is ignored build output.
+        let _ = fs::remove_dir_all(&cache_dir);
+    }
+    let output = output?;
+    // `fail` is a real nonzero exit code; a signal kill (no code) is `killed`
+    // and stays unverified.
+    let status = if output.timed_out {
+        "timeout"
+    } else if output.status.is_some_and(|status| status.success()) {
+        "pass"
+    } else if output.status.and_then(|status| status.code()).is_some() {
+        "fail"
+    } else {
+        "killed"
+    };
+    let cache_load = repo_exposure_authenticated_cache_load(&output.stderr);
+    let (subject, diagnostics) = repo_exposure_parity_leg_receipts(&output.stderr, phase);
+    Ok(RepoExposureParityRun {
+        status: status.to_string(),
+        stdout: output.stdout,
+        cache_load,
+        subject,
+        diagnostics,
+    })
+}
+
+/// Compare cache-served output with a cold recomputation for every format the
+/// latency run completed. `pass` is reachable only when each format was run
+/// cold against an empty private cache, then again against that now-populated
+/// cache with the trace confirming a cache hit, and the outputs are equal.
+fn repo_exposure_output_parity<P>(
+    binary: &Path,
+    runs: &[RepoExposureLatencyRun],
+    timeout: Duration,
+    run_parity: &mut P,
+) -> RepoExposureOutputParity
+where
+    P: FnMut(
+        &Path,
+        &str,
+        RepoExposureParityPhase,
+        Duration,
+    ) -> Result<RepoExposureParityRun, String>,
+{
+    RepoExposureOutputParity {
+        checks: runs
+            .iter()
+            .map(|run| repo_exposure_parity_check(binary, run, timeout, run_parity))
+            .collect(),
+    }
+}
+
+fn repo_exposure_parity_check<P>(
+    binary: &Path,
+    run: &RepoExposureLatencyRun,
+    timeout: Duration,
+    run_parity: &mut P,
+) -> RepoExposureParityCheck
+where
+    P: FnMut(
+        &Path,
+        &str,
+        RepoExposureParityPhase,
+        Duration,
+    ) -> Result<RepoExposureParityRun, String>,
+{
+    let format = run.format.as_str();
+    // Diagnostics from the comparison legs' own authenticated receipts; they
+    // ride on every outcome so a store failure on a leg can never be dropped.
+    let diagnostics = std::cell::RefCell::new(Vec::<String>::new());
+    let finish = |status: &'static str, reason: Option<String>| RepoExposureParityCheck {
+        format: format.to_string(),
+        status,
+        reason,
+        diagnostics: diagnostics.borrow().clone(),
+    };
+    let not_checked = |reason: String| finish("not_checked", Some(reason));
+    if run.status != "pass" {
+        return not_checked(format!("primary_run_{}", run.status));
+    }
+    let cold = match run_parity(binary, format, RepoExposureParityPhase::Cold, timeout) {
+        Ok(cold) => cold,
+        Err(err) => return not_checked(format!("cold_run_error: {err}")),
+    };
+    diagnostics
+        .borrow_mut()
+        .extend(cold.diagnostics.iter().map(|d| format!("cold_{d}")));
+    if cold.status != "pass" {
+        return not_checked(format!("cold_run_{}", cold.status));
+    }
+    if cold.cache_load.as_deref() == Some("hit") {
+        return not_checked("cold_run_served_from_cache".to_string());
+    }
+    // The cold run just succeeded against the same binary and inputs, so a
+    // served run that exits with a nonzero code is the cache path failing: it
+    // is a `fail`, not a quiet `not_checked`. A spawn/reader error, a signal
+    // kill or a timeout is not evidence about the cache and stays unverified.
+    let served = match run_parity(binary, format, RepoExposureParityPhase::Served, timeout) {
+        Ok(served) => served,
+        Err(err) => return not_checked(format!("served_run_error: {err}")),
+    };
+    diagnostics
+        .borrow_mut()
+        .extend(served.diagnostics.iter().map(|d| format!("served_{d}")));
+    if served.status == "fail" {
+        return finish("fail", Some("served_run_fail".to_string()));
+    }
+    if served.status != "pass" {
+        return not_checked(format!("served_run_{}", served.status));
+    }
+    if served.cache_load.as_deref() != Some("hit") {
+        return not_checked("served_run_not_cache_hit".to_string());
+    }
+    // One repository state: the producer's own account of each leg's source,
+    // config and generated-disclosure subject must agree before outputs are
+    // compared. Movement between the legs is not evidence about the cache.
+    match (
+        repo_exposure_leg_subject(format, &cold),
+        repo_exposure_leg_subject(format, &served),
+    ) {
+        (Some(cold_subject), Some(served_subject)) => {
+            if cold_subject != served_subject {
+                return not_checked("comparison_subject_moved".to_string());
+            }
+        }
+        _ => return not_checked("comparison_subject_unobserved".to_string()),
+    }
+    // Equality of nothing, or of text that is not the expected document, is
+    // not parity.
+    let (Some(cold_text), Some(served_text)) = (
+        repo_exposure_normalized_output(format, &cold.stdout),
+        repo_exposure_normalized_output(format, &served.stdout),
+    ) else {
+        return not_checked("output_unparseable".to_string());
+    };
+    let equal = cold_text == served_text;
+    finish(
+        if equal { "pass" } else { "mismatch" },
+        (!equal).then(|| "served_output_differs_from_cold".to_string()),
+    )
+}
+
+/// The subject a comparison leg was produced for, from the producer's own
+/// output: its cache-family receipt `subject` (cache key identity and the
+/// generated/naming-only/declined file disclosure) and, for JSON, the
+/// artifact's input and snapshot identity and source subject. `None` when the
+/// producer did not report one.
+fn repo_exposure_leg_subject(format: &str, leg: &RepoExposureParityRun) -> Option<Value> {
+    let receipt = leg.subject.clone()?;
+    if format != "repo-exposure-json" {
+        return Some(serde_json::json!({ "receipt": receipt }));
+    }
+    // Unparseable output is not a subject problem; the output comparison
+    // reports it as `output_unparseable`.
+    let document = serde_json::from_str::<Value>(&leg.stdout).unwrap_or(Value::Null);
+    Some(serde_json::json!({
+        "receipt": receipt,
+        "input_identity": document.pointer("/artifact/analysis/input_identity"),
+        "snapshot_identity": document.pointer("/artifact/snapshot_identity"),
+        "source_subject": document.get("source_subject"),
+    }))
+}
+
+/// Named diagnostics for one comparison leg's authenticated receipts, and the
+/// leg's subject. The cold leg must show both receipts; the served leg hits
+/// the classified-seam cache and so legitimately has no file-fact receipt.
+fn repo_exposure_parity_leg_receipts(
+    stderr: &str,
+    phase: RepoExposureParityPhase,
+) -> (Option<Value>, Vec<String>) {
+    let mut diagnostics = Vec::new();
+    let (family, family_limitation) = repo_exposure_cache_family_store_from_stderr(stderr);
+    let subject = match &family {
+        Some(store) => {
+            if store.store_errors > 0 {
+                diagnostics.push(format!("cache_family_store_errors={}", store.store_errors));
+            }
+            store.subject.clone()
+        }
+        None => {
+            diagnostics.push(
+                family_limitation.unwrap_or_else(|| "cache_family_store_not_observed".to_string()),
+            );
+            None
+        }
+    };
+    let (file_fact, file_fact_limitation) = repo_exposure_file_fact_cache_from_stderr(stderr);
+    match file_fact {
+        Some(cache) => {
+            if cache.store_errors > 0 {
+                diagnostics.push(format!(
+                    "file_fact_cache_store_errors={}",
+                    cache.store_errors
+                ));
+            }
+            if cache.corrupt_ignored > 0 {
+                diagnostics.push(format!(
+                    "file_fact_cache_corrupt_ignored={}",
+                    cache.corrupt_ignored
+                ));
+            }
+        }
+        // Absent on a served (cache-hit) leg is expected; any other limitation
+        // (malformed, duplicate, invalid, untrusted) is named.
+        None => {
+            let limitation = file_fact_limitation.unwrap_or_default();
+            if phase == RepoExposureParityPhase::Cold || limitation != "cache_phase_not_observed" {
+                diagnostics.push(format!("file_fact_cache_{limitation}"));
+            }
+        }
+    }
+    (subject, diagnostics)
+}
+
+/// The comparable form of a format's stdout. The JSON artifact envelope stamps
+/// `generated_at` and a `content_sha256` that covers it, so those two keys
+/// differ between any two runs; every other byte must match. Markdown has no
+/// volatile field.
+/// `None` when the text is empty, or for JSON is not a document with an
+/// `artifact` object: a raw-string fallback would false-mismatch on
+/// `generated_at` and an empty-equals-empty comparison would pass vacuously.
+fn repo_exposure_normalized_output(format: &str, stdout: &str) -> Option<String> {
+    if stdout.trim().is_empty() {
+        return None;
+    }
+    if format != "repo-exposure-json" {
+        return Some(stdout.to_string());
+    }
+    let mut value = serde_json::from_str::<Value>(stdout).ok()?;
+    let artifact = value.get_mut("artifact").and_then(Value::as_object_mut)?;
+    artifact.remove("generated_at");
+    artifact.remove("content_sha256");
+    Some(value.to_string())
 }
 
 fn repo_exposure_latency_run_from_output(
@@ -10696,6 +11299,8 @@ fn repo_exposure_latency_run_from_output(
     };
     let (file_fact_cache, file_fact_cache_limitation) =
         repo_exposure_file_fact_cache_from_stderr(&output.stderr);
+    let (cache_family_store, cache_family_store_limitation) =
+        repo_exposure_cache_family_store_from_stderr(&output.stderr);
     let (resource_cost, resource_cost_limitation) =
         repo_exposure_resource_cost_from_stderr(&output.stderr);
     RepoExposureLatencyRun {
@@ -10708,6 +11313,8 @@ fn repo_exposure_latency_run_from_output(
         trace: repo_exposure_latency_trace(&output.stderr),
         file_fact_cache,
         file_fact_cache_limitation,
+        cache_family_store,
+        cache_family_store_limitation,
         resource_cost,
         resource_cost_limitation,
     }
@@ -10716,13 +11323,22 @@ fn repo_exposure_latency_run_from_output(
 fn repo_exposure_resource_cost_from_stderr(
     stderr: &str,
 ) -> (Option<RepoExposureResourceCost>, Option<String>) {
-    let mut records = stderr
-        .lines()
-        .filter_map(|line| line.strip_prefix(REPO_EXPOSURE_RESOURCE_COST_PREFIX));
-    let Some(record) = records.next() else {
-        return (None, Some("resource_cost_receipt_not_observed".to_string()));
+    let (records, untrusted) =
+        repo_exposure_authenticated_receipts(stderr, REPO_EXPOSURE_RESOURCE_COST_PREFIX);
+    let Some(record) = records.first() else {
+        return (
+            None,
+            Some(
+                if untrusted > 0 {
+                    "untrusted_resource_cost_receipt_line"
+                } else {
+                    "resource_cost_receipt_not_observed"
+                }
+                .to_string(),
+            ),
+        );
     };
-    if records.next().is_some() {
+    if records.len() > 1 {
         return (None, Some("duplicate_resource_cost_receipt".to_string()));
     }
     let Ok(cost) = serde_json::from_str::<RepoExposureResourceCost>(record) else {
@@ -10740,46 +11356,125 @@ fn repo_exposure_resource_cost_from_stderr(
     (Some(cost), None)
 }
 
+/// Mirrors the producer's `MAX_STORE_FAILURE_ROWS` row cap.
+const MAX_RETAINED_STORE_FAILURES: usize = 32;
+
+/// Whether `rows` plus `dropped` account exactly for `store_errors` under the
+/// producer's cap, with only `stages` and portable row paths. Shared by the
+/// file-fact and the classified-seam / fingerprint receipts so both enforce
+/// one projection contract.
+fn repo_exposure_store_failures_valid(
+    rows: &[RepoExposureStoreFailure],
+    dropped: usize,
+    store_errors: usize,
+    stages: &[&str],
+    path_required: bool,
+) -> bool {
+    rows.len() <= MAX_RETAINED_STORE_FAILURES
+        && rows
+            .len()
+            .checked_add(dropped)
+            .is_some_and(|count| count == store_errors)
+        && !(rows.len() < MAX_RETAINED_STORE_FAILURES && dropped > 0)
+        && rows.iter().all(|row| {
+            stages.contains(&row.stage.as_str())
+                && match row.path.as_deref() {
+                    None => !path_required,
+                    Some(path) => {
+                        !(path.is_empty()
+                            || path.starts_with('/')
+                            || path
+                                .split('/')
+                                .any(|part| part == "." || part == ".." || part.is_empty())
+                            || path.contains('\\')
+                            || has_windows_drive_prefix(path)
+                            || path.chars().any(char::is_control))
+                    }
+                }
+        })
+}
+
 fn repo_exposure_file_fact_cache_from_stderr(
     stderr: &str,
 ) -> (Option<RepoExposureFileFactCache>, Option<String>) {
     const PREFIX: &str = "ripr_file_fact_cache_receipt ";
-    // Mirrors the producer's `MAX_STORE_FAILURE_ROWS` row cap.
-    const MAX_RETAINED_STORE_FAILURES: usize = 32;
-    let mut records = stderr.lines().filter_map(|line| line.strip_prefix(PREFIX));
-    let Some(record) = records.next() else {
-        return (None, Some("cache_phase_not_observed".to_string()));
+    let (records, untrusted) = repo_exposure_authenticated_receipts(stderr, PREFIX);
+    let Some(record) = records.first() else {
+        return (
+            None,
+            Some(
+                if untrusted > 0 {
+                    "untrusted_cache_receipt_line"
+                } else {
+                    "cache_phase_not_observed"
+                }
+                .to_string(),
+            ),
+        );
     };
-    if records.next().is_some() {
+    if records.len() > 1 {
         return (None, Some("duplicate_cache_receipt".to_string()));
     }
     let Ok(value) = serde_json::from_str::<RepoExposureFileFactCache>(record) else {
         return (None, Some("malformed_cache_receipt".to_string()));
     };
     if value.schema_version != "0.1"
-        || value.store_failures.len() > MAX_RETAINED_STORE_FAILURES
-        || value
-            .store_failures
-            .len()
-            .checked_add(value.store_failures_dropped)
-            .is_none_or(|count| count != value.store_errors)
-        || (value.store_failures.len() < MAX_RETAINED_STORE_FAILURES
-            && value.store_failures_dropped > 0)
-        || value.store_failures.iter().any(|row| {
-            !matches!(row.stage.as_str(), "create_dir" | "encode" | "write")
-                || row.path.as_deref().is_some_and(|path| {
-                    path.is_empty()
-                        || path.starts_with('/')
-                        || path
-                            .split('/')
-                            .any(|part| part == "." || part == ".." || part.is_empty())
-                        || path.contains('\\')
-                        || has_windows_drive_prefix(path)
-                        || path.chars().any(char::is_control)
-                })
-        })
+        || !repo_exposure_store_failures_valid(
+            &value.store_failures,
+            value.store_failures_dropped,
+            value.store_errors,
+            &["create_dir", "encode", "write"],
+            false,
+        )
     {
         return (None, Some("invalid_cache_receipt".to_string()));
+    }
+    (Some(value), None)
+}
+
+/// The classified-seam / corpus-fingerprint store receipt (#9633). A healthy
+/// run still emits it with no rows, so a missing line is "not observed", not
+/// "no failures".
+fn repo_exposure_cache_family_store_from_stderr(
+    stderr: &str,
+) -> (Option<RepoExposureCacheFamilyStore>, Option<String>) {
+    const PREFIX: &str = "ripr_cache_family_store_receipt ";
+    let (records, untrusted) = repo_exposure_authenticated_receipts(stderr, PREFIX);
+    let Some(record) = records.first() else {
+        return (
+            None,
+            Some(
+                if untrusted > 0 {
+                    "untrusted_cache_family_store_receipt_line"
+                } else {
+                    "cache_family_store_not_observed"
+                }
+                .to_string(),
+            ),
+        );
+    };
+    if records.len() > 1 {
+        return (
+            None,
+            Some("duplicate_cache_family_store_receipt".to_string()),
+        );
+    }
+    let Ok(value) = serde_json::from_str::<RepoExposureCacheFamilyStore>(record) else {
+        return (
+            None,
+            Some("malformed_cache_family_store_receipt".to_string()),
+        );
+    };
+    if value.schema_version != "0.1"
+        || !repo_exposure_store_failures_valid(
+            &value.store_failures,
+            value.store_failures_dropped,
+            value.store_errors,
+            &["classified_seam_store", "corpus_fingerprint_store"],
+            true,
+        )
+    {
+        return (None, Some("invalid_cache_family_store_receipt".to_string()));
     }
     (Some(value), None)
 }
@@ -10792,17 +11487,12 @@ fn has_windows_drive_prefix(path: &str) -> bool {
     bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'/'
 }
 
-/// Output parity (cache-served output equal to a cold recomputation) is not
-/// observed by this report: it runs each format once. Until a cold-vs-served
-/// comparison exists, no run set can earn `pass` (#9503).
-const REPO_EXPOSURE_OUTPUT_PARITY: &str = "not_checked";
-const REPO_EXPOSURE_OUTPUT_PARITY_CHECKED: bool = false;
-
 /// Named reasons a completed run set cannot be called `pass`. Empty means
-/// every completed run carried a clean cache receipt and parity was checked.
+/// every completed run carried clean cache receipts and every format's
+/// cache-served output equalled a cold recomputation.
 fn repo_exposure_latency_status_reasons(
     runs: &[RepoExposureLatencyRun],
-    parity_checked: bool,
+    parity: &RepoExposureOutputParity,
 ) -> Vec<String> {
     let mut reasons = Vec::new();
     for run in runs {
@@ -10829,22 +11519,59 @@ fn repo_exposure_latency_status_reasons(
                     .unwrap_or("not_observed")
             )),
         }
+        match &run.cache_family_store {
+            Some(store) => {
+                if store.store_errors > 0 {
+                    reasons.push(format!(
+                        "{}: cache_family_store_errors={}",
+                        run.format, store.store_errors
+                    ));
+                }
+            }
+            None => reasons.push(format!(
+                "{}: {}",
+                run.format,
+                run.cache_family_store_limitation
+                    .as_deref()
+                    .unwrap_or("cache_family_store_not_observed")
+            )),
+        }
     }
-    if !parity_checked {
+    if parity.checks.is_empty() {
         reasons.push("output_parity_not_checked".to_string());
+    } else if let Some(gap) = parity.coverage_gap() {
+        reasons.push(format!("output_parity_not_checked_{gap}"));
+    }
+    for check in &parity.checks {
+        for diagnostic in &check.diagnostics {
+            reasons.push(format!("{}: parity_{diagnostic}", check.format));
+        }
+        match check.status {
+            "pass" => {}
+            "mismatch" => reasons.push(format!("{}: output_parity_mismatch", check.format)),
+            "fail" => reasons.push(format!(
+                "{}: output_parity_fail_{}",
+                check.format,
+                check.reason.as_deref().unwrap_or("unknown")
+            )),
+            _ => reasons.push(format!(
+                "{}: output_parity_not_checked_{}",
+                check.format,
+                check.reason.as_deref().unwrap_or("unknown")
+            )),
+        }
     }
     reasons
 }
 
-fn repo_exposure_latency_status(runs: &[RepoExposureLatencyRun]) -> String {
-    repo_exposure_latency_status_with_parity(runs, REPO_EXPOSURE_OUTPUT_PARITY_CHECKED)
-}
-
-fn repo_exposure_latency_status_with_parity(
+fn repo_exposure_latency_status(
     runs: &[RepoExposureLatencyRun],
-    parity_checked: bool,
+    parity: &RepoExposureOutputParity,
 ) -> String {
-    if runs.iter().any(|run| run.status == "fail") {
+    // A cache-served output that differs from a cold recomputation is a
+    // correctness failure of the cache path, not a performance warning.
+    if matches!(parity.label(), "mismatch" | "fail") || runs.iter().any(|run| run.status == "fail")
+    {
         return "fail".to_string();
     }
     if runs
@@ -10856,7 +11583,7 @@ fn repo_exposure_latency_status_with_parity(
     // `pass` is evidence about the cache path and output, not only exit codes:
     // cache store errors, ignored corrupt entries, an unobserved cache phase
     // or unchecked output parity are all `warn`.
-    if !repo_exposure_latency_status_reasons(runs, parity_checked).is_empty() {
+    if !repo_exposure_latency_status_reasons(runs, parity).is_empty() {
         return "warn".to_string();
     }
     "pass".to_string()
@@ -10894,8 +11621,11 @@ fn repo_exposure_latency_json(report: &RepoExposureLatencyReport) -> String {
     // 0.3 adds the analyzer's own `resource_cost` block (#5213). The bump is
     // because the JSON gained fields a 0.2 reader does not know; nothing in
     // the 0.2 shape changed. 0.4 adds `output_parity` and `status_reasons`
-    // (#9503); no 0.3 field changed.
-    body.push_str("  \"schema_version\": \"0.4\",\n");
+    // (#9503); no 0.3 field changed. 0.5 makes `output_parity` a real
+    // comparison (`pass`, `mismatch`, `not_checked`), adds
+    // `output_parity_checks` and the per-run `cache_family_store` receipt
+    // (#9633); no 0.4 field was removed.
+    body.push_str("  \"schema_version\": \"0.5\",\n");
     body.push_str("  \"tool\": \"ripr\",\n");
     body.push_str("  \"report\": \"repo-exposure-latency\",\n");
     body.push_str(&format!(
@@ -10903,13 +11633,31 @@ fn repo_exposure_latency_json(report: &RepoExposureLatencyReport) -> String {
         json_escape(&report.status)
     ));
     body.push_str(&format!(
-        "  \"output_parity\": \"{REPO_EXPOSURE_OUTPUT_PARITY}\",\n"
+        "  \"output_parity\": \"{}\",\n",
+        report.output_parity.label()
+    ));
+    let parity_checks: Vec<Value> = report
+        .output_parity
+        .checks
+        .iter()
+        .map(|check| {
+            serde_json::json!({
+                "format": check.format,
+                "status": check.status,
+                "reason": check.reason,
+                "diagnostics": check.diagnostics,
+            })
+        })
+        .collect();
+    body.push_str(&format!(
+        "  \"output_parity_checks\": {},\n",
+        serde_json::json!(parity_checks)
     ));
     body.push_str(&format!(
         "  \"status_reasons\": {},\n",
         serde_json::json!(repo_exposure_latency_status_reasons(
             &report.runs,
-            REPO_EXPOSURE_OUTPUT_PARITY_CHECKED
+            &report.output_parity
         ))
     ));
     body.push_str(&format!("  \"timeout_ms\": {},\n", report.timeout_ms));
@@ -10945,6 +11693,16 @@ fn repo_exposure_latency_json(report: &RepoExposureLatencyReport) -> String {
         }
         body.push_str(",\n      \"file_fact_cache_limitation\": ");
         match &run.file_fact_cache_limitation {
+            Some(limitation) => body.push_str(&serde_json::json!(limitation).to_string()),
+            None => body.push_str("null"),
+        }
+        body.push_str(",\n      \"cache_family_store\": ");
+        match &run.cache_family_store {
+            Some(store) => body.push_str(&serde_json::json!(store).to_string()),
+            None => body.push_str("null"),
+        }
+        body.push_str(",\n      \"cache_family_store_limitation\": ");
+        match &run.cache_family_store_limitation {
             Some(limitation) => body.push_str(&serde_json::json!(limitation).to_string()),
             None => body.push_str("null"),
         }
@@ -10985,10 +11743,25 @@ fn repo_exposure_latency_markdown(report: &RepoExposureLatencyReport) -> String 
     body.push_str("# Repo Exposure Latency Report\n\n");
     body.push_str(&format!("Status: `{}`\n\n", report.status));
     body.push_str(&format!(
-        "Output parity: `{REPO_EXPOSURE_OUTPUT_PARITY}`\n\n"
+        "Output parity: `{}`\n\n",
+        report.output_parity.label()
     ));
-    let reasons =
-        repo_exposure_latency_status_reasons(&report.runs, REPO_EXPOSURE_OUTPUT_PARITY_CHECKED);
+    for check in &report.output_parity.checks {
+        body.push_str(&format!(
+            "- `{}` parity `{}`{}\n",
+            check.format,
+            check.status,
+            check
+                .reason
+                .as_deref()
+                .map(|reason| format!(" ({})", latency_markdown_cell(reason)))
+                .unwrap_or_default()
+        ));
+    }
+    if !report.output_parity.checks.is_empty() {
+        body.push('\n');
+    }
+    let reasons = repo_exposure_latency_status_reasons(&report.runs, &report.output_parity);
     if !reasons.is_empty() {
         body.push_str("Status reasons (`pass` requires none):\n\n");
         for reason in &reasons {
@@ -11124,6 +11897,40 @@ fn repo_exposure_latency_markdown(report: &RepoExposureLatencyReport) -> String 
             body.push_str(&format!(
                 "Unavailable: `{}`. No zero cache counts are inferred.\n\n",
                 run.file_fact_cache_limitation
+                    .as_deref()
+                    .unwrap_or("unknown")
+            ));
+        }
+    }
+    body.push_str("\n## Classified Seam And Corpus Fingerprint Store\n\n");
+    for run in &report.runs {
+        body.push_str(&format!("### `{}`\n\n", run.format));
+        if let Some(store) = &run.cache_family_store {
+            body.push_str(&format!(
+                "Store errors: {}; retained failures: {}; dropped failures: {}.\n\n",
+                store.store_errors,
+                store.store_failures.len(),
+                store.store_failures_dropped
+            ));
+            if !store.store_failures.is_empty() {
+                body.push_str("| Path | Stage | Error |\n| --- | --- | --- |\n");
+                for row in &store.store_failures {
+                    body.push_str(&format!(
+                        "| {} | {} | {} |\n",
+                        row.path.as_deref().map_or_else(
+                            || "_unrepresentable path_".to_string(),
+                            latency_markdown_cell
+                        ),
+                        row.stage,
+                        latency_markdown_cell(&row.error)
+                    ));
+                }
+                body.push('\n');
+            }
+        } else {
+            body.push_str(&format!(
+                "Unavailable: `{}`. No zero store counts are inferred.\n\n",
+                run.cache_family_store_limitation
                     .as_deref()
                     .unwrap_or("unknown")
             ));
@@ -16162,7 +16969,7 @@ fn changed_source_layers(changes: &[ChangedPath]) -> BTreeSet<&'static str> {
 fn source_layer_for_path(path: &str) -> Option<&'static str> {
     if path.starts_with(".github/workflows/") {
         Some("workflows")
-    } else if path == ".ripr/traceability.toml" {
+    } else if path == ".ripr/traceability.toml" || path.starts_with(".ripr/traceability.d/") {
         Some("traceability")
     } else if path.starts_with(".ripr/goals/") {
         Some("goal-manifest")
@@ -20370,6 +21177,7 @@ fn pr_shape_warnings(changes: &[ChangedPath]) -> Vec<String> {
             || is_fixture_path(&change.path)
             || change.path.starts_with("metrics/")
             || change.path == ".ripr/traceability.toml"
+            || change.path.starts_with(".ripr/traceability.d/")
     });
     if analysis_changed && !analysis_evidence {
         warnings.push(
@@ -20487,6 +21295,7 @@ fn critic_findings(
             || is_golden_path(&change.path)
             || change.path.starts_with("metrics/")
             || change.path == ".ripr/traceability.toml"
+            || change.path.starts_with(".ripr/traceability.d/")
     });
     if analysis_changed && !analysis_evidence {
         findings.push(CriticFinding {

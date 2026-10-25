@@ -506,8 +506,25 @@ omission instead of leaving it silent (#8729): when the producer-owned gate
 computes a refusal — no canonical gap to bind, an unreadable authority, a
 seam-limit-truncated candidate set, zero or several binding seams, or an
 ineligible seam — the drill-down prints one advisory line of the shape
-`no repair start offered: <state>; run \`ripr repair <item> --root <root>\`
-for the full gate's answer`. A static-limited finding never gets the runnable
+`no repair start offered: <state>; <recovery>`. Where the gate can
+still answer, the recovery is ``run `ripr repair <item> --root <root>` for the
+full gate's answer``. A refusal whose gate answer would only repeat it names
+its own recovery instead (#9244): a finding with no canonical gap says there
+is no seam to start a repair from and sends the reader to the Next step above
+(it makes no claim about missing discriminators, which other languages can
+name without a Rust canonical gap); an unreadable config names `ripr.toml` and
+the `ripr check` rerun; a finding no seam binds to says ripr found no seam in
+its file to bind it to and sends the reader to the Next step above; several binding seams say `ripr repair` needs the ID of
+the chosen seam without promising a listing; a repair route that is not ready
+says ripr cannot build a repair packet for the finding yet, lists the
+producer-owned missing evidence (or says the static evidence is not complete
+enough to name a safe test target when the list is empty), and sends the reader
+to the Next step above and the `ripr check` rerun, carrying the refusal kind
+and missing list as typed fields rather than parsing the reason text (the
+shared `repair route not ready` label that `ripr repair`, `ripr continue` and
+the MCP detail print is unchanged); other ineligible refusals keep their
+reason and gate pointer; a classification failure says the
+gate may print the underlying error. A static-limited finding never gets the runnable
 repair line (its limitation guidance is authoritative on the same screen),
 but a refusal the pipeline did compute is still named there, so "the gate
 refused this seam" cannot read as "analysis could not decide". A run with no

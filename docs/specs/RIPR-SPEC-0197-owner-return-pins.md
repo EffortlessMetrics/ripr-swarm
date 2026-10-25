@@ -883,8 +883,22 @@ wrong credits.
    annotated with one, a numeric or bool literal, an arithmetic
    combination of established names and literals with the accepted operators
    and `as` casts to primitives, or a call whose every same-named
-   function in the index declares one bare primitive return (optionally
-   behind one reference). Anything else — a string, char literal or block
+   function in the index is a free function without a self parameter and
+   declares one bare primitive return (optionally behind one reference).
+   An unqualified call must be a direct function-body let initializer.
+   Parameters, preceding destructured/raw/declaration-only lets, hoisted
+   local items and imports of its name (or globs) refuse primitive proof.
+   A later let, or the pattern currently being initialized, does not bind
+   at the call. Opaque statement/item macros refuse proof, including explicit
+   function declarations in their token trees. Other call scopes are unread.
+   A qualified call such as `crate::shipping_cents(..)` is not shadowed by a
+   local value named `shipping_cents`. Same-named associated functions and
+   methods refuse proof even when their returns are primitive. This bounded
+   check refuses local imports rather than resolving their targets, and
+   refuses an unqualified name that a `use` in the owner's enclosing module
+   or file binds (unreadable enclosing scopes refuse too); it does not
+   resolve arbitrary module paths, globs outside the function body or expand
+   macros. Anything else - a string, char literal or block
    comment anywhere in the owner body, a callee missing from or ambiguous
    in the index, a non-primitive return, a binding that is not established — keeps the
    credit: a custom type can overload the operator, and an overloaded
@@ -2389,43 +2403,43 @@ assertions. This repair shares the existing callback without that larger migrati
 
 ## Acceptance Examples
 
-- Given a trait default `try_get_int` whose changed tail is
-  `Ok(sign_extend(self.try_get_uint(nbytes)?, nbytes))`, an
-  `impl Buf for &[u8]`, and a test importing `Buf` that binds
-  `let mut a = &[0xff, 0xff, 0xff][..];` and asserts
-  `assert_eq!(a.try_get_int(3), Ok(-1))`, when `ripr check` runs, then the
-  finding reads `exposed`.
-- Given the same owner and a test asserting only
-  `assert_eq!(short.try_get_int(4), Err(TryGetError { .. }))`, the finding
-  stays below `exposed`.
-- Given `impl Codec { fn decode(input: u32) -> u32 }` and a free
-  `fn decode`, a test asserting `assert_eq!(decode(8), 9)` does not confirm
-  a change to `Codec::decode`.
-- Given `fn check(x: u32) -> Result<u32, String> { Ok(x + 0) }` changed
-  from `Ok(x)` and a test asserting `assert!(matches!(check(5), Ok(5)))`,
-  the finding reads `exposed`; `Ok(_)`, `Ok(1..=5)`, `Ok(5) | Ok(6)` and a
-  guarded pattern stay below `exposed`.
-- Given `fn lookup(k: u32) -> Option<u32>` whose changed early
-  `return Some(1 + 2);` sits beside a `None` tail and a test asserting
-  `assert!(matches!(lookup(1), Some(x @ 3)))`, the finding reads `exposed`;
-  `assert_eq!(lookup(2), None)` alone stays below `exposed`.
-- Given `impl Gauge { fn reading() -> u32 }` in `meter` and a free
-  `fn reading` in `spare`, a `panel` integration test with
-  `use meter::Gauge;` asserting `assert_eq!(Gauge::reading(), 42)` confirms
-  a change to `Gauge::reading`; the same test through `use meter::Gauge as
-  Knob;`, `use meter::*;` or `use spare::Gauge;` does not (#6617).
-- Given `fn both_zero(x: i32, y: i32) -> bool { x == 0 && 0 == y }`
-  changed from `y == 0` and a test asserting only
-  `assert_eq!(both_zero(1, 0), false)` and `assert_eq!(both_zero(2, 0), false)`,
-  the finding stays below `exposed`: no pinned call evaluates `0 == y`.
-- Given `fn in_band(level: u8, open: bool) -> bool { open && 3 <= level }`
-  changed from `level >= 3` and a test asserting
-  `assert_eq!(in_band(level, open), want)` over the table
-  `[(3, true, true), (2, true, false), (5, false, false)]`, the finding
-  reads `exposed`: the `(3, true)` row evaluates both operands.
-- Given a trait default `next_word` and `impl Reader for Fixed` overriding
-  it, a test asserting `assert_eq!(reader.next_word(), 7)` on a `Fixed`
-  receiver does not confirm a change to the default.
+1. Given a trait default `try_get_int` whose changed tail is
+   `Ok(sign_extend(self.try_get_uint(nbytes)?, nbytes))`, an
+   `impl Buf for &[u8]`, and a test importing `Buf` that binds
+   `let mut a = &[0xff, 0xff, 0xff][..];` and asserts
+   `assert_eq!(a.try_get_int(3), Ok(-1))`, when `ripr check` runs, then the
+   finding reads `exposed`.
+2. Given the same owner and a test asserting only
+   `assert_eq!(short.try_get_int(4), Err(TryGetError { .. }))`, the finding
+   stays below `exposed`.
+3. Given `impl Codec { fn decode(input: u32) -> u32 }` and a free
+   `fn decode`, a test asserting `assert_eq!(decode(8), 9)` does not confirm
+   a change to `Codec::decode`.
+4. Given `fn check(x: u32) -> Result<u32, String> { Ok(x + 0) }` changed
+   from `Ok(x)` and a test asserting `assert!(matches!(check(5), Ok(5)))`,
+   the finding reads `exposed`; `Ok(_)`, `Ok(1..=5)`, `Ok(5) | Ok(6)` and a
+   guarded pattern stay below `exposed`.
+5. Given `fn lookup(k: u32) -> Option<u32>` whose changed early
+   `return Some(1 + 2);` sits beside a `None` tail and a test asserting
+   `assert!(matches!(lookup(1), Some(x @ 3)))`, the finding reads `exposed`;
+   `assert_eq!(lookup(2), None)` alone stays below `exposed`.
+6. Given `impl Gauge { fn reading() -> u32 }` in `meter` and a free
+   `fn reading` in `spare`, a `panel` integration test with
+   `use meter::Gauge;` asserting `assert_eq!(Gauge::reading(), 42)` confirms
+   a change to `Gauge::reading`; the same test through `use meter::Gauge as
+   Knob;`, `use meter::*;` or `use spare::Gauge;` does not (#6617).
+7. Given `fn both_zero(x: i32, y: i32) -> bool { x == 0 && 0 == y }`
+   changed from `y == 0` and a test asserting only
+   `assert_eq!(both_zero(1, 0), false)` and `assert_eq!(both_zero(2, 0), false)`,
+   the finding stays below `exposed`: no pinned call evaluates `0 == y`.
+8. Given `fn in_band(level: u8, open: bool) -> bool { open && 3 <= level }`
+   changed from `level >= 3` and a test asserting
+   `assert_eq!(in_band(level, open), want)` over the table
+   `[(3, true, true), (2, true, false), (5, false, false)]`, the finding
+   reads `exposed`: the `(3, true)` row evaluates both operands.
+9. Given a trait default `next_word` and `impl Reader for Fixed` overriding
+   it, a test asserting `assert_eq!(reader.next_word(), 7)` on a `Fixed`
+   receiver does not confirm a change to the default.
 
 ## Test Mapping
 
@@ -2885,6 +2899,31 @@ non-integer input or an operator-family change it cannot evaluate. Inputs on
 the same side of both thresholds keep the gap.
 
 The intermediate-input reading also declines when the owner may compare a value other than the caller's: any occurrence of the parameter name in the body before the compared line (a `let`, pattern, `for`, `if let`, `match` arm or closure binding, or any other use), a binding form beside it on the compared line, a `mut` binding or borrow of it, or any assignment to it (`x += 5`). The gap stays in those cases (#9147).
+
+An operand that merely name-matches an owner parameter is that parameter's
+observed value only while the owner leaves the name alone (#9197). When the
+owner rebinds or mutates the name on or before the compared line (`let x`,
+`let mut x`, `x += ..`, `x = ..`, destructuring assignment `(x, y) = ..`,
+`&mut x`, a `for`, `let` or `if let` pattern, a closure parameter list, a
+match-arm pattern before its own `=>`, or a `matches!` line that mentions it),
+the equality-boundary path withholds the credit and never lists the caller's
+values as the operand's observed values. When the withheld credit is the only
+thing that would have satisfied the boundary (the input equals the threshold
+only by name), the boundary is unresolved with a rebound-operand reason rather
+than a named missing equality value, because no input can satisfy a repair for
+a value ripr cannot see: the predicate reads infection-unknown and a returned
+comparison keeps its prior reading. Where no credit was at stake the existing
+reading is unchanged. The scan is deliberately over-eager (it does not prove
+scope, and a bare arm re-binding the scrutinee's own name is declined too), so
+it only ever removes a credit; a field access, path segment, comparison, the
+scrutinee of a one-line `match`, a use in an earlier arm's result or an
+unrelated local keeps it.
+One verdict-corpus row moves from credited to limited, inside its acceptable
+verdicts and abstained rather than actionable: `strsim-sorensen-dice-equal`
+(`if b == a` follows `let a: String = a.chars().filter(..).collect()`, so `a` is
+a rebound local, not the passed argument). A bare first-arm binder of the
+scrutinee's own name (`match n { n if 0 > n => .. }`, `grid-match-guard`) binds the
+same value and keeps its credit.
 
 Only unqualified owner calls supply separating inputs: a module-qualified or method call of the same name (`rival::thr(101)`) may be another function and is never counted by this path, and helper-transferred rows are not read (#9147). The shared producer's resolver (#9218, below) is more permissive for equality-boundary inputs; this path keeps its stricter rule.
 

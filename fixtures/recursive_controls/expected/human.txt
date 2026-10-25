@@ -15,7 +15,10 @@ Start here:
   Why unknown: the change reaches a sink but infection could not be determined statically
   Canonical gap: gap:rust:src/lib.rs:classify_cycle:predicate_boundary:predicate:final_label==lit6f74686572
   Changed behavior: if final_label == "other" {
-  Missing discriminator (1 of 2): Changed boundary input is unresolved: boundary operand `final_label` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the…
+  Missing discriminator (1 of 2): Changed boundary input is unresolved: boundary operand
+    `final_label` is a local or computed value ripr cannot map to the related tests' inputs, so it
+    cannot tell which side of the boundary a test reaches; activation/infection is unknown; a
+    related test that passes literal inputs on each side of the boundary would let ripr decide
   Related test: tests/classify.rs:4 cycle_label_is_blank
   Next step: Open the related test and trace its input through the local or computed operand
     (including default and empty cases) to see which side of the changed condition it exercises,
@@ -39,7 +42,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/recursive_controls/input --diff <cwd>/fixtures/recursive_controls/diff.patch --mode fast probe:src_lib.rs:predicate:326a2e10
   ripr context --root <cwd>/fixtures/recursive_controls/input --diff <cwd>/fixtures/recursive_controls/diff.patch --mode fast --at probe:src_lib.rs:predicate:326a2e10
-  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: boundary_value; incomplete evidence stage: activation); run `ripr repair probe:src_lib.rs:predicate:326a2e10 --root <cwd>/fixtures/recursive_controls/input` for the full gate's answer
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: producer-owned missing discriminator fact: boundary_value; incomplete evidence stage: activation; follow the Next step above, then rerun `ripr check`
 
 Hidden:
   3 lower-priority finding(s) omitted from default human output.

@@ -305,6 +305,7 @@ async fn oversized_gap_item_leaves_mcp_through_the_real_routes() -> Result<(), S
     let mut finding = gaps::test_finding()?;
     finding.evidence = vec!["x".repeat(super::super::MAX_RESPONSE_BYTES)];
     let output = crate::app::CheckOutput {
+        value_origins: Default::default(),
         schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
         harness_projections: Vec::new(),
         tool: "ripr".to_string(),
@@ -414,6 +415,7 @@ async fn window_sized_gap_item_refuses_typed_instead_of_dropping_structured_cont
     let mut finding = gaps::test_finding()?;
     finding.evidence = vec!["x".repeat(70_000)];
     let output = crate::app::CheckOutput {
+        value_origins: Default::default(),
         schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
         harness_projections: Vec::new(),
         tool: "ripr".to_string(),
@@ -526,7 +528,7 @@ fn sdk_server_metadata_preserves_bounded_status_instructions() -> Result<(), Str
         .instructions
         .ok_or_else(|| "SDK metadata omitted instructions".to_string())?;
     if config.server_info.name != "ripr"
-        || !instructions.contains("ripr check --format json")
+        || !instructions.contains("ripr check --worktree --format json")
         || !instructions.contains("never edits source")
         || !instructions.contains("ripr_list_gaps")
     {

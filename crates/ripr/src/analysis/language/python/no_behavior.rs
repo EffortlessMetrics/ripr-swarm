@@ -17,7 +17,7 @@ use std::path::Path;
 /// Conservative by construction: only blank/comment lines and lines that are
 /// ENTIRELY a single non-f-string literal qualify. f-strings are excluded (a bare
 /// f-string statement can evaluate embedded calls), multi-line docstring interiors
-/// are handled from AST-backed source context in [`classify_change_with_context`],
+/// are handled from AST-backed source context in [`super::classify::classify_change_with_value_origins`],
 /// and annotation-only changes are handled by the dedicated
 /// `is_annotation_only_*_change` guards in
 /// `classify_change_with_old` (def headers via #1294; module-scope bare variables

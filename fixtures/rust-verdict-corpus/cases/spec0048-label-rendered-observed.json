@@ -1,0 +1,48 @@
+{
+  "case_id": "spec0048-label-rendered-observed",
+  "subject_id": "authored-spec0048-3",
+  "diff": "cases/spec0048-label-rendered-observed.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "behavior_selector_const",
+  "test_shape": "rendered_label_exact_pin",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "pub const TIER_LABEL: &str = \"tier: premium\";",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "report_renders_the_tier_label",
+        "equivalence_review": "the edit itself: the report renders tier: premium"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "report_renders_the_tier_label pins the whole rendered output to the golden string, so every label change fails it. Spec cells: RIPR-SPEC-0048 example 3 (rendered label already observed).",
+  "labeling_observation": {
+    "ripr_commit": "2939c0d6",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0048#3"
+  ]
+}

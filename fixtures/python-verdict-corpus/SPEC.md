@@ -5,7 +5,7 @@ RIPR-SPEC-0028 and the RIPR-SPEC-0238 acceptance examples.
 
 ## Given
 
-Twenty small authored Python projects under `subjects/`, our own code under
+Small authored Python projects under `subjects/`, our own code under
 this repository's license, one per test library or library feature:
 
 - `authored-py-pytest-pricing`: pytest asserts, `parametrize`, `raises`,
@@ -69,6 +69,25 @@ this repository's license, one per test library or library feature:
   through a helper in another file, a module-level lambda, `globals()`
   dispatch, a module constant read by a test class, the same function name in
   two modules, a nested function, and an unrelated unparseable module.
+- `authored-py-pytest-route-clients`: a framework-free route registry and
+  `TestClient`, with route owners whose request client is a conftest fixture
+  over the owner's own app, a fixture over another module's `app` on the same
+  path, a client built over a factory call, and a fixture built on a second
+  fixture. Each test only asserts the response is not `None`, so every mutant
+  survives and the cases score how the client's application is read, not the
+  oracle (run under Python 3.13.16 and pytest 9.1.1).
+- `authored-py-pytest-literals`, `authored-py-pytest-imports`,
+  `authored-py-unittest-almost`, `authored-py-unittest-raises` and
+  `authored-py-pytest-conjuncts`: one RIPR-SPEC-0238 rule family each (literal
+  comparisons; rival imports and `mocker.patch`; `assertAlmostEqual`; callable
+  and bound exception assertions; `and`/`or`/`not` chains). Cases are
+  one-line edits or rewrites labeled by real pytest runs (Python 3.13.16,
+  pytest 9.1.1, pytest-mock 3.17.0).
+- `authored-py-pytest-bands`: RIPR-SPEC-0238 rule 21's `approx` band
+  abstentions (positional band within and outside the band, spread band,
+  non-literal band, longer owner body, method owner, decorated owner). Every
+  case reads `static_unknown`; the outside-band edit is the one case whose
+  test catches the change.
 
 Each case is a one-line edit under `cases/` (the two `py-blocks-*-second-line`
 cases replace a comment and the line under it), labeled with what the project's
@@ -126,7 +145,7 @@ the `py-spec0233-exNN-` prefix and the subject keeps its
 `authored-py-pytest-spec0233` name, because RIPR-SPEC-0238 cites
 `py-spec0233-ex21-exc-value` by id and the subject sources are pinned by
 digest. Each such case cites its example in `spec_examples`, and
-`spec-coverage.toml` gates those citations on a floor; example 34, added at
+`spec-coverage.toml` gates those citations through `spec-examples.lock`; example 34, added at
 merge, has its cases under the same prefix.
 
 ## Refreshing
