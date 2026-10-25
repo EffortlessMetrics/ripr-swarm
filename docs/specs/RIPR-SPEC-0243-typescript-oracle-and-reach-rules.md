@@ -30,6 +30,8 @@ Linked issues:
 - #9138 (assertion after an always-exiting try/finally)
 - #9150 (bare non-throwing exit first in a try block makes its catch unreachable)
 - #8959 (lexically bound runner registrations)
+- #9496 (chai throw forms, anchored `assert.match`, substring rejection
+  regex)
 - #9181 (CommonJS function export reached through `require()`)
 - #9182 (`var`/`let` CommonJS runner bindings)
 - #9435 (exact oracle ignored on five changed-line shapes)
@@ -546,8 +548,18 @@ an actionable `weakly_exposed`. These read `exact_error_variant` /
 strong:
 
 - chai BDD `throw`, `throws` or `Throw`, not under `not`, with exactly
-  one argument that is a string literal. chai matches it as a substring
-  of the message, as Jest matches `toThrow("...")`.
+  one argument that is a string literal (chai matches it as a substring
+  of the message, as Jest matches `toThrow("...")`), exactly one argument
+  that is a PascalCase class reference (as Jest's `toThrow(Class)`), or a
+  class reference followed by a string literal (both must match). chai tests `instanceof`, so a class change credits only when both sides construct distinct built-in sibling classes (`TypeError`, `RangeError`, `SyntaxError`, `EvalError`, `URIError`, `ReferenceError`) and the check names one; a subclass, alias, user class or `Error` credits only through the message. A regex,
+  an instance, a lowercase or computed reference, a non-literal message and
+  a third argument stay broad. (Amended 2026-10-22, #9496: the class forms.)
+- `node:assert` / `assert/strict` `match(value, regex)` whose regex is
+  anchored with `^` and `$`, has no flags but `u` and no metacharacter
+  between the anchors other than escapes. It matches one string, so it
+  reads `exact_value` / strong exactly as `strictEqual(value, "text")`
+  does. A wider regex, `doesNotMatch` and chai's `assert.match` stay
+  `relational_check` / weak. (Amended 2026-10-22, #9496.)
 - `node:assert` `throws` or `rejects` (not chai `assert`, whose
   signature differs) whose second argument is a regex literal anchored
   with `^` and `$`, with no unescaped `|` outside a character class and
@@ -556,8 +568,10 @@ strong:
   whose top-level `message` is a string literal.
 
 Rule 4's message-only guard applies to all of them: on a message-only
-change, a chai string must be a substring of exactly one of the old and
-new messages (as rule 4 assembles them), an object `message` must equal
+change, a chai string (also the message of a chai class and message
+check) must be a substring of exactly one of the old and new messages (as
+rule 4 assembles them). A chai class and message check on `Error`, the
+ancestor of every thrown class, credits only through its message. An object `message` must equal
 exactly one of them, and an
 anchored regex credits only when ripr can match it as a plain literal
 (no flags other than `u`, no metacharacters between the anchors other
@@ -570,6 +584,18 @@ class may set any `name`, so it does not credit. Otherwise each reads
 `broad_error` / weak. A
 class argument, an unanchored regex, an identifier and a template literal
 stay `broad_error` / weak, as do `doesNotThrow` and `doesNotReject`.
+
+**Rule 20. A plain substring regex in `assert.throws` / `assert.rejects`
+pins the error only when the change separates it (2026-10-22, #9496).** A
+regex literal with no flags but `u` and no metacharacter or escape
+(`/down/`) reads `exact_error_variant` / strong at extraction and passes
+rule 4's guard in one of two cases. When both thrown messages are readable
+(as `String(err)`, rule 10), the text must occur in exactly one of them.
+When the old line only rethrows a local (`throw lastError;`), the new
+`String(err)` is readable, does not contain the text, and the changed line
+is the owner's only `throw` (no `reject`, no `new Promise`), so a test that
+passes on the old code reaches it and fails on the edit. Both cases need the changed line to be the owner's only `throw` and the owner to call nothing but its own parameters (any member call or other function may throw the pinned text); otherwise the check reads `broad_error` / weak. Otherwise it reads
+`broad_error` / weak. An anchored or wider regex follows rule 10.
 
 ### Aggregation
 
@@ -830,7 +856,7 @@ prove its condition costs an abstention or a gap, never a credit.
 
 **Rule 16. Playwright Test specs of pure functions (#9434, #9651, #9652).** A spec
 that imports `expect` and `test` from `@playwright/test` reads like its
-plain form in six places:
+plain form in seven places:
 
 1. `expect.soft(x).toBe(y)` is an `expect(x).toBe(y)`: a soft assertion
    records its failure and fails the test when it ends.
@@ -870,6 +896,11 @@ plain form in six places:
    pair. The base must be the owner call or a local alias of it; a field
    whose value is unchanged, another object's field and another owner keep
    the old reading.
+7. `test.describe(name, body)` (and `.describe.serial`, `.describe.parallel`
+   and `.only` on them) is a suite spelled as a member of the `test` root
+   (#10177). Its nested tests are extracted like those of a `describe`.
+   `.skip` and `.fixme` stay inactive, and a `test` that is not the runner
+   import is not a suite root.
 
 **Rule 17. `t.skip()` / `t.todo()` inside a test body withdraws the test
 (#9497).** A `node:test` (or AVA-style) callback whose first parameter calls
@@ -1243,11 +1274,11 @@ the masker.
   fixture `typescript_tothrow_exact_oracle` does not move: its change
   (`input === ""` to `input.trim() === ""`) is not message-only, so its
   class, string and object payloads all stay `exact_error_variant`.
-- Rules 1, 7, 10 and 11 move a finding to a stronger class only for an
+- Rules 1, 7, 10, 11 and 20 move a finding to a stronger class only for an
   awaited root (rule 1), an alias-rename local (rule 7; via
   RIPR-SPEC-0251, also a renamed default import), a literal
-  chai or `node:assert` message check (rule 10) or an inline literal
-  table row (rule 11).
+  chai or `node:assert` message check (rule 10), a substring rejection regex the change separates (rule 20)
+  or an inline literal table row (rule 11).
 - Rule 8 is the only path to a TypeScript `static_unknown`, and an
   `exposed` finding never carries `typescript_mock_only_observer`.
 - No TypeScript finding has class `reachable_unrevealed`.
@@ -1538,6 +1569,25 @@ keys); do not take the next number.
     `weakly_exposed` (the count does not see the argument; today
     `exact_value` / strong, `exposed`). `assert.deepEqual(
     send.mock.calls[0].arguments, [8])` keeps its reading.
+44. `describeRange` throws `new RangeError("lo above hi")` changed to
+    `new TypeError("lo above hi")` (corpus case `mocha-throw-class-changed`)
+    or to `new RangeError("lo is above hi")` (corpus case
+    `mocha-throw-message-reworded`); chai `expect(() => describeRange(4,
+    1)).to.throw(RangeError, "lo above hi")`: `exact_error_variant` /
+    strong, `exposed` (today `broad_error` / weak, `weakly_exposed`; rule
+    10). With `to.throw(RangeError, "above")` on the reword, or
+    `to.throw(Error, "lo above hi")` on the class change: `broad_error` /
+    weak by rule 4 (both versions pass).
+45. `slugify` changed from `.replace(/[^a-z0-9]+/g, "-")` to `"_"` (corpus
+    case `node-match-anchored-slug`); `assert.match(slugify("Hello
+    World"), /^hello-world$/)`: `exact_value` / strong, `exposed` (today
+    `relational_check` / weak). With `/hello-world/`, `/^hello.world$/` or
+    `/^HELLO-WORLD$/i`: `relational_check` / weak (unchanged).
+46. `withRetry` ends `throw lastError;` changed to `throw new Error("other")`
+    (corpus case `node-retry-last-error`); `await assert.rejects(withRetry(fn,
+    2), /down/)`: `exact_error_variant` / strong, `exposed` (rule 20; today
+    `broad_error` / weak). With `/other/`, or with a second `throw` in the
+    owner: `broad_error` / weak.
 
 ## Test Mapping
 
@@ -1615,6 +1665,12 @@ keys); do not take the next number.
   unexpanded, and the snapshot count, partial-extraction disclosure and
   evidence pointer of an expanded call. The corpus case
   `jest-mined-suite-factory` reads `credited`.
+- #9496: `crates/ripr/src/analysis/language/typescript/assertion_form_tests.rs`
+  pins rules 10 and 20 end to end (chai class and message, anchored
+  `assert.match`, substring `rejects` regex)
+  with a discriminating negative each; `error_payload_guard.rs` unit tests pin the readers. The corpus cases
+  `mocha-throw-class-changed`, `mocha-throw-message-reworded`,
+  `node-match-anchored-slug` and `node-retry-last-error` read `credited`.
 - Existing: `crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs`
   and the `tests/` modules beside it: `mock_form_tests.rs`,
   `scope_receiver_tests.rs`, `reexport_chain_tests.rs`.

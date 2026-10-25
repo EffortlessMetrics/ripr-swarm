@@ -162,3 +162,40 @@ fn local_binding_of_the_object_name_is_not_credited() -> Check {
     }
     Ok(())
 }
+
+fn classify_with_test(test_src: &str) -> Result<ExposureClass, String> {
+    let file = "shop/route.py";
+    let src = ROUTE.replace("= 422", "= 400");
+    let mut owners = extract_owners(Path::new(file), &src);
+    apply_class_facts(&mut owners);
+    let owner = owners
+        .iter()
+        .find(|owner| owner.name == "checkout")
+        .ok_or("owner checkout must be extracted")?;
+    let tests = extract_tests(Path::new("tests/test_route.py"), test_src);
+    classify_change_with_old(
+        Path::new(file),
+        owner.start_line + 1,
+        "    response.status_code = 400",
+        Some("    response.status_code = 422"),
+        &owners,
+        &tests,
+    )
+    .map(|finding| finding.class)
+    .ok_or_else(|| "the change must yield a finding".to_string())
+}
+
+#[test]
+fn patched_module_object_is_not_credited() -> Check {
+    for test_src in [
+        "from shop import route\nfrom shop.route import checkout, response\n\n\ndef test_it(monkeypatch):\n    monkeypatch.setattr(route, \"response\", object())\n    checkout(True)\n    assert response.status_code == 422\n",
+        "from unittest.mock import patch\nfrom shop.route import checkout, response\n\n\n@patch(\"shop.route.response\")\ndef test_it(fake):\n    checkout(True)\n    assert response.status_code == 422\n",
+        "from unittest.mock import patch\nfrom shop.route import checkout, response\n\n\ndef test_it():\n    with patch(\"shop.route.response\"):\n        checkout(True)\n    assert response.status_code == 422\n",
+        "from shop import route\nfrom shop.route import checkout, response\n\n\ndef test_it():\n    route.response = object()\n    checkout(True)\n    assert response.status_code == 422\n",
+        "from shop import route\nfrom shop.route import checkout, response\n\n\ndef test_it():\n    setattr(route, \"response\", object())\n    checkout(True)\n    assert response.status_code == 422\n",
+    ] {
+        let class = classify_with_test(test_src)?;
+        assert_ne!(class, ExposureClass::Exposed, "{test_src}");
+    }
+    Ok(())
+}
