@@ -28,7 +28,7 @@ as the previous point on each trend.
 |---|---|---|---|
 | Inner loop, small crates | first-run steps at or under 0.4 s | still at or under 0.34 s (doctor 0.07 to 0.27, check 0.17 to 0.22, pilot 0.14 to 0.34) | meets |
 | Inner loop, `ripr-swarm` itself | warm check 25 to 87 s on product Rust diffs | one-line edit under `crates/ripr`: 27 s first, then 15.1 s and 15.0 s against a 2 s target | misses; owned by the warm-check work |
-| Verdict trust, Rust | 5/499 false verdicts | 5/636 (0.8%), contradictions 0/804, spec examples 202/205, oracle accuracy 44/44, operator grid 21/21 | trending down; each remaining false verdict is owned by an open PR |
+| Verdict trust, Rust | 5/499 false verdicts | 5/636 (0.8%), contradictions 0/804, spec examples 202/205, oracle accuracy 44/44, operator grid 21/21 | rate down from 1.0% to 0.8%; the five remaining rows were not re-triaged for owners here |
 | Verdict trust, other languages | TS 3/178, Python 0/80, Perl 1/60 | coordinator figures of 2026-10-24: TS 9/351, Python 2/224, Perl 2/81 (counts rose with the corpus) | owned by the corpus threads |
 | Adoption, first impression | 2 of 3 first-run crates ended `static_unknown` | all three end `exposed` (semver, fastrand, bytesize); generated workflow 174 lines and installs the published release | #9276 looks fixed on main; confirm and close |
 | Hostile input | oversized diff all-or-nothing (#9277) | `--path`/`--exclude` shipped (#9330); an empty filter is an error; `@generated` files are skipped; 20,000-deep parentheses, a 50 MB single line (34 s), a symlink loop, BOM with CRLF, a Unicode path, no manifest, a syntax error and 3,000 nested modules all finish without a panic | meets, with the gap below |
