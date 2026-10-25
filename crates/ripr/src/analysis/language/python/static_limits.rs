@@ -303,19 +303,29 @@ pub(super) fn line_prefix_before(text: &str, idx: usize) -> &str {
         .map_or(&text[..idx], |(_, line)| line)
 }
 
+/// Whether the end of `prefix` (the text of a line before a position) sits in
+/// a comment or an open string. A tripled quote opens a string that only the
+/// same tripled delimiter closes, so `'''it's'''` is one balanced literal and
+/// code after it is visible (#9992); a triple string left open at the end of
+/// the prefix hides what follows. F-string fields are not read here.
 pub(super) fn python_prefix_hides_code(prefix: &str) -> bool {
-    let mut quote = None;
-    let mut escaped = false;
-    for ch in prefix.chars() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if let Some(active_quote) = quote {
+    let chars: Vec<char> = prefix.chars().collect();
+    // The active delimiter and its width (1 or 3).
+    let mut open: Option<(char, usize)> = None;
+    let mut index = 0;
+    while index < chars.len() {
+        let ch = chars[index];
+        if let Some((quote, width)) = open {
+            let closes = ch == quote
+                && chars.len() - index >= width
+                && chars[index..index + width].iter().all(|c| *c == quote);
             if ch == '\\' {
-                escaped = true;
-            } else if ch == active_quote {
-                quote = None;
+                index += 2;
+            } else if closes {
+                open = None;
+                index += width;
+            } else {
+                index += 1;
             }
             continue;
         }
@@ -323,10 +333,15 @@ pub(super) fn python_prefix_hides_code(prefix: &str) -> bool {
             return true;
         }
         if ch == '\'' || ch == '"' {
-            quote = Some(ch);
+            let triple = chars.get(index + 1) == Some(&ch) && chars.get(index + 2) == Some(&ch);
+            let width = if triple { 3 } else { 1 };
+            open = Some((ch, width));
+            index += width;
+            continue;
         }
+        index += 1;
     }
-    quote.is_some()
+    open.is_some()
 }
 
 pub(super) fn contains_metaprogramming(text: &str) -> bool {
