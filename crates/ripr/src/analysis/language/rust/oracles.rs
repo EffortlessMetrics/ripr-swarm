@@ -1353,16 +1353,17 @@ mod tests {
     // proximity-only oracle turned the finding `weakly_exposed`.
     #[test]
     fn a_generated_comparison_keeps_its_limit_beside_a_proximity_oracle() {
-        let arrow = || {
-            let (finding, mut index) = weakly_exposed_beside_a_proximity_oracle();
+        let with_attribute = |attribute: &str| {
+            let (finding, _) = weakly_exposed_beside_a_proximity_oracle();
             let mut test = test_summary("direct_inner", "src/lib.rs", 20, "weight(x)");
-            test.attrs = vec!["#[test_case(4 => 12)]".to_string()];
-            index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            test.attrs = vec![attribute.to_string()];
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
                 tests: vec![test],
                 ..Default::default()
             });
             (finding, index)
         };
+        let arrow = || with_attribute("#[test_case(4 => 12)]");
         let (mut finding, index) = arrow();
         apply_rust_macro_wrapped_assertion_limit(&mut finding, &index, None);
         assert_eq!(
@@ -1371,13 +1372,7 @@ mod tests {
         );
 
         // The plain-argument form generates no comparison.
-        let (mut finding, mut index) = arrow();
-        let mut test = test_summary("direct_inner", "src/lib.rs", 20, "weight(x)");
-        test.attrs = vec!["#[test_case(4, 12)]".to_string()];
-        index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
-            tests: vec![test],
-            ..Default::default()
-        });
+        let (mut finding, index) = with_attribute("#[test_case(4, 12)]");
         apply_rust_macro_wrapped_assertion_limit(&mut finding, &index, None);
         assert_eq!(finding.static_limit_kind, None);
 
