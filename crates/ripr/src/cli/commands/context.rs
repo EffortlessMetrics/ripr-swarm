@@ -287,7 +287,17 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
                 explicit.mode,
                 progress_sink,
             )
-            .map_err(&refuse)?
+            .map_err(|error| {
+                // #9244 item 9: a selector miss is user-fixable usage, not an
+                // internal failure, so the held-success sink must not project
+                // `ripr progress: failed` beside the real error.
+                if error.is_selector_miss()
+                    && let Some(sink) = &progress
+                {
+                    app::AnalysisProgressSink::user_fixable_failure(sink);
+                }
+                refuse(error)
+            })?
         }
     };
     // #7352 review: commit the held `completed` terminal before the sink
