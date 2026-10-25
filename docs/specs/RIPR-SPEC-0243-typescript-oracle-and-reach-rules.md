@@ -929,6 +929,15 @@ method head, since a nested parameter can shadow the owner's), the observed
 value may call nothing but the owner directly, and `0` versus `-0` counts
 as different values.
 
+The two versions must also differ on some probe input, so an equivalent
+rewrite is never reported as unexercised. Each numeric argument is probed at
+its asserted value, its neighbours, `0`, `1` and `-1`; when that does not
+separate them, the probe also tries each number literal the edit added or
+removed (at most three per side) and its neighbours, so a bound edited far from the
+asserted input (`Math.min(100, ...)` to `Math.min(200, ...)`, asserted at 40)
+still reads unexercised (#9436). An operator edit changes no number, so it
+keeps the boundary-witness reading.
+
 **Rule 19. A same-file assertion helper called with literals is its asserts
 (2026-10-22, #9636).** Extends decision 19(b) for literal-argument call-site
 rewrites of helpers that decision 19's pass leaves untouched (multi-statement
@@ -1238,6 +1247,18 @@ the masker.
     value is the declared function.
     Rejected: crediting `require()` of an ES module's default export
     (runtime namespace object) and an arbitrary `module.exports = expr`.
+22. **Mock call counts (2026-10-22, #9684).**
+    Adopted: for a changed side-effect call (a probe whose
+    change is to what the owner's call sends), an assertion whose observed
+    expression is a plain identifier path ending `.mock.callCount()` or
+    `.mock.calls.length` counts calls and reads `mock_expectation` / weak,
+    like `toHaveBeenCalledTimes`, under any matcher (the classifier applies
+    this; extraction still labels the equality `exact_value`). Rejected:
+    crediting the count as an exact value of the arguments the changed call
+    sends. Not demoted: a deleted call, an added call (a changed line with
+    no removed counterpart, which a count sees), or a value that decides
+    how many calls run (a count sees both), an aliased or optional-chained count,
+    and `mock.calls[0].arguments` pins, which keep their reading.
 
 ## Required Evidence
 
@@ -1533,7 +1554,13 @@ to `amount - 20`, and `tests/lib.test.ts` has
     withdraws the second test, rule 18 shows `describeAttempt(0)` agrees on
     both versions). Corpus cases `node-t-skip-inside-test` and
     `node-first-attempt-nonnegative-bound`.
-43. `describeRange` throws `new RangeError("lo above hi")` changed to
+43. `sender.send(orderId * 2)` rewritten as `sender.send(2 * orderId)`; test
+    `const send = mock.fn(); mockedSend(4, { send });
+    assert.equal(send.mock.callCount(), 1)`: `mock_expectation` / weak,
+    `weakly_exposed` (the count does not see the argument; today
+    `exact_value` / strong, `exposed`). `assert.deepEqual(
+    send.mock.calls[0].arguments, [8])` keeps its reading.
+44. `describeRange` throws `new RangeError("lo above hi")` changed to
     `new TypeError("lo above hi")` (corpus case `mocha-throw-class-changed`)
     or to `new RangeError("lo is above hi")` (corpus case
     `mocha-throw-message-reworded`); chai `expect(() => describeRange(4,
@@ -1542,12 +1569,12 @@ to `amount - 20`, and `tests/lib.test.ts` has
     10). With `to.throw(RangeError, "above")` on the reword, or
     `to.throw(Error, "lo above hi")` on the class change: `broad_error` /
     weak by rule 4 (both versions pass).
-44. `slugify` changed from `.replace(/[^a-z0-9]+/g, "-")` to `"_"` (corpus
+45. `slugify` changed from `.replace(/[^a-z0-9]+/g, "-")` to `"_"` (corpus
     case `node-match-anchored-slug`); `assert.match(slugify("Hello
     World"), /^hello-world$/)`: `exact_value` / strong, `exposed` (today
     `relational_check` / weak). With `/hello-world/`, `/^hello.world$/` or
     `/^HELLO-WORLD$/i`: `relational_check` / weak (unchanged).
-45. `withRetry` ends `throw lastError;` changed to `throw new Error("other")`
+46. `withRetry` ends `throw lastError;` changed to `throw new Error("other")`
     (corpus case `node-retry-last-error`); `await assert.rejects(withRetry(fn,
     2), /down/)`: `exact_error_variant` / strong, `exposed` (rule 20; today
     `broad_error` / weak). With `/other/`, or with a second `throw` in the
@@ -1564,6 +1591,10 @@ to `amount - 20`, and `tests/lib.test.ts` has
   cell, a table read elsewhere, a `let` or late table, a row of the wrong
   length, an early exit, a branch in the body, a non-block body). Corpus row
   `ts-grid-boundary-table` moves from gap to credited.
+
+- #9684 (decision 22): `tests/mock_call_count_tests.rs` pins the call-count
+  reading and its controls. Corpus row `ts-trap-mocked-send` moves from
+  credited to gap.
 
 - #9435 (rule 15): `crates/ripr/src/analysis/language/typescript/tests/returned_dataflow_tests.rs`
   pins each shape's credit and the fallbacks that reach the rule (a weak

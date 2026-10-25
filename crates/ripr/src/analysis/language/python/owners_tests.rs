@@ -248,6 +248,11 @@ fn owner_from_function(
         term_facts,
         class_facts: super::related_tests::PythonClassFacts {
             direct_statements: direct_expression_statements(context.source, body),
+            bound_names: super::module_constants::function_bound_names(
+                args,
+                body,
+                &text_for_range(context.source, range),
+            ),
             ..Default::default()
         },
     }
