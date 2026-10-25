@@ -88,3 +88,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_array_sibling_exit_field (8)
+
+Reason:
+RIPR-SPEC-0118 / #10192: ambiguous choices retain finding identity and remain discoverable beside bounded current hidden rows; stale/base-side subjects receive no choices. JSON/canonical fields, verdicts and repair admission are unchanged.
+
+Command:
+`cargo xtask goldens bless rust_array_sibling_exit_field --reason "..."`
+
+Updated:
+- `expected/human.txt`

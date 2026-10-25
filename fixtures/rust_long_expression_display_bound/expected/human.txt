@@ -40,7 +40,7 @@ Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_long_expression_display_bound/input --diff <cwd>/fixtures/rust_long_expression_display_bound/diff.patch --mode fast probe:src_lib.rs:predicate:cbead9b7
   ripr context --root <cwd>/fixtures/rust_long_expression_display_bound/input --diff <cwd>/fixtures/rust_long_expression_display_bound/diff.patch --mode fast --at probe:src_lib.rs:predicate:cbead9b7
   no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:predicate:cbead9b7 --root <cwd>/fixtures/rust_long_expression_display_bound/input` for the full gate's answer
-Choose a test-stub seam: src/lib.rs:10 holds more than one predicate_boundary seam, so --at cannot pick one; pass one of: --seam-id c7850f19593a6276, --seam-id c78f23195942d8f7, --seam-id 034db2197ad92c55
+Choose a test-stub seam for probe:src_lib.rs:predicate:cbead9b7: src/lib.rs:10 holds more than one predicate_boundary seam, so --at cannot pick one; pass one of: --seam-id c7850f19593a6276, --seam-id c78f23195942d8f7, --seam-id 034db2197ad92c55
   These syntax choices do not establish a repair binding or close a static limitation.
   ripr agent stub --root <cwd>/fixtures/rust_long_expression_display_bound/input --seam-id c7850f19593a6276
   ripr agent stub --root <cwd>/fixtures/rust_long_expression_display_bound/input --seam-id c78f23195942d8f7

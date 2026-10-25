@@ -40,5 +40,9 @@ Write a test for it:
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
     - ./src/lib.rs:17 (weak); kind: return_value; reason: No strong discriminator was detected
+      Choose a test-stub seam for probe:src_lib.rs:return_value:d890a3ab: src/lib.rs:16 holds more than one return_value seam, so --at cannot pick one; pass one of: --seam-id 3a55f95c4a5888e6, --seam-id 3a44fd5c4a4a1c7f
+        These syntax choices do not establish a repair binding or close a static limitation.
+        ripr agent stub --root <cwd>/fixtures/rust_adversarial_shared_error_variant_proximity/input --seam-id 3a55f95c4a5888e6
+        ripr agent stub --root <cwd>/fixtures/rust_adversarial_shared_error_variant_proximity/input --seam-id 3a44fd5c4a4a1c7f
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

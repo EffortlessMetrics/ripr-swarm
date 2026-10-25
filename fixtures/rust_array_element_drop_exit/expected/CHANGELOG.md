@@ -140,3 +140,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_array_element_drop_exit (12)
+
+Reason:
+RIPR-SPEC-0118 / #10192: ambiguous choices retain finding identity and remain discoverable beside bounded current hidden rows; stale/base-side subjects receive no choices. JSON/canonical fields, verdicts and repair admission are unchanged.
+
+Command:
+`cargo xtask goldens bless rust_array_element_drop_exit --reason "..."`
+
+Updated:
+- `expected/human.txt`
