@@ -429,3 +429,64 @@ fn a_head_whose_mergeability_is_still_being_computed_is_read_again() -> Result<(
     );
     Ok(())
 }
+
+#[test]
+fn a_failing_status_is_retired_when_the_label_is_removed_or_the_pr_is_a_draft() -> Result<(), String>
+{
+    let unlabeled = Pr {
+        labeled: false,
+        prior_statuses: OURS_FAILURE,
+        ..Pr::dirty(22)
+    };
+    let draft = Pr {
+        draft: true,
+        prior_statuses: OURS_FAILURE,
+        ..Pr::dirty(23)
+    };
+    let outcome = run(&[unlabeled, draft], "retire")?;
+    assert_eq!(
+        (outcome.successes, outcome.failures, outcome.comments),
+        (2, 0, 0),
+        "{}",
+        outcome.summary
+    );
+    for number in [22, 23] {
+        let sha = Pr::dirty(number).sha();
+        assert!(
+            outcome.log.contains(&format!(
+                "repos/o/r/statuses/{sha} -f state=success -f context=merge-ready conflict"
+            )),
+            "{}",
+            outcome.log
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn only_the_actions_bots_failure_on_a_same_repo_pr_is_retired() -> Result<(), String> {
+    let foreign = Pr {
+        labeled: false,
+        prior_statuses: r#"[{"context":"merge-ready conflict","state":"failure","creator":{"login":"someone"}}]"#,
+        ..Pr::dirty(24)
+    };
+    let fork = Pr {
+        labeled: false,
+        repo: "fork/r",
+        prior_statuses: OURS_FAILURE,
+        ..Pr::dirty(25)
+    };
+    let already_clear = Pr {
+        labeled: false,
+        prior_statuses: r#"[{"context":"merge-ready conflict","state":"success","creator":{"login":"github-actions[bot]"}},{"context":"merge-ready conflict","state":"failure","creator":{"login":"github-actions[bot]"}}]"#,
+        ..Pr::dirty(26)
+    };
+    let outcome = run(&[foreign, fork, already_clear], "retire-quiet")?;
+    assert_eq!(
+        (outcome.successes, outcome.failures, outcome.comments),
+        (0, 0, 0),
+        "{}",
+        outcome.summary
+    );
+    Ok(())
+}

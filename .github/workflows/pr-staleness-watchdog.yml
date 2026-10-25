@@ -54,6 +54,10 @@ name: PR Staleness Watchdog
 #   job holds `pull-requests: write` and `statuses: write` only; it still never
 #   dispatches or checks out anything.
 #
+# - A draft or unlabeled same-repo PR whose head still carries this repository's
+#   actions-bot `merge-ready conflict` failure gets a success status instead, since
+#   no qualification is requested on it any more (#10136).
+#
 # Each sweep's summary table (PR | head | mergeable_state | disposition) is the
 # audit trail.
 
@@ -134,6 +138,15 @@ jobs:
             gh api "repos/$REPOSITORY/statuses/$2" -f state=failure -f context="merge-ready conflict" -f description="Conflicts with $3: no qualification run can start; resolve and re-apply merge-ready" > /dev/null || return 1
           }
 
+          # A draft or unlabeled PR made no qualification request, so a conflict status this
+          # sweep or the notice posted earlier would sit red forever; retire it (#10136).
+          retire_stale() {
+            [ "$(ours_state "$2")" = "failure" ] || return 0
+            gh api "repos/$REPOSITORY/statuses/$2" -f state=success -f context="merge-ready conflict" -f description="merge-ready is not requested on this PR" > /dev/null || return 1
+            cleared=$((cleared + 1))
+            disposition="$disposition; stale conflict status retired"
+          }
+
           scanned=0 dark=0 in_progress=0 reported=0 cleared=0
           while IFS=$'\t' read -r number head_sha head_ref head_repo draft requested base_ref; do
             [ -n "${number:-}" ] || continue
@@ -141,8 +154,10 @@ jobs:
             mergeable_state="n/a"
             if [ "$draft" = "true" ]; then
               disposition="skip: draft"
+              [ "$head_repo" = "$REPOSITORY" ] && { retire_stale "$number" "$head_sha" || disposition="$disposition; retire failed"; }
             elif [ "$requested" != "true" ]; then
               disposition="skip: no merge-ready request"
+              [ "$head_repo" = "$REPOSITORY" ] && { retire_stale "$number" "$head_sha" || disposition="$disposition; retire failed"; }
             elif [ "$head_repo" != "$REPOSITORY" ]; then
               disposition="skip: fork/untrusted head (${head_repo:-deleted})"
             else
