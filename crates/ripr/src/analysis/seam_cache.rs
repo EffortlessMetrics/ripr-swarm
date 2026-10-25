@@ -512,7 +512,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// per row (#6925). Old entries read the table's owner as unreached.
 /// `1.102`: the same equal-arm sink limit reads a rustfmt-layout branch
 /// chain (#10134). Old entries keep the exposed verdict.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.102";
+/// `1.103`: a `macro_rules!` test table whose generator is defined in another
+/// file (`#[macro_use] mod`, or a parent module) indexes its tests (#6925).
+/// Old entries read the table's owner as unreached.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.103";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -661,7 +664,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.102";
 /// `0.107`: same equal-arm sink limit as full `1.100`.
 /// `0.108`: same macro table tests as full `1.101`.
 /// `0.109`: same multi-line equal-arm sink limit as full `1.102`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.109";
+/// `0.110`: same cross-file macro table tests as full `1.103`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.110";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -812,7 +816,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.109";
 /// `0.107`: same equal-arm sink limit as full `1.100`.
 /// `0.108`: same macro table tests as full `1.101`.
 /// `0.109`: same multi-line equal-arm sink limit as full `1.102`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.109";
+/// `0.110`: same cross-file macro table tests as full `1.103`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.110";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -4956,7 +4961,8 @@ mod tests {
         // 1.99 -> 1.100: equal-valued arms leave the first condition without a sink (#9843).
         // 1.100 -> 1.101: macro_rules! test tables index one test per row (#6925).
         // 1.101 -> 1.102: equal-valued arms of a rustfmt-layout chain (#10134).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.102");
+        // 1.102 -> 1.103: cross-file macro_rules! test tables (#6925).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.103");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5047,8 +5053,9 @@ mod tests {
         // 0.106 -> 0.107: same equal-arm sink limit as full 1.100.
         // 0.107 -> 0.108: same macro table tests as full 1.101 (#6925).
         // 0.108 -> 0.109: same multi-line equal-arm sink limit as full 1.102.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.109");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.109");
+        // 0.109 -> 0.110: same cross-file macro tables as full 1.103 (#6925).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.110");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.110");
     }
 
     #[test]
