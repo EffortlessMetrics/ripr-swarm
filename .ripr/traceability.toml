@@ -3773,7 +3773,8 @@ tests = [
   "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_receiver_reads_that_resemble_a_rebind_stay_credited",
   "crates/ripr/src/analysis/language/python/tests.rs::match_case_capture_of_the_receiver_counts_as_a_binding_target",
   "crates/ripr/src/analysis/language/python/bool_oracle_tests.rs::given_a_file_that_patches_only_other_names_then_the_callee_is_still_credited",
-  "crates/ripr/src/analysis/language/python/bool_oracle_tests.rs::given_a_decorator_that_patches_only_other_names_then_the_callee_is_still_credited",
+  "crates/ripr/src/analysis/language/python/bool_oracle_tests.rs::given_a_decorator_that_patches_a_collaborator_then_the_old_veto_keeps_the_assertion_smoke",
+  "crates/ripr/src/analysis/language/python/bool_oracle_tests.rs::given_an_escaped_or_dynamic_namespace_write_then_the_assertion_stays_smoke",
   "crates/ripr/src/analysis/language/python/bool_oracle_tests.rs::given_a_requests_style_utils_file_then_the_callee_is_credited_despite_mock_and_monkeypatch",
   "crates/ripr/src/analysis/language/python/bool_oracle_tests.rs::given_patching_that_names_the_callee_by_any_spelling_then_the_assertion_stays_smoke",
   "crates/ripr/src/analysis/language/python/bool_oracle_tests.rs::given_a_decorator_that_patches_the_callee_then_the_assertion_stays_smoke",
@@ -3784,6 +3785,7 @@ tests = [
 ]
 fixtures = [
   "fixtures/python_bool_owner_patched_callee",
+  "fixtures/python_bool_owner_escaped_patch_target",
   "fixtures/python_dynamic_namespace_dunder_setattr",
   "fixtures/python_dynamic_namespace_reload",
   "fixtures/python_dynamic_namespace_renamed_delattr",

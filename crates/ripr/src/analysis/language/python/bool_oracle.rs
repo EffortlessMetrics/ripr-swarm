@@ -129,8 +129,10 @@ fn unique_callee_owner<'o>(
 /// name. Textual on purpose: a hit in a comment or string only leaves the
 /// assertion smoke. Patching and mocking are not here: [`patch_scope`] reads
 /// them against the names they could rebind (#10391).
-const DYNAMIC_MARKERS: [&str; 8] = [
+const DYNAMIC_MARKERS: [&str; 10] = [
     "globals(",
+    "locals(",
+    "__globals__",
     "vars(",
     "exec(",
     "eval(",
