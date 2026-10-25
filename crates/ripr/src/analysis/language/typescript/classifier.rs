@@ -5833,7 +5833,16 @@ pub(crate) fn ts_observes_decorated_method_call(
         + test_body.matches(&format!("{{ {name} ")).count()
         + test_body.matches(&format!("({name})")).count()
         + test_body.matches(&format!("({name},")).count()
-        + test_body.matches(&format!(", {name})")).count();
+        + test_body.matches(&format!(", {name})")).count()
+        // Typed, optional, defaulted or bare-arrow parameters shadow the
+        // receiver inside a callback (`(l: Other) => ...`, `l => ...`).
+        + test_body.matches(&format!("({name}:")).count()
+        + test_body.matches(&format!(", {name}:")).count()
+        + test_body.matches(&format!("({name}?")).count()
+        + test_body.matches(&format!(", {name}?")).count()
+        + test_body.matches(&format!("({name} =")).count()
+        + test_body.matches(&format!(", {name} =")).count()
+        + test_body.matches(&format!("{name} =>")).count();
     let assignments = test_body
         .match_indices(name)
         .filter(|(at, _)| {
@@ -5969,16 +5978,25 @@ pub(crate) fn classify_resolved_owner(
     // to the wrapper's pass-through return. Any other line of the decorator
     // keeps the reading it had before the relation existed.
     let decorated_gated: Vec<TypeScriptRelatedCandidate<'_>>;
-    let related_candidates = if !decorated_return_changed(owner, line)
-        && context
-            .related_candidates
-            .iter()
-            .any(|candidate| candidate.relation == TypeScriptRelationKind::DecoratedMethodCall)
-    {
+    let has_decorated = context
+        .related_candidates
+        .iter()
+        .any(|candidate| candidate.relation == TypeScriptRelationKind::DecoratedMethodCall);
+    let return_changed = decorated_return_changed(owner, line);
+    let related_candidates = if has_decorated {
+        // On the return line the decorated tests are the only entry reach: an
+        // ordinary exported caller's unrelated assertion (a shared token such
+        // as `args`) must not lend the credit once the entry-only cap lifts.
         decorated_gated = context
             .related_candidates
             .iter()
-            .filter(|candidate| candidate.relation != TypeScriptRelationKind::DecoratedMethodCall)
+            .filter(|candidate| {
+                if return_changed {
+                    candidate.relation != TypeScriptRelationKind::ModuleEntryCall
+                } else {
+                    candidate.relation != TypeScriptRelationKind::DecoratedMethodCall
+                }
+            })
             .copied()
             .collect();
         &decorated_gated

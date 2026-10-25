@@ -1045,7 +1045,9 @@ or `static_unknown`, never `exposed`):
    `if`, loop, `try` or `await`, so the return runs on every call. The
    decorator body itself has only variable declarations and expression
    statements: a `return` of a replacement descriptor, outer control flow,
-   `Object.defineProperty` and `Reflect` use all refuse.
+   `Object.defineProperty` and `Reflect` use all refuse. The original is
+   captured with `const` (a `let` or `var` capture can be rebound before the
+   wrapper is installed), and no wrapper parameter reuses its name.
 2. The returned expression is the original's result and nothing that can
    replace or discard it: exactly one `original.apply(this, ...)` or
    `original.call(this, ...)`, combined only by `+` or `-` with literals or
@@ -1059,14 +1061,20 @@ or `static_unknown`, never `exposed`):
    factory (`@D(3)`), a stacked decorator, a class, property, accessor or
    parameter decorator, a static method, and a decorator that also assigns
    `descriptor.get`, `descriptor.set` or `descriptor.writable` keep the old
-   reading.
+   reading. A class with an instance field or accessor of the method's name,
+   a computed field, a `this.<method> = ...` assignment or a `this[...]`
+   access also keeps the old reading, because the own property hides the
+   prototype wrapper.
 4. A test reaches the method by the existing `class_method_call` identity
    gates. The assertion must be a strong exact oracle of the whole call
    result, so the same exactness rules as a direct return-value owner apply.
    The asserted call must be on a receiver of the decorated class
    (`new Ledger().add(...)`, or `x.add(...)` with `const x = new Ledger(...)`
    in the test): an assertion on another class's same-named method sees
-   nothing of the decorator. A test that replaces the method
+   nothing of the decorator; a callback parameter that reuses the receiver's
+   name (`(l: Other) => ...`, `l => ...`) is a different binding and refuses.
+   On the return line only decorated-method tests lend reach: an ordinary
+   exported caller's assertion never credits it. A test that replaces the method
    (`ledger.add = ...`, `Ledger.prototype.add = ...`, `spyOn(l, "add")`,
    `defineProperty(l, "add", ...)`) bypasses the wrapper and earns nothing.
    The relation is admitted only when no test calls `D` itself.

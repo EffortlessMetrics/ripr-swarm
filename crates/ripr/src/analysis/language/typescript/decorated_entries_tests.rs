@@ -247,3 +247,64 @@ fn decorated_call_must_be_the_whole_asserted_value_on_a_single_bound_receiver() 
         assert!(!observes("l.add(2, 3)", body, "Ledger", "add"), "{body}");
     }
 }
+
+#[test]
+fn rebindable_capture_or_shadowed_original_records_no_entry() {
+    assert_no_decorated_entry(&AUDITED.replace("const original", "let original").replace(
+        "  descriptor.value = function",
+        "  original = () => 99;\n  descriptor.value = function",
+    ));
+    assert_no_decorated_entry(&AUDITED.replace("const original", "var original"));
+    assert_no_decorated_entry(&AUDITED.replace(
+        "function (this: unknown, ...args",
+        "function (this: unknown, original, ...args",
+    ));
+    assert_eq!(decorator_entries(AUDITED).len(), 1);
+}
+
+#[test]
+fn instance_field_or_constructor_assignment_hides_the_decorated_method() {
+    for hiding in [
+        "  add = (a: number, b: number): number => 99;\n",
+        "  add: (a: number, b: number) => number = () => 99;\n",
+        "  accessor add = 1;\n",
+        "  [dynamic] = 1;\n",
+        "  constructor() { this.add = () => 99; }\n",
+        "  constructor() { this [\"add\"] = () => 99; }\n",
+        "  constructor() { this\n    .add\n    = () => 99; }\n",
+    ] {
+        assert_no_decorated_entry(&AUDITED.replace(
+            "export class Ledger {\n",
+            &format!("export class Ledger {{\n{hiding}"),
+        ));
+    }
+    // A static field of the same name does not hide the instance method.
+    assert_eq!(
+        decorator_entries(&AUDITED.replace(
+            "export class Ledger {\n",
+            "export class Ledger {\n  static add = 1;\n"
+        ))
+        .len(),
+        1
+    );
+}
+
+#[test]
+fn typed_or_arrow_parameter_shadowing_the_receiver_is_refused() {
+    use super::super::classifier::ts_observes_decorated_method_call as observes;
+    for body in [
+        "const l = new Ledger(); [new Other()].forEach((l: Other) => expect(l.add(2, 3)).toBe(99));",
+        "const l = new Ledger(); xs.forEach((a, l: Other) => expect(l.add(2, 3)).toBe(99));",
+        "const l = new Ledger(); xs.forEach(l => expect(l.add(2, 3)).toBe(99));",
+        "const l = new Ledger(); xs.forEach((l = other) => expect(l.add(2, 3)).toBe(99));",
+        "const l = new Ledger(); xs.forEach((l?: Other) => expect(l.add(2, 3)).toBe(99));",
+    ] {
+        assert!(!observes("l.add(2, 3)", body, "Ledger", "add"), "{body}");
+    }
+    assert!(observes(
+        "l.add(2, 3)",
+        "const l = new Ledger();",
+        "Ledger",
+        "add"
+    ));
+}

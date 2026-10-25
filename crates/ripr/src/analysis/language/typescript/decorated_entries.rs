@@ -54,7 +54,7 @@ pub(crate) fn assign_decorated_entries(
     source: &SourceText<'_>,
     owners: &mut [TypeScriptOwner],
 ) {
-    let applications = decorator_applications(program);
+    let applications = decorator_applications(program, source);
     if applications.is_empty() {
         return;
     }
@@ -123,6 +123,7 @@ pub(crate) fn assign_decorated_entries(
 /// application in the program's top-level classes.
 fn decorator_applications(
     program: &oxc_ast::ast::Program<'_>,
+    source: &SourceText<'_>,
 ) -> BTreeMap<String, Vec<(String, String)>> {
     let mut out: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
     let mut visit = |class: &Class<'_>| {
@@ -130,6 +131,37 @@ fn decorator_applications(
             return;
         };
         if !class.decorators.is_empty() {
+            return;
+        }
+        // An instance field of the same name hides the prototype wrapper on
+        // every instance (`add = () => 99`), and a computed field or accessor
+        // could be any name, so either withholds the class's applications.
+        let mut field_names: Vec<String> = Vec::new();
+        for element in &class.body.body {
+            let (key, computed, is_static) = match element {
+                ClassElement::PropertyDefinition(field) => {
+                    (&field.key, field.computed, field.r#static)
+                }
+                ClassElement::AccessorProperty(field) => {
+                    (&field.key, field.computed, field.r#static)
+                }
+                _ => continue,
+            };
+            if is_static {
+                continue;
+            }
+            match property_key_name(key) {
+                Some(name) if !computed => field_names.push(name),
+                _ => return,
+            }
+        }
+        // `this.add = ...` / `this[...] = ...` anywhere in the class body can
+        // replace the method on the instance, so the text is checked too.
+        let compact: String = source[class.span.start as usize..class.span.end as usize]
+            .chars()
+            .filter(|ch| !ch.is_whitespace())
+            .collect();
+        if compact.contains("this[") {
             return;
         }
         for element in &class.body.body {
@@ -146,6 +178,12 @@ fn decorator_applications(
             let Some(method_name) = property_key_name(&method.key) else {
                 continue;
             };
+            if field_names.contains(&method_name)
+                || compact.contains(&format!("this.{method_name}="))
+                    && !compact.contains(&format!("this.{method_name}=="))
+            {
+                continue;
+            }
             if let Expression::Identifier(decorator) = &method.decorators[0].expression {
                 out.entry(decorator.name.as_str().to_string())
                     .or_default()
@@ -209,7 +247,11 @@ fn pass_through_return(
                 };
                 let init_text = &source[init.span().start as usize..init.span().end as usize];
                 if init_text == member || init_text.starts_with(&format!("{member} as ")) {
-                    if original.is_some() {
+                    // A `let`/`var` capture can be rebound before the wrapper
+                    // is installed (`original = () => 99`); `const` cannot.
+                    if original.is_some()
+                        || declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const
+                    {
                         return None;
                     }
                     original = Some(id.name.as_str());
@@ -235,6 +277,14 @@ fn pass_through_return(
     }
     let (original, wrapper) = (original?, wrapper?);
     if wrapper.r#async || wrapper.generator {
+        return None;
+    }
+    // A wrapper parameter named like the capture would shadow it.
+    if wrapper.params.items.iter().any(|item| {
+        matches!(&item.pattern, BindingPattern::BindingIdentifier(id) if id.name == original)
+    }) || matches!(wrapper.params.rest.as_ref(), Some(rest_param)
+        if matches!(&rest_param.rest.argument, BindingPattern::BindingIdentifier(id) if id.name == original))
+    {
         return None;
     }
     let wrapper_body = wrapper.body.as_ref()?;
