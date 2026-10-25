@@ -1,0 +1,121 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_dynamic_namespace_reload/input
+config: <cwd>/fixtures/python_dynamic_namespace_reload/input/ripr.toml
+
+Summary: 2 probe(s), 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+
+Changed file(s) by language: python = 2
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 2 changed file(s), 4 changed line(s), 2 candidate line(s), 2 probe(s), 2 finding(s)
+
+WARNING shop/route.py:7
+  id: probe:shop_route.py:python_preview:6a58f374
+
+Changed
+  after:      response.status_code = 400
+
+Probe
+  family: field_construction
+  delta:  value
+  owner:  python:shop/route.py::checkout
+  canonical gap: gap:python:shop/route.py:checkout:field_value:field_construction:response.status_code=400
+
+Language
+  language: python
+  status: preview
+  owner kind: function
+
+Static exposure
+  weakly_exposed (warning, confidence 0.40)
+
+Evidence
+  - reach yes: 1 related Python test(s) found for owner `checkout`
+  - infection yes: Changed Python field or attribute construction can alter object state: `response.status_code = 400`
+  - propagation weak: Changed Python field construction can propagate through returned or retained object state; exact runtime object flow is not resolved
+  - observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)
+  - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
+  - local flow reaches constructed field: response.status_code = 400 (line 7)
+  - related test tests/test_route.py:7 test_checkout uses strong exact value oracle: assert response.status_code == 422; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+
+Weakness
+  - A strong Python oracle reaches `checkout`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output
+  - missing discriminator response.status_code == 400: changed Python field/object value at line 7 lacks a concrete repair discriminator
+
+Python repair card (preview/advisory)
+  card version: python_repair_card.v1
+  canonical gap: gap:python:shop/route.py:checkout:field_value:field_construction:response.status_code=400
+  authority: preview_advisory_only (python/preview)
+  repair action: strengthen_existing_test
+  changed owner: checkout
+  changed behavior: field_value changed at shop/route.py:7: `response.status_code = 400`
+  current test evidence: tests/test_route.py:7 test_checkout currently has oracle_strength=strong, oracle_kind=exact_value: assert response.status_code == 422
+  missing discriminator: response.status_code == 400
+  recommended test shape: Strengthen the existing pytest response status-code assertion for `response.status_code == 400`.
+  suggested assertion: Assert the response field directly: `assert response.status_code == 400`.
+  suggested file: tests/test_route.py
+  suggested test: test_checkout
+  pytest node: tests/test_route.py::test_checkout
+  verify: python -m pytest tests/test_route.py::test_checkout (high)
+  receipt: unavailable_until_python_gap_ledger
+  receipt guidance: Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command.
+  stop conditions:
+    - Stop if imports, fixtures, or test setup cannot call the changed owner.
+    - Stop if the expected value for the missing discriminator is ambiguous.
+    - Stop if adding the test appears to require a production-code edit.
+  limits:
+    - Syntax-first Python preview evidence only.
+    - No source edits, generated tests, mutation execution, provider calls, or gate authority.
+    - Verify success alone is not a gap-closure receipt.
+
+Next step
+  Python preview: strengthen the existing related test with a field/object assertion for missing discriminator `response.status_code == 400`
+Drill in:
+  ripr explain --root <cwd>/fixtures/python_dynamic_namespace_reload/input --diff <cwd>/fixtures/python_dynamic_namespace_reload/diff.patch --mode fast probe:shop_route.py:python_preview:6a58f374
+  ripr context --root <cwd>/fixtures/python_dynamic_namespace_reload/input --diff <cwd>/fixtures/python_dynamic_namespace_reload/diff.patch --mode fast --at probe:shop_route.py:python_preview:6a58f374
+
+WARNING shop/pricing.py:5
+  id: probe:shop_pricing.py:python_preview:b9038d35
+
+Changed
+  after:      if amount >= DISCOUNT_THRESHOLD:
+
+Probe
+  family: predicate
+  delta:  control
+  owner:  python:shop/pricing.py::discounted_total
+  canonical gap: gap:python:shop/pricing.py:discounted_total:predicate_boundary:predicate:amount>=discount_threshold
+
+Language
+  language: python
+  status: preview
+  owner kind: function
+
+Static exposure
+  weakly_exposed (warning, confidence 0.40)
+
+Evidence
+  - reach yes: 1 related Python test(s) found for owner `discounted_total`
+  - infection weak: Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary
+  - propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink
+  - observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)
+  - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
+  - local flow reaches unknown sink: if amount >= DISCOUNT_THRESHOLD: (line 5) — ripr could not classify where the changed value ends up; propagation confidence is limited
+  - related test tests/test_pricing.py:6 test_discount uses strong exact value oracle: assert discounted_total(DISCOUNT_THRESHOLD) == 9_000
+  - source function argument value amount = 20000 at line 9
+
+Weakness
+  - A strong Python oracle reaches `discounted_total`, but static evidence does not place a related test input at the changed predicate boundary. No strong related test call places amount equal to DISCOUNT_THRESHOLD; observed amount values: 20000; observed DISCOUNT_THRESHOLD values: unresolved
+
+Repair placement
+  suggested file: tests/test_pricing.py
+  suggested test: test_discount
+  pytest node: tests/test_pricing.py::test_discount
+  verify: python -m pytest tests/test_pricing.py::test_discount (high)
+Drill in:
+  ripr explain --root <cwd>/fixtures/python_dynamic_namespace_reload/input --diff <cwd>/fixtures/python_dynamic_namespace_reload/diff.patch --mode fast probe:shop_pricing.py:python_preview:b9038d35
+  ripr context --root <cwd>/fixtures/python_dynamic_namespace_reload/input --diff <cwd>/fixtures/python_dynamic_namespace_reload/diff.patch --mode fast --at probe:shop_pricing.py:python_preview:b9038d35
+
+
+Note: 2 Python files analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.
