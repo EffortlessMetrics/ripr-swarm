@@ -400,6 +400,17 @@ operands to the same value. Predicates without a comparable boundary (such as
 values stay `weakly_exposed`; the literal or operand-pair boundary becomes the
 missing discriminator when one is known.
 
+The named boundary is the comparison the edit changed (#10399). On a compound
+condition (`a > b || c >= d`) the adapter compares the old and the new line
+token by token and reads the boundary from the one comparison whose tokens
+differ, never from a neighbouring comparison on the same line. When the edit
+touches no comparison (an operand such as `isDone ||` is removed), touches
+several, or the line cannot be tokenized, the changed operator cannot be
+located unambiguously, so no boundary is named: no `missing_discriminator`,
+and the limitation reports that the changed line has no statically comparable
+predicate boundary. An added line with several comparisons is likewise
+unlabeled.
+
 Three one-hop input resolutions credit the idiom shapes that reach the same
 boundary without changing the guards (#4104 E):
 

@@ -343,6 +343,208 @@ pub(crate) fn typescript_boundary_discriminator_with_shape(
     None
 }
 
+/// One lexical token of a changed line, with its byte span.
+struct BoundaryToken<'a> {
+    text: &'a str,
+    start: usize,
+    end: usize,
+}
+
+/// Comparison-class operators a boundary can be read from (`??` is the
+/// nullish boundary the discriminator normalizes to `==`).
+fn is_boundary_site(text: &str) -> bool {
+    text == "??" || COMPARISON_OPERATORS.contains(&text)
+}
+
+/// Tokens that end an operand: boolean connectors, ternary and statement
+/// punctuation, assignment and control keywords. A comparison's operands are
+/// the tokens between the nearest delimiters on each side.
+fn is_boundary_delimiter(text: &str) -> bool {
+    is_boundary_site(text)
+        || matches!(
+            text,
+            "&&" | "||"
+                | "=>"
+                | "?"
+                | ":"
+                | "="
+                | "("
+                | ")"
+                | "{"
+                | "}"
+                | ","
+                | ";"
+                | "return"
+                | "if"
+                | "else"
+                | "while"
+                | "for"
+                | "case"
+                | "yield"
+        )
+}
+
+/// Splits a line into word, operator, quoted-literal and punctuation tokens.
+/// `None` for an unterminated literal or comment, which the caller reads as
+/// "cannot locate the changed operator".
+fn tokenize_boundary_line(line: &str) -> Option<Vec<BoundaryToken<'_>>> {
+    const OPERATORS: [&str; 17] = [
+        "!==", "===", ">>>", ">=", "<=", "==", "!=", "&&", "||", "??", "=>", ">>", "<<", "**",
+        "++", "--", "?.",
+    ];
+    let mut tokens = Vec::new();
+    let mut at = 0usize;
+    while at < line.len() {
+        let rest = line.get(at..)?;
+        let ch = rest.chars().next()?;
+        if ch.is_whitespace() {
+            at += ch.len_utf8();
+            continue;
+        }
+        if rest.starts_with("//") {
+            break;
+        }
+        if rest.starts_with("/*") {
+            let close = rest.find("*/")?;
+            at += close + 2;
+            continue;
+        }
+        let len = if matches!(ch, '"' | '\'' | '`') {
+            let mut escaped = false;
+            let mut close = None;
+            for (idx, inner) in rest.char_indices().skip(1) {
+                if escaped {
+                    escaped = false;
+                } else if inner == '\\' {
+                    escaped = true;
+                } else if inner == ch {
+                    close = Some(idx + inner.len_utf8());
+                    break;
+                }
+            }
+            close?
+        } else if ch.is_alphanumeric() || ch == '_' || ch == '$' {
+            rest.char_indices()
+                .find(|(_, c)| !(c.is_alphanumeric() || *c == '_' || *c == '$'))
+                .map_or(rest.len(), |(idx, _)| idx)
+        } else if let Some(operator) = OPERATORS.iter().find(|op| rest.starts_with(**op)) {
+            operator.len()
+        } else {
+            ch.len_utf8()
+        };
+        tokens.push(BoundaryToken {
+            text: rest.get(..len)?,
+            start: at,
+            end: at + len,
+        });
+        at += len;
+    }
+    Some(tokens)
+}
+
+/// The token index range `(first, last)` of the comparison whose operator is
+/// at `site`: the operator and the operand tokens up to the nearest delimiter
+/// on each side.
+fn boundary_site_span(tokens: &[BoundaryToken<'_>], site: usize) -> (usize, usize) {
+    let mut first = site;
+    while first > 0 && !is_boundary_delimiter(tokens[first - 1].text) {
+        first -= 1;
+    }
+    let mut last = site;
+    while last + 1 < tokens.len() && !is_boundary_delimiter(tokens[last + 1].text) {
+        last += 1;
+    }
+    (first, last)
+}
+
+/// The text the boundary discriminator and its consumers read for a changed
+/// predicate line (#10399). The discriminator takes the first comparison
+/// operator it finds, so on a compound condition it named a neighbouring
+/// comparison the diff never touched. The boundary must come from the
+/// comparison whose tokens differ between the old and the new line:
+///
+/// - a non-predicate family, a line without a comparison, one comparison the
+///   edit touches (or an added line), or the one condition comparison of a
+///   returned ternary whose arm changed reads the whole line, as before;
+/// - several comparisons with exactly one touched read that comparison alone;
+/// - otherwise (the edit touches no comparison, or several, or the line
+///   cannot be tokenized) the changed operator cannot be located
+///   unambiguously, so the text is empty and no boundary is named.
+pub(crate) fn typescript_changed_boundary_text<'a>(
+    family: &ProbeFamily,
+    old_line: Option<&str>,
+    new_line: &'a str,
+) -> std::borrow::Cow<'a, str> {
+    use std::borrow::Cow;
+    if *family != ProbeFamily::Predicate {
+        return Cow::Borrowed(new_line);
+    }
+    let Some(new_tokens) = tokenize_boundary_line(new_line) else {
+        return Cow::Borrowed("");
+    };
+    // A returned ternary's boundary is its condition only: a comparison in an
+    // arm is not what selects the branch.
+    let condition = return_ternary_condition(new_line.trim()).and_then(|condition| {
+        new_line
+            .find(condition)
+            .map(|at| (at, at + condition.len()))
+    });
+    let sites: Vec<usize> = new_tokens
+        .iter()
+        .enumerate()
+        .filter(|(_, token)| {
+            is_boundary_site(token.text)
+                && condition.is_none_or(|(start, end)| token.start >= start && token.end <= end)
+        })
+        .map(|(idx, _)| idx)
+        .collect();
+    if sites.is_empty() {
+        return Cow::Borrowed(new_line);
+    }
+    // The tokens of the edit: what differs between the old and the new line
+    // after the common leading and trailing tokens. An added line, or an old
+    // line that tokenizes to the same tokens, gives no edit to localize.
+    let edit = old_line
+        .and_then(tokenize_boundary_line)
+        .and_then(|old_tokens| {
+            let shared = new_tokens.len().min(old_tokens.len());
+            let prefix = (0..shared)
+                .take_while(|&idx| new_tokens[idx].text == old_tokens[idx].text)
+                .count();
+            let suffix = (0..shared - prefix)
+                .take_while(|&back| {
+                    new_tokens[new_tokens.len() - 1 - back].text
+                        == old_tokens[old_tokens.len() - 1 - back].text
+                })
+                .count();
+            let end = new_tokens.len() - suffix;
+            (!(prefix == new_tokens.len() && new_tokens.len() == old_tokens.len()))
+                .then_some((prefix, end))
+        });
+    let touched: Vec<(usize, usize)> = sites
+        .iter()
+        .map(|&site| boundary_site_span(&new_tokens, site))
+        .filter(|&(first, last)| match edit {
+            None => true,
+            // A pure deletion touches a comparison only from inside it.
+            Some((start, end)) if start == end => first < start && start <= last,
+            Some((start, end)) => start <= last && end > first,
+        })
+        .collect();
+    match touched.as_slice() {
+        [_] if sites.len() == 1 => Cow::Borrowed(new_line),
+        // An arm edit of a returned ternary leaves its one condition
+        // untouched; the dedicated ternary-arm guards own that change, and
+        // the condition remains its boundary.
+        [] if condition.is_some() && sites.len() == 1 => Cow::Borrowed(new_line),
+        [(first, last)] => match new_line.get(new_tokens[*first].start..new_tokens[*last].end) {
+            Some(text) => Cow::Borrowed(text),
+            None => Cow::Borrowed(""),
+        },
+        _ => Cow::Borrowed(""),
+    }
+}
+
 /// The boundary condition of a returned predicate: the condition of a
 /// returned ternary, or a returned relational comparison of two simple
 /// operands (`return total > 100;`).

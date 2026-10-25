@@ -6311,13 +6311,18 @@ pub(crate) fn classify_resolved_owner(
     // lets a row establish a definite miss; it reads and parses the owner's
     // module, so it is loaded only when some row is still unresolved, and
     // the same value later feeds the boundary-input evidence line.
-    let predicate_boundary = ts_predicate_boundary(&probe_shape, line_text);
+    // #10399: the boundary is the comparison the edit changed, never a
+    // neighbouring one on the same line.
+    let boundary_text =
+        typescript_changed_boundary_text(&probe_shape.family, old_line_text, line_text);
+    let boundary_text = boundary_text.as_ref();
+    let predicate_boundary = ts_predicate_boundary(&probe_shape, boundary_text);
     let row_activation = |candidate: &TypeScriptRelatedCandidate<'_>,
                           boundary_fact: Option<&TypeScriptBoundaryFact>| {
         let context = TsBoundaryRowContext {
             boundary: &predicate_boundary,
             boundary_fact,
-            line_text,
+            line_text: boundary_text,
             owner,
             sibling_tests: all_tests,
             alias_map,
@@ -6348,7 +6353,7 @@ pub(crate) fn classify_resolved_owner(
             });
     if fact_can_change_a_row {
         let fact =
-            ts_boundary_fact_for_change(&probe_shape, line, line_text, owner, workspace_root);
+            ts_boundary_fact_for_change(&probe_shape, line, boundary_text, owner, workspace_root);
         if let Some(fact) = &fact {
             for (candidate, activation) in related_candidates.iter().zip(&mut predicate_activations)
             {
@@ -6514,9 +6519,9 @@ pub(crate) fn classify_resolved_owner(
                     )
                 })
         } else if boundary_witnessed {
-            ts_observation_guard_limitation(&probe_shape, line_text)
+            ts_observation_guard_limitation(&probe_shape, boundary_text)
         } else {
-            ts_predicate_boundary_limitation(&probe_shape, line_text, &owner.name)
+            ts_predicate_boundary_limitation(&probe_shape, boundary_text, &owner.name)
         };
         (
             ExposureClass::WeaklyExposed,
@@ -6675,7 +6680,7 @@ pub(crate) fn classify_resolved_owner(
         && has_owner_call_evidence
         && static_limit.is_none()
     {
-        typescript_missing_discriminators(&probe_shape, line, line_text, flow_sink.as_ref())
+        typescript_missing_discriminators(&probe_shape, line, boundary_text, flow_sink.as_ref())
     } else {
         Vec::new()
     };

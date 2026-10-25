@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- TypeScript predicate findings on a compound condition now name the boundary of the comparison the edit changed. `readingCount >= concurrency` becoming `>` no longer reports `missing_discriminator: headIndex == backpressure` from a neighbouring comparison, and removing an unrelated `isDone ||` operand no longer invents a `readingCount == concurrency` boundary; when the changed operator cannot be located unambiguously no boundary is named and the stop reason stays (#10399, RIPR-SPEC-0027).

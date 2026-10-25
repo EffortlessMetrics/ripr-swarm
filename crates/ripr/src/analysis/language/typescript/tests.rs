@@ -11,7 +11,7 @@ fn changed(path: &str) -> ChangedFile {
     }
 }
 
-fn test_owner(name: &str, file: &str) -> TypeScriptOwner {
+pub(super) fn test_owner(name: &str, file: &str) -> TypeScriptOwner {
     TypeScriptOwner {
         name: name.to_string(),
         file: PathBuf::from(file),
@@ -120,7 +120,7 @@ fn smoke_assertion() -> TypeScriptAssertion {
     }
 }
 
-fn weak_direct_test_for(owner_name: &str) -> TypeScriptTest {
+pub(super) fn weak_direct_test_for(owner_name: &str) -> TypeScriptTest {
     TypeScriptTest {
         name: format!("{owner_name} smoke"),
         local_name: format!("{owner_name} smoke"),
@@ -334,7 +334,7 @@ fn classify_weak_direct_line(line_text: &str) -> Result<Finding, String> {
     .ok_or_else(|| "expected TypeScript preview finding".to_string())
 }
 
-fn missing_discriminator_values(finding: &Finding) -> Vec<String> {
+pub(super) fn missing_discriminator_values(finding: &Finding) -> Vec<String> {
     finding
         .activation
         .missing_discriminators
