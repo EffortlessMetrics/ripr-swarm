@@ -37,3 +37,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — binding_value_semantics_fail_closed (4)
+
+Reason:
+RIPR-SPEC-0158 and RIPR-SPEC-0319: retain the complete missing-discriminator prose under accepted #10258 compact-human wrapping. Exact observed merge8272 reproduces only this owned human.txt drift; JSON and human-full are byte-identical. Preserve the unknown predicates and existing returned-comparison residual.
+
+Command:
+`cargo xtask goldens bless binding_value_semantics_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

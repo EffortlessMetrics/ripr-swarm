@@ -19,7 +19,9 @@ Start here:
   Static exposure: no path (severity: warning, confidence 0.40)
   Why no path: no related test was found that reaches this change
   Changed behavior: return this.valid.has(token.trim());
-  Missing discriminator: No trusted TypeScript method receiver relation for `validate`. Direct `new ClassName(...)` receiver calls are supported, but factories, dependency injection, mocked modules,…
+  Missing discriminator: No trusted TypeScript method receiver relation for `validate`. Direct `new
+    ClassName(...)` receiver calls are supported, but factories, dependency injection, mocked
+    modules, prototype aliases, and dynamic property access stay ambiguous in preview
   Next step — TypeScript preview advisory: method receiver relation is missing context; use a direct
     `new ClassName(...)` receiver observer when safe, and keep factories, dependency injection,
     mocked modules, prototype aliases, and dynamic property access advisory

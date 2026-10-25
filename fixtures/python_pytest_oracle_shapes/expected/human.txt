@@ -19,7 +19,10 @@ Start here:
   Static exposure: unknown (severity: note, confidence 0.20)
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: logger.warning("coupon expired")
-  Analyzer limit: Static limit `unsupported_syntax`: a related Python test checks `<text> in caplog.text` against the changed logging call; the preview adapter does not evaluate `%`-formatted…
+  Analyzer limit: Static limit `unsupported_syntax`: a related Python test checks `<text> in
+    caplog.text` against the changed logging call; the preview adapter does not evaluate
+    `%`-formatted message arguments or the `caplog` level filter, so it cannot tell whether the edit
+    changes the logged text the test reads
   Related test: tests/test_notifications.py:4 test_warn_coupon_logs_expired_message
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
