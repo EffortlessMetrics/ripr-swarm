@@ -371,7 +371,8 @@ can only hint that a caller "may lead here" without changing anything.
   the default in-file layout `#[cfg(test)] mod tests { use super::<entry>; }`
   beside the entry resolves to the entry's module, while `super` from
   `flat::tests` names `flat`. Every such item in the file must resolve to the
-  entry's module. It refuses (verdict-corpus rows and the
+  entry's module, and one must sit in the same inline module as the test
+  function: an import in a sibling module does not bind the test's bare call. It refuses (verdict-corpus rows and the
   honesty corpus pin each): any `#[path]` in the package, a test file in a
   workspace member or under `tests/`, a spelling whose inline-module scope
   resolves elsewhere or past the crate root, a glob import,
