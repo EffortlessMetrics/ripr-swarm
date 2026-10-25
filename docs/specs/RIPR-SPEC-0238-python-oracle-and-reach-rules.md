@@ -1376,7 +1376,10 @@ and the test is `tests/test_subject.py`, which imports each owner from
   value, unary-sign and changed-argument negatives, and integer zero.
 - Corpus: `py-spec0233-ex08-almost-equal`,
   `py-spec0233-ex20-raises-regex` and `py-spec0233-ex21-exc-value`
-  (#6597) score credited under rules 12 to 14,
+  (#6597) score credited under rules 12 to 14; the `py-almost-*` cases
+  cover rule 12's other forms (default and `places=None` credited,
+  explicit `places=` and `delta=`, the positional `delta`, a spread and a
+  non-`self` receiver scored as a gap),
   `py-spec0233-ex11-fluent-helper` scores limited under rule 3, and
   `py-pytest-quote-shipping-term` scores its ideal `weakly_exposed` under
   rule 20. Example 34's `exc.value is not None` and length forms have

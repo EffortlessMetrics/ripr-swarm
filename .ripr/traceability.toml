@@ -2029,6 +2029,7 @@ tests = [
   "crates/ripr/src/cli/commands/review_comments.rs::review_comments_canonical_deadline_cancellation_records_timeout",
   "crates/ripr/src/cli/commands/review_comments.rs::review_comments_owner_attribution_runs_under_the_run_token",
   "crates/ripr/src/cli/commands/review_comments.rs::review_comments_budget_spent_in_owner_attribution_records_timeout",
+  "crates/ripr/src/output/review_comments_receipt.rs::tests::active_step_is_serialized_only_while_a_pass_is_running",
   "crates/ripr/src/analysis/facts/macro_generated_tests.rs::tests::registration_observes_an_expired_budget_per_file",
   "crates/ripr/src/cli/commands/review_comments.rs::review_comments_ordinary_canonical_analysis_failure_records_failed",
   "crates/ripr/src/cli/commands/review_comments.rs::review_comments_source_error_wins_over_later_clock_expiry",
@@ -17109,6 +17110,8 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::quoted_combined_and_escaped_script_flags_stay_medium",
   "crates/ripr/src/analysis/committed_source/tests.rs::porcelain_parser_records_unrouted_snapshot_inputs",
   "crates/ripr/src/analysis/committed_source/tests.rs::snapshot_inputs_differ_only_in_their_own_directory",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::plain_inline_projects_keep_the_credit_and_every_other_spelling_refuses",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::vitest_string_values_are_not_keys_but_real_keys_still_refuse",
 ]
 fixtures = [
   "fixtures/typescript-verdict-corpus",
