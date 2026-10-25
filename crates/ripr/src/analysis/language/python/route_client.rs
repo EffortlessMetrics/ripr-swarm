@@ -174,27 +174,31 @@ fn assignment_equals(line: &str) -> Vec<usize> {
 }
 
 /// Identifier tokens of `region` that are bare names: not an attribute
-/// (`x.name`), not inside a subscript (`d[name]`).
+/// (`x.name`), not inside a subscript (`d[name]`) and not the root of an
+/// attribute or subscript store (`x.name = v`, `x[0] = v`), which mutates the
+/// object without rebinding `x`.
 fn bare_names(region: &str) -> Vec<String> {
     let mut names = Vec::new();
     let mut depth = 0usize;
     let mut token = String::new();
     let mut prev_dot = false;
-    let flush = |token: &mut String, prev_dot: &mut bool, depth: usize, names: &mut Vec<String>| {
-        if !token.is_empty() {
-            if depth == 0 && !*prev_dot {
-                names.push(std::mem::take(token));
-            } else {
-                token.clear();
-            }
-        }
-    };
-    for ch in region.chars() {
+    let chars: Vec<char> = region.chars().collect();
+    for (at, &ch) in chars.iter().enumerate() {
         if is_python_identifier_char(ch) {
             token.push(ch);
             continue;
         }
-        flush(&mut token, &mut prev_dot, depth, &mut names);
+        if !token.is_empty() {
+            let accessed = matches!(
+                chars[at..].iter().find(|next| !next.is_whitespace()),
+                Some('.' | '[')
+            );
+            if depth == 0 && !prev_dot && !accessed {
+                names.push(std::mem::take(&mut token));
+            } else {
+                token.clear();
+            }
+        }
         match ch {
             '[' => depth += 1,
             ']' => depth = depth.saturating_sub(1),
@@ -207,7 +211,9 @@ fn bare_names(region: &str) -> Vec<String> {
         }
         prev_dot = false;
     }
-    flush(&mut token, &mut prev_dot, depth, &mut names);
+    if !token.is_empty() && depth == 0 && !prev_dot {
+        names.push(token);
+    }
     names
 }
 

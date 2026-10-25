@@ -196,3 +196,13 @@ fn names_that_start_or_end_with_lambda_are_ordinary_names() {
     let body = "api = client\nf = lambda api=1: api\n";
     assert!(receivers(body).contains(&"api".to_string()));
 }
+
+#[test]
+fn attribute_and_subscript_stores_do_not_rebind_their_root() {
+    let aliased = "def test_items(client):\n    api = client\n    api.headers[\"X\"] = \"v\"\n    api.base_url = \"u\"\n    assert api.get(\"/items\")\n";
+    assert_eq!(client_receivers(aliased), vec!["client", "api"]);
+    let rival = "def test_items():\n    client = TestClient(other)\n    client.headers[\"X\"] = \"v\"\n    assert client.get(\"/items\")\n";
+    assert_eq!(client_app_name(rival, "client"), Some("other".to_string()));
+    let rebound = "def test_items(client):\n    api = client\n    api = Store()\n    assert api.get(\"/items\")\n";
+    assert_eq!(client_receivers(rebound), vec!["client"]);
+}
