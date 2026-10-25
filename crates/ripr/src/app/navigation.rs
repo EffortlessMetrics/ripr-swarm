@@ -250,15 +250,15 @@ impl FindingNavigation {
         )
     }
 
-    /// The `ripr repair` start for one seam identity. Repair reads the live
-    /// tree at the bound root, so unlike explain/context it carries no
-    /// diff scope: the item comes first, then `--root`.
     /// The `ripr pilot` seam listing at the same root, for refusals whose
     /// recovery is choosing a seam (#9244).
     pub(crate) fn pilot_command(&self) -> String {
         format!("ripr pilot{}", self.repair_suffix)
     }
 
+    /// The `ripr repair` start for one seam identity. Repair reads the live
+    /// tree at the bound root, so unlike explain/context it carries no
+    /// diff scope: the item comes first, then `--root`.
     pub(crate) fn repair_command(&self, seam_id: &str) -> String {
         format!("ripr repair {}{}", shell_arg(seam_id), self.repair_suffix)
     }
