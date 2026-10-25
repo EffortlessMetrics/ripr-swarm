@@ -351,7 +351,8 @@ fn every_positional_reader_marks_positions_after_a_spread_unreadable() {
     // object-argument guards (#9645).
     let unreadable_after = |prefix: &[&str]| {
         let mut arguments: Vec<String> = prefix.iter().map(|a| a.to_string()).collect();
-        arguments.resize(16, "...".to_string());
+        let start = arguments.len();
+        arguments.extend((start..16).map(|position| format!("...#{position}")));
         arguments
     };
     let calls = owner_call_arguments(
@@ -379,4 +380,17 @@ fn every_positional_reader_marks_positions_after_a_spread_unreadable() {
         positional_prefix(vec!["a".to_string(), "b".to_string()]),
         vec!["a".to_string(), "b".to_string()]
     );
+}
+
+#[test]
+fn unreadable_spread_positions_never_witness_equal_arguments() {
+    // `isAllowed(...xs)` may pass any values, so no two of its positions are
+    // known to be equal (#10476 review); a real duplicate before the spread is.
+    let params = vec!["count".to_string(), "limit".to_string()];
+    let spread = positional_prefix(vec!["...xs".to_string()]);
+    assert!(!call_has_identical_arguments(&spread, &params));
+    let after = positional_prefix(vec!["5".to_string(), "...xs".to_string()]);
+    assert!(!call_has_identical_arguments(&after, &params));
+    let before = positional_prefix(vec!["5".to_string(), "5".to_string(), "...xs".to_string()]);
+    assert!(call_has_identical_arguments(&before, &params));
 }

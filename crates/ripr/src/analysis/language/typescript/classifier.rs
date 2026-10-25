@@ -4355,7 +4355,10 @@ pub(crate) fn positional_prefix(mut arguments: Vec<String>) -> Vec<String> {
         return arguments;
     };
     arguments.truncate(at);
-    arguments.resize(at.max(SPREAD_UNREADABLE_POSITIONS), "...".to_string());
+    // Each marker is distinct, so two unreadable positions never compare as
+    // equal values (a boundary witness, #10476 review).
+    let end = at.max(SPREAD_UNREADABLE_POSITIONS);
+    arguments.extend((at..end).map(|position| format!("...#{position}")));
     arguments
 }
 
@@ -4421,7 +4424,7 @@ fn argument_position_is_live(position: usize, params: &[String]) -> bool {
 /// (`isAllowed(5, 5)` witnesses `count <= limit`). Arguments in dead
 /// positions (past the owner's declared arity) are ignored — a duplicated
 /// literal parked in an unread argument cannot witness (#4102 shape 1).
-fn call_has_identical_arguments(arguments: &[String], params: &[String]) -> bool {
+pub(crate) fn call_has_identical_arguments(arguments: &[String], params: &[String]) -> bool {
     let live: Vec<&String> = arguments
         .iter()
         .enumerate()
