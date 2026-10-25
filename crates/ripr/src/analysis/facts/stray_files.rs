@@ -106,7 +106,37 @@ pub(super) fn never_compiled(
 /// True when a source assembles a `mod` or `include!` operand from macro
 /// metavariables, so the compiled file set cannot be read from text.
 fn builds_module_operands(source: &str) -> bool {
-    source.contains("mod $") || source.contains("include!($")
+    // Whitespace and comments may sit between the tokens (`mod\n$n;`,
+    // `mod/**/$n;`), so compare with both removed.
+    let compact: String = without_comments(source)
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect();
+    compact.contains("mod$") || compact.contains("include!($")
+}
+
+/// `source` with every block and line comment replaced by one space. An
+/// unterminated block comment swallows the rest, which is only more doubt in
+/// callers that also scan the raw text.
+fn without_comments(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    let mut rest = source;
+    while let Some(at) = rest.find('/') {
+        out.push_str(&rest[..at]);
+        let tail = &rest[at..];
+        if let Some(body) = tail.strip_prefix("/*") {
+            out.push(' ');
+            rest = body.find("*/").map_or("", |end| &body[end + 2..]);
+        } else if tail.starts_with("//") {
+            out.push(' ');
+            rest = tail.find('\n').map_or("", |end| &tail[end..]);
+        } else {
+            out.push('/');
+            rest = &tail[1..];
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Every `<name>.rs` token (a run of non-separator characters ending in
@@ -131,12 +161,24 @@ fn collect_referenced_file_names(text: &str, out: &mut BTreeSet<String>) {
 /// Every identifier following a `mod` keyword, in any position. Comments and
 /// strings count too: this only ever adds doubt.
 fn collect_declared_modules(source: &str, out: &mut BTreeSet<String>) {
-    for (at, _) in source.match_indices("mod ") {
+    collect_modules_in(source, out);
+    collect_modules_in(&without_comments(source), out);
+}
+
+fn collect_modules_in(source: &str, out: &mut BTreeSet<String>) {
+    for (at, _) in source.match_indices("mod") {
         let before = source[..at].chars().next_back();
         if before.is_some_and(|ch| ch.is_alphanumeric() || ch == '_') {
             continue;
         }
-        let name: String = source[at + 4..]
+        if !source[at + 3..]
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_whitespace() || ch == '/')
+        {
+            continue;
+        }
+        let name: String = source[at + 3..]
             .trim_start()
             .chars()
             .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
@@ -193,6 +235,28 @@ mod tests {
         assert!(modules.contains("real"));
         assert!(modules.contains("other"));
         assert!(!modules.contains("x"));
+    }
+
+    #[test]
+    fn module_tokens_survive_newlines_and_comments() {
+        let mut modules = BTreeSet::new();
+        collect_declared_modules("mod\nnl;\nmod/*c*/cm;\nmodule x;\n", &mut modules);
+        assert!(modules.contains("nl"), "{modules:?}");
+        assert!(modules.contains("cm"), "{modules:?}");
+        assert!(!modules.contains("ule"));
+    }
+
+    #[test]
+    fn metavariable_module_operands_survive_trivia() {
+        for source in [
+            "m!{ ($n:ident) => { mod $n; } }",
+            "m!{ ($n:ident) => { mod\n$n; } }",
+            "m!{ ($n:ident) => { mod/*c*/$n; } }",
+            "m!{ ($n:ident) => { include!\n($n); } }",
+        ] {
+            assert!(builds_module_operands(source), "{source}");
+        }
+        assert!(!builds_module_operands("mod plain;\n// mod\nfn f() {}"));
     }
 }
 

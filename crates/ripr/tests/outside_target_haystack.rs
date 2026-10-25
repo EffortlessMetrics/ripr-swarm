@@ -175,3 +175,24 @@ fn a_bench_target_naming_the_file_keeps_it_compiled() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn a_module_building_macro_keeps_the_file_whatever_its_spacing() -> Result<(), String> {
+    // Generated module membership is unknown, not proven excluded: newline and
+    // comment trivia between `mod` and `$n` must read like the compact form.
+    for builder in [
+        "mod $n;",
+        "mod\n        $n;",
+        "mod/* generated */$n;",
+        "mod // generated\n        $n;",
+    ] {
+        let lib = format!("macro_rules! m {{ ($n:ident) => {{ {builder} }} }}\n");
+        let run = run(&lib, "", Some(HAY_SOURCE))?;
+        assert!(
+            run.related_files.contains(&HAY.to_string()),
+            "{builder:?}: {:?}",
+            run.related_files
+        );
+    }
+    Ok(())
+}
