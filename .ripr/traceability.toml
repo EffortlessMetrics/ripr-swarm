@@ -3592,6 +3592,14 @@ id = "RIPR-SPEC-0028"
 name = "Python preview static facts"
 spec = "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/module_field_tests.rs::dynamic_namespace_reload_does_not_credit_module_object",
+  "crates/ripr/src/analysis/language/python/module_field_tests.rs::dynamic_namespace_dunder_setattr_does_not_credit_module_object",
+  "crates/ripr/src/analysis/language/python/module_field_tests.rs::dynamic_namespace_renamed_delattr_does_not_credit_module_object",
+  "crates/ripr/src/analysis/language/python/module_field_tests.rs::dynamic_namespace_unknown_fixture_keeps_existing_limit",
+  "crates/ripr/src/analysis/language/python/module_field_tests.rs::dynamic_namespace_writers_keep_independent_instance_field_credit",
+  "crates/ripr/src/analysis/language/python/module_constants/tests.rs::dynamic_namespace_writers_unresolve_owner_constants",
+  "crates/ripr/src/analysis/language/python/module_constants/tests.rs::dynamic_namespace_writers_unresolve_test_constants",
+  "crates/ripr/src/analysis/language/python/module_constants/tests.rs::dynamic_namespace_lookalikes_keep_constants_resolved",
   "crates/ripr/src/analysis/language/python/module_value_tests.rs::unreferenced_malformed_modules_do_not_erase_exact_credit",
   "crates/ripr/src/analysis/language/python/module_value_tests.rs::referenced_or_implicitly_loaded_malformed_modules_withhold_credit",
   "crates/ripr/src/analysis/language/python/module_value_tests.rs::generator_keyword_in_test_data_or_comments_preserves_credit",
@@ -3729,6 +3737,9 @@ tests = [
   "crates/ripr/src/analysis/language/python/helper_inline_tests.rs::given_a_test_with_a_non_expression_statement_then_it_stays_unknown",
 ]
 fixtures = [
+  "fixtures/python_dynamic_namespace_dunder_setattr",
+  "fixtures/python_dynamic_namespace_reload",
+  "fixtures/python_dynamic_namespace_renamed_delattr",
   "fixtures/python_module_formatted_generator_test",
   "fixtures/python_module_same_line_prior_assert",
   "fixtures/python_module_generator_test",
@@ -8688,6 +8699,9 @@ tests = [
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_two_impls_when_compact_grip_sees_trait_path_call_then_argument_type_decides",
 ]
 fixtures = [
+  "fixtures/python_dynamic_namespace_dunder_setattr",
+  "fixtures/python_dynamic_namespace_reload",
+  "fixtures/python_dynamic_namespace_renamed_delattr",
   "fixtures/rust_trait_default_import",
   "fixtures/rust_trait_default_shadow",
   "fixtures/rust_trait_impl_import",
