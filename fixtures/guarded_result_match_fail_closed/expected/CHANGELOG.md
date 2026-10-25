@@ -514,3 +514,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — guarded_result_match_fail_closed (39)
+
+Reason:
+Conditional ReturnValue guidance when an exact assertion exists (RIPR-SPEC-0259, #8954); aligned tail-return and semicolon effect fixtures (RIPR-SPEC-0094)
+
+Command:
+`cargo xtask goldens bless guarded_result_match_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

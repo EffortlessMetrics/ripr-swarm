@@ -84,23 +84,20 @@ related test row pins the exact label per arm.
 
 ## Acceptance Examples
 
-```text
-Given:  pub fn label(kind: &str) -> &'static str {
-            match kind { "word" => "alpha", "text" => "beta", _ => "other" }
-        }
-        pub fn classify(input: &str) -> &'static str {
-            let final_label = label(input);
-            if final_label == "alpha" { "word" } else { "blank" }
-        }
-Diff:   the equality constant changes "alpha" -> "beta"
-Tests:  assert_eq!(classify("word"), "word"); assert_eq!(classify("text"), "blank")
-Then:   exposed — label("word") = "alpha" and label("text") = "beta" are
-        exact per row, the boundary comparison is observed, and the
-        provenance names the helper hop
-Not:    a guard arm, an alternative pattern, a bare binding pattern, a
-        computed arm value, an escaped literal, or a char scrutinee
-        resolves — each refuses the whole match (controls fixture)
-```
+1. Accept: with
+   `pub fn label(kind: &str) -> &'static str { match kind { "word" => "alpha", "text" => "beta", _ => "other" } }`
+   and `classify` comparing `label(input)` with `"alpha"`, a diff changing
+   the constant to `"beta"` under the tests
+   `assert_eq!(classify("word"), "word"); assert_eq!(classify("text"), "blank")`
+   exposes — `label("word")` = `"alpha"` and `label("text")` = `"beta"`
+   are exact per row, the boundary comparison is observed, and the
+   provenance names the helper hop.
+2. Reject: a guard arm refuses the whole match (controls fixture).
+3. Reject: an alternative pattern refuses the whole match.
+4. Reject: a bare binding pattern refuses the whole match.
+5. Reject: a computed arm value refuses the whole match.
+6. Reject: an escaped pattern literal refuses the whole match.
+7. Reject: a char scrutinee refuses the whole match.
 
 ## Test Mapping
 
