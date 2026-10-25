@@ -392,9 +392,13 @@ pub(crate) fn test_extraction_cached(relative: &Path, source: &str) -> Rc<TestEx
     if let Some(extraction) = cached {
         return extraction;
     }
-    let extraction = Rc::new(super::tests_extract::extract_tests_with_expansion(
-        relative, source,
-    ));
+    // A worker failure is environmental, not a function of the bytes: serve
+    // the empty result this call but never store it.
+    let extraction = match super::tests_extract::try_extract_tests_with_expansion(relative, source)
+    {
+        Ok(extraction) => Rc::new(extraction),
+        Err(_) => return Rc::new((Vec::new(), None, None)),
+    };
     TEST_EXTRACTION_CACHE.with(|cache| {
         if let Ok(mut cache) = cache.try_borrow_mut() {
             let cache = cache.get_or_insert_with(|| TestExtractionCache {
@@ -828,5 +832,36 @@ mod tests {
         assert_eq!(cached.0, direct.0);
         assert_eq!(cached.1, direct.1);
         assert_eq!(cached.2.is_some(), direct.2.is_some());
+    }
+
+    #[test]
+    fn worker_failures_are_environmental_and_budget_refusals_are_not() {
+        use super::super::parse::is_worker_failure;
+        assert!(is_worker_failure(
+            "static limit parse_worker_failed: TypeScript parse worker thread failed; syntax facts unavailable"
+        ));
+        assert!(is_worker_failure(
+            "static limit parse_worker_unavailable: TypeScript parse worker thread could not start: boom"
+        ));
+        assert!(!is_worker_failure(
+            "static limit expression_nesting_budget: estimated expression nesting depth 9999 exceeds the 2000-level parse budget; parse refused to avoid a parser stack overflow"
+        ));
+    }
+
+    #[test]
+    fn over_budget_test_source_caches_its_deterministic_empty_result() {
+        let path = Path::new("tests/deep_probe.test.ts");
+        let deep = format!(
+            "it('d', () => {{ expect({}1{}).toBe(1); }});\n",
+            "(".repeat(2_500),
+            ")".repeat(2_500)
+        );
+        let first = test_extraction_cached(path, &deep);
+        assert!(first.0.is_empty());
+        let second = test_extraction_cached(path, &deep);
+        assert!(
+            Rc::ptr_eq(&first, &second),
+            "the budget refusal is a function of the bytes, so it may be cached"
+        );
     }
 }
