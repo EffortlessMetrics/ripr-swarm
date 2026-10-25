@@ -1715,6 +1715,14 @@ fn plain_inline_projects_keep_the_credit_and_every_other_spelling_refuses() -> R
             OracleStrength::Medium,
         ),
         (
+            "module.exports = { projects: [{ ['preset']: \"../x\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "const preset = \"../x\";\nmodule.exports = { projects: [{ preset }] };",
+            OracleStrength::Medium,
+        ),
+        (
             "module.exports = { projects: [{ preset: base }] };",
             OracleStrength::Medium,
         ),

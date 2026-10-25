@@ -415,8 +415,14 @@ fn preset_may_name_a_file(text: &str) -> bool {
         }
         let rest = text.get(index + matched.len()..).unwrap_or_default();
         let rest = rest.strip_prefix(['"', '\'', '`']).unwrap_or(rest);
+        let after = skip_trivia(rest);
+        // A computed key (`['preset']:`) or shorthand (`{ preset }`) names a
+        // preset this scan cannot read.
+        if after.starts_with([']', ',', '}']) {
+            return true;
+        }
         // `preset` not followed by `:` is a value or a word, not a key.
-        let Some(value) = skip_trivia(rest).strip_prefix(':').map(skip_trivia) else {
+        let Some(value) = after.strip_prefix(':').map(skip_trivia) else {
             return false;
         };
         let Some(name) = value.strip_prefix(['"', '\'']) else {
