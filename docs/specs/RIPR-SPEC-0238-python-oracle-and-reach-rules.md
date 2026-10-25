@@ -788,7 +788,11 @@ mutant calibrates the rule; ripr reports only the static shape.
     band: an old result already outside the band, a result within `1e-9`
     (relative) of the band edge, a non-literal argument, a positional
     band, `**`, a longer body, a method or decorated owner, and a run
-    without the old line (repo mode).
+    without the old line (repo mode). The `py-bands-*` cases pin the
+    abstentions: a positional band (an edit the band absorbs and one it
+    rejects, the latter a documented missed credit), a `**` spread,
+    named constants for the expected value and band, a two-statement
+    owner, a method owner and a decorated owner.
 22. **A `caplog.text` membership check on a changed log call is
     evaluated where it is decidable, else abstains.** When the changed
     line is a logging call (`<receiver>.debug`, `.info`, `.warning`,
@@ -1346,7 +1350,10 @@ and the test is `tests/test_subject.py`, which imports each owner from
   39, and rules 1, 2, 4 and 9 alongside them);
   `python/hypothesis.rs` unit tests pin `@given` pairing and `@example`
   rows.
-- Corpus (#6597): `py-spec0233-ex05-and-chain` (rule 15),
+- Corpus (#6597): `py-spec0233-ex05-and-chain` (rule 15; the
+  `py-conjuncts-*` cases add an exact owner conjunct credited, an exact
+  conjunct on a constant, all-weak conjuncts, an `or` chain and a `not`
+  comparison scored as gaps),
   `py-pytest-shipping-threshold` and `py-unittest-fee-waiver-mixin`
   (rule 16), `py-fixtures-report-file`, `py-unittest-transfer-notify` and
   `py-unittest-deposit-add` (rule 17), `py-pytest-tax-self-computed`

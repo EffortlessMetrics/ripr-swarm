@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -3,7 +3,7 @@
+ pub fn zero_tally(parts: &[u32]) -> u32 {
+     let mut total = 0;
+     for p in parts {
+-        total = total + p;
++        total += p;
+     }
+     total
+ }
