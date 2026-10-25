@@ -2971,7 +2971,7 @@ fn multiline_collection_identity_rejects_sibling_and_unrelated_oracles() -> Resu
             "        'high': 11,",
             "        'high': 80,",
             "        'low': 10,\n    }",
-            "labels() is not None and 8080 == 8080",
+            "labels() is not None and int('8080') == 8080",
             ExposureClass::WeaklyExposed,
         ),
         (
@@ -3020,7 +3020,7 @@ fn multiline_collection_identity_rejects_sibling_and_unrelated_oracles() -> Resu
             "        'high': 11,",
             "        'high': 80,",
             "        'low': 10,\n    }",
-            "labels() is not None and [8080] == [8080]",
+            "labels() is not None and list((8080,)) == [8080]",
             ExposureClass::WeaklyExposed,
         ),
         (
@@ -3048,6 +3048,13 @@ fn multiline_collection_identity_rejects_sibling_and_unrelated_oracles() -> Resu
             Some(&source),
         )
         .ok_or_else(|| format!("missing finding: {oracle}"))?;
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .any(|row| row.oracle_strength == OracleStrength::Strong),
+            "missing strong row: {oracle}"
+        );
         assert_eq!(finding.class, expected, "{oracle}");
     }
     Ok(())
@@ -3076,6 +3083,13 @@ fn multiline_collection_second_index_uses_its_actual_position() -> Result<(), St
             Some(&source),
         )
         .ok_or_else(|| format!("missing finding: {oracle}"))?;
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .any(|row| row.oracle_strength == OracleStrength::Strong),
+            "missing strong row: {oracle}"
+        );
         assert_eq!(finding.class, expected, "{oracle}");
     }
     Ok(())
@@ -3087,13 +3101,13 @@ fn multiline_collection_preserves_single_line_token_identity() -> Result<(), Str
         (
             "return {'high': 11, 'low': 10}",
             "return {'high': 80, 'low': 10}",
-            "labels() is not None and 8080 == 8080",
+            "labels() is not None and int('8080') == 8080",
             ExposureClass::WeaklyExposed,
         ),
         (
             "return {'high': 'old', 'low': 'x'}",
             "return {'high': 'port', 'low': 'x'}",
-            "labels() is not None and 'airport' == 'airport'",
+            "labels() is not None and str('airport') == 'airport'",
             ExposureClass::WeaklyExposed,
         ),
         (
@@ -3120,6 +3134,18 @@ fn multiline_collection_preserves_single_line_token_identity() -> Result<(), Str
             "tuple(labels()) == (True, 'detail')",
             ExposureClass::Exposed,
         ),
+        (
+            "return [1, 1]",
+            "return [1, 2]",
+            "labels() == [1, 2] and bool(1)",
+            ExposureClass::Exposed,
+        ),
+        (
+            "return [1, 1]",
+            "return [1, 2]",
+            "labels() == [1, 2] == list((1, 2))",
+            ExposureClass::Exposed,
+        ),
     ] {
         let before = format!("    {before}");
         let after = format!("    {after}");
@@ -3127,6 +3153,13 @@ fn multiline_collection_preserves_single_line_token_identity() -> Result<(), Str
         let tests =
             format!("from src.subject import labels\ndef test_labels():\n    assert {oracle}\n");
         let finding = classify_case(&source, &tests, 2, &before, &after)?;
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .any(|row| row.oracle_strength == OracleStrength::Strong),
+            "missing strong row: {oracle}"
+        );
         assert_eq!(finding.class, expected, "{oracle}");
     }
     Ok(())
@@ -3194,6 +3227,13 @@ fn multiline_collection_comments_preserve_member_identity() -> Result<(), String
             Some(&source),
         )
         .ok_or_else(|| format!("missing finding: {oracle}"))?;
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .any(|row| row.oracle_strength == OracleStrength::Strong),
+            "missing strong row: {oracle}"
+        );
         assert_eq!(finding.class, expected, "{oracle}");
     }
     Ok(())

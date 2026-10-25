@@ -382,6 +382,55 @@ fn oracle_compares_whole_collection(oracle: &str) -> bool {
     (display(right) && result(&compare.left)) || (display(&compare.left) && result(right))
 }
 
+/// Compound assertions need collection identity on the compared operand itself:
+/// an unrelated display in another conjunct cannot borrow the owner's call.
+fn oracle_compares_owner_collection(oracle: &str, test: &PythonTest, owner: &PythonOwner) -> bool {
+    fn callee_name(expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Name(name) => Some(name.id.to_string()),
+            Expr::Attribute(attr) => Some(format!("{}.{}", callee_name(&attr.value)?, attr.attr)),
+            _ => None,
+        }
+    }
+    fn observes(expr: &Expr, callees: &[String], locals: &[String]) -> bool {
+        let display = |expr: &Expr| matches!(expr, Expr::Dict(_) | Expr::List(_));
+        let result = |expr: &Expr| match expr {
+            Expr::Call(call) => callee_name(&call.func).is_some_and(|name| callees.contains(&name)),
+            Expr::Name(name) => locals.iter().any(|local| local == name.id.as_str()),
+            _ => false,
+        };
+        match expr {
+            Expr::BoolOp(boolean) if boolean.op == ast::BoolOp::And => boolean
+                .values
+                .iter()
+                .any(|value| observes(value, callees, locals)),
+            Expr::Compare(compare) => {
+                let mut left = compare.left.as_ref();
+                for (op, right) in compare.ops.iter().zip(&compare.comparators) {
+                    if *op == ast::CmpOp::Eq
+                        && ((display(left) && result(right)) || (result(left) && display(right)))
+                    {
+                        return true;
+                    }
+                    left = right;
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+    let expression = oracle
+        .trim()
+        .strip_prefix("assert ")
+        .unwrap_or(oracle.trim());
+    let Some(expression) = super::approx_band::parse_expression(expression) else {
+        return false;
+    };
+    let callees = owner_module_callees(test, owner);
+    let locals = owner_result_locals(test, &callees);
+    observes(&expression, &callees, &locals)
+}
+
 /// Whether a strong oracle observes the CHANGED dict element (#1290 / #6585): a
 /// subscript or `.get(...)` of a changed key, the changed value literal when the
 /// oracle does not solely subscript an unchanged sibling, or a whole-collection
@@ -1066,6 +1115,12 @@ pub(super) fn classify_sink_alignment_prepared(
     let field_construction_credit_ok = |unit: &AlignmentUnit<'_>| {
         if super::oracles::unittest_list::literal_text(&unit.text) {
             list_equality_discriminates
+        } else if (dict_change.is_some() || list_change.is_some())
+            && unit
+                .test
+                .is_some_and(|test| oracle_compares_owner_collection(&unit.text, test, owner))
+        {
+            true
         } else if let Some((changed_keys, changed_values)) = &dict_change {
             oracle_observes_changed_dict_element(&unit.text, changed_keys, changed_values)
         } else if let Some((changed_indices, changed_values)) = &list_change {
