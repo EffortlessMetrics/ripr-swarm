@@ -421,3 +421,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — binding_value_fail_closed (31)
+
+Reason:
+RIPR-SPEC-0158: re-bless human.txt after merging main wrapped digest prose (#10258)
+
+Command:
+`cargo xtask goldens bless binding_value_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -15,7 +15,10 @@ Start here:
   Why unknown: infection could not be determined statically, and no sink the change reaches was established
   Canonical gap: gap:rust:src/lib.rs:via_map_or_else:predicate_boundary:predicate:end==start
   Changed behavior: input.rfind(delim).map_or_else(|| 1, |idx| idx)
-  Missing discriminator (1 of 2): Changed boundary input is unresolved: boundary operand `end` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the…
+  Missing discriminator (1 of 2): Changed boundary input is unresolved: boundary operand `end` is a
+    local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which
+    side of the boundary a test reaches; activation/infection is unknown; a related test that passes
+    literal inputs on each side of the boundary would let ripr decide
   Related test: tests/controls.rs:4 map_or_else_boundary_stays_unresolved
   Next step: Open the related test and trace its input through the local or computed operand
     (including default and empty cases) to see which side of the changed condition it exercises,
