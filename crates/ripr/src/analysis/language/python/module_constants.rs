@@ -47,30 +47,77 @@ pub(super) fn module_literal_constants(
     source: &SourceText<'_>,
     statements: &[Stmt],
 ) -> Vec<PythonModuleConstant> {
-    let mut bindings = ScopeBindings::default();
-    collect_scope_bindings(statements, &mut bindings);
-    if bindings.opaque || writes_namespace_dynamically(source) {
+    let Some(stable) = StableNames::of(source, statements) else {
         return Vec::new();
-    }
-    let mut globals = Vec::new();
-    collect_global_declarations(statements, &mut globals);
-    // `alias.NAME = ...` can rebind the constant through a self-import.
-    let globals: std::collections::HashSet<&str> = globals.iter().map(String::as_str).collect();
-    let attributes = assigned_attributes(source);
-    let attributes: std::collections::HashSet<&str> =
-        attributes.iter().map(String::as_str).collect();
-    let walrus = walrus_target_names(source);
-    let counts = bindings.counts();
+    };
     statements
         .iter()
         .filter_map(|stmt| literal_assignment(source, stmt))
-        .filter(|constant| {
-            counts.get(constant.name.as_str()) == Some(&1)
-                && !globals.contains(constant.name.as_str())
-                && !attributes.contains(constant.name.as_str())
-                && !walrus.contains(constant.name.as_str())
-        })
+        .filter(|constant| stable.holds(&constant.name))
         .collect()
+}
+
+/// The module-scope names bound once to a call result (`response =
+/// SimpleNamespace(status_code=200)`) and never rebound: objects a function
+/// can mutate through an attribute write that a test imports and reads back.
+/// The same no-rebinding conditions as [`module_literal_constants`] apply.
+pub(super) fn module_object_bindings(source: &SourceText<'_>, statements: &[Stmt]) -> Vec<String> {
+    let Some(stable) = StableNames::of(source, statements) else {
+        return Vec::new();
+    };
+    statements
+        .iter()
+        .filter_map(|stmt| match stmt {
+            Stmt::Assign(assign) => match (assign.targets.as_slice(), assign.value.as_ref()) {
+                ([Expr::Name(name)], Expr::Call(_)) => Some(name.id.to_string()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .filter(|name| stable.holds(name))
+        .collect()
+}
+
+/// The facts that decide whether a module-scope name can still be rebound.
+struct StableNames {
+    counts: std::collections::HashMap<String, usize>,
+    globals: Vec<String>,
+    attributes: Vec<String>,
+    walrus: Vec<String>,
+}
+
+impl StableNames {
+    /// None when the module binds names this walk cannot see.
+    fn of(source: &SourceText<'_>, statements: &[Stmt]) -> Option<Self> {
+        let mut bindings = ScopeBindings::default();
+        collect_scope_bindings(statements, &mut bindings);
+        if bindings.opaque || writes_namespace_dynamically(source) {
+            return None;
+        }
+        let mut globals = Vec::new();
+        collect_global_declarations(statements, &mut globals);
+        Some(Self {
+            counts: bindings
+                .counts()
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
+            globals,
+            // `alias.NAME = ...` can rebind the name through a self-import.
+            attributes: assigned_attributes(source),
+            walrus: walrus_target_names(source)
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+        })
+    }
+
+    fn holds(&self, name: &str) -> bool {
+        self.counts.get(name) == Some(&1)
+            && !self.globals.iter().any(|global| global == name)
+            && !self.attributes.iter().any(|attribute| attribute == name)
+            && !self.walrus.iter().any(|target| target == name)
+    }
 }
 
 /// The constants still visible inside a function owner: those its parameters
@@ -99,6 +146,26 @@ pub(super) fn constants_visible_in_function(
         })
         .cloned()
         .collect()
+}
+
+/// The names a function body binds itself: its parameters, locals and walrus
+/// targets, so a module name spelled in it may refer to a local. None when the
+/// body nests a scope or lambda, or binds names the walk cannot enumerate.
+pub(super) fn function_bound_names(
+    args: &ast::Arguments,
+    body: &[Stmt],
+    body_text: &str,
+) -> Option<Vec<String>> {
+    if contains_nested_scope(body) || mentions_identifier(body_text, "lambda") {
+        return None;
+    }
+    let mut names = function_scope_names(args, body)?;
+    names.extend(
+        walrus_target_names(body_text)
+            .into_iter()
+            .map(str::to_string),
+    );
+    Some(names)
 }
 
 /// What a test file can do to a module constant's value, for one test.

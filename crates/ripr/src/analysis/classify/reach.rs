@@ -162,10 +162,9 @@ pub(in crate::analysis) fn owner_may_be_reached_unseen(
                 .map(|file| count_identifier_outside_fn_definition(&file.source, &owner.name))
                 .sum(),
         )
-        || index
-            .files()
-            .values()
-            .any(|file| includes_external_docs(&file.source))
+        || index.files().values().any(|file| {
+            includes_external_docs_with(&file.source, file.data().macro_candidates.is_some())
+        })
 }
 
 /// Whether the workspace names `owner` anywhere but inside its own body, given
@@ -218,11 +217,23 @@ impl UnseenReachNames {
             .values()
             .map(|file| file.data().source.as_ref())
             .collect();
+        // The producer stores macro candidates only for a source it parsed
+        // without errors, which is what the external-docs gate may rely on.
+        let with_clean: Vec<(&str, bool)> = index
+            .files()
+            .values()
+            .map(|file| {
+                (
+                    file.data().source.as_ref(),
+                    file.data().macro_candidates.is_some(),
+                )
+            })
+            .collect();
         // The external-docs parse is most of this scan and every file is
         // independent, so the parses run on the rayon pool. `build` can also
         // be reached from a classification worker (through a `OnceLock`
         // init); there the scans run in line, as `memoize_many` does.
-        let external_docs = includes_external_docs_many(&sources)
+        let external_docs = includes_external_docs_many(&with_clean)
             .into_iter()
             .any(|includes| includes);
         fn collect_names<'a>(
@@ -336,8 +347,15 @@ pub(in crate::analysis) fn take_external_docs_parse_count() -> usize {
 
 /// Macro-derived documentation can produce unindexed doctest calls, including
 /// external files and names assembled by `concat!` or supplied by `env!`.
-pub(in crate::analysis) fn includes_external_docs(source: &str) -> bool {
-    if !may_include_external_docs(source) {
+#[cfg(test)]
+fn includes_external_docs(source: &str) -> bool {
+    includes_external_docs_with(source, false)
+}
+
+/// [`includes_external_docs`] for a source whose `clean` parse the caller
+/// already knows (see [`may_include_external_docs`]).
+pub(in crate::analysis) fn includes_external_docs_with(source: &str, clean: bool) -> bool {
+    if !may_include_external_docs(source, clean) {
         return false;
     }
     // Pure in the source text, and rescanned for every overlapping index a
@@ -354,21 +372,41 @@ pub(in crate::analysis) fn includes_external_docs(source: &str) -> bool {
     )
 }
 
-/// The cheap text gate in front of the parse: a source that never spells
-/// `doc` and `!` cannot include external docs.
-fn may_include_external_docs(source: &str) -> bool {
-    source.contains("doc") && source.contains('!')
+/// Whitespace the gate skips between `doc` and `=`: Unicode `White_Space`
+/// plus the two marks Rust's lexer also treats as whitespace
+/// (`Pattern_White_Space`) that `char::is_whitespace` leaves out.
+fn rust_or_unicode_whitespace(c: char) -> bool {
+    c.is_whitespace() || matches!(c, '\u{200E}' | '\u{200F}')
 }
 
-/// [`includes_external_docs`] for every source of a scan, in order. The
+/// The cheap text gate in front of the parse: a source that never spells
+/// `doc` and `!` cannot include external docs. A source known to parse
+/// cleanly (`clean`: the file-fact producer already parsed it without
+/// errors) also needs a `doc` followed by `=`, because a key-value `doc`
+/// attribute has the `=` token right after its name with only whitespace or
+/// a comment between. A following `/` (a possible comment) keeps the source
+/// a candidate. An unclean source stays a candidate on the first test alone:
+/// the scan answers `true` for a source it cannot parse.
+fn may_include_external_docs(source: &str, clean: bool) -> bool {
+    source.contains("doc")
+        && source.contains('!')
+        && (!clean
+            || source.match_indices("doc").any(|(at, name)| {
+                source[at + name.len()..]
+                    .trim_start_matches(rust_or_unicode_whitespace)
+                    .starts_with(['=', '/'])
+            }))
+}
+
+/// [`includes_external_docs_with`] for every `(source, clean)` of a scan, in order. The
 /// parses of the texts the run scope has not seen run on the rayon pool
 /// (see [`crate::analysis::syntax::run_memo::memoize_many`]); the answers and
 /// the memo's contents are those of calling the single form per source.
-pub(in crate::analysis) fn includes_external_docs_many(sources: &[&str]) -> Vec<bool> {
+pub(in crate::analysis) fn includes_external_docs_many(sources: &[(&str, bool)]) -> Vec<bool> {
     let candidates: Vec<&str> = sources
         .iter()
-        .copied()
-        .filter(|source| may_include_external_docs(source))
+        .filter(|(source, clean)| may_include_external_docs(source, *clean))
+        .map(|(source, _)| *source)
         .collect();
     #[cfg(test)]
     let parsed = std::sync::atomic::AtomicUsize::new(0);
@@ -389,7 +427,9 @@ pub(in crate::analysis) fn includes_external_docs_many(sources: &[&str]) -> Vec<
         .with(|count| count.set(count.get() + parsed.load(std::sync::atomic::Ordering::Relaxed)));
     sources
         .iter()
-        .map(|source| may_include_external_docs(source) && answers.next().unwrap_or(true))
+        .map(|(source, clean)| {
+            may_include_external_docs(source, *clean) && answers.next().unwrap_or(true)
+        })
         .collect()
 }
 
@@ -1516,21 +1556,22 @@ mod tests {
             .map(|source| includes_external_docs(source))
             .collect();
         assert_eq!(expected, vec![false, true, false, false, true, true]);
+        let unknown: Vec<(&str, bool)> = sources.iter().map(|source| (*source, false)).collect();
         let _ = take_external_docs_parse_count();
-        assert_eq!(includes_external_docs_many(&sources), expected);
+        assert_eq!(includes_external_docs_many(&unknown), expected);
         assert_eq!(
             take_external_docs_parse_count(),
             5,
             "without a scope every source that passes the text gate parses"
         );
         let _scope = crate::analysis::syntax::run_memo::enter();
-        assert_eq!(includes_external_docs_many(&sources), expected);
+        assert_eq!(includes_external_docs_many(&unknown), expected);
         assert_eq!(
             take_external_docs_parse_count(),
             4,
             "inside a scope a repeated text parses once"
         );
-        assert_eq!(includes_external_docs_many(&sources), expected);
+        assert_eq!(includes_external_docs_many(&unknown), expected);
         assert_eq!(
             take_external_docs_parse_count(),
             0,
@@ -1542,6 +1583,54 @@ mod tests {
             0,
             "the single form hits too"
         );
+    }
+
+    #[test]
+    fn a_clean_source_without_a_doc_assignment_skips_the_parse() {
+        let _ = take_external_docs_parse_count();
+        // `doc` and `!` appear, but no `doc` is followed by `=`.
+        let plain = "/// docs! mention\nfn a() { assert!(true); }\nfn doc() {}\n";
+        assert!(!includes_external_docs_with(plain, true));
+        assert_eq!(take_external_docs_parse_count(), 0, "clean: gated out");
+        assert!(!includes_external_docs_with(plain, false));
+        assert_eq!(take_external_docs_parse_count(), 1, "unknown: parsed");
+        // Whitespace, newlines and comments may sit between `doc` and `=`.
+        for source in [
+            "#![doc=include_str!(\"R.md\")]",
+            "#![doc\n  = include_str!(\"R.md\")]",
+            "#![doc /* why */ = include_str!(\"R.md\")]",
+            "#![cfg_attr(all(), doc = include_str!(\"R.md\"))]",
+        ] {
+            let _ = take_external_docs_parse_count();
+            assert!(includes_external_docs_with(source, true), "{source}");
+            assert_eq!(take_external_docs_parse_count(), 1, "{source}");
+        }
+        // Rust's lexer skips the left-to-right and right-to-left marks too.
+        for mark in ["\u{200E}", "\u{200F}"] {
+            let source = format!("#![doc{mark}= concat!(\"a\")] fn f() {{}}");
+            assert!(
+                crate::analysis::syntax::parse_clean_source_file(&source).is_some(),
+                "{mark:?}"
+            );
+            assert!(includes_external_docs_with(&source, true), "{mark:?}");
+        }
+        // The batch form applies the flag per source, and keeps its answers
+        // aligned with the sources it did not parse.
+        let batch = [
+            (plain, true),
+            ("#![doc = include_str!(\"R.md\")]", true),
+            (plain, false),
+            ("fn broken( { doc !", false),
+        ];
+        let _ = take_external_docs_parse_count();
+        assert_eq!(
+            includes_external_docs_many(&batch),
+            vec![false, true, false, true]
+        );
+        assert_eq!(take_external_docs_parse_count(), 3);
+        // An unparseable source is never gated out by the clean test: it
+        // answers `true` when it cannot be parsed.
+        assert!(includes_external_docs_with("fn broken( { doc !", false));
     }
 
     #[test]

@@ -629,6 +629,16 @@ fn tail_if_branch_value(
             return None;
         }
     }
+    // An arm that returns what the first arm returns makes the choice between
+    // them unobservable for some inputs, so the first condition cannot be
+    // read as deciding the returned value (#9843).
+    if texts
+        .iter()
+        .skip(1)
+        .any(|text| *text == texts[0] && !branch_is_diverging(text))
+    {
+        return None;
+    }
     // A diverging branch never produces the returned value; the other branch
     // is the sink when exactly one diverges, and neither is when both do. A
     // ladder keeps only a non-diverging first arm: what a diverging first arm
@@ -1671,6 +1681,43 @@ mod tests {
         assert_eq!(sinks[0].text, "\"bulk\"");
         // A later arm's condition is not the first condition, so it has no sink.
         assert!(local_flow_sinks(&rival, Some(&owner)).is_empty());
+    }
+
+    #[test]
+    fn arms_that_return_the_same_value_leave_the_condition_without_a_sink() {
+        for body in [
+            // Two arms, same value.
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 { 1 } else { 1 }\n}",
+            // The first two arms of a ladder agree.
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 { 1 } else if x > 0 { 1 } else { 3 }\n}",
+            // The last arm repeats the first.
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 { 1 } else if x > 0 { 2 } else { 1 }\n}",
+        ] {
+            let owner = tail_owner(body);
+            let probe = probe(ProbeFamily::Predicate, "x > 1", 2);
+
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+
+            assert!(
+                !sinks
+                    .iter()
+                    .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
+                "`{body}` must not produce a return-value sink: {sinks:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn later_arms_that_only_agree_with_each_other_keep_the_first_sink() {
+        let owner = tail_owner(
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 { 1 } else if x > 0 { 2 } else { 2 }\n}",
+        );
+        let probe = probe(ProbeFamily::Predicate, "x > 1", 2);
+
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+
+        assert_eq!(sinks.len(), 1);
+        assert_eq!(sinks[0].text, "1");
     }
 
     #[test]
