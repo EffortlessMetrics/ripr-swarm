@@ -600,3 +600,176 @@ fn item_macro_struct_field_is_unknown_but_an_initializer_keeps_its_probe() -> Re
     );
     Ok(())
 }
+
+/// #10268 fail-closed: a macro DSL could execute an expression written where a
+/// type is expected, so a call or an arithmetic array length keeps its probe.
+#[test]
+fn item_macro_struct_field_holding_an_expression_keeps_field_construction() -> Result<(), String> {
+    for field in ["value: compute(),", "buf: [u8; N + 1],"] {
+        let source =
+            format!("pin_project! {{\n    pub struct Task {{\n        {field}\n    }}\n}}\n");
+        let probes = probes_at(&source, 3)?;
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.family == ProbeFamily::FieldConstruction),
+            "`{field}` must keep field_construction: {probes:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn macro_field_dsl_calls_retain_runtime_probe() -> Result<(), String> {
+    let source = r###"fn compute() -> usize { 17 }
+macro_rules! factory {
+    (struct $name:ident { $field:ident: $value:expr, }) => {
+        struct $name { $field: usize }
+        fn make() -> $name { $name { $field: $value } }
+    };
+}
+factory! {
+    struct Task {
+        value: compute(),
+    }
+}
+#[test]
+fn observes_execution() { assert_eq!(make().value, 17); }
+"###;
+    let probes = probes_at(source, 10)?;
+    assert!(
+        probes
+            .iter()
+            .any(|probe| probe.family == ProbeFamily::FieldConstruction),
+        "wrong retained family: {probes:?}"
+    );
+    assert!(
+        probes
+            .iter()
+            .all(|probe| probe.family != ProbeFamily::StaticUnknown),
+        "behavior or ambiguity was demoted: {probes:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn macro_field_array_values_retain_runtime_probe() -> Result<(), String> {
+    let source = r###"fn compute() -> usize { 17 }
+macro_rules! array_factory {
+    (struct $name:ident { $field:ident: $value:expr, }) => {
+        struct $name { $field: [usize; 3] }
+        fn make() -> $name { $name { $field: $value } }
+    };
+}
+array_factory! {
+    struct Task {
+        value: [compute(); 3],
+    }
+}
+#[test]
+fn observes_array_execution() { assert_eq!(make().value, [17; 3]); }
+"###;
+    let probes = probes_at(source, 10)?;
+    assert!(
+        probes
+            .iter()
+            .any(|probe| probe.family == ProbeFamily::FieldConstruction),
+        "wrong retained family: {probes:?}"
+    );
+    assert!(
+        probes
+            .iter()
+            .all(|probe| probe.family != ProbeFamily::StaticUnknown),
+        "behavior or ambiguity was demoted: {probes:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn macro_shared_field_line_keeps_fallback() -> Result<(), String> {
+    let source = r###"wrap! { struct Wrapped {
+    b: u8, c: u8,
+} }
+"###;
+    let probes = probes_at(source, 2)?;
+    assert!(
+        probes
+            .iter()
+            .any(|probe| probe.family == ProbeFamily::FieldConstruction),
+        "wrong retained family: {probes:?}"
+    );
+    assert!(
+        probes
+            .iter()
+            .all(|probe| probe.family != ProbeFamily::StaticUnknown),
+        "behavior or ambiguity was demoted: {probes:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn macro_malformed_body_keeps_fallback() -> Result<(), String> {
+    let source = r###"wrap! { struct Wrapped {
+    b: u8,
+}
+invalid tokens }
+"###;
+    let probes = probes_at(source, 2)?;
+    assert!(
+        probes
+            .iter()
+            .any(|probe| probe.family == ProbeFamily::FieldConstruction),
+        "wrong retained family: {probes:?}"
+    );
+    assert!(
+        probes
+            .iter()
+            .all(|probe| probe.family != ProbeFamily::StaticUnknown),
+        "behavior or ambiguity was demoted: {probes:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn nested_macro_field_keeps_fallback() -> Result<(), String> {
+    let source = r###"wrap! { inner! { struct Wrapped {
+    b: u8,
+} } }
+"###;
+    let probes = probes_at(source, 2)?;
+    assert!(
+        probes
+            .iter()
+            .any(|probe| probe.family == ProbeFamily::FieldConstruction),
+        "wrong retained family: {probes:?}"
+    );
+    assert!(
+        probes
+            .iter()
+            .all(|probe| probe.family != ProbeFamily::StaticUnknown),
+        "behavior or ambiguity was demoted: {probes:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn macro_long_header_field_remains_declaration() -> Result<(), String> {
+    let source = r###"macro_rules! wrap { ($i:item) => { $i }; }
+wrap! {
+    pub struct Long<T0: Copy + Clone, T1: Copy + Clone, T2: Copy + Clone, T3: Copy + Clone, T4: Copy + Clone, T5: Copy + Clone, T6: Copy + Clone, T7: Copy + Clone, T8: Copy + Clone, T9: Copy + Clone, T10: Copy + Clone, T11: Copy + Clone, T12: Copy + Clone, T13: Copy + Clone, T14: Copy + Clone, T15: Copy + Clone, T16: Copy + Clone, T17: Copy + Clone, T18: Copy + Clone, T19: Copy + Clone> {
+        marker: std::marker::PhantomData<(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19)>,
+        value: u8,
+    }
+}
+#[test]
+fn observes_long() { let value = Long::<u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, u8> { marker: std::marker::PhantomData, value: 7 }; assert_eq!(value.value, 7); }
+"###;
+    let probes = probes_at(source, 5)?;
+    assert!(
+        probes
+            .iter()
+            .any(|probe| probe.family == ProbeFamily::StaticUnknown),
+        "wrong retained family: {probes:?}"
+    );
+    Ok(())
+}

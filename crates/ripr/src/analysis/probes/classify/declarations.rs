@@ -130,6 +130,9 @@ pub(super) fn field_declaration_lines(
                     u32::from(range.start()) as usize <= span.start
                         && span.end <= u32::from(range.end()) as usize
                 })
+                // #10268: the same conservative recognition for a field of a
+                // struct declared inside an item macro in the old source.
+                || macro_struct_field_line(root.syntax(), &span)
         })
         .collect()
 }
@@ -195,9 +198,16 @@ pub(super) fn declaration_shape<'a>(
 /// is an opaque token tree, so no `RecordField` node exists; the line is a
 /// declaration when every token sits directly in a `{ .. }` tree whose
 /// preceding tokens in the same tree are a `struct` header (#10268). A
-/// construction (`Self { a: 1 }`) has no `struct` keyword before its brace,
-/// and a line holding a nested brace, a macro `!`, or an array-length call
-/// (`[u8; cap()]`) may run code, so none of them gain this authority.
+/// construction (`Self { a: 1 }`) has no `struct` keyword before its brace.
+///
+/// The line must read as pure type syntax, because a macro DSL could execute
+/// an expression written where a type is expected. It is withheld for a
+/// nested brace, a macro `!`, a paren group that is not a type (`compute()`:
+/// only a `fn`/`Fn*`/`FnMut`/`FnOnce` argument list or a tuple type after
+/// `: < , & * ( [ + ->` qualifies), and an array length that is anything but
+/// a literal or a path (`[u8; N + 1]`). The header search runs to the
+/// enclosing tree boundary and fails closed on a top-level `,`, so
+/// `struct S(u8), T { a: 1 }` does not make `T { .. }` a declaration.
 fn macro_struct_field_line(root: &SyntaxNode, span: &Range<usize>) -> bool {
     let Some(first) = root
         .token_at_offset((span.start as u32).into())
@@ -212,32 +222,82 @@ fn macro_struct_field_line(root: &SyntaxNode, span: &Range<usize>) -> bool {
         (u32::from(range.start()) as usize) >= span.start
             && (u32::from(range.end()) as usize) <= span.end
     };
-    let mut array_semicolon = false;
-    let mut call_after_semicolon = false;
-    for token in body
+    let tokens = body
         .descendants_with_tokens()
         .filter_map(|element| element.into_token())
         .filter(|token| in_span(token.text_range()))
-    {
-        match token.kind() {
-            SyntaxKind::BANG | SyntaxKind::L_CURLY => return false,
-            SyntaxKind::SEMICOLON => array_semicolon = true,
-            SyntaxKind::L_PAREN if array_semicolon => call_after_semicolon = true,
-            _ => {}
-        }
-    }
-    if call_after_semicolon {
-        return false;
-    }
-    let mut steps = 0usize;
-    let mut previous = body.prev_sibling_or_token();
-    while let Some(element) = previous {
-        steps += 1;
-        if steps > 64 {
+        .filter(|token| !matches!(token.kind(), SyntaxKind::WHITESPACE | SyntaxKind::COMMENT))
+        .collect::<Vec<_>>();
+    // One field per line: a top-level `,` before the last token means the line
+    // holds a second field (`b: u8, c: u8,`) or something ambiguous, and a
+    // top-level `=` is an initializer or discriminant, never a field type.
+    let mut angle_depth = 0usize;
+    for (index, token) in tokens.iter().enumerate() {
+        let top_level = angle_depth == 0 && token.parent().as_ref() == Some(&body);
+        let pure_type = match token.kind() {
+            SyntaxKind::BANG | SyntaxKind::L_CURLY => false,
+            SyntaxKind::L_PAREN => type_paren_group(token),
+            SyntaxKind::L_BRACK => literal_or_path_array_length(token),
+            SyntaxKind::L_ANGLE => {
+                angle_depth += 1;
+                true
+            }
+            SyntaxKind::R_ANGLE => {
+                angle_depth = angle_depth.saturating_sub(1);
+                true
+            }
+            SyntaxKind::COMMA => !top_level || index + 1 == tokens.len(),
+            SyntaxKind::EQ | SyntaxKind::SEMICOLON => !top_level,
+            _ => true,
+        };
+        if !pure_type {
             return false;
         }
+    }
+    // The struct must sit directly in the token tree of one macro call: a
+    // macro nested inside another macro's input is opaque twice over.
+    let direct_in_macro_call = body
+        .parent()
+        .filter(|tree| tree.kind() == SyntaxKind::TOKEN_TREE)
+        .and_then(|tree| tree.parent())
+        .is_some_and(|owner| owner.kind() == SyntaxKind::MACRO_CALL);
+    if !direct_in_macro_call {
+        return false;
+    }
+    // Whatever follows the struct body must be another item or the end of the
+    // tree; stray tokens make the whole input ambiguous.
+    let mut next = body.next_sibling_or_token();
+    while let Some(element) = next {
+        match element.kind() {
+            SyntaxKind::WHITESPACE | SyntaxKind::COMMENT | SyntaxKind::R_CURLY => {}
+            SyntaxKind::IMPL_KW
+            | SyntaxKind::STRUCT_KW
+            | SyntaxKind::ENUM_KW
+            | SyntaxKind::FN_KW
+            | SyntaxKind::TRAIT_KW
+            | SyntaxKind::UNSAFE_KW
+            | SyntaxKind::USE_KW
+            | SyntaxKind::MOD_KW
+            | SyntaxKind::CONST_KW
+            | SyntaxKind::STATIC_KW
+            | SyntaxKind::TYPE_KW
+            | SyntaxKind::PUB_KW
+            | SyntaxKind::POUND => break,
+            _ => return false,
+        }
+        next = element.next_sibling_or_token();
+    }
+    let mut angle_depth = 0usize;
+    let mut previous = body.prev_sibling_or_token();
+    while let Some(element) = previous {
         match element.kind() {
             SyntaxKind::STRUCT_KW => return true,
+            SyntaxKind::R_ANGLE => angle_depth += 1,
+            SyntaxKind::L_ANGLE => match angle_depth.checked_sub(1) {
+                Some(depth) => angle_depth = depth,
+                None => return false,
+            },
+            SyntaxKind::COMMA if angle_depth == 0 => return false,
             SyntaxKind::SEMICOLON
             | SyntaxKind::EQ
             | SyntaxKind::FN_KW
@@ -253,6 +313,75 @@ fn macro_struct_field_line(root: &SyntaxNode, span: &Range<usize>) -> bool {
         previous = element.prev_sibling_or_token();
     }
     false
+}
+
+fn previous_significant_token(
+    token: &ra_ap_syntax::SyntaxToken,
+) -> Option<ra_ap_syntax::SyntaxToken> {
+    let mut previous = token.prev_token();
+    while let Some(candidate) = previous {
+        if !matches!(
+            candidate.kind(),
+            SyntaxKind::WHITESPACE | SyntaxKind::COMMENT
+        ) {
+            return Some(candidate);
+        }
+        previous = candidate.prev_token();
+    }
+    None
+}
+
+/// A `(` that opens type syntax: a `fn`/`Fn*` parameter list, or a tuple type
+/// where a type may start. A `(` after any other identifier is a call.
+fn type_paren_group(open: &ra_ap_syntax::SyntaxToken) -> bool {
+    let Some(previous) = previous_significant_token(open) else {
+        return false;
+    };
+    match previous.kind() {
+        SyntaxKind::FN_KW
+        | SyntaxKind::COLON
+        | SyntaxKind::L_ANGLE
+        | SyntaxKind::COMMA
+        | SyntaxKind::AMP
+        | SyntaxKind::STAR
+        | SyntaxKind::L_PAREN
+        | SyntaxKind::L_BRACK
+        | SyntaxKind::PLUS
+        | SyntaxKind::THIN_ARROW => true,
+        SyntaxKind::IDENT => matches!(previous.text(), "Fn" | "FnMut" | "FnOnce"),
+        _ => false,
+    }
+}
+
+/// A `[` that is a slice/array type: any length after its `;` must be a
+/// literal or a plain path, never an expression (`N + 1`, `cap()`).
+fn literal_or_path_array_length(open: &ra_ap_syntax::SyntaxToken) -> bool {
+    let Some(tree) = open.parent() else {
+        return false;
+    };
+    let mut after_semicolon = false;
+    for element in tree.children_with_tokens() {
+        let Some(token) = element.as_token() else {
+            if after_semicolon {
+                return false;
+            }
+            continue;
+        };
+        match token.kind() {
+            SyntaxKind::SEMICOLON => after_semicolon = true,
+            SyntaxKind::WHITESPACE | SyntaxKind::COMMENT | SyntaxKind::R_BRACK => {}
+            SyntaxKind::IDENT
+            | SyntaxKind::SELF_TYPE_KW
+            | SyntaxKind::CRATE_KW
+            | SyntaxKind::INT_NUMBER
+            | SyntaxKind::COLON
+            | SyntaxKind::COLON2
+                if after_semicolon => {}
+            _ if after_semicolon => return false,
+            _ => {}
+        }
+    }
+    true
 }
 
 fn is_brace_token_tree(node: &SyntaxNode) -> bool {
@@ -416,14 +545,72 @@ mod tests {
             declaration_shape(&facts, 11, "buffered: None,").is_none(),
             "a construction inside a macro keeps its probe"
         );
-        for body in ["buf: [u8; cap()],", "inner: Wrap!(u8),"] {
+        let decl = |source: &str, line: usize, text: &str| -> Result<bool, String> {
+            Ok(declaration_shape(&declaration_facts(source)?, line, text).is_some())
+        };
+        // Type syntax stays a declaration: fn pointers, Fn bounds, tuples, paths.
+        for body in [
+            "cb: fn(u8) -> u8,",
+            "boxed: Option<Box<dyn Fn(u8) + Send>>,",
+            "pair: (u8, Foo),",
+            "buf: [u8; 4],",
+            "buf: [u8; N],",
+        ] {
             let source = format!("m! {{\n    struct S {{\n        {body}\n    }}\n}}\n");
-            let facts = declaration_facts(&source)?;
             assert!(
-                declaration_shape(&facts, 3, body).is_none(),
+                decl(&source, 3, body)?,
+                "type syntax must be a declaration: {body}"
+            );
+        }
+        // Anything that could execute stays a lexical field_construction.
+        for body in [
+            "buf: [u8; cap()],",
+            "buf: [u8; N + 1],",
+            "inner: Wrap!(u8),",
+            "value: compute(),",
+            "value: Foo::<u8>(),",
+            "value: Foo { a: 1 },",
+            "value: [compute(); 3],",
+            "b: u8, c: u8,",
+            "a: u8 = 3,",
+            "a: u8; b",
+        ] {
+            let source = format!("m! {{\n    struct S {{\n        {body}\n    }}\n}}\n");
+            assert!(
+                !decl(&source, 3, body)?,
                 "expression-bearing field keeps its probe: {body}"
             );
         }
+        // The header search stops at every non-struct owner and identifier.
+        for (header, why) in [
+            ("fn go()", "fn body"),
+            ("impl K", "impl body"),
+            ("enum E", "enum body"),
+            ("trait T", "trait body"),
+            ("let x =", "assignment"),
+            ("x =>", "match arm"),
+            ("let y = 1; Foo", "after a statement"),
+            ("my_struct", "identifier ending in struct"),
+            ("struct S(u8), T", "tuple struct then literal"),
+            ("struct S { z: u8 } T", "closed struct then literal"),
+        ] {
+            let source = format!("m! {{\n    {header} {{\n        a: u8,\n    }}\n}}\n");
+            assert!(
+                !decl(&source, 3, "a: u8,")?,
+                "{why}: `{header}` must not own a declaration"
+            );
+        }
+        // A long generic header is searched to the tree boundary, not capped.
+        let generics = (0..40)
+            .map(|i| format!("A{i}: Clone"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let source =
+            format!("m! {{\n    pub struct S<{generics}> {{\n        a: u8,\n    }}\n}}\n");
+        assert!(
+            decl(&source, 3, "a: u8,")?,
+            "long struct header must still be found"
+        );
         Ok(())
     }
 
