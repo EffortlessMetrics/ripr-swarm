@@ -19011,6 +19011,48 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0356"
+name = "A Rust file that no Cargo target compiles contributes no related test"
+spec = "docs/specs/RIPR-SPEC-0356-uncompiled-rust-files-contribute-no-tests.md"
+tests = [
+  "crates/ripr/tests/outside_target_haystack.rs::an_uncompiled_haystack_is_not_a_related_test",
+  "crates/ripr/tests/outside_target_haystack.rs::an_uncompiled_unparsed_haystack_is_not_a_lexical_limitation",
+  "crates/ripr/tests/outside_target_haystack.rs::the_same_file_compiled_through_a_path_module_is_related_and_disclosed",
+  "crates/ripr/tests/outside_target_haystack.rs::a_bench_target_naming_the_file_keeps_it_compiled",
+  "crates/ripr/src/analysis/facts/stray_files.rs::index_tests::stray_haystack_tests_are_not_related_test_evidence",
+  "crates/ripr/src/analysis/facts/stray_files.rs::index_tests::stray_file_the_parser_refuses_is_still_outside_every_target",
+  "crates/ripr/src/analysis/facts/stray_files.rs::index_tests::manifest_bench_path_keeps_the_file_a_target",
+  "crates/ripr/src/analysis/facts/stray_files.rs::index_tests::another_packages_manifest_naming_the_file_keeps_it_a_target",
+  "crates/ripr/src/analysis/facts/stray_files.rs::index_tests::path_attribute_into_the_file_keeps_it_compiled",
+  "crates/ripr/src/analysis/facts/stray_files.rs::index_tests::nested_module_or_include_mention_is_doubt",
+  "crates/ripr/src/analysis/facts/stray_files.rs::index_tests::macro_built_module_operands_are_doubt",
+  "crates/ripr/src/analysis/facts/stray_files.rs::index_tests::linked_unparsed_file_is_workspace_doubt_but_unlinked_one_is_not",
+  "crates/ripr/src/analysis/facts/stray_files.rs::index_tests::package_without_an_indexed_crate_root_gives_no_evidence",
+  "crates/ripr/src/analysis/facts/stray_files.rs::index_tests::leaf_addition_that_links_a_withheld_file_rebuilds_like_fresh",
+  "crates/ripr/src/analysis/facts/stray_files.rs::tests::stray_shape_excludes_target_directories_and_root_files",
+  "crates/ripr/src/analysis/facts/stray_files.rs::tests::referenced_names_match_inside_any_literal_or_path",
+  "crates/ripr/src/analysis/facts/stray_files.rs::tests::escaped_path_operands_are_doubt",
+  "crates/ripr/src/analysis/facts/stray_files.rs::index_tests::inline_module_path_with_punctuation_or_escape_keeps_the_file",
+  "crates/ripr/src/analysis/facts/stray_files.rs::tests::declared_modules_ignore_longer_identifiers",
+  "crates/ripr/src/analysis/facts/stray_files.rs::tests::module_tokens_survive_newlines_and_comments",
+  "crates/ripr/src/analysis/facts/stray_files.rs::tests::metavariable_module_operands_survive_trivia",
+  "crates/ripr/src/analysis/facts/stray_files.rs::index_tests::leaf_addition_that_only_mentions_a_withheld_file_rebuilds_like_fresh",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::registered_attribute_in_a_file_no_target_compiles_adds_no_test",
+  "crates/ripr/tests/outside_target_haystack.rs::a_module_building_macro_keeps_the_file_whatever_its_spacing",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/facts/stray_files.rs",
+  "crates/ripr/src/analysis/facts/role_composition.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0356-uncompiled-rust-files-contribute-no-tests.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0351"
 name = "A test that asserts on the local it passed as &mut observes the change only when the changed expression writes through that parameter"
 spec = "docs/specs/RIPR-SPEC-0351-out-parameter-oracle-credit.md"
