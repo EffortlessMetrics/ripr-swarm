@@ -1311,6 +1311,9 @@ mod fixtures_tests;
 mod dunder_entry_tests;
 
 #[cfg(test)]
+mod module_field_tests;
+
+#[cfg(test)]
 mod helper_assertions_tests;
 
 #[cfg(test)]
