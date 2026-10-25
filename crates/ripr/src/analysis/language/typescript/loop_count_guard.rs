@@ -1165,6 +1165,16 @@ fn declares_method(statement: &str, at: usize, len: usize) -> bool {
 
 /// `(svc as any)`, `svc!`, `(svc as Svc)!` name the receiver `svc`.
 fn without_receiver_casts(receiver: &str) -> String {
+    reduce_receiver(receiver, 0)
+}
+
+/// Group nesting past this depth is left as written rather than recursed into.
+const MAX_GROUP_DEPTH: usize = 16;
+
+fn reduce_receiver(receiver: &str, level: usize) -> String {
+    if level >= MAX_GROUP_DEPTH {
+        return receiver.to_string();
+    }
     let mut text = receiver.trim_end().to_string();
     for _ in 0..8 {
         let trimmed = text.trim_end();
@@ -1199,16 +1209,19 @@ fn without_receiver_casts(receiver: &str) -> String {
             .unwrap_or("");
         // `=>`, a comparison `>` and a `)` that closes `if (…)` lead a body or an
         // operand, not a call; `f<T>(…)` and `f(a)(…)` are adjacent calls.
+        let member = before[..before.len() - word.len()].ends_with('.');
         let call_like = before.ends_with(['.'])
-            || (before.ends_with('>') && !before.ends_with("=>") && !spaced)
+            || (before.ends_with('>')
+                && !before.ends_with("=>")
+                && (!spaced || closes_type_arguments(before)))
             || (before.ends_with([')', ']']) && !spaced && !closes_statement_head(before))
             || (!word.is_empty()
                 && !before.ends_with(['>', ')', ']'])
-                && !is_expression_keyword(word));
+                && (member || !is_expression_keyword(word)));
         if call_like {
             break;
         }
-        let Some(reduced) = reduced_group(inner) else {
+        let Some(reduced) = reduced_group(inner, level) else {
             break;
         };
         let glue = if before.len() == end[..open].len()
@@ -1228,33 +1241,34 @@ fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_' || c == '$'
 }
 
-/// The expression a cast or non-null group stands for, or `None` when the group
-/// is a comma list or reduces to nothing.
-fn reduced_group(inner: &str) -> Option<String> {
+/// The expression a cast or non-null group stands for (the last element of a
+/// comma list), or `None` when the group reduces to nothing new.
+fn reduced_group(inner: &str, level: usize) -> Option<String> {
     let flat = inner.split_whitespace().collect::<Vec<_>>().join(" ");
-    let mut head = flat.as_str();
-    let mut depth = 0usize;
+    let mut start = 0usize;
+    let mut end = flat.len();
+    let mut nest = 0usize;
     for (at, ch) in flat.char_indices() {
         match ch {
-            '(' | '[' | '{' => depth += 1,
-            ')' | ']' | '}' => depth = depth.saturating_sub(1),
-            ',' if depth == 0 => return None,
-            ' ' if depth == 0 => {
+            '(' | '[' | '{' => nest += 1,
+            ')' | ']' | '}' => nest = nest.saturating_sub(1),
+            ',' if nest == 0 => start = at + 1,
+            ' ' if nest == 0 => {
                 let rest = &flat[at..];
                 if rest.starts_with(" as ") || rest.starts_with(" satisfies ") {
-                    head = &flat[..at];
+                    end = at;
                     break;
                 }
             }
             _ => {}
         }
     }
-    let head = head.trim();
+    let head = flat[start..end].trim();
     let head = match head.strip_prefix('<') {
         Some(rest) => rest.split_once('>').map_or(head, |(_, tail)| tail.trim()),
         None => head,
     };
-    let reduced = without_receiver_casts(head);
+    let reduced = reduce_receiver(head, level + 1);
     (!reduced.is_empty() && reduced != flat).then_some(reduced)
 }
 
@@ -1282,7 +1296,27 @@ fn closes_statement_head(text: &str) -> bool {
         .rsplit(|c: char| !is_word_char(c))
         .next()
         .unwrap_or("");
-    matches!(word, "if" | "while" | "for" | "switch" | "with" | "catch")
+    let member = end[..open]
+        .trim_end()
+        .strip_suffix(word)
+        .is_some_and(|rest| rest.ends_with('.'));
+    !member && matches!(word, "if" | "while" | "for" | "switch" | "with" | "catch")
+}
+
+/// Whether the `>` ending `text` closes the type arguments of a call (`f<T>`),
+/// not a comparison: only type characters sit between it and a `<` that follows
+/// a word.
+fn closes_type_arguments(text: &str) -> bool {
+    let Some(inner) = text.strip_suffix('>') else {
+        return false;
+    };
+    let Some(open) = inner.rfind('<') else {
+        return false;
+    };
+    inner[..open].ends_with(is_word_char)
+        && inner[open + 1..].chars().all(|c| {
+            is_word_char(c) || matches!(c, ',' | ' ' | '.' | '[' | ']' | '|' | '&' | '<' | '>')
+        })
 }
 
 /// Keywords after which a parenthesized expression is a group, not an argument list.
@@ -2147,8 +2181,27 @@ mod tests {
             "x in (svc as any)",
             "delete (svc as any)",
             "export default (svc as any)",
+            "return(svc as any)",
+            "await(svc as any)",
+            "throw(svc as any)",
+            "a > (svc as any)",
+            "a >> (svc as any)",
+            "if(a)(svc as any)",
+            "while(a)(svc as any)",
+            "(((svc as any) as Svc))",
+            "(svc  as  any)",
+            "(svc\nas any)",
+            "(<Svc>svc)",
+            "(svc satisfies Svc)",
+            "(svc!)",
+            "await (await (svc as any))",
+            "(svc as unknown as (() => void))",
         ] {
-            assert!(without_receiver_casts(group).ends_with("svc"), "{group}");
+            let reduced = without_receiver_casts(group);
+            assert!(
+                reduced.ends_with("svc") && !reduced.contains("as "),
+                "{group} -> {reduced}"
+            );
         }
         for call in [
             "f(svc as any)",
@@ -2164,18 +2217,35 @@ mod tests {
             "if (a) (svc as any).retry(fn, 2);",
             "yield (svc as any).retry(fn, 2);",
             "else (svc as any).retry(fn, 2);",
+            "return(svc as any).retry(fn, 2);",
+            "if(a)(svc as any).retry(fn, 2);",
+            "(((svc as any) as Svc)).retry(fn, 2);",
+            "await (await (svc as any)).retry(fn, 2);",
+            "(<Svc>svc).retry(fn, 2);",
+            "(svc satisfies Svc).retry(fn, 2);",
+            "(svc!).retry(fn, 2);",
+            "(a, svc as any).retry(fn, 2);",
+            "(0, svc).retry(fn, 2);",
         ] {
             assert!(
                 hands_mock_to_owner(stmt, &["retry"], Receivers::Members(&svc, "retry"), "fn"),
                 "{stmt}"
             );
         }
-        assert!(!hands_mock_to_owner(
+        for stmt in [
             "other (svc as any).retry(fn, 2);",
-            &["retry"],
-            Receivers::Members(&svc, "retry"),
-            "fn"
-        ));
+            "(a, other as any).retry(fn, 2);",
+            "obj.return(svc as any).retry(fn, 2);",
+            "obj.if(a)(svc as any).retry(fn, 2);",
+            "f<T> (svc as any).retry(fn, 2);",
+            "wrap(svc as any).retry(fn, 2);",
+            "f(a)(svc as any).retry(fn, 2);",
+        ] {
+            assert!(
+                !hands_mock_to_owner(stmt, &["retry"], Receivers::Members(&svc, "retry"), "fn"),
+                "{stmt}"
+            );
+        }
         for text in ["{", "[", "const {", "const [é", "{ é"] {
             let _ = declares_local(&format!("() => {{ {text}"), "fn");
             let _ = binding_names(text);
@@ -2188,6 +2258,8 @@ mod tests {
         assert_eq!(binding_names(" { a = fn, b: c, d } = o"), ["a", "c", "d"]);
         assert_eq!(binding_names(" [a = fn, b] = o"), ["a", "b"]);
         assert_eq!(binding_names(" r: ReturnType<typeof fn> = x"), ["r"]);
+        let nested = format!("{}svc as any{}", "(".repeat(100_000), ")".repeat(100_000));
+        let _ = without_receiver_casts(&nested);
         let deep = format!("{}new Svc(){}", "(".repeat(5000), ")".repeat(5000));
         assert_eq!(inline_constructed_class(&deep), None);
     }
