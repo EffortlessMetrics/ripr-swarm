@@ -24,6 +24,9 @@ schema_version = "ripr_verdict_corpus_spec_coverage.v1"
 # abstain today; analyzer fix tracked in #9871.
 # 148: minus the one row RIPR-SPEC-0353 credits (grid-bool-exact). Measured on the combined tree.
 # 147 (#6485): minus one more on this branch (two grid rows recovered by the loop-accumulator credit, one bound-input abstention added). Measured on the combined tree.
+# 146: minus the one abstention resolved on this branch (spec-b-0164-alternative-pattern:
+# alternative-of-plain-literals match arms now transfer exactly, so the row credits as exposed).
+# Measured on the combined tree.
 missed_credit_ceiling = 147
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a

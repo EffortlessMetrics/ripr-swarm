@@ -12,18 +12,19 @@
 //!
 //! as the whole helper body (a tail expression). When the scrutinee
 //! resolves exactly (#3295 facts) and every arm's pattern is a plain
-//! string literal or `_` and every arm's value is a plain string
-//! literal or one nested direct call to a unique helper, the
-//! evaluator returns the first arm whose literal equals the scrutinee
-//! — source order is authoritative, exactly like the Rust match. A
-//! nested call resolves through the shared bounded context (the
-//! #3296 recursive row): distinct `(helper, bound inputs)` states
-//! unroll within the explicit hop bound, while a repeated state (a
-//! true cycle) or the bound itself refuses. Anything else — a guard,
-//! an alternative pattern, a computed value, a bare-identifier
-//! pattern, a non-string scrutinee, any statement after the closing
-//! brace — refuses the whole shape and returns `None`; the caller's
-//! existing limitation wording stays the disclosure.
+//! string literal, an alternative (`|`) of plain string literals, or
+//! `_`, and every arm's value is a plain string literal or one nested
+//! direct call to a unique helper, the evaluator returns the first arm
+//! whose pattern names the scrutinee — source order is authoritative,
+//! exactly like the Rust match. A nested call resolves through the
+//! shared bounded context (the #3296 recursive row): distinct
+//! `(helper, bound inputs)` states unroll within the explicit hop
+//! bound, while a repeated state (a true cycle) or the bound itself
+//! refuses. Anything else — a guard, a wildcard inside an alternative,
+//! a computed value, a bare-identifier pattern, a non-string scrutinee,
+//! any statement after the closing brace — refuses the whole shape and
+//! returns `None`; the caller's existing limitation wording stays the
+//! disclosure.
 
 use super::helper_transfer::HelperEval;
 use super::value_transfer::{EvalOutcome, ExactInputs, TypedValue, evaluate_initializer};
@@ -45,9 +46,11 @@ enum MatchValue {
 }
 
 struct MatchArm {
-    /// `None` is the `_` wildcard arm; `Some(literal)` is a plain
-    /// string-literal pattern. A wildcard still respects source order.
-    pattern: Option<String>,
+    /// `None` is the `_` wildcard arm; `Some(literals)` is one or more
+    /// plain string-literal patterns joined by `|` (the arm matches the
+    /// scrutinee when ANY names it, exactly like the Rust match). A
+    /// wildcard still respects source order.
+    pattern: Option<Vec<String>>,
     value: MatchValue,
 }
 
@@ -67,7 +70,7 @@ pub(crate) fn match_return_value(
         _ => return None,
     };
     for arm in &shape.arms {
-        let selected = !matches!(&arm.pattern, Some(literal) if literal != &subject);
+        let selected = !matches!(&arm.pattern, Some(literals) if !literals.iter().any(|literal| literal == &subject));
         if selected {
             return match &arm.value {
                 MatchValue::Literal(value) => Some(TypedValue::Str(value.clone())),
@@ -151,20 +154,35 @@ impl MatchShape {
     }
 }
 
-/// `"literal" => "value",` — the pattern is a plain string literal or
-/// `_`; the value is a plain string literal or one nested direct call
-/// (`label_of("a")`) to a unique helper with literal or bound-parameter
-/// arguments. Guards, alternatives, bindings, paths, and escapes all
-/// refuse the arm (and with it the whole helper): an unresolved
-/// pattern could match anything, and any other value shape is not an
-/// exact return the shared authorities can evaluate.
+/// `"literal" => "value",` — the pattern is a plain string literal, an
+/// alternative (`|`) of plain string literals, or `_`; the value is a
+/// plain string literal or one nested direct call (`label_of("a")`) to
+/// a unique helper with literal or bound-parameter arguments. An
+/// alternative keeps the exact-match semantics of the Rust match: the
+/// arm matches when ANY of its literals equals the scrutinee, so the
+/// evaluator still just picks the first matching arm in source order.
+/// Guards, bindings, paths, escapes, a wildcard mixed into an
+/// alternative, and any other value shape refuse the arm (and with it
+/// the whole helper): an unresolved pattern could match anything, and
+/// any other value shape is not an exact return the shared authorities
+/// can evaluate.
 fn parse_arm(line: &str) -> Option<MatchArm> {
     let trimmed = line.trim().trim_end_matches(',').trim();
     let (pattern, value) = trimmed.split_once(" => ")?;
     let pattern = if pattern == "_" {
         None
     } else {
-        Some(literal_string(pattern)?)
+        // An alternative pattern: every `|`-separated component must be
+        // a plain string literal. Splitting on `|` cannot cut inside a
+        // literal: a literal containing `|` still splits into fragments
+        // that fail `literal_string`'s balanced-quote rule, so the arm
+        // refuses conservatively instead of mis-parsing.
+        let literals: Vec<String> = pattern
+            .split('|')
+            .map(str::trim)
+            .map(literal_string)
+            .collect::<Option<Vec<_>>>()?;
+        Some(literals)
     };
     let value = if let Some(literal) = literal_string(value) {
         MatchValue::Literal(literal)
@@ -312,15 +330,16 @@ mod tests {
     }
 
     #[test]
-    fn guard_alternative_binding_and_computed_shapes_fail_closed() -> Result<(), String> {
-        let cases: [(&str, &str); 5] = [
+    fn guard_binding_and_computed_shapes_fail_closed() -> Result<(), String> {
+        // RIPR-SPEC-0164#3 / the spec-b-0164-alternative-pattern corpus
+        // row: an alternative of PLAIN literals is now a supported exact
+        // shape (see alternative_arms_match_any_constituent below), so
+        // only the genuinely unresolved shapes stay in this fail-closed
+        // list.
+        let cases: [(&str, &str); 4] = [
             (
                 "guard arm",
                 "        \"word\" if kind.len() > 2 => \"alpha\",",
-            ),
-            (
-                "alternative pattern",
-                "        \"word\" | \"text\" => \"alpha\",",
             ),
             ("bare binding pattern", "        word => \"alpha\","),
             (
@@ -343,6 +362,73 @@ mod tests {
                 "a {name} arm must refuse the match"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn alternative_arms_match_any_constituent() -> Result<(), String> {
+        // RIPR-SPEC-0164#3 (spec-b-0164-alternative-pattern): `"word" |
+        // "term" => "alpha"` matches when the scrutinee equals ANY
+        // constituent, with source order still authoritative.
+        let body = BODY.replace(
+            "        \"word\" => \"alpha\",",
+            "        \"word\" | \"term\" => \"alpha\",",
+        );
+        assert_ne!(body, BODY, "the alternative-arm substitution must apply");
+        let helper = match_fn("label", &body);
+        assert_eq!(returned(&helper, "\"word\"")?, "alpha");
+        assert_eq!(returned(&helper, "\"term\"")?, "alpha");
+        // A value only the later literal arm names still reaches it.
+        assert_eq!(returned(&helper, "\"text\"")?, "beta");
+        assert_eq!(returned(&helper, "\"zz\"")?, "other");
+        Ok(())
+    }
+
+    #[test]
+    fn alternative_arms_respect_source_order_and_refuse_mixed_shapes() -> Result<(), String> {
+        let index = RustIndex::default();
+        let eval = root_eval(&index);
+        // An earlier arm shadowing one constituent of a later
+        // alternative wins, exactly like the Rust match.
+        let shadowed = BODY.replace(
+            "        \"text\" => \"beta\",",
+            "        \"text\" => \"first\",\n        \"word\" | \"text\" => \"second\",",
+        );
+        assert_ne!(shadowed, BODY, "the shadowing substitution must apply");
+        let helper = match_fn("label", &shadowed);
+        assert_eq!(returned(&helper, "\"text\"")?, "first");
+        assert_eq!(returned(&helper, "\"word\"")?, "second");
+
+        // A wildcard mixed into an alternative is not a plain-literal
+        // alternative; the arm (and the match) refuses rather than
+        // approximating a total pattern.
+        let mixed_wildcard = BODY.replace(
+            "        \"word\" => \"alpha\",",
+            "        \"word\" | _ => \"alpha\",",
+        );
+        assert_ne!(
+            mixed_wildcard, BODY,
+            "the mixed-wildcard substitution must apply"
+        );
+        let helper2 = match_fn("label", &mixed_wildcard);
+        assert!(
+            match_return_value(&helper2, &inputs(&[("kind", "\"word\"")]), &eval).is_none(),
+            "a wildcard inside an alternative must refuse"
+        );
+        // A binding inside an alternative is equally unresolved.
+        let mixed_binding = BODY.replace(
+            "        \"word\" => \"alpha\",",
+            "        \"word\" | rest => \"alpha\",",
+        );
+        assert_ne!(
+            mixed_binding, BODY,
+            "the mixed-binding substitution must apply"
+        );
+        let helper3 = match_fn("label", &mixed_binding);
+        assert!(
+            match_return_value(&helper3, &inputs(&[("kind", "\"word\"")]), &eval).is_none(),
+            "a binding inside an alternative must refuse"
+        );
         Ok(())
     }
 

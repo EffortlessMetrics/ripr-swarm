@@ -1,0 +1,2 @@
+<!-- section: Improved -->
+- Rust match-arm evidence now transfers an alternative pattern of plain string literals exactly (`"word" | "term" => "alpha"`): the arm matches when any constituent names the scrutinee, with source order still authoritative. The `spec-b-0164-alternative-pattern` verdict-corpus row credits as exposed (rust missed-credit ceiling 146 → 145). Guards, bindings, and wildcards inside an alternative still refuse the shape (#10304).
