@@ -150,6 +150,7 @@ mod source_utils;
 use source_utils::{is_test_file, normalized_path};
 mod fixtures;
 mod helper_assertions;
+mod literal_patch;
 mod module_callees;
 mod same_class_callees;
 mod static_limits;
@@ -1275,6 +1276,8 @@ mod capability_disposition_tests;
 
 #[cfg(test)]
 mod helper_inline_tests;
+#[cfg(test)]
+mod literal_patch_tests;
 
 #[cfg(test)]
 mod helper_owner_call_tests;
