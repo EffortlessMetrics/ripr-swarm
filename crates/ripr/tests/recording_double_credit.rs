@@ -273,6 +273,7 @@ fn hidden_execution_and_module_value_twins_cannot_supply_credit() -> Result<(), 
     for (label, candidate) in [
         ("overloaded setup equality", base.replace("n: u32) {", "n: u32) { let skip = Stop == Stop;")
             + "\nstruct Stop; impl PartialEq for Stop { fn eq(&self, _: &Self) -> bool { std::process::exit(0); } }\n"),
+        ("let-else exits before observation", base.replace("n: u32) {", "n: u32) { let N = 1 else { std::process::exit(0); };") + "\nconst N: u32 = 2;\n"),
         ("hidden format exit", base.replace("format!(\"n={}\", n)", "format!(\"n={}\", { std::process::exit(0); n })")),
         ("module const redirects owner", base.replace("use super::*;", "use super::*; const report: fn(&mut dyn Sink, u32) = rival; fn rival(s: &mut dyn Sink, _: u32) { s.send(\"n=3\".to_string()); }")),
         ("module static redirects owner", base.replace("use super::*;", "use super::*; static report: fn(&mut dyn Sink, u32) = rival; fn rival(s: &mut dyn Sink, _: u32) { s.send(\"n=3\".to_string()); }")),
