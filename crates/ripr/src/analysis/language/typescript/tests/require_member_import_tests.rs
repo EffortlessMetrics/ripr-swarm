@@ -144,3 +144,71 @@ fn a_member_of_another_module_or_another_name_does_not_reach_the_owner() -> Resu
     assert_eq!(other_name, ExposureClass::NoStaticPath);
     Ok(())
 }
+
+#[test]
+fn a_file_that_binds_its_own_require_reads_no_import() {
+    for source in [
+        "const require = () => ({ stringify() {} });\nconst s = require('./lib').stringify;\n",
+        "function require() {}\nconst { stringify } = require('./lib');\n",
+        "let require = null;\nconst lib = require('./lib');\n",
+    ] {
+        assert_eq!(imports_of(source), Vec::new(), "{source}");
+    }
+    assert_eq!(
+        imports_of(
+            "import { createRequire } from 'node:module';\nconst require = createRequire(import.meta.url);\nconst s = require('./lib').stringify;\n"
+        )
+        .into_iter()
+        .filter(|import| import.0 == "./lib")
+        .collect::<Vec<_>>(),
+        vec![named("./lib", "stringify", "s")],
+        "createRequire keeps the loader identity"
+    );
+}
+
+#[test]
+fn a_reassigned_import_binding_does_not_reach_the_owner() -> Result<(), String> {
+    for (label, binding) in [
+        (
+            "req-let-member",
+            "let s = require('../src/lib').stringify;\ns = () => '{\"a\":1}';",
+        ),
+        (
+            "req-let-destructured",
+            "let { stringify: s } = require('../src/lib');\ns = () => '{\"a\":1}';",
+        ),
+        (
+            "req-var-member",
+            "var s = require('../src/lib').stringify;\ns = () => '{\"a\":1}';",
+        ),
+    ] {
+        let class = class_for(label, binding, "s({ a: 1 })")?;
+        assert_eq!(class, ExposureClass::NoStaticPath, "{label}");
+    }
+    // The same bindings without the reassignment still relate.
+    let class = class_for(
+        "req-let-unwritten",
+        "let s = require('../src/lib').stringify;",
+        "s({ a: 1 })",
+    )?;
+    assert_eq!(class, ExposureClass::WeaklyExposed);
+    Ok(())
+}
+
+#[test]
+fn a_shadowed_require_does_not_reach_the_owner() -> Result<(), String> {
+    for (label, binding) in [
+        (
+            "req-shadow-member",
+            "const require = () => ({ stringify: () => '{\"a\":1}' });\nconst s = require('../src/lib').stringify;",
+        ),
+        (
+            "req-shadow-destructured",
+            "const require = () => ({ stringify: () => '{\"a\":1}' });\nconst { stringify: s } = require('../src/lib');",
+        ),
+    ] {
+        let class = class_for(label, binding, "s({ a: 1 })")?;
+        assert_eq!(class, ExposureClass::NoStaticPath, "{label}");
+    }
+    Ok(())
+}

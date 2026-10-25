@@ -1374,6 +1374,14 @@ fn extract_imports_from_statements_inner(
     include_reexports: bool,
 ) -> Vec<TypeScriptImport> {
     let mut out: Vec<TypeScriptImport> = Vec::new();
+    // A file that binds its own `require` (`const require = ...`,
+    // `function require()`) is not calling Node's loader, so a `require()`
+    // call there says nothing about which module a local comes from (#10401).
+    // The ambient-`require` contract of `createRequire(import.meta.url)` keeps
+    // its reading.
+    let mut top_level_names = Vec::new();
+    super::tests_extract::collect_registration_scope_names(statements, &mut top_level_names, true);
+    let require_name_bound = top_level_names.iter().any(|name| name == "require");
     for stmt in statements {
         // ES module import declarations: `import { x } from './y'`
         if let Statement::ImportDeclaration(import) = stmt {
@@ -1478,6 +1486,11 @@ fn extract_imports_from_statements_inner(
                 let Some(init) = &declarator.init else {
                     continue;
                 };
+                if require_name_bound
+                    && !super::admission::program_require_is_known(statements, &out, true)
+                {
+                    continue;
+                }
                 // One member of a literal require: `const f = require('./y').f`
                 // picks the named export `f` out of the module (#9188). It is
                 // the twin of `const { f } = require('./y')`, so it records the
