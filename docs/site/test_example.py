@@ -76,6 +76,7 @@ class ReleaseWebsite(unittest.TestCase):
         self.assertTrue(all(line.strip() in expected for line in excerpt))
 
     def test_equality_assertion_rejects_the_old_behavior(self):
+        """Model the reader's own crate, separate from ripr's fixture replay."""
         test = self.block("boundary-test")
         command = shlex.split(self.block("boundary-test-command"))
         self.assertEqual(command, ["cargo", "test", "equality_gets_discount"])
@@ -87,6 +88,8 @@ class ReleaseWebsite(unittest.TestCase):
             root = Path(directory)
             shutil.copytree(FIXTURE / "input/src", root / "src")
             (root / "tests").mkdir()
+            # This is a standalone project, even if TMPDIR is inside a workspace.
+            # The page does not instruct users to test ripr's nested fixture.
             (root / "Cargo.toml").write_text(
                 (FIXTURE / "input/Cargo.toml").read_text() + "\n[workspace]\n"
             )
@@ -98,18 +101,25 @@ class ReleaseWebsite(unittest.TestCase):
                     arguments, cwd=root, env=env, capture_output=True, text=True, timeout=60
                 )
 
+            def assert_named_test_passed(output, name):
+                self.assertEqual(output.returncode, 0, output.stdout + output.stderr)
+                self.assertIn("running 1 test", output.stdout)
+                self.assertIn(f"test {name} ... ok", output.stdout)
+
             new = run(command)
-            self.assertEqual(new.returncode, 0, new.stdout + new.stderr)
-            self.assertIn("running 1 test", new.stdout)
-            self.assertRegex(new.stdout, r"test equality_gets_discount \.\.\. ok")
+            assert_named_test_passed(new, "equality_gets_discount")
+            zero = run(["cargo", "test", "nonexistent_boundary_control"])
+            self.assertEqual(zero.returncode, 0)
+            self.assertIn("running 0 tests", zero.stdout)
+            with self.assertRaises(self.failureException):
+                assert_named_test_passed(zero, "nonexistent_boundary_control")
 
             source = (root / "src/lib.rs").read_text()
             self.assertEqual(source.count("amount >= discount_threshold"), 1)
             (root / "src/lib.rs").write_text(source.replace("amount >=", "amount >"))
             for name in ("below_threshold_has_no_discount", "far_above_threshold_discounts"):
                 old_existing = run(["cargo", "test", name])
-                self.assertEqual(old_existing.returncode, 0, old_existing.stdout + old_existing.stderr)
-                self.assertIn("running 1 test", old_existing.stdout)
+                assert_named_test_passed(old_existing, name)
 
             old = run(command)
             self.assertNotEqual(old.returncode, 0, "the equality test must reject the old > condition")

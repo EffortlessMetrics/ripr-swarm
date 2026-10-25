@@ -88,17 +88,15 @@ assert_eq!(discounted_total(10_000, 100), 9_990);</code></pre>
 Missing discriminator: amount == discount_threshold
 Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions</code></pre>
             <a href="https://github.com/EffortlessMetrics/ripr-swarm/blob/67f48e6ef567302ab7e104a2dfa83db5f8cd422c/fixtures/boundary_gap/expected/human.txt">Read the checked fixture <span class="arrow" aria-hidden="true"></span></a>
-            <p class="fixture-replay">To replay it from a development checkout with the matching development build:</p>
-            <pre><code id="fixture-command">ripr check --root fixtures/boundary_gap/input --diff fixtures/boundary_gap/diff.patch --mode fast</code></pre>
           </div>
           <div class="test-snippet boundary-repair">
             <p class="code-caption">Add the missing equality case</p>
-            <p>If equality should receive the discount, add this test beside the existing tests:</p>
+            <p>In your own crate that defines <code>discounted_total</code>, add this test to the module with your existing tests if equality should receive the discount:</p>
             <pre><code id="boundary-test">#[test]
 fn equality_gets_discount() {
     assert_eq!(discounted_total(100, 100), 90);
 }</code></pre>
-            <p>The <code>&gt;=</code> version returns <code>90</code>; the old <code>&gt;</code> version returns <code>100</code> and fails this assertion. Run the focused test:</p>
+            <p>The <code>&gt;=</code> version returns <code>90</code>; the old <code>&gt;</code> version returns <code>100</code> and fails this assertion. From your crate’s directory, run the focused test:</p>
             <pre><code id="boundary-test-command">cargo test equality_gets_discount</code></pre>
             <p class="step-note">Choose the expected result from your intended behavior. This test runs your code; ripr’s finding is static evidence.</p>
           </div>
@@ -149,6 +147,8 @@ ripr --version</code></pre>
           <div>
             <h3 id="development-title">Following the example output or the latest repair workflow?</h3>
             <p>The example above comes from development, while the install here is pinned to 0.10.0. Use the <a href="https://github.com/EffortlessMetrics/ripr-swarm/blob/main/README.md#the-first-useful-run">development installation instructions</a> for the matching build, and consult the <a href="https://github.com/EffortlessMetrics/ripr/blob/main/docs/status/SUPPORT_TIERS.md">support tiers</a> for workflow and language maturity.</p>
+            <p class="fixture-replay">Separately, replay the checked output from the root of a development checkout with the matching development build. This analyzes the fixture; the project test above belongs in your own crate:</p>
+            <pre><code id="fixture-command">ripr check --root fixtures/boundary_gap/input --diff fixtures/boundary_gap/diff.patch --mode fast</code></pre>
           </div>
         </aside>
       </section>
