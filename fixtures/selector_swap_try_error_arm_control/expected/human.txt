@@ -33,7 +33,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/selector_swap_try_error_arm_control/input --diff <cwd>/fixtures/selector_swap_try_error_arm_control/diff.patch --mode fast probe:src_lib.rs:error_path:d4885999
   ripr context --root <cwd>/fixtures/selector_swap_try_error_arm_control/input --diff <cwd>/fixtures/selector_swap_try_error_arm_control/diff.patch --mode fast --at probe:src_lib.rs:error_path:d4885999
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:error_path:d4885999 --root <cwd>/fixtures/selector_swap_try_error_arm_control/input` for the full gate's answer
+  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full
