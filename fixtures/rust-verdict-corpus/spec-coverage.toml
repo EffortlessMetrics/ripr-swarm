@@ -26,7 +26,8 @@ schema_version = "ripr_verdict_corpus_spec_coverage.v1"
 # from the parameter (`let a = a.chars()..collect()`), so the name-only credit
 # is withheld and the row abstains; fail-closed by design. Measured on the
 # combined tree.
-missed_credit_ceiling = 147
+# 146 (#6485): two grid rows recovered by the loop-accumulator credit, one bound-input abstention added. Measured on the combined tree.
+missed_credit_ceiling = 146
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
