@@ -27,7 +27,14 @@ serve() { if [ -f "$1" ]; then jq -r "$expr" < "$1"; else jq -r "$expr" <<< "$2"
 all="$*"
 case "$all" in
   *"/pulls?state=open"*) serve "$FAKE_DIR/pulls.json" '[]' ;;
-  *"/pulls/"*) n="${all#*/pulls/}"; n="${n%% *}"; serve "$FAKE_DIR/pull.$n.json" '{}' ;;
+  *"/pulls/"*)
+    n="${all#*/pulls/}"; n="${n%% *}"
+    # A `.later.json` fixture answers every read after the first (lazy mergeability).
+    if [ -f "$FAKE_DIR/pull.$n.later.json" ] && [ -f "$FAKE_DIR/pull.$n.seen" ]; then
+      serve "$FAKE_DIR/pull.$n.later.json" '{}'
+    else
+      touch "$FAKE_DIR/pull.$n.seen"; serve "$FAKE_DIR/pull.$n.json" '{}'
+    fi ;;
   *"/check-runs"*) sha="${all#*/commits/}"; sha="${sha%%/*}"; serve "$FAKE_DIR/checks.$sha.json" '{"check_runs":[]}' ;;
   *"/workflows/routed-rust.yml/runs"*) serve "$FAKE_DIR/runs.json" '{"workflow_runs":[]}' ;;
   *"/statuses?"*) sha="${all#*/commits/}"; sha="${sha%%/*}"; serve "$FAKE_DIR/statuses.$sha.json" '[]' ;;
@@ -44,6 +51,7 @@ struct Pr {
     prior_statuses: &'static str,
     marker_comment: bool,
     moved: bool,
+    later_state: Option<&'static str>,
 }
 
 impl Pr {
@@ -57,6 +65,7 @@ impl Pr {
             prior_statuses: "[]",
             marker_comment: false,
             moved: false,
+            later_state: None,
         }
     }
     fn sha(&self) -> String {
@@ -137,6 +146,16 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
             pr.prior_statuses,
         )
         .map_err(|e| e.to_string())?;
+        if let Some(later) = pr.later_state {
+            fs::write(
+                dir.join(format!("pull.{}.later.json", pr.number)),
+                format!(
+                    r#"{{"mergeable_state":"{later}","head":{{"sha":"{}"}},"base":{{"ref":"main"}}}}"#,
+                    pr.sha()
+                ),
+            )
+            .map_err(|e| e.to_string())?;
+        }
         if pr.marker_comment {
             fs::write(
                 dir.join("comments.json"),
@@ -149,11 +168,16 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
         }
     }
     fs::write(dir.join("bin/gh"), FAKE_GH).map_err(|e| e.to_string())?;
+    fs::write(dir.join("bin/sleep"), "#!/bin/bash\nexit 0\n").map_err(|e| e.to_string())?;
     fs::write(dir.join("block.sh"), run_block()?).map_err(|e| e.to_string())?;
-    let gh = dir.join("bin/gh");
-    let mut mode = fs::metadata(&gh).map_err(|e| e.to_string())?.permissions();
-    mode.set_mode(0o755);
-    fs::set_permissions(&gh, mode).map_err(|e| e.to_string())?;
+    for tool in ["gh", "sleep"] {
+        let path = dir.join("bin").join(tool);
+        let mut mode = fs::metadata(&path)
+            .map_err(|e| e.to_string())?
+            .permissions();
+        mode.set_mode(0o755);
+        fs::set_permissions(&path, mode).map_err(|e| e.to_string())?;
+    }
     let summary_path = dir.join("summary.md");
     let path = format!(
         "{}:{}",
@@ -385,5 +409,23 @@ fn a_head_pushed_since_the_list_call_is_left_for_the_next_sweep() -> Result<(), 
         outcome.summary
     );
     assert!(outcome.summary.contains("moved"), "{}", outcome.summary);
+    Ok(())
+}
+
+#[test]
+fn a_head_whose_mergeability_is_still_being_computed_is_read_again() -> Result<(), String> {
+    // The first read is "unknown" (the base just moved); the retry sees the conflict.
+    let lazy = Pr {
+        state: "unknown",
+        later_state: Some("dirty"),
+        ..Pr::dirty(16)
+    };
+    let outcome = run(&[lazy], "lazy")?;
+    assert_eq!(
+        (outcome.comments, outcome.failures),
+        (1, 1),
+        "{}",
+        outcome.summary
+    );
     Ok(())
 }
