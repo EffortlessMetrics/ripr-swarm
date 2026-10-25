@@ -353,35 +353,6 @@ fn oracle_contains_whole_literal(oracle: &str, value: &str) -> bool {
     })
 }
 
-/// Only a display compared with the asserted result observes the collection.
-/// A display in an unrelated boolean conjunct or a sibling subscript does not.
-fn oracle_compares_whole_collection(oracle: &str) -> bool {
-    let expression = oracle
-        .trim()
-        .strip_prefix("assert ")
-        .unwrap_or(oracle.trim());
-    let Some(Expr::Compare(compare)) = super::approx_band::parse_expression(expression) else {
-        return false;
-    };
-    let [ast::CmpOp::Eq] = compare.ops.as_slice() else {
-        return false;
-    };
-    let [right] = compare.comparators.as_slice() else {
-        return false;
-    };
-    let display = |expr: &Expr| matches!(expr, Expr::Dict(_) | Expr::List(_));
-    let result = |expr: &Expr| match expr {
-        Expr::Name(_) => true,
-        Expr::Call(call) => match call.func.as_ref() {
-            Expr::Name(name) => name.id.as_str() != "len",
-            Expr::Attribute(attr) => attr.attr.as_str() != "get",
-            _ => false,
-        },
-        _ => false,
-    };
-    (display(right) && result(&compare.left)) || (display(&compare.left) && result(right))
-}
-
 /// Compound assertions need collection identity on the compared operand itself:
 /// an unrelated display in another conjunct cannot borrow the owner's call.
 fn oracle_compares_owner_collection(oracle: &str, test: &PythonTest, owner: &PythonOwner) -> bool {
@@ -389,22 +360,42 @@ fn oracle_compares_owner_collection(oracle: &str, test: &PythonTest, owner: &Pyt
         match expr {
             Expr::Name(name) => Some(name.id.to_string()),
             Expr::Attribute(attr) => Some(format!("{}.{}", callee_name(&attr.value)?, attr.attr)),
+            Expr::Call(call) => Some(format!("{}()", callee_name(&call.func)?)),
             _ => None,
         }
     }
     fn observes(expr: &Expr, callees: &[String], locals: &[String]) -> bool {
         let display = |expr: &Expr| matches!(expr, Expr::Dict(_) | Expr::List(_));
-        let result = |expr: &Expr| match expr {
-            Expr::Call(call) => callee_name(&call.func).is_some_and(|name| callees.contains(&name)),
-            Expr::Name(name) => locals.iter().any(|local| local == name.id.as_str()),
-            _ => false,
-        };
+        fn result(expr: &Expr, callees: &[String], locals: &[String]) -> bool {
+            match expr {
+                Expr::Call(call) => {
+                    callee_name(&call.func).is_some_and(|name| callees.contains(&name))
+                        || (matches!(call.func.as_ref(), Expr::Name(name) if matches!(name.id.as_str(), "list" | "tuple"))
+                            && call.keywords.is_empty()
+                            && call.args.len() == 1
+                            && call
+                                .args
+                                .first()
+                                .is_some_and(|arg| result(arg, callees, locals)))
+                }
+                Expr::Name(name) => locals.iter().any(|local| local == name.id.as_str()),
+                _ => false,
+            }
+        }
+        let result = |expr: &Expr| result(expr, callees, locals);
         match expr {
             Expr::BoolOp(boolean) if boolean.op == ast::BoolOp::And => boolean
                 .values
                 .iter()
                 .any(|value| observes(value, callees, locals)),
             Expr::Compare(compare) => {
+                if compare.ops.iter().all(|op| *op == ast::CmpOp::Eq) {
+                    let operands: Vec<_> = std::iter::once(compare.left.as_ref())
+                        .chain(compare.comparators.iter())
+                        .collect();
+                    return operands.iter().any(|operand| display(operand))
+                        && operands.iter().any(|operand| result(operand));
+                }
                 let mut left = compare.left.as_ref();
                 for (op, right) in compare.ops.iter().zip(&compare.comparators) {
                     if *op == ast::CmpOp::Eq
@@ -426,7 +417,27 @@ fn oracle_compares_owner_collection(oracle: &str, test: &PythonTest, owner: &Pyt
     let Some(expression) = super::approx_band::parse_expression(expression) else {
         return false;
     };
-    let callees = owner_module_callees(test, owner);
+    let mut callees = owner_module_callees(test, owner);
+    if matches!(
+        owner.owner_kind,
+        Some(OwnerKind::Method | OwnerKind::ClassMethod)
+    ) && let Some((class, method)) = owner.qualified_name.rsplit_once('.')
+    {
+        let class_locals = super::related_tests::owner_class_locals(test, owner, class);
+        callees.extend(
+            class_locals
+                .iter()
+                .flat_map(|class| [format!("{class}.{method}"), format!("{class}().{method}")]),
+        );
+        callees.extend(
+            super::related_tests::owner_method_bound_locals(test, owner, class, method)
+                .into_iter()
+                .chain(super::related_tests::setup_bound_receivers(
+                    test, owner, class, method,
+                ))
+                .map(|receiver| format!("{receiver}.{method}")),
+        );
+    }
     let locals = owner_result_locals(test, &callees);
     observes(&expression, &callees, &locals)
 }
@@ -1135,10 +1146,8 @@ pub(super) fn classify_sink_alignment_prepared(
         && super::oracles::unittest_list::literal_change_discriminated(element_old, element_new);
     let field_construction_credit_ok = |unit: &AlignmentUnit<'_>| {
         let whole_collection_observed = if literal_lines.is_some() {
-            oracle_compares_whole_collection(&unit.text)
-                || unit
-                    .test
-                    .is_some_and(|test| oracle_compares_owner_collection(&unit.text, test, owner))
+            unit.test
+                .is_some_and(|test| oracle_compares_owner_collection(&unit.text, test, owner))
         } else {
             legacy_whole_collection_comparison(&unit.text)
         };

@@ -3030,6 +3030,34 @@ fn multiline_collection_identity_rejects_sibling_and_unrelated_oracles() -> Resu
             "labels()['low'] == [10]",
             ExposureClass::WeaklyExposed,
         ),
+        (
+            "        'high': 11,",
+            "        'high': 80,",
+            "        'low': 10,\n    }",
+            "list((10,)) == [labels()['low']]",
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            "        11,",
+            "        80,",
+            "        10,\n    ]",
+            "list((10,)) == [labels()[1]]",
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            "        1,",
+            "        2,",
+            "        1,\n    ]",
+            "list(labels()) == [2, 1] and bool(1)",
+            ExposureClass::Exposed,
+        ),
+        (
+            "        1,",
+            "        2,",
+            "        1,\n    ]",
+            "labels() == list((2, 1)) == [2, 1]",
+            ExposureClass::Exposed,
+        ),
     ] {
         let opener = if tail.ends_with('}') { '{' } else { '[' };
         let source = format!("def labels():\n    return {opener}\n{after}\n{tail}\n");
@@ -3239,6 +3267,44 @@ fn multiline_collection_comments_preserve_member_identity() -> Result<(), String
                 .iter()
                 .any(|row| row.oracle_strength == OracleStrength::Strong),
             "missing strong row: {oracle}"
+        );
+        assert_eq!(finding.class, expected, "{oracle}");
+    }
+    Ok(())
+}
+
+#[test]
+fn multiline_collection_method_whole_result_keeps_receiver_identity() -> Result<(), String> {
+    let source = "class Labels:\n    def labels(self):\n        return [\n            1,\n            2,\n        ]\n";
+    let before = "            1,";
+    let after = "            2,";
+    for (oracle, expected) in [
+        ("r.labels() == [1, 2]", ExposureClass::Exposed),
+        (
+            "list((1,)) == [r.labels()[0]]",
+            ExposureClass::WeaklyExposed,
+        ),
+    ] {
+        let tests = format!(
+            "from src.subject import Labels\ndef test_labels():\n    r = Labels()\n    assert {oracle}\n"
+        );
+        let owners = extract_owners(Path::new("src/subject.py"), source);
+        let tests = extract_tests(Path::new("tests/test_subject.py"), &tests);
+        let finding = classify_change_with_source(
+            Path::new("src/subject.py"),
+            5,
+            after,
+            Some(before),
+            &owners,
+            &tests,
+            Some(source),
+        )
+        .ok_or_else(|| format!("missing method finding: {oracle}"))?;
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .any(|row| row.oracle_strength == OracleStrength::Strong)
         );
         assert_eq!(finding.class, expected, "{oracle}");
     }
