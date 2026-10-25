@@ -1,0 +1,52 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_dunder_truthiness_integer/input
+config: <cwd>/fixtures/python_dunder_truthiness_integer/input/ripr.toml
+
+Summary: 1 probe(s), 1 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Changed file(s) by language: python = 1
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+
+INFO src/shapes/money.py:6
+  id: probe:src_shapes_money.py:python_preview:aacb327b
+
+Changed
+  after:          return self.cents > 0
+
+Probe
+  family: predicate
+  delta:  control
+  owner:  python:src/shapes/money.py::Money.__bool__
+  canonical gap: gap:python:src/shapes/money.py:Money.__bool__:predicate_boundary:predicate:self.cents>0
+
+Language
+  language: python
+  status: preview
+  owner kind: method
+
+Static exposure
+  exposed (info, confidence 0.60)
+
+Evidence
+  - reach yes: 1 related Python test(s) found for owner `__bool__`
+  - infection yes: Changed Python expression can alter preview-classified predicate behavior: `return self.cents > 0`
+  - propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink
+  - observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)
+  - discriminator yes: Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated
+  - local flow reaches unknown sink: return self.cents > 0 (line 6) — ripr could not classify where the changed value ends up; propagation confidence is limited
+  - related test tests/test_money.py:4 test_truthiness uses strong exact value oracle: assert Money(-1)
+
+Weakness
+  - Related Python test reaches `__bool__` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator
+
+Next step
+  Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior
+Drill in:
+  ripr explain --root <cwd>/fixtures/python_dunder_truthiness_integer/input --diff <cwd>/fixtures/python_dunder_truthiness_integer/diff.patch --mode fast probe:src_shapes_money.py:python_preview:aacb327b
+  ripr context --root <cwd>/fixtures/python_dunder_truthiness_integer/input --diff <cwd>/fixtures/python_dunder_truthiness_integer/diff.patch --mode fast --at probe:src_shapes_money.py:python_preview:aacb327b
+
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.
