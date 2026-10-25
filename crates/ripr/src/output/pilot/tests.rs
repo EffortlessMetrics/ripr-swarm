@@ -2295,7 +2295,6 @@ fn pilot_next_steps_name_the_dirty_target_precondition_only_when_it_applies() ->
     vcs(root, &["config", "commit.gpgSign", "false"])?;
     vcs(root, &["config", "core.hooksPath", ".no-hooks"])?;
     vcs(root, &["add", "."])?;
-    vcs(root, &["commit", "-qm", "baseline"])?;
 
     let artifacts = pilot_artifacts();
     let tests_dir_entry = route_ready_entry(&["tests/pricing.rs"]);
@@ -2326,31 +2325,59 @@ fn pilot_next_steps_name_the_dirty_target_precondition_only_when_it_applies() ->
         working_tree: false,
     };
 
-    let render = |entry: &ClassifiedSeam, change: &PilotCurrentChange| -> Result<String, String> {
-        let route = commands::repair_start_command(root, entry)
+    let render = |render_root: &Path,
+                  entry: &ClassifiedSeam,
+                  change: &PilotCurrentChange,
+                  expected_spawns: usize|
+     -> Result<(String, String), String> {
+        let route = commands::repair_start_command(render_root, entry)
             .ok_or_else(|| "fixture seam must offer a repair start".to_string())?;
         let mut context = pilot_context(&artifacts);
-        context.root = root;
+        context.root = render_root;
         context.current_change = Some(change);
-        let terminal = render_pilot_terminal(std::slice::from_ref(entry), context);
+        let entries = std::slice::from_ref(entry);
+        let before = crate::git::test_process_spawns();
+        let (markdown, terminal) = render_pilot_human_summaries(entries, context);
+        assert_eq!(crate::git::test_process_spawns() - before, expected_spawns);
         assert!(terminal.contains(&format!("  1. {route}\n")), "{terminal}");
-        Ok(terminal)
-    };
-    let render_md = |entry: &ClassifiedSeam, change: &PilotCurrentChange| {
-        let mut context = pilot_context(&artifacts);
-        context.root = root;
-        context.current_change = Some(change);
-        render_pilot_summary_md(std::slice::from_ref(entry), context)
+        // Independent renders retain their previous output while the command's
+        // shared path pays for one observation rather than two.
+        let before = crate::git::test_process_spawns();
+        assert_eq!(terminal, render_pilot_terminal(entries, context));
+        assert_eq!(markdown, render_pilot_summary_md(entries, context));
+        assert_eq!(
+            crate::git::test_process_spawns() - before,
+            2 * expected_spawns
+        );
+        Ok((terminal, markdown))
     };
 
+    // An unborn HEAD defers to the repair start after the root and HEAD probes.
+    let (terminal, markdown) = render(root, &inline_entry, &no_change, 2)?;
+    assert!(!terminal.contains("uncommitted edits"), "{terminal}");
+    assert!(!markdown.contains("uncommitted edits"), "{markdown}");
+    vcs(root, &["commit", "-qm", "baseline"])?;
+
     // Committed target: no line, whatever the current change claims.
-    assert!(!render(&inline_entry, &change)?.contains("uncommitted edits"));
+    assert!(
+        !render(root, &inline_entry, &change, 5)?
+            .0
+            .contains("uncommitted edits")
+    );
+
+    // #10037: another dirty file makes working_tree=true without dirtying the
+    // inline target. The current-change flag must not manufacture a refusal.
+    write("tests/pricing.rs", "fn boundary() { let _ = 1; }\n")?;
+    let other_dirty = changed("tests/pricing.rs", 1).with_working_tree(true);
+    let (terminal, markdown) = render(root, &inline_entry, &other_dirty, 5)?;
+    assert!(!terminal.contains("uncommitted edits"), "{terminal}");
+    assert!(!markdown.contains("uncommitted edits"), "{markdown}");
 
     // Worktree edit: the line sits between heading and step 1.
     write("src/pricing.rs", "pub fn price() { let _ = 1; }\n")?;
     let route = commands::repair_start_command(root, &inline_entry)
         .ok_or_else(|| "inline fixture must offer a repair start".to_string())?;
-    let inline_dirty = render(&inline_entry, &change)?;
+    let (inline_dirty, markdown) = render(root, &inline_entry, &change, 5)?;
     let positions = (
         inline_dirty.find("Next, in order:"),
         inline_dirty.find(precondition),
@@ -2367,7 +2394,6 @@ fn pilot_next_steps_name_the_dirty_target_precondition_only_when_it_applies() ->
 
     // The saved Markdown summary carries the same precondition, ahead of the
     // repair introduction and without a placeholder command a user could run.
-    let markdown = render_md(&inline_entry, &change);
     assert!(
         markdown.contains("Before starting the repair: if `src/pricing.rs` has uncommitted edits"),
         "{markdown}"
@@ -2378,8 +2404,12 @@ fn pilot_next_steps_name_the_dirty_target_precondition_only_when_it_applies() ->
     );
 
     // A tests/ target is not an inline target: no line under a dirty file.
-    let tests_dirty = render(&tests_dir_entry, &change)?;
+    let (tests_dirty, tests_markdown) = render(root, &tests_dir_entry, &change, 0)?;
     assert!(!tests_dirty.contains("uncommitted edits"), "{tests_dirty}");
+    assert!(
+        !tests_markdown.contains("uncommitted edits"),
+        "{tests_markdown}"
+    );
     assert!(
         tests_dirty.contains("  3. run the `continue --attempt ...`"),
         "{tests_dirty}"
@@ -2389,21 +2419,37 @@ fn pilot_next_steps_name_the_dirty_target_precondition_only_when_it_applies() ->
     // matches the index, so pilot's worktree diff sees no change. The target
     // file's own state still names the precondition `agent repair` enforces.
     vcs(root, &["add", "src/pricing.rs"])?;
-    let staged = render(&inline_entry, &no_change)?;
+    let (staged, staged_markdown) = render(root, &inline_entry, &no_change, 5)?;
     assert!(staged.contains(precondition), "{staged}");
     assert!(
-        render_md(&inline_entry, &no_change)
+        staged_markdown
             .contains("Before starting the repair: if `src/pricing.rs` has uncommitted edits")
     );
     assert!(
-        !render(&tests_dir_entry, &no_change)?.contains("uncommitted edits"),
+        !render(root, &tests_dir_entry, &no_change, 0)?
+            .0
+            .contains("uncommitted edits"),
         "a staged inline file must not leak into a tests/ target"
     );
 
+    // A subdirectory root is refused by the repair start, so the first root
+    // probe is the only process and neither surface claims a dirty target.
+    let (terminal, markdown) = render(&root.join("src"), &inline_entry, &change, 1)?;
+    assert!(!terminal.contains("uncommitted edits"), "{terminal}");
+    assert!(!markdown.contains("uncommitted edits"), "{markdown}");
+
     // Back at HEAD: a clean tree prints no line, with or without a change.
     vcs(root, &["reset", "-q", "--hard", "HEAD"])?;
-    assert!(!render(&inline_entry, &no_change)?.contains("uncommitted edits"));
-    assert!(!render(&inline_entry, &change)?.contains("uncommitted edits"));
+    assert!(
+        !render(root, &inline_entry, &no_change, 5)?
+            .0
+            .contains("uncommitted edits")
+    );
+    assert!(
+        !render(root, &inline_entry, &change, 5)?
+            .0
+            .contains("uncommitted edits")
+    );
     Ok(())
 }
 

@@ -22,6 +22,7 @@ Linked issues:
 
 - #3896 (the documented repair step needs a command the user can run)
 - #9553 (an index-only difference needs the same precondition)
+- #10037 (share the target observation across human summaries)
 
 Linked PRs:
 
@@ -66,6 +67,14 @@ no change) prints the line too. A target at HEAD, and a `tests/` target, print
 no such line, because the refusal does not apply to them. The predicate fails
 open (no line) whenever the answer is not positively established, leaving the
 repair start's own refusal authoritative.
+In particular, an unborn HEAD or a root below the Git top-level prints no
+precondition line: the repair start refuses those roots itself. A clean target
+also prints no line when another file is dirty and the current change carries
+`working_tree=true`.
+
+The pilot command observes the inline target once and shares the answer between
+the terminal and saved Markdown summary. Rendering both surfaces must not repeat
+the Git probes; their wording remains unchanged.
 
 ### Rule 2: continue command
 
@@ -79,7 +88,14 @@ the `continue --attempt ...` command that step 1 prints, not an `--attempt ...
   pins, against a real repository fixture, the line's presence and its position
   between the heading and step 1 for a worktree-dirty and for a staged-only
   inline target (the latter with a `NoChange` current change), its absence at
-  HEAD, and for a `tests/` target, and the step 3 wording.
+  HEAD (including `working_tree=true` with another dirty file), for a `tests/`
+  target, for an unborn HEAD, and below the Git top-level, and the step 3 wording.
+  It compares shared and standalone rendering byte-for-byte and counts actual
+  bounded subprocess spawns: five for a committed inline target, two for an
+  unborn HEAD, one for a subdirectory root, and zero for a `tests/` target.
+  Two standalone renders require twice those counts.
+- The `spec_0237` summary helper compares shared and standalone Markdown and
+  requires zero Git spawns for its `root = "."` fixtures.
 - `generated_workflow_replay_prints_only_runnable_next_steps` keeps the
   Markdown summary free of a placeholder command that cannot run as printed.
 
@@ -105,8 +121,10 @@ the `continue --attempt ...` command that step 1 prints, not an `--attempt ...
 ## Implementation Mapping
 
 - `crates/ripr/src/output/pilot/render/complete.rs`: `render_pilot_terminal`,
-  `render_pilot_summary_md`, `uncommitted_inline_target`,
+  `render_pilot_summary_md`, `render_pilot_human_summaries`,
+  `summary_uncommitted_inline_target`,
   `dirty_target_precondition`.
+- `crates/ripr/src/cli/commands/pilot.rs`: the complete pilot summary writes.
 - `crates/ripr/src/output/pilot/commands.rs`: `repair_inline_target_file`.
 - `crates/ripr/src/edit_cage/mod.rs`: `inline_target_is_uncommitted`.
 

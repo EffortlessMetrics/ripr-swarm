@@ -743,6 +743,18 @@ pub(crate) fn run_git_output_with_optional_deadline_and_limit(
     )
 }
 
+#[cfg(test)]
+thread_local! {
+    static TEST_PROCESS_SPAWNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Successful bounded subprocess spawns on this test thread. Snapshots exclude
+/// concurrent tests without changing process-wide environment or Git behavior.
+#[cfg(test)]
+pub(crate) fn test_process_spawns() -> usize {
+    TEST_PROCESS_SPAWNS.with(std::cell::Cell::get)
+}
+
 fn collect_output_with_optional_deadline_and_limit(
     mut command: Command,
     timeout: Option<Duration>,
@@ -759,6 +771,8 @@ fn collect_output_with_optional_deadline_and_limit(
     let spawn_site = SpawnSite::of(&command);
     let mut child =
         OwnedProcess::spawn(command).map_err(|err| spawn_site.failure_message(describe, &err))?;
+    #[cfg(test)]
+    TEST_PROCESS_SPAWNS.with(|count| count.set(count.get() + 1));
     let stdout_reader = child
         .stdout_pipe()
         .take()

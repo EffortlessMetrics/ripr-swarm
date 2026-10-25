@@ -229,9 +229,32 @@ pub(crate) fn render_pilot_summary_json(
     out
 }
 
+/// Render both human surfaces from one observation of the inline target.
+/// The CLI always writes Markdown and renders the terminal, even for JSON stdout.
+pub(crate) fn render_pilot_human_summaries(
+    classified: &[ClassifiedSeam],
+    context: PilotSummaryContext<'_>,
+) -> (String, String) {
+    let target = summary_uncommitted_inline_target(classified, context, 1);
+    (
+        render_pilot_summary_md_with_target(classified, context, target.as_deref()),
+        render_pilot_terminal_with_target(classified, context, target.as_deref()),
+    )
+}
+
+#[cfg(test)]
 pub(crate) fn render_pilot_summary_md(
     classified: &[ClassifiedSeam],
     context: PilotSummaryContext<'_>,
+) -> String {
+    let target = summary_uncommitted_inline_target(classified, context, context.max_seams);
+    render_pilot_summary_md_with_target(classified, context, target.as_deref())
+}
+
+fn render_pilot_summary_md_with_target(
+    classified: &[ClassifiedSeam],
+    context: PilotSummaryContext<'_>,
+    uncommitted_inline_target: Option<&str>,
 ) -> String {
     let actionable_total = actionable_total(classified);
     let top = top_actionable_seams(classified, context.max_seams, context.current_change);
@@ -453,10 +476,7 @@ pub(crate) fn render_pilot_summary_md(
                 .first()
                 .map(|entry| repair_edit_scope(entry))
                 .unwrap_or_default();
-            if let Some(file) = top
-                .first()
-                .and_then(|entry| uncommitted_inline_target(context.root, entry))
-            {
+            if let Some(file) = uncommitted_inline_target {
                 out.push_str(&format!(
                     "Before starting the repair: if `{file}` has uncommitted edits, commit or stash them; the repair start refuses a target file that differs from HEAD.\n\n",
                 ));
@@ -590,9 +610,19 @@ pub(crate) fn render_pilot_summary_md(
     out
 }
 
+#[cfg(test)]
 pub(crate) fn render_pilot_terminal(
     classified: &[ClassifiedSeam],
     context: PilotSummaryContext<'_>,
+) -> String {
+    let target = summary_uncommitted_inline_target(classified, context, 1);
+    render_pilot_terminal_with_target(classified, context, target.as_deref())
+}
+
+fn render_pilot_terminal_with_target(
+    classified: &[ClassifiedSeam],
+    context: PilotSummaryContext<'_>,
+    uncommitted_inline_target: Option<&str>,
 ) -> String {
     let top = top_actionable_seams(classified, 1, context.current_change);
     let commands = PilotCommands::new(context);
@@ -798,11 +828,8 @@ pub(crate) fn render_pilot_terminal(
         .and_then(|entry| repair_start_command(context.root, entry))
     {
         out.push_str("Next, in order:\n");
-        if let Some(file) = top
-            .first()
-            .and_then(|entry| uncommitted_inline_target(context.root, entry))
-        {
-            out.push_str(&dirty_target_precondition(&file));
+        if let Some(file) = uncommitted_inline_target {
+            out.push_str(&dirty_target_precondition(file));
             out.push('\n');
         }
         out.push_str(&format!("  1. {command}\n"));
@@ -921,9 +948,16 @@ pub(crate) fn render_pilot_terminal(
 /// the same one the repair start's baseline capture enforces, so a staged-only
 /// difference is named too and pilot does not fork its own check. The predicate
 /// fails open (`None`) whenever the answer is not positively established.
-fn uncommitted_inline_target(root: &std::path::Path, entry: &ClassifiedSeam) -> Option<String> {
+fn summary_uncommitted_inline_target(
+    classified: &[ClassifiedSeam],
+    context: PilotSummaryContext<'_>,
+    max_seams: usize,
+) -> Option<String> {
+    let top = top_actionable_seams(classified, max_seams, context.current_change);
+    let entry = top.first()?;
+    repair_start_command(context.root, entry)?;
     repair_inline_target_file(entry)
-        .filter(|file| crate::edit_cage::inline_target_is_uncommitted(root, file))
+        .filter(|file| crate::edit_cage::inline_target_is_uncommitted(context.root, file))
 }
 
 /// Precondition printed ahead of the repair steps when `file`, the inline test
