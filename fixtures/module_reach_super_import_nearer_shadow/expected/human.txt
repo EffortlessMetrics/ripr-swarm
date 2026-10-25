@@ -34,7 +34,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/module_reach_super_import_nearer_shadow/input --diff <cwd>/fixtures/module_reach_super_import_nearer_shadow/diff.patch --mode fast probe:src_lib.rs:predicate:41e056ec
   ripr context --root <cwd>/fixtures/module_reach_super_import_nearer_shadow/input --diff <cwd>/fixtures/module_reach_super_import_nearer_shadow/diff.patch --mode fast --at probe:src_lib.rs:predicate:41e056ec
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.rs:predicate:41e056ec --root <cwd>/fixtures/module_reach_super_import_nearer_shadow/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 No test stub here: the owner's tests live in an out-of-line `mod tests;` file
 
 Hidden:
