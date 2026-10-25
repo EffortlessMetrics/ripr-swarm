@@ -797,23 +797,28 @@ pub(crate) fn repair_start_withheld_note(
     }
 }
 
-/// The gap-bound TypeScript start admission (#9103, RIPR-SPEC-0311) for one
-/// finding of a check run: a TypeScript preview finding that is not
+/// The gap-bound start admission (#9103, RIPR-SPEC-0311; Python #10373) for
+/// one finding of a check run: a TypeScript or Python finding that is not
 /// static-limited, from a run that recorded its diff base, whose GapRecord the
 /// shared agent-packet validator accepts. This is the single admission both
 /// `ripr check` (the printed start line) and `ripr agent status` (the routed
 /// warning, #10001) consult; it forks no validator and fails closed.
-fn typescript_gap_route(
+fn gap_bound_route(
     output: &super::CheckOutput,
+    check_config: &crate::config::RiprConfig,
     finding: &crate::domain::Finding,
 ) -> Option<crate::app::GapRepairRoute> {
-    if non_rust_language(&finding.probe.location.file) != Some("TypeScript")
-        || super::gap_bound_repair::finding_is_static_limited(finding)
-    {
+    if super::gap_bound_repair::finding_is_static_limited(finding) {
         return None;
     }
     let base = output.base.as_deref()?;
-    let record = super::gap_bound_repair::startable_typescript_gap_record(finding)?;
+    let record = match non_rust_language(&finding.probe.location.file)? {
+        "TypeScript" => super::gap_bound_repair::startable_typescript_gap_record(finding)?,
+        "Python" => {
+            super::gap_bound_repair::startable_python_gap_record(output, check_config, finding)?
+        }
+        _ => return None,
+    };
     Some(crate::app::GapRepairRoute {
         finding_id: finding.id.clone(),
         gap_id: record.canonical_gap_id,
@@ -823,12 +828,12 @@ fn typescript_gap_route(
 
 /// The gap-bound start the default human `ripr check` would print for this
 /// run's selected finding, or `None` when check would print none (#10001).
-pub(crate) fn selected_typescript_gap_route(
+pub(crate) fn selected_gap_bound_route(
     output: &super::CheckOutput,
     check_config: &crate::config::RiprConfig,
 ) -> Option<crate::app::GapRepairRoute> {
     let finding = crate::output::human::selected_triage_finding(output, check_config)?;
-    typescript_gap_route(output, finding)
+    gap_bound_route(output, check_config, finding)
 }
 
 /// The repair route for the one finding the default human `ripr check`
@@ -892,9 +897,9 @@ pub(crate) fn check_repair_route(
     // agent-packet validator and starts a gap-bound attempt. The canonical
     // gap id and the base this run analyzed are the whole start. A finding
     // that does not validate, a static-limited one, and a run without a base
-    // keep the refusals below. Python and the other routed languages are
-    // unchanged.
-    if !static_limited && let Some(route) = typescript_gap_route(output, finding) {
+    // keep the refusals below. A Python finding takes the same route
+    // (#10373); the other routed languages are unchanged.
+    if !static_limited && let Some(route) = gap_bound_route(output, check_config, finding) {
         return CheckRepairRoute::GapRoute(route);
     }
     let Some(gap) = finding.canonical_gap.as_ref() else {
@@ -1049,11 +1054,24 @@ pub(crate) fn no_seam_inventory_reason(language: &str, file: &str) -> String {
     )
 }
 
+/// The pointer a seam-addressed refusal of a TypeScript or Python item adds
+/// (#10373): such a finding can still start the delegated loop by gap, so
+/// "terminal" must not read as "no repair start exists anywhere". Empty for
+/// the other non-Rust languages.
+pub(crate) fn gap_bound_start_pointer(language: &str) -> &'static str {
+    if matches!(language, "TypeScript" | "Python") {
+        ". When the finding's repair packet is complete, `ripr check --base <base>` prints a gap-bound start (`ripr agent repair --gap-id <gap> --base <base> --phase before`) that runs the delegated loop by gap instead of by seam"
+    } else {
+        ""
+    }
+}
+
 fn unknown_repair_item(root: &Path, item: &str) -> String {
     if let Some(language) = non_rust_item_language(item) {
         return format!(
-            "repair item `{item}` names no seam in the selected root: {}",
-            no_seam_inventory_reason(language, "")
+            "repair item `{item}` names no seam in the selected root: {}{}",
+            no_seam_inventory_reason(language, ""),
+            gap_bound_start_pointer(language)
         );
     }
     let list = format!(
