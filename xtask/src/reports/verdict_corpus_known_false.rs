@@ -32,7 +32,7 @@ pub(crate) const KNOWN_FALSE_DIR: &str = "known-false";
 /// One accepted missed credit: an abstained row whose tests do discriminate
 /// the change. One `[[entry]]` block per row in the corpus's sorted
 /// `missed-credit.toml`, so PRs that move different rows touch different
-/// hunks and git merges them cleanly (#10222).
+/// hunks and git usually merges them (adjacent edits can still conflict) (#10222).
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct MissedCredit {
