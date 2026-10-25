@@ -16840,6 +16840,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/analysis/language/python/caplog_text.rs",
+  "crates/ripr/src/analysis/language/python/fixtures.rs",
   "crates/ripr/src/analysis/language/python/helper_assertions.rs",
   "crates/ripr/src/analysis/language/python/classify.rs",
   "crates/ripr/src/analysis/language/python/message_pin.rs",

@@ -632,3 +632,29 @@ fn given_an_aliased_fixture_overriding_caplog_then_the_logged_text_abstains() ->
     );
     Ok(())
 }
+
+#[test]
+fn given_an_alias_rebound_by_a_later_import_then_it_is_not_a_fixture_decorator()
+-> Result<(), String> {
+    // `fx` ends up bound to functools.cache, so `@fx def caplog` is no fixture.
+    let shadowed = "from pytest import fixture as fx\nfrom functools import cache as fx\n\n\n@fx\ndef caplog():\n    return Recorder()\n";
+    assert_eq!(
+        log_edit(&[
+            ("src/audit.py", AUDIT_PY),
+            ("tests/conftest.py", shadowed),
+            ("tests/test_audit.py", PINNED),
+        ])?,
+        (ExposureClass::Exposed, None)
+    );
+    // The pytest import coming last keeps the alias a fixture decorator.
+    let kept = "from functools import cache as fx\nfrom pytest import fixture as fx\n\n\n@fx\ndef caplog():\n    return Recorder()\n";
+    assert_eq!(
+        log_edit(&[
+            ("src/audit.py", AUDIT_PY),
+            ("tests/conftest.py", kept),
+            ("tests/test_audit.py", PINNED),
+        ])?,
+        ABSTAINS
+    );
+    Ok(())
+}

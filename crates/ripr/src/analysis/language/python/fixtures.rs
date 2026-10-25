@@ -85,6 +85,15 @@ fn fixture_aliases(imports: &[PythonImport]) -> Vec<String> {
             import.imported == "fixture"
                 && matches!(import.source_module.as_str(), "pytest" | "pytest_asyncio")
         })
+        // A later import that rebinds the same local name wins, so a shadowed
+        // alias is not trusted (fail closed, as before aliases were read).
+        .filter(|import| {
+            imports
+                .iter()
+                .rev()
+                .find(|other| other.alias == import.alias)
+                .is_some_and(|last| last == *import)
+        })
         .map(|import| import.alias.clone())
         .collect()
 }
