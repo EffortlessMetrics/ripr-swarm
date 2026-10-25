@@ -19,7 +19,9 @@ Start here:
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: this.misses += 1;
-  Missing discriminator: Related tests reach `recordMiss` with a strong oracle, but the TypeScript preview adapter does not recognise the shape of the changed line, so static evidence cannot tie an…
+  Missing discriminator: Related tests reach `recordMiss` with a strong oracle, but the TypeScript
+    preview adapter does not recognise the shape of the changed line, so static evidence cannot tie
+    an assertion to it
   Related test: tests/stats.test.ts:5 miss table (ripr could not confirm that this assertion observes the changed behavior)
   Next step — TypeScript preview advisory: add a test that exercises the changed behavior with an
     exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`); no actionable repair packet is
