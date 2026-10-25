@@ -64,3 +64,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_wrapper_boolean_return_discarded (5)
+
+Reason:
+RIPR-SPEC-0186: human limitation line now wraps instead of truncating after #10258; classification unchanged
+
+Command:
+`cargo xtask goldens bless rust_wrapper_boolean_return_discarded --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
