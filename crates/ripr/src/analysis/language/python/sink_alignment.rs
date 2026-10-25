@@ -239,11 +239,7 @@ pub(super) fn oracle_observes_changed_dict_element(
     changed_values: &[String],
 ) -> bool {
     // A whole-collection comparison (`== {...}` / `== [...]`) observes every element.
-    if oracle.contains("=={")
-        || oracle.contains("== {")
-        || oracle.contains("==[")
-        || oracle.contains("== [")
-    {
+    if oracle_compares_whole_collection(oracle) {
         return true;
     }
     // Observes a changed value literal (e.g. the new `9090` / `"failure"`), but
@@ -283,6 +279,91 @@ fn oracle_solely_subscripts_unchanged_dict_key(oracle: &str, changed_keys: &[Str
             .any(|key| oracle_subscripts_dict_key(oracle, key))
 }
 
+/// `text` with the contents of its quoted strings blanked out; keeps byte offsets so the
+/// caller can still index the original. Escapes inside strings are honoured.
+fn blank_quoted_strings(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for ch in text.chars() {
+        match quote {
+            Some(active) => {
+                let closes = !escaped && ch == active;
+                escaped = !escaped && ch == '\\';
+                if closes {
+                    quote = None;
+                    out.push(ch);
+                } else {
+                    out.extend(std::iter::repeat_n('_', ch.len_utf8()));
+                }
+            }
+            None => {
+                if ch == '"' || ch == '\'' {
+                    quote = Some(ch);
+                }
+                out.push(ch);
+            }
+        }
+    }
+    out
+}
+
+/// A whole-collection comparison (RIPR-SPEC-0238 rule 10): `<owner result> == {…}`
+/// or `== […]` where the display holds only literals (a display that subscripts,
+/// calls or `.get`s other data supplies no whole-output evidence) and the other
+/// operand is not itself a literal wrapper such as `list((10,))`.
+pub(super) fn oracle_compares_whole_collection(oracle: &str) -> bool {
+    let blanked = blank_quoted_strings(oracle);
+    blanked.match_indices("==").any(|(at, _)| {
+        let before = blanked[..at].chars().next_back();
+        if before.is_some_and(|c| matches!(c, '=' | '!' | '<' | '>')) {
+            return false;
+        }
+        let right = blanked[at + 2..].trim_start();
+        let Some(open) = right.chars().next().filter(|c| matches!(c, '{' | '[')) else {
+            return false;
+        };
+        let close = if open == '{' { '}' } else { ']' };
+        let mut depth = 0usize;
+        let Some(end) = right.char_indices().find_map(|(i, c)| {
+            if c == open || c == '{' || c == '[' {
+                depth += 1;
+            } else if c == close || c == '}' || c == ']' {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            None
+        }) else {
+            return false;
+        };
+        let display = &right[..=end];
+        let reads_other_data = display.contains('(')
+            || display.contains(".get")
+            || display.char_indices().any(|(i, c)| {
+                c == '['
+                    && display[..i].chars().next_back().is_some_and(|p| {
+                        p.is_alphanumeric() || matches!(p, '_' | ']' | ')' | '"' | '\'')
+                    })
+            });
+        let left = blanked[..at].trim_start();
+        let left = left.strip_prefix("assert").unwrap_or(left);
+        let mut residue = left.to_string();
+        for wrapper in ["frozenset", "sorted", "tuple", "list", "dict", "set"] {
+            residue = residue.replace(wrapper, "");
+        }
+        !reads_other_data && residue.chars().any(char::is_alphabetic)
+    })
+}
+
+/// Whether byte offset `start` of `text` lies inside a quoted string literal.
+fn inside_quoted_string(text: &str, start: usize) -> bool {
+    blank_quoted_strings(text)
+        .get(start..start + 1)
+        .is_some_and(|c| c == "_")
+}
+
 /// Whether the oracle contains the changed element's value as a WHOLE literal
 /// token (RIPR-SPEC-0238 rule 10): a number not adjacent to a digit, letter, `_`
 /// or `.` (so `80` is not found inside `8080`), a string as a complete quoted
@@ -315,7 +396,9 @@ pub(super) fn oracle_contains_value_literal(oracle: &str, value: &str) -> bool {
     oracle.match_indices(literal).any(|(start, found)| {
         let before = oracle[..start].chars().next_back();
         let after = oracle[start + found.len()..].chars().next();
-        !before.is_some_and(adjacent) && !after.is_some_and(adjacent)
+        !before.is_some_and(adjacent)
+            && !after.is_some_and(adjacent)
+            && !inside_quoted_string(oracle, start)
     })
 }
 
@@ -425,16 +508,12 @@ fn list_changed_indices_and_values(
 /// comparison. Conservative, mirroring [`oracle_observes_changed_dict_element`]: it
 /// returns `false` only for an oracle that observes purely a sibling index or an
 /// aggregate (`len(...)`).
-fn oracle_observes_changed_list_element(
+pub(super) fn oracle_observes_changed_list_element(
     oracle: &str,
     changed_indices: &[usize],
     changed_values: &[String],
 ) -> bool {
-    if oracle.contains("=={")
-        || oracle.contains("== {")
-        || oracle.contains("==[")
-        || oracle.contains("== [")
-    {
+    if oracle_compares_whole_collection(oracle) {
         return true;
     }
     for value in changed_values {

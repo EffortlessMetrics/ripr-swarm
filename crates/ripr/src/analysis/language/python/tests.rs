@@ -794,7 +794,10 @@ use super::bounded_read::{
     DEFAULT_PYTHON_MAX_WORKSPACE_READ_BYTES,
 };
 use super::owners_tests::{extract_owners, extract_tests};
-use super::sink_alignment::{enclosing_literal_pair, oracle_contains_value_literal};
+use super::sink_alignment::{
+    enclosing_literal_pair, oracle_compares_whole_collection, oracle_contains_value_literal,
+    oracle_observes_changed_dict_element, oracle_observes_changed_list_element,
+};
 use super::*;
 use std::path::{Path, PathBuf};
 
@@ -9248,4 +9251,100 @@ fn changed_value_is_observed_only_as_a_whole_literal_token() {
         "assert x == compute(a)",
         "compute(a)"
     ));
+}
+
+#[test]
+fn whole_collection_credit_needs_a_literal_display_compared_to_a_result() {
+    let dict_keys = vec!["high".to_string()];
+    let dict_values = vec!["80".to_string()];
+    let list_indices = vec![0usize];
+    let list_values = vec!["80".to_string()];
+    let unrelated_dict = "assert list((10,)) == [labels()['low']]";
+    let unrelated_list = "assert list((10,)) == [labels()[1]]";
+    assert!(!oracle_observes_changed_dict_element(
+        unrelated_dict,
+        &dict_keys,
+        &dict_values
+    ));
+    assert!(!oracle_observes_changed_list_element(
+        unrelated_list,
+        &list_indices,
+        &list_values
+    ));
+    // A display that reads other data, or a literal on both sides, is no whole-output compare.
+    assert!(!oracle_compares_whole_collection(
+        "assert labels() == {'low': labels()['low']}"
+    ));
+    assert!(!oracle_compares_whole_collection("assert [1] == [1]"));
+    assert!(!oracle_compares_whole_collection("assert x >= [1]"));
+    // Positives: a result compared with a literal display, with or without wrapper.
+    assert!(oracle_compares_whole_collection(
+        "assert labels() == {'high': 80, 'low': 10}"
+    ));
+    assert!(oracle_compares_whole_collection(
+        "assert list(staff()) == [80, 10]"
+    ));
+    assert!(oracle_compares_whole_collection(
+        "assert result=={'a': [1, 2]}"
+    ));
+}
+
+#[test]
+fn numeric_value_is_not_found_inside_a_quoted_string() {
+    assert!(!oracle_contains_value_literal(
+        "assert labels() is not None and str('80') == '80'",
+        "80"
+    ));
+    assert!(oracle_contains_value_literal(
+        "assert labels()['high'] == 80",
+        "80"
+    ));
+    assert!(oracle_contains_value_literal(
+        "assert labels()['high'] == -80",
+        "-80"
+    ));
+}
+
+#[test]
+fn unrelated_display_with_a_sibling_read_does_not_expose_a_multiline_change() -> Result<(), String>
+{
+    let dict = "def labels():\n    return {\n        \"high\": 80,\n        \"low\": 10,\n    }\n";
+    let class = multiline_literal_class(
+        dict,
+        3,
+        "        \"high\": 80,",
+        "        \"high\": 11,",
+        "assert list((10,)) == [labels()['low']]",
+        "labels",
+    )?;
+    assert_ne!(
+        class,
+        ExposureClass::Exposed,
+        "dict sibling in unrelated display"
+    );
+    let list = "def labels():\n    return [\n        80,\n        10,\n    ]\n";
+    let class = multiline_literal_class(
+        list,
+        3,
+        "        80,",
+        "        11,",
+        "assert list((10,)) == [labels()[1]]",
+        "labels",
+    )?;
+    assert_ne!(
+        class,
+        ExposureClass::Exposed,
+        "list sibling in unrelated display"
+    );
+    // Positive control: the owner result compared with the whole literal display.
+    let class = multiline_literal_class(
+        dict,
+        3,
+        "        \"high\": 80,",
+        "        \"high\": 11,",
+        "assert labels() == {'high': 80, 'low': 10}",
+        "labels",
+    )?;
+    assert_eq!(class, ExposureClass::Exposed);
+    Ok(())
 }
