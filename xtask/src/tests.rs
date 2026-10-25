@@ -12559,6 +12559,29 @@ fn traceability_fragment_extend_without_a_behavior_or_with_a_name_is_a_violation
 }
 
 #[test]
+fn scorecard_traceability_hash_changes_when_only_a_fragment_changes() -> Result<(), String> {
+    with_temp_cwd("scorecard-traceability-fragment-hash", |root| {
+        write(&root.join(".ripr/traceability.toml"), "# base\n");
+        let base = crate::evidence_quality::scorecard_traceability_input()?;
+
+        write(
+            &root.join(".ripr/traceability.d/one.toml"),
+            "[[extend]]\nid = \"RIPR-SPEC-0001\"\n",
+        );
+        let with_fragment = crate::evidence_quality::scorecard_traceability_input()?;
+        write(
+            &root.join(".ripr/traceability.d/one.toml"),
+            "[[extend]]\nid = \"RIPR-SPEC-0002\"\n",
+        );
+        let edited = crate::evidence_quality::scorecard_traceability_input()?;
+
+        assert_ne!(base.sha256, with_fragment.sha256);
+        assert_ne!(with_fragment.sha256, edited.sha256);
+        Ok(())
+    })
+}
+
+#[test]
 fn sorted_traceability_behavior_blocks_content_skips_unsafe_manifests() {
     let duplicate =
         "[[behavior]]\nid = \"RIPR-SPEC-0001\"\n\n[[behavior]]\nid = \"RIPR-SPEC-0001\"\n";
