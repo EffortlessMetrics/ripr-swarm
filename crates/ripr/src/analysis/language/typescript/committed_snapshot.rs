@@ -405,8 +405,8 @@ fn delegates_to_other_config(text: &str) -> bool {
         .any(|key| mentions_named_key(&text, key))
 }
 
-/// `text` with the contents of every quoted string that is a value (followed
-/// by `,` or `}`) read as spaces, so a label such as `displayName: "projects"` is not
+/// `text` with the contents of every quoted property value (`label: "x"`
+/// followed by `,` or `}`) read as spaces, so a label such as `displayName: "projects"` is not
 /// taken for a key (#10295). A string that is a key, a computed key, or a
 /// bracket member keeps its text. Unchanged when the scan cannot be sure of
 /// string boundaries (unterminated string or comment, or a template literal or a `/`,
@@ -417,6 +417,7 @@ fn blank_value_strings(text: &str) -> String {
     };
     let mut out = String::with_capacity(clean.len());
     let mut chars = clean.char_indices();
+    let mut previous = ' ';
     while let Some((open, ch)) = chars.next() {
         match ch {
             '"' | '\'' => {
@@ -437,7 +438,9 @@ fn blank_value_strings(text: &str) -> String {
                 let after = clean.get(close + 1..).unwrap_or_default();
                 out.push(ch);
                 let body = clean.get(open + 1..close).unwrap_or_default();
-                if skip_trivia(after).starts_with([',', '}']) {
+                // Only a property value (`label: "x"`): a string after `(`, `,`
+                // or `=` can be a dynamic key (`Object.defineProperty(c, 'root', ..)`).
+                if previous == ':' && skip_trivia(after).starts_with([',', '}']) {
                     out.extend(body.chars().flat_map(|c| {
                         let fill = if c.is_ascii() && is_line_terminator(c) {
                             c
@@ -450,12 +453,18 @@ fn blank_value_strings(text: &str) -> String {
                     out.push_str(body);
                 }
                 out.push(ch);
+                previous = ch;
             }
             // A template can hold quotes this scan would misread as a string.
             // So can a regex literal, and after comments are blanked a `/`
             // is a regex or a division this scan cannot tell apart.
             '`' | '/' => return text.to_string(),
-            c => out.push(c),
+            c => {
+                if !c.is_whitespace() {
+                    previous = c;
+                }
+                out.push(c);
+            }
         }
     }
     // Callers slice the result with offsets taken from `clean`.

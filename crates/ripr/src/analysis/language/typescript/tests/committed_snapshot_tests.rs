@@ -1736,6 +1736,14 @@ fn plain_inline_projects_keep_the_credit_and_every_other_spelling_refuses() -> R
             OracleStrength::Medium,
         ),
         (
+            "Object.defineProperty(module.exports, 'root', { value: './other' });",
+            OracleStrength::Medium,
+        ),
+        (
+            "const k = 'projects', v = 1; module.exports = { v };",
+            OracleStrength::Medium,
+        ),
+        (
             "module.exports = { projects: [{ displayName: \"projects\" }], projects: [\"./other\"] };",
             OracleStrength::Medium,
         ),
