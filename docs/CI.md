@@ -447,6 +447,7 @@ and single-platform CI was the root cause enabling both.
   logs and their captured exit statuses; it is evidence validation, not a test
   gate, and it fails the job when the evidence is missing or unusable.
 - **`Windows Advisory Shards`** (`windows-advisory-shards.yml`, manual `workflow_dispatch` only) runs the same workspace tests as four `cargo nextest --partition count:N/4` jobs plus a doctest job, each with its own log artifact and failure summary, so a Windows test failure is attributable to a shard without a 75-minute single step (#9272). It is advisory and does not replace the nightly lane.
+- **`Windows Watchdog Qualification`** (`windows-watchdog-qualification.yml`, manual `workflow_dispatch` only) extracts the shard workflow's shipped test step, shortens only its timer to 12 seconds and runs it against a native fixture process tree in three cells: mapped, a primary-only-kill mutation that must fail the descendant check, and forced-missing mapping. It checks root identity, primary reaping, descendant termination, an unowned sentinel and uploaded receipts. It qualifies only the shortened bound (#9272).
 - **Logs are redirected, not piped.** Each cargo step writes its log with a
   file redirect and replays it with `cat`. A `| tee` pipe stays open until
   every process holding its write end exits, so one test leaking a child kept
@@ -1149,6 +1150,22 @@ It uploads the JUnit XML as the `rust-junit` GitHub Actions artifact and uploads
 the same file to Codecov Test Analytics only when `CODECOV_TOKEN` is available
 on trusted runs. Fork pull requests still run tests and upload the artifact, but
 skip the Codecov test-results upload because repository secrets are unavailable.
+
+### Merge-ready Conflict Notice
+
+A `merge-ready` label on a PR that conflicts with its base starts no
+`routed-rust.yml` run, because GitHub creates no `pull_request` run without a
+test-merge ref (#9842, #9250).
+`.github/workflows/merge-ready-conflict-notice.yml` closes that silence. It runs
+on `pull_request_target: [labeled]` for the `merge-ready` label only, reads the
+PR's `mergeable_state` through the API (retrying while GitHub computes it), and
+for a `dirty` PR posts one comment per head SHA plus a failing
+`merge-ready conflict` commit status. A mergeable PR gets nothing from it, and a
+head or base branch that changed after the request is ignored. If mergeability is still uncomputed after the retries it warns and exits, and the label can be re-applied. The failing status is keyed to the head SHA, so it clears with the next push. The workflow checks out and runs
+no PR code, takes only the PR number, head SHA and base branch name as `env` values, uses no
+third-party actions, and holds job-level `pull-requests: write` and
+`statuses: write` only. It is a notice, not a required check; the author merges
+the base branch, resolves the conflict, and re-applies `merge-ready`.
 
 ### PR Staleness Watchdog
 

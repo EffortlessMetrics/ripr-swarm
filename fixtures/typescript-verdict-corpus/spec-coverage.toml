@@ -30,6 +30,12 @@
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
 floor = 152
 
+# Most abstained rows whose tests do catch the change (missed credit). A
+# regression fails `verdict-corpus check`; an improvement passes with a note
+# to lower this number (not a failure, so concurrent fixes do not collide).
+# Raising it is a reviewed edit with a reason.
+missed_credit_ceiling = 23
+
 # Operator grid and false-credit traps (verdict_corpus_grid.rs). `cell_floor`
 # is the count of covered operator-by-truth cells (7 operators x credited,
 # gap, partial); `trap_floor` the count of trap cases the tests cannot
@@ -725,3 +731,33 @@ reason = "Rust analyzer transfer rule over Rust syntax; a TypeScript case cannot
 id = "RIPR-SPEC-0159"
 scope = "out"
 reason = "Rust analyzer transfer rule over Rust syntax; a TypeScript case cannot label it"
+
+# Rust spec 0164
+[[spec]]
+id = "RIPR-SPEC-0164"
+scope = "out"
+reason = "Rust analyzer transfer rule over Rust syntax; a TypeScript case cannot label it"
+
+# Rust spec 0165
+[[spec]]
+id = "RIPR-SPEC-0165"
+scope = "out"
+reason = "Rust analyzer transfer rule over Rust syntax; a TypeScript case cannot label it"
+
+# Rust unsafe boundary probes
+[[spec]]
+id = "RIPR-SPEC-0168"
+scope = "out"
+reason = "Rust/Cargo analyzer behavior; a TypeScript case cannot label it"
+
+# Cargo path-dependency diff scope
+[[spec]]
+id = "RIPR-SPEC-0171"
+scope = "out"
+reason = "Rust/Cargo analyzer behavior; a TypeScript case cannot label it"
+
+# Cargo cross-crate dependency edges
+[[spec]]
+id = "RIPR-SPEC-0172"
+scope = "out"
+reason = "Rust/Cargo analyzer behavior; a TypeScript case cannot label it"

@@ -39,11 +39,14 @@ alone:
 - When the strongest related oracle (highest admitted strength rank) is
   already exact — `exact_value`, `exact_error_variant`,
   `whole_object_equality`, or `snapshot` — the family templates are not
-  emitted. The step names the test, states that the gap is not the assertion
-  shape, and prescribes the missing input: for `error_path`, an input that
-  executes the changed error arm with the exact variant or payload asserted;
-  for `return_value`, an input where the changed branch behaves differently
-  with the exact assertion kept. When the finding carries a missing
+  emitted. The step names the test. For `error_path`, it states that the gap
+  is not the assertion shape and prescribes an input that executes the changed
+  error arm with the exact variant or payload asserted. For `return_value`, an
+  exact assertion may observe an effect rather than the returned value: first
+  inspect whether the change can affect the return. Only if it can should the
+  step prescribe a separating input with an exact returned-value assertion.
+  Otherwise test the changed effect separately, without claiming that an input
+  can distinguish identical returns. When the finding carries a missing
   discriminator fact, the step appends it the way the predicate probe's
   evidence does (`Missing discriminator: \`...\``).
 - Only reach-establishing rows are eligible: the row's relation reason must
