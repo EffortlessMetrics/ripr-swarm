@@ -1,3 +1,4 @@
+use super::PythonFramework;
 use super::admission::{PythonAdmissionContext, PythonTestFunction, assertion_admission};
 use super::module_constants::{
     PythonModuleConstant, constants_visible_in_function, python_test_rebinding,
@@ -15,7 +16,7 @@ use super::{
 };
 use crate::domain::OwnerKind;
 use rustpython_parser::{
-    ast::{self, Expr, Ranged, Stmt},
+    ast::{self, Constant, Expr, Ranged, Stmt},
     text_size::TextRange,
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -76,6 +77,7 @@ pub(super) fn collect_owners_from_statements(
                     || class.name.to_string(),
                     |outer| format!("{outer}.{}", class.name),
                 );
+                let first = out.len();
                 collect_owners_from_statements(
                     file,
                     source,
@@ -85,6 +87,25 @@ pub(super) fn collect_owners_from_statements(
                     module_constants,
                     out,
                 );
+                // Class-level facts a dunder binding relies on (#9421): a class
+                // with decorators, a metaclass, odd body statements or a second
+                // definition of the same path may run another method than the
+                // one the owner names.
+                let duplicate = out[..first]
+                    .iter()
+                    .any(|owner| owner.class_path == class_path && owner.file == file);
+                let plain = !duplicate
+                    && class.decorator_list.is_empty()
+                    && class.keywords.is_empty()
+                    && class_body_is_plain(&class.body);
+                let no_bases = class.bases.is_empty();
+                for owner in out
+                    .iter_mut()
+                    .filter(|owner| owner.class_path == class_path && owner.file == file)
+                {
+                    owner.class_facts.plain = plain;
+                    owner.class_facts.no_bases = no_bases;
+                }
                 out.push(owner_from_class(
                     PythonOwnerContext {
                         file,
@@ -157,8 +178,18 @@ fn owner_from_function(
         .map(|class| format!("{}.{name}", innermost_class(class)))
         .unwrap_or_else(|| name.to_string());
     let route_paths = collect_static_route_paths(context.source, decorators);
+    let route_methods = collect_static_route_methods(context.source, decorators);
     let dynamic_route_decorators = collect_dynamic_route_decorators(context.source, decorators);
     let unplain_decorators = called_decorator_names(decorators);
+    let decorator_lines = decorators
+        .first()
+        .zip(decorators.last())
+        .map(|(first, last)| {
+            (
+                line_for_range_start(context.source, first.range()),
+                line_for_range_end(context.source, last.range()),
+            )
+        });
     let mut decorators = decorator_names;
     if is_async {
         decorators.push("async_def".to_string());
@@ -171,7 +202,11 @@ fn owner_from_function(
         &text_for_range(context.source, range),
         !decorators.is_empty() || is_async,
         binding_only,
-    );
+    )
+    .with_calls_own_name(super::module_callees::calls_own_name(
+        &text_for_range(context.source, range),
+        name,
+    ));
     let same_class_callees = super::same_class_callees::same_class_callees_from_body(
         body,
         super::same_class_callees::method_receiver_name(&parameters, &decorators),
@@ -192,8 +227,10 @@ fn owner_from_function(
         imports: context.imports.to_vec(),
         cli_receiver_names: collect_static_cli_receiver_names(context.source, context.imports),
         route_paths,
+        route_methods,
         dynamic_route_decorators,
         unplain_decorators,
+        decorator_lines,
         parameters,
         reexport_modules: Vec::new(),
         star_exported: false,
@@ -209,7 +246,52 @@ fn owner_from_function(
         module_callees,
         class_path: context.class_context.unwrap_or_default().to_string(),
         term_facts,
+        class_facts: super::related_tests::PythonClassFacts {
+            direct_statements: direct_expression_statements(context.source, body),
+            bound_names: super::module_constants::function_bound_names(
+                args,
+                body,
+                &text_for_range(context.source, range),
+            ),
+            ..Default::default()
+        },
     }
+}
+
+/// The trimmed text of each single-line expression statement written directly
+/// in a function body (not under an `if`, `try`, loop or `with`), so a changed
+/// line can be told apart from a guarded one (#9421).
+fn direct_expression_statements(source: &SourceText<'_>, body: &[Stmt]) -> Vec<String> {
+    body.iter()
+        .filter_map(|stmt| match stmt {
+            Stmt::Expr(expr) => Some(text_for_range(source, expr.range)),
+            Stmt::Assign(assign) => Some(text_for_range(source, assign.range)),
+            Stmt::AugAssign(assign) => Some(text_for_range(source, assign.range)),
+            _ => None,
+        })
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.contains('\n'))
+        .collect()
+}
+
+/// Whether the class body holds only method definitions, a docstring, `pass`
+/// and plain non-dunder attributes, so no dunder is assigned, regenerated or
+/// defined conditionally in it.
+fn class_body_is_plain(body: &[Stmt]) -> bool {
+    body.iter().all(|stmt| match stmt {
+        Stmt::FunctionDef(_) | Stmt::AsyncFunctionDef(_) | Stmt::Pass(_) | Stmt::ClassDef(_) => {
+            true
+        }
+        Stmt::Expr(expr) => matches!(expr.value.as_ref(), Expr::Constant(_)),
+        Stmt::Assign(assign) => assign
+            .targets
+            .iter()
+            .all(|target| matches!(target, Expr::Name(name) if !name.id.as_str().starts_with("__"))),
+        Stmt::AnnAssign(assign) => {
+            matches!(assign.target.as_ref(), Expr::Name(name) if !name.id.as_str().starts_with("__"))
+        }
+        _ => false,
+    })
 }
 
 /// Declared parameters in binding order: positional-only, then regular, then
@@ -258,8 +340,10 @@ fn owner_from_class(
         imports: context.imports.to_vec(),
         cli_receiver_names: collect_static_cli_receiver_names(context.source, context.imports),
         route_paths: collect_static_route_paths(context.source, decorators),
+        route_methods: collect_static_route_methods(context.source, decorators),
         dynamic_route_decorators: collect_dynamic_route_decorators(context.source, decorators),
         unplain_decorators: called_decorator_names(decorators),
+        decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         star_exported: false,
@@ -270,6 +354,7 @@ fn owner_from_class(
         module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
+        class_facts: Default::default(),
     }
 }
 
@@ -290,8 +375,10 @@ pub(super) fn module_owner(
         imports: imports.to_vec(),
         cli_receiver_names: collect_static_cli_receiver_names(source, imports),
         route_paths: Vec::new(),
+        route_methods: Vec::new(),
         dynamic_route_decorators: Vec::new(),
         unplain_decorators: Vec::new(),
+        decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         star_exported: false,
@@ -302,6 +389,7 @@ pub(super) fn module_owner(
         module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
+        class_facts: Default::default(),
     }
 }
 
@@ -368,16 +456,16 @@ pub(super) fn collect_tests_from_statements(
         match stmt {
             Stmt::FunctionDef(function) if function.name.as_str().starts_with("test") => {
                 let framework = if in_unittest_class {
-                    "unittest"
+                    PythonFramework::Unittest
                 } else {
-                    "pytest"
+                    PythonFramework::Pytest
                 };
                 let name = function.name.to_string();
                 let generated_inputs = super::hypothesis::given_parameter_names(
                     &function.args,
                     &function.decorator_list,
                 );
-                let direct_parametrized = if framework == "pytest" {
+                let direct_parametrized = if framework == PythonFramework::Pytest {
                     super::parametrize::direct_argnames(&function.decorator_list)
                 } else {
                     Vec::new()
@@ -397,7 +485,7 @@ pub(super) fn collect_tests_from_statements(
                 );
                 // pytest does not parametrize unittest methods; Hypothesis
                 // `@example` rows run under either framework.
-                let parametrize = (framework == "pytest")
+                let parametrize = (framework == PythonFramework::Pytest)
                     .then(|| parametrize_cases(source, &function.decorator_list))
                     .flatten()
                     .or_else(|| {
@@ -429,10 +517,15 @@ pub(super) fn collect_tests_from_statements(
                     imports,
                     decorators: decorator_names(&function.decorator_list),
                     activation_controls: super::test_activation::activation_controls(
-                        &decorator_names(&function.decorator_list),
+                        &function.decorator_list,
                         &definition_imports,
                         super::test_activation::DeclarationSite::Function,
-                    ),
+                    )
+                    .into_iter()
+                    .chain(super::test_activation::empty_parametrize_control(
+                        &function.decorator_list,
+                    ))
+                    .collect(),
                     fixtures,
                     setup_receivers: setup_receivers.clone(),
                     fixture_defs: Vec::new(),
@@ -444,6 +537,7 @@ pub(super) fn collect_tests_from_statements(
                     framework,
                     assertions,
                     assertion_admission,
+                    bare_sibling_modules: Vec::new(),
                     constant_rebinding: python_test_rebinding(
                         &function.args,
                         &function.body,
@@ -453,16 +547,16 @@ pub(super) fn collect_tests_from_statements(
             }
             Stmt::AsyncFunctionDef(function) if function.name.as_str().starts_with("test") => {
                 let framework = if in_unittest_class {
-                    "unittest"
+                    PythonFramework::Unittest
                 } else {
-                    "pytest"
+                    PythonFramework::Pytest
                 };
                 let name = function.name.to_string();
                 let generated_inputs = super::hypothesis::given_parameter_names(
                     &function.args,
                     &function.decorator_list,
                 );
-                let direct_parametrized = if framework == "pytest" {
+                let direct_parametrized = if framework == PythonFramework::Pytest {
                     super::parametrize::direct_argnames(&function.decorator_list)
                 } else {
                     Vec::new()
@@ -474,7 +568,7 @@ pub(super) fn collect_tests_from_statements(
                 let assertions = collect_assertions_from_statements(&function.body, source, false);
                 // pytest does not parametrize unittest methods; Hypothesis
                 // `@example` rows run under either framework.
-                let parametrize = (framework == "pytest")
+                let parametrize = (framework == PythonFramework::Pytest)
                     .then(|| parametrize_cases(source, &function.decorator_list))
                     .flatten()
                     .or_else(|| {
@@ -506,10 +600,15 @@ pub(super) fn collect_tests_from_statements(
                     imports,
                     decorators: decorator_names(&function.decorator_list),
                     activation_controls: super::test_activation::activation_controls(
-                        &decorator_names(&function.decorator_list),
+                        &function.decorator_list,
                         &definition_imports,
                         super::test_activation::DeclarationSite::Function,
-                    ),
+                    )
+                    .into_iter()
+                    .chain(super::test_activation::empty_parametrize_control(
+                        &function.decorator_list,
+                    ))
+                    .collect(),
                     fixtures,
                     setup_receivers: setup_receivers.clone(),
                     fixture_defs: Vec::new(),
@@ -521,6 +620,7 @@ pub(super) fn collect_tests_from_statements(
                     framework,
                     assertions,
                     assertion_admission,
+                    bare_sibling_modules: Vec::new(),
                     constant_rebinding: python_test_rebinding(
                         &function.args,
                         &function.body,
@@ -675,7 +775,7 @@ fn qualified_test_name(class_context: Option<&str>, name: &str) -> String {
         .unwrap_or_else(|| name.to_string())
 }
 
-fn fixture_parameter_names(args: &ast::Arguments, framework: &str) -> Vec<String> {
+fn fixture_parameter_names(args: &ast::Arguments, framework: PythonFramework) -> Vec<String> {
     let mut names: Vec<String> = args
         .posonlyargs
         .iter()
@@ -692,7 +792,7 @@ fn fixture_parameter_names(args: &ast::Arguments, framework: &str) -> Vec<String
     names.retain(|name| {
         name != "self"
             && name != "cls"
-            && (framework == "pytest" || !matches!(name.as_str(), "subTest"))
+            && (framework == PythonFramework::Pytest || !matches!(name.as_str(), "subTest"))
     });
     names.sort();
     names.dedup();
@@ -903,7 +1003,7 @@ impl<'a> LocalTestClasses<'a> {
                 })
                 .flat_map(|((_, class), imports)| {
                     super::test_activation::activation_controls(
-                        &decorator_names(&class.decorator_list),
+                        &class.decorator_list,
                         imports,
                         super::test_activation::DeclarationSite::Class,
                     )
@@ -1164,6 +1264,80 @@ fn collect_static_route_paths(source: &str, decorators: &[Expr]) -> Vec<String> 
             route_decorator_literal_argument(source, decorator, &name)
         })
         .collect()
+}
+
+/// The HTTP verbs each static route decorator accepts, index-aligned with
+/// `collect_static_route_paths`. A verb decorator (`@app.post`) names its own
+/// verb; a GET route also serves HEAD. `route` and `api_route` name verbs only
+/// through a literal `methods=[...]`; without one, or with a non-literal one,
+/// the entry is empty and the verb is unknown rather than guessed.
+fn collect_static_route_methods(source: &str, decorators: &[Expr]) -> Vec<Vec<String>> {
+    decorators
+        .iter()
+        .filter_map(|decorator| {
+            let name = expr_full_name(decorator)?;
+            if !is_static_route_decorator(&name) {
+                return None;
+            }
+            route_decorator_literal_argument(source, decorator, &name)?;
+            let verb = name.rsplit('.').next().unwrap_or_default();
+            Some(match verb {
+                "get" => vec!["get".to_string(), "head".to_string()],
+                "post" | "put" | "patch" | "delete" | "options" | "head" => {
+                    vec![verb.to_string()]
+                }
+                "route" | "api_route" => route_decorator_literal_methods(decorator),
+                _ => Vec::new(),
+            })
+        })
+        .collect()
+}
+
+/// Lowercase verbs from the decorator call's own `methods=[...]` /
+/// `methods=(...)` keyword, read from the parsed arguments so a `methods`
+/// inside another call's keywords, a string, or a comment is never mistaken
+/// for it. Empty (unknown) when the keyword is absent, when the call forwards
+/// `**kwargs`, or when the value is anything but a plain list or tuple of
+/// string constants.
+fn route_decorator_literal_methods(decorator: &Expr) -> Vec<String> {
+    let Expr::Call(call) = decorator else {
+        return Vec::new();
+    };
+    if call.keywords.iter().any(|keyword| keyword.arg.is_none()) {
+        return Vec::new();
+    }
+    let Some(keyword) = call.keywords.iter().find(|keyword| {
+        keyword
+            .arg
+            .as_ref()
+            .is_some_and(|arg| arg.as_str() == "methods")
+    }) else {
+        return Vec::new();
+    };
+    let elements = match &keyword.value {
+        Expr::List(list) => &list.elts,
+        Expr::Tuple(tuple) => &tuple.elts,
+        _ => return Vec::new(),
+    };
+    let mut verbs = Vec::new();
+    for element in elements {
+        match element {
+            Expr::Constant(constant) => match &constant.value {
+                Constant::Str(verb)
+                    if !verb.is_empty() && verb.bytes().all(|byte| byte.is_ascii_alphabetic()) =>
+                {
+                    verbs.push(verb.to_ascii_lowercase());
+                }
+                _ => return Vec::new(),
+            },
+            _ => return Vec::new(),
+        }
+    }
+    // A GET route also serves HEAD (Flask and Starlette add it).
+    if verbs.iter().any(|verb| verb == "get") && !verbs.iter().any(|verb| verb == "head") {
+        verbs.push("head".to_string());
+    }
+    verbs
 }
 
 fn collect_dynamic_route_decorators(source: &str, decorators: &[Expr]) -> Vec<String> {

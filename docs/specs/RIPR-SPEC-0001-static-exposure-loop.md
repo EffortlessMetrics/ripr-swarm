@@ -59,6 +59,17 @@ of the block carries a comment delimiter (`/*`, `*/`) or an odd number of `"`.
 Only `name: value,` field lines may cross an edited line, since they may move
 within their literal. Text is compared exactly apart from a trailing `\r`.
 
+A changed `struct`, `enum`, `union` or `trait` header that opens its body on the
+same line (`enum Operator<P, Q: Ord + Copy> {`, with any visibility or `unsafe`
+prefix) declares bounds and runs nothing, so it is one `static_unknown` probe
+like an `impl` header, never a `field_construction` probe: the generic bound
+only looks like a field `name: Type` (#9170). This holds only when the header
+has no expression or macro descendants: a const-generic default
+(`<const N: usize = { capacity() }>`), an array length call or a macro keeps
+its call probe. A one-line declaration whose body follows the `{` stays
+probed, and `union` is a header only before an identifier (`union = Bits {` is
+an expression).
+
 An equal-sized replacement with no retained long identifier token does not
 seed a second historical finding when an emitted candidate probe of the same
 family already represents that exact old line (#7807). Pairing uses the Git
@@ -83,8 +94,13 @@ A named field declared inside an enum variant, or a whole one-line variant with
 named fields, is likewise a type declaration (#8999): it stays one
 `static_unknown` probe, while a variant constructed in a body keeps
 `field_construction`. A discriminant, macro syntax or expression inside the
-variant, or a shared line, withholds that authority. Deleted-only struct and
-enum field declarations keep their removed-side lexical probe.
+variant, or a shared line, withholds that authority. A deleted-only struct or
+enum-variant field declaration gets the same authority on the reconstructed old
+source (#9183): the removed line must equal the old source line and sit wholly
+inside one field or variant declaration, and it then yields one `static_unknown`
+probe instead of a removed-side `field_construction`. A removed constructor in
+a body, discriminant, macro-typed field, shared line, or failed old-source
+parse keeps the lexical probe, and an edited field keeps its before/after pair.
 Real expressions on a shared line
 keep their existing parser-owned runtime probes. Comments, strings and macro
 token trees cannot establish declaration authority. Removed bounds require
@@ -463,6 +479,17 @@ The human report's "Why unknown" line for `infection_unknown` says the change
 "reaches a sink" only when the propagation stage is `yes`; otherwise it says
 no sink the change reaches was established.
 
+Radix-prefixed literal rule: a test argument or boundary operand written as a
+radix-prefixed integer (`0xFF`, `0XFF`, `0b1010`, `0o17`, optionally with a
+leading `-`, `_` separators, and a trailing type suffix that ends the literal)
+is read as one value spelled as written, never as its leading `0`. A literal
+input equals a boundary only when both spell the same literal, so `0x10`
+against a `0xFF` boundary is off the boundary (`weakly_exposed`), `0xFF`
+against `0xFF` stays at it, and a hex input is not credited against the
+decimal spelling `255`, the safe direction already taken for `1_000` versus
+`1000`. A radix marker with no valid digit after it (`0x`, `0xg`, `0b2`, `0o8`)
+keeps the earlier reading.
+
 Named-constant boundary example:
 
 ```rust
@@ -542,7 +569,7 @@ Fixture coverage:
 - `given_computed_argument_for_compared_parameter_then_boundary_is_unresolved_not_missing`
 - `given_literal_inputs_off_the_boundary_then_missing_boundary_is_still_reported`
 - `given_local_accumulator_boundary_then_boundary_is_unresolved_not_missing`
-- `given_length_of_string_input_boundary_then_boundary_is_unresolved_not_missing`
+- `given_length_of_string_input_boundary_then_boundary_is_observed_only_when_a_row_lands_on_it`
 - `unresolved_boundary_input_is_unknown_not_weak`
 - `computed_comparison_operand_is_not_its_contained_literal`
 - `given_constant_minus_offset_boundary_then_boundary_is_the_offset_value_not_the_offset`
@@ -598,6 +625,11 @@ Fixture coverage:
 - `given_inputs_off_the_same_file_constant_value_then_equality_boundary_names_its_value`
 - `given_argument_naming_a_declared_constant_then_equality_boundary_is_observed`
 - `given_constant_not_declared_in_owner_file_then_boundary_is_a_named_limitation`
+- `fixtures/radix_literal_boundary_off`
+- `fixtures/radix_literal_boundary_match`
+- `scalar_values_read_a_radix_prefixed_integer_as_one_literal`
+- `scalar_values_leave_non_radix_zero_prefixed_text_alone`
+- `scalar_values_radix_literal_spellings_never_collapse_to_zero`
 - unit coverage for local flow sink families: predicate-to-return,
   predicate-to-error, match-arm result, output field, event/outbound call,
   state write, persistence write, log message, configuration change, and
@@ -618,11 +650,26 @@ Fixture coverage:
 - `probes_for_file_keeps_lone_structural_line_hunks`
 - `probes_for_file_keeps_structural_line_closing_outside_block_in_mixed_run`
 - `lone_else_split_hunk_is_not_no_behavioral_candidates`
+- `multi_line_attribute_entries_seed_no_probe_but_the_same_text_as_code_does`
+- `attribute_continuation_lines_cover_the_span_and_fail_closed`
 - `an_identical_line_inside_a_replacement_block_seeds_no_probe`
 - `identical_line_suppression_is_fail_closed`
 - `identical_line_pairing_never_hides_reorders_or_block_moves`
 - `multiline_builder_chain_setup_row_is_dropped_beside_the_assertion`
 - `multiline_setup_row_stays_unless_it_is_a_bare_unwrap_chain_beside_an_assertion`
+- `keyword_probe_tokens_do_not_relate_tests_by_name`
+
+The entries of a multi-line `#![..]`/`#[..]` attribute (a lint list, a `cfg_attr`
+argument list) are attribute text, like the single-line form, and seed no probe
+on either diff side (#10089). The closing line counts only when nothing follows
+the bracket, and an unclosed attribute marks nothing.
+
+Related-test name tokens come from the changed expression's identifiers. A Rust
+keyword (`return`, `while`, `loop`, ...) is syntax and never a name token, and
+the substring fallback applies the same generic/common-word gate as the
+word-boundary path (#9172), so a test named `ready_return` or `wait_while` does
+not make an uncalled owner read `weakly_exposed`. Words inside string literals
+remain name tokens; that residual is tracked in #9172.
 
 ## Implementation Mapping
 

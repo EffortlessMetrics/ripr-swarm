@@ -132,27 +132,27 @@ schema. No registry or external dependency resolution.
 
 ## Acceptance Examples
 
-- Workspace `a <- b <- c` (path dependencies) plus unrelated `d`: a Draft
-  diff touching only `a/src/lib.rs` brings `b`'s and `c`'s package files
-  into scope; `d` stays out; a `Draft` finding for `a`'s changed owner may
-  name `b`'s integration test as related evidence. Expanding from `c`
-  (which nothing depends on) adds nothing.
-- The same workspace without `b`'s dependency edge: `b` stays out of scope.
-- A workspace whose manifest inventory cannot be parsed fully: the graph is
-  `limited`, connected edges still participate, and the disclosure names the
-  partial inventory.
-- A directory with no `Cargo.toml` at all: the graph is `unavailable`, the
-  expansion did not run, and the disclosure says the scope stays the changed
-  packages.
-- Crate `t` declares `[lib] path = "lib/core.rs"` and crate `u` path-depends
-  on `t`: a Draft diff touching only `t/lib/core.rs` (no heuristic package
-  root) attributes the file to `t`, brings `u`'s package files into scope,
-  and may name `u`'s integration test as related evidence; a custom target
-  inside a nested package attributes to that nested package, not `t`.
-- A diff deletes dependency directory `a` while `b` still declares
-  `a = { path = "../a" }`: the edge is `TargetMissing` and disconnected,
-  and the declared-target index still brings `b`'s package files into
-  scope.
+1. Workspace `a <- b <- c` (path dependencies) plus unrelated `d`: a Draft
+   diff touching only `a/src/lib.rs` brings `b`'s and `c`'s package files
+   into scope; `d` stays out; a `Draft` finding for `a`'s changed owner may
+   name `b`'s integration test as related evidence. Expanding from `c`
+   (which nothing depends on) adds nothing.
+2. The same workspace without `b`'s dependency edge: `b` stays out of scope.
+3. A workspace whose manifest inventory cannot be parsed fully: the graph is
+   `limited`, connected edges still participate, and the disclosure names the
+   partial inventory.
+4. A directory with no `Cargo.toml` at all: the graph is `unavailable`, the
+   expansion did not run, and the disclosure says the scope stays the changed
+   packages.
+5. Crate `t` declares `[lib] path = "lib/core.rs"` and crate `u` path-depends
+   on `t`: a Draft diff touching only `t/lib/core.rs` (no heuristic package
+   root) attributes the file to `t`, brings `u`'s package files into scope,
+   and may name `u`'s integration test as related evidence; a custom target
+   inside a nested package attributes to that nested package, not `t`.
+6. A diff deletes dependency directory `a` while `b` still declares
+   `a = { path = "../a" }`: the edge is `TargetMissing` and disconnected,
+   and the declared-target index still brings `b`'s package files into
+   scope.
 
 ## Test Mapping
 

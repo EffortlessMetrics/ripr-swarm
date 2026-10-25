@@ -1,5 +1,6 @@
 mod json_construction;
 mod retention_parity;
+mod shared_target_context;
 
 use super::*;
 use crate::analysis::facts::{FunctionItemFact, SourceRoleProvenance, SourceRoleProvenanceEdge};
@@ -68,6 +69,7 @@ fn index(files: &[(&str, &str)]) -> RustIndex {
         index.extend_tests(facts.tests.iter().cloned());
         index.insert_file_only(PathBuf::from(path), facts);
     }
+    crate::analysis::facts::compose_fixture_source_roles(&mut index, Path::new(""));
     index
 }
 
@@ -89,7 +91,25 @@ fn index_with_provenance(
         index.extend_tests(facts.tests.iter().cloned());
         index.insert_file_only(PathBuf::from(path), facts);
     }
+    fixture_execution_contexts(&mut index);
     index
+}
+
+/// Explicit authority for these closed synthetic fixture chains. Production
+/// never reconstructs complete execution ancestry from a representative DTO.
+fn fixture_execution_contexts(index: &mut RustIndex) {
+    let mut parents: BTreeMap<PathBuf, Vec<SourceRoleProvenanceEdge>> = BTreeMap::new();
+    for facts in index.files().values() {
+        for edge in &facts.role_provenance.edges {
+            if edge.kind == SourceRoleProvenanceEdgeKind::Module {
+                let entries = parents.entry(edge.child.clone()).or_default();
+                if !entries.contains(edge) {
+                    entries.push(edge.clone());
+                }
+            }
+        }
+    }
+    index.execution_module_parents = Some(parents);
 }
 
 /// One composed out-of-line `mod` edge.
@@ -4410,7 +4430,11 @@ fn shared_return_admission_uses_the_outer_invocation_identity() {
         "pretty_assertions::assert_eq!(weight(input), 12);",
         "similar_asserts :: assert_eq !(weight(input), 12);",
     ] {
-        assert!(is_admission_gated_assert_eq(assertion), "{assertion}");
+        assert_eq!(
+            OwnerPinSyntax::assertion_macro_name(assertion).as_deref(),
+            Some("assert_eq"),
+            "{assertion}"
+        );
     }
     for assertion in [
         "assert!({ assert_eq!(weight(input), 12); true });",
@@ -4419,8 +4443,21 @@ fn shared_return_admission_uses_the_outer_invocation_identity() {
         "pretty_assertions::nested::assert_eq!(weight(input), 12);",
         "matches!(value, Some(_));",
         "match value { _ => assert_eq!(weight(input), 12) }",
+        // A leading prefix token is not part of the macro path (#8927).
+        "if matches!(1, 2) { assert_eq!(weight(input), 12); }",
+        "if !cfg!(test) { assert_eq!(weight(input), 12); }",
+        "if cfg!(any()) { assert_eq!(weight(input), 12); }",
+        "if!cfg!(test) { assert_eq!(weight(input), 12); }",
+        "matches!(1, 2) && { assert_eq!(weight(input), 12); true };",
+        "!true && { assert_eq!(weight(input), 12); true };",
+        "if ::core::matches!(1, 2) { assert_eq!(weight(input), 12); }",
+        "while ::std::cfg!(any()) { assert_eq!(weight(input), 12); }",
     ] {
-        assert!(!is_admission_gated_assert_eq(assertion), "{assertion}");
+        assert_ne!(
+            OwnerPinSyntax::assertion_macro_name(assertion).as_deref(),
+            Some("assert_eq"),
+            "{assertion}"
+        );
     }
 }
 
@@ -4619,6 +4656,33 @@ fn a_std_qualified_assertion_is_admitted_unless_its_root_may_be_rebound() -> Res
 }
 
 #[test]
+fn owner_pin_refuses_a_test_whose_indexed_body_no_longer_matches_the_parsed_source()
+-> Result<(), String> {
+    let tests = "use demo::weight;\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    let index = index(&[(LIB, WEIGHT_LIB), (TESTS, tests)]);
+    let test = index
+        .tests()
+        .iter()
+        .find(|test| test.file == Path::new(TESTS))
+        .ok_or("fixture has no test")?;
+    let assertion = test.assertions.first().ok_or("fixture has no assertion")?;
+    let syntax = OwnerPinSyntax::default();
+    assert_eq!(syntax.refusal(test, assertion, &index), None);
+    // The same length, one byte different: the stored fingerprint must see it.
+    let mut stale = test.clone();
+    stale.body = stale.body.replacen("12", "13", 1).into();
+    assert_ne!(stale.body, test.body);
+    assert_eq!(
+        OwnerPinSyntax::default().refusal(&stale, assertion, &index),
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::StaleSource
+        )),
+        "a body differing from the parsed source must be refused as stale"
+    );
+    Ok(())
+}
+
+#[test]
 fn owner_pin_requires_test_item_ancestry_and_enabled_cfg() {
     for module in [
         "mod nested { #![cfg(any())] BODY }",
@@ -4712,6 +4776,7 @@ fn a_crate_local_site_another_crate_can_compile_stays_workspace_wide() {
         let mut facts = summarize_file(PathBuf::from(helper), shadow.to_string());
         facts.role_provenance.edges = edges;
         index.insert_file_only(PathBuf::from(helper), facts);
+        fixture_execution_contexts(&mut index);
         if include_target {
             index.include_targets.insert(PathBuf::from(helper));
         }
@@ -4905,6 +4970,7 @@ fn an_unresolvable_path_attribute_or_lexical_fallback_disables_root_routing() {
     let mut facts = summarize_file(PathBuf::from("src/other.rs"), String::new());
     facts.used_lexical_fallback = true;
     fallback.insert_file_only(PathBuf::from("src/other.rs"), facts);
+    fixture_execution_contexts(&mut fallback);
     assert_eq!(
         TargetRoots::new(&fallback).root(Path::new(TESTS), &fallback),
         None
@@ -7455,6 +7521,7 @@ fn analyzer_limit_refusals_are_limits_of_ripr_reading() {
         syntax(AssertionContextRefusal::UnidentifiedTest),
         syntax(AssertionContextRefusal::AsyncTest),
         syntax(AssertionContextRefusal::DuplicateSpelling),
+        syntax(AssertionContextRefusal::DuplicateSpellingOneRuns),
         syntax(AssertionContextRefusal::StaleSource),
         syntax(AssertionContextRefusal::TestAttribute(
             "#[cfg(any(feature = \"std\", not(no_core_net)))]".to_string(),
@@ -9908,6 +9975,7 @@ fn the_owners_library_name_roots_a_path_from_another_crate() -> Result<(), Strin
     let admitted = |lib: &str, tests: &str| {
         let mut index = index(&[(LIB, lib), (TESTS, tests)]);
         index.member_crates = crate::analysis::facts::member_crates::MemberCrates::new(&root);
+        fixture_execution_contexts(&mut index);
         let owner = owner(&index, "weight");
         let pin = OwnerReturnPin::establish(&return_probe(owner, "x * 3"), owner, &index);
         let syntax = OwnerPinSyntax::default();
@@ -10597,7 +10665,7 @@ fn test_crate_bindings_of_the_root_are_read_from_that_crate_only() {
     // reach the root only through a `use` or glob in the root, which the
     // root scan refuses. The same binding in the library's crate never
     // counts.
-    let helper = "tests/buf_tests/helper.rs";
+    let helper = "tests/helper.rs";
     let lib_binding = "mod demo_lib {}\npub fn weight(x: u32) -> u32 {\n    x * 3\n}\n";
     for (files, binds) in [
         (
@@ -10706,6 +10774,50 @@ fn an_err_return_guard_on_inequality_pins_its_assertion_twin() {
                 .all(|(text, admitted)| *admitted && text.starts_with(subject)),
             "{body}: {verdicts:?}"
         );
+    }
+}
+
+#[test]
+fn an_err_return_guard_on_a_negated_literal_matches_pins_its_assertion_twin() {
+    // RIPR-SPEC-0154 example 2 (#10121): `if !matches!(owner(..), v) {
+    // return Err(..) }` is `assert!(matches!(owner(..), v))`, which pins the
+    // owner's value like `assert_eq!(owner(..), v)` does.
+    let body = "    if !matches!(weight(4), 12) {\n        return Err(\"mismatch\".to_string());\n    }\n    Ok(())";
+    let subject = "if !matches!(weight(4), 12)";
+    let verdicts = weight_verdicts(&weight_test(" -> Result<(), String>", body), subject);
+    assert_eq!(verdicts.len(), 1, "{verdicts:?}");
+    assert!(
+        verdicts
+            .iter()
+            .all(|(text, admitted)| *admitted && text.starts_with(subject)),
+        "{verdicts:?}"
+    );
+}
+
+#[test]
+fn an_err_return_guard_on_a_matches_that_is_not_one_literal_pin_refuses() {
+    for (body, subject) in [
+        // An or-pattern, wildcard and binding pin no single value.
+        (
+            "    if !matches!(weight(4), 12 | 13) {\n        return Err(\"mismatch\".to_string());\n    }\n    Ok(())",
+            "if !matches!(weight(4), 12 | 13)",
+        ),
+        (
+            "    if !matches!(weight(4), _) {\n        return Err(\"mismatch\".to_string());\n    }\n    Ok(())",
+            "if !matches!(weight(4), _)",
+        ),
+        // A guarded pattern says nothing about the value alone.
+        (
+            "    if !matches!(weight(4), n if n > 1) {\n        return Err(\"mismatch\".to_string());\n    }\n    Ok(())",
+            "if !matches!(weight(4), n if n > 1)",
+        ),
+        // The scrutinee must be the owner call itself.
+        (
+            "    if !matches!(weight(4) + 1, 13) {\n        return Err(\"mismatch\".to_string());\n    }\n    Ok(())",
+            "if !matches!(weight(4) + 1, 13)",
+        ),
+    ] {
+        assert_not_pinned(&weight_test(" -> Result<(), String>", body), subject);
     }
 }
 
@@ -11293,6 +11405,7 @@ fn associated_function_pin_resolves_the_importing_crate_through_manifests() -> R
             index.insert_file_only(PathBuf::from(path), facts);
         }
         index.member_crates = crate::analysis::facts::member_crates::MemberCrates::new(&root);
+        crate::analysis::facts::compose_fixture_source_roles(&mut index, &root);
         let owner = index.functions().iter().find(|function| {
             function.name == "reading" && function.file == Path::new("meter/src/lib.rs")
         });
@@ -12149,6 +12262,10 @@ fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() -> Resu
         "use ::core::arch::x86::*;\n",
         "use core::{simd::*, mem};\n",
         "mod inner {\n    use std::collections::*;\n}\n",
+        // #9676: serde_core's facade. A path in a module resolves only against
+        // that module's own items, so a module named `core` beside the glob
+        // (here, the one holding it) does not shadow the standard root.
+        "mod lib {\n    mod core {\n        #[cfg(not(feature = \"std\"))]\n        pub use core::*;\n        #[cfg(feature = \"std\")]\n        pub use std::*;\n    }\n}\n",
     ] {
         assert_eq!(refusal_beside(sibling), None, "{sibling}");
     }
@@ -12170,6 +12287,16 @@ fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() -> Resu
         "mod core {}\nuse core::simd::prelude::*;\n",
         "extern crate other as std;\nuse std::io::prelude::*;\n",
         "use other as core;\nuse core::simd::prelude::*;\n",
+        // The module-local admission still refuses a binding in the glob's own
+        // module, and an item-position macro that may emit one.
+        "mod lib {\n    mod core {\n        mod std {}\n        pub use std::*;\n    }\n}\n",
+        "mod lib {\n    mod core {\n        use other as std;\n        pub use std::*;\n    }\n}\n",
+        "mod lib {\n    mod core {\n        mod core {}\n        pub use core::*;\n    }\n}\n",
+        "mod lib {\n    mod core {\n        emit!();\n        pub use core::*;\n    }\n}\n",
+        // A plain import that binds the root name, by path or by `{self}`,
+        // takes it over for the module.
+        "use other::std;\nuse std::io::prelude::*;\n",
+        "use other::std::{self};\nuse std::io::prelude::*;\n",
         // `alloc` has no manifest proof, so it stays a foreign glob.
         "use alloc::vec::*;\n",
     ] {
@@ -12218,9 +12345,10 @@ fn the_workspace_macro_scan_runs_in_line_on_a_pool_worker_and_fans_out_elsewhere
     let files: Vec<MacroScanFile<'_>> = likely.into_iter().chain(rest).collect();
     assert!(!files.is_empty(), "the scan needs files to map over");
     let resolved = |_: &Path, _: usize, _: &str| true;
+    let roots = TargetRoots::new(&index);
     let decision_of_scan = || {
         LAST_SCAN_FAN_OUT.with(|last| last.set(None));
-        scan_macro_sites(&files, &index, &resolved);
+        scan_macro_sites(&files, &index, &roots, &resolved);
         LAST_SCAN_FAN_OUT.with(std::cell::Cell::get)
     };
 

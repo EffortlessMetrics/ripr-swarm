@@ -88,6 +88,40 @@ fn corpus_covers_every_issue_required_shape() -> TestResult {
     Ok(())
 }
 
+/// `ripr` reports every generated skip under one limitation wording, so the
+/// harness cannot read an exclusion's cause from it. It attributes the cause by
+/// experiment instead: a file is only credited as excluded by the configured
+/// pattern if the same path is analyzed under a nonmatching pattern, which rules
+/// out a naming convention or generator header as the cause.
+#[test]
+fn every_generated_exclusion_is_paired_with_an_analyzed_run_of_the_same_path() -> TestResult {
+    let cases = all_cases();
+    let analyzed: BTreeSet<&str> = cases
+        .iter()
+        .filter(|case| matches!(case.expect, Expect::GeneratedNotExcluded))
+        .map(|case| case.changed.as_str())
+        .collect();
+    let excluded: Vec<&str> = cases
+        .iter()
+        .filter(|case| matches!(case.expect, Expect::GeneratedExcluded))
+        .map(|case| case.changed.as_str())
+        .collect();
+    if excluded.is_empty() {
+        return Err("corpus has no generated-exclusion row".to_string());
+    }
+    let unpaired: Vec<&str> = excluded
+        .into_iter()
+        .filter(|path| !analyzed.contains(path))
+        .collect();
+    if unpaired.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "generated exclusions with no analyzed run of the same path: {unpaired:?}"
+        ))
+    }
+}
+
 #[test]
 fn rust_cases_exercise_both_routes_and_the_pilot_reads_an_artifact() -> TestResult {
     let check = case_named("rust-nested-blocks-over-budget.check")?;
@@ -465,6 +499,94 @@ fn rust_check_requires_the_producer_failure_limitation_naming_the_declined_file(
 }
 
 #[test]
+fn glob_normalization_rows_pin_both_consumers_and_reject_opposite_results() -> TestResult {
+    for (id, pattern, matches) in [
+        ("leading-dot-segment", "./src/lib.rs", true),
+        ("inner-dot-segment", "src/./lib.rs", true),
+        ("empty-segment", "src//lib.rs", true),
+        ("normalized-nonmatch", "src/./other.rs", false),
+    ] {
+        for (consumer, config_path, config_key) in [
+            (
+                "suppression",
+                super::corpus::SUPPRESSION_POLICY_FILE,
+                "path",
+            ),
+            ("generated", "ripr.toml", "generated_file_patterns"),
+        ] {
+            let case = case_named(&format!("glob-{consumer}-{id}"))?;
+            if case.changed != "src/lib.rs" || case.route != Route::Check {
+                return Err(format!(
+                    "{} does not exercise the retained check path",
+                    case.id
+                ));
+            }
+            let config = case
+                .files
+                .iter()
+                .find(|(path, _)| path == config_path)
+                .ok_or_else(|| format!("{} has no consumer config", case.id))?;
+            let config: toml::Value =
+                toml::from_str(std::str::from_utf8(&config.1).map_err(|error| error.to_string())?)
+                    .map_err(|error| error.to_string())?;
+            let (configured, expected, matched, unmatched) = if consumer == "suppression" {
+                (
+                    config.get("suppressions").and_then(|value| value.get(0))
+                        .and_then(|value| value.get(config_key)).and_then(toml::Value::as_str),
+                    matches!(case.expect, Expect::GlobMatch),
+                    serde_json::json!({
+                        "findings": [{"canonical_gap": {"file": case.changed}, "suppressed": true, "suppressed_by": "qualification"}],
+                        "suppression_policy": {"suppressed": 1}, "summary": {"suppressed_by_policy": 1},
+                        "analysis_outcome": {"analysis_complete": true}
+                    }).to_string(),
+                    check_json(&[&case.changed], "", true),
+                )
+            } else {
+                (
+                    config
+                        .get("languages")
+                        .and_then(|value| value.get("rust"))
+                        .and_then(|value| value.get(config_key))
+                        .and_then(|value| value.get(0))
+                        .and_then(toml::Value::as_str),
+                    matches!(case.expect, Expect::GeneratedExcluded),
+                    check_json(
+                        &[],
+                        &python_limitation(
+                            &case.changed,
+                            "intentionally skipped",
+                            "language_scope_unsupported",
+                        ),
+                        false,
+                    ),
+                    check_json(&[&case.changed], "", true),
+                )
+            };
+            if configured != Some(pattern) || expected != matches {
+                return Err(format!(
+                    "{} changed its literal pattern or expectation",
+                    case.id
+                ));
+            }
+            let (good, wrong) = if matches {
+                (&matched, &unmatched)
+            } else {
+                (&unmatched, &matched)
+            };
+            if !assess(&case, &observe(good, "", None)).result.is_pass()
+                || assess(&case, &observe(wrong, "", None)).result.is_pass()
+            {
+                return Err(format!(
+                    "{} accepts the wrong consumer disposition",
+                    case.id
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn glob_rows_cannot_pass_by_suppressing_or_excluding_silently() -> TestResult {
     let nonmatch = case_named("glob-suppression-many-star-nonmatch")?;
     let visible = format!(
@@ -520,6 +642,60 @@ fn the_commit_in_a_version_line_binds_a_build_manifest() -> TestResult {
     }
     if version_commit("ripr 0.11.0").is_some() || version_commit("ripr (").is_some() {
         return Err("a version without a commit binds nothing".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn the_candidate_manifest_reader_agrees_with_the_admitted_live_head_manifest() -> TestResult {
+    use super::candidate_manifest::{candidate_sha, parse_candidate_sha};
+    use crate::reports::release::candidate_harness::live_head::LiveHeadSnapshot;
+    use crate::reports::release::candidate_harness::live_head::tests::Fixture;
+
+    // The real #1609 DTO admits this manifest; the harness must read the same
+    // commit from the same bytes, so a schema move cannot split the two.
+    let fixture = Fixture::new()?;
+    let approved = fixture.write()?;
+    let admitted = LiveHeadSnapshot::admit(
+        &fixture.root,
+        "0.11.0",
+        std::path::Path::new("manifest.json"),
+        &approved,
+    )?;
+    let read = candidate_sha(&fixture.root.join("manifest.json"))?;
+    if read != admitted.candidate_sha()? {
+        return Err(format!(
+            "harness read {read}, admitted manifest names {}",
+            admitted.candidate_sha()?
+        ));
+    }
+
+    // The committed template selects no candidate, so it must not satisfy the
+    // harness's candidate binding.
+    let template = include_str!("../../../docs/release-candidates/0.11.0-live-head-selection.json");
+    if parse_candidate_sha(template).is_ok() {
+        return Err("the unfilled template must not name a candidate".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn the_candidate_manifest_reader_takes_only_a_full_commit() -> TestResult {
+    use super::candidate_manifest::parse_candidate_sha;
+    let sha = "c7d6b397c5ea11d121800e32af890856f252d097";
+    let good = format!("{{\"schema\":\"x\",\"candidate\":{{\"sha\":\"{sha}\",\"tree\":\"t\"}}}}");
+    if parse_candidate_sha(&good)? != sha {
+        return Err("a full commit must be read back".to_string());
+    }
+    for bad in [
+        "{}",
+        "{\"candidate\":{\"sha\":\"c7d6b397\"}}",
+        "{\"candidate\":{\"sha\":\"zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}}",
+        "not json",
+    ] {
+        if parse_candidate_sha(bad).is_ok() {
+            return Err(format!("`{bad}` must be refused"));
+        }
     }
     Ok(())
 }
@@ -1089,6 +1265,29 @@ mod unix_stubs {
     }
 
     #[test]
+    fn a_flooding_stub_is_an_instrument_failure_naming_the_stream() -> TestResult {
+        let root = scratch("flood")?;
+        let binary = stub(
+            &root,
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'ripr 0.0.0 (stub)'; exit 0; fi\nhead -c 20000000 /dev/zero\n",
+        )?;
+        let options = stub_options(&root, binary);
+        let packet = build_packet(&options)?;
+        let _ = fs::remove_dir_all(&root);
+        if packet.rows.is_empty()
+            || packet.rows.iter().any(|row| {
+                row.result != RowResult::InstrumentFailure
+                    || !row.detail.contains("stdout exceeds its")
+            })
+        {
+            return Err(
+                "every row of a stdout-flooding binary must be an instrument failure".to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn a_binary_with_the_wrong_digest_is_refused_before_any_row_runs() -> TestResult {
         let root = scratch("digest")?;
         let binary = stub(
@@ -1121,8 +1320,10 @@ mod unix_stubs {
             != [
                 "execution-scrubbed-path",
                 "execution-owned-cwd",
+                "execution-decoy-repository",
                 "execution-stale-artifact",
                 "execution-snapshot-isolation",
+                "execution-cleanup-failure",
             ]
         {
             return Err(format!("unexpected execution controls: {ids:?}"));
@@ -1347,5 +1548,18 @@ mod unix_stubs {
             }
         }
         Ok(())
+    }
+}
+
+#[test]
+fn the_child_never_inherits_a_variable_that_redirects_git() {
+    // The parent environment cannot be set here (`unsafe` is forbidden), so this
+    // pins what `launch` hands the runner to remove, whatever the caller exports.
+    let removed = super::exec::removed_env();
+    for name in ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"] {
+        assert!(
+            removed.iter().any(|removed| removed == name),
+            "{name} must be removed from every child"
+        );
     }
 }

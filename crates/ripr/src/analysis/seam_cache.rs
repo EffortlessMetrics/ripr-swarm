@@ -53,6 +53,7 @@ use super::seam_classification::ClassifiedSeam;
 #[cfg(test)]
 use super::seam_classification::SeamGripClassCounts;
 use super::seam_inventory::{SeamLimitSource, repo_exposure_seam_limit};
+use super::syntax::RustModuleTreeScan;
 use super::test_grip_evidence::RelatedTestGrip;
 use super::test_grip_evidence::shared_grips::SharedGrips;
 use crate::config::{
@@ -60,7 +61,7 @@ use crate::config::{
     TYPESCRIPT_SOURCE_DIR_MARKERS, source_dir_contains_detectable_python,
     source_dir_contains_detectable_typescript,
 };
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
@@ -90,6 +91,8 @@ cache_layers! {
     CompactClassifiedSeamsSharded => "repo-compact-classified-seams-sharded",
     CorpusFingerprint => "repo-corpus-fingerprint",
     FileFacts => "repo-file-facts",
+    ModuleTreeScans => "repo-module-tree-scans",
+    ScopedClassifiedSeams => "repo-scoped-classified-seams",
     // Test-only producer: `RepoSeamCountCache` is constructed only under
     // `#[cfg(test)]`. It stays registered so `cache clear` still removes
     // count caches left by earlier builds and test runs.
@@ -147,6 +150,8 @@ pub(crate) fn production_entry_dirs(base: &Path) -> Vec<(PathBuf, bool)> {
     );
     dirs.push(RepoCorpusFingerprintCache::at_base(base).entry_dir());
     dirs.push(RepoFileFactCache::at_base(base).entry_dir());
+    dirs.push(RepoModuleTreeScanCache::at_base(base).entry_dir());
+    dirs.push(RepoScopedInventoryCache::at_base(base).entry_dir());
     dirs
 }
 
@@ -483,7 +488,29 @@ pub(crate) struct CachedSeamLimitInfo {
 /// and checked by a collect-and-compare test is withheld as
 /// `rust_caller_loop_selector_unresolved` (RIPR-SPEC-0240, #5503). Old entries
 /// keep the weak gap.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.92";
+/// `1.93`: a write-only `Display::fmt` pinned by an exact `to_string()`
+/// assertion is credited (RIPR-SPEC-0297, #9608). Old entries keep the weak gap.
+/// `1.94`: a closure tail pinned on a helper-built receiver and a field of a
+/// hand-written recording double are withheld as
+/// `rust_framework_oracle_unresolved` (RIPR-SPEC-0240, #9609, #9610). Old
+/// entries keep the weak gap.
+/// `1.95`: a same-file assertion wrapper beside a proximity-only oracle names
+/// `rust_macro_wrapped_assertion_unresolved` (RIPR-SPEC-0120, #7089). Old
+/// entries keep the weak gap.
+/// `1.96`: an exact pin on a closure tail, returned-receiver effect or
+/// let-else exit withholds the gap under `rust_pinned_shape_unresolved`
+/// (#9440). Old entries keep it weakly exposed.
+/// `1.97`: effect-family assertions share execution admission (#8927). Old
+/// entries credit an assertion that provably never runs.
+/// `1.98`: safe typed function-pointer calls retain reach and can pin a
+/// scalar owner return (RIPR-SPEC-0115/0197, #9478). Old entries lack the pin.
+/// `1.99`: a one-line `else if` ladder tail flows its first arm to the
+/// returned value (#9630). Old entries keep the unknown propagation.
+/// `1.100`: arms that return the first arm's value leave the first condition
+/// without a returned-value sink (#9843). Old entries keep the exposed verdict.
+/// `1.101`: a same-file `macro_rules!` test table indexes one generated test
+/// per row (#6925). Old entries read the table's owner as unreached.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.101";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -622,7 +649,16 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.92";
 /// `0.97`: same spawned-task assertion pins as full `1.90`.
 /// `0.98`: same skip-guarded table rows as full `1.91`.
 /// `0.99`: same caller-loop selector limit as full `1.92`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.99";
+/// `0.100`: same Display string pin as full `1.93`.
+/// `0.101`: same fixture-receiver and recording-double limits as full `1.94`.
+/// `0.102`: same local-macro wrapper limit as full `1.95`.
+/// `0.103`: same pinned-shape limit as full `1.96` (#9440).
+/// `0.104`: same effect-assertion execution admission as full `1.97` (#8927).
+/// `0.105`: same typed function-pointer pins as full `1.98` (#9478).
+/// `0.106`: same one-line ladder tail as full `1.99`.
+/// `0.107`: same equal-arm sink limit as full `1.100`.
+/// `0.108`: same macro table tests as full `1.101`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.108";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -763,7 +799,16 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.99";
 /// `0.97`: same spawned-task assertion pins as full `1.90`.
 /// `0.98`: same skip-guarded table rows as full `1.91`.
 /// `0.99`: same caller-loop selector limit as full `1.92`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.99";
+/// `0.100`: same Display string pin as full `1.93`.
+/// `0.101`: same fixture-receiver and recording-double limits as full `1.94`.
+/// `0.102`: same local-macro wrapper limit as full `1.95`.
+/// `0.103`: same pinned-shape limit as full `1.96` (#9440).
+/// `0.104`: same effect-assertion execution admission as full `1.97` (#8927).
+/// `0.105`: same typed function-pointer pins as full `1.98` (#9478).
+/// `0.106`: same one-line ladder tail as full `1.99`.
+/// `0.107`: same equal-arm sink limit as full `1.100`.
+/// `0.108`: same macro table tests as full `1.101`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.108";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -948,7 +993,8 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// alias (#8388); `1.43` candidates omit it.
 /// `1.45`: oracle facts drop statements that never run (RIPR-SPEC-0231
 /// rule 8, #7638); `1.44` facts still credit them.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.45";
+/// `1.46`: call facts retain safe typed function-pointer aliases (#9478).
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.46";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -970,8 +1016,16 @@ const SHARDED_ENVELOPE_DIGEST_DOMAIN: &str = "ripr-cache:ShardedCacheEnvelope:v1
 const SHARDED_MANIFEST_DIGEST_DOMAIN: &str = "ripr-cache:ShardedCacheManifest:v1";
 
 mod export;
+mod scoped_inventory;
+#[cfg(test)]
+mod semantic_identity_tests;
 mod store;
 pub(crate) use export::export_current;
+#[cfg(test)]
+pub(crate) use scoped_inventory::SCOPED_INVENTORY_CACHE_SCHEMA_VERSION;
+pub(crate) use scoped_inventory::{
+    PersistedScopedInventory, PersistedSeamLimit, RepoScopedInventoryCache,
+};
 
 /// Environment variable that relocates the cache base directory. When set
 /// to a non-empty path, all cache reads and writes use that path as the
@@ -1222,7 +1276,7 @@ fn classified_seam_cache_encoded_shard_ceiling_from_env(
 
 /// Aggregate cache key — every field that, when changed, must invalidate
 /// the workspace-level classified seam cache.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub(crate) struct RepoSeamCacheKey {
     pub(crate) schema_version: String,
     pub(crate) analyzer_version: String,
@@ -1843,6 +1897,145 @@ impl RepoCorpusFingerprintCache {
 
     fn entry_path(&self, fingerprint: &str) -> PathBuf {
         self.dir.join(format!("{fingerprint}.json"))
+    }
+}
+
+/// Schema generation of the persisted module-tree scan bundle.
+pub(crate) const MODULE_TREE_SCAN_CACHE_SCHEMA_VERSION: &str = "0.1";
+
+/// Most scans one bundle keeps. A workspace holds a few thousand Rust files;
+/// the bound stops a long-lived cache directory from growing with every
+/// edit it ever saw.
+pub(crate) const MODULE_TREE_SCAN_CACHE_MAX_ENTRIES: usize = 50_000;
+
+/// Key a module-tree scan is stored under: the file-fact cache's content
+/// hash plus the byte length of the exact text scanned (#9794).
+pub(crate) fn module_tree_scan_key(text: &str) -> String {
+    format!("{}-{}", hash_bytes(text.as_bytes()), text.len())
+}
+
+/// On-disk bundle of module-tree scans, one per distinct source text. A scan
+/// is a pure function of its text, so entries are valid for any workspace
+/// and are keyed by content alone.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ModuleTreeScanEnvelope {
+    #[serde(default, skip_serializing)]
+    payload_digest: Option<String>,
+    module_tree_scan_cache_schema_version: String,
+    analyzer_version: String,
+    scans: BTreeMap<String, RustModuleTreeScan>,
+}
+
+impl ModuleTreeScanEnvelope {
+    fn expected_digest(&self) -> Result<String, String> {
+        semantic_body_digest("ripr-cache:ModuleTreeScanEnvelope:v1", self)
+    }
+    fn validate_integrity(&self) -> Result<(), String> {
+        let expected = self.expected_digest()?;
+        if self.payload_digest.as_deref() == Some(expected.as_str()) {
+            Ok(())
+        } else {
+            Err("missing or mismatching semantic payload digest".to_owned())
+        }
+    }
+}
+
+/// Persists the module-graph walk's per-file scans between runs so a warm
+/// check skips the parse that produced them. Layout:
+///
+/// ```text
+/// {cache_base}/repo-module-tree-scans/{schema_version}/scans.json
+/// ```
+///
+/// Every failure (untrusted base, unreadable, corrupt, other build) reads as
+/// an empty bundle and the walk scans from source exactly as before.
+pub(crate) struct RepoModuleTreeScanCache {
+    dir: PathBuf,
+    base: PathBuf,
+}
+
+impl RepoModuleTreeScanCache {
+    pub(crate) fn at(workspace_root: &Path) -> Self {
+        let dir = cache_layer_dir(workspace_root, CacheLayer::ModuleTreeScans)
+            .join(MODULE_TREE_SCAN_CACHE_SCHEMA_VERSION);
+        let base = dir
+            .ancestors()
+            .nth(2)
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| dir.clone());
+        Self { dir, base }
+    }
+
+    /// Construct at an already resolved cache `base` (doctor's probe list).
+    fn at_base(base: &Path) -> Self {
+        Self {
+            dir: base
+                .join(CacheLayer::ModuleTreeScans.name())
+                .join(MODULE_TREE_SCAN_CACHE_SCHEMA_VERSION),
+            base: base.to_path_buf(),
+        }
+    }
+
+    /// The entry directory this cache writes into; `store` creates no
+    /// subdirectory, hence `false`.
+    pub(crate) fn entry_dir(&self) -> (PathBuf, bool) {
+        (self.dir.clone(), false)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn at_dir(dir: PathBuf) -> Self {
+        Self {
+            base: dir.clone(),
+            dir,
+        }
+    }
+
+    fn entry_path(&self) -> PathBuf {
+        self.dir.join("scans.json")
+    }
+
+    /// The stored scans, or none when the bundle is absent, unusable, from
+    /// another build or fails its integrity check.
+    pub(crate) fn load(&self) -> BTreeMap<String, RustModuleTreeScan> {
+        if cache_dir_not_a_directory_reason(&self.base)
+            .or_else(|| cache_base_untrusted_reason(&self.base))
+            .is_some()
+        {
+            return BTreeMap::new();
+        }
+        let Ok(bytes) = std::fs::read(self.entry_path()) else {
+            return BTreeMap::new();
+        };
+        let Ok(envelope) = serde_json::from_slice::<ModuleTreeScanEnvelope>(&bytes) else {
+            return BTreeMap::new();
+        };
+        if envelope.module_tree_scan_cache_schema_version != MODULE_TREE_SCAN_CACHE_SCHEMA_VERSION
+            || envelope.analyzer_version != crate::build_identity::cache_identity()
+            || envelope.validate_integrity().is_err()
+        {
+            return BTreeMap::new();
+        }
+        envelope.scans
+    }
+
+    /// Replaces the bundle with `scans`, atomically.
+    pub(crate) fn store(&self, scans: &BTreeMap<String, RustModuleTreeScan>) -> Result<(), String> {
+        if let Some(reason) = cache_dir_not_a_directory_reason(&self.base)
+            .or_else(|| cache_base_untrusted_reason(&self.base))
+        {
+            return Err(reason);
+        }
+        std::fs::create_dir_all(&self.dir)
+            .map_err(|err| format!("create module tree scan cache dir failed: {err}"))?;
+        let envelope = ModuleTreeScanEnvelope {
+            payload_digest: None,
+            module_tree_scan_cache_schema_version: MODULE_TREE_SCAN_CACHE_SCHEMA_VERSION
+                .to_string(),
+            analyzer_version: crate::build_identity::cache_identity().to_string(),
+            scans: scans.clone(),
+        };
+        let bytes = encode_integrity_body(&envelope, envelope.expected_digest()?)?;
+        crate::atomic_file::write_cache(&self.entry_path(), &bytes, "module tree scan cache")
     }
 }
 
@@ -4434,7 +4627,9 @@ mod tests {
         let compact = RepoSeamFactCache::at_compact_classified(root);
         let corpus = RepoCorpusFingerprintCache::at(root);
         let files = RepoFileFactCache::at(root);
+        let scans = RepoModuleTreeScanCache::at(root);
         let counts = RepoSeamCountCache::at(root);
+        let scoped = RepoScopedInventoryCache::at(root);
         let produced = [
             &full.dir,
             &full.sharded_dir,
@@ -4442,7 +4637,9 @@ mod tests {
             &compact.sharded_dir,
             &corpus.dir,
             &files.dir,
+            &scans.dir,
             &counts.dir,
+            &scoped.dir,
         ];
         let actual: BTreeSet<_> = produced
             .into_iter()
@@ -4604,7 +4801,8 @@ mod tests {
         // 1.41 -> 1.42: macro-body binding candidates (#5991).
         // 1.43 -> 1.44: `extern crate x as std` binding candidates (#8388).
         // 1.44 -> 1.45: never-executed oracle statements dropped (#7638).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.45");
+        // 1.45 -> 1.46: typed function-pointer alias facts (#9478).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.46");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -4722,7 +4920,16 @@ mod tests {
         // 1.89 -> 1.90: joined `tokio::spawn` assertions pin the owner (RIPR-SPEC-0197).
         // 1.90 -> 1.91: a literal skip list lends the rows its guard lets through (RIPR-SPEC-0229).
         // 1.91 -> 1.92: caller-loop selector limit (RIPR-SPEC-0240, #5503).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.92");
+        // 1.92 -> 1.93: write-only `Display::fmt` pinned by `to_string()` (RIPR-SPEC-0297, #9608).
+        // 1.93 -> 1.94: fixture-receiver and recording-double limits (RIPR-SPEC-0240, #9609, #9610).
+        // 1.94 -> 1.95: local macro wrapper beside a proximity oracle (RIPR-SPEC-0120, #7089).
+        // 1.95 -> 1.96: pinned-shape limit (RIPR-SPEC-0240, #9440).
+        // 1.96 -> 1.97: effect assertions require execution admission (#8927).
+        // 1.97 -> 1.98: typed function-pointer owner pins (#9478).
+        // 1.98 -> 1.99: one-line `else if` ladder tail (#9630).
+        // 1.99 -> 1.100: equal-valued arms leave the first condition without a sink (#9843).
+        // 1.100 -> 1.101: macro_rules! test tables index one test per row (#6925).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.101");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4803,8 +5010,17 @@ mod tests {
         // 0.96 -> 0.97: same spawned-task assertion pins as full 1.90.
         // 0.97 -> 0.98: same skip-guarded table rows as full 1.91.
         // 0.98 -> 0.99: same caller-loop selector limit as full 1.92.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.99");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.99");
+        // 0.99 -> 0.100: same Display string pin as full 1.93.
+        // 0.100 -> 0.101: same fixture-receiver and recording-double limits as full 1.94.
+        // 0.101 -> 0.102: same local-macro wrapper limit as full 1.95.
+        // 0.102 -> 0.103: same pinned-shape limit as full 1.96.
+        // 0.103 -> 0.104: same effect assertion admission as full 1.97 (#8927).
+        // 0.104 -> 0.105: same typed function-pointer pins as full 1.98.
+        // 0.105 -> 0.106: same one-line ladder tail as full 1.99.
+        // 0.106 -> 0.107: same equal-arm sink limit as full 1.100.
+        // 0.107 -> 0.108: same macro table tests as full 1.101 (#6925).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.108");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.108");
     }
 
     #[test]
@@ -6251,6 +6467,76 @@ mod tests {
         match outcome {
             CacheLoad::CorruptIgnored { reason } if reason.contains("tracked by Git") => Ok(()),
             other => Err(format!("tracked entry must be refused, got {other:?}")),
+        }
+    }
+
+    fn scoped_sample_inventory() -> PersistedScopedInventory {
+        PersistedScopedInventory {
+            classified: Vec::new(),
+            classified_seams_considered: 0,
+            total_rust_files: 1,
+            total_production_files: 1,
+            scoped_production_files: Vec::new(),
+            changed_production_files: Vec::new(),
+            parser_declined_files: Vec::new(),
+            immediate_caller_files: Vec::new(),
+            unevaluated_seams: 0,
+            repo_seam_limit: PersistedSeamLimit::NotComputed,
+        }
+    }
+
+    #[test]
+    fn given_scoped_inventory_entries_tracked_by_git_when_load_or_store_runs_then_both_refuse()
+    -> Result<(), String> {
+        let (root, cache_dir) = work_tree_with_cache_dir("tracked-scoped")?;
+        let key = empty_state().cache_key();
+        let untracked = RepoScopedInventoryCache::at_dir(cache_dir.clone());
+        untracked.store(&key, b"id", scoped_sample_inventory())?;
+        // Control: untracked, the same entry is served.
+        if !matches!(untracked.load(&key, b"id"), CacheLoad::Hit(_)) {
+            return Err("untracked control entry must be a hit".to_owned());
+        }
+        track_cache_dir(&root, &cache_dir)?;
+        let tracked = RepoScopedInventoryCache::at_dir(cache_dir.clone());
+        let loaded = tracked.load(&key, b"id");
+        let stored = tracked.store(&key, b"id", scoped_sample_inventory());
+        ignore_remove_dir_all(&root);
+        match loaded {
+            CacheLoad::CorruptIgnored { reason } if reason.contains("tracked by Git") => {}
+            other => return Err(format!("tracked entry must be refused, got {other:?}")),
+        }
+        match stored {
+            Err(reason) if reason.contains("tracked by Git") => Ok(()),
+            other => Err(format!(
+                "store into a tracked root must fail, got {other:?}"
+            )),
+        }
+    }
+
+    #[test]
+    fn given_cache_base_is_a_regular_file_when_scoped_inventory_runs_then_both_refuse()
+    -> Result<(), String> {
+        let dir = isolated_dir("scoped-base-is-file");
+        ignore_remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|err| format!("fixture setup failed: {err}"))?;
+        let base = dir.join("cache-is-a-file");
+        std::fs::write(&base, "not a directory\n")
+            .map_err(|err| format!("fixture setup failed: {err}"))?;
+        let cache = RepoScopedInventoryCache::at_dir(base.clone());
+        let key = empty_state().cache_key();
+        let expected = format!("cache dir is not a directory: {}", base.display());
+        let loaded = cache.load(&key, b"id");
+        let stored = cache.store(&key, b"id", scoped_sample_inventory());
+        ignore_remove_dir_all(&dir);
+        match loaded {
+            CacheLoad::CorruptIgnored { reason } if reason == expected => {}
+            other => return Err(format!("expected the base-is-file reason, got {other:?}")),
+        }
+        match stored {
+            Err(reason) if reason == expected => Ok(()),
+            other => Err(format!(
+                "store must fail with the same reason, got {other:?}"
+            )),
         }
     }
 
@@ -8524,6 +8810,65 @@ mod tests {
         format!("{}-{:x}", std::process::id(), nanos)
     }
 
+    // ---- module-tree scan bundle (#9794) ----------------------------------
+
+    fn sample_module_tree_scans() -> BTreeMap<String, RustModuleTreeScan> {
+        let text = "mod a;\n";
+        let scan = crate::analysis::syntax::rust_module_tree_scan(text);
+        BTreeMap::from([(module_tree_scan_key(text), scan)])
+    }
+
+    #[test]
+    fn module_tree_scan_bundle_round_trips_and_keys_by_exact_content() -> Result<(), String> {
+        let dir = isolated_dir("module-tree-scans-round-trip");
+        ignore_remove_dir_all(&dir);
+        let cache = RepoModuleTreeScanCache::at_dir(dir.clone());
+        assert!(cache.load().is_empty(), "a cold bundle reads as empty");
+        let scans = sample_module_tree_scans();
+        cache.store(&scans)?;
+        assert_eq!(cache.load(), scans);
+        let stored = module_tree_scan_key("mod a;\n");
+        assert!(cache.load().contains_key(&stored));
+        assert!(!cache.load().contains_key(&module_tree_scan_key("mod b;\n")));
+        assert_ne!(
+            module_tree_scan_key("mod a;\n"),
+            module_tree_scan_key("mod a;\n\n"),
+            "length is part of the key"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn module_tree_scan_bundle_that_fails_its_digest_or_build_reads_as_empty() -> Result<(), String>
+    {
+        let dir = isolated_dir("module-tree-scans-tampered");
+        ignore_remove_dir_all(&dir);
+        let cache = RepoModuleTreeScanCache::at_dir(dir.clone());
+        cache.store(&sample_module_tree_scans())?;
+        let path = cache.entry_path();
+        let original = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
+
+        let edited = original.replace("\"name\": \"a\"", "\"name\": \"forged\"");
+        assert_ne!(edited, original, "control: the edit applied");
+        std::fs::write(&path, &edited).map_err(|error| error.to_string())?;
+        assert!(cache.load().is_empty(), "edited body fails its digest");
+
+        let other_build =
+            original.replace(crate::build_identity::cache_identity(), "some-other-build");
+        assert_ne!(other_build, original, "control: the identity applied");
+        std::fs::write(&path, other_build).map_err(|error| error.to_string())?;
+        assert!(
+            cache.load().is_empty(),
+            "another build's bundle is not served"
+        );
+
+        std::fs::write(&path, b"{not json").map_err(|error| error.to_string())?;
+        assert!(cache.load().is_empty(), "undecodable bundle reads as empty");
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
     // ---- cache envelope + limit_info round-trip tests (Slice B) -----------
 
     #[test]
@@ -9691,6 +10036,8 @@ mod generation_transition_tests {
             (compact.sharded_dir.clone(), true),
             (RepoCorpusFingerprintCache::at(root).dir, false),
             (RepoFileFactCache::at(root).dir, false),
+            (RepoModuleTreeScanCache::at(root).dir, false),
+            (RepoScopedInventoryCache::at(root).dir, false),
         ];
         assert_eq!(production_entry_dirs(&cache_base_dir(root)), expected);
         // The constructors doctor's list is derived from must carry the
@@ -9701,6 +10048,8 @@ mod generation_transition_tests {
         constructed.extend(compact.entry_dirs());
         constructed.push(RepoCorpusFingerprintCache::at(root).entry_dir());
         constructed.push(RepoFileFactCache::at(root).entry_dir());
+        constructed.push(RepoModuleTreeScanCache::at(root).entry_dir());
+        constructed.push(RepoScopedInventoryCache::at(root).entry_dir());
         assert_eq!(constructed, expected);
     }
 

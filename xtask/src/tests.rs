@@ -6,6 +6,7 @@
 mod build_feature_reuse;
 mod discarded_matcher_honesty;
 mod fixture_cache;
+mod operand_callee_honesty;
 #[path = "precommit_source_oracle.rs"]
 mod precommit_source_oracle;
 #[cfg(windows)]
@@ -85,11 +86,12 @@ use super::{
     PrTriagePullRequest, REAL_REPAIR_ATTEMPTS_CORPUS, REAL_REPAIR_ATTEMPTS_REQUIRED_CASES,
     REPO_BADGE_ARTIFACT_DEFAULT_TIMEOUT_MS, REPO_BADGE_ARTIFACT_TIMEOUT_ENV,
     REPO_EXPOSURE_SUMMARY_REPORT_DEFAULT_TIMEOUT_MS, REPO_EXPOSURE_SUMMARY_REPORT_TIMEOUT_ENV,
-    ReceiptRecord, RepoBadgeArtifactOptions, RepoExposureCpuCost, RepoExposureLatencyReport,
-    RepoExposureLatencyRun, RepoExposureLatencyTrace, RepoExposureMeasurement, ReportIndexEntry,
-    ReportIndexRepoOpsArtifact, RiprSwarmReadinessNextActionSources, RoutedRustEventRoute,
-    SUPPORT_TIERS_PATH, SarifPolicyMode, SarifPolicyResult, SarifPolicyThreshold,
-    StaticLanguageAllowEntry, StaticLanguageMatcher, TYPESCRIPT_BUN_UB_CALIBRATION_REQUIRED_CASES,
+    ReceiptRecord, RepoBadgeArtifactOptions, RepoExposureCpuCost, RepoExposureFileFactCache,
+    RepoExposureLatencyReport, RepoExposureLatencyRun, RepoExposureLatencyTrace,
+    RepoExposureMeasurement, ReportIndexEntry, ReportIndexRepoOpsArtifact,
+    RiprSwarmReadinessNextActionSources, RoutedRustEventRoute, SUPPORT_TIERS_PATH, SarifPolicyMode,
+    SarifPolicyResult, SarifPolicyThreshold, StaticLanguageAllowEntry, StaticLanguageMatcher,
+    TYPESCRIPT_BUN_UB_CALIBRATION_REQUIRED_CASES,
     TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_REQUIRED_CASES,
     TYPESCRIPT_PREVIEW_REPAIR_LOOP_REQUIRED_CASES, TestOracleClass,
     UNREGISTERED_SPEC_MESSAGE_LIMIT, USER_SURFACE_PROJECTION_REQUIRED_RUN_STATUSES,
@@ -183,6 +185,7 @@ use super::{
     repo_badge_artifacts_summary_markdown, repo_exposure_file_fact_cache_from_stderr,
     repo_exposure_latency_json, repo_exposure_latency_markdown, repo_exposure_latency_run,
     repo_exposure_latency_run_from_output, repo_exposure_latency_status,
+    repo_exposure_latency_status_reasons, repo_exposure_latency_status_with_parity,
     repo_exposure_latency_trace, repo_exposure_resource_cost_from_stderr,
     repo_exposure_summary_report_timeout_ms_from_env, repo_root,
     repo_seam_inventory_command_args_for_root, report_index_lane1_overall_status,
@@ -9634,6 +9637,218 @@ fn allow_attribute_detection_sees_suppressions_after_a_quoted_paren() {
             (1, "allow(warnings)".to_string()),
         ]
     );
+}
+
+/// Raw string delimiters, rather than interior quotes or backslashes, bound a
+/// reason. Neither wrapper nesting nor ordinary attributes may lose a lint.
+#[test]
+fn allow_attribute_detection_sees_suppressions_after_raw_string_reasons() {
+    let guarded = guarded_allow_attribute_lints();
+    for (hashes, body) in [
+        ("", "\\"),
+        ("#", "\" )"),
+        ("##", "\"# ) , [ ( \\"),
+        ("###", "🦀 \"## ], ( \\,"),
+    ] {
+        let reason = format!("r{hashes}\"{body}\"{hashes}");
+        for text in [
+            format!(
+                concat!(
+                    "#",
+                    "[cfg_attr(test, allow(dead_code, reason = {}), expect(warnings))]"
+                ),
+                reason
+            ),
+            format!(
+                concat!(
+                    "#",
+                    "[cfg_attr(test, cfg_attr(test, allow(dead_code, reason = {})), expect(warnings))]"
+                ),
+                reason
+            ),
+            format!(
+                concat!(
+                    "#",
+                    "[allow(dead_code, reason = {})]\n",
+                    "#",
+                    "[expect(warnings)]"
+                ),
+                reason
+            ),
+        ] {
+            let warning_line = if text.contains('\n') { 2 } else { 1 };
+            assert_eq!(
+                guarded_allow_attributes_in_text(&text, &guarded),
+                vec![
+                    (1, "allow(dead_code)".to_string()),
+                    (warning_line, "expect(warnings)".to_string()),
+                ],
+                "raw reason must retain both suppressions: {text}",
+            );
+        }
+    }
+}
+
+/// Char literals (`')'`, `'"'`, `'['`, escapes, multibyte) in an attribute
+/// must not desync the paren span or comma split, and lifetimes must not
+/// swallow following text.
+#[test]
+fn allow_attribute_detection_sees_suppressions_after_char_literals() {
+    let guarded = guarded_allow_attribute_lints();
+    for literal in [
+        "')'",
+        "'\"'",
+        "'('",
+        "'['",
+        "']'",
+        "','",
+        "'\\''",
+        "'\\\\'",
+        "'\\u{29}'",
+        "'🦀'",
+        "'é'",
+        "'€'",
+        "'\\n'",
+        "'\\x41'",
+        "b'('",
+        "'\\u{1F980}'",
+    ] {
+        for text in [
+            format!(
+                concat!(
+                    "#",
+                    "[cfg_attr(test, allow(dead_code, reason = {}), expect(warnings))]"
+                ),
+                literal
+            ),
+            format!(
+                concat!(
+                    "#",
+                    "[allow(dead_code, reason = {})]\n",
+                    "#",
+                    "[expect(warnings)]"
+                ),
+                literal
+            ),
+        ] {
+            let warning_line = if text.contains('\n') { 2 } else { 1 };
+            assert_eq!(
+                guarded_allow_attributes_in_text(&text, &guarded),
+                vec![
+                    (1, "allow(dead_code)".to_string()),
+                    (warning_line, "expect(warnings)".to_string()),
+                ],
+                "char literal must retain both suppressions: {text}",
+            );
+        }
+    }
+    // A lifetime tick is not a char literal: it must not swallow a following
+    // suppression (tick first), nor a real char literal after it, and a char
+    // literal comma must not split the attribute (split-only discriminator).
+    for (body, expected) in [
+        (
+            "x = &'a T, allow(dead_code), y = ')', expect(warnings)",
+            vec!["allow(dead_code)", "expect(warnings)"],
+        ),
+        (
+            "x = &'a T, allow(dead_code), expect(warnings)",
+            vec!["allow(dead_code)", "expect(warnings)"],
+        ),
+        ("x = ',', allow(dead_code)", vec!["allow(dead_code)"]),
+        (
+            "x = ',', allow(dead_code), y = ',', expect(warnings)",
+            vec!["allow(dead_code)", "expect(warnings)"],
+        ),
+        (
+            "allow(dead_code), x = 'a, expect(warnings)",
+            vec!["allow(dead_code)", "expect(warnings)"],
+        ),
+        (
+            "allow(dead_code), expect(warnings), x = 'a",
+            vec!["allow(dead_code)", "expect(warnings)"],
+        ),
+    ] {
+        let text = format!(concat!("#", "[cfg_attr(test, {})]"), body);
+        assert_eq!(
+            guarded_allow_attributes_in_text(&text, &guarded)
+                .into_iter()
+                .map(|(_, f)| f)
+                .collect::<Vec<_>>(),
+            expected,
+            "lifetime/char mix must retain suppressions: {text}",
+        );
+    }
+}
+
+#[test]
+fn allow_attribute_detection_keeps_fake_attributes_inside_raw_reasons() {
+    let reason = "r#\"\"), allow(warnings), (\"#";
+    let text = format!(
+        concat!(
+            "#",
+            "[cfg_attr(test, cfg_attr(test, allow(dead_code, reason = {})))]"
+        ),
+        reason
+    );
+    assert_eq!(
+        guarded_allow_attributes_in_text(&text, &guarded_allow_attribute_lints()),
+        vec![(1, "allow(dead_code)".to_string())],
+    );
+}
+
+#[test]
+fn allow_attributes_gate_enforces_raw_reason_suppressions_and_exact_budgets() -> Result<(), String>
+{
+    with_temp_cwd("allow-attributes-raw-reason", |root| {
+        badge_fixture_git(&["init", "--initial-branch=main", "--quiet"])?;
+        write(&root.join(".ripr/allow-attributes.txt"), "");
+        write(
+            &root.join("src/lib.rs"),
+            concat!(
+                "#",
+                "[cfg_attr(test, allow(dead_code, reason = r#\"\" )\"#), expect(warnings))]\nfn f() {}\n"
+            ),
+        );
+        badge_fixture_git(&["add", ".ripr/allow-attributes.txt", "src/lib.rs"])?;
+        let listed = super::tracked_files()?;
+        assert!(listed.iter().any(|path| path == "src/lib.rs"), "{listed:?}");
+
+        super::check_allow_attributes_impl()
+            .err()
+            .ok_or("unbudgeted raw-reason suppressions must fail the gate")?;
+        let report = std::fs::read_to_string(root.join("target/ripr/reports/allow-attributes.md"))
+            .map_err(|error| format!("read unbudgeted suppression report: {error}"))?;
+        for attribute in ["allow(dead_code)", "expect(warnings)"] {
+            assert!(
+                report.contains(&format!(
+                    "src/lib.rs:1 contains `{attribute}` 1 time(s), allowed 0"
+                )),
+                "the gate must report the actual tracked suppression: {report}",
+            );
+        }
+
+        write(
+            &root.join(".ripr/allow-attributes.txt"),
+            "src/lib.rs|allow(dead_code)|1|deliberate gate fixture\nsrc/lib.rs|expect(warnings)|1|deliberate gate fixture\n",
+        );
+        super::check_allow_attributes_impl()?;
+
+        write(&root.join("src/lib.rs"), "fn f() {}\n");
+        super::check_allow_attributes_impl()
+            .err()
+            .ok_or("removing raw-reason suppressions must leave stale budgets")?;
+        let report = std::fs::read_to_string(root.join("target/ripr/reports/allow-attributes.md"))
+            .map_err(|error| format!("read stale suppression report: {error}"))?;
+        for attribute in ["allow(dead_code)", "expect(warnings)"] {
+            assert!(
+                report.contains(&format!(
+                    "`{attribute}` allowlist count is stale: found 0, allowed 1"
+                )),
+                "the gate must retain exact budget enforcement: {report}",
+            );
+        }
+        Ok(())
+    })
 }
 
 #[test]
@@ -51209,7 +51424,7 @@ fn repo_exposure_latency_report_json_and_markdown_are_structured() -> Result<(),
     let json = repo_exposure_latency_json(&report);
     let value: Value =
         serde_json::from_str(&json).map_err(|err| format!("latency JSON should parse: {err}"))?;
-    assert_eq!(value["schema_version"], "0.3");
+    assert_eq!(value["schema_version"], "0.4");
     assert_eq!(value["report"], "repo-exposure-latency");
     assert_eq!(value["status"], "warn");
     assert_eq!(value["runs"][0]["trace"][0]["phase"], "cache_load");
@@ -51383,7 +51598,7 @@ fn repo_exposure_latency_report_carries_observed_resource_cost() -> Result<(), S
     };
     let value: Value = serde_json::from_str(&repo_exposure_latency_json(&report))
         .map_err(|err| format!("latency JSON should parse: {err}"))?;
-    assert_eq!(value["schema_version"], "0.3");
+    assert_eq!(value["schema_version"], "0.4");
     assert_eq!(
         value["runs"][0]["resource_cost"]["observer"],
         "ripr_process_self"
@@ -51709,7 +51924,8 @@ fn repo_exposure_latency_report_builder_runs_markdown_after_json_pass() -> Resul
             "repo-exposure-md".to_string()
         ]
     );
-    assert_eq!(report.status, "pass");
+    // Both formats exited 0, but output parity is unchecked: not `pass` (#9503).
+    assert_eq!(report.status, "warn");
     assert_eq!(report.runs.len(), 2);
     assert_eq!(report.runs[0].duration_ms, 30_000);
     assert_eq!(report.runs[1].duration_ms, 30_000);
@@ -51802,9 +52018,11 @@ fn repo_exposure_latency_status_and_empty_trace_markdown_are_stable() {
     let timeout = latency_run_with_status("repo-exposure-json", "timeout");
     let skipped = latency_run_with_status("repo-exposure-md", "skipped_after_json_timeout");
 
+    // `pass` needs exit codes AND a clean observed cache AND checked parity
+    // (#9503); an exit-code-only run is `warn`.
     assert_eq!(
         repo_exposure_latency_status(std::slice::from_ref(&pass)),
-        "pass"
+        "warn"
     );
     assert_eq!(repo_exposure_latency_status(&[timeout]), "warn");
     assert_eq!(repo_exposure_latency_status(&[skipped]), "warn");
@@ -51824,6 +52042,100 @@ fn repo_exposure_latency_status_and_empty_trace_markdown_are_stable() {
     };
     let markdown = repo_exposure_latency_markdown(&report);
     assert!(markdown.contains("No analyzer trace lines were captured"));
+}
+
+fn clean_cache(store_errors: usize, corrupt_ignored: usize) -> RepoExposureFileFactCache {
+    RepoExposureFileFactCache {
+        schema_version: "0.1".to_string(),
+        hits: 1,
+        misses: 0,
+        invalidated: 0,
+        corrupt_ignored,
+        stores: 0,
+        store_errors,
+        store_failures: Vec::new(),
+        store_failures_dropped: store_errors,
+    }
+}
+
+fn observed_run(cache: Option<RepoExposureFileFactCache>) -> RepoExposureLatencyRun {
+    RepoExposureLatencyRun {
+        file_fact_cache_limitation: cache
+            .is_none()
+            .then(|| "cache_phase_not_observed".to_string()),
+        file_fact_cache: cache,
+        ..latency_run_with_status("repo-exposure-json", "pass")
+    }
+}
+
+/// #9503 negative experiments: the same exit-code-clean runs flip from `pass`
+/// to `warn` for each degraded dimension, and only the fully observed, clean,
+/// parity-checked set stays `pass`.
+#[test]
+fn repo_exposure_latency_status_is_not_pass_with_cache_errors_or_unchecked_parity() {
+    let clean = observed_run(Some(clean_cache(0, 0)));
+    // Positive control: this is the only shape allowed to say `pass`.
+    assert_eq!(
+        repo_exposure_latency_status_with_parity(std::slice::from_ref(&clean), true),
+        "pass"
+    );
+    // Unchecked output parity alone blocks `pass` (the production default).
+    assert_eq!(
+        repo_exposure_latency_status(std::slice::from_ref(&clean)),
+        "warn"
+    );
+    // Cache store errors block `pass` even with parity checked.
+    let store_errors = observed_run(Some(clean_cache(2, 0)));
+    assert_eq!(
+        repo_exposure_latency_status_with_parity(std::slice::from_ref(&store_errors), true),
+        "warn"
+    );
+    // Ignored corrupt entries block `pass`.
+    let corrupt = observed_run(Some(clean_cache(0, 1)));
+    assert_eq!(
+        repo_exposure_latency_status_with_parity(std::slice::from_ref(&corrupt), true),
+        "warn"
+    );
+    // An unobserved cache phase blocks `pass`.
+    let unobserved = observed_run(None);
+    assert_eq!(
+        repo_exposure_latency_status_with_parity(std::slice::from_ref(&unobserved), true),
+        "warn"
+    );
+    let reasons = repo_exposure_latency_status_reasons(&[store_errors, unobserved], false);
+    assert!(reasons.contains(&"repo-exposure-json: file_fact_cache_store_errors=2".to_string()));
+    assert!(
+        reasons
+            .contains(&"repo-exposure-json: file_fact_cache_cache_phase_not_observed".to_string())
+    );
+    assert!(reasons.contains(&"output_parity_not_checked".to_string()));
+}
+
+/// #9503: a legitimate Unix file name containing `:` is a valid receipt row
+/// path; a Windows drive-qualified path is still refused.
+#[test]
+fn cache_receipt_accepts_colon_in_unix_row_paths_but_not_drive_paths() {
+    let receipt = |path: &str| {
+        let value = serde_json::json!({
+            "schema_version": "0.1", "hits": 0, "misses": 1, "invalidated": 0,
+            "corrupt_ignored": 0, "stores": 0, "store_errors": 1,
+            "store_failures": [{"path": path, "stage": "write", "error": "boom"}],
+            "store_failures_dropped": 0
+        });
+        repo_exposure_file_fact_cache_from_stderr(&format!(
+            "ripr_file_fact_cache_receipt {value}\n"
+        ))
+    };
+    let (cache, limitation) = receipt("src/a:b.rs");
+    assert!(cache.is_some(), "colon path rejected: {limitation:?}");
+    let (cache, limitation) = receipt("a:b.rs");
+    assert!(
+        cache.is_some(),
+        "top-level colon path rejected: {limitation:?}"
+    );
+    let (cache, limitation) = receipt(&format!("{}:/work/src/lib.rs", "C"));
+    assert!(cache.is_none());
+    assert_eq!(limitation.as_deref(), Some("invalid_cache_receipt"));
 }
 
 /// One observed resource-cost receipt body, in the exact wire shape the
@@ -55868,6 +56180,41 @@ fn gh_pr_status_real_cli_schema() -> Result<(), String> {
             available.contains(field),
             "real gh rejects production field {field}: {text}"
         );
+    }
+    Ok(())
+}
+
+/// #5531: the capability registry checks are hosted. The docs-gate step must
+/// invoke both commands, key off the SUPPORT_TIERS.md, LANGUAGE_ADAPTER_PREVIEW.md and docs/specs paths, and
+/// must not use a failure-swallowing form.
+#[test]
+fn routed_rust_docs_gate_runs_capability_registry_checks() -> Result<(), String> {
+    let workflow = routed_rust_workflow_text()?;
+    let docs_gate = workflow
+        .split("\n  docs-gate:")
+        .nth(1)
+        .and_then(|rest| rest.split("\n  result:").next())
+        .ok_or("routed-rust.yml must declare a docs-gate job before result")?;
+    for needle in [
+        "cargo xtask capability-docs --check",
+        "cargo xtask check-capability-producers",
+        "docs/status/SUPPORT_TIERS\\.md",
+        "docs/LANGUAGE_ADAPTER_PREVIEW\\.md",
+        "core.quotePath=false",
+        "docs/specs/",
+    ] {
+        if !docs_gate.contains(needle) {
+            return Err(format!("docs-gate must contain `{needle}`"));
+        }
+    }
+    for line in docs_gate.lines().map(str::trim) {
+        if (line.contains("capability-docs") || line.contains("check-capability-producers"))
+            && line.contains("|| true")
+        {
+            return Err(format!(
+                "docs-gate must not swallow capability failures: {line}"
+            ));
+        }
     }
     Ok(())
 }

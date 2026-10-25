@@ -12,7 +12,10 @@
 //! change.
 
 use super::super::rust_index::{RustIndex, TestSummary};
+use crate::analysis::facts::{FunctionContainer, FunctionSummary};
+use crate::analysis::syntax::{fn_call_has_local_binding, name_scopes_for_fn};
 use crate::domain::{OracleKind, RelationReason};
+use std::collections::BTreeSet;
 
 /// Token carried in the discriminate summary when [`operand_only_pin`] holds.
 pub(in crate::analysis) const FIELD_PINNED_EQUAL_TO_OPERAND: &str = "field_pinned_equal_to_operand";
@@ -55,12 +58,13 @@ pub(in crate::analysis) fn operand_only_pin(
     expression: &str,
     owner_name: &str,
     owner_body: &str,
+    outer_imports: Option<&BTreeSet<String>>,
     tests: &[(&TestSummary, RelationReason)],
     index: &RustIndex,
 ) -> Option<OperandOnlyPin> {
     let (field, left, right) = binary_field_initializer(expression)?;
-    if !operand_established_primitive(left, owner_body, index)
-        || !operand_established_primitive(right, owner_body, index)
+    if !operand_established_primitive(left, owner_body, outer_imports, index)
+        || !operand_established_primitive(right, owner_body, outer_imports, index)
     {
         return None;
     }
@@ -188,10 +192,16 @@ fn binary_field_initializer(expression: &str) -> Option<(&str, &str, &str)> {
 /// primitive keeps the finding. Proof runs through the owner's own text: a
 /// parameter of a primitive type, or a `let` bound to a numeric or bool
 /// literal, to another established name, to an arithmetic combination of those,
-/// or to a call whose every same-named function in the index declares one
-/// bare primitive return. A string, char literal or block comment anywhere
-/// in the owner body, or anything else unreadable, proves nothing.
-fn operand_established_primitive(operand: &str, owner_body: &str, index: &RustIndex) -> bool {
+/// or to an unshadowed call whose every same-named function in the index is
+/// free and declares one bare primitive return. A string, char literal or
+/// block comment anywhere in the owner body, or anything else unreadable,
+/// proves nothing.
+fn operand_established_primitive(
+    operand: &str,
+    owner_body: &str,
+    outer_imports: Option<&BTreeSet<String>>,
+    index: &RustIndex,
+) -> bool {
     // Comments are dropped first. A string, char literal or block comment
     // could hide a binding or a type this proof would misread, so such an
     // owner is not read at all.
@@ -210,12 +220,12 @@ fn operand_established_primitive(operand: &str, owner_body: &str, index: &RustIn
     // `let shipping = Money::new(shipping)` over `shipping: u64`).
     let mut established: Vec<String> = primitive_params
         .iter()
-        .filter(|name| !bindings.iter().any(|(bound, _, _)| bound == *name))
+        .filter(|name| !bindings.iter().any(|(bound, _, _, _)| bound == *name))
         .cloned()
         .collect();
     loop {
         let mut changed = false;
-        for (name, _, _) in &bindings {
+        for (name, _, _, _) in &bindings {
             if established.iter().any(|seen| seen == name) {
                 continue;
             }
@@ -231,12 +241,20 @@ fn operand_established_primitive(operand: &str, owner_body: &str, index: &RustIn
             // present: a primitive annotation proves the binding outright,
             // a non-primitive one refuses it even when the initializer
             // looks like a literal (`let s: Money = 499;`).
-            let all = bindings.iter().filter(|(bound, _, _)| bound == name).all(
-                |(_, bound_expr, annotation)| match annotation {
+            let all = bindings
+                .iter()
+                .filter(|(bound, _, _, _)| bound == name)
+                .all(|(_, bound_expr, annotation, offset)| match annotation {
                     Some(ty) => primitive_type_token(ty),
-                    None => expression_established(bound_expr, &basis, index),
-                },
-            );
+                    None => expression_established(
+                        bound_expr,
+                        *offset,
+                        &basis,
+                        &text,
+                        outer_imports,
+                        index,
+                    ),
+                });
             if all {
                 established.push(name.clone());
                 changed = true;
@@ -251,22 +269,34 @@ fn operand_established_primitive(operand: &str, owner_body: &str, index: &RustIn
 /// Whether one binding initializer proves its name primitive. A typed
 /// binding with a primitive annotation proves it outright; the value forms
 /// are read by [`expression_established`].
-fn expression_established(expr: &str, established: &[String], index: &RustIndex) -> bool {
+fn expression_established(
+    expr: &str,
+    offset: usize,
+    established: &[String],
+    owner_body: &str,
+    outer_imports: Option<&BTreeSet<String>>,
+    index: &RustIndex,
+) -> bool {
     let expr = expr.trim();
     if is_identifier(expr) {
         return expr == "true" || expr == "false" || established.iter().any(|name| name == expr);
     }
     if let Some(callee) = call_callee(expr) {
-        return call_established_primitive(callee, index);
+        return call_established_primitive(callee, offset, owner_body, outer_imports, index);
     }
     arithmetic_established(expr, established)
 }
 
-/// The last segment of a plain free call (`name(..)`, `a::b::name(..)`),
+struct CallCallee<'a> {
+    name: &'a str,
+    qualified: bool,
+}
+
+/// The last segment and qualification of a plain free call (`name(..)`, `a::b::name(..)`),
 /// when the whole expression is exactly that call. A method call, a
 /// turbofish, a chained transform or a type segment in the path (`Other::
 /// quote`) is not read.
-fn call_callee(expr: &str) -> Option<&str> {
+fn call_callee(expr: &str) -> Option<CallCallee<'_>> {
     let expr = expr.trim();
     if expr.contains("::<") {
         return None;
@@ -289,19 +319,69 @@ fn call_callee(expr: &str) -> Option<&str> {
         Some(_) => return None,
         None => callee,
     };
-    is_identifier(name).then_some(name)
+    is_identifier(name).then_some(CallCallee {
+        name,
+        qualified: callee.contains("::"),
+    })
 }
 
-/// Whether every function named `callee` in the index declares one bare
-/// primitive return (optionally behind one reference). No such function,
+/// The names the `use` items of `owner`'s enclosing modules and file bind,
+/// or `None` when those scopes cannot be read (the caller then proves no
+/// bare call).
+pub(in crate::analysis) fn outer_imported_names(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+) -> Option<BTreeSet<String>> {
+    let facts = index.files().get(&owner.file)?;
+    let scopes = name_scopes_for_fn(&facts.data().source, owner.start_line, &owner.name)?;
+    Some(
+        scopes
+            .scopes
+            .iter()
+            .filter(|scope| !scope.fn_body)
+            .flat_map(|scope| scope.imports.iter().map(|import| import.bound.clone()))
+            .collect(),
+    )
+}
+
+/// Whether every indexed declaration named `callee` is a free function with
+/// one bare primitive return (optionally behind one reference), and a bare
+/// call is not intercepted by an owner-local binding. This is not general
+/// import/module resolution. No such function, an associated item,
 /// disagreeing returns, or any non-primitive return proves nothing: a call
 /// to a function outside the index (another crate) could return a type
 /// that overloads the operator.
-fn call_established_primitive(callee: &str, index: &RustIndex) -> bool {
+fn call_established_primitive(
+    callee: CallCallee<'_>,
+    offset: usize,
+    owner_body: &str,
+    outer_imports: Option<&BTreeSet<String>>,
+    index: &RustIndex,
+) -> bool {
+    // A `use` in the owner's enclosing module or file can bind the bare name
+    // to a function other than the indexed one. Unreadable enclosing scopes
+    // prove nothing. Glob imports and same-named sibling-module items are
+    // general module resolution and stay out of scope.
+    if !callee.qualified && outer_imports.is_none_or(|imports| imports.contains(callee.name)) {
+        return false;
+    }
+    // Keep the spelled qualification: a value named `fee` cannot shadow
+    // `crate::fee(..)`. For a bare call, settle bindings at this initializer,
+    // including hoisted imports/items and preceding declaration-only lets.
+    // A later let does not shadow this call. Opaque item/statement macros
+    // cannot establish the absence of a binding.
+    if !callee.qualified
+        && fn_call_has_local_binding(owner_body, offset, callee.name) != Some(false)
+    {
+        return false;
+    }
     let mut seen: Option<String> = None;
     for function in index.functions().iter() {
-        if function.name != callee {
+        if function.name != callee.name {
             continue;
+        }
+        if function.item.container != FunctionContainer::Free || function.item.has_self_param {
+            return false;
         }
         let Some(returns) = declared_return_type(function.body.as_str()) else {
             return false;
@@ -362,17 +442,23 @@ fn primitive_type_token(text: &str) -> bool {
 /// the body's opening brace is read. A typed binding carries its
 /// annotation text; patterns other than a plain name, and
 /// initializer-less declarations, are not read.
-fn let_binding_expressions(text: &str) -> Vec<(String, String, Option<String>)> {
-    let inner = match text.find('{') {
-        Some(open) if text[..open].contains("fn ") => text[open + 1..]
-            .trim_end()
-            .strip_suffix('}')
-            .unwrap_or(&text[open + 1..]),
-        _ => text,
+fn let_binding_expressions(text: &str) -> Vec<(String, String, Option<String>, usize)> {
+    let start = match text.find('{') {
+        Some(open) if text[..open].contains("fn ") => open + 1,
+        _ => 0,
     };
+    let inner = text[start..]
+        .trim_end()
+        .strip_suffix('}')
+        .unwrap_or(&text[start..]);
     inner
         .split(';')
-        .filter_map(|statement| {
+        .scan(start, |offset, statement| {
+            let start = *offset;
+            *offset += statement.len() + 1;
+            Some((start, statement))
+        })
+        .filter_map(|(start, statement)| {
             let rest = statement.trim().strip_prefix("let ")?;
             let (name, value) = rest.split_once('=')?;
             let name = name.trim();
@@ -384,7 +470,15 @@ fn let_binding_expressions(text: &str) -> Vec<(String, String, Option<String>)> 
                 Some((name, ty)) => (name.trim(), Some(ty.trim().to_string())),
                 None => (name, None),
             };
-            is_identifier(name).then(|| (name.to_string(), value.trim().to_string(), annotation))
+            let offset = start + statement.trim_end().len() - value.trim_start().len();
+            is_identifier(name).then(|| {
+                (
+                    name.to_string(),
+                    value.trim().to_string(),
+                    annotation,
+                    offset,
+                )
+            })
         })
         .collect()
 }
@@ -575,7 +669,7 @@ fn matching_close_brace(body: &str, open: usize) -> Option<usize> {
 
 /// Comma-separated items of `text` at bracket depth zero, trimmed and
 /// non-empty.
-fn top_level_items(text: &str) -> Vec<&str> {
+pub(super) fn top_level_items(text: &str) -> Vec<&str> {
     let mut items = Vec::new();
     let mut depth = 0usize;
     let mut start = 0usize;
@@ -643,7 +737,7 @@ fn literal_value(text: &str) -> Option<String> {
 
 /// Occurrences of `word` in `text` not joined to an identifier character on
 /// either side.
-fn whole_word_count(text: &str, word: &str) -> usize {
+pub(super) fn whole_word_count(text: &str, word: &str) -> usize {
     let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
     text.match_indices(word)
         .filter(|(at, _)| {
@@ -788,7 +882,7 @@ fn is_bare_owner_call(value: &str, owner_name: &str) -> bool {
 }
 
 /// The byte index of the `)` closing the `(` at `open`.
-fn matching_paren(text: &str, open: usize) -> Option<usize> {
+pub(super) fn matching_paren(text: &str, open: usize) -> Option<usize> {
     let mut depth = 0usize;
     for (at, ch) in text[open..].char_indices() {
         match ch {
@@ -809,7 +903,7 @@ fn matching_paren(text: &str, open: usize) -> Option<usize> {
 /// a condition, a match, a loop, a closure, an early exit, `?` or a
 /// short-circuit `&&`/`||`. Comments and strings count too, which only
 /// refuses more.
-fn has_control_flow(body: &str) -> bool {
+pub(super) fn has_control_flow(body: &str) -> bool {
     [
         "if", "match", "for", "while", "loop", "return", "break", "continue",
     ]
@@ -819,7 +913,7 @@ fn has_control_flow(body: &str) -> bool {
         || body.contains("&&")
 }
 
-fn is_identifier(text: &str) -> bool {
+pub(super) fn is_identifier(text: &str) -> bool {
     let mut chars = text.chars();
     chars
         .next()
@@ -830,10 +924,8 @@ fn is_identifier(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::facts::{FunctionSourceRole, OracleFact, OwnedRustIndex};
-    use crate::analysis::rust_index::{FileFacts, FunctionFact};
-    use crate::domain::{OracleStrength, SymbolId};
-    use std::collections::BTreeMap;
+    use crate::analysis::facts::OracleFact;
+    use crate::domain::OracleStrength;
     use std::path::PathBuf;
 
     const OWNER: &str = "pub fn quote(unit: u64, quantity: u64) -> Quote {
@@ -846,54 +938,17 @@ mod tests {
     }
 }";
 
-    /// An index holding one file whose functions carry `bodies` verbatim,
-    /// the way the parser producer records signatures in `body`.
+    /// Use the real producer for declaration names, containers and bodies.
     fn index_with(bodies: &[&str]) -> RustIndex {
         let path = PathBuf::from("src/lib.rs");
-        let functions: Vec<FunctionFact> = bodies
-            .iter()
-            .enumerate()
-            .map(|(offset, body)| FunctionFact {
-                id: SymbolId(format!("lib::{}::{offset}", fn_name_of(body))),
-                name: fn_name_of(body).to_string(),
-                file: path.clone(),
-                start_line: 1,
-                end_line: 1,
-                body: (*body).into(),
-                calls: Vec::new(),
-                returns: Vec::new(),
-                literals: Vec::new(),
-                source_role: FunctionSourceRole::Production,
-                attrs: Vec::new(),
-                impl_attrs: Vec::new(),
-                nested_fn_names: Vec::new(),
-                let_bindings: Vec::new(),
-                item: Default::default(),
-                impl_context: Default::default(),
-            })
-            .collect();
-        RustIndex::from_owned(OwnedRustIndex {
-            files: BTreeMap::from([(
-                path.clone(),
-                FileFacts {
-                    path: path.clone(),
-                    functions: functions.clone(),
-                    source: "".into(),
-                    ..FileFacts::default()
-                },
-            )]),
-            functions,
-            ..Default::default()
-        })
-    }
-
-    fn fn_name_of(body: &str) -> &str {
-        let at = body.find("fn ").unwrap_or(0);
-        let rest = &body[at + 3..];
-        let end = rest
-            .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
-            .unwrap_or(rest.len());
-        &rest[..end]
+        let facts = crate::analysis::rust_index::summarize_file(path.clone(), bodies.join("\n"));
+        assert!(
+            !facts.used_lexical_fallback,
+            "premise: parser facts available"
+        );
+        let mut index = RustIndex::default();
+        index.insert_file(path, facts, true);
+        index
     }
 
     fn test_with(body_lines: &[&str]) -> TestSummary {
@@ -932,6 +987,7 @@ mod tests {
             "total_cents: subtotal + shipping",
             "quote",
             OWNER,
+            Some(&BTreeSet::new()),
             &refs,
             index,
         )
@@ -1108,6 +1164,7 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 OWNER,
+                Some(&BTreeSet::new()),
                 &[
                     (&paired, RelationReason::DirectOwnerCall),
                     (&unrelated, RelationReason::SameModule),
@@ -1173,6 +1230,7 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 OWNER,
+                Some(&BTreeSet::new()),
                 &[
                     (&paired, RelationReason::DirectOwnerCall),
                     (&through_helper, reason),
@@ -1186,6 +1244,7 @@ mod tests {
             "total_cents: subtotal + shipping",
             "quote",
             OWNER,
+            Some(&BTreeSet::new()),
             &[
                 (&paired, RelationReason::DirectOwnerCall),
                 (&hands_to_helper, RelationReason::DirectOwnerCall),
@@ -1338,6 +1397,7 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 owner,
+                Some(&BTreeSet::new()),
                 &[(&paired, RelationReason::DirectOwnerCall)],
                 &index,
             )
@@ -1380,6 +1440,7 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 owner,
+                Some(&BTreeSet::new()),
                 &refs,
                 index,
             )
@@ -1424,6 +1485,7 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 owner,
+                Some(&BTreeSet::new()),
                 &refs,
                 &index,
             ),
@@ -1459,6 +1521,7 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 owner,
+                Some(&BTreeSet::new()),
                 &refs,
                 &custom,
             ),
@@ -1469,6 +1532,7 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 owner,
+                Some(&BTreeSet::new()),
                 &refs,
                 &absent,
             ),
@@ -1502,6 +1566,7 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 owner,
+                Some(&BTreeSet::new()),
                 &refs,
                 &index,
             )
@@ -1525,6 +1590,7 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 OWNER,
+                Some(&BTreeSet::new()),
                 &refs,
                 &tier,
             ),
@@ -1535,6 +1601,7 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 OWNER,
+                Some(&BTreeSet::new()),
                 &refs,
                 &result,
             ),
@@ -1566,6 +1633,7 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 owner,
+                Some(&BTreeSet::new()),
                 &refs,
                 &index,
             )
@@ -1597,6 +1665,7 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 owner,
+                Some(&BTreeSet::new()),
                 &refs,
                 &index,
             )
@@ -1630,6 +1699,7 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 owner,
+                Some(&BTreeSet::new()),
                 &refs,
                 &index,
             ),
@@ -1652,6 +1722,7 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 OWNER,
+                Some(&BTreeSet::new()),
                 &refs,
                 &reference,
             )
@@ -1683,6 +1754,7 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 owner,
+                Some(&BTreeSet::new()),
                 &refs,
                 &index,
             ),
@@ -1717,11 +1789,141 @@ mod tests {
                 "total_cents: subtotal + shipping",
                 "quote",
                 owner,
+                Some(&BTreeSet::new()),
                 &refs,
                 &index,
             ),
             None
         );
+    }
+
+    const SHADOW_SOURCE: &str =
+        include_str!("../../../tests/fixtures/operand_callee_identity/let_shadow.rs");
+    const METHOD_SOURCE: &str =
+        include_str!("../../../tests/fixtures/operand_callee_identity/method_confusion.rs");
+    const PRIMITIVE_SOURCE: &str =
+        include_str!("../../../tests/fixtures/operand_callee_identity/primitive_control.rs");
+
+    fn parsed_pin(source: &str) -> Result<Option<OperandOnlyPin>, String> {
+        let index = index_with(&[source]);
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "quote")
+            .ok_or("premise: quote indexed")?;
+        assert_eq!(index.tests().len(), 1, "premise: one parsed test");
+        let tests = index
+            .tests()
+            .iter()
+            .map(|test| (test, RelationReason::DirectOwnerCall))
+            .collect::<Vec<_>>();
+        assert!(
+            tests[0].0.assertions.len() >= 2,
+            "premise: paired field oracles were parsed"
+        );
+        Ok(operand_only_pin(
+            "total_cents: subtotal + shipping",
+            &owner.name,
+            owner.body.as_str(),
+            Some(&BTreeSet::new()),
+            &tests,
+            &index,
+        ))
+    }
+
+    #[test]
+    fn parsed_local_callee_bindings_do_not_prove_a_primitive_return() -> Result<(), String> {
+        for binding in [
+            "let shipping_cents = flat_rate;",
+            "let (shipping_cents,) = (flat_rate,);",
+            "let r#shipping_cents = flat_rate;",
+            "let shipping_cents;\n    shipping_cents = flat_rate;",
+            "use crate::flat_rate as shipping_cents;",
+        ] {
+            let source = SHADOW_SOURCE.replace("let shipping_cents = flat_rate;", binding);
+            assert_eq!(parsed_pin(&source)?, None, "{binding}");
+        }
+        for parameter in [
+            "shipping_cents: fn(u64) -> Shipping",
+            "r#shipping_cents: fn(u64) -> Shipping",
+            "(shipping_cents,): (fn(u64) -> Shipping,)",
+        ] {
+            let argument = if parameter.starts_with('(') {
+                "(flat_rate,)"
+            } else {
+                "flat_rate"
+            };
+            let source = SHADOW_SOURCE
+                .replace("    let shipping_cents = flat_rate;\n", "")
+                .replace("quantity: u64)", &format!("quantity: u64, {parameter})"))
+                .replace("quote(3_000, 3)", &format!("quote(3_000, 3, {argument})"));
+            assert_eq!(parsed_pin(&source)?, None, "{parameter}");
+        }
+        for binding in [
+            "use crate::local_rates::shipping_cents;",
+            "use crate::local_rates::*;",
+            "declare!(fn shipping_cents(_: u64) -> Shipping { Shipping });",
+        ] {
+            let source = format!(
+                "mod local_rates {{ pub use crate::flat_rate as shipping_cents; }}\n\
+                 macro_rules! declare {{ ($item:item) => {{ $item }}; }}\n{}",
+                SHADOW_SOURCE.replace("let shipping_cents = flat_rate;", binding)
+            );
+            assert_eq!(parsed_pin(&source)?, None, "{binding}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn parsed_associated_callees_do_not_prove_a_free_call_return() -> Result<(), String> {
+        for source in [
+            METHOD_SOURCE.to_string(),
+            METHOD_SOURCE.replace("&self, _: u64", "_: u64"),
+        ] {
+            let index = index_with(&[&source]);
+            let callees = index
+                .functions()
+                .iter()
+                .filter(|function| function.name == "shipping_cents")
+                .collect::<Vec<_>>();
+            assert_eq!(callees.len(), 1, "premise: only the decoy has this name");
+            assert!(matches!(
+                callees[0].item.container,
+                crate::analysis::facts::FunctionContainer::Inherent { .. }
+            ));
+            assert_eq!(parsed_pin(&source)?, None);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn parsed_qualified_primitive_call_is_not_shadowed_by_a_value() -> Result<(), String> {
+        assert!(parsed_pin(PRIMITIVE_SOURCE)?.is_some());
+        let source = PRIMITIVE_SOURCE
+            .replace(
+                "    let subtotal =",
+                "    let shipping_cents = 7u64;\n    let subtotal =",
+            )
+            .replace(
+                "= shipping_cents(subtotal)",
+                "= crate::shipping_cents(subtotal)",
+            );
+        assert!(parsed_pin(&source)?.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn only_bindings_in_scope_at_the_call_can_shadow_it() -> Result<(), String> {
+        for replacement in [
+            "let shipping = shipping_cents(subtotal);\n    let shipping_cents = 7u64;",
+            "let shipping = shipping_cents(subtotal)   ;",
+            "let shipping_cents = shipping_cents(subtotal);\n    let shipping = shipping_cents;",
+        ] {
+            let source =
+                PRIMITIVE_SOURCE.replace("let shipping = shipping_cents(subtotal);", replacement);
+            assert!(parsed_pin(&source)?.is_some(), "{replacement}");
+        }
+        Ok(())
     }
 
     #[test]

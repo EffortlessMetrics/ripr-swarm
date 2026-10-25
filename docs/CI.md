@@ -446,17 +446,49 @@ and single-platform CI was the root cause enabling both.
   `cargo xtask` step, `windows-advisory-summary`, which validates the two run
   logs and their captured exit statuses; it is evidence validation, not a test
   gate, and it fails the job when the evidence is missing or unusable.
-- **Logs are redirected, not piped.** Each cargo step writes its log with a
-  file redirect and replays it with `cat`. A `| tee` pipe stays open until
-  every process holding its write end exits, so one test leaking a child kept
+- **`Windows Advisory Shards`** (`windows-advisory-shards.yml`, manual `workflow_dispatch` only) runs the same workspace tests as four `cargo nextest --partition count:N/4` jobs plus a doctest job, each with its own log artifact and failure summary, so a Windows test failure is attributable to a shard without a 75-minute single step (#9272). It is advisory and does not replace the nightly lane.
+- **`Windows Watchdog Qualification`** (`windows-watchdog-qualification.yml`, manual `workflow_dispatch` only) extracts the shard workflow's shipped test step, shortens only its timer to 12 seconds and runs it against a native fixture process tree in three cells: mapped, a primary-only-kill mutation that must fail the descendant check, and forced-missing mapping. It checks root identity, primary reaping, descendant termination, an unowned sentinel and uploaded receipts. It qualifies only the shortened bound (#9272).
+- **Test steps run under `windows-advisory-run`** (#9272, #9660). The
+  `--no-default-features` test step and both workspace runs go through
+  `cargo xtask windows-advisory-run`, which owns the cargo process tree (a Job
+  Object on Windows). It streams output to the job log as it arrives and into
+  the log file, ends the whole tree at its own deadline (40 minutes for the
+  `--no-default-features` tests, 70 for each workspace run), and on a timeout
+  names every test libtest reported as running for over 60 seconds with no
+  result, so a stuck run points at a test. It records cargo's exit code in the
+  status file (124 when it enforced the deadline, 127 when the command could
+  not start) and exits 0, so test outcomes stay advisory and a missing status is
+  still reported as missing evidence by the summarizer. Both streams share one
+  pipe so cargo's `Running` headers and libtest's results keep the order the
+  summarizer attributes by. It also bounds the wait for output after cargo
+  exits and requests termination of the process tree when a descendant keeps
+  the pipe open (a Job Object kills the whole tree on Windows), which is what a
+  `| tee` could not do: a test that leaks a child kept
   the step alive after cargo finished until the 90-minute job limit cancelled
-  the whole lane (#9272, run 39549631529). Each cargo step also carries its
-  own `timeout-minutes`, and later steps run under `!cancelled()`; a step that times out leaves
-  no status file, which the summarizer reports as missing evidence. The job
-  deadline (270 minutes) exceeds the sum of the cargo step deadlines (15+45+15+75+75), so
-  those steps alone cannot exhaust it (setup, summary compilation and the
-  manual isolation repeats have no separate deadline). The manual nested-alias
-  isolation repeats use the same redirect-and-replay form.
+  the whole lane (run 39549631529), and two jobs ran for hours past a
+  75-minute step limit with no output (jobs 119992784688 and 120026188944). The
+  runner executable is copied to `target/advisory-run/` first, because
+  `cargo test --workspace` rebuilds `xtask.exe` and Windows will not replace a
+  running image. Job-log delivery runs on its own thread behind a bounded
+  queue, so a stalled job-log pipe cannot delay the deadline: the log file keeps
+  every line and the runner reports what the job log lost. Termination runs on a helper thread that owns the child, because the
+  owner's reap and its drop poll without a bound; the runner observes the
+  primary for ten seconds, abandons a call that has not returned in twenty, and
+  reports a failed or unconfirmed termination instead of waiting indefinitely
+  or claiming success.
+  A read error on the command's pipe or a write error on the log file means the
+  log may be incomplete, so the status file is withheld and the summarizer
+  refuses the step. Repeating `--timeout-minutes`, `--log` or `--status` is
+  refused. The Windows-native forced-deadline control runs with
+  `workflow_dispatch` input `runner_probe_only` (job
+  `windows-advisory-runner-probe`), without the full lanes. The check steps still redirect to a file and replay it with
+  `cat`. Every step also carries its own `timeout-minutes` as a backstop above
+  the runner deadline, and later steps run under `!cancelled()`. The job
+  deadline (270 minutes) exceeds the sum of the step deadlines
+  (15+45+15+15+75+75, including the runner build), so those steps alone cannot
+  exhaust it (setup, summary compilation and the manual isolation repeats have
+  no separate deadline). The manual nested-alias isolation repeats use the
+  redirect-and-replay form.
 - **Two samples per run.** The suite runs twice on purpose: one sample cannot
   separate a reproducible failure from a load-dependent flake. The summarizer
   tracks three states per test (failed, observed pass, not observed) and reports
@@ -1149,6 +1181,22 @@ the same file to Codecov Test Analytics only when `CODECOV_TOKEN` is available
 on trusted runs. Fork pull requests still run tests and upload the artifact, but
 skip the Codecov test-results upload because repository secrets are unavailable.
 
+### Merge-ready Conflict Notice
+
+A `merge-ready` label on a PR that conflicts with its base starts no
+`routed-rust.yml` run, because GitHub creates no `pull_request` run without a
+test-merge ref (#9842, #9250).
+`.github/workflows/merge-ready-conflict-notice.yml` closes that silence. It runs
+on `pull_request_target: [labeled]` for the `merge-ready` label only, reads the
+PR's `mergeable_state` through the API (retrying while GitHub computes it), and
+for a `dirty` PR posts one comment per head SHA plus a failing
+`merge-ready conflict` commit status. A mergeable PR gets nothing from it except the clearing of a conflict status it posted earlier on the same head, and a
+head or base branch that changed after the request is ignored. If mergeability is still uncomputed after the retries it warns and exits, and the label can be re-applied. The failing status is keyed to the head SHA: it clears with the next push, or when a re-applied label finds the conflict gone. The workflow checks out and runs
+no PR code, takes only the PR number, head SHA and base branch name as `env` values, uses no
+third-party actions, and holds job-level `pull-requests: write` and
+`statuses: write` only. It is a notice, not a required check; the author merges
+the base branch, resolves the conflict, and re-applies `merge-ready`.
+
 ### PR Staleness Watchdog
 
 GitHub sometimes silently drops the `pull_request` event delivery that creates
@@ -1181,7 +1229,7 @@ minutes), so before calling a head dark the watchdog also lists
 in-progress run is reported as in flight. Re-applying `merge-ready` on such a
 head would cancel the real run, so the watchdog never recommends it. This uses
 `actions: read` only. Drafts and fork heads are
-skipped, as are PRs without the `merge-ready` label (no request was made). No PR comments are posted; each sweep's summary table is the audit
+skipped, as are PRs without the `merge-ready` label (no request was made). The one write is the conflict report (#10136): a labeled, non-draft, same-repo PR that is `dirty` and whose head has no `merge-ready conflict` failure from the actions bot gets one comment per head and base plus that failing status (the same marker and context the label-time notice uses, so the two never double up), and a PR that is no longer conflicting and still carries that failure gets a success status. The job holds `pull-requests: write` and `statuses: write` and still never dispatches. Each sweep's summary table is the audit
 trail. `xtask/tests/pr_readiness_workflow_contract.rs` pins the alert-only
 shape (no dispatch command, no `actions: write`), the in-flight check, and
 the `mergeable_state` column.
@@ -2293,18 +2341,34 @@ on a `dependabot/` branch without the template claim lines: the claim is this
 dependency policy and the acceptance delta is the update branch. Any other PR
 still has to state its own claim.
 
+A security update that bumps a lockfile inside a blind-journey installed
+fixture (`fixtures/blind_journey_installed_*`) trips the fixture bindings: file
+digests, snapshot commit/tree ids and the scripted corpus's candidate
+identities are all recorded. Check out the update branch and run
+`cargo xtask fixtures refresh-identity <typescript|python>`. It re-derives the
+digests from the bytes, the ids from the manifest's own `construction_recipe`
+(the rebuild `check-fixture-contracts` verifies with), rebinds the same ids in
+`fixtures/blind_journey_execute/corpus.json`, and moves the TypeScript
+`runner_identity` to the vitest version the head lockfile selects. It refuses
+to add or drop a bound file and does not touch prose. It lists the lines that
+still name the old runner version; those, the frozen transcripts and the
+journeys themselves are re-checked by hand under the new runner
+(`cargo xtask check-fixture-contracts`, `cargo xtask blind-journey-execute`)
+before the update lands.
+
 The ordinary size envelope (files and changed lines) counts only what a human
 has to review. Generated files are declared once, with `linguist-generated` in
 `.gitattributes` (dependency lockfiles, blessed `expected/` rows and goldens,
-public-proof metrics), and their lines and files are not counted. The
+public-proof metrics, verdict-corpus producer fact packets), and their lines and files are not counted. The
 declaration is read from the PR's base commit, so a PR cannot label its own
 files; a `.gitattributes` edit is itself counted in full. Three guards keep the
 label from hiding hand-written code: only declarable shapes count (lockfiles,
-`fixtures/**/expected/**`, `metrics/public-proof/**`; a new family is added to
+`fixtures/**/expected/**`, `fixtures/<language>-verdict-corpus/packets/**`,
+`metrics/public-proof/**`; a new family is added to
 `GENERATED_DECLARATION_ALLOWED` in reviewed code, and any other declaration is
 ignored and fails admission with `generated_declaration_invalid`); only data
 file types (`.json`, `.jsonl`, `.lock`, `.md`, `.txt`, `.stdout`) are ever
-exempt, and a file must change at least one line; and the exempt lines have their
+exempt (corpus packets: `.json` only), and a file must change at least one line; and the exempt lines have their
 own cap of 40000 (`generated_scope_oversized`), so a regeneration is separated
 from the hand-written change. A truncated file listing exempts nothing.
 
@@ -2322,6 +2386,78 @@ vulnerability reporting are settings, not workflow files. Keep that document
 updated when repository settings change.
 
 Release workflows handle extension publishing and server binary releases.
+
+## Capability Producer Inventory
+
+`cargo xtask check-capability-producers [--registry-json <path>]` compares the
+binary-resident language capability registry (`ripr capabilities --json`, #5531)
+with repository inventory the in-crate tests cannot enumerate. It builds `ripr`
+and fails when:
+
+- a `LanguageId` variant declared in `domain/language.rs` is not exported by the
+  registry (an omitted `LanguageId::ALL` entry);
+- a registered language has no cell, or a cell names an unregistered language;
+- a `lang-*` Cargo feature, a registry `required_feature` and an adapter
+  directory under `analysis/language/` do not name the same producer set;
+- a cell `proof_refs` entry has no `docs/specs/RIPR-SPEC-NNNN-*.md`.
+
+It is separate from `check-capabilities`, which validates
+`metrics/capabilities.toml` against `docs/CAPABILITY_MATRIX.md` and does not read
+the registry. Limits: it does not check cell states, tier ceilings or docs text
+(in-crate tests and `check-support-tiers`), framework-level producers (the
+per-language disposition tests), the registry's relation to
+`metrics/capabilities.toml`, or non-default feature builds. `--registry-json`
+reads a saved registry without building and can be stale; the report says so.
+It is not part of `precommit` or `check-pr` (it requires a `ripr` build, which
+`precommit` must not force). It is hosted: `rust-gates.yml` runs it as the
+unconditional `capability_producers` step after `fixtures` (the `ripr` build is
+already warm), and the `routed-rust.yml` docs-gate runs it when a docs-only PR
+changes `docs/specs/**` or `docs/status/SUPPORT_TIERS.md` (a renamed spec is the
+one docs-only way to break a `proof_refs` entry).
+
+## Capability Registry Docs Block
+
+`cargo xtask capability-docs [--check | --write] [--markdown-file <path>]` keeps
+the generated `<!-- capability-registry:begin ... end -->` block in
+`docs/status/SUPPORT_TIERS.md` and in `docs/LANGUAGE_ADAPTER_PREVIEW.md` equal
+to the registry (#5531). Both documents embed the same rendering; a marker
+pair missing from either is a failure, and `--write` validates and splices every
+document in memory before writing any (an I/O error mid-write can leave a
+partial state that a re-run converges). The preview guide's remaining prose is checked by the
+`language_capability_drift` test: it may not state a `usable alpha` tier (the
+block owns per-cell tiers) and may say `<cell id> is not_proven` only of a cell
+the registry lacks or holds at `not_proven` (backticks, emphasis, hard wraps
+and the verbs is/are/remains/stays are normalized). There is one
+renderer, in the `ripr` library; `ripr capabilities --markdown` prints it and
+the command builds `ripr`, runs that, and compares or splices the exact text.
+The in-crate `language_capability_drift` test checks the same renderer, but a
+Rust test does not run on a Markdown-only PR (`routed-rust.yml` classifies it
+`docs_only`), so a hand edit of the block was previously caught only by a Rust
+run.
+
+- `--check` (default) fails when the block differs, when the begin/end markers
+  are missing, duplicated or reversed, or when the rendering is empty or has no
+  cell rows.
+- `--write` rewrites only the text from the begin marker to the end marker and
+  refuses on the same conditions, so a failed run writes nothing.
+- `--markdown-file` reads a saved rendering instead of building (offline, can be
+  stale; the report says so).
+
+Hosted wiring (#5531): `rust-gates.yml` runs `capability-docs --check` as the
+unconditional `capability_docs` step after `fixtures` on every non-docs-only
+lane, so registry drift (an edit to `domain/language_capability.rs`) fails the
+required `Ripr Rust Small Result`. For a docs-only PR the `routed-rust.yml`
+docs-gate runs it only when the PR changes `docs/status/SUPPORT_TIERS.md`,
+`docs/LANGUAGE_ADAPTER_PREVIEW.md` or `docs/specs/**`, so a hand edit of the block fails the same required result
+while other docs-only PRs build nothing extra. Both are existing jobs of the
+existing `pull_request`/`merge_group` workflow: no new trigger, permission,
+secret or `pull_request_target`, and candidate code runs only where
+`cargo xtask precommit` already ran it. A hosted run of the new step is not
+proof the wiring works; the local negative experiment is (hand-edit the block,
+`cargo xtask capability-docs --check` exits non-zero), and the workflow
+contract tests pin the step shape. It stays out of `precommit` and `check-pr`
+because producing the rendering needs a `ripr` build. It does not check tier
+prose or row bindings (`check-support-tiers` and the drift test).
 
 ## Principles
 

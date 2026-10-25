@@ -1,0 +1,66 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/radix_literal_boundary_off/input
+
+Summary: 2 probe(s), 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+
+Shared evidence and guidance
+  E1 [findings 1, 2]: reach yes: Related tests appear to reach is_big: small_is_not_big
+  E2 [findings 1, 2]: infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
+  E3 [findings 1, 2]: observation yes: A related test observes a value or effect near the changed behavior
+  E4 [findings 1, 2]: discriminator missing: `n == 0xFF`; related oracle: Strong oracle found: exact value or pattern assertion
+  E5 [findings 1, 2]: local flow reaches returned value: n > 0xFF (line 2)
+  E6 [findings 1, 2]: related test tests/big.rs:4 small_is_not_big uses strong exact value oracle: assert_eq!(is_big(0x10), false); misses: no test input reaches `n == 0xFF`
+  E7 [findings 1, 2]: source assertion argument value false at line 5
+  E8 [findings 1, 2]: source function argument value n = 0x10 at line 5
+
+Finding 1: WARNING ./src/lib.rs:2
+  id: probe:src_lib.rs:predicate:7432bf5c
+Changed
+  before: n >= 0xFF
+  after:  n > 0xFF
+Probe
+  family: predicate
+  delta:  control
+  owner:  src/lib.rs::is_big
+  canonical gap: gap:rust:src/lib.rs:is_big:predicate_boundary:predicate:n==0xff
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+Evidence
+  shared evidence: E1, E2
+  - propagation yes: Changed behavior appears to influence returned value: n > 0xFF
+  shared evidence: E3, E4, E5, E6, E7, E8
+Weakness
+  - missing discriminator n == 0xFF: No related test call uses n equal to 0xFF; observed n values: 0x10; target 0xFF value: 0xFF
+Next step
+  - Add boundary tests for below, equal, and above the changed threshold with exact assertions
+Drill in:
+  ripr explain --root <cwd>/fixtures/radix_literal_boundary_off/input --diff <cwd>/fixtures/radix_literal_boundary_off/diff.patch --mode fast probe:src_lib.rs:predicate:7432bf5c
+  ripr context --root <cwd>/fixtures/radix_literal_boundary_off/input --diff <cwd>/fixtures/radix_literal_boundary_off/diff.patch --mode fast --at probe:src_lib.rs:predicate:7432bf5c
+
+Finding 2: WARNING ./src/lib.rs:2
+  id: probe:src_lib.rs:return_value:ebe6c6ef
+Changed
+  before: n >= 0xFF
+  after:  n > 0xFF
+Probe
+  family: return_value
+  delta:  value
+  owner:  src/lib.rs::is_big
+  canonical gap: gap:rust:src/lib.rs:is_big:return_value:return_value:n>0xff
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+Evidence
+  shared evidence: E1, E2
+  - propagation yes: Complete propagation witness reaches returned value: n > 0xFF
+  shared evidence: E3, E4, E5, E6, E7, E8
+Weakness
+  - missing discriminator n == 0xFF: No related test call uses n equal to 0xFF; observed n values: 0x10; target 0xFF value: 0xFF
+Next step
+  - The related test `small_is_not_big` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns. Missing discriminator: `n == 0xFF`
+Drill in:
+  ripr explain --root <cwd>/fixtures/radix_literal_boundary_off/input --diff <cwd>/fixtures/radix_literal_boundary_off/diff.patch --mode fast probe:src_lib.rs:return_value:ebe6c6ef
+  ripr context --root <cwd>/fixtures/radix_literal_boundary_off/input --diff <cwd>/fixtures/radix_literal_boundary_off/diff.patch --mode fast --at probe:src_lib.rs:return_value:ebe6c6ef

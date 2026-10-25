@@ -416,12 +416,20 @@ each labeled row carries an `oracle` object (expected, `observed_kind`,
 `observed_strength`, `observed_all`, `outcome`). These never enter
 `false_verdict_rate` or any verdict rate.
 
-The `[[known_false]]` tables of `spec-coverage.toml` (`case`, `issue`,
-`reason`) list every false verdict the corpus still scores with its owning
+The `known-false/<case>.toml` files of a corpus directory (`case`, `issue`,
+`reason`; the file name is the case id, and an inline `[[known_false]]` table
+in `spec-coverage.toml` is rejected so parallel fixes never share lines) list every false verdict the corpus still scores with its owning
 issue. A whole-corpus `check` fails on a false row that is not listed and on a
 listed row that is no longer false, so a bless cannot absorb a new false
 verdict and a fixed row cannot return unnoticed. A `--case` subset is never
 gated on it.
+
+`missed_credit_ceiling` in `spec-coverage.toml` counts `abstained` rows whose
+truth is `discriminated`: tests that catch the change while ripr says
+unknown. A whole-corpus `check` fails when the count rises above the ceiling
+and passes with a printed note when it falls below it, so a fix lowers the
+ceiling but concurrent fixes never deadlock on the same number. A corpus
+without the key is not gated.
 
 The `[oracle]` table of `spec-coverage.toml` holds `match_floor` and
 `overclaim_ceiling`. `validate` requires the table once any case is

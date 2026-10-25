@@ -1,0 +1,12 @@
+diff --git a/reads/audit.py b/reads/audit.py
+--- a/reads/audit.py
++++ b/reads/audit.py
+@@ -40,7 +40,7 @@ def locked(account):
+ 
+ def slow_query(millis):
+     if millis > 500:
+-        log.warning("slow query: %s", millis)
++        log.warning("query slow: %s", millis)
+         return False
+     return True
+ 

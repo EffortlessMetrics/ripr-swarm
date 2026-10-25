@@ -56,15 +56,21 @@ use std::{
     ops::RangeInclusive,
     path::{Path, PathBuf},
 };
+mod approx_band;
 mod arm_activation;
+mod bool_oracle;
 mod boundary;
+mod caplog_text;
 mod classify;
 mod deleted_lines;
 mod guard_activation;
+mod guard_credit;
+mod helper_inline;
+mod message_pin;
 mod wrapped_call;
 use classify::{PythonNoBehaviorContext, classify_change_with_context};
 #[cfg(test)]
-use classify::{classify_change, classify_change_with_old};
+use classify::{classify_change, classify_change_with_old, classify_change_with_source};
 mod discriminators;
 mod effect_alignment;
 mod hypothesis;
@@ -79,6 +85,7 @@ mod reexports;
 mod related_tests;
 mod repo;
 mod row_miss;
+mod row_reach;
 mod setup_receivers;
 mod sink_alignment;
 mod source_facts;
@@ -143,6 +150,7 @@ use source_facts::{extract_source_facts, source_fact_snapshot_observation};
 mod source_utils;
 use source_utils::{is_test_file, normalized_path};
 mod fixtures;
+mod helper_assertions;
 mod module_callees;
 mod same_class_callees;
 mod static_limits;
@@ -184,6 +192,39 @@ fn mentions_python_name(text: &str, name: &str) -> bool {
         })
 }
 
+/// Whether `line` is a decorator in a run of added decorator lines that ends
+/// at an added `def` or `class` line: the decorators of a newly added
+/// definition. A decorator added above an existing definition, or beside
+/// unrelated added lines, is an edit of that definition and keeps its probe.
+fn opens_added_definition(
+    added_lines: &[crate::analysis::diff::ChangedLine],
+    line: &crate::analysis::diff::ChangedLine,
+) -> bool {
+    let is_decorator = |text: &str| {
+        text.trim_start()
+            .strip_prefix('@')
+            .and_then(|rest| rest.chars().next())
+            .is_some_and(|ch| ch == '_' || ch.is_alphabetic())
+    };
+    if !is_decorator(&line.text) {
+        return false;
+    }
+    let mut next = line.line;
+    loop {
+        next += 1;
+        let Some(following) = added_lines.iter().find(|added| added.line == next) else {
+            return false;
+        };
+        let text = following.text.trim_start();
+        if is_decorator(text) {
+            continue;
+        }
+        return text.starts_with("def ")
+            || text.starts_with("async def ")
+            || text.starts_with("class ");
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PythonOwner {
     name: String,
@@ -196,12 +237,21 @@ struct PythonOwner {
     imports: Vec<PythonImport>,
     cli_receiver_names: Vec<String>,
     route_paths: Vec<String>,
+    /// Lowercase HTTP verbs each `route_paths` entry accepts, index-aligned;
+    /// an empty entry means the verb is not statically known.
+    route_methods: Vec<Vec<String>>,
     dynamic_route_decorators: Vec<String>,
     /// Decorator names whose binding is not the plain name they spell: a
     /// decorator written as a call (`@final(wrapper)`) or one whose first
     /// segment is redefined at module level. Transparent-decorator rules must
     /// not trust the import for these.
     unplain_decorators: Vec<String>,
+    /// First and last source line of a function owner's decorator list. The
+    /// `def` line starts the owner, so a changed decorator argument
+    /// (`@retry(3)`) would otherwise fall to the module owner and never see
+    /// the owner's decorator-indirection limit. `None` without decorators and
+    /// for class and module owners.
+    decorator_lines: Option<(usize, usize)>,
     /// Declared parameters of a function/method owner, in declaration order.
     /// Empty for class and module owners. Used only to bind literal test-call
     /// arguments to predicate boundary operands (`boundary.rs`).
@@ -245,6 +295,10 @@ struct PythonOwner {
     /// guarded-return shape as a callee, and whether its parameters hold
     /// their call-site values as a caller (`term_activation.rs`, #6733).
     term_facts: term_activation::PythonTermFacts,
+    /// Facts about the owner's class that a dunder-protocol binding needs
+    /// (`related_tests.rs`, #9421). Empty until the workspace pass fills it,
+    /// which keeps every consumer fail-closed.
+    class_facts: related_tests::PythonClassFacts,
 }
 
 /// One declared parameter of a Python function owner.
@@ -303,6 +357,27 @@ impl PythonOwner {
     }
 }
 
+/// Closed set of Python test frameworks the adapter classifies tests under.
+///
+/// Every consumer matches this exhaustively, so adding a variant is a compile
+/// error until each verify-command, placement and activation site decides it.
+/// `capability_disposition_tests` additionally binds each variant to its
+/// `python/<framework>/diff/repair_routing` capability cell.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PythonFramework {
+    Pytest,
+    Unittest,
+}
+
+impl PythonFramework {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pytest => "pytest",
+            Self::Unittest => "unittest",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PythonTest {
     name: String,
@@ -330,11 +405,17 @@ struct PythonTest {
     parametrize: Option<parametrize::PythonParametrizeCases>,
     /// Parameters Hypothesis `@given(...)` supplies (#6601); never fixtures.
     generated_inputs: Vec<String>,
-    framework: &'static str,
+    framework: PythonFramework,
     assertions: Vec<PythonAssertion>,
     /// Whether RIPR can say this test has no assertion, or only that it
     /// recognized none (#5571).
     assertion_admission: admission::PythonAssertionAdmission,
+    /// Modules this test imports by a bare name that resolve to a file or
+    /// directory beside the test file (`from runner import run_case` with
+    /// `tests/runner.py`): pytest's rootdir insertion makes them importable
+    /// and they are test support the single-file scan cannot read. Filled by
+    /// the workspace pass (`fixtures.rs`, #5491); empty until then.
+    bare_sibling_modules: Vec<PathBuf>,
     /// How the test and its module can rebind names and attributes; guards
     /// module-constant boundary resolution (`boundary.rs`, #4227).
     constant_rebinding: module_constants::PythonTestRebinding,
@@ -373,10 +454,31 @@ struct PythonAssertion {
     /// (`assertRaisesRegex(E, 'm', check, 20, n=3)` calls `check(20, n=3)`;
     /// RIPR-SPEC-0238 rule 13), with every argument it passes on.
     callable_call: Option<String>,
+    /// The existing helper-resolution pass supplied this assertion. Its
+    /// comparison alone does not establish a deferred owner's execution.
+    helper_derived: bool,
     line: usize,
     oracle_kind: OracleKind,
     oracle_strength: OracleStrength,
     oracle_shape: PythonOracleShape,
+    /// Set for a bare `assert f(lit, ..)` / `assert not f(lit, ..)`: an
+    /// assertion on a call whose arguments are all literals. Extraction reads
+    /// it as a smoke truthiness check; `bool_oracle` re-reads it as an exact
+    /// boolean pin once the callee is known to return `bool`.
+    bare_bool_call: Option<PythonBareBoolCall>,
+}
+
+/// The call under a bare boolean assertion (`bool_oracle.rs`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PythonBareBoolCall {
+    /// The bare callee name; dotted callees are never resolved.
+    callee: String,
+    /// The call's source text, without the `not`.
+    call_text: String,
+    /// `Some(b)` for a `True`/`False` literal argument, `None` for any other
+    /// literal, by position.
+    bool_arguments: Vec<Option<bool>>,
+    negated: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -712,6 +814,9 @@ impl PythonAdapter {
         let mut fixture_defs_by_file: BTreeMap<PathBuf, Vec<PythonFixtureDef>> = BTreeMap::new();
         // Conftests that install implicit setup around tests (#6657).
         let mut implicit_conftests: BTreeSet<PathBuf> = BTreeSet::new();
+        let mut reach_conftests: BTreeSet<PathBuf> = BTreeSet::new();
+        let mut helper_modules_by_file: BTreeMap<PathBuf, helper_assertions::PythonHelperModule> =
+            BTreeMap::new();
         let mut docstring_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
             BTreeMap::new();
         let mut import_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
@@ -750,6 +855,7 @@ impl PythonAdapter {
             if !facts.fixtures.is_empty() {
                 fixture_defs_by_file.insert(relative.clone(), facts.fixtures.clone());
             }
+            helper_modules_by_file.insert(relative.clone(), facts.helper_module.clone());
             // A conftest with implicit setup, or one that only partly parsed,
             // may assert around every test below it.
             if facts.conftest_implicit_setup
@@ -758,6 +864,12 @@ impl PythonAdapter {
             {
                 implicit_conftests.insert(relative.clone());
             }
+            if facts.conftest_declares_fixture_or_hook
+                || (relative.file_name().and_then(|name| name.to_str()) == Some("conftest.py")
+                    && !facts.limitations.is_empty())
+            {
+                reach_conftests.insert(relative.clone());
+            }
             if is_test_file(relative) {
                 all_tests.extend(facts.tests);
             } else {
@@ -765,12 +877,34 @@ impl PythonAdapter {
             }
         }
         fixtures::attach_fixture_defs(&mut all_tests, &fixture_defs_by_file);
-        fixtures::taint_admission_by_conftest(&mut all_tests, &implicit_conftests, |conftest| {
-            // A chain conftest that exists but was never read (capped,
-            // excluded or unreadable) cannot be ruled out.
+        helper_assertions::apply_helper_assertions(&mut all_tests, &helper_modules_by_file);
+        // A chain conftest that exists but was never read (capped, excluded or
+        // unreadable) cannot be ruled out.
+        let unreadable_conftest = |conftest: &Path| {
             !workspace_read.sources.contains_key(conftest) && options.root.join(conftest).is_file()
+        };
+        fixtures::taint_admission_by_conftest(
+            &mut all_tests,
+            &implicit_conftests,
+            unreadable_conftest,
+        );
+        fixtures::mark_implicit_reach_by_conftest(
+            &mut all_tests,
+            &reach_conftests,
+            unreadable_conftest,
+        );
+        fixtures::taint_admission_by_conftest_declarations(
+            &mut all_tests,
+            &reach_conftests,
+            unreadable_conftest,
+        );
+        fixtures::record_bare_sibling_imports(&mut all_tests, |path| {
+            options.root.join(path).exists()
         });
         reexports::apply_package_reexports(&mut all_owners, |file| {
+            workspace_read.sources.get(file).map(String::as_str)
+        });
+        bool_oracle::credit_bare_bool_asserts(&mut all_tests, &all_owners, |file| {
             workspace_read.sources.get(file).map(String::as_str)
         });
         related_tests::apply_src_module_ambiguity(
@@ -778,6 +912,7 @@ impl PythonAdapter {
             workspace_files.iter().filter(|file| !is_test_file(file)),
         );
         related_tests::apply_rival_definition_modules(&mut all_owners);
+        related_tests::apply_class_facts(&mut all_owners);
 
         // Walk-count cap disclosure: one named limitation carrying the
         // refused count, mirroring the TypeScript adapter's
@@ -940,6 +1075,12 @@ impl PythonAdapter {
                     || is_added_import(added)
                     || is_python_no_behavior_line(&added.text)
                     || is_python_structural_line(&added.text)
+                    // A decorator that opens a newly added function is part of
+                    // its definition; the function's own lines carry the change.
+                    // A decorator that replaces an old line is an edit and keeps
+                    // its probe (#9756).
+                    || (!counterparts.contains_key(&added.line)
+                        && opens_added_definition(&changed.added_lines, added))
             });
             // Header span per owner, computed once per changed file.
             let mut header_spans: BTreeMap<usize, Option<(usize, usize)>> = BTreeMap::new();
@@ -1087,11 +1228,18 @@ impl PythonAdapter {
             production_files,
             skipped_files,
             partial_reason,
+            file_accounting: repo::file_accounting(&input),
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
         })
     }
 }
+
+#[cfg(test)]
+mod property_assertion_tests;
+
+#[cfg(test)]
+mod unreachable_assertion_tests;
 
 #[cfg(test)]
 mod arm_activation_tests;
@@ -1100,13 +1248,34 @@ mod arm_activation_tests;
 mod assertion_selection_tests;
 
 #[cfg(test)]
+mod bool_oracle_tests;
+
+#[cfg(test)]
 mod conftest_admission_tests;
+
+#[cfg(test)]
+mod source_facts_tests;
 
 #[cfg(test)]
 mod deleted_lines_tests;
 
 #[cfg(test)]
 mod fixtures_tests;
+
+#[cfg(test)]
+mod dunder_entry_tests;
+
+#[cfg(test)]
+mod module_field_tests;
+
+#[cfg(test)]
+mod helper_assertions_tests;
+
+#[cfg(test)]
+mod capability_disposition_tests;
+
+#[cfg(test)]
+mod helper_inline_tests;
 
 #[cfg(test)]
 mod helper_owner_call_tests;

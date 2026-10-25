@@ -1,0 +1,45 @@
+{
+  "case_id": "method-hop-multi-caller-hit",
+  "subject_id": "authored-method-hop",
+  "diff": "cases/method-hop-multi-caller-hit.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 127
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "exact_pin_assert",
+  "hard_case": "The owner has two direct callers: `Size::pretty_as`, which the test helper reaches, and `Display::fmt`, which no test calls. The helper asserts the method's result and the boundary row arrives as a const-constructor receiver.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "bytes <= unit",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests::pretty_formats_one_binary_unit",
+        "equivalence_review": "the edit itself: exactly one unit formats as the raw byte count instead of one unit"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`check_pretty` asserts `size.pretty_as(si)`, which returns `pretty(self.0, si)` unchanged; the test passes Size::kib(1) with si true, so bytes and the selected unit are both 1_024. `Display::fmt` is a second caller of `pretty` that no test reaches, so it neither binds nor blocks the chain. 1 of 1 listed mutants fails cargo test; the extra mutant `bytes > unit`, run by hand, fails it too. Spec cells: RIPR-SPEC-0158, RIPR-SPEC-0159.",
+  "labeling_observation": {
+    "ripr_commit": "581975f",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

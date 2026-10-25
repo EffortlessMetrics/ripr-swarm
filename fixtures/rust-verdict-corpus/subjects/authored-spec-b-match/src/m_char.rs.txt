@@ -1,0 +1,29 @@
+//! The scrutinee is a char, not a string.
+
+pub fn tag_char(c: char) -> &'static str {
+    match c {
+        'a' => "alpha",
+        'b' => "beta",
+        _ => "other",
+    }
+}
+
+pub fn classify_char(c: char) -> &'static str {
+    let final_label = tag_char(c);
+    if final_label == "alpha" {
+        "word"
+    } else {
+        "blank"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_arm_has_its_own_label_m_char() {
+        assert_eq!(classify_char('a'), "word");
+        assert_eq!(classify_char('b'), "blank");
+    }
+}
