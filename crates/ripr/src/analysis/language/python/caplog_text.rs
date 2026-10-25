@@ -30,7 +30,6 @@ use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion
 use super::boundary::{CallRow, owner_call_rows_for_candidate, unrebound_constants};
 use super::discriminators::python_string_literal_value;
 use super::guard_activation::{condition_holds, leading_whitespace};
-use super::module_constants::mentions_identifier;
 use super::no_behavior::split_top_level_args;
 use super::related_tests::PythonRelatedCandidate;
 use super::static_limits::{CaplogRead, caplog_required_literals};
@@ -629,6 +628,47 @@ fn caplog_aliases(body: &str) -> Vec<CaplogAlias<'_>> {
         .collect()
 }
 
+/// Where a left-to-right scan of Python source stands relative to string
+/// literals, including triple-quoted ones (`"""a "b" c"""`), which a plain
+/// quote toggle reads as alternating open and closed strings.
+#[derive(Default)]
+struct StringScan {
+    /// The open string's quote and whether it is triple-quoted.
+    open: Option<(char, bool)>,
+    escaped: bool,
+}
+
+impl StringScan {
+    /// Consume the string character at the start of `rest` when the scan is
+    /// inside a string or `rest` opens one; the bytes consumed, else 0 (plain
+    /// code, left to the caller).
+    fn step(&mut self, rest: &str) -> usize {
+        let Some(ch) = rest.chars().next() else {
+            return 0;
+        };
+        let triple = |quote: char| rest.starts_with(&quote.to_string().repeat(3));
+        match self.open {
+            Some((quote, is_triple)) => {
+                if self.escaped {
+                    self.escaped = false;
+                } else if ch == '\\' {
+                    self.escaped = true;
+                } else if ch == quote && (!is_triple || triple(quote)) {
+                    self.open = None;
+                    return if is_triple { 3 } else { 1 };
+                }
+                ch.len_utf8()
+            }
+            None if ch == '\'' || ch == '"' => {
+                let is_triple = triple(ch);
+                self.open = Some((ch, is_triple));
+                if is_triple { 3 } else { 1 }
+            }
+            None => 0,
+        }
+    }
+}
+
 /// `text` with each whole-word `name` outside a string literal replaced by its
 /// read, in one pass: an alias spelled inside a quoted literal is data, not the
 /// alias, and a read inserted for one alias (`caplog.text`) is never rescanned
@@ -636,25 +676,16 @@ fn caplog_aliases(body: &str) -> Vec<CaplogAlias<'_>> {
 pub(super) fn replace_identifiers(text: &str, replacements: &[(&str, &str)]) -> String {
     let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
     let mut out = String::with_capacity(text.len());
-    let mut quote: Option<char> = None;
-    let mut escaped = false;
+    let mut scan = StringScan::default();
     let mut index = 0;
     while index < text.len() {
-        let Some(ch) = text[index..].chars().next() else {
-            break;
-        };
-        let width = ch.len_utf8();
-        if let Some(open) = quote {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == open {
-                quote = None;
-            }
-        } else if ch == '\'' || ch == '"' {
-            quote = Some(ch);
-        } else if let Some((name, with)) = replacements.iter().find(|(name, _)| {
+        let consumed = scan.step(&text[index..]);
+        if consumed > 0 {
+            out.push_str(&text[index..index + consumed]);
+            index += consumed;
+            continue;
+        }
+        if let Some((name, with)) = replacements.iter().find(|(name, _)| {
             text[index..].starts_with(name)
                 && !text[..index].chars().next_back().is_some_and(is_word)
                 && !text[index + name.len()..]
@@ -666,8 +697,11 @@ pub(super) fn replace_identifiers(text: &str, replacements: &[(&str, &str)]) -> 
             index += name.len();
             continue;
         }
+        let Some(ch) = text[index..].chars().next() else {
+            break;
+        };
         out.push(ch);
-        index += width;
+        index += ch.len_utf8();
     }
     out
 }
@@ -685,33 +719,52 @@ pub(super) fn substitute_caplog_aliases(test: &PythonTest, gate_text: &str) -> S
 /// its brackets, so `assert (` / `"..." in msgs` / `)` is one assertion.
 fn statement_lines(lines: &[&str], start: usize) -> std::ops::Range<usize> {
     let mut depth = 0i32;
-    let mut quote: Option<char> = None;
-    let mut escaped = false;
+    let mut scan = StringScan::default();
     for (offset, line) in lines.iter().skip(start).enumerate() {
-        for ch in line.chars() {
-            if let Some(open) = quote {
-                if escaped {
-                    escaped = false;
-                } else if ch == '\\' {
-                    escaped = true;
-                } else if ch == open {
-                    quote = None;
-                }
-            } else if ch == '#' {
-                break;
-            } else if ch == '\'' || ch == '"' {
-                quote = Some(ch);
-            } else if matches!(ch, '(' | '[' | '{') {
-                depth += 1;
-            } else if matches!(ch, ')' | ']' | '}') {
-                depth -= 1;
+        let mut in_comment = false;
+        let mut index = 0;
+        while index < line.len() {
+            let consumed = scan.step(&line[index..]);
+            if consumed > 0 {
+                index += consumed;
+                continue;
             }
+            let Some(ch) = line[index..].chars().next() else {
+                break;
+            };
+            match ch {
+                '#' => {
+                    in_comment = true;
+                    break;
+                }
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => depth -= 1,
+                _ => {}
+            }
+            index += ch.len_utf8();
         }
-        if depth <= 0 && quote.is_none() && !line.trim_end().ends_with('\\') {
+        // A backslash ending a comment is comment text, not a continuation.
+        let continued = !in_comment && line.trim_end().ends_with('\\');
+        if depth <= 0 && scan.open.is_none() && !continued {
             return start..start + offset + 1;
         }
     }
     start..lines.len()
+}
+
+/// Whether `text` uses the local name `name`: a whole word that is not an
+/// attribute (`caplog.text` does not use a local called `text`).
+fn mentions_local_name(text: &str, name: &str) -> bool {
+    let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    text.match_indices(name).any(|(start, _)| {
+        let before = text[..start].trim_end();
+        !before.ends_with('.')
+            && !text[..start].chars().next_back().is_some_and(is_word)
+            && !text[start + name.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_word)
+    })
 }
 
 /// The assertion text with its aliases of captured-log reads replaced by the
@@ -730,7 +783,7 @@ fn snapshot_alias_gate(
     let aliases = caplog_aliases(&test.body_text);
     let mentioned: Vec<_> = aliases
         .iter()
-        .filter(|alias| mentions_identifier(gate_text, alias.name))
+        .filter(|alias| mentions_local_name(gate_text, alias.name))
         .collect();
     if mentioned.is_empty() {
         return Some(gate_text.to_string());
@@ -747,7 +800,7 @@ fn snapshot_alias_gate(
             .count()
             == 1;
         let only_uses = lines.iter().enumerate().all(|(index, line)| {
-            !mentions_identifier(line, alias.name)
+            !mentions_local_name(line, alias.name)
                 || index == alias.index
                 || assertion_lines.contains(&index)
         });

@@ -817,7 +817,9 @@ mutant calibrates the rule; ripr reports only the static shape.
     assertion statement (a wrapped assertion counts as one statement). An
     alias that is appended to, rebound, deleted, read in a comprehension,
     taken before the call or inside a nested block keeps the abstention, as
-    does a name spelled inside a quoted literal, which is data. `caplog`'s
+    does a name spelled inside a quoted literal (single, double or triple
+    quoted), which is data. A local called `text`, `messages` or `records`
+    is not confused with the attribute of `caplog.text` and the like. `caplog`'s
     reads are rebuilt on each access, so an alias taken before the call
     would hold earlier records (#10151).
 23. **An assertion that cannot run or cannot fail is not read.** The

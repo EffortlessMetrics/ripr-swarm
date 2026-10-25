@@ -8902,6 +8902,74 @@ fn a_wrapped_assertion_using_an_alias_is_evaluated() -> Result<(), String> {
 }
 
 #[test]
+fn an_alias_inside_a_triple_quoted_literal_is_not_substituted() -> Result<(), String> {
+    // Post-landing #10282 receipt: a plain quote toggle read
+    // `"""prefix "msgs" : 5"""` as alternating open and closed strings, so the
+    // `msgs` inside it was replaced and the evaluator read `caplog.text`.
+    use super::caplog_text::replace_identifiers;
+    assert_eq!(
+        replace_identifiers(
+            "\"\"\"prefix \"msgs\" : 5\"\"\" in msgs",
+            &[("msgs", "caplog.text")]
+        ),
+        "\"\"\"prefix \"msgs\" : 5\"\"\" in caplog.text"
+    );
+    assert_eq!(
+        replace_identifiers("\'\'\'a \'msgs\' b\'\'\' in msgs", &[("msgs", "R")]),
+        "\'\'\'a \'msgs\' b\'\'\' in R"
+    );
+    let owner = AUDIT_OWNER.replace(
+        "low balance: %s\", balance",
+        "prefix \\\"msgs\\\" : 5 | prefix \\\"caplog.text\\\" : 5\"",
+    );
+    for quote in ["\"\"\"", "\'\'\'"] {
+        let test = format!(
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    msgs = caplog.text\n    assert {quote}prefix \"msgs\" : 5{quote} in msgs\n"
+        );
+        assert_eq!(
+            classify_log_text_edit_from(
+                &owner,
+                "log.warning(\"prefix \\\"msgs\\\" : 5 | prefix \\\"caplog.text\\\" : 5\")",
+                "log.warning(\"prefix \\\"msgs\\\" : 5\")",
+                &test
+            )?,
+            (ExposureClass::WeaklyExposed, None),
+            "{quote}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn two_aliases_whose_names_are_read_attributes_are_both_evaluated() -> Result<(), String> {
+    // Exact-successor review (P2): the local `text` was counted inside the
+    // other alias's `caplog.text`, so a two-alias assertion abstained.
+    let removed = "log.warning(\"balance low: %s\", balance)";
+    let test = "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    msgs = caplog.text\n    text = caplog.messages\n    assert \"low balance: 5\" in msgs and \"low balance: 5\" in text\n";
+    assert_eq!(
+        classify_log_text_edit(AUDIT_OWNER, removed, test)?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_comment_ending_in_a_backslash_does_not_extend_the_assertion() -> Result<(), String> {
+    // #10309 review: the comment's trailing backslash is not a continuation,
+    // so the `del` on the next line is an extra use and keeps the abstention.
+    let removed = "log.warning(\"balance low: %s\", balance)";
+    let test = "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    msgs = caplog.messages\n    assert \"low balance: 5\" in msgs  # see notes\\\n    del msgs\n";
+    assert_eq!(
+        classify_log_text_edit(AUDIT_OWNER, removed, test)?,
+        (
+            ExposureClass::StaticUnknown,
+            Some(StaticLimitKind::UnsupportedSyntax)
+        )
+    );
+    Ok(())
+}
+
+#[test]
 fn alias_replacement_skips_string_literals_and_longer_names() {
     use super::caplog_text::replace_identifiers;
     assert_eq!(
