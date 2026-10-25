@@ -221,3 +221,27 @@ fn a_dependent_calling_a_wrapper_defined_in_the_owners_package_keeps_the_gap() -
         ],
     )?)
 }
+
+#[test]
+fn an_unused_namesake_wrapper_in_the_dependent_does_not_hide_an_owner_package_wrapper()
+-> Result<(), String> {
+    // The test calls `tally::heavy`; ledger's own `heavy` is never used.
+    assert_gap_kept(&findings_with(
+        CUSTOM_LIB_MANIFEST,
+        "tally/lib/core.rs",
+        &[
+            (
+                "tally/lib/core.rs",
+                "pub fn weight(count: u32) -> u32 {\n    3 * count\n}\npub fn heavy(count: u32) -> u32 {\n    weight(count)\n}\n",
+            ),
+            (
+                "ledger/src/lib.rs",
+                "pub fn heavy(count: u32) -> u32 {\n    3 * count\n}\n",
+            ),
+            (
+                "ledger/tests/ledger.rs",
+                "#[test]\nfn heavy_triples_the_count() {\n    assert_eq!(tally::heavy(5), 15);\n}\n",
+            ),
+        ],
+    )?)
+}

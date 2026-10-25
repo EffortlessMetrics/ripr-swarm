@@ -2605,13 +2605,12 @@ pub(in crate::analysis) fn declared_dependent_package_calls_owner(
                         ))
             })
     });
-    // The wrapper the test enters lives in the owner's own package when only
-    // that package defines `entry_symbol`: that is a same-package chain
-    // entered from outside, not a cross-package wrapper.
+    // A function of the entry symbol's name in the owner's own package makes
+    // the entry identity ambiguous (the name-only witness graph cannot say
+    // which definition the test calls), and the owner-package one would be a
+    // same-package chain entered from outside, so the gap stays.
     let wrapper_in_owner_package = functions.iter().any(|function| {
         function.name == entry_symbol && package_of(function).as_ref() == Some(&owner_manifest)
-    }) && !functions.iter().any(|function| {
-        function.name == entry_symbol && package_of(function).as_ref() == Some(&test_manifest)
     });
     !shadowed && !wrapper_in_owner_package
 }
