@@ -1,0 +1,12 @@
+diff --git a/src/m_escape.rs b/src/m_escape.rs
+--- a/src/m_escape.rs
++++ b/src/m_escape.rs
+@@ -10,7 +10,7 @@
+ 
+ pub fn classify_escape(input: &str) -> &'static str {
+     let final_label = label_escape(input);
+-    if final_label == "alpha" {
++    if final_label == "beta" {
+         "word"
+     } else {
+         "blank"
