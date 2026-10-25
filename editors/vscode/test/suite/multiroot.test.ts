@@ -7,6 +7,7 @@ import * as vscode from 'vscode';
 import type { LanguageClient } from 'vscode-languageclient/node';
 import { assertActionTargets, assertContextPacket, normalizeUriSpelling, RootExpectation } from '../multiRootAssertions';
 import { boundedRequestEvidence } from '../hostDiagnostics';
+import { observeDocuments, RequestEventTrace } from '../requestEventTrace';
 
 // Read observations from the activated controller without supplying a runtime,
 // resolver, client, root selector, status producer or diagnostic collection.
@@ -40,6 +41,10 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
     const processes: ProcessObservation[] = [];
     const stages: Record<string, unknown>[] = [];
     const clientIds = new WeakMap<LanguageClient, number>();
+    const tracedClients = new WeakSet<LanguageClient>();
+    const trace = new RequestEventTrace();
+    const traceSubscriptions: vscode.Disposable[] = [];
+    const restoreMiddleware: Array<() => void> = [];
     let nextClientId = 1;
     let phase = 'setup';
     let outcome = 'not_established';
@@ -65,6 +70,10 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
         relatedTest: 'tests/beta_contract.rs',
         testNames: ['beta_light_parcel', 'beta_heavy_parcel'],
       };
+      const sourceUris = new Set([rootA, rootB].map(root =>
+        vscode.Uri.file(path.join(root.root, root.source)).toString()));
+      traceSubscriptions.push(...observeDocuments(vscode.workspace, trace,
+        document => sourceUris.has(document.uri.toString())));
       assert.deepStrictEqual(vscode.workspace.workspaceFolders?.map(f => f.uri.fsPath),
         [rootA.root, rootB.root], 'must be the actual two-root .code-workspace');
       assert.strictEqual(vscode.window.activeTextEditor, undefined,
@@ -87,8 +96,17 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
           const observed: ProcessObservation = {
             child, pid: child.pid, args: [...(args ?? [])], cwd, session, exits: 0, closes: 0,
           };
-          child.on('exit', () => observed.exits++);
-          child.on('close', () => observed.closes++);
+          trace.record('process.spawn', { client_pid: child.pid });
+          child.on('exit', (code, signal) => {
+            observed.exits++;
+            trace.record('process.exit', { client_pid: child.pid,
+              exit_code: code ?? undefined, signal: signal ?? undefined });
+          });
+          child.on('close', (code, signal) => {
+            observed.closes++;
+            trace.record('process.close', { client_pid: child.pid,
+              exit_code: code ?? undefined, signal: signal ?? undefined });
+          });
           processes.push(observed);
         }
         return child;
@@ -206,6 +224,7 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
       let teardownError: unknown;
       let beforeCleanup: unknown;
       const cleanupErrors: string[] = [];
+      trace.record('teardown.begin');
       try {
         if (deactivateActual) { await bounded(deactivateActual(), 'extension deactivation'); }
         for (const observed of processes) { await assertReaped(observed); }
@@ -220,6 +239,8 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
           catch (cleanupError) { cleanupErrors.push(String(cleanupError)); }
         }
       } finally {
+        for (const restore of restoreMiddleware.reverse()) { restore(); }
+        for (const subscription of traceSubscriptions) { subscription.dispose(); }
         restoreSpawn?.();
         const receipt = process.env.RIPR_TEST_MULTIROOT_RECEIPT;
         assert.ok(receipt, 'matrix receipt path is required');
@@ -232,12 +253,18 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
           before_emergency_cleanup: beforeCleanup,
           emergency_cleanup_errors: cleanupErrors,
           claim_limit: 'Real extension/LSP session acceptance; no final release-candidate qualification or Windows descendant-containment claim.',
+          request_event_trace: trace.snapshot(),
         }, null, 2));
       }
       if (teardownError !== undefined) { throw teardownError; }
     });
 
     function sessions(): ProcessObservation[] { return processes.filter(p => p.session); }
+    function clientIdentity(client: LanguageClient | undefined): number | undefined {
+      if (!client) { return undefined; }
+      if (!clientIds.has(client)) { clientIds.set(client, nextClientId++); }
+      return clientIds.get(client);
+    }
     function record(): void {
       stages.push({ phase, status: controller.status.kind, root: controller.workspaceRoot,
         session_pids: sessions().map(p => p.pid), diagnostic_uris: riprDiagnostics().map(([uri]) => uri.toString()) });
@@ -249,6 +276,28 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
         `real session bound to ${expected.root}`);
       const client = controller.client!;
       assert.ok(client.serverProcess?.pid, 'selected session must own a real server process');
+      if (!tracedClients.has(client)) {
+        // 10.1.2 exposes this middleware object and forwards the original
+        // document/range/context/token to it. No replacement runtime/client.
+        const middleware = client.clientOptions.middleware;
+        assert.ok(middleware, 'the observed real client must expose its middleware object');
+        const previous = middleware.provideCodeActions;
+        const wrapped = trace.middleware(previous, {
+          client_id: clientIdentity(client), client_pid: client.serverProcess?.pid,
+        });
+        middleware.provideCodeActions = wrapped;
+        restoreMiddleware.push(() => {
+          if (middleware.provideCodeActions === wrapped) {
+            if (previous) { middleware.provideCodeActions = previous; }
+            else { delete middleware.provideCodeActions; }
+          }
+        });
+        traceSubscriptions.push(client.onDidChangeState(event => trace.record('client.state', {
+          client_id: clientIdentity(client), client_pid: client.serverProcess?.pid,
+          old_state: event.oldState, new_state: event.newState,
+        })));
+        tracedClients.add(client);
+      }
       // Interactive save refreshes deliberately defer expensive seam evidence,
       // so drive the framed full-refresh wire command until the full-seam
       // snapshot commits and its seam diagnostics publish. On CI, refreshes
@@ -353,11 +402,6 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
       assert.strictEqual(diagnostic.message,
         `Weakly gripped behavioral seam (predicate_boundary): ${expected.changedExpression}`);
       assert.strictEqual(diagnostic.range.start.line, 1);
-      const clientIdentity = (observed: LanguageClient | undefined) => {
-        if (!observed) { return undefined; }
-        if (!clientIds.has(observed)) { clientIds.set(observed, nextClientId++); }
-        return clientIds.get(observed);
-      };
       const requestEvidence = (error?: unknown) => {
         const currentClient = controller.client;
         const document = vscode.workspace.textDocuments.find(d => d.uri.toString() === uri.toString());
@@ -377,11 +421,14 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
       };
       // Observe the original request once; do not retry or alter cancellation.
       stages.push({ phase, code_action_request: requestEvidence() });
+      trace.record('command.begin', { document_uri: uri.toString(), client_id: clientIdentity(client) });
       let actions: Array<vscode.CodeAction | vscode.Command>;
       try {
         actions = await vscode.commands.executeCommand<Array<vscode.CodeAction | vscode.Command>>(
           'vscode.executeCodeActionProvider', uri, diagnostic.range);
+        trace.record('command.resolve', { document_uri: uri.toString(), client_id: clientIdentity(client) });
       } catch (error) {
+        trace.record('command.reject', { document_uri: uri.toString(), client_id: clientIdentity(client) }, error);
         stages.push({ phase, code_action_failure: requestEvidence(error) });
         // executeCodeActionProvider throws a bare illegal-argument when the
         // URI has no open text model; disclose the open-document set so the
