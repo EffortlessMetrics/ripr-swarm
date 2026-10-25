@@ -631,3 +631,56 @@ fn importing_the_owner_itself_is_still_a_limit() -> Result<(), String> {
     ));
     withheld(&lib, BEFORE, AFTER, "use of the owner's own path")
 }
+
+// #10167 review: a bare-name shadow does not shadow the owner's qualified path,
+// and `use super::inc as inc;` still names the owner. Both keep the strong
+// indirect assertion's limit instead of reading as an actionable gap.
+#[test]
+fn a_shadow_beside_the_qualified_owner_value_is_still_a_limit() -> Result<(), String> {
+    for shadow in [
+        "fn inc(x: u32) -> u32 {
+            x + 9
+        }",
+        "use super::other::inc;",
+    ] {
+        let lib = with_other_module(&values(&format!(
+            "    #[test]
+    fn positive() {{
+        {shadow}
+        assert!(super::inc(1) > 0);
+        assert_eq!([1, 2].map(super::inc), [2, 3]);
+    }}
+"
+        )));
+        withheld(&lib, BEFORE, AFTER, shadow)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn an_owner_preserving_same_name_alias_is_still_a_limit() -> Result<(), String> {
+    let lib = values(
+        "    #[test]
+    fn positive() {
+        use super::inc as inc;
+        assert!(inc(1) > 0);
+        assert_eq!([1, 2].map(inc), [2, 3]);
+    }
+",
+    );
+    withheld(&lib, BEFORE, AFTER, "use super::inc as inc")
+}
+
+#[test]
+fn an_alias_of_another_item_under_the_owner_name_keeps_the_gap() -> Result<(), String> {
+    let lib = with_other_module(&values(
+        "    #[test]
+    fn positive() {
+        use super::other::inc as inc;
+        assert!(super::inc(1) > 0);
+        assert_eq!([1, 2].map(inc), [10, 11]);
+    }
+",
+    ));
+    keeps_gap(&lib, BEFORE, AFTER, "use other::inc as inc")
+}

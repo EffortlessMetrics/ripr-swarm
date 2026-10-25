@@ -235,11 +235,16 @@ fn names_owner_as_value(code: &str, owner: &FunctionFact) -> bool {
 }
 
 fn names_value(code: &str, name: &str, owner_names: &[String]) -> bool {
-    if is_bound_locally(code, name) || is_shadowed_by_item(code, name, owner_names) {
+    if is_bound_locally(code, name) {
         return false;
     }
+    // A bare `name` is the shadowing item; `super::name` still names the owner.
+    let shadowed = is_shadowed_by_item(code, name, owner_names);
     identifier_offsets(code, name).any(|at| {
         let before = code[..at].trim_end();
+        if shadowed && !before.ends_with("::") {
+            return false;
+        }
         let after = code[at + name.len()..].trim_start();
         let defined = before.ends_with("fn") && ends_at_boundary(&before[..before.len() - 2]);
         let method = before.ends_with('.');
@@ -392,23 +397,42 @@ fn use_statement_shadows(statement: &str, name: &str, owner_names: &[String]) ->
     identifier_offsets(statement, name).any(|at| {
         let before = statement[..at].trim_end();
         let after = statement[at + name.len()..].trim_start();
-        if before.ends_with(" as") || before.ends_with("\nas") {
-            return true;
+        if let Some(imported) = before
+            .strip_suffix("as")
+            .filter(|rest| rest.ends_with(char::is_whitespace))
+        {
+            // `use super::inc as inc;` renames the owner to its own name.
+            let imported = imported.trim_end();
+            return !imported
+                .strip_suffix(name)
+                .is_some_and(|qualifier| path_locates_owner(qualifier, owner_names));
         }
-        if !(after.is_empty() || after.starts_with([',', '}']) || after.starts_with("as ")) {
+        // The source side of `name as other` is judged where the alias is.
+        let renamed = after
+            .strip_prefix("as")
+            .is_some_and(|rest| rest.starts_with(char::is_whitespace));
+        if renamed {
             return false;
         }
-        // A group import (`a::b::{x, name}`) takes the path before its brace.
-        let prefix = match before.rfind('{') {
-            Some(brace) if !before[brace..].contains('}') => before[..brace].trim_end(),
-            _ => before,
-        };
-        let Some(path) = prefix.strip_suffix("::") else {
-            return false;
-        };
-        let last = path.rsplit("::").next().unwrap_or(path).trim();
-        !owner_names.iter().any(|known| known == last)
+        (after.is_empty() || after.starts_with([',', '}']))
+            && !path_locates_owner(before, owner_names)
     })
+}
+
+/// Whether the path written before an imported leaf (`super::`, `a::{`) ends in
+/// a segment that locates the owner. A group import takes the path before its
+/// open brace.
+fn path_locates_owner(before: &str, owner_names: &[String]) -> bool {
+    let before = before.trim_end();
+    let prefix = match before.rfind('{') {
+        Some(brace) if !before[brace..].contains('}') => before[..brace].trim_end(),
+        _ => before,
+    };
+    let Some(path) = prefix.strip_suffix("::") else {
+        return false;
+    };
+    let last = path.rsplit("::").next().unwrap_or(path).trim();
+    owner_names.iter().any(|known| known == last)
 }
 
 /// Byte ranges of `code` that are binding patterns: from `let`/`for` to the
