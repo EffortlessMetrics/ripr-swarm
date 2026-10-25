@@ -711,6 +711,49 @@ mod tests {
     }
 
     #[test]
+    fn a_literal_ending_in_r_or_a_raw_identifier_is_still_a_literal_tail() -> Result<(), String> {
+        let label = match_fn(
+            "label_of",
+            "pub fn label_of(kind: &str) -> &'static str {\n    match kind {\n        \"word\" => pick(kind),\n        _ => \"other\",\n    }\n}",
+        );
+        // `r` ending a literal or an identifier is not a raw-string opener.
+        for (body, expected) in [
+            (
+                "fn pick(_k: &str) -> &'static str {\n    \"other\"\n}",
+                "other",
+            ),
+            (
+                "fn pick(_k: &str) -> &'static str {\n    \"user\"\n}",
+                "user",
+            ),
+            (
+                "fn pick(_k: &str) -> &'static str {\n    \"color\"\n}",
+                "color",
+            ),
+            ("fn pick(_k: &str) -> &'static str {\n    \"#\"\n}", "#"),
+            (
+                "fn pick(_k: &str) -> &'static str {\n    // a raw ident r#type\n    \"alpha\"\n}",
+                "alpha",
+            ),
+        ] {
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions: vec![label.clone(), match_fn("pick", body)],
+                ..Default::default()
+            });
+            let eval = root_eval(&index);
+            match super::super::helper_transfer::helper_return_value(
+                &label,
+                &inputs(&[("kind", "\"word\"")]),
+                &eval,
+            ) {
+                Some(TypedValue::Str(text)) => assert_eq!(text, expected, "{body}"),
+                other => return Err(format!("{body}: expected Str({expected:?}), got {other:?}")),
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn raw_string_interiors_async_bodies_and_early_returns_are_not_literal_tails() {
         let label = match_fn(
             "label_of",
@@ -718,6 +761,8 @@ mod tests {
         );
         let bodies = [
             "fn pick(_k: &str) -> &'static str {\n    r#\"\n\"x\"\n\"#\n}",
+            "fn pick(_k: &str) -> &'static [u8] {\n    br#\"\n\"x\"\n\"#\n}",
+            "fn pick(_k: &str) -> &'static str {\n    r##\"\n\"x\"\n\"##\n}",
             "async fn pick(_k: &str) -> &'static str {\n    \"x\"\n}",
             "fn pick(k: &str) -> &'static str {\n    \"x\";\n    return k;\n}",
             // A quoted line inside a block comment is comment text, not a tail.

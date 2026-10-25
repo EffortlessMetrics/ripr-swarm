@@ -125,7 +125,7 @@ Updated:
 ## Pending — typescript_conditional_assertion_credit (11)
 
 Reason:
-RIPR-SPEC-0243: unevaluated-condition label also covers a conditionally registered test (#10438)
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
 
 Command:
 `cargo xtask goldens bless typescript_conditional_assertion_credit --reason "..."`
