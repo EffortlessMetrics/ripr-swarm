@@ -161,7 +161,7 @@ pub(super) fn static_limit_for_focused_change(
     }
     if let Some(decorator) = owner.decorators.iter().find(|decorator| {
         !is_transparent_owner_decorator_for_owner(decorator, owner)
-            && !is_forwarding_decorator(decorator, owner_source)
+            && !is_forwarding_decorator(decorator, owner, owner_source)
     }) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::DecoratorIndirection,
@@ -1516,7 +1516,7 @@ pub(super) fn unpinned_equality_dunder_limit(
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::domain::StaticLimitKind;
     use std::path::PathBuf;
@@ -1537,7 +1537,10 @@ mod tests {
         }
     }
 
-    fn owner_with(decorators: &[&str], imports: Vec<PythonImport>) -> PythonOwner {
+    pub(in crate::analysis::language::python) fn owner_with(
+        decorators: &[&str],
+        imports: Vec<PythonImport>,
+    ) -> PythonOwner {
         PythonOwner {
             name: "owner".to_string(),
             qualified_name: "owner".to_string(),

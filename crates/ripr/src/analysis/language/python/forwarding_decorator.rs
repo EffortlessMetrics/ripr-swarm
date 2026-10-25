@@ -14,6 +14,7 @@
 //! `def NAME(fn): [@functools.wraps(fn)] def inner(*args[, **kwargs]): <side
 //! effects>; return fn(*args[, **kwargs])` followed by `return inner`.
 
+use super::PythonOwner;
 use super::module_constants::ModuleBindingFacts;
 use super::source_facts::parse_module_result;
 use super::static_limits::{has_identifier_boundary, is_simple_python_identifier};
@@ -23,8 +24,22 @@ use std::path::Path;
 /// Whether `decorator` is a workspace-local forwarding wrapper defined in
 /// `owner_source`. An unparsable file, an empty source or any unfamiliar shape
 /// is not forwarding (fail closed).
-pub(super) fn is_forwarding_decorator(decorator: &str, owner_source: &str) -> bool {
-    if owner_source.is_empty() || !is_simple_python_identifier(decorator) {
+pub(super) fn is_forwarding_decorator(
+    decorator: &str,
+    owner: &PythonOwner,
+    owner_source: &str,
+) -> bool {
+    // `owner.decorators` names `@logged(arg)` as `logged`; the call form runs
+    // the decorator with other arguments, so only the bare spelling counts
+    // (`owner.unplain_decorators` also holds every locally defined name, so it
+    // cannot tell the two apart). A
+    // method's class body may bind the name too, which this module-level read
+    // cannot see.
+    if owner_source.is_empty()
+        || !is_simple_python_identifier(decorator)
+        || !owner.class_path.is_empty()
+        || decorated_by_call(owner_source, decorator)
+    {
         return false;
     }
     let Ok(Mod::Module(module)) = parse_module_result(Path::new("<owner>"), owner_source) else {
@@ -48,6 +63,17 @@ pub(super) fn is_forwarding_decorator(decorator: &str, owner_source: &str) -> bo
         _ => false,
     }) && facts.bound_once("functools");
     forwards_unchanged(definition, owner_source, plain_functools)
+}
+
+/// Whether any decorator line in the file spells `@name(...)`. File-wide on
+/// purpose: a lexical, fail-closed screen that costs only credit.
+fn decorated_by_call(source: &str, decorator: &str) -> bool {
+    source.lines().any(|line| {
+        line.trim_start()
+            .strip_prefix('@')
+            .and_then(|rest| rest.trim_start().strip_prefix(decorator))
+            .is_some_and(|after| after.trim_start().starts_with('('))
+    })
 }
 
 fn forwards_unchanged(
@@ -135,7 +161,9 @@ fn inner_forwards(
         !text.is_empty()
             && !mentions(text, vararg)
             && kwarg.is_none_or(|name| !mentions(text, name))
-            && !mentions_other_than_attribute(text, function)
+            && !mentions(text, "yield")
+            && !mentions(text, "await")
+            && !mentions_other_than_safe_attribute(text, function)
     })
 }
 
@@ -188,12 +216,22 @@ fn mentions(text: &str, identifier: &str) -> bool {
         .any(|(idx, _)| has_identifier_boundary(text, idx, identifier.len()))
 }
 
-/// Whether `identifier` appears other than as the receiver of an attribute
-/// read (`fn.__name__`).
-fn mentions_other_than_attribute(text: &str, identifier: &str) -> bool {
+/// Whether `identifier` appears other than as the receiver of a plain read of
+/// a metadata attribute. `fn.__call__(0)`, `fn.cache_clear()` and chained
+/// access run or reset the wrapped function.
+fn mentions_other_than_safe_attribute(text: &str, identifier: &str) -> bool {
+    const SAFE: [&str; 4] = [".__name__", ".__qualname__", ".__module__", ".__doc__"];
     text.match_indices(identifier).any(|(idx, _)| {
-        has_identifier_boundary(text, idx, identifier.len())
-            && !text[idx + identifier.len()..].starts_with('.')
+        if !has_identifier_boundary(text, idx, identifier.len()) {
+            return false;
+        }
+        let rest = &text[idx + identifier.len()..];
+        !SAFE.iter().any(|attribute| {
+            rest.strip_prefix(attribute).is_some_and(|after| {
+                !after.starts_with(|c: char| c.is_alphanumeric() || c == '_')
+                    && !matches!(after.trim_start().chars().next(), Some('(' | '.'))
+            })
+        })
     })
 }
 
@@ -203,8 +241,12 @@ mod tests {
 
     const LOGGED: &str = "import functools\n\nLOG = []\n\n\ndef logged(fn):\n    @functools.wraps(fn)\n    def inner(*args):\n        LOG.append(fn.__name__)\n        return fn(*args)\n\n    return inner\n";
 
+    fn owner() -> PythonOwner {
+        super::super::static_limits::tests::owner_with(&["logged"], Vec::new())
+    }
+
     fn forwarding(source: &str) -> bool {
-        is_forwarding_decorator("logged", source)
+        is_forwarding_decorator("logged", &owner(), source)
     }
 
     #[test]
@@ -276,13 +318,13 @@ mod tests {
     fn decorator_defined_elsewhere_does_not_forward() {
         let source = "from helpers import logged\n";
         assert!(!forwarding(source));
-        assert!(!is_forwarding_decorator("logged", ""));
+        assert!(!is_forwarding_decorator("logged", &owner(), ""));
     }
 
     #[test]
     fn dotted_or_called_decorators_do_not_forward() {
-        assert!(!is_forwarding_decorator("mod.logged", LOGGED));
-        assert!(!is_forwarding_decorator("logged(3)", LOGGED));
+        assert!(!is_forwarding_decorator("mod.logged", &owner(), LOGGED));
+        assert!(!is_forwarding_decorator("logged(3)", &owner(), LOGGED));
     }
 
     #[test]
@@ -294,5 +336,34 @@ mod tests {
     fn aliased_functools_wraps_does_not_forward() {
         let source = LOGGED.replace("import functools", "import functools as ft");
         assert!(!forwarding(&source));
+    }
+
+    #[test]
+    fn dunder_call_on_the_function_does_not_forward() {
+        let source = LOGGED.replace("LOG.append(fn.__name__)", "LOG.append(fn.__call__(0))");
+        assert!(!forwarding(&source));
+        let source = LOGGED.replace("LOG.append(fn.__name__)", "LOG.append(fn.__name__.upper())");
+        assert!(!forwarding(&source));
+    }
+
+    #[test]
+    fn yield_in_a_side_effect_does_not_forward() {
+        let source = LOGGED.replace("LOG.append(fn.__name__)", "LOG.append((yield))");
+        assert!(!forwarding(&source));
+    }
+
+    #[test]
+    fn called_decorator_spelling_does_not_forward() {
+        let called = format!("{LOGGED}\n\n@logged(transform)\ndef double(x):\n    return x\n");
+        assert!(!is_forwarding_decorator("logged", &owner(), &called));
+        let bare = format!("{LOGGED}\n\n@logged\ndef double(x):\n    return x\n");
+        assert!(is_forwarding_decorator("logged", &owner(), &bare));
+    }
+
+    #[test]
+    fn method_owner_does_not_forward() {
+        let mut method = owner();
+        method.class_path = "C".to_string();
+        assert!(!is_forwarding_decorator("logged", &method, LOGGED));
     }
 }
