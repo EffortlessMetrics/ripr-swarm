@@ -375,6 +375,7 @@ impl ClassifiedProbeEvidence {
                 &owner_parameter_names(owner),
                 &chain_tests,
                 Some(chain),
+                context.index,
             )
             .is_empty(),
             _ => false,

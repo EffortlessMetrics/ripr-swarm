@@ -271,10 +271,10 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
 ) -> StageEvidence {
     // A returned bare comparison with a resolved missing boundary
     // discriminator reads the predicate lens's gap, never a better reading:
-    // only a `weak` result replaces the return-value reading, which is
-    // otherwise unchanged (#9094).
+    // Weak or unresolved boundary evidence also applies to the returned
+    // comparison (#9094, #10046).
     if let Some(mut predicate) = returned_comparison_view(probe)
-        && !activation.missing_discriminators.is_empty()
+        && (!activation.missing_discriminators.is_empty() || unresolved_boundary.is_some())
     {
         predicate.family = ProbeFamily::Predicate;
         let evidence = infection_evidence_for_owner(
@@ -285,7 +285,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
             owner,
             owner_has_other_callers,
         );
-        if matches!(evidence.state, StageState::Weak) {
+        if matches!(evidence.state, StageState::Weak | StageState::Unknown) {
             return evidence;
         }
     }

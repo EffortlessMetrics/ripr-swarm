@@ -1279,9 +1279,8 @@ fn missing_discriminator_facts(
     {
         missing.push(fact);
     }
-    // A returned bare comparison reads the same boundary, but only a
-    // resolved gap counts: a boundary the lens cannot read leaves the
-    // return-value reading as it was and sets no unresolved reason.
+    // A returned comparison shares both resolved gaps and unresolved input
+    // identity with the predicate lens; withheld rows cannot fabricate gaps.
     let mut returned_unresolved = None;
     if let Some(view) = returned_comparison_view(probe)
         && let Some(fact) = missing_boundary_discriminator(
@@ -1300,6 +1299,9 @@ fn missing_discriminator_facts(
         })
     {
         missing.push(fact);
+    }
+    if returned_unresolved.is_some() {
+        *unresolved_boundary = returned_unresolved;
     }
     if (matches!(probe.family, ProbeFamily::ErrorPath)
         || flow_sinks
@@ -1685,47 +1687,58 @@ fn missing_boundary_discriminator(
             boundary_operand_parameter(owner, owner_source, &parameters, &left),
             boundary_operand_parameter(owner, owner_source, &parameters, &right),
         ];
-        *unresolved = computed_input_parameters(owner, &parameters, related_tests, helper_chain)
-            .into_iter()
-            .find(|parameter| compared.iter().flatten().any(|name| name == parameter))
-            .map(|parameter| computed_argument_reason(&parameter))
-            .or_else(|| {
-                // The owner is called, but only with arguments ripr cannot
-                // read (`score(&[b'f'; 16])`): a compared operand that is
-                // neither a parameter, a literal, nor a constant (a local
-                // counter `count`) has no row to evaluate it under, so it is
-                // unreadable rather than missing (Devin review on #6796).
-                let unknown_operands = [&left, &right]
-                    .into_iter()
-                    .filter(|operand| {
-                        boundary_operand_parameter(owner, owner_source, &parameters, operand)
-                            .is_none()
-                            && literal_operand_value(operand).is_none()
-                            && crate::analysis::value_resolution::constant_operand_name(operand)
+        *unresolved =
+            computed_input_parameters(owner, &parameters, related_tests, helper_chain, index)
+                .into_iter()
+                .find(|parameter| compared.iter().flatten().any(|name| name == parameter))
+                .map(|parameter| computed_argument_reason(&parameter))
+                .or_else(|| {
+                    // The owner is called, but only with arguments ripr cannot
+                    // read (`score(&[b'f'; 16])`): a compared operand that is
+                    // neither a parameter, a literal, nor a constant (a local
+                    // counter `count`) has no row to evaluate it under, so it is
+                    // unreadable rather than missing (Devin review on #6796).
+                    let unknown_operands = [&left, &right]
+                        .into_iter()
+                        .filter(|operand| {
+                            boundary_operand_parameter(owner, owner_source, &parameters, operand)
                                 .is_none()
-                            && crate::analysis::value_resolution::constant_offset_operand(operand)
+                                && literal_operand_value(operand).is_none()
+                                && crate::analysis::value_resolution::constant_operand_name(operand)
+                                    .is_none()
+                                && crate::analysis::value_resolution::constant_offset_operand(
+                                    operand,
+                                )
                                 .is_none()
+                        })
+                        .map(String::as_str)
+                        .collect::<Vec<_>>();
+                    (!unknown_operands.is_empty()
+                        && owner_is_called(owner, related_tests, helper_chain))
+                    .then(|| {
+                        unresolved_boundary_input(
+                            owner,
+                            &parameters,
+                            related_tests,
+                            helper_chain,
+                            index,
+                            &unknown_operands,
+                            [None, None],
+                        )
                     })
-                    .map(String::as_str)
-                    .collect::<Vec<_>>();
-                (!unknown_operands.is_empty()
-                    && owner_is_called(owner, related_tests, helper_chain))
-                .then(|| {
-                    unresolved_boundary_input(
+                    .flatten()
+                })
+                .or_else(|| {
+                    call_built_input_reason(
                         owner,
                         &parameters,
                         related_tests,
-                        helper_chain,
-                        &unknown_operands,
-                        [None, None],
+                        compared,
+                        &call_values,
                     )
                 })
-                .flatten()
-            })
-            .or_else(|| {
-                call_built_input_reason(owner, &parameters, related_tests, compared, &call_values)
-            })
-            .or_else(|| unreadable_spelled_line_reason(owner, related_tests, helper_chain));
+                .or_else(|| unresolved_call_identity(owner, related_tests, helper_chain, index))
+                .or_else(|| unreadable_spelled_line_reason(owner, related_tests, helper_chain));
         return None;
     }
     let left_parameter = boundary_operand_parameter(owner, owner_source, &parameters, &left);
@@ -1917,6 +1930,7 @@ fn missing_boundary_discriminator(
         &parameters,
         related_tests,
         helper_chain,
+        index,
         &unknown_operands,
         [left_parameter.as_deref(), right_parameter.as_deref()],
     ) {
@@ -2296,6 +2310,34 @@ fn element_boundary_discriminator(
     })
 }
 
+/// A declined call has no trusted owner row. Absence of that row cannot
+/// establish a missing boundary discriminator (#10046).
+fn unresolved_call_identity(
+    owner: &FunctionSummary,
+    related_tests: &[&TestSummary],
+    helper_chain: Option<&super::helper_transfer::HelperChain>,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Option<String> {
+    let refused = |target: &FunctionSummary| {
+        related_tests.iter().any(|test| {
+            test.body_calls().any(|call| {
+                call.name == target.name
+                    && !super::call_identity::qualified_owner_calls_resolve(
+                        index, target, test, &call.text,
+                    )
+            })
+        })
+    };
+    (refused(owner)
+        || helper_chain
+            .and_then(|chain| chain.hops.last())
+            .is_some_and(|entry| refused(&entry.caller)))
+    .then(|| {
+        "call identity does not resolve to the owner, so ripr cannot establish the boundary inputs"
+            .to_string()
+    })
+}
+
 /// Why a changed boundary's inputs cannot be read, when they cannot
 /// (#6674, #6693, #6672): an operand that is neither a parameter, a
 /// value the bounded evaluator folds from a row, a literal, nor a named
@@ -2306,6 +2348,7 @@ fn unresolved_boundary_input(
     parameters: &[String],
     related_tests: &[&TestSummary],
     helper_chain: Option<&super::helper_transfer::HelperChain>,
+    index: &crate::analysis::rust_index::RustIndex,
     unknown_operands: &[&str],
     operand_parameters: [Option<&str>; 2],
 ) -> Option<String> {
@@ -2335,12 +2378,14 @@ fn unresolved_boundary_input(
             ),
         });
     }
-    let computed = computed_input_parameters(owner, parameters, related_tests, helper_chain);
+    let computed = computed_input_parameters(owner, parameters, related_tests, helper_chain, index);
     let parameter = operand_parameters
         .into_iter()
         .flatten()
-        .find(|parameter| computed.iter().any(|name| name == parameter))?;
-    Some(computed_argument_reason(parameter))
+        .find(|parameter| computed.iter().any(|name| name == parameter));
+    parameter
+        .map(computed_argument_reason)
+        .or_else(|| unresolved_call_identity(owner, related_tests, helper_chain, index))
 }
 
 /// Whether a related test calls the owner, or the resolved helper chain's
@@ -3641,6 +3686,7 @@ fn binds_from_owner_call(body: &str, receiver: &str, owner_call: &str) -> bool {
     })
 }
 
+#[cfg(test)]
 fn owner_call_parameter_values(
     related_tests: &[&TestSummary],
     owner_name: &str,
@@ -3923,13 +3969,18 @@ pub(in crate::analysis) fn computed_input_parameters(
     parameters: &[String],
     related_tests: &[&TestSummary],
     helper_chain: Option<&super::helper_transfer::HelperChain>,
+    index: &crate::analysis::rust_index::RustIndex,
 ) -> Vec<String> {
-    let computed_for = |name: &str, names: &[String]| -> (bool, Vec<String>) {
+    let computed_for = |target: &FunctionSummary, names: &[String]| -> (bool, Vec<String>) {
         let mut called = false;
         let mut computed = Vec::new();
         for test in related_tests {
             for call in test.body_calls() {
-                if call.name != name {
+                if call.name != target.name
+                    || !super::call_identity::qualified_owner_calls_resolve(
+                        index, target, test, &call.text,
+                    )
+                {
                     continue;
                 }
                 let Some(arguments) = call_arguments(&call.text, &call.name) else {
@@ -3949,7 +4000,7 @@ pub(in crate::analysis) fn computed_input_parameters(
         }
         (called, computed)
     };
-    let (called, direct) = computed_for(&owner.name, parameters);
+    let (called, direct) = computed_for(owner, parameters);
     if called {
         return direct;
     }
@@ -3965,18 +4016,10 @@ pub(in crate::analysis) fn computed_input_parameters(
         return Vec::new();
     };
     let entry_parameters = function_parameters(&entry.caller);
-    let (entry_called, mut computed) = computed_for(&entry.caller.name, &entry_parameters);
+    let (entry_called, mut computed) = computed_for(&entry.caller, &entry_parameters);
     // A hop argument computed from the caller's parameters is one exact
     // value per row only when the entry calls carry exact rows at all.
-    if !entry_called
-        || owner_call_parameter_values(
-            related_tests,
-            &entry.caller.name,
-            is_free(&entry.caller),
-            &entry_parameters,
-        )
-        .is_empty()
-    {
+    if !entry_called || chain_entry_rows(chain, related_tests, index).is_empty() {
         return Vec::new();
     }
     for step in (0..chain.hops.len()).rev() {

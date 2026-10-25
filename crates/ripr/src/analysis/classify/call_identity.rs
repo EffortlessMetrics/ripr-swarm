@@ -683,7 +683,18 @@ impl OwnerCallIdentity {
                     let found = match import {
                         UseBinding::Path(path) => match path.split_last() {
                             Some((_, module)) if !module.is_empty() => {
-                                self.matches_module(use_target(module, base, scope, crate_names))
+                                // An import does not rebind its own path prefix:
+                                // `use thr::thr` imports a value from crate `thr`.
+                                let mut import_scope = scope.clone();
+                                import_scope.imports.retain(|import| {
+                                    !matches!(&import.binding, UseBinding::Path(bound) if bound == path)
+                                });
+                                self.matches_module(use_target(
+                                    module,
+                                    base,
+                                    &import_scope,
+                                    crate_names,
+                                ))
                             }
                             _ => Matches::Any,
                         },
@@ -1669,19 +1680,10 @@ fn own_crate_names_of(
     names
 }
 
-/// #9218: whether every module-qualified free call of the owner's name in a
-/// captured call line settles on the owner's own module, so the line's
-/// arguments may be read as an input of the owner. A bare call (`thr(5)`)
-/// keeps the name-only reading its consumers always had, a type-path call
-/// (`Type::thr(5)`) never lends arguments (the free-call reader skips it),
-/// and a receiver call is no free call. Any other qualified spelling
-/// (`rival::thr(5)`) must resolve to the owner: through the shared
-/// same-named-rival identity when the owner has rivals, otherwise only as
-/// `crate::<owner module>::thr` from the owner's own crate sources or as
-/// `super::thr` from a test beside a file-level owner. Everything else
-/// (an unreadable qualifier, an import-bound module, a dependency path, a
-/// `#[path]`-remapped package) declines: it supplies no input row, which
-/// only keeps a gap open.
+/// Whether every captured free call of the owner's name resolves to that
+/// owner. Bare imports use the same lexical and workspace crate identity as
+/// qualified paths, even when no same-package rival exists (#10046).
+/// Declined calls supply no row; activation retains the unresolved identity.
 pub(super) fn qualified_owner_calls_resolve(
     index: &RustIndex,
     owner: &FunctionSummary,
@@ -1695,7 +1697,6 @@ pub(super) fn qualified_owner_calls_resolve(
         .into_iter()
         .all(|qualifier| match qualifier {
             None => false,
-            Some(segments) if segments.is_empty() => true,
             Some(segments) if names_a_type(&segments) => true,
             Some(segments) => qualified_call_names_owner(index, owner, test, &segments),
         })
@@ -3474,8 +3475,8 @@ mod tests {
         let resolves = |owner: &FunctionSummary, text: &str| {
             qualified_owner_calls_resolve(&index, owner, test, text)
         };
-        // Bare and type-path spellings keep their reading.
-        assert!(resolves(&thr, "assert!(thr(1));"));
+        // An unbound bare call declines; type paths keep their reading.
+        assert!(!resolves(&thr, "assert!(thr(1));"));
         assert!(resolves(&thr, "assert!(Type::thr(1));"));
         // The owner's module path resolves, spelled absolutely or through
         // an in-file module name; a different module or an unbound one

@@ -26,6 +26,16 @@ fn findings(new: &str, old: &str, test: &str) -> Result<Vec<Finding>, String> {
 /// [`findings`] with `prefix` (whole lines) ahead of the changed line, which
 /// then sits on line `2 + prefix lines`.
 fn findings_after(prefix: &str, new: &str, old: &str, test: &str) -> Result<Vec<Finding>, String> {
+    findings_after_with(prefix, new, old, test, &[])
+}
+
+fn findings_after_with(
+    prefix: &str,
+    new: &str,
+    old: &str,
+    test: &str,
+    extra: &[(&str, &str)],
+) -> Result<Vec<Finding>, String> {
     let changed_line = 2 + prefix.lines().count();
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
@@ -49,6 +59,12 @@ fn findings_after(prefix: &str, new: &str, old: &str, test: &str) -> Result<Vec<
         "src/lib.rs",
         &format!("pub fn thr(x: i32) -> bool {{\n{prefix}{new}\n}}\n"),
     )?;
+    for (path, text) in extra {
+        if let Some(parent) = root.join(path).parent() {
+            std::fs::create_dir_all(parent).map_err(|error| format!("extra dir: {error}"))?;
+        }
+        write(path, text)?;
+    }
     write("tests/it.rs", test)?;
     let diff = format!(
         "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,{n} +1,{n} @@\n pub fn thr(x: i32) -> bool {{\n{ctx}-{old}\n+{new}\n }}\n",
@@ -444,7 +460,7 @@ fn a_qualified_rival_call_is_not_a_separating_input() -> Result<(), String> {
         OLD,
         "use thr::thr;\n\nmod rival {\n    pub fn thr(x: i32) -> bool {\n        x > 0\n    }\n}\n\n#[test]\nfn low() {\n    assert!(!thr(50));\n}\n\n#[test]\nfn high() {\n    assert!(thr(500));\n}\n\n#[test]\nfn other() {\n    assert!(rival::thr(101));\n}\n",
     )?;
-    assert_gap_named(&rival, true)?;
+    assert_identity_unresolved(&rival)?;
     let owner = family(&rival, "return_value")?;
     assert_ne!(owner.class, ExposureClass::Exposed, "{owner:?}");
     // Positive control: a plain `thr(101)` does separate.
@@ -492,7 +508,7 @@ fn a_qualified_rival_call_is_not_a_boundary_input() -> Result<(), String> {
             "use thr::thr;\n\n{RIVAL_MOD}{FAR_ONLY}\n#[test]\nfn other() {{\n    assert!(!rival::thr(101));\n}}\n"
         ),
     )?;
-    assert_gap_named(&rival, true)?;
+    assert_identity_unresolved(&rival)?;
     let owner = family(&rival, "return_value")?;
     assert_ne!(owner.class, ExposureClass::Exposed, "{owner:?}");
     // The same holds when the rival module is not defined in the test file.
@@ -503,7 +519,7 @@ fn a_qualified_rival_call_is_not_a_boundary_input() -> Result<(), String> {
             "use thr::thr;\n\n{FAR_ONLY}\n#[test]\nfn other() {{\n    assert!(!other_dep::thr(101));\n}}\n"
         ),
     )?;
-    assert_gap_named(&foreign, true)?;
+    assert_identity_unresolved(&foreign)?;
     let owner = family(&foreign, "return_value")?;
     assert_ne!(owner.class, ExposureClass::Exposed, "{owner:?}");
     // Positive control: the plain owner call at the boundary still clears it.
@@ -551,7 +567,7 @@ fn an_import_bound_owner_crate_path_is_still_a_boundary_input() -> Result<(), St
         OLD,
         &format!("{FAR_ONLY_QUALIFIED}\n#[test]\nfn at() {{\n    assert!(!t::thr(101));\n}}\n"),
     )?;
-    assert_gap_named(&unbound, true)?;
+    assert_identity_unresolved(&unbound)?;
     Ok(())
 }
 
@@ -663,7 +679,7 @@ fn a_dependency_export_of_a_same_named_function_is_not_the_owner() -> Result<(),
         "pub mod internal;\npub use internal::thr as renamed;\npub use other_dep::thr;\n",
     ] {
         let found = reexport_case(lib_rs)?;
-        assert_gap_named(&found, true).map_err(|error| format!("{lib_rs:?}: {error}"))?;
+        assert_identity_unresolved(&found).map_err(|error| format!("{lib_rs:?}: {error}"))?;
         let owner = family(&found, "return_value")?;
         assert_ne!(owner.class, ExposureClass::Exposed, "{lib_rs:?} {owner:?}");
     }
@@ -723,18 +739,11 @@ fn a_reexport_outside_the_crate_roots_top_level_is_not_a_root_export() -> Result
     for (lib_rs, extra) in cases {
         let found = reexport_case_with(lib_rs, &extra)?;
         let owner = family(&found, "return_value")?;
-        // With two crate roots naming `internal` the owner's module is
-        // ambiguous, so even the far owner calls decline and the boundary
-        // reads unresolved instead of missing: only not-Exposed holds.
-        assert!(
-            !extra.is_empty()
-                || owner
-                    .ripr
-                    .infect
-                    .summary
-                    .contains("equality-boundary discriminator is missing"),
-            "{lib_rs:?} {extra:?}: {owner:?}"
-        );
+        // Refused identity withholds the boundary, including ambiguous roots.
+        assert_gap_named(&found, false)?;
+        if extra.is_empty() {
+            assert_eq!(owner.class, ExposureClass::InfectionUnknown, "{owner:?}");
+        }
         assert_ne!(owner.class, ExposureClass::Exposed, "{lib_rs:?} {owner:?}");
     }
     Ok(())
@@ -749,6 +758,140 @@ fn an_explicit_owner_export_beats_a_dependency_glob() -> Result<(), String> {
     ] {
         let found = reexport_case(lib_rs)?;
         assert_gap_named(&found, false).map_err(|error| format!("{lib_rs:?}: {error}"))?;
+    }
+    Ok(())
+}
+
+const IDENTITY_FAR: &str = "mod owner_tests {\nuse thr::thr;\n#[test]\nfn low() { assert!(!thr(50)); }\n#[test]\nfn high() { assert!(thr(500)); }\n}\n";
+
+fn assert_identity_unresolved(findings: &[Finding]) -> Result<(), String> {
+    let owner = family(findings, "return_value")?;
+    assert_eq!(owner.class, ExposureClass::InfectionUnknown, "{owner:?}");
+    assert_gap_named(findings, false)?;
+    assert!(
+        owner.ripr.infect.summary.contains("call identity"),
+        "{owner:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn bare_import_call_values_require_the_owner_identity() -> Result<(), String> {
+    for (import, assertion, expected_owner) in [
+        ("thr::thr", "!thr(101)", true),
+        ("rival::thr", "thr(101)", false),
+    ] {
+        let results = findings(
+            NEW,
+            OLD,
+            &format!(
+                "use {import};\n{RIVAL_MOD}{IDENTITY_FAR}\n#[test]\nfn at() {{\n    assert!({assertion});\n}}\n"
+            ),
+        )?;
+        if expected_owner {
+            assert_gap_named(&results, false)?;
+        } else {
+            assert_identity_unresolved(&results)?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn workspace_sibling_call_values_require_the_owner_identity() -> Result<(), String> {
+    let extra = [
+        (
+            "Cargo.toml",
+            "[package]\nname = \"thr\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\nmembers = [\"sibling\"]\n[dependencies]\nsibling = { path = \"sibling\" }\n",
+        ),
+        (
+            "sibling/Cargo.toml",
+            "[package]\nname = \"sibling\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+        ),
+        (
+            "sibling/src/lib.rs",
+            "pub fn thr(x: i32) -> bool { x > 0 }\n",
+        ),
+    ];
+    for (import, assertion, expected_owner) in [
+        ("thr::thr", "!thr(101)", true),
+        ("sibling::thr", "thr(101)", false),
+    ] {
+        let results = findings_after_with(
+            "",
+            NEW,
+            OLD,
+            &format!(
+                "use {import};\n{IDENTITY_FAR}\n#[test]\nfn at() {{\n    assert!({assertion});\n}}\n"
+            ),
+            &extra,
+        )?;
+        if expected_owner {
+            assert_gap_named(&results, false)?;
+        } else {
+            assert_identity_unresolved(&results)?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn computed_call_values_use_the_same_owner_identity() -> Result<(), String> {
+    for (import, assertion, expected_owner) in [
+        ("thr::thr", "!thr(base + 1)", true),
+        ("rival::thr", "thr(base + 1)", false),
+    ] {
+        let results = findings(
+            NEW,
+            OLD,
+            &format!(
+                "use {import};\n{RIVAL_MOD}{IDENTITY_FAR}\n#[test]\nfn at() {{\n    let base = 100;\n    assert!({assertion});\n}}\n"
+            ),
+        )?;
+        let owner = family(&results, "return_value")?;
+        assert_eq!(owner.class, ExposureClass::InfectionUnknown, "{owner:?}");
+        assert_gap_named(&results, false)?;
+        if expected_owner {
+            assert!(
+                owner.ripr.infect.summary.contains("computed argument"),
+                "{owner:?}"
+            );
+        } else {
+            assert_identity_unresolved(&results)?;
+            assert!(
+                !owner.ripr.infect.summary.contains("computed argument"),
+                "{owner:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn workspace_sibling_local_calls_require_the_owner_identity() -> Result<(), String> {
+    for (call, expected_owner) in [("owner_dep::thr(101)", true), ("thr(101)", false)] {
+        let sibling = format!(
+            "pub fn thr(x: i32) -> bool {{ x > 0 }}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn at() {{ assert!({neg}{call}); }}\n}}\n",
+            neg = if expected_owner { "!" } else { "" }
+        );
+        let extra = [
+            (
+                "Cargo.toml",
+                "[package]\nname = \"thr\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\nmembers = [\"sibling\"]\n",
+            ),
+            (
+                "sibling/Cargo.toml",
+                "[package]\nname = \"sibling\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[dependencies]\nowner_dep = { package = \"thr\", path = \"..\" }\n",
+            ),
+            ("sibling/src/lib.rs", sibling.as_str()),
+        ];
+        let results =
+            findings_after_with("", NEW, OLD, &format!("use thr::thr;\n{FAR_ONLY}"), &extra)?;
+        if expected_owner {
+            assert_gap_named(&results, false)?;
+        } else {
+            assert_identity_unresolved(&results)?;
+        }
     }
     Ok(())
 }

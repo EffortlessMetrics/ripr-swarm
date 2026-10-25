@@ -2902,8 +2902,20 @@ The intermediate-input reading also declines when the owner may compare a value 
 
 Only unqualified owner calls supply separating inputs: a module-qualified or method call of the same name (`rival::thr(101)`) may be another function and is never counted by this path, and helper-transferred rows are not read (#9147). The shared producer's resolver (#9218, below) is more permissive for equality-boundary inputs; this path keeps its stricter rule.
 
-The shared owner call-value producer (`call_values_for_owner`, which feeds the equality-boundary reading `equality_observed`/`exact_rows` and the helper-transferred entry rows) reads a module-qualified free call of the owner's name only when its spelled path settles on the owner: through the same-named-rival call identity when the owner has rivals, otherwise through the owner-alone identity, which reads `crate`/`self`/`super`, in-file `mod` names, `use`-bound modules (`use crate::pricing; pricing::thr(..)`, renames included) and the owner crate's own name from another crate's test, and finally a path anchored at the owner's crate whose target module re-exports the owner through a top-level `pub use` item of the owner crate target's own module file (a `main.rs`, `src/bin` or `tests` file never counts), whose leaf is not renamed and whose path resolves to the owner's own module (`pub use internal::inner;`, `pub use crate::internal::*;`). Explicit leaves take precedence over globs (an explicit dependency export beats an owner glob and an explicit owner export beats a dependency glob), a dependency glob beside an owner glob is ambiguous and declines, and a leading `::`, an undeclared first segment, a nested-scope `use` or an unreadable tree does not qualify (`pub use other_dep::thr;`, `pub use other_dep::*;`). A `crate::` qualifier counts only from a test in the owner's own crate target. A bare call, a type-path call and a method call keep their reading; any other qualified spelling (`rival::thr(101)`, a module bound to something else, a dependency path, a glob-bound or unreadable qualifier, a `#[path]`-remapped package) supplies no input row (#9218).
+The shared owner call-value producer (`call_values_for_owner`, including
+helper-entry rows) admits a free call only when the shared call identity
+resolves it to the owner (#9218, #10046). Bare calls resolve through lexical
+imports as well as qualified paths. Workspace sibling functions with the same
+name cannot lend arguments merely because the owner has no same-package rival:
+the owner-alone identity still verifies the test's imports and workspace crate
+names. Qualified paths retain the existing module, crate-alias and verified
+owner re-export reading; type paths and methods retain their separate handling.
 
-Accepted tradeoff: a genuine owner call spelled through a path ripr cannot resolve is declined, so its input is not read and a missing-equality gap can stay open although a test exercises the boundary. That direction was chosen because crediting an unresolved qualified call lets another function's input suppress the gap and reads `Exposed` wrongly. The filter covers the direct owner calls and the helper-transferred entry rows (`chain_entry_rows`). It does not cover the computed-input continuation (`computed_input_parameters`), which reads calls by name and stays unfiltered because it is conservative (it only ever unresolves a boundary), nor the adaptor element-run reader (`sequence_runs`): dropping only some of its calls could remove the discriminating element and create an actionable gap. The call-value producer and the chain entry rows are the only consumers filtered. A re-export counts only from the owner crate target's own module file (a `main.rs`, `src/bin` or `tests` file is another crate) and only from a top-level `pub use` item whose leaf is not renamed; a `use` inside a nested module binds there and never counts.
-
-Out of scope: a bare call whose name an import binds to a rival (`use rival::thr; thr(5)`) keeps the name-only reading it always had, because the resolver filters only module-qualified spellings; resolving bare imports is a separate change.
+`computed_input_parameters` uses the same admission for direct owner calls and
+helper-entry calls, and its entry-row precondition uses `chain_entry_rows`.
+A refused call supplies neither an exact owner row nor a computed-owner
+parameter. When no admitted discriminator resolves the boundary, withheld call
+identity is `infection_unknown`, never a fabricated missing-equality gap.
+Returned comparisons retain the same unresolved boundary reason as predicates.
+An admitted exact boundary input still supplies the discriminator. The adaptor
+element-run reader (`sequence_runs`) is unchanged.
