@@ -2489,7 +2489,7 @@ fn root_divergence_start(function: &ast::Fn) -> Option<TextSize> {
             ast::Expr::LoopExpr(body) => !loop_is_left_by_break(body.syntax()),
             ast::Expr::WhileExpr(body) => {
                 body.condition()
-                    .is_some_and(|condition| condition.syntax().text().to_string().trim() == "true")
+                    .is_some_and(|condition| is_literal_true(&condition))
                     && !loop_is_left_by_break(body.syntax())
             }
             ast::Expr::CallExpr(call) => call.expr().is_some_and(|callee| {
@@ -2504,6 +2504,14 @@ fn root_divergence_start(function: &ast::Fn) -> Option<TextSize> {
             _ => false,
         })
         .map(|expression| expression.syntax().text_range().start())
+}
+
+/// `true`, however many parentheses wrap it (`while (true) {}`).
+fn is_literal_true(condition: &ast::Expr) -> bool {
+    match condition {
+        ast::Expr::ParenExpr(paren) => paren.expr().is_some_and(|inner| is_literal_true(&inner)),
+        other => other.syntax().text().to_string().trim() == "true",
+    }
 }
 
 /// Whether some `break` inside `loop_node` leaves exactly that loop.

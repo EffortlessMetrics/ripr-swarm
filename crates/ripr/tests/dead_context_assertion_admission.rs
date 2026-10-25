@@ -71,6 +71,7 @@ fn dead_context_assertions_never_credit_and_live_ones_keep_credit() -> Result<()
                     "mixed",
                     "loop_outer_inner_break",
                     "while_true",
+                    "while_paren_true",
                     "exit_qualified",
                     "exit_use_process",
                     "exit_use_leaf",
@@ -100,6 +101,7 @@ fn dead_context_assertions_never_credit_and_live_ones_keep_credit() -> Result<()
                             format!("loop {{ for _ in 0..1 {{ break; }} }}\n{assertion}")
                         }
                         "while_true" => format!("while true {{ }}\n{assertion}"),
+                        "while_paren_true" => format!("while (true) {{ }}\n{assertion}"),
                         "exit_qualified" => format!("std::process::exit(0);\n{assertion}"),
                         "exit_use_process" => {
                             format!("use std::process;\nprocess::exit(0);\n{assertion}")
@@ -246,7 +248,7 @@ fn dead_context_assertions_never_credit_and_live_ones_keep_credit() -> Result<()
             }
         }
     }
-    assert_eq!(count, 456);
+    assert_eq!(count, 480);
     Ok(())
 }
 
