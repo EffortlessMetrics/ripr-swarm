@@ -4930,8 +4930,10 @@ fn scanner_state_path_operand(operand: &str, lefts: &[ExactOperand]) -> Option<E
             && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
     };
     let is_path = |text: &str| {
-        let segments: Vec<&str> = text.split("::").collect();
-        segments.len() >= 2 && segments.iter().all(|segment| identifier(segment))
+        let mut segments = text.split("::");
+        let first = segments.next().is_some_and(&identifier);
+        let second = segments.next().is_some_and(&identifier);
+        first && second && segments.all(&identifier)
     };
     let token = operand.trim();
     // A `crate::`, `self::` or `super::` prefix is a spelling the scanner
@@ -4944,8 +4946,11 @@ fn scanner_state_path_operand(operand: &str, lefts: &[ExactOperand]) -> Option<E
     {
         return None;
     }
+    // Only a value a helper returned can be a scanner state: a quoted call
+    // argument or a literal that merely looks like a path is not (#10308).
     lefts
         .iter()
+        .filter(|left| left.provenance.contains(" via helper return of "))
         .any(|left| {
             left.value
                 .strip_prefix('"')
@@ -8152,7 +8157,9 @@ assert_eq!(input.amount, 100);"#
     fn scanner_left(value: &str) -> ExactOperand {
         ExactOperand {
             value: value.to_string(),
-            provenance: "scanner".to_string(),
+            provenance: format!(
+                "scan = {value} via helper return of `scan` over bound inputs (1 hop)"
+            ),
         }
     }
 
@@ -8183,6 +8190,25 @@ assert_eq!(input.amount, 100);"#
             assert!(
                 scanner_state_path_operand("Scan::Word", &lefts).is_none(),
                 "left {left:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn scanner_state_path_operand_needs_a_helper_returned_left() {
+        // #10308: a quoted call argument or literal that looks like a path is
+        // not a scanner state, whatever the right operand spells.
+        for provenance in [
+            "exact input input = \"Scan::Word\"",
+            "state = \"Scan::Word\" (exact literal)",
+        ] {
+            let lefts = [ExactOperand {
+                value: "\"Scan::Word\"".to_string(),
+                provenance: provenance.to_string(),
+            }];
+            assert!(
+                scanner_state_path_operand("Scan::Word", &lefts).is_none(),
+                "{provenance}"
             );
         }
     }

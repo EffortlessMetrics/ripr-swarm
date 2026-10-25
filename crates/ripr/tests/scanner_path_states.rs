@@ -18,8 +18,12 @@ impl Scratch {
             std::process::id(),
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
-        std::fs::create_dir_all(path.join("src")).map_err(|error| error.to_string())?;
-        Ok(Self(path))
+        // Exclusive creation, then the guard owns the root before anything else
+        // is written, so a failed setup step cleans up after itself.
+        std::fs::create_dir(&path).map_err(|error| error.to_string())?;
+        let scratch = Self(path);
+        std::fs::create_dir(scratch.0.join("src")).map_err(|error| error.to_string())?;
+        Ok(scratch)
     }
 }
 
@@ -56,13 +60,17 @@ fn predicate_finding(comparison: &str, tests: &str) -> Result<Value, String> {
 
 /// `extra` declares items after the test module; the fixture must compile.
 fn predicate_finding_with(comparison: &str, tests: &str, extra: &str) -> Result<Value, String> {
-    let source = source(comparison, tests, extra);
+    finding_for(&source(comparison, tests, extra), &diff(comparison))
+}
+
+/// The predicate finding of a compiled fixture crate under a diff.
+fn finding_for(source: &str, diff: &str) -> Result<Value, String> {
     let scratch = Scratch::create()?;
     std::fs::write(scratch.0.join("Cargo.toml"), MANIFEST).map_err(|error| error.to_string())?;
-    std::fs::write(scratch.0.join("src/lib.rs"), &source).map_err(|error| error.to_string())?;
+    std::fs::write(scratch.0.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
     assert_compiles(&scratch.0.join("src/lib.rs"), &scratch.0)?;
     let diff_file = scratch.0.join("change.diff");
-    std::fs::write(&diff_file, diff(comparison)).map_err(|error| error.to_string())?;
+    std::fs::write(&diff_file, diff).map_err(|error| error.to_string())?;
     let report = check_workspace(CheckInput {
         root: scratch.0.clone(),
         diff_file: Some(diff_file),
@@ -171,5 +179,19 @@ fn a_qualified_prefix_or_a_constant_is_not_a_scanner_state_operand() -> Result<(
             "{comparison}: {finding}"
         );
     }
+    Ok(())
+}
+
+// #10308 review: a path-shaped string a test passes as an argument is not a
+// scanner state. `classify("Scan::Word")` is false, because the associated
+// constant holds "other", so the comparison must not gain an equality witness.
+const PARAMETER_FIXTURE: &str = "pub struct Scan;\n\nimpl Scan {\n    #[allow(non_upper_case_globals)]\n    pub const Word: &'static str = \"other\";\n}\n\npub fn classify(input: &str) -> bool {\n    if input != Scan::Word {\n        return false;\n    }\n    true\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn the_path_text_is_not_the_constant() {\n        assert!(!classify(\"Scan::Word\"));\n    }\n}\n";
+
+#[test]
+fn a_path_shaped_string_argument_is_not_a_scanner_state() -> Result<(), String> {
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -8,5 +8,5 @@\n pub fn classify(input: &str) -> bool {\n-    if input == Scan::Word {\n+    if input != Scan::Word {\n         return false;\n     }\n     true\n";
+    let finding = finding_for(PARAMETER_FIXTURE, diff)?;
+    eprintln!("PARAM {}", finding["classification"]);
+    assert_ne!(finding["classification"], "exposed", "{finding}");
     Ok(())
 }
