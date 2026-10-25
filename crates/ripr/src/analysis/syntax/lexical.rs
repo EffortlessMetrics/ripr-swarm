@@ -361,6 +361,24 @@ mod tests {
     use super::*;
     use crate::domain::OracleKind;
 
+    /// #10363: the declaration table is built once per file, not once per
+    /// function or assertion, so a large test file stays linear.
+    #[test]
+    fn declaration_table_is_built_once_per_file_by_the_lexical_adapter() -> Result<(), String> {
+        let mut source = String::from("enum Only { Value }\n");
+        for index in 0..40 {
+            let test = "#[test]\nfn tN() {\n    assert_eq!(N, N);\n    assert!(matches!(make(), Only::Value));\n}\n";
+            source.push_str(&test.replace('N', &index.to_string()));
+        }
+        let before = crate::analysis::extract::table_builds();
+        LexicalRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &source)?;
+        let builds = crate::analysis::extract::table_builds() - before;
+        if builds != 1 {
+            return Err(format!("40 tests built {builds} declaration tables"));
+        }
+        Ok(())
+    }
+
     #[test]
     fn lexical_adapter_summarizes_functions_tests_and_file_facts() -> Result<(), String> {
         let adapter = LexicalRustSyntaxAdapter;

@@ -2949,6 +2949,24 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    /// #10363: the declaration table is built once per file, not once per
+    /// function or assertion, so a large test file stays linear.
+    #[test]
+    fn declaration_table_is_built_once_per_file_by_the_parser_adapter() -> Result<(), String> {
+        let mut source = String::from("enum Only { Value }\n");
+        for index in 0..40 {
+            let test = "#[test]\nfn tN() {\n    assert_eq!(N, N);\n    assert!(matches!(make(), Only::Value));\n}\n";
+            source.push_str(&test.replace('N', &index.to_string()));
+        }
+        let before = crate::analysis::extract::table_builds();
+        RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &source)?;
+        let builds = crate::analysis::extract::table_builds() - before;
+        if builds != 1 {
+            return Err(format!("40 tests built {builds} declaration tables"));
+        }
+        Ok(())
+    }
+
     /// #4558: where each `fn` sits, as a type-path call `T::name(` sees it.
     #[test]
     fn impl_context_names_the_self_type_only_for_plain_named_impls() -> Result<(), Box<dyn Error>> {
