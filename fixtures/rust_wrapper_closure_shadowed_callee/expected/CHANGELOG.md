@@ -25,3 +25,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_wrapper_closure_shadowed_callee (3)
+
+Reason:
+RIPR-SPEC-0186 regenerate for the #10426 evidence legend on merged main
+
+Command:
+`cargo xtask goldens bless rust_wrapper_closure_shadowed_callee --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

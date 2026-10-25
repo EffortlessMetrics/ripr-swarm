@@ -37,3 +37,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_wrapper_user_macro_guard (4)
+
+Reason:
+RIPR-SPEC-0186 regenerate for the #10426 evidence legend on merged main
+
+Command:
+`cargo xtask goldens bless rust_wrapper_user_macro_guard --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
