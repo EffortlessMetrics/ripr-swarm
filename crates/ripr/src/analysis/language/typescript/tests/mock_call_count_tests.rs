@@ -19,6 +19,12 @@ fn jest_test(assertion: &str) -> String {
     )
 }
 
+fn done_test(assertion: &str) -> String {
+    format!(
+        "import {{ notify }} from \"../src/notify\";\nit(\"notify\", done => {{\n const fn = jest.fn();\n notify(4, {{send: fn}});\n setTimeout(() => {{\n {assertion}\n done();\n }}, 0);\n}});\n"
+    )
+}
+
 fn notify_class(label: &str, source: &str) -> Result<ExposureClass, String> {
     notify_class_for(label, source, Some("  sender.send(id + 1);"))
 }
@@ -312,5 +318,61 @@ fn unused_callback_mentions_do_not_steal_mock_call_count_alias_identity() -> Res
             "{assertion}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn admitted_nested_mock_call_count_aliases_are_not_argument_pins() -> Result<(), String> {
+    for assertion in [
+        "const calls = fn.mock.calls; expect(calls.length).toBe(1);",
+        "const count = fn.mock.calls.length; expect(count).toBe(1);",
+        "const calls = fn[\"mock\"][\"calls\"]; const count = calls[\"length\"]; expect(count).toBe(1);",
+        "const count = fn?.mock.calls.length; expect(count).toBe(1);",
+    ] {
+        let source = done_test(assertion);
+        let tests = extract_tests(Path::new("tests/notify.test.ts"), &source);
+        assert_eq!(tests.len(), 1, "{assertion}");
+        assert_eq!(tests[0].assertions.len(), 1, "{assertion}");
+        assert_eq!(
+            notify_class("nested-count-alias", &source)?,
+            ExposureClass::WeaklyExposed,
+            "{assertion}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn nested_mock_call_count_aliases_preserve_argument_and_added_call_credit() -> Result<(), String> {
+    assert_eq!(
+        notify_class(
+            "nested-argument-pin",
+            &done_test("const calls = fn.mock.calls; expect(calls[0][0]).toBe(8);")
+        )?,
+        ExposureClass::Exposed
+    );
+    assert_eq!(
+        notify_class_for(
+            "nested-added-call",
+            &done_test("const calls = fn.mock.calls; expect(calls.length).toBe(1);"),
+            None,
+        )?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn unused_nested_mock_call_count_alias_does_not_capture_an_outer_argument_pin() -> Result<(), String>
+{
+    let source = "import { notify } from \"../src/notify\";\nlet count = 0;\nit(\"notify\", () => {\n const fn = jest.fn((value: number) => { count = value; });\n notify(4, {send: fn});\n const unused = () => { const count = fn.mock.calls.length; };\n expect(count).toBe(8);\n});\n";
+    let tests = extract_tests(Path::new("tests/notify.test.ts"), source);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].assertions.len(), 1);
+    assert_eq!(mock_call_count_assertions(&tests[0]), vec![false]);
+    assert_eq!(
+        notify_class("nested-alias-scope-refusal", source)?,
+        ExposureClass::Exposed
+    );
     Ok(())
 }

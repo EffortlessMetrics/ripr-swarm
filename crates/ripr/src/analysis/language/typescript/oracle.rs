@@ -2741,45 +2741,39 @@ type MockCountAliases = std::collections::BTreeMap<String, (Vec<MockCountPart>, 
 /// Resolve that binding identity independently of source-text mentions in
 /// unused closures. This only withholds argument credit; it establishes no
 /// execution order or admission. Initializer aliases still resolve in order,
-/// and any nested shadowing refuses the name entirely.
+/// and any nested shadowing refuses the name entirely. A nested callback's
+/// constants have that callback's lexical scope, not the whole registration.
 fn mock_count_aliases(file: &Path, source: &str, allocator: &Allocator) -> MockCountAliases {
-    use oxc_ast_visit::Visit;
-    #[derive(Default)]
-    struct Bindings(std::collections::BTreeMap<String, usize>);
-    impl<'a> Visit<'a> for Bindings {
+    use oxc_ast_visit::{Visit, walk};
+    struct Constant {
+        name: String,
+        initializer: String,
+        start: u32,
+        end: u32,
+        scope: oxc_span::Span,
+    }
+    struct Facts<'s> {
+        source: &'s str,
+        bindings: std::collections::BTreeMap<String, usize>,
+        reads: std::collections::BTreeMap<String, Vec<u32>>,
+        constants: Vec<Constant>,
+    }
+    impl<'a> Visit<'a> for Facts<'_> {
         fn visit_binding_identifier(&mut self, node: &oxc_ast::ast::BindingIdentifier<'a>) {
-            *self.0.entry(node.name.to_string()).or_default() += 1;
+            *self.bindings.entry(node.name.to_string()).or_default() += 1;
         }
-    }
-    let parsed = Parser::new(allocator, source, source_type_for(file)).parse();
-    if !parsed.errors.is_empty() {
-        return Default::default();
-    }
-    let mut bindings = Bindings::default();
-    bindings.visit_program(&parsed.program);
-    let mut aliases = MockCountAliases::new();
-    for statement in &parsed.program.body {
-        let bodies: Vec<&[Statement<'_>]> = match statement {
-            Statement::FunctionDeclaration(function) => function
-                .body
-                .iter()
-                .map(|body| body.statements.as_slice())
-                .collect(),
-            Statement::ExpressionStatement(statement) => {
-                match statement.expression.get_inner_expression() {
-                    Expression::CallExpression(call) => call
-                        .arguments
-                        .iter()
-                        .filter_map(function_body_statements_from_argument)
-                        .map(|body| body.as_slice())
-                        .collect(),
-                    _ => Vec::new(),
-                }
-            }
-            _ => Vec::new(),
-        };
-        for body in bodies {
-            for statement in body {
+
+        fn visit_identifier_reference(&mut self, node: &oxc_ast::ast::IdentifierReference<'a>) {
+            self.reads
+                .entry(node.name.to_string())
+                .or_default()
+                .push(node.span.start);
+        }
+
+        fn visit_function_body(&mut self, body: &oxc_ast::ast::FunctionBody<'a>) {
+            // Only direct, straight-line declarations in a callback body.
+            // In particular this does not read loop-header declarations.
+            for statement in &body.statements {
                 let Statement::VariableDeclaration(declaration) = statement else {
                     continue;
                 };
@@ -2790,16 +2784,59 @@ fn mock_count_aliases(file: &Path, source: &str, allocator: &Allocator) -> MockC
                     let BindingPattern::BindingIdentifier(name) = &declarator.id else {
                         continue;
                     };
-                    if bindings.0.get(name.name.as_str()) != Some(&1) {
+                    let Some(init) = &declarator.init else {
                         continue;
-                    }
-                    if let Some(init) = &declarator.init {
-                        let path = mock_count_path(init, &aliases, declarator.span.start, 0);
-                        aliases.insert(name.name.to_string(), (path, declarator.span.end));
-                    }
+                    };
+                    let span = init.span();
+                    let Some(initializer) = self.source.get(span.start as usize..span.end as usize)
+                    else {
+                        continue;
+                    };
+                    self.constants.push(Constant {
+                        name: name.name.to_string(),
+                        initializer: initializer.to_string(),
+                        start: declarator.span.start,
+                        end: declarator.span.end,
+                        scope: body.span,
+                    });
                 }
             }
+            walk::walk_function_body(self, body);
         }
+    }
+    let parsed = Parser::new(allocator, source, source_type_for(file)).parse();
+    if !parsed.errors.is_empty() {
+        return Default::default();
+    }
+    let mut facts = Facts {
+        source,
+        bindings: Default::default(),
+        reads: Default::default(),
+        constants: Vec::new(),
+    };
+    facts.visit_program(&parsed.program);
+    facts.constants.sort_by_key(|constant| constant.start);
+    let mut aliases = MockCountAliases::new();
+    for constant in &facts.constants {
+        if facts.bindings.get(&constant.name) != Some(&1)
+            || facts.reads.get(&constant.name).is_some_and(|reads| {
+                reads
+                    .iter()
+                    .any(|at| *at < constant.scope.start || *at >= constant.scope.end)
+            })
+        {
+            // A unique spelling can still name an outer value outside this
+            // callback. Refuse it rather than let an unused sibling closure's
+            // count alias weaken an unrelated argument pin.
+            continue;
+        }
+        let Ok(init) =
+            Parser::new(allocator, &constant.initializer, source_type_for(file)).parse_expression()
+        else {
+            continue;
+        };
+        let path = mock_count_path(&init, &aliases, constant.start, 0);
+        aliases.insert(constant.name.clone(), (path, constant.end));
     }
     aliases
 }
