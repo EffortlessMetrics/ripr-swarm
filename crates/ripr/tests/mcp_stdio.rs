@@ -1374,6 +1374,125 @@ fn second_initialize_answers_already_initialized_and_the_session_recovers() -> R
 }
 
 #[test]
+fn malformed_tool_argument_objects_are_rejected_before_dispatch_and_recover() -> Result<(), String>
+{
+    let root = workspace_root()?;
+    // Status comes first so the pre-repair witness fails before a malformed
+    // refresh can start analysis of this repository.
+    let mut cases: Vec<(&str, Value)> = [
+        "ripr_workspace_status",
+        "ripr_refresh",
+        "ripr_list_gaps",
+        "ripr_get_gap",
+        "ripr_prepare_repair",
+        "ripr_get_repair_attempt",
+        "ripr_get_receipt_status",
+        "ripr_get_repair_card",
+        "ripr_list_repair_attempts",
+    ]
+    .into_iter()
+    .map(|name| (name, Value::Null))
+    .collect();
+    cases.extend(
+        [json!(false), json!(7), json!("oops"), json!([])]
+            .into_iter()
+            .map(|arguments| ("ripr_workspace_status", arguments)),
+    );
+    for legacy in [false, true] {
+        let setup = if legacy {
+            [
+                line(json!({
+                    "jsonrpc": "2.0", "id": "setup", "method": "initialize",
+                    "params": {"protocolVersion": "2025-11-25", "capabilities": {},
+                        "clientInfo": {"name": "argument-object-control", "version": "1"}}
+                }))?,
+                line(json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))?,
+            ]
+            .concat()
+        } else {
+            line(json!({
+                "jsonrpc": "2.0", "id": "setup", "method": "server/discover",
+                "params": {"_meta": current_meta()}
+            }))?
+        };
+        // Keep the safe red control in its own process; batch the remaining
+        // cases so executable custody is measured four times, not 26 times.
+        for cases in [&cases[..1], &cases[1..]] {
+            let mut requests = setup.clone();
+            let mut expected_ids = Vec::new();
+            for (index, (tool, arguments)) in cases.iter().enumerate() {
+                let id = if index % 2 == 0 {
+                    json!(format!("bad-\"\\\n雪-{index}"))
+                } else {
+                    json!(index)
+                };
+                let mut params = json!({"name": tool, "arguments": arguments});
+                if !legacy {
+                    params["_meta"] = current_meta();
+                }
+                requests.extend(line(json!({
+                    "jsonrpc": "2.0", "id": id, "method": "tools/call", "params": params
+                }))?);
+                expected_ids.push(id);
+            }
+            // Both omission and an explicit empty object remain valid.
+            for (recovery_id, arguments) in [("omitted", None), ("empty", Some(json!({})))] {
+                let mut params = json!({"name": "ripr_workspace_status"});
+                if let Some(arguments) = arguments {
+                    params["arguments"] = arguments;
+                }
+                if !legacy {
+                    params["_meta"] = current_meta();
+                }
+                requests.extend(line(json!({
+                    "jsonrpc": "2.0", "id": recovery_id, "method": "tools/call", "params": params
+                }))?);
+            }
+            let output = run_mcp(&root, &[&requests])?;
+            let replies = response_lines(&output)?;
+            if replies.len() != cases.len() + 3 || replies[0].get("result").is_none() {
+                return Err(format!(
+                    "argument-object fixture did not initialize: {replies:?}"
+                ));
+            }
+            for ((rejected, id), (tool, arguments)) in replies[1..=cases.len()]
+                .iter()
+                .zip(&expected_ids)
+                .zip(cases)
+            {
+                if rejected.get("id") != Some(id)
+                    || rejected.pointer("/error/code") != Some(&json!(-32602))
+                    || rejected.get("result").is_some()
+                {
+                    return Err(format!(
+                        "legacy={legacy}, {tool} arguments={arguments} must be Invalid Params with its original id: {rejected}"
+                    ));
+                }
+            }
+            for (reply, expected_id) in replies[cases.len() + 1..].iter().zip(["omitted", "empty"])
+            {
+                let text = reply
+                    .pointer("/result/content/0/text")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| format!("status recovery omitted JSON text: {reply}"))?;
+                let document: Value =
+                    serde_json::from_str(text).map_err(|error| error.to_string())?;
+                if reply.get("id") != Some(&json!(expected_id))
+                    || reply.pointer("/result/isError") != Some(&json!(false))
+                    || reply.pointer("/result/structuredContent") != Some(&document)
+                    || document.pointer("/session/attempt_state") != Some(&json!("no_snapshot"))
+                {
+                    return Err(format!(
+                        "argument-object rejection lost clean status recovery: {reply}"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn malformed_params_of_a_served_method_answer_invalid_params_and_the_session_recovers()
 -> Result<(), String> {
     let root = workspace_root()?;
