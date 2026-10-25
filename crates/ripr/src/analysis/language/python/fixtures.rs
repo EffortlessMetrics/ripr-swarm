@@ -28,8 +28,12 @@ pub(super) fn collect_fixture_defs(
     module_imports: &[PythonImport],
 ) -> Vec<PythonFixtureDef> {
     let mut defs = Vec::new();
-    let aliases = fixture_aliases(module_imports);
+    let mut aliases = fixture_aliases(module_imports);
     for stmt in statements {
+        // An alias stops being pytest's decorator once a statement before the
+        // decorated def rebinds the name (#10473), and starts again when a
+        // later pytest import binds it.
+        update_aliases_for_binding(stmt, &mut aliases);
         let (name, decorators, body, range) = match stmt {
             Stmt::FunctionDef(function) => (
                 function.name.as_str(),
@@ -96,6 +100,56 @@ fn fixture_aliases(imports: &[PythonImport]) -> Vec<String> {
         })
         .map(|import| import.alias.clone())
         .collect()
+}
+
+/// Apply the name bindings of one top-level statement to the fixture aliases:
+/// an assignment, `def` or `class` of an alias drops it, and a pytest
+/// `fixture` import (re)adds its local name. Other imports are already
+/// resolved by `fixture_aliases` (last import wins).
+fn update_aliases_for_binding(stmt: &Stmt, aliases: &mut Vec<String>) {
+    let mut bound = Vec::new();
+    match stmt {
+        Stmt::Assign(assign) => {
+            for target in &assign.targets {
+                target_names(target, &mut bound);
+            }
+        }
+        Stmt::AnnAssign(assign) => target_names(&assign.target, &mut bound),
+        Stmt::AugAssign(assign) => target_names(&assign.target, &mut bound),
+        Stmt::ClassDef(class) => bound.push(class.name.to_string()),
+        Stmt::FunctionDef(function) => bound.push(function.name.to_string()),
+        Stmt::AsyncFunctionDef(function) => bound.push(function.name.to_string()),
+        Stmt::ImportFrom(import) => {
+            let from_pytest = import.level.is_none_or(|level| level.to_u32() == 0)
+                && import
+                    .module
+                    .as_ref()
+                    .is_some_and(|module| matches!(module.as_str(), "pytest" | "pytest_asyncio"));
+            for name in &import.names {
+                let local = name.asname.as_ref().unwrap_or(&name.name).to_string();
+                if from_pytest && name.name.as_str() == "fixture" {
+                    if !aliases.contains(&local) {
+                        aliases.push(local);
+                    }
+                } else {
+                    bound.push(local);
+                }
+            }
+        }
+        _ => {}
+    }
+    aliases.retain(|alias| !bound.contains(alias));
+}
+
+/// Plain names bound by an assignment target, including tuple/list unpacking.
+fn target_names(target: &Expr, out: &mut Vec<String>) {
+    match target {
+        Expr::Name(name) => out.push(name.id.to_string()),
+        Expr::Tuple(tuple) => tuple.elts.iter().for_each(|elt| target_names(elt, out)),
+        Expr::List(list) => list.elts.iter().for_each(|elt| target_names(elt, out)),
+        Expr::Starred(starred) => target_names(&starred.value, out),
+        _ => {}
+    }
 }
 
 fn is_fixture_decorator_name(name: &str, aliases: &[String]) -> bool {
