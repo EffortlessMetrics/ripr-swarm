@@ -18,7 +18,9 @@ floor = 219
 # regression fails `verdict-corpus check`; an improvement passes with a note
 # to lower this number (not a failure, so concurrent fixes do not collide).
 # Raising it is a reviewed edit with a reason.
-missed_credit_ceiling = 144
+# 145: the 144 baseline plus the one abstention #10143 added (the private-predicate-via-wrapper
+# shape, spec0186-ex06, now abstains as limited and is no longer known-false). Measured on the combined tree.
+missed_credit_ceiling = 145
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
