@@ -2567,6 +2567,7 @@ pub(in crate::analysis) fn declared_dependent_package_calls_owner(
     context: &DependencyEdgeContext<'_>,
     owner: &FunctionSummary,
     test_file: &Path,
+    entry_symbol: &str,
 ) -> bool {
     if context.adjacency.status() != PathDependencyGraphStatus::Complete {
         return false;
@@ -2577,20 +2578,42 @@ pub(in crate::analysis) fn declared_dependent_package_calls_owner(
     ) else {
         return false;
     };
+    // A partially indexed test package may hold the competing definition
+    // this check looks for.
     if owner_manifest == test_manifest
-        || context
-            .adjacency
-            .forward_dependency_declarations(&test_manifest, &owner_manifest)
-            .is_none()
+        || context.unindexed_manifests.contains(&test_manifest)
+        || !has_callable_forward_dependency(context.adjacency, &test_manifest, &owner_manifest)
     {
         return false;
     }
-    !context.index.functions().iter().any(|function| {
+    let package_of = |function: &FunctionSummary| {
+        nearest_manifest_identity(context.manifest_dir_prefixes, &function.file)
+    };
+    let functions = context.index.functions();
+    // A function of the owner's name in the test's package, or in another
+    // package it can call, is a bare-call target as plausible as the owner.
+    let shadowed = functions.iter().any(|function| {
         function.name == owner.name
             && function.id != owner.id
-            && nearest_manifest_identity(context.manifest_dir_prefixes, &function.file)
-                .is_some_and(|manifest| manifest == test_manifest)
-    })
+            && package_of(function).is_some_and(|manifest| {
+                manifest == test_manifest
+                    || (manifest != owner_manifest
+                        && has_callable_forward_dependency(
+                            context.adjacency,
+                            &test_manifest,
+                            &manifest,
+                        ))
+            })
+    });
+    // The wrapper the test enters lives in the owner's own package when only
+    // that package defines `entry_symbol`: that is a same-package chain
+    // entered from outside, not a cross-package wrapper.
+    let wrapper_in_owner_package = functions.iter().any(|function| {
+        function.name == entry_symbol && package_of(function).as_ref() == Some(&owner_manifest)
+    }) && !functions.iter().any(|function| {
+        function.name == entry_symbol && package_of(function).as_ref() == Some(&test_manifest)
+    });
+    !shadowed && !wrapper_in_owner_package
 }
 
 /// Whether `body` introduces a local binding of `owner_name` through a

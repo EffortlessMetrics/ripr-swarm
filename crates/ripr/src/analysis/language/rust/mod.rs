@@ -1537,15 +1537,20 @@ fn apply_rust_proximity_reach_limit(
         .owner
         .as_ref()
         .and_then(|id| index.functions().iter().find(|function| function.id == *id));
-    let admits = |test_file: &Path| {
+    let admits = |test_file: &Path, entry_symbol: &str| {
         !cross_package_only
             || owner.zip(dependency_edges).is_some_and(|(owner, context)| {
-                classify::declared_dependent_package_calls_owner(context, owner, test_file)
+                classify::declared_dependent_package_calls_owner(
+                    context,
+                    owner,
+                    test_file,
+                    entry_symbol,
+                )
             })
     };
     if let Some(witness) = transitive_reach
         .transitive_witness(&owner_name)
-        .filter(|witness| admits(&witness.test_file))
+        .filter(|witness| admits(&witness.test_file, &witness.entry_symbol))
     {
         apply_rust_transitive_reach_limit(finding, &owner_name, &witness);
         unresolved_reach_next_step(
@@ -1556,7 +1561,7 @@ fn apply_rust_proximity_reach_limit(
         );
     } else if let Some(witness) = transitive_reach
         .macro_reach_witness(&owner_name)
-        .filter(|witness| admits(&witness.test_file))
+        .filter(|witness| admits(&witness.test_file, &witness.entry_symbol))
     {
         apply_rust_macro_reach_limit(finding, &owner_name, &witness);
         unresolved_reach_next_step(
@@ -1567,7 +1572,7 @@ fn apply_rust_proximity_reach_limit(
         );
     } else if let Some(witness) = transitive_reach
         .deep_transitive_witness(&owner_name)
-        .filter(|witness| admits(&witness.test_file))
+        .filter(|witness| admits(&witness.test_file, &witness.entry_symbol))
     {
         apply_rust_transitive_reach_limit(finding, &owner_name, &witness);
         unresolved_reach_next_step(

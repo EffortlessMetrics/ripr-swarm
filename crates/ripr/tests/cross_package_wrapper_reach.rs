@@ -104,10 +104,9 @@ fn a_test_through_a_wrapper_in_another_package_names_the_reach_limit() -> Result
         .iter()
         .map(|finding| (finding.class.as_str(), limit(finding)))
         .collect();
-    if found.iter().any(|finding| {
-        finding.class == ExposureClass::ReachableUnrevealed && limit(finding).is_none()
-    }) || !found.iter().any(|finding| limit(finding).is_some())
-    {
+    if !found.iter().any(|finding| {
+        finding.class == ExposureClass::ReachableUnrevealed && limit(finding).is_some()
+    }) {
         return Err(format!(
             "expected the transitive-reach limit, got {summary:?}"
         ));
@@ -196,6 +195,28 @@ fn a_dependent_that_defines_its_own_function_of_the_owners_name_keeps_the_gap() 
             (
                 "ledger/tests/ledger.rs",
                 "#[test]\nfn heavy_triples_the_count() {\n    assert_eq!(ledger::heavy(5), 15);\n}\n",
+            ),
+        ],
+    )?)
+}
+
+#[test]
+fn a_dependent_calling_a_wrapper_defined_in_the_owners_package_keeps_the_gap() -> Result<(), String>
+{
+    // `tally::heavy` and the changed `tally::weight` share a package; the
+    // test merely sits in a dependent, so no cross-package wrapper exists.
+    assert_gap_kept(&findings_with(
+        CUSTOM_LIB_MANIFEST,
+        "tally/lib/core.rs",
+        &[
+            (
+                "tally/lib/core.rs",
+                "pub fn weight(count: u32) -> u32 {\n    3 * count\n}\npub fn heavy(count: u32) -> u32 {\n    weight(count)\n}\n",
+            ),
+            ("ledger/src/lib.rs", "pub fn unrelated() {}\n"),
+            (
+                "ledger/tests/ledger.rs",
+                "#[test]\nfn heavy_triples_the_count() {\n    assert_eq!(tally::heavy(5), 15);\n}\n",
             ),
         ],
     )?)
