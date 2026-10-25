@@ -4458,11 +4458,25 @@ fn classify_log_text_edit(
     new_call: &str,
     test_body: &str,
 ) -> Result<(ExposureClass, Option<StaticLimitKind>), String> {
+    classify_log_text_edit_from(
+        owner_source,
+        "log.warning(\"low balance: %s\", balance)",
+        new_call,
+        test_body,
+    )
+}
+
+fn classify_log_text_edit_from(
+    owner_source: &str,
+    old_call: &str,
+    new_call: &str,
+    test_body: &str,
+) -> Result<(ExposureClass, Option<StaticLimitKind>), String> {
     let finding = classify_change_with_source(
         Path::new("src/audit.py"),
         6,
         &format!("        {new_call}"),
-        Some("        log.warning(\"low balance: %s\", balance)"),
+        Some(&format!("        {old_call}")),
         &extract_owners(Path::new("src/audit.py"), owner_source),
         &extract_tests(
             Path::new("tests/test_audit.py"),
@@ -8831,6 +8845,141 @@ fn caplog_messages_and_records_the_edit_removes_are_credited() -> Result<(), Str
             );
         }
     }
+    Ok(())
+}
+
+fn aliased_records_test(read: &str, between: &str) -> String {
+    format!(
+        "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    msgs = {read}\n{between}    assert \"low balance: 5\" in msgs\n"
+    )
+}
+
+#[test]
+fn a_straight_line_alias_of_a_captured_log_read_is_evaluated() -> Result<(), String> {
+    // #10151: `msgs = caplog.messages` after the call is the same read as
+    // `caplog.messages`.
+    let removed = "log.warning(\"balance low: %s\", balance)";
+    let retry = "log.warning(\"low balance: %s (retry)\", balance)";
+    for read in ["caplog.messages", "caplog.text"] {
+        assert_eq!(
+            classify_log_text_edit(AUDIT_OWNER, removed, &aliased_records_test(read, ""))?,
+            (ExposureClass::Exposed, None),
+            "{read}: the edit removes the asserted message"
+        );
+    }
+    // The same evaluation calls a kept substring a gap instead of crediting it.
+    assert_eq!(
+        classify_log_text_edit(AUDIT_OWNER, retry, &aliased_records_test("caplog.text", ""))?,
+        (ExposureClass::WeaklyExposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn alias_replacement_skips_string_literals_and_longer_names() {
+    use super::caplog_text::replace_identifier;
+    assert_eq!(
+        replace_identifier(
+            "assert \"msgs\" in msgs and 'msgs' in msgs and msgs2 and x.msgs",
+            "msgs",
+            "caplog.messages"
+        ),
+        "assert \"msgs\" in caplog.messages and 'msgs' in caplog.messages and msgs2 and x.msgs"
+            .replace("x.msgs", "x.caplog.messages")
+    );
+    assert_eq!(
+        replace_identifier("\"a\\\"msgs\" in msgs", "msgs", "R"),
+        "\"a\\\"msgs\" in R"
+    );
+}
+
+#[test]
+fn an_alias_spelled_inside_the_asserted_literal_is_not_substituted() -> Result<(), String> {
+    // #10282 review: replacing `msgs` inside `"msgs: 5"` made the evaluator
+    // read the literal `caplog.text: 5`, which the edit did remove, and credit
+    // an assertion that still passes on the kept `msgs: 5`.
+    let owner = AUDIT_OWNER.replace("low balance: %s\", balance", "msgs: 5 caplog.text: 5\"");
+    let test = "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    msgs = caplog.text\n    assert \"msgs: 5\" in msgs\n";
+    for quoted in ["\"msgs: 5\"", "'msgs: 5'"] {
+        let test = test.replace("\"msgs: 5\"", quoted);
+        assert_eq!(
+            classify_log_text_edit_from(
+                &owner,
+                "log.warning(\"msgs: 5 caplog.text: 5\")",
+                "log.warning(\"msgs: 5\")",
+                &test
+            )?,
+            (ExposureClass::WeaklyExposed, None),
+            "{quoted}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn an_alias_line_with_a_trailing_comment_is_still_an_alias() -> Result<(), String> {
+    let removed = "log.warning(\"balance low: %s\", balance)";
+    let commented = aliased_records_test("caplog.messages  # type: ignore", "");
+    assert_eq!(
+        classify_log_text_edit(AUDIT_OWNER, removed, &commented)?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn an_alias_that_is_not_a_plain_snapshot_keeps_abstaining() -> Result<(), String> {
+    let unread = (
+        ExposureClass::StaticUnknown,
+        Some(StaticLimitKind::UnsupportedSyntax),
+    );
+    let removed = "log.warning(\"balance low: %s\", balance)";
+    // Mutated, rebound, deleted from, or read elsewhere between the snapshot
+    // and the assertion.
+    for between in [
+        "    msgs.append(\"low balance: 5\")\n",
+        "    msgs += [\"low balance: 5\"]\n",
+        "    msgs = frozen\n",
+        "    del msgs[0]\n",
+        "    seen = [m for m in msgs]\n",
+    ] {
+        assert_eq!(
+            classify_log_text_edit(
+                AUDIT_OWNER,
+                removed,
+                &aliased_records_test("caplog.messages", between)
+            )?,
+            unread,
+            "{between}"
+        );
+    }
+    // Taken before the call: the alias holds the records that existed then.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            removed,
+            "def test_low_balance(caplog):\n    msgs = caplog.messages\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    assert \"low balance: 5\" in msgs\n"
+        )?,
+        unread
+    );
+    // Taken inside the level block, not at the assertion's own level.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            removed,
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n        msgs = caplog.messages\n    assert \"low balance: 5\" in msgs\n"
+        )?,
+        unread
+    );
+    // Bound twice.
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            removed,
+            &aliased_records_test("caplog.messages", "    msgs = caplog.messages\n")
+        )?,
+        unread
+    );
     Ok(())
 }
 
