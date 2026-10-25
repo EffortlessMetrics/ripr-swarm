@@ -2,6 +2,10 @@
 
 use super::*;
 
+#[path = "tests_extract_hook_identity.rs"]
+mod hook_identity;
+use hook_identity::HookCalls;
+
 #[derive(Clone, Copy)]
 enum TestDeclarationRoot {
     Test,
@@ -182,14 +186,16 @@ fn extract_tests_expanding_suite_factories(file: &Path, source: &str, expand: bo
         let imports = extract_imports_for_test_file(&ret.program.body);
         let mocks = extract_mocks_from_statements(&ret.program.body, &imports);
         let mut tests = Vec::new();
+        let admission = TypeScriptAdmissionContext::of_program(&ret.program, &imports, file);
+        let hook_calls = HookCalls::of_program(&ret.program, &imports, &admission);
         let mut scope = TestScope {
             assertion_bindings: TypeScriptAssertionBindings::from_program(
                 &ret.program.body,
                 &imports,
             )
             .with_strict_matchers(strict_equality_matchers(&ret.program.body, source)),
-            admission: TypeScriptAdmissionContext::of_program(&ret.program, &imports, file),
-            reassigned_setup_hooks: reassigned_setup_hooks(&ret.program),
+            admission,
+            hook_calls,
             ..TestScope::default()
         };
         // One line index per source; every test and assertion line is a
@@ -833,6 +839,7 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
     // level. Collected before any test so a hook written after a test still
     // counts, as it does at runtime.
     let mut level = Vec::new();
+    let mut untrusted_hook_entries = Vec::new();
     let mut sites = Vec::new();
     let mut iterables = Vec::new();
     let mut returned = false;
@@ -847,6 +854,8 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             &mut level,
             &mut sites,
             scope.admission.block_functions_are_lexical,
+            &scope.hook_calls,
+            &mut untrusted_hook_entries,
         );
         // After a possible early `return`, a binding may never run.
         if returned {
@@ -855,6 +864,12 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
                 .for_each(|entry| entry.1 = ScopeValue::Other);
         }
         returned |= may_return(stmt, source);
+    }
+    // Keep duplicate-hook race summaries from the original collection. Only
+    // actual callback contributions receive the call-identity downgrade.
+    for index in untrusted_hook_entries {
+        level[index].1 = ScopeValue::Other;
+        level[index].2 = Phase::Interleaved;
     }
     // A destructuring or hoisted declaration can also shadow `undefined` at a
     // registration. Nested blocks contribute only names visible after them
@@ -884,13 +899,12 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
         ("beforeAll", Phase::BeforeAll),
         ("beforeEach", Phase::BeforeEach),
     ] {
-        let shadowed = scope.reassigned_setup_hooks.iter().any(|name| name == hook)
-            || scope
-                .levels
-                .iter()
-                .chain(std::iter::once(&level))
-                .flatten()
-                .any(|(name, _, entry_phase)| name == hook && *entry_phase == Phase::Declaration)
+        let shadowed = scope
+            .levels
+            .iter()
+            .chain(std::iter::once(&level))
+            .flatten()
+            .any(|(name, _, entry_phase)| name == hook && *entry_phase == Phase::Declaration)
             || imports.iter().any(|import| {
                 import.local == hook
                     && (!TEST_RUNNER_MODULES.contains(&import.source.as_str())
@@ -1090,10 +1104,7 @@ fn collect_mocha_setup_hooks(
             import.local == hook
                 && !(import.source == "mocha" && import.imported.as_deref() == Some(hook))
         });
-        if declared
-            || imported_elsewhere
-            || scope.reassigned_setup_hooks.iter().any(|name| name == hook)
-        {
+        if declared || imported_elsewhere || !scope.hook_calls.contains(call) {
             continue;
         }
         let Some(argument) = call.arguments.last() else {
@@ -1176,114 +1187,11 @@ fn member_use_in_text(text: &str, name: &str) -> bool {
 /// Modules whose `beforeEach`/`beforeAll` run before every test in scope.
 const TEST_RUNNER_MODULES: [&str; 4] = ["vitest", "@jest/globals", "bun:test", "node:test"];
 
-/// Hook registration is trusted only while the hook binding is unwritten.
-/// Read the existing AST once, including nested callbacks: an unmodeled write
-/// may replace an ambient hook before its registration. This deliberately
-/// withholds on local same-name writes too; it never establishes hook credit.
-fn reassigned_setup_hooks(program: &oxc_ast::ast::Program<'_>) -> Vec<String> {
-    use oxc_ast::ast::{AssignmentTargetPropertyIdentifier, SimpleAssignmentTarget};
-    use oxc_ast_visit::{Visit, walk};
-
-    #[derive(Default)]
-    struct Writes(Vec<String>);
-
-    impl Writes {
-        fn record(&mut self, name: &str) {
-            if matches!(name, "before" | "beforeEach" | "beforeAll")
-                && !self.0.iter().any(|recorded| recorded == name)
-            {
-                self.0.push(name.to_string());
-            }
-        }
-
-        fn member(&mut self, object: &Expression<'_>, property: Option<&str>) {
-            let global = match runtime_expression(object) {
-                Expression::Identifier(identifier) => matches!(
-                    identifier.name.as_str(),
-                    "globalThis" | "global" | "window" | "self"
-                ),
-                Expression::ThisExpression(_) => true,
-                _ => false,
-            };
-            if global {
-                if let Some(property) = property {
-                    self.record(property);
-                } else {
-                    for hook in ["before", "beforeEach", "beforeAll"] {
-                        self.record(hook);
-                    }
-                }
-            }
-        }
-
-        fn expression(&mut self, expression: &Expression<'_>) {
-            match runtime_expression(expression) {
-                Expression::Identifier(identifier) => self.record(identifier.name.as_str()),
-                Expression::StaticMemberExpression(member) => {
-                    self.member(&member.object, Some(member.property.name.as_str()));
-                }
-                Expression::ComputedMemberExpression(member) => self.member(
-                    &member.object,
-                    match runtime_expression(&member.expression) {
-                        Expression::StringLiteral(literal) => Some(literal.value.as_str()),
-                        _ => None,
-                    },
-                ),
-                _ => {}
-            }
-        }
-    }
-
-    impl<'a> Visit<'a> for Writes {
-        fn visit_simple_assignment_target(&mut self, target: &SimpleAssignmentTarget<'a>) {
-            match target {
-                SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) => {
-                    self.record(identifier.name.as_str());
-                }
-                SimpleAssignmentTarget::StaticMemberExpression(member) => {
-                    self.member(&member.object, Some(member.property.name.as_str()));
-                }
-                SimpleAssignmentTarget::ComputedMemberExpression(member) => self.member(
-                    &member.object,
-                    match runtime_expression(&member.expression) {
-                        Expression::StringLiteral(literal) => Some(literal.value.as_str()),
-                        _ => None,
-                    },
-                ),
-                SimpleAssignmentTarget::TSAsExpression(inner) => self.expression(&inner.expression),
-                SimpleAssignmentTarget::TSSatisfiesExpression(inner) => {
-                    self.expression(&inner.expression);
-                }
-                SimpleAssignmentTarget::TSNonNullExpression(inner) => {
-                    self.expression(&inner.expression);
-                }
-                SimpleAssignmentTarget::TSTypeAssertion(inner) => {
-                    self.expression(&inner.expression)
-                }
-                _ => {}
-            }
-            walk::walk_simple_assignment_target(self, target);
-        }
-
-        fn visit_assignment_target_property_identifier(
-            &mut self,
-            property: &AssignmentTargetPropertyIdentifier<'a>,
-        ) {
-            self.record(property.binding.name.as_str());
-            walk::walk_assignment_target_property_identifier(self, property);
-        }
-    }
-
-    let mut writes = Writes::default();
-    writes.visit_program(program);
-    writes.0
-}
-
 /// The enclosing scopes of the statements being walked.
 #[derive(Default)]
 pub(crate) struct TestScope {
-    /// Hook-name writes anywhere in the parsed file withhold setup facts.
-    reassigned_setup_hooks: Vec<String>,
+    /// The callable identity captured at each hook registration.
+    hook_calls: HookCalls,
     /// Describe names, outermost first.
     describe_names: Vec<String>,
     /// Name bindings of the file and each enclosing describe, outermost first.
@@ -1419,6 +1327,8 @@ fn collect_scope_bindings(
     out: &mut Vec<ScopeEntry>,
     sites: &mut Vec<usize>,
     block_functions_are_lexical: bool,
+    hook_calls: &HookCalls,
+    untrusted_hook_entries: &mut Vec<usize>,
 ) {
     match stmt {
         // `declare` forms are erased before the test runs: no runtime binding.
@@ -1499,6 +1409,8 @@ fn collect_scope_bindings(
                         &mut locals,
                         &mut Vec::new(),
                         block_functions_are_lexical,
+                        hook_calls,
+                        &mut Vec::new(),
                     );
                 }
                 locals.retain(|(_, _, phase)| *phase == Phase::Declaration);
@@ -1553,7 +1465,11 @@ fn collect_scope_bindings(
                     })
                     .map(|(name, _, _)| name.clone())
                     .collect();
+                let start = out.len();
                 out.extend(writes);
+                if phase != Phase::Interleaved && !hook_calls.contains(call) {
+                    untrusted_hook_entries.extend(start..out.len());
+                }
                 out.extend(
                     raced
                         .into_iter()

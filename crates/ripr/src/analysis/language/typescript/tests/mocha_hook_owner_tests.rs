@@ -496,3 +496,46 @@ fn reassigned_mocha_setup_hook_does_not_abstain() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn hook_registration_identity_keeps_registered_mocha_bodies() -> Result<(), String> {
+    for hook in ["before", "beforeEach"] {
+        let active = format!("  {hook}(() => {{ register(\"  alpha \"); }});\n");
+        for (label, prefix, suffix, enabled) in [
+            ("later", "", format!("{hook} = () => {{}};"), true),
+            ("preceding", "", String::new(), false),
+            ("later-sibling-global", "", String::new(), true),
+            ("preceding-sibling-global", "", String::new(), false),
+            ("preceding-sibling-local", "", String::new(), true),
+        ] {
+            let source = match label {
+                "preceding" => suite(&format!("{hook} = () => {{}};\n{active}")),
+                "later-sibling-global" => format!(
+                    "{}\ndescribe('noise', () => {{ {hook} = () => {{}}; }});",
+                    suite(&active)
+                ),
+                "preceding-sibling-global" => format!(
+                    "{HEAD}\ndescribe('noise', () => {{ {hook} = () => {{}}; }});\ndescribe('registry', () => {{ {active} {TESTS} }});"
+                ),
+                "preceding-sibling-local" => format!(
+                    "{HEAD}\ndescribe('noise', () => {{ let {hook} = () => {{}}; {hook} = () => {{}}; }});\ndescribe('registry', () => {{ {active} {TESTS} }});"
+                ),
+                _ => suite(&format!("{prefix}{active}{suffix}")),
+            };
+            let bodies = hook_bodies(&source);
+            assert_eq!(bodies.len(), 2, "{hook}/{label}: preserve tests");
+            assert!(
+                bodies
+                    .iter()
+                    .all(|bodies| bodies.len() == usize::from(enabled)),
+                "{hook}/{label}: {bodies:?}"
+            );
+            if enabled {
+                assert_abstained(label, &source)?;
+            } else {
+                assert_gap_kept(label, &source)?;
+            }
+        }
+    }
+    Ok(())
+}

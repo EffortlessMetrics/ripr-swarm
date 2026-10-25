@@ -304,12 +304,17 @@ reason `gap_evidence_unresolved`:
   `mocha`, `chai` or a `chai-*` plugin and show no jest, vitest, bun, ava or
   `node:test` signal (an import, or a `jest.` / `vi.` member use anywhere in
   the file). The hook identifier must not be declared in scope or imported
-  from anything but `mocha`. It must also be unwritten in the parsed file;
-  assignment, update, destructuring and loop targets, including known global
-  object properties, withhold its setup body. An unreadable computed global
-  target withholds every setup hook. Comments and literal contents are not
-  writes. As with setup-derived receiver identity, local same-name writes and
-  registration timing are conservatively unresolved.
+  from anything but `mocha`. Its callable must remain known at that particular
+  registration call, using the same parsed identity fact as receiver setup.
+  A preceding write to the binding withholds the body; a later write cannot
+  revoke an already registered callback, and a separate lexical binding does
+  not replace it. Known-global member writes affect ambient bindings only when
+  their root is unshadowed; unreadable global keys remain conservative.
+  Comments and literal contents are not writes. Helper execution, uncertain or
+  repeated registration order, self-referencing callbacks, hook-binding argument
+  effects and restoration remain unresolved. This rule
+  adds no hook-state evaluator and does not relax the existing receiver race
+  or rebinding summaries.
 
 The recommended next step then says a mocha setup hook calls the changed
 owner outside every test body, that no new assertion is needed on that

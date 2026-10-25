@@ -587,15 +587,21 @@ stay `broad_error` / weak, as do `doesNotThrow` and `doesNotReject`.
 
 ### Reach
 
-Setup-derived receiver identity requires an unwritten setup-hook binding.
-Assignments, updates, destructuring and loop targets that write `beforeEach`
-or `beforeAll`, including direct properties of known global objects, withhold
-the hook's construction facts. A computed global target whose key is unreadable
-withholds every setup-hook binding. These facts come from the parsed AST, so
-comments, strings, regexes and an ordinary object's same-named property do not
-count as hook writes. The check is conservative across the file: it does not
-resolve local same-name writes, registration timing or restoration of a hook.
-It adds no relation or oracle credit.
+Setup-derived receiver identity requires a known hook callable at the registration
+call. Parsed assignment, update, destructuring and loop targets affect subsequent
+registrations of that binding, including properties of unshadowed known global
+objects. A later write cannot revoke an already registered callback; a separate
+lexical binding or an ambient property cannot rebind an imported hook identifier.
+An unreadable computed global target withholds affected ambient hook identities.
+Only ordinary statements and admitted synchronous suite callbacks have ordered
+registration facts. Helper bodies, conditional/repeated registration order and
+restoration remain conservative. Self-referencing callbacks and hook-binding
+writes during argument evaluation keep unknown registration facts. Comments,
+strings, regexes and an ordinary
+object's same-named property are not hook-binding writes. Per-call identity is
+shared with Mocha setup-body admission. Existing duplicate-hook/race summaries,
+receiver rebinding and scope resolution retain their independent limits; filtering
+an ineligible hook cannot erase those summaries or add oracle credit.
 
 Candidates come from the first non-empty tier:
 
