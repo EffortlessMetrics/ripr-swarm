@@ -309,6 +309,21 @@ pub(crate) fn mask_rust_comments_and_strings(text: &str) -> String {
             continue;
         }
 
+        // A char literal (`'"'`, `'\''`, `'a'`) is masked as one unit so its
+        // quote is never read as a string start; a lifetime (`'a`) has no
+        // closing quote and is left alone.
+        if bytes[index] == b'\'' {
+            if let Some(end) = crate::analysis::extract::mask::char_literal_close(bytes, index)
+                .map(|close| close + 1)
+            {
+                mask_non_newline_bytes(&mut masked, index, end);
+                index = end;
+            } else {
+                index = index.saturating_add(1);
+            }
+            continue;
+        }
+
         if bytes[index] == b'"' {
             let end = rust_string_literal_end(bytes, index);
             mask_non_newline_bytes(&mut masked, index, end);
@@ -325,6 +340,30 @@ pub(crate) fn mask_rust_comments_and_strings(text: &str) -> String {
     }
 }
 
+/// Blank the content of char and byte-char literals, keeping the quotes and
+/// every byte offset. `mask_rust_comments_and_strings` deliberately leaves
+/// them alone (a `'"'` there opens a string), so a scan that must not read
+/// `';'` or `'{'` as punctuation runs this first (#10228).
+pub(crate) fn mask_rust_char_literals(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains('\'') {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let bytes = text.as_bytes();
+    let mut masked = bytes.to_vec();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if bytes[index] == b'\''
+            && let Some(close) = rust_char_literal_close(bytes, index)
+        {
+            mask_non_newline_bytes(&mut masked, index.saturating_add(1), close);
+            index = close.saturating_add(1);
+            continue;
+        }
+        index = index.saturating_add(1);
+    }
+    std::borrow::Cow::Owned(String::from_utf8(masked).unwrap_or_else(|_| text.to_string()))
+}
+
 fn starts_with_bytes(bytes: &[u8], index: usize, needle: &[u8]) -> bool {
     bytes
         .get(index..index.saturating_add(needle.len()))
@@ -338,6 +377,45 @@ fn mask_non_newline_bytes(bytes: &mut [u8], start: usize, end: usize) {
             *byte = b' ';
         }
     }
+}
+
+/// Index of the closing quote when `start` opens a char or byte-char literal
+/// (`'x'`, `'\n'`, `'\''`, `'\x41'`, `'\u{1F600}'`), `None` for a lifetime or
+/// label (`'a`, `'outer:`), which has no closing quote right after one
+/// character.
+fn rust_char_literal_close(bytes: &[u8], start: usize) -> Option<usize> {
+    let body = start.saturating_add(1);
+    let first = *bytes.get(body)?;
+    let close = if first == b'\\' {
+        match *bytes.get(body.saturating_add(1))? {
+            b'x' => body.saturating_add(4),
+            b'u' => {
+                let open = body.saturating_add(2);
+                if bytes.get(open) != Some(&b'{') {
+                    return None;
+                }
+                let end = bytes
+                    .get(open..)?
+                    .iter()
+                    .take(10)
+                    .position(|byte| *byte == b'}')?;
+                open.saturating_add(end).saturating_add(1)
+            }
+            _ => body.saturating_add(2),
+        }
+    } else if first == b'\'' || first == b'\n' {
+        return None;
+    } else {
+        let width = match first {
+            0x00..=0x7f => 1,
+            0xc0..=0xdf => 2,
+            0xe0..=0xef => 3,
+            0xf0..=0xf7 => 4,
+            _ => return None,
+        };
+        body.saturating_add(width)
+    };
+    (bytes.get(close) == Some(&b'\'')).then_some(close)
 }
 
 fn rust_string_literal_end(bytes: &[u8], start: usize) -> usize {
@@ -447,6 +525,35 @@ mod tests {
     }
 
     #[test]
+    fn mask_reads_a_quote_char_literal_as_a_char_not_a_string_start() {
+        // #9197: the quote in `'"'` must not open a string that swallows the
+        // rebinding after it.
+        let source = "let q = '\"'; let x = x + 5; if x > 101 {}";
+        let masked = mask_rust_comments_and_strings(source);
+        assert!(masked.contains("let x = x + 5;"), "{masked}");
+        assert_eq!(masked.len(), source.len());
+        for literal in ["'\\''", "b'\"'", "'\\u{1F600}'", "'é'"] {
+            let source = format!("let c = {literal}; let x = 1;");
+            let masked = mask_rust_comments_and_strings(&source);
+            assert!(masked.contains("let x = 1;"), "{literal}: {masked}");
+        }
+        // Escaped quote, byte char, unicode char, raw string, label and
+        // lifetime cases stay sane.
+        let masked = mask_rust_comments_and_strings(
+            "let a = b'\"'; let b = '\\\"'; let c = '→'; let r = r#\"x = 1\"#; 'outer: loop { let x = 2; }",
+        );
+        assert!(masked.contains("let x = 2;"), "{masked}");
+        assert!(masked.contains("'outer: loop"), "{masked}");
+        assert!(!masked.contains("x = 1"), "{masked}");
+        // Lifetimes are not char literals; strings and comments still mask.
+        let masked =
+            mask_rust_comments_and_strings("fn f<'a>(s: &'a str) { let t = \"x = 1\"; } // y");
+        assert!(masked.contains("fn f<'a>(s: &'a str)"), "{masked}");
+        assert!(!masked.contains("x = 1"), "{masked}");
+        assert!(!masked.contains("// y"), "{masked}");
+    }
+
+    #[test]
     fn mask_nested_block_comments_and_hashed_raw_strings() {
         let source = r##"keep(/* /* nested */ still */ done()); let raw = r#"assert_raw!(x)"#;"##;
         let masked = mask_rust_comments_and_strings(source);
@@ -457,17 +564,41 @@ mod tests {
     }
 
     #[test]
-    fn mask_does_not_special_case_char_literal_quotes_unlike_extract_mask() {
-        // Discriminator against silently switching to extract::mask_comments_and_strings,
-        // which treats character literals as code. The adapter mask starts a string at
-        // the inner quote and therefore blanks the remainder of the line.
+    fn mask_keeps_code_after_a_quote_char_literal_unlike_the_old_adapter_mask() {
+        // #9197: the quote in a char literal is not a string opener, so code
+        // after it stays visible (the adapter mask once blanked the rest of
+        // the line, hiding a later rebinding).
         let source = "let quote = '\"'; keep_alive(x);";
         let masked = mask_rust_comments_and_strings(source);
-        assert!(
-            !masked.contains("keep_alive"),
-            "adapter mask must keep treating the quote inside a char literal as a string opener: {masked:?}"
-        );
+        assert!(masked.contains("keep_alive"), "{masked:?}");
         assert!(masked.contains("let quote"));
+    }
+
+    #[test]
+    fn char_literal_mask_blanks_content_and_keeps_lifetimes() {
+        for (source, hidden) in [
+            ("let c = ';'; x", ";"),
+            ("let c = '{'; x", "{"),
+            ("let c = '\\''; x", "\\"),
+            ("let c = '\\u{3b}'; x", "3b"),
+            ("let c = '\\x3b'; x", "x3b"),
+            ("let c = b';'; x", ";"),
+            ("let c = '\u{e9}'; x", "\u{e9}"),
+        ] {
+            let masked = super::mask_rust_char_literals(source);
+            assert_eq!(masked.len(), source.len(), "{source}");
+            assert!(
+                !masked.contains(&format!("'{hidden}'")),
+                "{source} -> {masked:?}"
+            );
+            assert!(masked.ends_with("; x"), "{source} -> {masked:?}");
+        }
+        // Lifetimes and labels have no closing quote after one character.
+        let kept = "fn f<'a>(x: &'a str) -> &'a str { 'outer: loop { break 'outer; } }";
+        assert_eq!(super::mask_rust_char_literals(kept), kept);
+        // `'"'` is blanked before the string masker can open a string on it.
+        let quote = super::mask_rust_char_literals("let q = '\"'; keep_alive(x);");
+        assert!(mask_rust_comments_and_strings(&quote).contains("keep_alive"));
     }
 
     #[test]

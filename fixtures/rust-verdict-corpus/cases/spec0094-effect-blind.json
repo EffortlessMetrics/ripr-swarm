@@ -1,0 +1,47 @@
+{
+  "case_id": "spec0094-effect-blind",
+  "subject_id": "authored-spec0094-4",
+  "diff": "cases/spec0094-effect-blind.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 17
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "call_deletion",
+  "test_shape": "unit_test_assert_bool_no_observer",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "notifier.send(order_id);",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: the notifier records order-42 instead of order-43; the test never reads the notifier"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "placing_reports_success asserts only the returned bool, and place returns true whatever the notifier records. Spec cells: RIPR-SPEC-0094 example 4 (effect call, plain assert, no mock or token).",
+  "labeling_observation": {
+    "ripr_commit": "2939c0d6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0094#4"
+  ]
+}

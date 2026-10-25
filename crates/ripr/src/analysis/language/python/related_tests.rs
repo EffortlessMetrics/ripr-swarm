@@ -22,6 +22,9 @@ pub(super) enum PythonRelationKind {
     SyntacticCall,
     ImportAliasCall,
     ApiClientRouteCall,
+    /// The test calls the route's path and verb through a request client whose
+    /// application is not established (#10110). Reach evidence only.
+    ApiClientRouteUnidentifiedApp,
     ConstructCall,
     ConstructorCall,
     LocalBinding,
@@ -49,6 +52,7 @@ impl PythonRelationKind {
             Self::SyntacticCall => 5,
             Self::ImportAliasCall => 4,
             Self::ApiClientRouteCall => 4,
+            Self::ApiClientRouteUnidentifiedApp => 2,
             Self::ConstructCall => 4,
             Self::ConstructorCall => 4,
             Self::LocalBinding => 4,
@@ -87,6 +91,7 @@ impl PythonRelationKind {
             Self::SyntacticCall => "syntactic_call",
             Self::ImportAliasCall => "import_alias_call",
             Self::ApiClientRouteCall => "api_client_route_call",
+            Self::ApiClientRouteUnidentifiedApp => "api_client_route_unidentified_app",
             Self::ConstructCall => "construct_call",
             Self::ConstructorCall => "constructor_call",
             Self::LocalBinding => "local_binding",
@@ -482,13 +487,14 @@ pub(super) fn related_test_relation(
     // The bare-name relations below key on call text alone; a route literal
     // or a fixture's own call does not depend on the name the test imported.
     if bare_name_bound_to_other_module(test, owner) {
-        if api_client_route_calls_owner(test, owner) {
+        let route = api_client_route_calls_owner(test, owner);
+        if route == Some(ClientRoute::Identified) {
             return Some(PythonRelationKind::ApiClientRouteCall);
         }
         if fixture_owner_call(test, owner) {
             return Some(PythonRelationKind::FixtureOwnerCall);
         }
-        return None;
+        return route.map(|_| PythonRelationKind::ApiClientRouteUnidentifiedApp);
     }
     if body_calls_owner(&test.body_text, owner) || exception_assertion_calls_owner(test, owner) {
         return Some(PythonRelationKind::SyntacticCall);
@@ -505,7 +511,8 @@ pub(super) fn related_test_relation(
     if import_alias_calls_owner(test, owner) {
         return Some(PythonRelationKind::ImportAliasCall);
     }
-    if api_client_route_calls_owner(test, owner) {
+    let route = api_client_route_calls_owner(test, owner);
+    if route == Some(ClientRoute::Identified) {
         return Some(PythonRelationKind::ApiClientRouteCall);
     }
     if construct_call_invokes_owner(test, owner) {
@@ -516,6 +523,9 @@ pub(super) fn related_test_relation(
     }
     if fixture_owner_call(test, owner) {
         return Some(PythonRelationKind::FixtureOwnerCall);
+    }
+    if route.is_some() {
+        return Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
     }
     // A test is related to an owner only when it references the owner
     // (RIPR-SPEC-0028). File-stem, test-name and fixture-name proximity are
@@ -2201,52 +2211,112 @@ fn import_binds_owner_name(import: &PythonImport, owner: &PythonOwner) -> bool {
         || (import.imported == "*" && !owner.name.starts_with('_') && owner.star_exported)
 }
 
-fn api_client_route_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
-    let receivers = super::route_client::client_receivers(&test.body_text);
-    owner.route_paths.iter().enumerate().any(|(index, route)| {
-        // An empty or missing verb list is an unknown verb, which keeps the
-        // path-only match; a known list must contain the verb the test called.
-        let verbs = owner.route_methods.get(index).map(Vec::as_slice);
-        receivers
-            .iter()
-            .filter(|receiver| {
-                !client_targets_rival_app(
-                    test,
-                    owner,
-                    receiver,
-                    owner.route_receivers.get(index).map(String::as_str),
-                )
-            })
-            .any(|receiver| {
-                body_calls_api_client_route(
-                    &test.body_text,
-                    receiver,
-                    route,
-                    verbs.unwrap_or_default(),
-                )
-            })
-    })
+/// How firmly a test's request client is tied to the owner's route.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClientRoute {
+    /// The client is built over the application the owner's decorator
+    /// registers on.
+    Identified,
+    /// The client calls the route's path and verb but its application is not
+    /// established (a fixture the adapter cannot read, a factory-built app,
+    /// an app defined in the test, a decorator on an unrecognised receiver).
+    Unidentified,
 }
 
-/// Whether the request client demonstrably targets a different application
-/// than the owner's route decorator. Only the case this adapter can decide from
-/// the pair is withheld: the client is built over an application name imported
-/// from a module that is not the owner's module, and that name equals the
-/// decorator's receiver, so two modules each defining `app` cannot both take the
-/// credit. A client built elsewhere (a fixture, an unresolved name, a router
-/// the application includes under another name) stays unknown and keeps the
-/// path-and-verb match.
-fn client_targets_rival_app(
+fn api_client_route_calls_owner(test: &PythonTest, owner: &PythonOwner) -> Option<ClientRoute> {
+    let receivers = super::route_client::client_receivers(&test.body_text);
+    let mut found = None;
+    for (index, route) in owner.route_paths.iter().enumerate() {
+        // An empty or missing verb list is an unknown verb, which keeps the
+        // path-only match; a known list must contain the verb the test called.
+        let verbs = owner
+            .route_methods
+            .get(index)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        for receiver in &receivers {
+            if !body_calls_api_client_route(&test.body_text, receiver, route, verbs) {
+                continue;
+            }
+            match client_app_identity(
+                test,
+                owner,
+                receiver,
+                owner.route_receivers.get(index).map(String::as_str),
+            ) {
+                ClientApp::Own => return Some(ClientRoute::Identified),
+                ClientApp::Unidentified => found = Some(ClientRoute::Unidentified),
+                ClientApp::Rival => {}
+            }
+        }
+    }
+    found
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClientApp {
+    Own,
+    Rival,
+    Unidentified,
+}
+
+/// The application name a receiver's client is built over, and the imports
+/// that name resolves against: the test body, or the fixture the receiver is
+/// a parameter of (the test's module or a `conftest.py` up its chain).
+fn client_app_source<'a>(
+    test: &'a PythonTest,
+    receiver: &str,
+) -> Option<(String, &'a [PythonImport])> {
+    if let Some(app) = super::route_client::client_app_name(&test.body_text, receiver) {
+        // An application name bound in the test body is not the import it spells.
+        if super::route_client::rebinds_name(&test.body_text, &app) || test.fixtures.contains(&app)
+        {
+            return None;
+        }
+        return Some((app, test.imports.as_slice()));
+    }
+    // A fixture parameter: the client alias leads back to it, nothing in the
+    // body rebinds it, and a class-level fixture override (which is not
+    // recorded) cannot apply because the test is a module-level function.
+    let root = super::route_client::client_root(&test.body_text, receiver);
+    if test.qualified_name != test.name
+        || !super::route_client::is_unrebound_parameter(&test.body_text, &root)
+    {
+        return None;
+    }
+    let def = test
+        .fixture_defs
+        .iter()
+        .find(|def| def.name == root && test.fixtures.contains(&root))?;
+    let app = super::route_client::fixture_client_app_name(&def.body_text)?;
+    // The fixture's own parameters and local bindings are not module imports.
+    if super::route_client::rebinds_name(&def.body_text, &app)
+        || super::route_client::is_unrebound_parameter(&def.body_text, &app)
+    {
+        return None;
+    }
+    Some((app, def.imports.as_slice()))
+}
+
+/// Which application the client targets, decided only from the pair: a client
+/// built over a name imported from the owner's module (or a package above it)
+/// under the decorator receiver's symbol is the owner's own application; one
+/// built over a different imported symbol, or over the receiver's name from
+/// another module, is a rival. Anything else (a fixture or factory the adapter
+/// cannot read, an app defined in the test, a router the application includes
+/// under another name, a decorator on an unrecognised receiver) is
+/// unidentified and does not earn oracle credit.
+fn client_app_identity(
     test: &PythonTest,
     owner: &PythonOwner,
     receiver: &str,
     owner_receiver: Option<&str>,
-) -> bool {
+) -> ClientApp {
     let Some(owner_receiver) = owner_receiver.filter(|name| !name.is_empty()) else {
-        return false;
+        return ClientApp::Unidentified;
     };
-    let Some(app_name) = super::route_client::client_app_name(&test.body_text, receiver) else {
-        return false;
+    let Some((app_name, imports)) = client_app_source(test, receiver) else {
+        return ClientApp::Unidentified;
     };
     // Where the owner's file itself got the receiver: a shared application
     // imported from a third module is the same object the test imports from there.
@@ -2255,18 +2325,36 @@ fn client_targets_rival_app(
         .iter()
         .find(|import| import_bound_name(import) == owner_receiver)
         .map(|import| (import.source_module.as_str(), import.imported.as_str()));
-    test.imports.iter().any(|import| {
+    let mut identity = ClientApp::Unidentified;
+    for import in imports {
         if import_bound_name(import) != app_name || import.source_module.is_empty() {
-            return false;
+            continue;
         }
-        match owner_origin {
+        let verdict = match owner_origin {
             // Same module, different symbol (`from common import other_app as app`)
             // is a different application under the same bound name.
             Some((origin, symbol)) => {
                 if import.source_module == origin {
-                    import.imported != symbol
+                    if import.imported == symbol {
+                        ClientApp::Own
+                    } else {
+                        ClientApp::Rival
+                    }
+                } else if import.imported == owner_receiver || import.imported == symbol {
+                    // The owner's own module re-exports the app it imported; a
+                    // package above it may define another `app`.
+                    if import_source_module_matches_owner(import, owner, &test.file) {
+                        ClientApp::Own
+                    } else if owner_module_paths(&owner.file)
+                        .iter()
+                        .any(|path| path.starts_with(&format!("{}.", import.source_module)))
+                    {
+                        ClientApp::Unidentified
+                    } else {
+                        ClientApp::Rival
+                    }
                 } else {
-                    import.imported == owner_receiver || import.imported == symbol
+                    ClientApp::Unidentified
                 }
             }
             // Defined in the owner's own module: the test's import must name that
@@ -2278,14 +2366,26 @@ fn client_targets_rival_app(
                         || owner_module_paths(&owner.file)
                             .iter()
                             .any(|path| path.starts_with(&format!("{}.", import.source_module)));
-                if names_owner_module {
-                    import.imported != owner_receiver
+                if import.imported == owner_receiver {
+                    if names_owner_module {
+                        ClientApp::Own
+                    } else {
+                        ClientApp::Rival
+                    }
+                } else if names_owner_module {
+                    ClientApp::Rival
                 } else {
-                    import.imported == owner_receiver
+                    ClientApp::Unidentified
                 }
             }
+        };
+        match verdict {
+            ClientApp::Rival => return ClientApp::Rival,
+            ClientApp::Own => identity = ClientApp::Own,
+            ClientApp::Unidentified => {}
         }
-    })
+    }
+    identity
 }
 
 fn import_bound_name(import: &PythonImport) -> &str {

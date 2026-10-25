@@ -11,11 +11,12 @@
 # facts that change, which the `perl-0235-*` cases edit from a producer packet
 # (SPEC.md). RIPR-SPEC-0064 is prose without numbered examples.
 #
-# `floor` is the covered-example count `verdict-corpus check` protects. Raise
-# it when coverage grows; lowering it is a reviewed edit with a reason.
+# `spec-examples.lock` lists the covered examples `verdict-corpus check`
+# protects, one per line in sorted order. A locked example that loses its case
+# fails; covering a new one passes with a note naming the line to add.
+# Dropping a line is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 32
 
 # Most abstained rows whose tests do catch the change (missed credit). A
 # regression fails `verdict-corpus check`; an improvement passes with a note
@@ -390,6 +391,27 @@ scope = "out"
 reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
 
 [[spec]]
+id = "RIPR-SPEC-0048"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a Perl case cannot label them"
+
+[[spec]]
+id = "RIPR-SPEC-0093"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a Perl case cannot label them"
+
+[[spec]]
+id = "RIPR-SPEC-0094"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a Perl case cannot label them"
+
+[[spec]]
+id = "RIPR-SPEC-0096"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a Perl case cannot label them"
+
+
+[[spec]]
 id = "RIPR-SPEC-0231"
 scope = "out"
 reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
@@ -643,6 +665,16 @@ reason = "release-process tooling (xtask release-ledger); its examples validate 
 id = "RIPR-SPEC-0351"
 scope = "out"
 reason = "Rust-only out-parameter oracle credit; not a perl verdict example"
+
+[[spec]]
+id = "RIPR-SPEC-0353"
+scope = "out"
+reason = "Rust-only bool truth-table infection; not a perl verdict example"
+
+[[spec]]
+id = "RIPR-SPEC-0356"
+scope = "out"
+reason = "Rust uncompiled-file test withholding is proved by crates/ripr/tests/outside_target_haystack.rs; no corpus case labels it yet"
 
 # Every false verdict the corpus still scores, with its owning issue.
 # `verdict-corpus check` fails when a false row is not listed here and when a
