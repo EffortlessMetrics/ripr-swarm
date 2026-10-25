@@ -57,6 +57,10 @@ pub(super) fn never_compiled(
     if candidates.is_empty() {
         return out;
     }
+    let candidate_names: BTreeSet<&str> = candidates
+        .iter()
+        .filter_map(|file| file.file_name().and_then(|name| name.to_str()))
+        .collect();
     let mut referenced_names: BTreeSet<String> = BTreeSet::new();
     let mut declared_modules: BTreeSet<String> = BTreeSet::new();
     for facts in index.files().values() {
@@ -64,7 +68,10 @@ pub(super) fn never_compiled(
         if builds_module_operands(source) {
             return out;
         }
-        collect_referenced_file_names(source, &mut referenced_names);
+        if escapes_a_rs_literal(source) {
+            return out;
+        }
+        collect_referenced_file_names(source, &candidate_names, &mut referenced_names);
         collect_declared_modules(source, &mut declared_modules);
     }
     let mut manifests: BTreeSet<PathBuf> = manifest_dirs
@@ -79,7 +86,12 @@ pub(super) fn never_compiled(
             workspace_root.join(manifest)
         };
         match std::fs::read_to_string(&path) {
-            Ok(text) => collect_referenced_file_names(&text, &mut referenced_names),
+            Ok(text) => {
+                if escapes_a_rs_literal(&text) {
+                    return BTreeSet::new();
+                }
+                collect_referenced_file_names(&text, &candidate_names, &mut referenced_names);
+            }
             // A workspace without a root manifest is fine; any other
             // unreadable manifest is doubt.
             Err(_) if path == workspace_root.join("Cargo.toml") => {}
@@ -165,23 +177,32 @@ fn without_comments(source: &str) -> String {
     out
 }
 
-/// Every `<name>.rs` token (a run of non-separator characters ending in
-/// `.rs`) in `text`: path literals, `[[bench]] path` values, `build =`.
-fn collect_referenced_file_names(text: &str, out: &mut BTreeSet<String>) {
-    for (at, _) in text.match_indices(".rs") {
-        let end = at + 3;
-        let start = text[..at]
-            .rfind(|ch: char| {
-                matches!(
-                    ch,
-                    '"' | '\'' | '/' | '\\' | '(' | ')' | '=' | ',' | '[' | ']' | '{' | '}' | '<'
-                ) || ch.is_whitespace()
-            })
-            .map_or(0, |separator| separator + 1);
-        if start < at {
-            out.insert(text[start..end].to_string());
+/// Records each candidate file name that `text` mentions anywhere, including
+/// inside a longer path, a string with spaces or punctuation, or a comment:
+/// a bare substring match only ever adds doubt.
+fn collect_referenced_file_names(
+    text: &str,
+    candidate_names: &BTreeSet<&str>,
+    out: &mut BTreeSet<String>,
+) {
+    for name in candidate_names {
+        if text.contains(name) {
+            out.insert((*name).to_string());
         }
     }
+}
+
+/// True when a `.rs` literal carries a backslash before the extension, so an
+/// escape (`\u{72}ust.rs`) or a Windows separator could spell a name the
+/// substring scan cannot match.
+fn escapes_a_rs_literal(text: &str) -> bool {
+    text.match_indices(".rs").any(|(at, _)| {
+        let line_start = text[..at].rfind('\n').map_or(0, |newline| newline + 1);
+        let literal_start = text[line_start..at]
+            .rfind('"')
+            .map_or(line_start, |quote| line_start + quote);
+        text[literal_start..at].contains('\\')
+    })
 }
 
 /// Every identifier following a `mod` keyword, in any position. Comments and
@@ -240,16 +261,28 @@ mod tests {
     }
 
     #[test]
-    fn referenced_names_cover_paths_manifests_and_includes() {
+    fn referenced_names_match_inside_any_literal_or_path() {
+        let candidates: BTreeSet<&str> =
+            ["x.rs", "my hay.rs", "a(1).rs", "it's.rs", "bench-main.rs"].into();
         let mut names = BTreeSet::new();
         collect_referenced_file_names(
-            "#[path = \"../benchmarks/x.rs\"] mod a; include!(\"y.rs\"); \
-             [[bench]]\npath = \"z/bench-main.rs\"\nbuild = 'scripts/build.rs'",
+            "#[path = \"../benchmarks/x.rs\"] mod a; \
+             #[path = \"../my hay.rs\"] mod b; #[path=\"a(1).rs\"] mod c; \
+             #[path = \"it's.rs\"] mod d; [[bench]]\npath = \"z/bench-main.rs\"",
+            &candidates,
             &mut names,
         );
-        for name in ["x.rs", "y.rs", "bench-main.rs", "build.rs"] {
-            assert!(names.contains(name), "{name} in {names:?}");
-        }
+        assert_eq!(names.len(), candidates.len(), "{names:?}");
+    }
+
+    #[test]
+    fn rs_literals_with_escapes_are_doubt() {
+        assert!(escapes_a_rs_literal("#[path = \"\\u{72}ust.rs\"] mod m;"));
+        assert!(escapes_a_rs_literal("path = \"benchmarks\\hay.rs\""));
+        assert!(!escapes_a_rs_literal(
+            "#[path = \"../hay.rs\"] mod m; // \\n"
+        ));
+        assert!(!escapes_a_rs_literal("let s = \"a\\n\";\nmod m; // x.rs"));
     }
 
     #[test]
@@ -393,6 +426,32 @@ mod index_tests {
         assert!(facts.used_lexical_fallback, "premise: parser refusal");
         assert!(outside(&index, HAY));
         assert_eq!(test_files(&index), vec!["tests/it.rs".to_string()]);
+        Ok(())
+    }
+
+    #[test]
+    fn inline_module_path_with_punctuation_or_escape_keeps_the_file() -> Result<(), String> {
+        for (name, file, lib) in [
+            (
+                "space",
+                "benchmarks/my hay.rs",
+                "mod o { #[path = \"../../benchmarks/my hay.rs\"] mod h; }\n",
+            ),
+            (
+                "paren",
+                "benchmarks/a(1).rs",
+                "mod o { #[path = \"../../benchmarks/a(1).rs\"] mod h; }\n",
+            ),
+            (
+                "escape",
+                "benchmarks/rust.rs",
+                "mod o { #[path = \"../../benchmarks/\\u{72}ust.rs\"] mod h; }\n",
+            ),
+        ] {
+            let lib_source = format!("{LIB}{lib}");
+            let index = run(name, &[("src/lib.rs", &lib_source), (file, HAY_SOURCE)])?;
+            assert!(!outside(&index, file), "{name}");
+        }
         Ok(())
     }
 

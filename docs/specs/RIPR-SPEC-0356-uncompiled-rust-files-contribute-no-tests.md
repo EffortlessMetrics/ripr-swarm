@@ -58,12 +58,13 @@ provenance #7426 introduced for `src/<name>.rs` orphans) when all of these hold:
    `benches` or `examples`. Root-level files such as `build.rs` never qualify.
 2. No known module or include edge reaches it, it is not a crate root, and
    its package's `src/lib.rs` or `src/main.rs` is indexed.
-3. No Rust source or `Cargo.toml` of the workspace names its file name
-   anywhere (a `#[path]`, an `include!`, a `[[bench]]`/`[[test]]`/`[lib]`
-   `path`, a `build =`), no source declares a `mod` of its stem, and no source
-   builds a `mod` or `include!` operand from a macro metavariable (any `$` beside a
-   `mod`/`include` word, whatever comments or strings intervene), passes a computed
-   `include!` operand. A `mod.rs` file is always kept.
+3. No Rust source or `Cargo.toml` of the workspace mentions its file name as a
+   substring anywhere (a `#[path]`, an `include!`, a `[[bench]]`/`[[test]]`/`[lib]`
+   `path`, a `build =`), no `.rs` literal is written with an escape or a
+   backslash, no source declares a `mod` of its stem, no source builds a `mod`
+   or `include!` operand from a macro metavariable (any `$` beside a
+   `mod`/`include` word, whatever comments or strings intervene) or passes a
+   computed `include!` operand, and the file is not a `mod.rs`.
 4. The workspace has no unresolved `include!`, and every lexical-fallback file
    or unknown `#[path]` is itself unlinked: a file no root reaches never
    compiles its own declarations either.
