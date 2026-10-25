@@ -636,6 +636,21 @@ fn oracle_for_assert_expr(
                 OracleStrength::Smoke,
                 PythonOracleShape::BroadSmokeAssertion,
             )),
+        // `assert not any(... for record in caplog.records)` reads the same
+        // captured records as the positive form, asserted absent.
+        Expr::UnaryOp(unary)
+            if unary.op == ast::UnaryOp::Not
+                && matches!(
+                    unary.operand.as_ref(),
+                    Expr::Call(call) if any_over_captured_records(call)
+                ) =>
+        {
+            (
+                OracleKind::RelationalCheck,
+                OracleStrength::Weak,
+                PythonOracleShape::OutputAssertion,
+            )
+        }
         Expr::Call(call) if any_over_captured_records(call) => (
             OracleKind::RelationalCheck,
             OracleStrength::Weak,
