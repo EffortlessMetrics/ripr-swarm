@@ -18,9 +18,9 @@ pins the wrapper at 10 and 9.
 ## Then
 
 Neither finding is `exposed`. ripr does not expand macros, so a bare `info!`
-is not trusted as the logging macro; only `tracing::`/`log::`-qualified
-logging macros and the standard assertion/format macros stay transparent
-(#10284, #10351).
+is not trusted as the logging macro. Only bare standard assertion/format
+macros stay transparent, and only while no file rebinds those names; every
+logging and path-qualified macro withholds forwarding credit (#10284, #10351).
 
 ## Must Not
 

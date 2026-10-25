@@ -1,0 +1,50 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_wrapper_unicode_macro_suffix/input
+
+Summary: 2 probes (0 exposed, 0 weak, 0 unrevealed, 0 no path, 2 unknown); 2 of 2 findings unsuppressed
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+
+Start here:
+  State: limited by static analysis
+  Safe next action: inspect the named static limitation before treating this as repair-ready
+  File: ./src/lib.rs:2
+  Static exposure: unknown (severity: note, confidence 0.66)
+  Why unknown: the path from the changed behavior to an observable sink is not statically clear
+  Canonical gap: gap:rust:src/lib.rs:is_bulk:predicate_boundary:predicate:10==qty
+  Changed behavior: 10 <= qty
+  Analyzer limit: Discriminator unconfirmed: no admitted discriminating oracle is paired with the
+    owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle
+    do not establish that discriminator
+  Related test (1 of 2 matched rows): tests/api.rs:4 wrapper_pins_the_boundary
+  Next step: Trace the changed value to its output or effect, and inspect what the related test
+    actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or
+    strengthen a test only if this inspection finds a gap. Compare the original and changed
+    implementations with a focused run using the project's configured test runner (`cargo test` for
+    ordinary Cargo tests). Static classification may remain unknown
+  Evidence: reach yes · infection yes · propagation unknown · observation yes · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+    - reach yes: Related tests appear to reach is_bulk: wrapper_pins_the_boundary
+    - infection yes: Detected related test input at the changed boundary
+    - 11 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/rust_wrapper_unicode_macro_suffix/input --diff <cwd>/fixtures/rust_wrapper_unicode_macro_suffix/diff.patch --mode fast probe:src_lib.rs:predicate:41e056ec
+  ripr context --root <cwd>/fixtures/rust_wrapper_unicode_macro_suffix/input --diff <cwd>/fixtures/rust_wrapper_unicode_macro_suffix/diff.patch --mode fast --at probe:src_lib.rs:predicate:41e056ec
+  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: boundary_value; incomplete evidence stage: activation); run `ripr repair probe:src_lib.rs:predicate:41e056ec --root <cwd>/fixtures/rust_wrapper_unicode_macro_suffix/input` for the full gate's answer
+Write a test for it:
+  ripr agent stub --root <cwd>/fixtures/rust_wrapper_unicode_macro_suffix/input --at src/lib.rs:2 --kind predicate
+
+Hidden:
+  1 lower-priority finding(s) omitted from default human output.
+    - ./src/lib.rs:2 (unknown)
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json

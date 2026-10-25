@@ -297,6 +297,7 @@ relation are out of scope.
 - `fixtures/rust_wrapper_user_macro_guard`
 - `fixtures/rust_wrapper_closure_shadowed_callee`
 - `fixtures/rust_wrapper_crate_alias_logging_macro`
+- `fixtures/rust_wrapper_unicode_macro_suffix`
 
 ## Implementation Mapping
 
