@@ -19,7 +19,9 @@ Start here:
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: throw "TOKEN_REQUIRED";
-  Missing discriminator (1 of 2): Related test reaches `load` but the strongest extracted oracle is `unknown`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow` form…
+  Missing discriminator (1 of 2): Related test reaches `load` but the strongest extracted oracle is
+    `unknown`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or
+    a `toThrow` form with an exact payload (string, object, or class reference)
   Related test: tests/load.test.ts:4 missing token
   Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `throws error matching "TOKEN_REQUIRED"`; no actionable repair packet is emitted

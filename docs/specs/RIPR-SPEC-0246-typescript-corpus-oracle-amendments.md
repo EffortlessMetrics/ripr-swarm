@@ -360,6 +360,28 @@ is dead, as before. A test that still pins the unchanged value is a discriminato
 because RIPR-SPEC-0245 scores the diff as its own single mutant, and that
 test fails against it.
 
+**Rule 11. An edit to a ternary condition's comparison needs a tested input the
+two comparisons treat differently.** (Added 2026-10-22, #9437.) When the
+changed line is a return-value change and its removed and added text differ
+only in one `param <op> <number> ?` condition (`<op>` one of `===`, `!==`,
+`==`, `!=`, `<`, `<=`, `>`, `>=`; the operator, the literal, or both change; the
+comparison is the whole condition, so it follows `(`, `{`, `,`, `:`, `?`, a
+lone `=`, `return` or the start of the line, and ends at a single `?`, and it
+is code, not text inside a string or comment), the edit decides the result only
+for a value of `param` where the two comparisons disagree. The rule reads every
+observed owner call: each related test passes literal arguments, every owner
+parameter is never rebound or written (the rule 3 stability check), and the
+compared parameter's argument is a plain signed numeric literal. If any
+observed value separates the two comparisons, or any call cannot be read (a
+variable or expression argument, an omitted argument, a test file that feeds
+the owner another way), the ladder result stands. Otherwise an `exposed` ladder
+result reads `weakly_exposed`, and the missing line names a whole number where
+the comparisons differ. When the RIPR-SPEC-0243 rule 18 unexercised returned-
+expression arm demotes first, the ladder limitation carries this rule's
+condition and differing value instead of the generic changed-arm note; an
+argument only that arm's evaluator can read keeps the generic note. Rule 11
+runs after RIPR-SPEC-0248 rule 2 and removes credit only.
+
 ### Decisions
 
 The owner delegated these choices on 2026-10-04 ("make reasonable
@@ -431,6 +453,13 @@ and the rejected alternative.
    getter identity, hook exclusivity, unconditional execution and JavaScript
    evaluator divergence. Rejected for now: crediting the reading test, which
    stays gated on a second real mocha-hook corpus row. Recorded on #9496.
+
+10. **Condition comparison (rule 11, 2026-10-22).** Adopted: demote only when
+    every observed argument is a numeric literal that both comparisons treat
+    alike; anything unreadable fails open. Limited to a bare `param <op> number`
+    condition so no other operand can change the answer. Rejected: also
+    reading predicate-family changes, whose boundary evidence the RIPR-SPEC-0027
+    witness already owns. Recorded on #9437.
 
 ## Required Evidence
 
@@ -529,6 +558,13 @@ and the rejected alternative.
     finding reads `exposed`. `.to.equal(500)`, equal to neither value, stays
     `weakly_exposed`.
 
+19. `return \`${n} item${n === 1 ? "" : "s"}\`` becomes `n <= 1`, tests
+    `expect(plural(1)).toBe("1 item")` and `expect(plural(3)).toBe("3 items")`:
+    `weakly_exposed`. Adding `expect(plural(0)).toBe("0 items")`: `exposed`.
+    An argument the RIPR-SPEC-0243 rule 18 evaluator cannot read (a variable,
+    a missing argument): `exposed`; one only that evaluator can read
+    (`1 + 1`) reads `weakly_exposed` with the generic unexercised-arm note.
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs`
@@ -549,6 +585,10 @@ and the rejected alternative.
 - `crates/ripr/src/analysis/language/typescript/tests/mocha_hook_owner_tests.rs`
   pins rule 7 (example 16); corpus case `mocha-before-hook-trimmed-name`
   pins the row.
+- `crates/ripr/src/analysis/language/typescript/tests/comparison_edit_tests.rs`
+  pins rule 11 (example 19): the reader's shapes and refusals and the
+  classifier verdicts; corpus case `shape-template-plural-boundary` pins the
+  row.
 
 ## Implementation Mapping
 
@@ -574,6 +614,9 @@ and the rejected alternative.
   `classifier.rs`: `ts_catch_arm_unreached` (rule 6).
 - `crates/ripr/src/analysis/language/typescript/loop_count_guard.rs`,
   `classifier.rs`: `ts_loop_count_unmodeled` (rule 8).
+- `crates/ripr/src/analysis/language/typescript/comparison_edit_guard.rs`,
+  `rounding_mode_guard.rs`: `observed_numeric_calls`; `classifier.rs`: the
+  rule 11 hook in `ts_apply_post_ladder_rules`.
 - `crates/ripr/src/analysis/language/typescript/table_rows.rs`:
   `callback_case_assertions`, shared with RIPR-SPEC-0243 rule 11.
 - `crates/ripr/src/analysis/language/typescript/literal_matcher_guard.rs`:
