@@ -494,3 +494,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_cross_language_bridge_limit (23)
+
+Reason:
+RIPR-SPEC-0122: state only that the finding has no canonical gap, without a discriminator claim (#9244)
+
+Command:
+`cargo xtask goldens bless ts_cross_language_bridge_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

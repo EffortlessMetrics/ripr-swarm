@@ -205,3 +205,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — gap_withheld_feature_gated_test (18)
+
+Reason:
+RIPR-SPEC-0122: state only that the finding has no canonical gap, without a discriminator claim (#9244)
+
+Command:
+`cargo xtask goldens bless gap_withheld_feature_gated_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -34,7 +34,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/module_reach_root_const_decoy/input --diff <cwd>/fixtures/module_reach_root_const_decoy/diff.patch --mode fast probe:src_lib.rs:predicate:363c147e
   ripr context --root <cwd>/fixtures/module_reach_root_const_decoy/input --diff <cwd>/fixtures/module_reach_root_const_decoy/diff.patch --mode fast --at probe:src_lib.rs:predicate:363c147e
-  no repair start offered: this finding names no missing discriminator (no canonical gap), so there is no seam to start a repair from; follow the Next step above and check the related test by hand
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 No test stub here: the owner is in a nested module with no inline test module of its own
 
 Hidden:

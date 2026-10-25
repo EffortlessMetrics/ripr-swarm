@@ -41,7 +41,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/javascript_js_preview/input --diff <cwd>/fixtures/javascript_js_preview/diff.patch --mode fast probe:src_discount.js:typescript_preview:8152c8c0
   ripr context --root <cwd>/fixtures/javascript_js_preview/input --diff <cwd>/fixtures/javascript_js_preview/diff.patch --mode fast --at probe:src_discount.js:typescript_preview:8152c8c0
-  no repair start offered: this finding names no missing discriminator (no canonical gap), so there is no seam to start a repair from; follow the Next step above and check the related test by hand
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

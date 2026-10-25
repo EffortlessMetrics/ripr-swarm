@@ -47,3 +47,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_cfg_alt_reexport (5)
+
+Reason:
+RIPR-SPEC-0122: state only that the finding has no canonical gap, without a discriminator claim (#9244)
+
+Command:
+`cargo xtask goldens bless module_reach_cfg_alt_reexport --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

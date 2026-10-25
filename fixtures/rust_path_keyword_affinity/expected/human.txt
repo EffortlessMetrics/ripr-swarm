@@ -37,7 +37,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_path_keyword_affinity/input --diff <cwd>/fixtures/rust_path_keyword_affinity/diff.patch --mode fast probe:src_lib.rs:static_unknown:bd010b89
   ripr context --root <cwd>/fixtures/rust_path_keyword_affinity/input --diff <cwd>/fixtures/rust_path_keyword_affinity/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:bd010b89
-  no repair start offered: this finding names no missing discriminator (no canonical gap), so there is no seam to start a repair from; follow the Next step above and check the related test by hand
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 Hidden:
   5 finding(s) omitted: 4 lower-priority, 1 base-side evidence (not candidate edit targets).

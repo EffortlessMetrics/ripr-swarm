@@ -157,3 +157,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — javascript_awaited_registration (14)
+
+Reason:
+RIPR-SPEC-0122: state only that the finding has no canonical gap, without a discriminator claim (#9244)
+
+Command:
+`cargo xtask goldens bless javascript_awaited_registration --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

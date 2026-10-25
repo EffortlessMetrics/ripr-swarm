@@ -38,7 +38,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/ts_runner_detect_ava_script/input --diff <cwd>/fixtures/ts_runner_detect_ava_script/diff.patch --mode fast probe:src_fetch.ts:typescript_preview:9c3e9e7e
   ripr context --root <cwd>/fixtures/ts_runner_detect_ava_script/input --diff <cwd>/fixtures/ts_runner_detect_ava_script/diff.patch --mode fast --at probe:src_fetch.ts:typescript_preview:9c3e9e7e
-  no repair start offered: this finding names no missing discriminator (no canonical gap), so there is no seam to start a repair from; follow the Next step above and check the related test by hand
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full
