@@ -117,7 +117,7 @@ command) has no seam to start a delegated repair from: the seam inventory
 behind `ripr repair` and `ripr agent repair --phase before` is built from the
 Rust index only, and binding a Python finding would need a parallel Python
 seam owner (#9102). The product therefore states that precise terminal reason
-instead of the generic "no seam in the finding's file binds this finding" or a
+instead of the generic "ripr found no seam in this finding's file to bind it to" or a
 stale-id message: `ripr check` prints "no repair start offered: the seam
 inventory ... covers Rust files only, so this Python finding in `<file>` has no
 seam", and `ripr repair` / `ripr agent repair --seam-id` given the Python gap

@@ -36,7 +36,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/module_reach_control_qualified/input --diff <cwd>/fixtures/module_reach_control_qualified/diff.patch --mode fast probe:src_inner.rs:return_value:438cae72
   ripr context --root <cwd>/fixtures/module_reach_control_qualified/input --diff <cwd>/fixtures/module_reach_control_qualified/diff.patch --mode fast --at probe:src_inner.rs:return_value:438cae72
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_inner.rs:return_value:438cae72 --root <cwd>/fixtures/module_reach_control_qualified/input` for the full gate's answer
+  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/module_reach_control_qualified/input --at src/inner.rs:2 --kind return_value
 
