@@ -280,10 +280,7 @@ fn computed_arguments_and_unsupported_owner_expressions_stay_unknown() -> Result
             "{argument}"
         );
     }
-    for initializer in [
-        "text.trim().as_bytes().len()",
-        "text.as_bytes().len() + 0",
-    ] {
+    for initializer in ["text.trim().as_bytes().len()", "text.as_bytes().len() + 0"] {
         let source = candidate().replace("text.as_bytes().len()", initializer);
         let diff = DIFF.replace("text.as_bytes().len()", initializer);
         assert_eq!(
