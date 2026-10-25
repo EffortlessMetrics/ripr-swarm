@@ -1,3 +1,0 @@
-case = "perl-hostile-glob-triple-unexercised"
-issue = 9420
-reason = "False silent: the changed line sits in a glob-generated sub the tests never call, so the committed truth is not_discriminated and the ideal verdict is gap; ripr reports silent. The owning analyzer repair is #9420."
