@@ -446,6 +446,32 @@ This order is the existing behavior and is normative:
      other receiver, and any test that mentions a mock, keeps the limit
      (fail closed). The `monkeypatch` forms and decorator rule are
      unchanged.
+   - `mocked_module` does not apply to a test whose every substitution is
+     `with patch("<dotted.target>", return_value=<nonzero int or str literal>):`
+     (`patch` bound once, from `unittest.mock`/`mock`, or `mock.patch`),
+     when the test is a plain function (no decorators, defaults or
+     `*args`) whose statements are only `assert <expr>`, `name = <expr>`
+     and such `with` blocks of those, with expressions made of names,
+     constants, operators and calls of the owner or a safe builtin (a
+     `;`, a chained, attribute or subscript assignment, a helper call, a
+     nested def or a default argument is not plain, so none can rebind
+     names behind the patch), and the changed line, old and new, is one `return` of an f-string or `+`/`-` expression
+     over names, int and string literals, the substituted zero-argument
+     call (`time.time()` or `time()`) and `int(<that call>)`. The call
+     appears exactly once on each side, with the same sign and the same
+     `int(...)` wrapping, so the expression is `s*v + K` and an edit that
+     changes `K` changes the value the assertion pins, as it would without
+     the patch. With more than one call, or a changed sign, a collision at
+     the fixed value (`v + v` against `v - v + 2` at `v = 1`) hides the
+     edit. Products, divisions, `%`, `max`/`min`, indexing, comparisons,
+     branches, other calls, an assignment on the changed line, and a zero,
+     float, bool or `None` stand-in keep the limit. The patched name must
+     appear in the owner only on the changed line, and the owner and its
+     class must not be a segment of the target. A patch decorator,
+     `patch.object`, an `as` binding, `side_effect`, `autospec`, a
+     non-literal `return_value`, another mock name in the body, or an
+     edit to the patched call's arguments keeps the limit. The substituted
+     calls are not read as unresolved imports (`time.time()`).
 
 ### Sink alignment
 
