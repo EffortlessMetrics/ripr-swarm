@@ -65,6 +65,7 @@ mod classify;
 mod conditional_defs;
 mod deleted_lines;
 mod guard_activation;
+mod guard_credit;
 mod helper_inline;
 mod message_pin;
 mod module_value;
