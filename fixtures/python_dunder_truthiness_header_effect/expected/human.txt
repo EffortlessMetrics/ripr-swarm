@@ -19,7 +19,10 @@ Start here:
   Static exposure: unknown (severity: note, confidence 0.20)
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: return self.cents > 0
-  Analyzer limit: Static limit `dynamic_dispatch`: `Money.__bool__` is a dunder method Python invokes through operator or `with` syntax; related tests build `Money` instances, but the preview…
+  Analyzer limit: Static limit `dynamic_dispatch`: `Money.__bool__` is a dunder method Python
+    invokes through operator or `with` syntax; related tests build `Money` instances, but the
+    preview adapter does not bind the syntax to the instance or evaluate the assertion against the
+    dunder's result, so it does not grade this edit as a gap
   Related test: tests/test_money.py:8 test_truthiness
   Evidence: reach weak · infection unknown · propagation unknown · observation weak · discriminator unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

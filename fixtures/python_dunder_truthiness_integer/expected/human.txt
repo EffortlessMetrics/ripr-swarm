@@ -19,7 +19,9 @@ Start here:
   Static exposure: exposed (severity: info, confidence 0.60)
   Canonical gap: gap:python:src/shapes/money.py:Money.__bool__:predicate_boundary:predicate:self.cents>0
   Changed behavior: return self.cents > 0
-  Discriminator (observed, advisory): Related Python test reaches `__bool__` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator
+  Discriminator (observed, advisory): Related Python test reaches `__bool__` with an `exact_value`
+    oracle. Static evidence suggests the changed behavior is observed under an exact-value
+    discriminator
   Related test: tests/test_money.py:4 test_truthiness
   Next step — Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior
   Evidence: reach yes · infection yes · propagation weak · observation yes · discriminator yes

@@ -19,7 +19,10 @@ Start here:
   Static exposure: unknown (severity: note, confidence 0.20)
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: return self.cents > 0
-  Analyzer limit: Static limit `dynamic_dispatch`: `Money.__bool__` is a dunder method Python invokes through syntax on an instance of `Money`; tests import `Money`, its module or its package, or…
+  Analyzer limit: Static limit `dynamic_dispatch`: `Money.__bool__` is a dunder method Python
+    invokes through syntax on an instance of `Money`; tests import `Money`, its module or its
+    package, or name `Money`, but the preview adapter cannot bind the instance a test builds to the
+    class, so it does not claim that no test reaches the owner
   Evidence: reach no · infection unknown · propagation unknown · observation no · discriminator no
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
