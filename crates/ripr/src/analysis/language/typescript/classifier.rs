@@ -5818,6 +5818,32 @@ pub(crate) fn classify_resolved_owner(
     } else {
         probe_shape
     };
+    // #10157: additional credit only after receiver identity and spy order
+    // have been established together. Generic oracle projection is unchanged.
+    let counted_removal = !probe_shape.specific
+        && super::call_removal_guard::removed_method_call(line_text, old_line_text).is_some_and(
+            |(receiver, method)| {
+                super::call_removal_guard::call_count_pins_removed_call(
+                    &receiver,
+                    &method,
+                    owner,
+                    related_candidates,
+                    alias_map,
+                    workspace_root,
+                ) && owner.source_text.as_deref().is_some_and(|source| {
+                    super::mock_payload_guard::runs_changed_line_once(
+                        source,
+                        &owner.name,
+                        line_text,
+                    )
+                })
+            },
+        );
+    let probe_shape = if counted_removal {
+        TypeScriptProbeShape::new(ProbeFamily::CallDeletion, DeltaKind::Effect)
+    } else {
+        probe_shape
+    };
     let mut related = related_tests_for_candidates(related_candidates, Some(&probe_shape.family));
     let bun_array_buffer_facts = collect_related_bun_array_buffer_facts(related_candidates);
     let bun_bridge_hints = collect_related_bun_bridge_hints(&bun_array_buffer_facts);

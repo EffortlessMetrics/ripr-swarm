@@ -1589,7 +1589,27 @@ keys); do not take the next number.
     `broad_error` / weak). With `/other/`, or with a second `throw` in the
     owner: `broad_error` / weak.
 
+### Counted removal receiver witness (#10157)
+
+This bounded successor to #9667's removed-call rule 19 adds call-deletion
+credit for a whole `receiver.method(...)` statement replaced by `void local;`.
+A direct imported owner must run on a straight-line path after a `node:test`
+spy registration and before an exact positive count of one. The receiver is
+either a parsed const object passed in the receiver parameter position, or
+a direct exported const binding with an unshadowed named import resolved to the owner's complete module identity
+through the existing import resolver. Parsed declarations handle legal
+whitespace. Reassignment, enclosing shadows, reset/restore, intervening calls,
+conditional execution and unresolved identity withhold this additional credit.
+Nonreceiver arguments must be primitive literals; owner statements cannot
+replace the receiver or invoke opaque code. This does not change generic
+call-count oracle projection (#10174).
+
 ## Test Mapping
+
+- #10157: `call_removal_tests.rs::counted_removal_receiver_identity_controls`
+  covers the four executable controls from #9667 comment 6371144187 and the
+  passed-parameter and same-module positives. `counted_removal_refuses_unresolved_execution`
+  covers wrong arguments, resets, conditional registration and zero counts.
 
 - #9683 (rule 11, empty table): `tests/table_loop_tests.rs` pins that an empty
   `const` table holds no assertions and a `let` table does not. Corpus row
@@ -1743,6 +1763,9 @@ keys); do not take the next number.
   `ts-trap-wrapped-swallow` stay `gap`.
 
 ## Implementation Mapping
+
+- #10157: `call_removal_guard.rs` owns parsed receiver/order witnesses;
+  `classifier.rs` admits only its additional call-deletion credit.
 
 - #9685 (decision 20): `oracle.rs` (`catch_only_rethrows_caught_error` in
   the `TryStatement` arm) and `rethrow_wrapper.rs` (`expand_rethrow_wrappers`,
