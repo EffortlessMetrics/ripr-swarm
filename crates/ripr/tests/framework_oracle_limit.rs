@@ -1057,6 +1057,12 @@ fn fixture_receiver_literal_pin_reads_helper_data() -> Result<(), String> {
             "{label}: literal fixture pin was not credited: {findings:?}"
         );
         assert!(findings.iter().all(|finding| !limited(finding)));
+        assert!(findings.iter().all(|finding| {
+            finding
+                .stop_reasons
+                .iter()
+                .all(|reason| reason.as_str() != "fixture_opaque")
+        }));
     }
     Ok(())
 }
@@ -1298,6 +1304,12 @@ fn fixture_receiver_credit_requires_readable_carried_data() -> Result<(), String
     let data = "vec![(\"a\".to_string(), 30), (\"b\".to_string(), 12)]";
     for (label, source) in [
         ("empty field", direct.replace(data, "vec![]")),
+        (
+            "associated macros can replace iter",
+            format!(
+                "{direct}\nmacro_rules! declare_iter {{ () => {{ fn iter(&self) -> std::slice::Iter<'_, (String, u32)>; }} }}\nmacro_rules! implement_iter {{ () => {{ fn iter(&self) -> std::slice::Iter<'_, (String, u32)> {{ self.as_slice()[0..0].iter() }} }} }}\ntrait EmptyIter {{ declare_iter!(); }}\nimpl EmptyIter for Vec<(String, u32)> {{ implement_iter!(); }}"
+            ),
+        ),
         (
             "extension iter discards literal data",
             format!(

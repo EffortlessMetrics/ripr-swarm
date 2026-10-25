@@ -44,6 +44,8 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     pub(in crate::analysis) reach: StageEvidence,
     pub(in crate::analysis) infect: StageEvidence,
     pub(in crate::analysis) propagate: StageEvidence,
+    /// The credited fixture-specific pin has read its actual receiver data.
+    pub(in crate::analysis) literal_fixture_receiver_pinned: bool,
     pub(in crate::analysis) observe: StageEvidence,
     pub(in crate::analysis) discriminate: StageEvidence,
     /// Reach is `No` for a resolved owner that nothing in the workspace
@@ -894,12 +896,11 @@ impl ClassifiedProbeEvidence {
         // literal tuples and their numeric projection through the returned
         // sum. Reveal's credited bit retains all assertion/relation/name
         // defeats; an unreadable or empty fixture cannot supply this flow.
-        let propagate = if propagate.state == StageState::Weak
-            && reveal.owner_pin_credited
+        let literal_fixture_receiver_pinned = reveal.owner_pin_credited
             && owner_return_pin
                 .as_ref()
-                .is_some_and(OwnerReturnPin::reads_literal_fixture_receiver)
-        {
+                .is_some_and(OwnerReturnPin::reads_literal_fixture_receiver);
+        let propagate = if propagate.state == StageState::Weak && literal_fixture_receiver_pinned {
             StageEvidence::new(
                 StageState::Yes,
                 Confidence::Medium,
@@ -1400,6 +1401,7 @@ impl ClassifiedProbeEvidence {
             reach,
             infect,
             propagate,
+            literal_fixture_receiver_pinned,
             observe,
             discriminate,
             reach_ruled_out,

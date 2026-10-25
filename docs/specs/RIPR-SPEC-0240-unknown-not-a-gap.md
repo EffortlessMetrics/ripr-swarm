@@ -422,14 +422,16 @@ non-ignored related test matches one of these shapes:
   Each numeric component must be literal. Pipeline dispatch also fails closed
   for indexed receiver methods named `iter`, `map` or `sum`, an indexed
   `no_implicit_prelude` declaration, or imports, extern crates and item macro
-  invocations in the owner module or its same-file ancestors. This can withhold
+  invocations (including trait/impl associated items) in the owner module
+  or its same-file ancestors. This can withhold
   unrelated imports or methods; general method resolution is not claimed.
   Declaration attributes come from the indexed declaration facts, not the
   function-body substring. The test contains only the eager
   assertion and its optional immutable fixture binding. Existing assertion
   execution, macro binding, receiver/type/import identity and plain-drop gates
   still apply. Only a pin credited through these gates can supply the
-  corresponding returned-sum propagation fact. Computed or unresolved data,
+  corresponding returned-sum propagation fact and remove the resolved
+  `fixture_opaque` stop reason. Computed or unresolved data,
   empty collections, extra helper statements, alternate exits, mutable or
   aliased receivers, rebound `vec!`, duplicate helpers, unrelated fields and
   nonliteral projected tuple components receive no new credit. General helper

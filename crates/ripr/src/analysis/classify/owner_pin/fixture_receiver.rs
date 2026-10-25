@@ -411,9 +411,10 @@ fn pipeline_dispatch_is_closed(owner: &FunctionSummary, index: &RustIndex) -> bo
     {
         return false;
     }
-    let Some(source) = index.files().get(&owner.file).map(|facts| &*facts.source) else {
+    let Some(facts) = index.files().get(&owner.file) else {
         return false;
     };
+    let source = &facts.source;
     let Some(scope) = super::item_nesting_with_impl(source, &owner.name, owner.start_line, true)
     else {
         return false;
@@ -426,7 +427,10 @@ fn pipeline_dispatch_is_closed(owner: &FunctionSummary, index: &RustIndex) -> bo
             || ast::ExternCrate::can_cast(node.kind())
             || ast::MacroCall::can_cast(node.kind()))
             || !node.parent().is_some_and(|parent| {
-                ast::ItemList::can_cast(parent.kind()) || ast::SourceFile::can_cast(parent.kind())
+                ast::ItemList::can_cast(parent.kind())
+                    || ast::SourceFile::can_cast(parent.kind())
+                    || ast::MacroCall::can_cast(node.kind())
+                        && ast::AssocItemList::can_cast(parent.kind())
             })
         {
             return false;
