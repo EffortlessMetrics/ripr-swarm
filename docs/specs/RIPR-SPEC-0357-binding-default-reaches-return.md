@@ -74,9 +74,19 @@ not evaluated" instead of the generic reason. Any condition that is in doubt
 keeps today's reading. This stage never adds a relation to a test, raises a
 class, or strengthens an oracle.
 
-### Credit (stage 2)
+### Credit (stage 2, not implemented)
 
-A return flow earns credit only when all of these also hold:
+Stage 2 is deferred (#10259). Retargeting the probe to the returned
+expression was prototyped and rejected: the tail slice reads
+`propagation_unknown` because the direct-sink propagation witness is built
+from a changed returned expression, and the three negatives read as silent.
+Credit needs its own digest-validated witness kind for the binding-to-return
+flow, built where `classifier/evidence.rs` builds the others. Until then the
+retained row `ledger-sku-family-end` stays `limited`, an acceptable verdict.
+The rules below are the design that witness must satisfy, not behavior that
+ships.
+
+A return flow would earn credit only when all of these also hold:
 
 1. `INIT` is `RECEIVER.unwrap_or(D)` or `RECEIVER.unwrap_or_else(|| D)`, `D`
    has no side effect (a literal, a parameter, `PARAM.len()`), and the changed
@@ -98,7 +108,7 @@ A rebound, shadowed or captured binding never reaches stage 2.
 
 - Stage 1: the binding-to-return relation is recorded for the whole-binding and
   range-bound flows; each blocker in conditions 1 and 3 (rebound, shadowed, intervening use, each early-exit form, unterminated previous line) keeps the generic reading.
-- Stage 2: the credited case, plus one negative each for an unpinned default, a
+- Stage 2 (when built): the credited case, plus one negative each for an unpinned default, a
   rebound binding, and a default that is called but not asserted.
 - Corpus negatives (present before the relation lands): `default-flow-unpinned`,
   `default-flow-rebound`, `default-flow-smoked`.
@@ -110,6 +120,12 @@ A rebound, shadowed or captured binding never reaches stage 2.
 - One binding and one function; no flow through helper calls or struct fields.
 - The value evaluator proves `None` only for the receivers it already
   evaluates (`find`, `rfind`, `strip_prefix`-style lookups on literals).
+
+- The retained row rewrites the combinator (`unwrap_or(D)` to
+  `unwrap_or_else(|| D)`) and leaves `D` and the receiver untouched, so a rule
+  that requires the changed span to be exactly `D` would never credit it. A
+  stage 2 design must instead require both branches (`None` and `Some`) to be
+  pinned by exact equalities on the owner call.
 
 ## Non-Goals
 
@@ -139,7 +155,7 @@ A rebound, shadowed or captured binding never reaches stage 2.
   (`resolve_changed_binding_return`), seeded from
   `analysis/probes/diff.rs` and disclosed by
   `analysis/language/rust/probes.rs` (`attach_changed_binding_return_evidence`).
-- Stage 2: `crates/ripr/src/analysis/classify/value_transfer.rs` (planned).
+- Stage 2: not implemented (see Credit).
 
 ## Metrics
 
