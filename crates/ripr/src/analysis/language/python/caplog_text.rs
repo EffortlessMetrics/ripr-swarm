@@ -177,26 +177,47 @@ pub(super) fn python_log_evidence(
                 CaplogRead::Text | CaplogRead::MessageContains => text.contains(&literal),
                 CaplogRead::MessageEquals => *text == literal,
             };
+            // An absence assertion (`not in`) passes while nothing matches.
+            let negated = membership.negated;
+            let old_matches = old_texts.iter().any(holds);
+            let new_matches = new_texts.iter().any(holds);
+            // For an absence assertion the interesting text is the one that
+            // now matches.
+            let new_text = if negated {
+                new_texts.iter().find(|text| holds(text)).cloned()
+            } else {
+                new_texts.first().cloned()
+            };
             evaluations.push(Evaluation {
-                old_present: old_texts.iter().any(holds),
-                new_present: new_texts.iter().any(holds),
+                old_passes: old_matches != negated,
+                new_passes: new_matches != negated,
+                negated,
                 literal,
                 old_text: old_texts.first().cloned(),
-                new_text: new_texts.first().cloned(),
+                new_text,
             });
         }
     }
     // A test that did not already see the text before the edit says nothing
     // about it afterwards.
-    if evaluations.is_empty() || evaluations.iter().any(|evaluation| !evaluation.old_present) {
+    if evaluations.is_empty() || evaluations.iter().any(|evaluation| !evaluation.old_passes) {
         return None;
     }
     observed_values.sort_by(|a, b| a.line.cmp(&b.line).then(a.value.cmp(&b.value)));
     observed_values.dedup();
-    if let Some(gone) = evaluations
-        .iter()
-        .find(|evaluation| !evaluation.new_present)
-    {
+    if let Some(gone) = evaluations.iter().find(|evaluation| !evaluation.new_passes) {
+        if gone.negated {
+            return Some(PythonLogEvidence {
+                verdict: PythonLogVerdict::Rejects,
+                discriminator: String::new(),
+                observed_values,
+                reason: format!(
+                    "the text `{}` the test asserts absent is not in the old logged message and is in the new one: the new message reads `{}`",
+                    gone.literal,
+                    gone.new_text.as_deref().unwrap_or_default(),
+                ),
+            });
+        }
         let new_detail = gone.new_text.as_deref().map_or_else(
             || {
                 format!(
@@ -218,6 +239,18 @@ pub(super) fn python_log_evidence(
         });
     }
     let kept = evaluations.first()?;
+    if kept.negated {
+        return Some(PythonLogEvidence {
+            verdict: PythonLogVerdict::Absorbs,
+            discriminator: "an asserted-absent text the edit adds to the logged message"
+                .to_string(),
+            observed_values,
+            reason: format!(
+                "the text `{}` the test asserts absent is in neither the old nor the new logged message, so the assertion passes either way",
+                kept.literal
+            ),
+        });
+    }
     Some(PythonLogEvidence {
         verdict: PythonLogVerdict::Absorbs,
         discriminator: "an asserted text the edit removes from the logged message".to_string(),
@@ -231,8 +264,10 @@ pub(super) fn python_log_evidence(
 
 struct Evaluation {
     literal: String,
-    old_present: bool,
-    new_present: bool,
+    /// Whether the assertion passes against the old and the new logged text.
+    old_passes: bool,
+    new_passes: bool,
+    negated: bool,
     old_text: Option<String>,
     new_text: Option<String>,
 }

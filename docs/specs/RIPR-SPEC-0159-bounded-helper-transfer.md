@@ -294,7 +294,8 @@ can only hint that a caller "may lead here" without changing anything.
   invokes an `include`-family macro, defines a macro or invokes any macro in
   item position (an expansion may declare the name; the prefix then may not
   name the library), imports the entry's name through any `self::`/`crate::`/`super::` path
-  (only `crate::` from a unit test under `src/` is credited), or when any
+  (only `crate::` from a unit test under `src/` and the resolved relative
+  imports below are credited), or when any
   `const`/`static` of that name appears anywhere in the test file.
 
   The imported suffix is resolved, not only the prefix: an import of the
@@ -320,7 +321,8 @@ can only hint that a caller "may lead here" without changing anything.
   where nothing in the test file can shadow the library name. Valid but
   refused routes: an extern-crate alias, a re-export through a test-crate
   module (`pub use ::<lib>::..`, including beside a same-named local module),
-  `super::public_api::..` and nested `self::` re-exports; the const/static
+  `super::public_api::..` re-export routes and `self::` re-exports through a
+  test-crate module; the const/static
   veto is file-wide, so a same-named value inside an unrelated module also
   refuses. The package-wide macro-definition and item-position-macro scan on
   the library side is deliberately coarse and fail-closed. A bare call is read from the masked file at
@@ -355,9 +357,30 @@ can only hint that a caller "may lead here" without changing anything.
   binding, or a block-local `fn` inside a macro argument); this is a named
   limit tracked in #9971.
 
-  A relative `use super::<entry>;` in a `src/` unit test is refused even when
-  `super` is the crate root (verdict-corpus row
-  `spec0236-seam-private-tier-src-test-chain` moves gap to limited).
+  A relative `use super::<entry>;`, `use super::super::..`, `use super::<module>::<entry>;`
+  or `use self::<module>::<entry>;` (#9971) in a unit test under the root
+  package's `src/` is resolved against the test file's own module (read from
+  the layout) to an absolute module path, and is credited only when that path
+  equals the entry's definition module path and both sides are bound: the
+  entry by the library declaration chain above, the test file by an
+  unconditional, un-remapped chain from `src/lib.rs` whose only `cfg` is a bare
+  `#[cfg(test)]` on the test module's own out-of-line declaration and which
+  passes through no inline module. It refuses (verdict-corpus rows and the
+  honesty corpus pin each): any `#[path]` in the package, a test file in a
+  workspace member or under `tests/`, an inline module, glob import,
+  `cfg`-gated `use`, inner `cfg`, macro definition or item-position macro in the
+  test file, a renamed or function-local import, a path through `self`/`super`/
+  `crate` again or past the crate root, a path that resolves to another module
+  or only re-exports the entry, a `cfg`/`cfg_attr`-gated, duplicated or
+  `#[path]`-remapped declaration on the chain, and every nearer-binding veto
+  above (a body `let`, closure parameter, `fn`, `const`, `static` or tuple
+  struct of the entry's name). Verdict-corpus row
+  `spec0236-seam-private-tier-src-test-chain` (`use super::checkout;` in
+  `src/checkout_tests.rs`, declared `#[cfg(test)] mod checkout_tests;`) is the
+  recovered positive. Still refused, tracked in #9971: a test module on a
+  declaration chain that passes through an inline module (the library index
+  does not place such a file in a module context either), a test module under
+  a `cfg(test)`-gated parent, and the other routes listed above.
 
   Accepted conservative losses (tracked in #9971): the fully qualified
   spelling of a crate-root re-export of an inline-module entry
