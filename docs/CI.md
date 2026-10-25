@@ -1197,6 +1197,21 @@ third-party actions, and holds job-level `pull-requests: write` and
 `statuses: write` only. It is a notice, not a required check; the author merges
 the base branch, resolves the conflict, and re-applies `merge-ready`.
 
+### Base Still Merges Cleanly (rust-gates)
+
+`actions/checkout` tests the merge ref as it stood when a pull-request run was
+admitted. The `Base still merges cleanly` step of `rust-gates.yml` (`pull_request`
+events only) runs just before `Required Rust tests`, fetches the current base and
+runs `git merge-tree --write-tree HEAD^2 origin/<base>`. If the base moved and now
+conflicts with the PR head, the step fails with an error naming the base, the PR head
+and the remedy (merge the base, resolve, re-apply `merge-ready`), so the required
+check goes red before the ~18-minute test step instead of after it (#10341). It cannot
+cancel the run (that needs `actions: write`) and it only looks once, so a conflict
+that appears later still finishes the run. It fails open: a failed fetch, or a Git
+older than 2.38 (no `merge-tree --write-tree`), emits a warning and passes. Its
+outcome has its own row in the gate summary. `xtask/tests/rust_gate_merge_ref_check.rs`
+runs the step's script against real Git repositories.
+
 ### PR Staleness Watchdog
 
 GitHub sometimes silently drops the `pull_request` event delivery that creates

@@ -287,6 +287,31 @@ jobs:
         id: verdict_corpus
         run: cargo xtask verdict-corpus check-all
 
+      # `actions/checkout` tests GitHub's merge ref as it stood when the run was
+      # admitted. If the base has since moved and now conflicts with the PR head,
+      # the ~18-minute test run below cannot produce a mergeable result, so fail
+      # here with the reason instead of finishing it (#10341). Needs the full
+      # history the checkout above fetches; `merge-tree` writes nothing to the tree.
+      - name: Base still merges cleanly
+        id: base_still_merges
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if ! git fetch --no-tags origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"; then
+            echo "::warning title=Base fetch failed::could not re-read $BASE_REF; the conflict re-check is skipped."
+            exit 0
+          fi
+          rc=0
+          git merge-tree --write-tree --no-messages HEAD^2 "origin/$BASE_REF" > /dev/null || rc=$?
+          [ "$rc" -eq 0 ] && exit 0
+          if [ "$rc" -ne 1 ]; then
+            echo "::warning title=Conflict re-check unavailable::git merge-tree exited $rc; not blocking."
+            exit 0
+          fi
+          echo "::error title=Base moved and now conflicts::$BASE_REF moved after this run was admitted and now conflicts with PR head $(git rev-parse --short HEAD^2). Merge $BASE_REF into the branch, resolve, then remove and re-apply merge-ready."
+          exit 1
+
       - name: Required Rust tests
         id: rust-tests
         run: |
@@ -451,6 +476,7 @@ jobs:
           CAPABILITY_PRODUCERS_RESULT: ${{ steps.capability_producers.outcome }}
           CAPABILITY_DOCS_RESULT: ${{ steps.capability_docs.outcome }}
           VERDICT_CORPUS_RESULT: ${{ steps.verdict_corpus.outcome }}
+          BASE_STILL_MERGES_RESULT: ${{ steps.base_still_merges.outcome }}
           PR_EVIDENCE_RESULT: ${{ steps.pr_evidence.outcome }}
           SCHEMA_SWEEP_RESULT: ${{ steps.schema_producer_sweep.outcome }}
         run: |
@@ -477,6 +503,7 @@ jobs:
             printf '| capability_producers | %s |\n' "${CAPABILITY_PRODUCERS_RESULT:-not_reported}"
             printf '| capability_docs | %s |\n' "${CAPABILITY_DOCS_RESULT:-not_reported}"
             printf '| verdict_corpus | %s |\n' "${VERDICT_CORPUS_RESULT:-not_reported}"
+            printf '| base_still_merges | %s |\n' "${BASE_STILL_MERGES_RESULT:-not_reported}"
             printf '| pr_evidence | %s |\n' "${PR_EVIDENCE_RESULT:-not_reported}"
             printf '| schema_producer_sweep | %s |\n' "${SCHEMA_SWEEP_RESULT:-not_reported}"
             echo ""
