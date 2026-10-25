@@ -617,6 +617,8 @@ fn caplog_aliases(body: &str) -> Vec<CaplogAlias<'_>> {
         .enumerate()
         .filter_map(|(index, line)| {
             let (name, value) = line.trim().split_once('=')?;
+            // A trailing comment (`# type: ignore`) is not part of the value.
+            let value = value.split('#').next().unwrap_or_default();
             let (name, value) = (name.trim(), value.trim());
             let identifier = !name.is_empty()
                 && !name.starts_with(|ch: char| ch.is_ascii_digit())
@@ -627,21 +629,43 @@ fn caplog_aliases(body: &str) -> Vec<CaplogAlias<'_>> {
         .collect()
 }
 
-fn replace_identifier(text: &str, name: &str, with: &str) -> String {
+/// `text` with each whole-word `name` outside a string literal replaced by
+/// `with`: an alias spelled inside a quoted literal is data, not the alias.
+pub(super) fn replace_identifier(text: &str, name: &str, with: &str) -> String {
     let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
     let mut out = String::with_capacity(text.len());
-    let mut from = 0;
-    for (start, _) in text.match_indices(name) {
-        let end = start + name.len();
-        let whole = !text[..start].chars().next_back().is_some_and(is_word)
-            && !text[end..].chars().next().is_some_and(is_word);
-        if start >= from && whole {
-            out.push_str(&text[from..start]);
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut index = 0;
+    while index < text.len() {
+        let Some(ch) = text[index..].chars().next() else {
+            break;
+        };
+        let width = ch.len_utf8();
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+        } else if ch == '\'' || ch == '"' {
+            quote = Some(ch);
+        } else if text[index..].starts_with(name)
+            && !text[..index].chars().next_back().is_some_and(is_word)
+            && !text[index + name.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_word)
+        {
             out.push_str(with);
-            from = end;
+            index += name.len();
+            continue;
         }
+        out.push(ch);
+        index += width;
     }
-    out.push_str(&text[from..]);
     out
 }
 
