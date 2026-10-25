@@ -11267,6 +11267,8 @@ code = [
   "xtask/src/reports/release/candidate_harness/live_head.rs",
   "xtask/src/reports/release/candidate_harness/live_head/input.rs",
   "xtask/src/reports/release/candidate_harness/live_head/producer.rs",
+  "xtask/src/termination_qualification/candidate_manifest.rs",
+  "xtask/src/termination_qualification/command.rs",
   "xtask/src/reports/release/candidate_harness/input.rs",
   "xtask/src/reports/release/candidate_harness/source.rs",
   "xtask/src/reports/release/candidate_harness/source/inventory.rs",
