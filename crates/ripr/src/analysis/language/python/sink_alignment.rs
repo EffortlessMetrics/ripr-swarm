@@ -364,30 +364,30 @@ fn oracle_compares_owner_collection(oracle: &str, test: &PythonTest, owner: &Pyt
             _ => None,
         }
     }
-    fn observes(expr: &Expr, callees: &[String], locals: &[String]) -> bool {
+    fn observes(expr: &Expr, callees: &[String], locals: &[String], test: &PythonTest) -> bool {
         let display = |expr: &Expr| matches!(expr, Expr::Dict(_) | Expr::List(_));
-        fn result(expr: &Expr, callees: &[String], locals: &[String]) -> bool {
+        fn result(expr: &Expr, callees: &[String], locals: &[String], test: &PythonTest) -> bool {
             match expr {
                 Expr::Call(call) => {
                     callee_name(&call.func).is_some_and(|name| callees.contains(&name))
-                        || (matches!(call.func.as_ref(), Expr::Name(name) if matches!(name.id.as_str(), "list" | "tuple"))
+                        || (matches!(call.func.as_ref(), Expr::Name(name) if matches!(name.id.as_str(), "list" | "tuple") && !super::related_tests::builtin_is_shadowed(test, name.id.as_str()))
                             && call.keywords.is_empty()
                             && call.args.len() == 1
                             && call
                                 .args
                                 .first()
-                                .is_some_and(|arg| result(arg, callees, locals)))
+                                .is_some_and(|arg| result(arg, callees, locals, test)))
                 }
                 Expr::Name(name) => locals.iter().any(|local| local == name.id.as_str()),
                 _ => false,
             }
         }
-        let result = |expr: &Expr| result(expr, callees, locals);
+        let result = |expr: &Expr| result(expr, callees, locals, test);
         match expr {
             Expr::BoolOp(boolean) if boolean.op == ast::BoolOp::And => boolean
                 .values
                 .iter()
-                .any(|value| observes(value, callees, locals)),
+                .any(|value| observes(value, callees, locals, test)),
             Expr::Compare(compare) => {
                 if compare.ops.iter().all(|op| *op == ast::CmpOp::Eq) {
                     let operands: Vec<_> = std::iter::once(compare.left.as_ref())
@@ -439,7 +439,7 @@ fn oracle_compares_owner_collection(oracle: &str, test: &PythonTest, owner: &Pyt
         );
     }
     let locals = owner_result_locals(test, &callees);
-    observes(&expression, &callees, &locals)
+    observes(&expression, &callees, &locals, test)
 }
 
 /// Whether a strong oracle observes the CHANGED dict element (#1290 / #6585): a
