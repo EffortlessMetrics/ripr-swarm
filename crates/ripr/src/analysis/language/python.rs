@@ -83,6 +83,7 @@ mod probe_shape;
 mod reexports;
 mod related_tests;
 mod repo;
+mod route_client;
 mod row_miss;
 mod row_reach;
 mod setup_receivers;

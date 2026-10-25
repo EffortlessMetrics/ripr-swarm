@@ -336,16 +336,20 @@ Relations, first match wins (rank, oracle-eligible):
   call and in the route decorator alike (a decorator whose path is not a
   whole literal is a dynamic route registration, a static limit). The
   receiver is `client`, or a name bound once by assignment or `with ... as`
-  from `client` or from a `TestClient(...)` construction, or an
+  from `client`, another receiver or a `TestClient(...)` construction (any
+  alias chain length; an assignment, annotation, augmented assignment, tuple
+  or `for`/`with`/walrus target, `def` or `import` of the same name anywhere in
+  the body withdraws it; a call wrapped over lines or written `app = x` reads
+  like its one-line form), or an
   `AsyncClient(...)` built over an application (`app=` or an
   `ASGITransport`). A client built over an application name imported from a
   module that is not where the owner's application comes from is a rival and
   does not relate: the owner's file imports the receiver from a module (the
   test must import it from that module), or defines it itself (the test must
   import it from that module or a package above it). A client built
-  elsewhere (a fixture, an unresolved or dotted name, a multi-line
-  construction, a rebound name, a router an application includes under
-  another name) is unidentified and keeps the path-and-verb match (#10110);
+  elsewhere (a fixture, an unresolved, dotted or called application name, a
+  rebound name, a router an application includes under another name) is
+  unidentified and keeps the path-and-verb match (#10110);
 - R4: `construct_call` (4, eligible): a `__call__` owner invoked as
   `Class(...)(...)`;
 - R5: `local_binding` (4, eligible): a `__call__` owner invoked through

@@ -191,3 +191,53 @@ fn a_comment_after_the_path_literal_keeps_the_route() -> Result<(), String> {
     assert!(related("app/a.py", routes, test)?);
     Ok(())
 }
+
+const RIVAL_HEAD: &str = "from starlette.testclient import TestClient\nfrom app.b import app as other\nfrom app.a import app\n\ndef test_items():\n";
+
+fn rival_and_own(body: &str) -> Result<(bool, bool), String> {
+    let rival = format!("{RIVAL_HEAD}{body}").replace("APP", "other");
+    let own = format!("{RIVAL_HEAD}{body}").replace("APP", "app");
+    Ok((
+        related("app/a.py", OWN_APP, &rival)?,
+        related("app/a.py", OWN_APP, &own)?,
+    ))
+}
+
+#[test]
+fn keyword_spacing_and_wrapped_constructions_still_withhold_a_rival() -> Result<(), String> {
+    for client in [
+        "    client = TestClient(app = APP)\n",
+        "    client = TestClient(\n        app=APP,\n    )\n",
+        "    client = TestClient(\n        app = APP  # under test\n    )\n",
+    ] {
+        let body = format!("{client}    assert client.get(\"/items\")\n");
+        assert_eq!(rival_and_own(&body)?, (false, true), "{client}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_long_alias_chain_keeps_the_rival_check() -> Result<(), String> {
+    for links in 1..=5usize {
+        let mut body = String::from("    client = TestClient(APP)\n");
+        let mut previous = "client".to_string();
+        for link in 0..links {
+            body.push_str(&format!("    c{link} = {previous}\n"));
+            previous = format!("c{link}");
+        }
+        body.push_str(&format!("    assert {previous}.get(\"/items\")\n"));
+        assert_eq!(rival_and_own(&body)?, (false, true), "{links} links");
+    }
+    Ok(())
+}
+
+#[test]
+fn an_annotated_rebinding_does_not_leave_the_alias_a_client() -> Result<(), String> {
+    let test = "def test_items(client):\n    api = client\n    api: object = Store()\n    assert api.get(\"/items\")\n";
+    assert!(!related("app/a.py", OWN_APP, test)?);
+    // An annotation on the single binding keeps it a client alias.
+    let kept =
+        "def test_items(client):\n    api: object = client\n    assert api.get(\"/items\")\n";
+    assert!(related("app/a.py", OWN_APP, kept)?);
+    Ok(())
+}

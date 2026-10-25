@@ -2093,7 +2093,7 @@ fn import_binds_owner_name(import: &PythonImport, owner: &PythonOwner) -> bool {
 }
 
 fn api_client_route_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
-    let receivers = api_client_receivers(&test.body_text);
+    let receivers = super::route_client::client_receivers(&test.body_text);
     owner.route_paths.iter().enumerate().any(|(index, route)| {
         // An empty or missing verb list is an unknown verb, which keeps the
         // path-only match; a known list must contain the verb the test called.
@@ -2119,104 +2119,6 @@ fn api_client_route_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool 
     })
 }
 
-/// A request client's receiver names in a test body: the conventional
-/// `client` plus each name assigned exactly once from that client or from a
-/// `TestClient(...)` / `AsyncClient(...)` construction (`api = client`,
-/// `api = TestClient(app)`). A name rebound elsewhere is not tracked, so an
-/// alias cannot point at a different object by the time it is called.
-fn api_client_receivers(body_text: &str) -> Vec<String> {
-    let mut receivers = vec!["client".to_string()];
-    let bindings = client_bindings(body_text);
-    // Two passes so `a = client; b = a` resolves in either order of the lines.
-    for _ in 0..2 {
-        for (name, value) in &bindings {
-            if receivers.iter().any(|known| known == name) || binding_count(body_text, name) != 1 {
-                continue;
-            }
-            if receivers.iter().any(|known| known == value) || client_construction(value).is_some()
-            {
-                receivers.push((*name).to_string());
-            }
-        }
-    }
-    receivers
-}
-
-/// Every `name = value` assignment and `with value as name:` binding line.
-fn client_bindings(body_text: &str) -> Vec<(&str, &str)> {
-    body_text
-        .lines()
-        .filter_map(|line| simple_assignment(line).or_else(|| with_binding(line)))
-        .collect()
-}
-
-/// `with value as name:` (or `async with`) binding one plain name.
-fn with_binding(line: &str) -> Option<(&str, &str)> {
-    let rest = line.trim();
-    let rest = rest.strip_prefix("async ").unwrap_or(rest);
-    let rest = rest.strip_prefix("with ")?.strip_suffix(':')?;
-    let (value, name) = rest.rsplit_once(" as ")?;
-    let name = name.trim();
-    (!name.is_empty() && name.chars().all(is_python_identifier_char))
-        .then_some((name, value.trim()))
-}
-
-/// How often a name is bound by assignment or `with ... as`; an alias is only
-/// tracked when it is bound exactly once.
-fn binding_count(body_text: &str, name: &str) -> usize {
-    assignment_count(body_text, name)
-        + body_text
-            .lines()
-            .filter(|line| with_binding(line).is_some_and(|(bound, _)| bound == name))
-            .count()
-}
-
-/// `name = value` on one line: a plain identifier target, not `==`, an
-/// annotation or a tuple/attribute target.
-fn simple_assignment(line: &str) -> Option<(&str, &str)> {
-    let (name, value) = line.trim().split_once('=')?;
-    let name = name.trim();
-    let value = value.trim();
-    (!value.starts_with('=')
-        && !name.is_empty()
-        && name.chars().all(is_python_identifier_char)
-        && !name.starts_with(|ch: char| ch.is_ascii_digit()))
-    .then_some((name, value))
-}
-
-/// The argument text of a `TestClient(...)` / `AsyncClient(...)` construction
-/// (any dotted prefix), when `value` is one.
-fn client_construction(value: &str) -> Option<&str> {
-    let open = value.find('(')?;
-    let callee = value.get(..open)?.trim();
-    let class = callee.rsplit('.').next()?;
-    if !matches!(class, "TestClient" | "AsyncClient") {
-        return None;
-    }
-    // An `AsyncClient` is a route client only when it is built over an
-    // application; `AsyncClient(base_url=...)` calls an external service.
-    if class == "AsyncClient" && !value.contains("app=") && !value.contains("ASGITransport(") {
-        return None;
-    }
-    // The construction must be the whole value: `TestClient(app).get(..)` is a
-    // response, not a client.
-    let mut depth = 0usize;
-    for (offset, ch) in value.get(open..)?.char_indices() {
-        match ch {
-            '(' => depth += 1,
-            ')' => {
-                depth = depth.checked_sub(1)?;
-                if depth == 0 {
-                    let end = open + offset + 1;
-                    return (end == value.len()).then(|| value.get(open + 1..end - 1))?;
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
 /// Whether the request client demonstrably targets a different application
 /// than the owner's route decorator. Only the case this adapter can decide from
 /// the pair is withheld: the client is built over an application name imported
@@ -2234,7 +2136,7 @@ fn client_targets_rival_app(
     let Some(owner_receiver) = owner_receiver.filter(|name| !name.is_empty()) else {
         return false;
     };
-    let Some(app_name) = client_app_name(&test.body_text, receiver) else {
+    let Some(app_name) = super::route_client::client_app_name(&test.body_text, receiver) else {
         return false;
     };
     // Where the owner's file itself got the receiver: a shared application
@@ -2272,40 +2174,6 @@ fn import_bound_name(import: &PythonImport) -> &str {
     } else {
         import.alias.as_str()
     }
-}
-
-/// The application name a receiver's `TestClient(app)` (or `app=app`)
-/// construction passes, following aliases of the client to their construction.
-fn client_app_name(body_text: &str, receiver: &str) -> Option<String> {
-    let mut target = receiver;
-    let bindings = client_bindings(body_text);
-    for _ in 0..3 {
-        // A name bound more than once may point anywhere by the call.
-        if binding_count(body_text, target) != 1 {
-            return None;
-        }
-        let value = bindings
-            .iter()
-            .find(|(name, _)| *name == target)
-            .map(|(_, value)| *value)?;
-        if let Some(arguments) = client_construction(value) {
-            let argument = arguments
-                .split(',')
-                .map(str::trim)
-                .find_map(|argument| argument.strip_prefix("app=").map(str::trim))
-                .or_else(|| {
-                    arguments
-                        .split(',')
-                        .map(str::trim)
-                        .next()
-                        .filter(|argument| !argument.contains('='))
-                })?;
-            return (!argument.is_empty() && argument.chars().all(is_python_identifier_char))
-                .then(|| argument.to_string());
-        }
-        target = value;
-    }
-    None
 }
 
 fn body_calls_api_client_route(
