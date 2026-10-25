@@ -1027,6 +1027,17 @@ The gate text keeps strings, templates and regex literals visible beside the
 two masks, so a string spelling `module.exports = x` refuses the file (fail
 closed). Known limits: a default binding of a function export (`const { default: f } = require(...)`, and an ES `import f from` of the same module, which the adapter cannot tell apart) is refused rather than credited; overload-style repeated `function name` declarations and any `require.resolve` use refuse the file.
 
+**Rule 22. A member of a literal `require()` is a named import (#9188).**
+`const f = require("<module>").f` (also `var`, a renamed local, and the
+string-key spelling `require("<module>")["f"]`) picks one export out of a
+CommonJS module, so it records the import `const { f } = require("<module>")`
+records: source `<module>`, imported `f`, local `f` (or the rename). A call
+through the local then relates by rules 5 and 7 as the destructured form does.
+Only a plain member of a call to `require` with a string-literal argument is
+read: a call on the member (`require("./lib").make()`), an optional chain, a
+computed key that is not a string literal, a deeper member (`.a.b`) and a
+dynamic `require` argument record nothing and keep the old reading.
+
 **Rule 21. A method decorator that passes the original result through
 lends `exposed` to the decorated method's tests (design decision, #10189).**
 A changed line inside `D(target, key, descriptor)` is reached by no test
