@@ -1277,6 +1277,32 @@ fn limited_journey_public_api_helper_boundary_stays_limited() -> Result<(), Stri
         "{text}"
     );
     assert!(!text.contains("Write a test for it:"), "{text}");
+    let mut check_json = ripr_command();
+    check_json
+        .args(["check", "--root"])
+        .arg(root)
+        .arg("--diff")
+        .arg(&diff)
+        .arg("--json");
+    let output = run_bounded(check_json, root, "limited-json", Duration::from_mins(2))?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())?;
+    let findings = report["findings"].as_array().ok_or("missing findings")?;
+    assert_eq!(findings.len(), 1, "{report}");
+    let finding = &findings[0];
+    assert_eq!(finding["classification"], "no_static_path", "{report}");
+    assert_eq!(
+        finding["static_limitation"]["first_unresolved_edge"],
+        "entry `outer` -> owner `inner` through a transitive Rust helper path",
+        "canonical edge is stable: {report}"
+    );
+    let evidence = finding["evidence"].as_array().ok_or("missing evidence")?;
+    assert!(evidence.iter().any(|line| line.as_str() == Some("limitation_helper_boundary: restricted-visibility helper `inner` behind public entry point `outer`; candidate path only")), "{report}");
     let mut explain = ripr_command();
     explain
         .args(["explain", "--root"])

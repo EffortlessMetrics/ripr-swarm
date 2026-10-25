@@ -1563,15 +1563,21 @@ fn apply_rust_transitive_reach_limit(
     finding
         .evidence
         .push(classify::transitive_reach_witness_pointer(witness));
-    let mut detail = classify::transitive_reach_limitation_detail_lines(witness, owner_name);
+    finding
+        .evidence
+        .extend(classify::transitive_reach_limitation_detail_lines(
+            witness, owner_name,
+        ));
     if let Some(boundary) =
         finding.probe.owner.as_ref().and_then(|owner| {
             transitive_reach.private_helper_boundary(owner, &witness.entry_symbol)
         })
     {
-        detail[1].push_str(&format!(" ({boundary})"));
+        finding.evidence.push(format!(
+            "{}{boundary}",
+            crate::domain::LIMITATION_HELPER_BOUNDARY_PREFIX
+        ));
     }
-    finding.evidence.extend(detail);
 }
 
 /// Shared typed macro limitation projection. It adds neither reach credit

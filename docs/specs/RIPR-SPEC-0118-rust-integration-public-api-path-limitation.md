@@ -287,6 +287,8 @@ may already observe the change; do not prescribe a direct private-helper call
 or promise that repeating the public assertion resolves the path. Exact indexed
 function identity and declaration visibility may name the private-helper/public
 entry boundary without promoting the candidate path to confirmed reach.
+This is additive `limitation_helper_boundary` evidence; all existing canonical
+edge, route, and non-claim values remain unchanged.
 `explain` presents investigation guidance instead of a recipe claimed to change
 the verdict; check withholds its test-writing route for this limitation. Neither
 changes classification, stage evidence, or repair admission.

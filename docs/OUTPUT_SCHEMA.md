@@ -747,6 +747,8 @@ evidence says tests cannot close that analysis limitation, names the edge and
 analyzer route, and reserves test changes for an independently confirmed gap.
 Exact indexed declarations may additionally identify a private or restricted
 helper behind a public entry; the path remains a candidate, not confirmed reach.
+That declaration context uses additive `limitation_helper_boundary` evidence;
+canonical edge, route, and non-claim values retain their original bytes.
 `ripr check --format human-full` (alias `text-full`) preserves the exhaustive
 per-finding human report. Navigation-aware CLI reports may define identical
 facts or guidance once with explicit finding-ordinal references; every finding

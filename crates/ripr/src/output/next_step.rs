@@ -78,11 +78,14 @@ pub(crate) fn unresolved_edge_guidance(finding: &Finding) -> Option<String> {
             .filter(|value| !value.is_empty())
     };
     let edge = detail(crate::domain::LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX)?;
+    let boundary = detail(crate::domain::LIMITATION_HELPER_BOUNDARY_PREFIX)
+        .map(|boundary| format!(" ({boundary})"))
+        .unwrap_or_default();
     let route = detail(crate::domain::LIMITATION_ANALYZER_ROUTE_PREFIX)
         .map(|route| format!(" Route analyzer work to `{route}`."))
         .unwrap_or_default();
     Some(format!(
-        "Tests cannot close this static-analysis limitation: ripr cannot trace {edge}. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test.{route}"
+        "Tests cannot close this static-analysis limitation: ripr cannot trace {edge}{boundary}. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test.{route}"
     ))
 }
 
@@ -114,6 +117,7 @@ mod tests {
         finding.evidence = vec![
             "limitation_first_unresolved_edge: entry `parse_duration` -> owner `parse_unit` through a transitive Rust helper path".to_string(),
             "limitation_analyzer_route: analysis/rust-public-api-transitive-reach".to_string(),
+            "limitation_helper_boundary: private helper `parse_unit` behind public entry point `parse_duration`; candidate path only".to_string(),
         ];
         finding.recommended_next_step = Some("add a direct test for parse_unit".to_string());
         let step = reconcile_next_step(&finding);
@@ -129,6 +133,7 @@ mod tests {
             step.contains("analysis/rust-public-api-transitive-reach"),
             "{step}"
         );
+        assert!(step.contains("private helper `parse_unit`"), "{step}");
         assert!(!step.contains("add a direct test"), "{step}");
         finding.static_limit_kind =
             Some(crate::domain::StaticLimitKind::RustValuePropagationUnresolved);

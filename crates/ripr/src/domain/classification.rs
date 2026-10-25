@@ -85,6 +85,8 @@ pub(crate) const LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX: &str =
     "limitation_first_unresolved_edge: ";
 pub(crate) const LIMITATION_ANALYZER_ROUTE_PREFIX: &str = "limitation_analyzer_route: ";
 pub(crate) const LIMITATION_NON_CLAIM_PREFIX: &str = "limitation_non_claim: ";
+/// Additive declaration context, kept separate from the canonical edge text.
+pub(crate) const LIMITATION_HELPER_BOUNDARY_PREFIX: &str = "limitation_helper_boundary: ";
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
