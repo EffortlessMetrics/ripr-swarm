@@ -257,28 +257,30 @@ fn is_reference_operand(operand: &str, before: &str) -> bool {
 
 /// Whether the site sits inside an unclosed generic `<` of its statement, as
 /// in `let v: Vec<Result<u8, Money>> = ..`, where `>>` is no operator. Only a
-/// `<` that follows a name or `::` with no space opens generics; a comparison
-/// such as `1 < 2 && Money(8) >> Money(1)` does not, so it cannot hide a real
-/// shift.
+/// `<` that follows a name or `::` with no space opens generics, and only a
+/// `>` that closes one is counted, so a comparison such as
+/// `1 < 2 && Money(8) >> Money(1)` or `a > b && f::<Vec<Money>>()` can neither
+/// hide a real shift nor cancel a generic opener. A `;` inside `[..]`
+/// (`Vec<[Money; 2]>`) does not end the statement.
 fn in_generic_arguments(masked: &str, at: usize) -> bool {
-    let before = &masked[..at];
-    let statement = before
-        .rfind([';', '{', '}'])
-        .map_or(before, |i| &before[i + 1..]);
-    let bytes = statement.as_bytes();
-    let opened = bytes
-        .iter()
-        .enumerate()
-        .filter(|&(i, &byte)| {
-            byte == b'<' && i > 0 && (is_ident_byte(bytes[i - 1]) || bytes[i - 1] == b':')
-        })
-        .count();
-    let closed = bytes
-        .iter()
-        .enumerate()
-        .filter(|&(i, &byte)| byte == b'>' && (i == 0 || !matches!(bytes[i - 1], b'-' | b'=')))
-        .count();
-    opened > closed
+    let bytes = masked[..at].as_bytes();
+    let mut generics = 0usize;
+    let mut brackets = 0usize;
+    for (i, &byte) in bytes.iter().enumerate() {
+        match byte {
+            b'[' => brackets += 1,
+            b']' => brackets = brackets.saturating_sub(1),
+            b';' | b'{' | b'}' if brackets == 0 => generics = 0,
+            b'<' if i > 0 && (is_ident_byte(bytes[i - 1]) || bytes[i - 1] == b':') => {
+                generics += 1;
+            }
+            b'>' if i > 0 && !matches!(bytes[i - 1], b'-' | b'=') => {
+                generics = generics.saturating_sub(1);
+            }
+            _ => {}
+        }
+    }
+    generics > 0
 }
 
 /// Byte ranges of `stringify!(..)` arguments: the tokens become text and are

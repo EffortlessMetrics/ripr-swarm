@@ -434,13 +434,34 @@ fn generic_arguments_are_not_shift_operators() -> Result<(), String> {
         ..shr
     };
     let direct = direct_tests(&after_comparison)?;
-    if direct == ["operator_under_test"] {
-        Ok(())
-    } else {
-        Err(format!(
+    if direct != ["operator_under_test"] {
+        return Err(format!(
             "a `>>` after a comparison was not credited: {direct:?}"
-        ))
+        ));
     }
+    // A comparison `>` must not cancel a generic opener, and a `;` inside an
+    // array type must not end the statement.
+    for (label, body) in [
+        (
+            "comparison before a turbofish generic",
+            "let ok = 2 > 1 && 3 > 2 && f::<Vec<u8>, Result<u8, Money>>().is_ok();\n        assert!(ok);",
+        ),
+        (
+            "array length inside generics",
+            "let v: Vec<Vec<[Money; 2]>> = Vec::new();\n        assert!(v.is_empty());",
+        ),
+    ] {
+        let case = Case {
+            label,
+            test_body: body,
+            ..shr
+        };
+        let direct = direct_tests(&case)?;
+        if !direct.is_empty() {
+            return Err(format!("{label}: related by a direct call: {direct:?}"));
+        }
+    }
+    Ok(())
 }
 
 #[test]
