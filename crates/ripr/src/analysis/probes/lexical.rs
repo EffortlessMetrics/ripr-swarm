@@ -1153,8 +1153,8 @@ mod tests {
             "let g = [|| 1, || 2];",
             "Some(x) => || x,",
             "MyStruct { field: || x }",
-            "let task = async || fetch().await;",
-            "let task = async move || fetch().await;",
+            "let task = async || work().await;",
+            "let task = async move || work().await;",
             "let r = &|| true;",
         ];
         for text in closure_heads {
