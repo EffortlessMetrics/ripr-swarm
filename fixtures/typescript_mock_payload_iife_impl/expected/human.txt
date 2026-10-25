@@ -19,7 +19,9 @@ Start here:
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: db.write(v + 2);
-  Missing discriminator (1 of 2): Related test reaches `save` with bounded mock payload evidence `expect(db.write).toHaveBeenCalledWith(2)`; keep the item advisory until mock-shape actionability can name verify…
+  Missing discriminator (1 of 2): Related test reaches `save` with bounded mock payload evidence
+    `expect(db.write).toHaveBeenCalledWith(2)`; keep the item advisory until mock-shape
+    actionability can name verify command, receipt command, evidence refs, and edit boundaries
   Related test: tests/save.test.ts:7 save
   Next step — TypeScript preview advisory: related mock payload evidence
     `expect(db.write).toHaveBeenCalledWith(2)` is syntax-bounded for `call db.write includes v + 2`,

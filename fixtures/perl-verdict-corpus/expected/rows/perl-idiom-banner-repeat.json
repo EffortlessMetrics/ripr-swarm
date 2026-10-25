@@ -1,0 +1,23 @@
+{
+  "case_id": "perl-idiom-banner-repeat",
+  "subject_id": "authored-perl-idioms-toolkit",
+  "origin": "authored",
+  "anchor": "lib/Toolkit.pm:48",
+  "behavior_family": "string_repeat",
+  "test_shape": "ok_length_only",
+  "hard_case": true,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "reachable_unrevealed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {},
+  "packet_provenance": "producer"
+}
