@@ -24,6 +24,7 @@
 //! withholds, so the actionability flip stays fail-closed.
 
 use super::gap_admission::{is_ignored, withhold_gap};
+use super::owner_pin::closure_adaptor::call_argument_texts;
 use super::owner_pin::{CONDITIONAL_COMBINATORS, closure_adaptor::adaptor_tail_of};
 use super::reveal::assertion_comparison_operands;
 use crate::analysis::facts::TestFact;
@@ -113,6 +114,10 @@ pub(in crate::analysis) fn withhold_pinned_shape_gap(
     ) else {
         return false;
     };
+    // The accumulator's walked argument, so an empty literal elsewhere in the
+    // call does not make the pin degenerate.
+    let walked = loop_accumulator_at(&owner.body, changed_line - owner.start_line)
+        .map(|accumulator| accumulator.walked_position);
     let labels: Vec<String> = finding
         .related_tests
         .iter()
@@ -123,7 +128,7 @@ pub(in crate::analysis) fn withhold_pinned_shape_gap(
                     && test.file == related.file
                     && test.start_line == related.line
             })?;
-            pins_owner_exactly(test, &owner.name, shape).then(|| {
+            pins_owner_exactly(test, &owner.name, shape, walked).then(|| {
                 format!(
                     "`{}` ({}:{})",
                     related.name,
@@ -245,7 +250,7 @@ fn pins_result_ok(test: &TestFact, owner: &str) -> bool {
 /// Whether `test` is a live test with a plain `assert_eq!` whose one operand
 /// is the owner's call itself (see [`is_whole_call`]) on an input that is not
 /// empty or zero, and whose other operand does not name the owner.
-fn pins_owner_exactly(test: &TestFact, owner: &str, shape: Shape) -> bool {
+fn pins_owner_exactly(test: &TestFact, owner: &str, shape: Shape, walked: Option<usize>) -> bool {
     if is_ignored(test)
         || test
             .attrs
@@ -266,7 +271,7 @@ fn pins_owner_exactly(test: &TestFact, owner: &str, shape: Shape) -> bool {
                     text_calls(call, owner)
                         && !contains_name(other, owner)
                         && is_whole_call(call, owner)
-                        && !degenerate_pin(shape, call, other)
+                        && !degenerate_pin(shape, walked, owner, call, other)
                 };
                 pins(left, right) || pins(right, left)
             })
@@ -382,15 +387,31 @@ fn is_whole_call(operand: &str, owner: &str) -> bool {
 /// accumulator walks every element, so one zero element is no more degenerate
 /// than any other: only an empty input or a zero total (the update then adds
 /// nothing a pin could notice) is.
-fn degenerate_pin(shape: Shape, call: &str, other: &str) -> bool {
+fn degenerate_pin(
+    shape: Shape,
+    walked: Option<usize>,
+    owner: &str,
+    call: &str,
+    other: &str,
+) -> bool {
     if shape != Shape::AccumulatedLocal {
         return degenerate_input(call);
     }
-    let compact: String = call.chars().filter(|ch| !ch.is_whitespace()).collect();
-    ["[]", "::new()", "Vec::new"]
-        .iter()
-        .any(|empty| compact.contains(empty))
-        || is_zero_literal(other)
+    let is_empty = |text: &str| {
+        let compact: String = text.chars().filter(|ch| !ch.is_whitespace()).collect();
+        ["[]", "::new()", "Vec::new"]
+            .iter()
+            .any(|empty| compact.contains(empty))
+    };
+    // Only the walked argument can be an empty run; other arguments are
+    // read whole when the call cannot be split.
+    let empty_input = match walked.and_then(|at| {
+        call_argument_texts(call, owner).and_then(|arguments| arguments.get(at).cloned())
+    }) {
+        Some(argument) => is_empty(&argument),
+        None => is_empty(call),
+    };
+    empty_input || is_zero_literal(other)
 }
 
 /// `0`, `-0`, `0_u32`, `0x0` and the like: an integer literal that is zero.

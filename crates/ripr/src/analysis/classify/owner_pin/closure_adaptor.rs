@@ -643,7 +643,10 @@ pub(in crate::analysis::classify) fn call_count(text: &str, name: &str) -> usize
 }
 
 /// The top-level argument texts of the first call of `name` in `text`.
-fn call_argument_texts(text: &str, name: &str) -> Option<Vec<String>> {
+pub(in crate::analysis::classify) fn call_argument_texts(
+    text: &str,
+    name: &str,
+) -> Option<Vec<String>> {
     let masked = mask_comments_and_strings(text);
     let open = whole_word_offsets(&masked, name)
         .into_iter()

@@ -224,6 +224,19 @@ fn a_nondecimal_zero_total_keeps_the_gap() -> Result<(), String> {
 }
 
 #[test]
+fn an_empty_argument_beside_the_walked_one_is_not_an_empty_input() -> Result<(), String> {
+    // The walked parameter is second; the empty literal is the first argument.
+    let owner = OWNER.replace("items: &[u32]", "skip: &[u32], items: &[u32]");
+    let found = accumulator_finding(
+        &owner,
+        "let want = 3 + 4;\n        assert_eq!(total(&[], &[3, 4]), want);",
+    )?;
+    assert_eq!(found.class, ExposureClass::StaticUnknown, "{found:?}");
+    assert_eq!(limit(&found), Some("rust_pinned_shape_unresolved"));
+    Ok(())
+}
+
+#[test]
 fn a_call_that_is_never_asserted_stays_a_gap() -> Result<(), String> {
     let found = accumulator_finding(OWNER, "let _ = total(&[3, 4, 5]);")?;
     assert_ne!(found.class, ExposureClass::Exposed, "{found:?}");
