@@ -408,8 +408,28 @@ non-ignored related test matches one of these shapes:
   `x.owner(..)` for a `let [mut] x = helper();` earlier in the test. `helper`
   is a function of the test's file other than the owner. An inline struct
   literal receiver, a non-literal expectation and `assert_ne!` keep the
-  finding. The closure runs over data the helper builds, which ripr does not
-  read; the exact pin may still miss the change, so nothing is credited.
+  finding. The withholding rule does not read arbitrary helper data.
+  The bounded #9766 exception in `owner_pin/fixture_receiver.rs` credits
+  `assert_eq!(fixture().total(), 42)` (either operand order, or one preceding
+  immutable receiver binding) only when the owner's whole body is
+  `self.field.iter().map(|(.., price, ..)| price).sum()`, returning `u32`.
+  The actual tuple pattern has exactly one identifier and otherwise wildcards;
+  rest patterns are not read. The receiver is an ordinary single-field record
+  whose field is a standard `Vec` of tuples of `String` and `u32`, and the
+  projected component is `u32`. A unique, unattributed zero-argument helper
+  in the test's own file and module returns only that record literal, with a
+  nonempty `vec!` of literal tuples (strings use literal `.to_string()`).
+  Each numeric component must be literal. The test contains only the eager
+  assertion and its optional immutable fixture binding. Existing assertion
+  execution, macro binding, receiver/type/import identity and plain-drop gates
+  still apply. Only a pin credited through these gates can supply the
+  corresponding returned-sum propagation fact. Computed or unresolved data,
+  empty collections, extra helper statements, alternate exits, mutable or
+  aliased receivers, rebound `vec!`, duplicate helpers, unrelated fields and
+  nonliteral projected tuple components receive no new credit. General helper
+  interpretation, other collection pipelines and recording doubles stay
+  outside this exception. The corpus fixture-total row can read `credited`;
+  its historical labeling observation remains unchanged.
 - **recording double** (#9610): a `call_deletion` or `side_effect` probe
   whose changed line calls a method on a parameter typed `&mut dyn Trait`,
   and a `direct_owner_call` test that declares `let mut rec = Type { .. }`
@@ -694,8 +714,9 @@ Tests in `crates/ripr/src/analysis/classify/framework_oracle.rs` and
 - `an_arm_chosen_by_the_environment_is_withheld` and its keeps-the-gap control
 - `an_expect_debug_literal_is_withheld` and its keeps-the-gap control
 - `an_unredacted_insta_field_is_withheld` and its keeps-the-gap control
-- `a_helper_built_receiver_pinned_to_a_literal_is_withheld` and
-  `a_fixture_receiver_shape_that_differs_keeps_the_finding`
+- `fixture_receiver_literal_pin_reads_helper_data` and
+  `a_fixture_receiver_shape_that_differs_keeps_the_finding` and
+  `fixture_receiver_credit_requires_readable_carried_data`
 - `a_hand_written_recorder_compared_by_field_is_withheld`,
   `a_recorder_shape_that_differs_keeps_the_finding` and
   `a_vec_pushed_into_by_the_changed_call_keeps_the_gap`

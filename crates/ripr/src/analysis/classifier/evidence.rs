@@ -890,6 +890,24 @@ impl ClassifiedProbeEvidence {
             reveal.related,
             reveal.related_total,
         );
+        // #9766: only the fixture-specific owner gate reads the nonempty
+        // literal tuples and their numeric projection through the returned
+        // sum. Reveal's credited bit retains all assertion/relation/name
+        // defeats; an unreadable or empty fixture cannot supply this flow.
+        let propagate = if propagate.state == StageState::Weak
+            && reveal.owner_pin_credited
+            && owner_return_pin
+                .as_ref()
+                .is_some_and(OwnerReturnPin::reads_literal_fixture_receiver)
+        {
+            StageEvidence::new(
+                StageState::Yes,
+                Confidence::Medium,
+                "Literal fixture receiver data reaches the changed tuple projection and returned sum through a credited exact pin",
+            )
+        } else {
+            propagate
+        };
         // #6692: a clone-field pin (`assert_eq!(recv.clone(), recv)` through
         // a derived `PartialEq`) observes the constructed field, so the
         // missing-field fact below no longer stands for this probe. Only an

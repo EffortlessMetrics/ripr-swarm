@@ -670,7 +670,10 @@ wrong credits.
    identifier or number other than `async`, `break`, `else`, `in`, `let`,
    `move`, `mut`, `return`, `static` or `yield`, or a `)`, `]` or `?`. A
    closure's opening pipe never does (`f(|x| ..)`, `move |x| ..`,
-   `Foo { f: |x| x }`, `[|x| x]`), so every closure still fails closed. A
+   `Foo { f: |x| x }`, `[|x| x]`), so a closure fails this general gate.
+   The bounded literal receiver projection in RIPR-SPEC-0240's fixture
+   receiver rule (#9766) has its own owner/data gate; arbitrary helper
+   bodies and other receiver pipelines remain refused. A
    `|` inside a macro invocation's arguments
    (`matches!(k, A | B)`) or in a tail holding a `let` may separate pattern
    alternatives, which short-circuit, so it is never binary. With a paired
