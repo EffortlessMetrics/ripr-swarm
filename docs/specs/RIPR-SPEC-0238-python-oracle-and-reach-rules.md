@@ -439,11 +439,14 @@ This order is the existing behavior and is normative:
      unchanged.
    - `mocked_module` does not apply to a test whose every substitution is
      `with patch("<dotted.target>", return_value=<nonzero int or str literal>):`
-     (`patch` imported from `unittest.mock`/`mock`, or `mock.patch`), when
-     every other line of the test body is a plain `assert ...` or
-     `name = ...` (no dunder access, lambda, import, `exec`/`eval`,
-     `globals`/`locals`/`vars` or `sys.modules`), and the changed line,
-     old and new, is one `return` of an f-string or `+`/`-` expression
+     (`patch` bound once, from `unittest.mock`/`mock`, or `mock.patch`),
+     when the test is a plain function (no decorators, defaults or
+     `*args`) whose statements are only `assert <expr>`, `name = <expr>`
+     and such `with` blocks of those, with expressions made of names,
+     constants, operators and calls of the owner or a safe builtin (a
+     `;`, a chained, attribute or subscript assignment, a helper call, a
+     nested def or a default argument is not plain, so none can rebind
+     names behind the patch), and the changed line, old and new, is one `return` of an f-string or `+`/`-` expression
      over names, int and string literals, the substituted zero-argument
      call (`time.time()` or `time()`) and `int(<that call>)`. The call
      appears exactly once on each side, with the same sign and the same

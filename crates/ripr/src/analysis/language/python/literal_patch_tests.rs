@@ -305,7 +305,7 @@ fn a_test_that_rebinds_names_keeps_the_limit() {
         "stamp.__globals__['stamp'] = lambda: 3",
         "stamp.__code__ = other.__code__",
         "globals()['stamp'] = print",
-        "helper = stamp.__wrapped__",
+        "x = globals()",
     ] {
         let test = clock_test(CLOCK_PATCH)
             .replace("assert stamp", &format!("{extra}\n        assert stamp"));
@@ -315,4 +315,54 @@ fn a_test_that_rebinds_names_keeps_the_limit() {
             "{extra}"
         );
     }
+}
+
+/// Statements that could rebind the owner behind the patch are not a plain
+/// test body: a second statement on a line, a chained or attribute
+/// assignment, a helper call, a default argument, a nested def.
+#[test]
+fn a_test_body_that_can_rebind_the_owner_keeps_the_limit() {
+    let new = "    return f\"{prefix}_{int(time.time())}\"";
+    let with_line = |extra: &str| {
+        clock_test(CLOCK_PATCH).replace("assert stamp", &format!("{extra}\n        assert stamp"))
+    };
+    for extra in [
+        "x = 1; idioms.clock.stamp = ref",
+        "x = idioms.clock.stamp = ref",
+        "idioms.clock.stamp = ref",
+        "x = rig()",
+    ] {
+        assert_eq!(
+            limit(new, OLD, &with_line(extra)),
+            Some(StaticLimitKind::MockedModule),
+            "{extra}"
+        );
+    }
+    // A pure attribute read cannot rebind anything.
+    assert_eq!(limit(new, OLD, &with_line("x = stamp.attr")), None);
+    let semicolon = clock_test(CLOCK_PATCH).replace(
+        "assert stamp(\"a\") == \"a-1700000000\"",
+        "assert stamp(\"a\") == \"a-1700000000\"; idioms.clock.stamp = ref",
+    );
+    assert_eq!(
+        limit(new, OLD, &semicolon),
+        Some(StaticLimitKind::MockedModule)
+    );
+    let default_argument = clock_test(CLOCK_PATCH).replace(
+        "def test_stamp_uses_the_patched_clock():",
+        "def test_stamp_uses_the_patched_clock(_=rig()):",
+    );
+    assert_eq!(
+        limit(new, OLD, &default_argument),
+        Some(StaticLimitKind::MockedModule)
+    );
+    // `patch` bound twice is not `unittest.mock.patch`.
+    let shadowed = clock_test(CLOCK_PATCH).replace(
+        "from unittest.mock import patch\n",
+        "from unittest.mock import patch\nfrom mylib import patch\n",
+    );
+    assert_eq!(
+        limit(new, OLD, &shadowed),
+        Some(StaticLimitKind::MockedModule)
+    );
 }

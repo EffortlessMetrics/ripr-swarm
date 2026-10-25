@@ -12,8 +12,10 @@
 
 use super::approx_band::parse_expression;
 use super::related_tests::is_python_identifier_char;
+use super::source_facts::parse_module_result;
 use super::{PythonImport, PythonOwner, PythonTest, expr_full_name};
-use rustpython_parser::ast::{self, Expr};
+use rustpython_parser::ast::{self, Expr, Mod, Stmt};
+use std::path::Path;
 
 /// The substituted call spellings (`time.time()`, `time()`) on the changed
 /// line when every substitution in `test` is a literal zero-argument stand-in
@@ -35,7 +37,7 @@ pub(super) fn literal_patch_calls(
     {
         return None;
     }
-    let targets = literal_patch_targets(test)?;
+    let targets = literal_patch_targets(test, owner)?;
     if targets.is_empty() {
         return None;
     }
@@ -171,46 +173,129 @@ pub(super) fn without_calls(line: &str, spellings: &[String]) -> String {
     rest
 }
 
-/// The dotted targets of every substitution in the test body, or None when any
-/// substitution is not `with patch("<dotted>", return_value=<literal>):`.
-fn literal_patch_targets(test: &PythonTest) -> Option<Vec<String>> {
+/// The dotted targets of every substitution in the test body, or None unless
+/// the whole test is a plain function (no defaults, `*args`, nested defs or
+/// decorators) whose statements are `assert`s, `name = <expr>` and
+/// `with patch("<dotted>", return_value=<literal>):` blocks of those, and whose
+/// expressions can call only the owner and a few builtins. A test that could
+/// rebind names behind the patch (a `;`, a chained or attribute assignment, a
+/// helper call, a default argument evaluated at definition) is not admitted.
+fn literal_patch_targets(test: &PythonTest, owner: &PythonOwner) -> Option<Vec<String>> {
+    let Ok(Mod::Module(module)) = parse_module_result(Path::new("t.py"), &test.body_text) else {
+        return None;
+    };
+    let [Stmt::FunctionDef(function)] = module.body.as_slice() else {
+        return None;
+    };
+    let arguments = &function.args;
+    if !function.decorator_list.is_empty()
+        || arguments.vararg.is_some()
+        || arguments.kwarg.is_some()
+        || !arguments.kwonlyargs.is_empty()
+        || !arguments.posonlyargs.is_empty()
+        || arguments
+            .args
+            .iter()
+            .any(|argument| argument.default.is_some())
+    {
+        return None;
+    }
     let mut targets = Vec::new();
-    for line in test.body_text.lines() {
-        let text = line.trim();
-        // A test's own name may say "patched"; its decorators are checked apart.
-        if text.starts_with("def ") || text.starts_with("async def ") {
-            continue;
-        }
-        if mentions_substitution(text) {
-            targets.push(literal_patch_header(text, &test.imports)?);
-        } else if !is_plain_test_line(text) {
-            return None;
+    for statement in &function.body {
+        match statement {
+            Stmt::With(with) => {
+                let [item] = with.items.as_slice() else {
+                    return None;
+                };
+                if item.optional_vars.is_some() {
+                    return None;
+                }
+                targets.push(patch_target(&item.context_expr, &test.imports)?);
+                if with.body.is_empty()
+                    || !with.body.iter().all(|inner| plain_statement(inner, owner))
+                {
+                    return None;
+                }
+            }
+            other => {
+                if !plain_statement(other, owner) {
+                    return None;
+                }
+            }
         }
     }
     Some(targets)
 }
 
-/// Any other line of the test body is an `assert ...` or `name = ...` with no
-/// way to rebind names behind the test's back: no dunder access, lambda,
-/// import, `exec`/`eval`, `globals`/`locals`/`vars` or `sys.modules`.
-fn is_plain_test_line(text: &str) -> bool {
-    if text.is_empty() || text.starts_with('#') {
-        return true;
+/// `assert <expr>`, `name = <expr>`, `pass` or a docstring.
+fn plain_statement(statement: &Stmt, owner: &PythonOwner) -> bool {
+    match statement {
+        Stmt::Assert(assert) => {
+            plain_expression(&assert.test, owner)
+                && assert
+                    .msg
+                    .as_ref()
+                    .is_none_or(|message| plain_expression(message, owner))
+        }
+        Stmt::Assign(assign) => {
+            matches!(assign.targets.as_slice(), [Expr::Name(_)])
+                && plain_expression(&assign.value, owner)
+        }
+        Stmt::Pass(_) => true,
+        Stmt::Expr(expr) => matches!(expr.value.as_ref(), Expr::Constant(_)),
+        _ => false,
     }
-    const FORBIDDEN: &[&str] = &[
-        "__", "lambda", "import", "exec", "eval", "globals", "locals", "vars", "modules",
-        "getattr", "open(",
-    ];
-    let lower = text.to_ascii_lowercase();
-    if FORBIDDEN.iter().any(|word| lower.contains(word)) {
-        return false;
+}
+
+/// Builtins an assertion may call without changing any name.
+const SAFE_CALLS: &[&str] = &[
+    "int", "str", "len", "float", "bool", "list", "tuple", "dict", "set", "sorted", "round", "abs",
+    "sum", "min", "max", "repr",
+];
+
+/// Names, constants, operators and calls of the owner or a safe builtin.
+fn plain_expression(expr: &Expr, owner: &PythonOwner) -> bool {
+    let all = |items: &[Expr]| items.iter().all(|item| plain_expression(item, owner));
+    match expr {
+        Expr::Name(_) | Expr::Constant(_) => true,
+        Expr::Compare(compare) => {
+            plain_expression(&compare.left, owner) && all(&compare.comparators)
+        }
+        Expr::BoolOp(operation) => all(&operation.values),
+        Expr::UnaryOp(operation) => plain_expression(&operation.operand, owner),
+        Expr::BinOp(operation) => {
+            plain_expression(&operation.left, owner) && plain_expression(&operation.right, owner)
+        }
+        Expr::Tuple(tuple) => all(&tuple.elts),
+        Expr::List(list) => all(&list.elts),
+        Expr::JoinedStr(joined) => all(&joined.values),
+        Expr::FormattedValue(formatted) => {
+            formatted.format_spec.is_none() && plain_expression(&formatted.value, owner)
+        }
+        Expr::Attribute(attribute) => plain_expression(&attribute.value, owner),
+        Expr::Subscript(subscript) => {
+            plain_expression(&subscript.value, owner) && plain_expression(&subscript.slice, owner)
+        }
+        Expr::Call(call) => {
+            let callee_ok = match call.func.as_ref() {
+                Expr::Name(name) => {
+                    name.id.as_str() == owner.name || SAFE_CALLS.contains(&name.id.as_str())
+                }
+                Expr::Attribute(attribute) => {
+                    attribute.attr.as_str() == owner.name
+                        && expr_full_name(attribute.value.as_ref()).is_some()
+                }
+                _ => false,
+            };
+            callee_ok
+                && all(&call.args)
+                && call
+                    .keywords
+                    .iter()
+                    .all(|keyword| keyword.arg.is_some() && plain_expression(&keyword.value, owner))
+        }
+        _ => false,
     }
-    if text.starts_with("assert ") {
-        return true;
-    }
-    // `name = value`: a plain identifier on the left, not `==`.
-    text.split_once('=')
-        .is_some_and(|(left, right)| is_identifier(left.trim()) && !right.starts_with('='))
 }
 
 fn mentions_substitution(text: &str) -> bool {
@@ -222,10 +307,9 @@ fn mentions_substitution(text: &str) -> bool {
     .any(|word| lower.contains(word))
 }
 
-/// `with patch("a.b.c", return_value=1700000000):` -> `a.b.c`.
-fn literal_patch_header(line: &str, imports: &[PythonImport]) -> Option<String> {
-    let item = line.strip_prefix("with ")?.strip_suffix(':')?;
-    let Expr::Call(call) = parse_expression(item)? else {
+/// `patch("a.b.c", return_value=1700000000)` -> `a.b.c`.
+fn patch_target(expr: &Expr, imports: &[PythonImport]) -> Option<String> {
+    let Expr::Call(call) = expr else {
         return None;
     };
     if !is_unittest_mock_patch(expr_full_name(call.func.as_ref())?.as_str(), imports) {
@@ -262,14 +346,29 @@ fn is_unittest_mock_patch(name: &str, imports: &[PythonImport]) -> bool {
     let spelled = |import: &PythonImport, imported: &str| {
         import.imported == imported && (import.alias.is_empty() || import.alias == imported)
     };
+    // The spelled name must be bound exactly once (a second `from x import
+    // patch` would make it something else).
+    let bindings = |word: &str| {
+        imports
+            .iter()
+            .filter(|import| import.imported == word || import.alias == word)
+            .count()
+    };
     match name {
-        "patch" => imports.iter().any(|import| {
-            spelled(import, "patch")
-                && matches!(import.source_module.as_str(), "unittest.mock" | "mock")
-        }),
-        "mock.patch" => imports.iter().any(|import| {
-            spelled(import, "mock") && matches!(import.source_module.as_str(), "unittest" | "")
-        }),
+        "patch" => {
+            bindings("patch") == 1
+                && imports.iter().any(|import| {
+                    spelled(import, "patch")
+                        && matches!(import.source_module.as_str(), "unittest.mock" | "mock")
+                })
+        }
+        "mock.patch" => {
+            bindings("mock") == 1
+                && imports.iter().any(|import| {
+                    spelled(import, "mock")
+                        && matches!(import.source_module.as_str(), "unittest" | "")
+                })
+        }
         _ => false,
     }
 }
