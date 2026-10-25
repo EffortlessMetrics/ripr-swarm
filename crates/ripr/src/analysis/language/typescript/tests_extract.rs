@@ -3687,6 +3687,29 @@ fn expression_is_active_declaration(
         Expression::StaticMemberExpression(member) => {
             is_active_declaration_modifier(member.property.name.as_str())
                 && expression_is_active_declaration(&member.object, root)
+                || is_playwright_describe_member(member, root)
+        }
+        _ => false,
+    }
+}
+
+/// Playwright Test registers a suite as `test.describe(...)`, with the
+/// `serial` / `parallel` / `only` modifiers (`test.describe.serial(...)`).
+/// Jest, Vitest and mocha have no `test.describe`, so the spelling is not a
+/// suite there. `.skip` / `.fixme` stay inactive like every other skip.
+fn is_playwright_describe_member(
+    member: &oxc_ast::ast::StaticMemberExpression<'_>,
+    root: TestDeclarationRoot,
+) -> bool {
+    if !matches!(root, TestDeclarationRoot::Describe) {
+        return false;
+    }
+    match (member.property.name.as_str(), &member.object) {
+        ("describe", Expression::Identifier(object)) => {
+            TestDeclarationRoot::Test.matches_identifier(object.name.as_str())
+        }
+        ("serial" | "parallel", Expression::StaticMemberExpression(object)) => {
+            is_playwright_describe_member(object, root)
         }
         _ => false,
     }

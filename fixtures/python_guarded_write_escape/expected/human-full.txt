@@ -1,0 +1,79 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_guarded_write_escape/input
+config: <cwd>/fixtures/python_guarded_write_escape/input/ripr.toml
+
+Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Changed file(s) by language: python = 1
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+
+WARNING shapes/noter.py:9
+  id: probe:shapes_noter.py:python_preview:a00e0fc8
+
+Changed
+  after:              self.last = "fault"
+
+Probe
+  family: field_construction
+  delta:  value
+  owner:  python:shapes/noter.py::Recorder.note
+  canonical gap: gap:python:shapes/noter.py:Recorder.note:field_value:field_construction:self.last=fault
+
+Language
+  language: python
+  status: preview
+  owner kind: method
+
+Static exposure
+  weakly_exposed (warning, confidence 0.40)
+
+Evidence
+  - reach yes: 1 related Python test(s) found for owner `note`
+  - infection yes: Changed Python field or attribute construction can alter object state: `self.last = "fault"`
+  - propagation weak: Changed Python field construction can propagate through returned or retained object state; exact runtime object flow is not resolved
+  - observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)
+  - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
+  - local flow reaches constructed field: self.last = "fault" (line 9)
+  - related test tests/test_noter.py:3 test_note uses strong exact value oracle: assert rec.last == None; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+
+Weakness
+  - A strong Python oracle reaches `note`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output
+  - missing discriminator self.last == "fault": changed Python field/object value at line 9 lacks a concrete repair discriminator
+
+Python repair card (preview/advisory)
+  card version: python_repair_card.v1
+  canonical gap: gap:python:shapes/noter.py:Recorder.note:field_value:field_construction:self.last=fault
+  authority: preview_advisory_only (python/preview)
+  repair action: strengthen_existing_test
+  changed owner: Recorder.note
+  changed behavior: field_value changed at shapes/noter.py:9: `self.last = "fault"`
+  current test evidence: tests/test_noter.py:3 test_note currently has oracle_strength=strong, oracle_kind=exact_value: assert rec.last == None
+  missing discriminator: self.last == "fault"
+  recommended test shape: Strengthen the existing pytest object field assertion for `self.last == "fault"`.
+  suggested assertion: Assert the observed instance field directly, e.g. `assert <instance>.last == "fault"`.
+  suggested file: tests/test_noter.py
+  suggested test: test_note
+  pytest node: tests/test_noter.py::test_note
+  verify: python -m pytest tests/test_noter.py::test_note (high)
+  receipt: unavailable_until_python_gap_ledger
+  receipt guidance: Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command.
+  stop conditions:
+    - Stop if imports, fixtures, or test setup cannot call the changed owner.
+    - Stop if the expected value for the missing discriminator is ambiguous.
+    - Stop if adding the test appears to require a production-code edit.
+  limits:
+    - Syntax-first Python preview evidence only.
+    - No source edits, generated tests, mutation execution, provider calls, or gate authority.
+    - Verify success alone is not a gap-closure receipt.
+
+Next step
+  Python preview: strengthen the existing related test with a field/object assertion for missing discriminator `self.last == "fault"`
+Drill in:
+  ripr explain --root <cwd>/fixtures/python_guarded_write_escape/input --diff <cwd>/fixtures/python_guarded_write_escape/diff.patch --mode fast probe:shapes_noter.py:python_preview:a00e0fc8
+  ripr context --root <cwd>/fixtures/python_guarded_write_escape/input --diff <cwd>/fixtures/python_guarded_write_escape/diff.patch --mode fast --at probe:shapes_noter.py:python_preview:a00e0fc8
+
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

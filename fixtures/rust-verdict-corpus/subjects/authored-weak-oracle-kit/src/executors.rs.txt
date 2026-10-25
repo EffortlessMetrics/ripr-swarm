@@ -1,0 +1,28 @@
+use std::future::Future;
+
+pub async fn scale(x: u32) -> u32 {
+    x * 2
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::pin::pin;
+    use std::task::{Context, Poll, Waker};
+
+    fn block_on<F: Future>(fut: F) -> F::Output {
+        let mut fut = pin!(fut);
+        let mut cx = Context::from_waker(Waker::noop());
+        loop {
+            if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) {
+                return v;
+            }
+        }
+    }
+
+    #[test]
+    fn scaled_value_is_positive() {
+        let v = block_on(scale(2));
+        assert!(v > 0);
+    }
+}
