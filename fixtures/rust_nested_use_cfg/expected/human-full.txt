@@ -1,0 +1,108 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_nested_use_cfg/input
+
+Summary: 3 probe(s), 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 1 propagation_unknown, 0 static_unknown; 3 of 3 finding(s) unsuppressed (1 base-side evidence, not candidate edit targets)
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 3 probe(s), 3 finding(s)
+
+Shared evidence and guidance
+  E1 [findings 1, 3]: reach yes: Related tests appear to reach thr: at, high, low
+  E2 [findings 1, 3]: infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
+  E3 [findings 1, 3]: observation yes: A related test observes a value or effect near the changed behavior
+  E4 [findings 1, 3]: discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly
+  E5 [findings 1, 3]: local flow reaches returned value: x > 101 (line 2)
+  E6 [findings 1, 3]: related test tests/api.rs:12 at uses weak relational check oracle: assert!(!thr::thr(101)); misses: assertion too weak to tell the old behavior from the new
+  E7 [findings 1, 3]: related test tests/api.rs:7 high uses weak relational check oracle: assert!(thr::internal::thr(500)); misses: assertion too weak to tell the old behavior from the new
+  E8 [findings 1, 3]: related test tests/api.rs:2 low uses weak relational check oracle: assert!(!thr::internal::thr(50)); misses: assertion too weak to tell the old behavior from the new
+  E9 [findings 1, 3]: source function argument value x = 50 at line 3
+  E10 [findings 1, 3]: source function argument value x = 500 at line 8
+  E11 [findings 1, 3]: source function argument value x = 101 at line 13
+
+Finding 1: WARNING ./src/internal.rs:2
+  id: probe:src_internal.rs:predicate:2361a6b7
+Changed
+  before: x > 100
+  after:  x > 101
+Probe
+  family: predicate
+  delta:  control
+  owner:  src/internal.rs::thr
+  canonical gap: gap:rust:src/internal.rs:thr:predicate_boundary:predicate:x==101
+Static exposure
+  weakly_exposed (warning, confidence 0.84)
+Evidence
+  shared evidence: E1, E2
+  - propagation yes: Changed behavior appears to influence returned value: x > 101
+  shared evidence: E3, E4, E5, E6, E7, E8, E9, E10, E11
+Weakness
+  - No strong discriminator was detected
+  - missing discriminator x == 101: No related test call uses x equal to 101; observed x values: 50, 500; target 101 value: 101
+Next step
+  - Add boundary tests for below, equal, and above the changed threshold with exact assertions
+Drill in:
+  ripr explain --root <cwd>/fixtures/rust_nested_use_cfg/input --diff <cwd>/fixtures/rust_nested_use_cfg/diff.patch --mode fast probe:src_internal.rs:predicate:2361a6b7
+  ripr context --root <cwd>/fixtures/rust_nested_use_cfg/input --diff <cwd>/fixtures/rust_nested_use_cfg/diff.patch --mode fast --at probe:src_internal.rs:predicate:2361a6b7
+
+Finding 2: NOTE ./src/internal.rs:2
+  id: probe:src_internal.rs:predicate:fa3cd745
+Changed
+  before: x > 100
+  expr:   x > 100
+  source:  base_deleted — base-side evidence, not a candidate edit target
+Probe
+  family: predicate
+  delta:  control
+  owner:  src/internal.rs::thr
+  canonical gap: gap:rust:src/internal.rs:thr:predicate_boundary:predicate:x==100
+Static exposure
+  propagation_unknown (note, confidence 0.66)
+Evidence
+  - reach yes: Related tests appear to reach thr: at, high, low
+  - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
+  - propagation unknown: Propagation is not statically obvious from syntax-first analysis
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly
+  - related test tests/api.rs:12 at uses weak relational check oracle: assert!(!thr::thr(101));
+  - related test tests/api.rs:7 high uses weak relational check oracle: assert!(thr::internal::thr(500));
+  - related test tests/api.rs:2 low uses weak relational check oracle: assert!(!thr::internal::thr(50));
+  - source function argument value x = 50 at line 3
+  - source function argument value x = 500 at line 8
+  - source function argument value x = 101 at line 13
+Weakness
+  - No clear propagation path from changed behavior to an observable sink
+  - No strong discriminator was detected
+  - missing discriminator x == 100: No related test call uses x equal to 100; observed x values: 50, 500; target 100 value: 100
+Stop reasons:
+  - propagation_evidence_unknown — ripr could not tell whether the changed value flows to something a test observes
+Next step
+  - Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
+Drill in:
+  ripr explain --root <cwd>/fixtures/rust_nested_use_cfg/input --diff <cwd>/fixtures/rust_nested_use_cfg/diff.patch --mode fast probe:src_internal.rs:predicate:fa3cd745
+  ripr context --root <cwd>/fixtures/rust_nested_use_cfg/input --diff <cwd>/fixtures/rust_nested_use_cfg/diff.patch --mode fast --at probe:src_internal.rs:predicate:fa3cd745
+
+Finding 3: WARNING ./src/internal.rs:2
+  id: probe:src_internal.rs:return_value:42dc8ea8
+Changed
+  before: x > 100
+  after:  x > 101
+Probe
+  family: return_value
+  delta:  value
+  owner:  src/internal.rs::thr
+  canonical gap: gap:rust:src/internal.rs:thr:return_value:return_value:x>101
+Static exposure
+  weakly_exposed (warning, confidence 0.84)
+Evidence
+  shared evidence: E1, E2
+  - propagation yes: Complete propagation witness reaches returned value: x > 101
+  shared evidence: E3, E4, E5, E6, E7, E8, E9, E10, E11
+Weakness
+  - No strong discriminator was detected
+  - missing discriminator x == 101: No related test call uses x equal to 101; observed x values: 50, 500; target 101 value: 101
+Next step
+  - Replace broad assertions with exact equality or a property that constrains the changed returned value
+Drill in:
+  ripr explain --root <cwd>/fixtures/rust_nested_use_cfg/input --diff <cwd>/fixtures/rust_nested_use_cfg/diff.patch --mode fast probe:src_internal.rs:return_value:42dc8ea8
+  ripr context --root <cwd>/fixtures/rust_nested_use_cfg/input --diff <cwd>/fixtures/rust_nested_use_cfg/diff.patch --mode fast --at probe:src_internal.rs:return_value:42dc8ea8
