@@ -4298,3 +4298,69 @@ fn ingested_identity_fills_an_empty_context_and_never_replaces_a_measured_one() 
     assert_eq!(partial.binary, "target/release/ripr");
     Ok(())
 }
+
+/// #10183: the committed agent-as-user receipt is judged against
+/// `agent-baseline.json` by the required Rust gate, so a receipt commit that
+/// lengthens the agent's path, leaves more non-exposed verdicts or adds
+/// white-box tests fails before merge. The 2026-10-04 receipt is the negative
+/// control: it is worse than the baseline on three metrics.
+fn agent_gate_report(receipt: &str) -> Result<Value, String> {
+    let config = load_config(&committed_config())?;
+    let samples = parse_ingest(
+        &serde_json::from_str(receipt).map_err(|err| err.to_string())?,
+        &config,
+    )?;
+    let baseline = check_baseline(
+        serde_json::from_str(include_str!(
+            "../../../../metrics/dx-scoreboard/agent-baseline.json"
+        ))
+        .map_err(|err| err.to_string())?,
+    )?;
+    let boards = vec!["agent".to_string()];
+    Ok(build_report(
+        &config,
+        &boards,
+        &samples,
+        &context("local"),
+        Some(&baseline),
+        true,
+    ))
+}
+
+#[test]
+fn committed_agent_receipt_does_not_regress_the_agent_baseline() -> Result<(), String> {
+    let report = agent_gate_report(include_str!(
+        "../../../../metrics/public-proof/agent-as-user.json"
+    ))?;
+    assert_eq!(
+        report["gate"]["status"].as_str(),
+        Some("pass"),
+        "{}",
+        gate_failure_message(&report)
+    );
+    assert_eq!(
+        metric(&report, "agent.ripr_commands_to_fix")?["samples"]
+            .as_array()
+            .map(Vec::len),
+        Some(3),
+        "the receipt must still carry one sample per target"
+    );
+    Ok(())
+}
+
+#[test]
+fn agent_gate_fails_the_receipt_from_before_the_rerun() -> Result<(), String> {
+    let report = agent_gate_report(include_str!(
+        "../../../../benchmarks/dx_scoreboard/testdata/10183-agent-receipt-2026-10-04.json"
+    ))?;
+    assert_eq!(report["gate"]["status"].as_str(), Some("fail"));
+    let message = gate_failure_message(&report);
+    for id in [
+        "agent.ripr_commands_to_fix",
+        "agent.tool_steps_to_fix",
+        "agent.white_box_tests_to_satisfy_ripr",
+    ] {
+        assert!(message.contains(id), "{id} not named in: {message}");
+    }
+    Ok(())
+}
