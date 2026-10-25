@@ -308,3 +308,16 @@ fn typed_or_arrow_parameter_shadowing_the_receiver_is_refused() {
         "add"
     ));
 }
+
+#[test]
+fn only_a_plain_function_expression_wrapper_is_admitted() {
+    assert_no_decorated_entry(&AUDITED.replace(
+        "function (this: unknown, ...args: number[]): number {\n    calls.push(key);\n    return original.apply(this, args) + 1;\n  };",
+        "(...args: number[]): number => {\n    calls.push(key);\n    return original.apply(this, args) + 1;\n  };",
+    ));
+    assert_no_decorated_entry(&AUDITED.replace(
+        "descriptor.value = function (this: unknown, ...args: number[]): number {\n    calls.push(key);\n    return original.apply(this, args) + 1;\n  };",
+        "descriptor.value = (function (this: unknown, ...args: number[]): number {\n    calls.push(key);\n    return original.apply(this, args) + 1;\n  });",
+    ));
+    assert_eq!(decorator_entries(AUDITED).len(), 1);
+}

@@ -18190,6 +18190,7 @@ mod commonjs_default_function_tests;
 mod commonjs_export_tests;
 mod comparison_edit_tests;
 mod custom_matcher_tests;
+mod decorated_reach_tests;
 mod default_object_member_tests;
 mod directory_specifier_tests;
 mod dropped_term_tests;
