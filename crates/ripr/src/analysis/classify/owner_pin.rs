@@ -1665,7 +1665,8 @@ fn target_context_roots(
                     .parent()
                     .and_then(Path::file_name)
                     .is_some_and(|p| p == "tests"))
-                || !recognized_target_root(root, src_dirs)
+                || !(recognized_target_root(root, src_dirs)
+                    || index.member_crates.is_custom_lib_path_root(root))
         })
     {
         return None;
@@ -3725,15 +3726,15 @@ impl OwnerReturnPin {
                 (None, Some(call)) => (call, left.as_str(), Some(right.as_str())),
                 _ => return false,
             }
-        } else if !is_guard
-            && is_plain_assert_of_matches(&assertion.text)
-            && let Some(operands) = outer_assertion_condition(&assertion.text)
-                .as_deref()
-                .and_then(literal_matches_operands)
+        } else if let Some(operands) = matches_pin_condition(&assertion.text)
+            .as_deref()
+            .and_then(literal_matches_operands)
         {
             // RIPR-SPEC-0197 literal `matches!` pins: `assert!(matches!(owner(..), Ok(5)))`
             // with a literal-only pattern pins the value as
-            // `assert_eq!(owner(..), Ok(5))` does.
+            // `assert_eq!(owner(..), Ok(5))` does. #10121: so does its
+            // Err-return guard twin `if !matches!(owner(..), Ok(5)) { return
+            // Err(..) }` (RIPR-SPEC-0154 example 2).
             matches_operands = operands;
             let Some(call) = owner_call_shape(&matches_operands[0], &self.name) else {
                 return false;
@@ -13430,6 +13431,21 @@ fn top_level_semicolon(masked: &str) -> Option<usize> {
         }
     }
     None
+}
+
+/// The `matches!(scrutinee, pattern)` condition a literal `matches!` pin reads
+/// from `text`: a plain `assert!(matches!(..))`, or the assertion twin of a
+/// terminal Err-return guard over a negated `matches!`. Guards are read through
+/// the same twin, so both spellings take one admission (#10121).
+fn matches_pin_condition(text: &str) -> Option<String> {
+    if is_plain_assert_of_matches(text) {
+        return outer_assertion_condition(text);
+    }
+    let (_, twin) = err_return_guard_twin(text)?;
+    if !is_plain_assert_of_matches(&twin) {
+        return None;
+    }
+    outer_assertion_condition(&twin)
 }
 
 /// Whether `text` is one unqualified `assert!` whose only nested macro is a
