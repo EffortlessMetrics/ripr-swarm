@@ -30,12 +30,18 @@ fn stable(fn_text: &str, name: &str, line_offset: usize) -> Option<()> {
         .syntax()
         .descendants()
         .find_map(ast::Fn::cast)?;
+    // An integer type, so a method call resolves to std's inherent methods
+    // (which win over any trait method of the same name) and
+    // `read_only_method` can trust a name.
     let declared_mut = function.param_list()?.params().any(|param| {
         matches!(param.pat(), Some(ast::Pat::IdentPat(ident))
             if ident.mut_token().is_some()
                 && ident.ref_token().is_none()
                 && ident.at_token().is_none()
                 && ident.name().is_some_and(|bound| bound.text() == name))
+            && param
+                .ty()
+                .is_some_and(|ty| INTEGER_TYPES.contains(&ty.syntax().text().to_string().as_str()))
     });
     if !declared_mut {
         return None;
@@ -124,6 +130,24 @@ fn stable(fn_text: &str, name: &str, line_offset: usize) -> Option<()> {
         .then_some(())
 }
 
+const INTEGER_TYPES: [&str; 12] = [
+    "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize",
+];
+
+/// Macros that only read their arguments.
+const READ_ONLY_MACROS: [&str; 10] = [
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "format",
+    "println",
+    "print",
+    "panic",
+];
+
 /// Every range that may change `name`, or `None` when one cannot be read.
 fn writes_of(function: &ast::Fn, name: &str) -> Option<Vec<TextRange>> {
     let mentions = |node: &SyntaxNode| {
@@ -175,7 +199,21 @@ fn writes_of(function: &ast::Fn, name: &str) -> Option<Vec<TextRange>> {
                 && tokens
                     .iter()
                     .any(|token| matches!(token.as_str(), "let" | "fn"));
-            if touches {
+            // A macro can expand a bare `reset!(n)` into a write, so any
+            // other macro that names the parameter refuses.
+            let read_only_macro = tree
+                .syntax()
+                .parent()
+                .and_then(ast::MacroCall::cast)
+                .and_then(|call| call.path())
+                .and_then(|path| path.segment())
+                .and_then(|segment| segment.name_ref())
+                .is_some_and(|macro_name| {
+                    READ_ONLY_MACROS
+                        .iter()
+                        .any(|read_only| *read_only == macro_name.text())
+                });
+            if touches || (!read_only_macro && tokens.iter().any(|token| token == name)) {
                 return None;
             }
         }
@@ -188,39 +226,49 @@ fn read_only_method(method: Option<&str>) -> bool {
     let Some(method) = method else {
         return false;
     };
-    [
-        "checked_",
-        "wrapping_",
-        "saturating_",
-        "overflowing_",
-        "is_",
-        "to_",
-    ]
-    .iter()
-    .any(|prefix| method.starts_with(prefix))
-        || matches!(
-            method,
-            "abs"
-                | "pow"
-                | "min"
-                | "max"
-                | "clamp"
-                | "clone"
-                | "len"
-                | "cmp"
-                | "partial_cmp"
-                | "count_ones"
-                | "leading_zeros"
-                | "trailing_zeros"
-                | "signum"
-                | "rem_euclid"
-                | "div_euclid"
-                | "abs_diff"
-                | "unsigned_abs"
-                | "isqrt"
-                | "ilog2"
-                | "ilog10"
-        )
+    matches!(
+        method,
+        "checked_add"
+            | "checked_sub"
+            | "checked_mul"
+            | "checked_div"
+            | "checked_rem"
+            | "checked_pow"
+            | "wrapping_add"
+            | "wrapping_sub"
+            | "wrapping_mul"
+            | "wrapping_neg"
+            | "saturating_add"
+            | "saturating_sub"
+            | "saturating_mul"
+            | "saturating_pow"
+            | "overflowing_add"
+            | "overflowing_sub"
+            | "overflowing_mul"
+            | "is_positive"
+            | "is_negative"
+            | "is_power_of_two"
+            | "to_string"
+            | "abs"
+            | "pow"
+            | "min"
+            | "max"
+            | "clamp"
+            | "clone"
+            | "cmp"
+            | "partial_cmp"
+            | "count_ones"
+            | "leading_zeros"
+            | "trailing_zeros"
+            | "signum"
+            | "rem_euclid"
+            | "div_euclid"
+            | "abs_diff"
+            | "unsigned_abs"
+            | "isqrt"
+            | "ilog2"
+            | "ilog10"
+    )
 }
 
 fn line_range(text: &str, line_offset: usize) -> Option<(usize, usize)> {
@@ -298,6 +346,9 @@ mod tests {
             "fn f(mut n: u8) -> u8 {\n    let mut g = || n += 1;\n    g();\n    if n > 9 { 1 } else { 0 }\n}\n",
             "fn f(mut n: u8) -> u8 {\n    n.add_assign(1);\n    if n > 9 { 1 } else { 0 }\n}\n",
             "fn f(mut n: u8) -> u8 {\n    set!(n = 4);\n    if n > 9 { 1 } else { 0 }\n}\n",
+            "fn f(mut n: u8) -> u8 {\n    reset!(n);\n    if n > 9 { 1 } else { 0 }\n}\n",
+            "trait Z { fn to_zero(&mut self); }\nfn f(mut n: u8) -> u8 {\n    n.to_zero();\n    if n > 9 { 1 } else { 0 }\n}\n",
+            "fn f(mut n: String) -> usize {\n    if n.len() > 9 { 1 } else { 0 }\n}\n",
             "fn f(mut n: u8) -> u8 {\n    let n = n / 2;\n    if n > 9 { 1 } else { 0 }\n}\n",
         ] {
             assert!(!at(source, "n > 9"), "{source}");
