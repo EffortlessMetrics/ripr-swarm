@@ -468,9 +468,11 @@ finding) are judged; either can withhold a gap, which only costs an advisory.
 
 It runs after the should-panic rule and before `withhold_unsupported_gap`,
 and writes the finding the same way. This withholding route credits nothing.
-With bounded recording credit (#9766), the selected public corpus check reads
+The isolated recording-double receipt (#10286) reads
 `idiom-hand-mock-exact-line` as `credited`; `idiom-fixture-builder-total`
 remains `limited` and `spec0231-oracle-events-sent-len-eq` remains `gap`.
+This receipt does not measure the separately owned fixture-builder candidate
+(#10297) or a combined tree.
 Historical corpus effect before bounded recording credit (#9766):
 `lib-serial-test-retries-default-arm`, `lib-mockall-recipient-predicate`,
 `lib-expect-test-assert-debug-eq-variant-payload` and
@@ -711,10 +713,12 @@ Recording credit is exercised by `crates/ripr/tests/recording_double_credit.rs`:
 `primitive_slice_setup_and_later_append_keep_the_exact_pin`,
 `missing_argument_transfer_is_never_credited`,
 `recording_credit_preserves_observer_and_receiver_refusals`,
-`user_read_methods_do_not_supply_recording_credit`, and
+`user_read_methods_do_not_supply_recording_credit`,
 `hidden_execution_and_module_value_twins_cannot_supply_credit`,
-`a_scalar_shadow_drops_slice_provenance`, and
-`the_changed_call_cannot_hide_execution_in_format_arguments`.
+`a_scalar_shadow_drops_slice_provenance`,
+`the_changed_call_cannot_hide_execution_in_format_arguments`,
+`fixture_setup_owns_only_exclusively_acquired_roots`, and
+`plain_test_cfg_uses_the_shared_predicate_authority`.
 The existing framework suite retains the concrete/collection/count/order controls.
 
 Tests in `crates/ripr/src/analysis/classify/gap_admission.rs`:
@@ -737,7 +741,7 @@ Tests in `crates/ripr/src/analysis/classify/framework_oracle.rs` and
 - `an_unredacted_insta_field_is_withheld` and its keeps-the-gap control
 - `a_helper_built_receiver_pinned_to_a_literal_is_withheld` and
   `a_fixture_receiver_shape_that_differs_keeps_the_finding`
-- `a_hand_written_recorder_compared_by_field_is_withheld`,
+- `a_hand_written_recorder_compared_by_field_is_credited`,
   `a_recorder_shape_that_differs_keeps_the_finding` and
   `a_vec_pushed_into_by_the_changed_call_keeps_the_gap`
 
