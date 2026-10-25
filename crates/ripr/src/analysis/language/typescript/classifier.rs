@@ -5853,8 +5853,28 @@ pub(crate) fn ts_observes_decorated_method_call(
 fn normalize_member_access(body: &str) -> String {
     let mut stripped = String::with_capacity(body.len());
     let mut chars = body.chars().peekable();
+    // Comment markers inside a string or template literal (`"http://x"`,
+    // `"src/**/*.ts"`) are text, not comments: dropping the rest of the line
+    // would hide a method replacement that follows. State confusion from a
+    // quote inside a regex literal only keeps more text, which refuses more.
+    let mut quote: Option<char> = None;
     while let Some(ch) = chars.next() {
+        if let Some(open) = quote {
+            stripped.push(ch);
+            if ch == '\\' {
+                if let Some(escaped) = chars.next() {
+                    stripped.push(escaped);
+                }
+            } else if ch == open || (ch == '\n' && open != '`') {
+                quote = None;
+            }
+            continue;
+        }
         match (ch, chars.peek()) {
+            ('"' | '\'' | '`', _) => {
+                quote = Some(ch);
+                stripped.push(ch);
+            }
             ('/', Some('*')) => {
                 chars.next();
                 let mut prev = ' ';
