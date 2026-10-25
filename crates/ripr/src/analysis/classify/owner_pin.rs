@@ -173,6 +173,78 @@ fn operand_holds_exit_token(text: &str) -> bool {
             .any(|word| !whole_word_offsets(&masked, word).is_empty())
 }
 
+/// Pure comparison macros that may nest in a boolean assertion's operand,
+/// each with the crate that exports it. Their expansions compare two values
+/// and never leave the enclosing function.
+const KNOWN_COMPARISON_MACROS: [(&str, &str); 4] = [
+    ("approx_eq", "float_cmp"),
+    ("relative_eq", "approx"),
+    ("abs_diff_eq", "approx"),
+    ("ulps_eq", "approx"),
+];
+
+/// Whether every macro nested in the boolean assertion `text` is one of
+/// [`KNOWN_COMPARISON_MACROS`], imported by name from its crate in the test
+/// file and not defined by a `macro_rules!` anywhere in the index. A nested
+/// path-qualified, glob-imported or locally defined macro may hide an exit.
+fn nested_macros_are_known_comparisons(text: &str, test_file: &Path, index: &RustIndex) -> bool {
+    let masked = mask_comments_and_strings(text);
+    let mut names = Vec::new();
+    let bytes = masked.as_bytes();
+    for (at, _) in masked.match_indices('!') {
+        let after = masked[at + 1..].trim_start();
+        if !after.starts_with(['(', '[', '{']) {
+            continue;
+        }
+        let start = bytes[..at]
+            .iter()
+            .rposition(|byte| !(byte.is_ascii_alphanumeric() || *byte == b'_'))
+            .map_or(0, |last| last + 1);
+        let name = &masked[start..at];
+        if name.is_empty() || bytes[..start].ends_with(b"::") {
+            return false;
+        }
+        names.push(name);
+    }
+    // The outer assertion is the first invocation; the rest are nested.
+    let Some((_, nested)) = names.split_first() else {
+        return false;
+    };
+    let Some(file) = index.files().get(test_file) else {
+        return false;
+    };
+    let imports = mask_comments_and_strings(&file.source);
+    nested.iter().all(|name| {
+        KNOWN_COMPARISON_MACROS
+            .iter()
+            .find(|(known, _)| known == name)
+            .is_some_and(|(_, krate)| {
+                imports.split(';').any(|statement| {
+                    let statement = statement.trim();
+                    statement
+                        .rsplit_once("use ")
+                        .map(|(_, tree)| tree)
+                        .is_some_and(|tree| {
+                            tree.trim_start().starts_with(&format!("{krate}::"))
+                                && !tree.contains('*')
+                                && !tree.contains(" as ")
+                                && !whole_word_offsets(tree, name).is_empty()
+                        })
+                }) && !index.files().values().any(|other| {
+                    let masked = mask_comments_and_strings(&other.source);
+                    whole_word_offsets(&masked, "macro_rules")
+                        .into_iter()
+                        .any(|at| {
+                            masked[at + "macro_rules".len()..]
+                                .trim_start()
+                                .strip_prefix('!')
+                                .is_some_and(|rest| rest.trim_start().starts_with(name))
+                        })
+                })
+            })
+    })
+}
+
 /// The rooted spellings of every admitted assertion macro: each needs the
 /// same root proof.
 const STD_ROOTED_ASSERT_EQ: [&str; 24] = [
@@ -722,17 +794,26 @@ impl OwnerPinSyntax {
             Some(AssertionRefusal::Syntax(AssertionContextRefusal::DuplicateSpellingOneRuns)) => {
                 matches!(family, ProbeFamily::SideEffect | ProbeFamily::CallDeletion)
             }
-            // #10389: a boolean `assert!` whose operand only nests a macro
-            // (`assert!(approx_eq!(f64, ..))`) is not shown dead, only
-            // unresolved: ripr does not expand third-party comparison macros.
-            // The return family keeps the credit it had before this gate
-            // (`rust_assertion_context_unestablished` would demote live
-            // rows of the verdict corpus); an operand that holds an exit
-            // token, or any other refusal, still withholds it.
+            // #10389: a boolean `assert!` whose operand only nests a known
+            // pure comparison macro (`assert!(approx_eq!(f64, ..))`) is not
+            // shown dead, only unresolved: ripr does not expand third-party
+            // macros. The return family keeps the credit it had before this
+            // gate, because `rust_assertion_context_unestablished` would
+            // demote live rows of the verdict corpus. Any other nested
+            // macro (it may hide a `return`), an operand with an exit token,
+            // a test with any attribute besides `#[test]` (the function-level
+            // macro scan reports first and would hide `TestAttribute`), and
+            // every other refusal still withhold it.
             Some(AssertionRefusal::Syntax(AssertionContextRefusal::MacroOperandExit(_))) => {
                 family == ProbeFamily::ReturnValue
                     && matches!(outer.as_deref(), Some("assert" | "debug_assert"))
+                    && test.attrs.iter().all(|attr| {
+                        attr.chars()
+                            .filter(|ch| !ch.is_whitespace())
+                            .eq("#[test]".chars())
+                    })
                     && !operand_holds_exit_token(&assertion.text)
+                    && nested_macros_are_known_comparisons(&assertion.text, &test.file, index)
             }
             Some(_) => false,
         }

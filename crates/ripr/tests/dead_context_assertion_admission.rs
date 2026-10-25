@@ -305,10 +305,54 @@ fn boolean_assert_with_nested_macro_operand_credits_only_when_it_runs_and_cannot
             "return;\nassert!(compute_score(4) == 8);",
             false,
         ),
+        (
+            "dead_after_unrelated_nested_macro",
+            "println!(\"{}\", foo!(1));\nreturn;\nassert!(compute_score(4) == 8);",
+            false,
+        ),
+        (
+            "if_false_after_unrelated_nested_macro",
+            "println!(\"{}\", foo!(1));\nif false {\nassert!(compute_score(4) == 8);\n}",
+            false,
+        ),
+        (
+            "dead_nested_and_dead_plain",
+            "return;\nassert!(approx_eq!(i32, compute_score(4), 8));\nassert!(compute_score(4) == 8);",
+            false,
+        ),
+        (
+            "if_false_nested_macro",
+            "if false {\nassert!(approx_eq!(i32, compute_score(4), 8));\n}",
+            false,
+        ),
+        (
+            "local_macro_that_returns",
+            "macro_rules! chk {\n($e:expr) => {{ return; }};\n}\nassert!(chk!(compute_score(4) == 8));",
+            false,
+        ),
+        (
+            "unknown_attribute_nested_macro",
+            "@#[custom::harness]|assert!(approx_eq!(i32, compute_score(4), 8));",
+            false,
+        ),
+        (
+            "cfg_any_nested_macro",
+            "@#[cfg(any())]|assert!(approx_eq!(i32, compute_score(4), 8));",
+            false,
+        ),
+        (
+            "live_nested_then_dead_plain",
+            "assert!(approx_eq!(i32, compute_score(4), 8));\nreturn;\nassert!(compute_score(4) == 8);",
+            true,
+        ),
     ];
     for (name, body, credited) in cases {
+        let (attribute, body) = body
+            .strip_prefix('@')
+            .and_then(|rest| rest.split_once('|'))
+            .unwrap_or(("", body));
         let source = format!(
-            "{production}\n#[cfg(test)]\nmod tests {{\nuse super::*;\nuse float_cmp::approx_eq;\n#[test]\nfn compute_score_observed() {{\n{body}\n}}\n}}\n"
+            "{production}\n#[cfg(test)]\nmod tests {{\nuse super::*;\nuse float_cmp::approx_eq;\n#[test]\n{attribute}\nfn compute_score_observed() {{\n{body}\n}}\n}}\n"
         );
         let root = root_dir.join(name);
         std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
