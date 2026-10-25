@@ -272,6 +272,8 @@ lane records the report ungated. To start gating, dispatch the workflow on
 `ubuntu-latest`, review the `dx-scoreboard.json` artifact, and commit it as the
 baseline file. Install seconds compare only against a same-runner baseline.
 
+The same workflow's `first-run-main` job walks the first-run crates with a ripr built from the checked-out commit and gates the verdict rows against `metrics/dx-scoreboard/first-run-main-baseline.json` (3 of 3 decisive verdicts on a main build, #9276). Wall-time rows in that baseline came from a local run and are skipped on `ubuntu-latest`; refresh the baseline with `cargo xtask first-run --ripr target/debug/ripr --out target/ripr/first-run-main`, then `cargo xtask dx-scoreboard --boards first_run --ingest target/ripr/first-run-main/first-run-rows.jsonl`, and copy `target/ripr/reports/dx-scoreboard.json` over the baseline when a verdict improves.
+
 ## Claim boundary
 
 Numbers hold for the recorded revision, binary, runner class, and pinned

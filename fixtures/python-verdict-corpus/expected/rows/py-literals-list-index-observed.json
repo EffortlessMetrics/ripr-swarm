@@ -1,0 +1,22 @@
+{
+  "case_id": "py-literals-list-index-observed",
+  "subject_id": "authored-py-pytest-literals",
+  "origin": "authored",
+  "anchor": "lits/cfg.py:31",
+  "behavior_family": "output_value",
+  "test_shape": "pytest_list_index_subscript_pinned",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

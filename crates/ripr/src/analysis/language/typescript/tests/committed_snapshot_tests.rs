@@ -1660,3 +1660,210 @@ fn repository_tracking_nothing_under_root_is_unknown() -> Result<(), String> {
     assert_eq!(something_tracked, vec![OracleStrength::Medium]);
     Ok(())
 }
+
+/// #10139: a `projects` array whose elements are all inline object literals
+/// names no other config, so the walk reads the committed entry. A path,
+/// glob, identifier, spread or call element, a project that sets
+/// `rootDir`/`roots`/`root`, a second `projects`, a template placeholder and
+/// a member assignment keep the reading at medium.
+#[test]
+fn plain_inline_projects_keep_the_credit_and_every_other_spelling_refuses() -> Result<(), String> {
+    let jest = jest_snap(&[("price 1", "140")]);
+    for (text, expected) in [
+        (
+            "module.exports = { projects: [{ displayName: \"unit\", preset: \"ts-jest\", testMatch: [\"<rootDir>/test/**/*.test.ts\"] }] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { projects: [ // two\n  { displayName: \"a\" }, /* b */ { displayName: \"b\" },\n] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { projects: [\"<rootDir>/config/app.jest.js\"] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ root: \"x\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ workspace: \"x\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"a\" }].concat([\"./other\"]) };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"a\" }].map(load) };",
+            OracleStrength::Medium,
+        ),
+        (
+            "const base = {};\nmodule.exports = { projects: [{ ...base, displayName: \"a\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ ...require(\"./base\") }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: load(\"a\") }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ preset: \"./preset.js\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ ['preset']: \"../x\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "const preset = \"../x\";\nmodule.exports = { projects: [{ preset }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ preset: base }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ preset: \"ts-jest\" }], testTimeout: 5000 };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { projects: [{ preset: \"ts-jest/presets/js-with-ts\" }] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"a\", globals: { tag: /a(b)[)/]/i } }] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { projects: [{ globals: { tag: /a(b)/ }, rootDir: \"pkg\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ globals: { tag: /a(b) } }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ globals: { tag: f(/a/) } }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{}], // first\r projects: [\"./other.config.js\"] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{}], // first\u{2028} projects: [\"./other.config.js\"] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{}], // first\u{2029} projects: [\"./other.config.js\"] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ globals: { tag: /a(b)\r/ } }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ preset: \"ts-jest\" && \"./custom-preset.js\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ preset: \"ts-jest\" + \"/../../p.js\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ preset: \"ts-jest\" , displayName: \"a\" }] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { projects: [{ preset: \"review-snapshot-preset\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ preset: \"@scope/jest-preset\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ preset: \"ts-jest/../evil\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { \"projects\": [{ displayName: \"unit\" }] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { 'projects': [{ displayName: 'unit' }] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "// unit projects\nmodule.exports = { projects: [{ displayName: \"unit\" }] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { \"projects\": [\"<rootDir>/pkg\"] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "/* projects: [] */ module.exports = { projects: [\"<rootDir>/pkg\"] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"a\" }] }; // trailing",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"a\" }, \"<rootDir>/pkg\"] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "const unit = {};\nmodule.exports = { projects: [unit] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "const unit = {};\nmodule.exports = { projects: [{ displayName: \"a\" }, ...[unit]] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ rootDir: \"pkg\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ roots: [\"<rootDir>/pkg\"] }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: `a${dir}` }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{}], other: { projects: [{}] } };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{}], workspace: \"./packages\" };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ snapshotResolver: \"<rootDir>/r.js\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"a\" ",
+            OracleStrength::Medium,
+        ),
+    ] {
+        assert_eq!(
+            strengths(
+                "snap-inline-projects",
+                PRICE_TEST,
+                &[(SNAP_PATH, &jest), ("jest.config.js", text)]
+            )?,
+            vec![expected],
+            "{text}"
+        );
+    }
+    Ok(())
+}
