@@ -117,7 +117,7 @@ contradicting limitation. The rest is either correct but unstated
 ## Behavior
 
 Paths are relative to `crates/ripr/src/analysis/language/typescript/`.
-Paragraphs headed Rule 1 to Rule 19 mark behavior changes. Rules 1 to 8
+Paragraphs headed Rule 1 to Rule 22 mark behavior changes. Rules 1 to 8
 are numbered in reading order; rules 9 to 11 were added later. Every other statement below is current behavior and is
 normative.
 
@@ -1027,17 +1027,6 @@ The gate text keeps strings, templates and regex literals visible beside the
 two masks, so a string spelling `module.exports = x` refuses the file (fail
 closed). Known limits: a default binding of a function export (`const { default: f } = require(...)`, and an ES `import f from` of the same module, which the adapter cannot tell apart) is refused rather than credited; overload-style repeated `function name` declarations and any `require.resolve` use refuse the file.
 
-**Rule 22. A member of a literal `require()` is a named import (#9188).**
-`const f = require("<module>").f` (also `var`, a renamed local, and the
-string-key spelling `require("<module>")["f"]`) picks one export out of a
-CommonJS module, so it records the import `const { f } = require("<module>")`
-records: source `<module>`, imported `f`, local `f` (or the rename). A call
-through the local then relates by rules 5 and 7 as the destructured form does.
-Only a plain member of a call to `require` with a string-literal argument is
-read: a call on the member (`require("./lib").make()`), an optional chain, a
-computed key that is not a string literal, a deeper member (`.a.b`) and a
-dynamic `require` argument record nothing and keep the old reading.
-
 **Rule 21. A method decorator that passes the original result through
 lends `exposed` to the decorated method's tests (design decision, #10189).**
 A changed line inside `D(target, key, descriptor)` is reached by no test
@@ -1048,6 +1037,22 @@ of each method it decorates. Unlike `module_entry_call`, it may lend
 return value. That is only true under all of these conditions, and any
 other shape keeps today's `decorator_indirection` limit (`no_static_path`
 or `static_unknown`, never `exposed`):
+
+**Rule 22. A member of a literal `require()` is a named import (#9188).**
+`const f = require("<module>").f` (also `var`, a renamed local, and the
+string-key spelling `require("<module>")["f"]`) picks one export out of a
+CommonJS module, so it records the import `const { f } = require("<module>")`
+records: source `<module>`, imported `f`, local `f` (or the rename). A call
+through the local then relates by rules 5 and 7 as the destructured form does.
+Only a plain member of a call to `require` with a string-literal argument is
+read: a call on the member (`require("./lib").make()`), an optional chain, a
+computed key that is not a string literal, a deeper member (`.a.b`), the
+`.default` member (a native CommonJS module has none) and a dynamic
+`require` argument record nothing and keep the old reading. The identity gates
+of rule 5 still apply (the specifier must resolve to the owner module, the
+imported name must be the owner's name, a shadow or a mock blocks it), and a
+member read off a function export (rule 19) is a property of the function, not
+the owner.
 
 1. `D` is a function declaration with a `descriptor` parameter that
    assigns `descriptor.value = function (...) { ... }` once, and the

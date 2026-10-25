@@ -1567,6 +1567,13 @@ pub(crate) fn require_string_literal_source(expr: &Expression<'_>) -> Option<Str
 /// require("./y").f` (#9188). `None` for any other initializer, so a call on
 /// the member, a computed key and a dynamic `require` argument stay unread.
 fn require_member_source(expr: &Expression<'_>) -> Option<(String, String)> {
+    let read = require_member_parts(expr)?;
+    // `.default` is an ES default only for a transpiled module; a native
+    // CommonJS module has no such property, so it is not read as the import.
+    (read.1 != "default").then_some(read)
+}
+
+fn require_member_parts(expr: &Expression<'_>) -> Option<(String, String)> {
     match expr {
         Expression::StaticMemberExpression(member) if !member.optional => {
             let source = require_string_literal_source(&member.object)?;

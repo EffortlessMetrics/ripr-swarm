@@ -58,6 +58,8 @@ fn only_a_plain_member_of_a_literal_require_is_read() {
         "const s = require(name).stringify;\n",
         "const s = require('./lib').a.b;\n",
         "const s = other('./lib').stringify;\n",
+        "const s = require('./lib').default;\n",
+        "const s = require('./lib')['default'];\n",
     ] {
         assert_eq!(imports_of(source), Vec::new(), "{source}");
     }
@@ -121,7 +123,7 @@ fn a_call_through_the_member_binding_reaches_the_owner() -> Result<(), String> {
         "const { stringify: s } = require('../src/lib');",
         "s({ a: 1 })",
     )?;
-    assert_ne!(member, ExposureClass::NoStaticPath, "member form relates");
+    assert_eq!(member, ExposureClass::WeaklyExposed, "member form relates");
     assert_eq!(member, destructured, "same program, same reading");
     Ok(())
 }
