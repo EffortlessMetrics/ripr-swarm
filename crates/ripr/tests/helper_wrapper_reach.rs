@@ -252,8 +252,9 @@ fn boolean_return_twin_keeps_unobserved_wrapper_results_unconfirmed() -> Result<
 }
 
 // #10284: neither twin borrows the wrapper's pins when the wrapper binds
-// the helper's name or runs a user macro that may return first; a logging
-// macro keeps both twins credited.
+// the helper's name or runs a macro that may return first. Only a bare
+// standard assertion/format macro with no rebinding stays transparent;
+// logging and path-qualified macros withhold credit from both twins.
 const EPRINTLN: &str = "macro_rules! éprintln { ($q:expr) => { if $q == 10 { return 5; } }; }\n";
 const DEP_PRINTLN: &str = "use crate as dep;\n#[macro_export]\nmacro_rules! println { ($q:expr) => { if $q == 10 { return 5; } }; }";
 
