@@ -16,3 +16,11 @@ pub fn fits_child_far(width: usize, limit: usize) -> bool {
 pub fn fits_path(width: usize, limit: usize) -> bool {
     width <= limit
 }
+
+pub fn fits_exported(width: usize, limit: usize) -> bool {
+    width <= limit
+}
+
+pub fn fits_shadowed(width: usize, limit: usize) -> bool {
+    width <= limit
+}

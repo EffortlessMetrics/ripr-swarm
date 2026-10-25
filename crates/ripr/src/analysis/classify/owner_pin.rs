@@ -149,17 +149,47 @@ struct StdRootedCalls {
     unrebound: BTreeSet<String>,
 }
 
-/// The rooted spellings of `assert_eq!` and, for the boolean owner pins and
-/// effect probes, `assert!` (#8927): each needs the same root proof.
-const STD_ROOTED_ASSERT_EQ: [&str; 8] = [
+/// The assertion macros whose execution the shared admission can establish
+/// (#8927, #8983): the equality family and the boolean family, each with its
+/// `debug_` twin. `assert_ne!` and the `debug_` spellings run the same
+/// argument-evaluating, early-diverging expansion as `assert_eq!`/`assert!`,
+/// so a context that never runs one never runs the others.
+const ADMITTED_ASSERTION_MACROS: [&str; 6] = [
+    "assert_eq",
+    "assert_ne",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "assert",
+    "debug_assert",
+];
+
+/// The rooted spellings of every admitted assertion macro: each needs the
+/// same root proof.
+const STD_ROOTED_ASSERT_EQ: [&str; 24] = [
     "std::assert_eq",
     "core::assert_eq",
     "::std::assert_eq",
     "::core::assert_eq",
+    "std::assert_ne",
+    "core::assert_ne",
+    "::std::assert_ne",
+    "::core::assert_ne",
+    "std::debug_assert_eq",
+    "core::debug_assert_eq",
+    "::std::debug_assert_eq",
+    "::core::debug_assert_eq",
+    "std::debug_assert_ne",
+    "core::debug_assert_ne",
+    "::std::debug_assert_ne",
+    "::core::debug_assert_ne",
     "std::assert",
     "core::assert",
     "::std::assert",
     "::core::assert",
+    "std::debug_assert",
+    "core::debug_assert",
+    "::std::debug_assert",
+    "::core::debug_assert",
 ];
 
 impl StdRootedCalls {
@@ -643,18 +673,18 @@ impl OwnerPinSyntax {
         // takes the context gate whenever an assertion macro sits in its tail.
         let compound = outer
             .as_deref()
-            .is_none_or(|name| !matches!(name, "assert_eq" | "assert"));
+            .is_none_or(|name| !ADMITTED_ASSERTION_MACROS.contains(&name));
         let gated = match outer.as_deref() {
             _ if compound => {
                 let masked = mask_comments_and_strings(&assertion.text);
                 matches!(family, ProbeFamily::SideEffect | ProbeFamily::CallDeletion)
-                    && ["assert_eq", "assert"].iter().any(|name| {
+                    && ADMITTED_ASSERTION_MACROS.iter().any(|name| {
                         whole_word_offsets(&masked, name)
                             .into_iter()
                             .any(|at| masked[at + name.len()..].trim_start().starts_with('!'))
                     })
             }
-            Some("assert_eq") => matches!(
+            Some("assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne") => matches!(
                 family,
                 ProbeFamily::ReturnValue
                     | ProbeFamily::ErrorPath
@@ -662,7 +692,7 @@ impl OwnerPinSyntax {
                     | ProbeFamily::SideEffect
                     | ProbeFamily::CallDeletion
             ),
-            Some("assert") => matches!(
+            Some("assert" | "debug_assert") => matches!(
                 family,
                 ProbeFamily::MatchArm | ProbeFamily::SideEffect | ProbeFamily::CallDeletion
             ),
@@ -894,8 +924,15 @@ impl OwnerPinSyntax {
                 .chain(placement.iter())
                 .all(|file| {
                     if matches!(root, "std" | "core") {
-                        matches!(leaf, "assert" | "assert_eq" | "assert_ne")
-                            && index.drop_in_manifests.unbound_standard_root(file, root)
+                        matches!(
+                            leaf,
+                            "assert"
+                                | "assert_eq"
+                                | "assert_ne"
+                                | "debug_assert"
+                                | "debug_assert_eq"
+                                | "debug_assert_ne"
+                        ) && index.drop_in_manifests.unbound_standard_root(file, root)
                     } else {
                         matches!(leaf, "assert_eq" | "assert_ne")
                             && index.drop_in_manifests.verified(file, root)
@@ -1315,9 +1352,9 @@ impl OwnerPinSyntax {
         let rooted = self
             .std_rooted
             .get_or_build(&test.file, || StdRootedCalls::of(&facts.source));
-        let qualified: BTreeSet<String> = std_rooted_macro_path(&assertion.text, "assert_eq")
-            .into_iter()
-            .chain(std_rooted_macro_path(&assertion.text, "assert"))
+        let qualified: BTreeSet<String> = ADMITTED_ASSERTION_MACROS
+            .iter()
+            .filter_map(|name| std_rooted_macro_path(&assertion.text, name))
             .chain(rooted.calls.iter().cloned())
             .collect();
         if let Some(path) = qualified.into_iter().find(|path| {
@@ -1370,7 +1407,7 @@ impl OwnerPinSyntax {
                                 .map(|(path, file)| (path.clone(), file.source.clone())),
                         )
                     })
-                    .imported_definitions(&test.file);
+                    .imported_macros(&test.file);
                 generated_test_pins(&test.file, &facts.source, &imported, NON_RETURNING_MACROS)
             })
             .iter()
@@ -1458,8 +1495,9 @@ impl OwnerPinSyntax {
             .into_iter()
             .map(|(name, _)| name),
         );
-        if let Some(path) = std_rooted_macro_path(&assertion.text, "assert_eq")
-            .or_else(|| std_rooted_macro_path(&assertion.text, "assert"))
+        if let Some(path) = ADMITTED_ASSERTION_MACROS
+            .iter()
+            .find_map(|name| std_rooted_macro_path(&assertion.text, name))
             .or_else(|| StdRootedCalls::of(source).calls.into_iter().next())
         {
             return Some(AssertionRefusal::Syntax(
@@ -2579,6 +2617,14 @@ enum ReturnPathGate {
     /// pinned value to be an `Ok(..)` that every element reached
     /// (`requires_ok`, #9490).
     Adaptor { position: usize, requires_ok: bool },
+    /// RIPR-SPEC-0360: the changed statement adds into (or subtracts from) a
+    /// zero-initialized local that the owner returns, once per element of the
+    /// slice-like parameter at `position`. The pinned call must pass that
+    /// parameter a non-empty literal sequence, and the pinned value must be
+    /// a nonzero integer literal: from zero, a nonzero result separates the
+    /// update from a flipped sign, a product, a quotient and a deleted
+    /// statement.
+    LoopAccumulator { position: usize },
     /// RIPR-SPEC-0197 rule 3: the changed tail is the owner's whole body and
     /// one pure `&&` or `||` chain over its parameters. The pinned call
     /// must evaluate every operand on some run.
@@ -2899,6 +2945,17 @@ impl OwnerReturnPin {
             // closure refusal ("a closure in the tail no longer refuses it
             // on this shape") and must stay unguarded: 0265's keeping-pair
             // registry is what tells a closure-carried change apart there.
+            None if matches!(probe.family, ProbeFamily::ReturnValue)
+                && let Some(accumulator) =
+                    crate::analysis::syntax::loop_accumulator::loop_accumulator_at(
+                        &owner.body,
+                        changed_line,
+                    ) =>
+            {
+                ReturnPathGate::LoopAccumulator {
+                    position: accumulator.walked_position,
+                }
+            }
             None if matches!(probe.family, ProbeFamily::ReturnValue) => {
                 closure_adaptor::admitted_owner_adaptor_tail(owner, index)
                     .filter(|tail| tail.tail_is(&probe.expression))
@@ -3985,6 +4042,22 @@ impl OwnerReturnPin {
                 {
                     return false;
                 }
+                // RIPR-SPEC-0360: some pinned run walks a non-empty literal
+                // sequence and pins a nonzero integer.
+                if let ReturnPathGate::LoopAccumulator { position } = path
+                    && !call_text.is_some_and(|text| {
+                        closure_adaptor::pinned_run_sums_to_nonzero(
+                            test,
+                            loan.as_ref(),
+                            text,
+                            &self.name,
+                            *position,
+                            expected,
+                        )
+                    })
+                {
+                    return false;
+                }
                 // #9444: a walk over an empty literal visits nothing.
                 // A rendered or indexed comparison (`format!("{}", call)`,
                 // `vec![call][0]`) carries no call text, so the assertion's
@@ -4974,6 +5047,7 @@ impl ReturnPathGate {
             Self::Adaptor { requires_ok, .. } => {
                 !requires_ok || constructor_call_span(expected.trim(), "Ok").is_some()
             }
+            Self::LoopAccumulator { .. } => true,
             Self::Head(head) | Self::EarlyHead(head) => {
                 constructor_call_span(expected.trim(), head).is_some()
             }

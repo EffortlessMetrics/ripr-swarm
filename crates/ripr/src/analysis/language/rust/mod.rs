@@ -21,7 +21,9 @@ mod probe_shape;
 pub(crate) mod probes;
 
 pub(crate) use probe_shape::producer_gap_names_seam_shape;
-pub(crate) use probes::{changed_let_binding, mask_rust_comments_and_strings};
+pub(crate) use probes::{
+    changed_let_binding, mask_rust_char_literals, mask_rust_comments_and_strings,
+};
 
 use super::super::probes as analysis_probes;
 use super::super::{
@@ -2557,6 +2559,7 @@ impl RustAdapter {
                 };
                 let probe = seeded.probe;
                 let binding_relation = seeded.binding_relation;
+                let binding_return = seeded.binding_return;
                 finding.language = Some(LanguageId::Rust);
                 // Producer-owned source currentness (#3280): resolved from the diff
                 // evidence that seeded the probe, before any limitation shaping.
@@ -2687,6 +2690,10 @@ impl RustAdapter {
                     &probe,
                     &index,
                     binding_relation.as_ref(),
+                );
+                probes::attach_changed_binding_return_evidence(
+                    &mut finding,
+                    binding_return.as_ref(),
                 );
                 // #5268: the producer names the canonical gap identity from
                 // the changed-line evidence it already holds, after the

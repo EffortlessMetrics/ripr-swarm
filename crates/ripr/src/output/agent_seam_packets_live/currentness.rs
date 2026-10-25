@@ -180,8 +180,8 @@ pub(crate) fn evaluate_gap_record_source_currentness(
         return GapRecordSourceCurrentness::stale(
             format!(
                 "gap ledger root {} does not match selected root {}; regenerate the source and ledger for this checkout",
-                canonical_ledger_root.display(),
-                canonical_root.display()
+                crate::output::path::display_path(&canonical_ledger_root),
+                crate::output::path::display_path(&canonical_root)
             ),
             refresh_commands,
             source_kind_owned,
@@ -240,7 +240,7 @@ pub(crate) fn evaluate_gap_record_source_currentness(
             return GapRecordSourceCurrentness::not_evaluated(
                 format!(
                     "repo-exposure source {} could not be read for live currentness: {error}",
-                    source_path.display()
+                    crate::output::path::display_path(&source_path)
                 ),
                 refresh_commands,
                 source_kind_owned,
@@ -252,8 +252,8 @@ pub(crate) fn evaluate_gap_record_source_currentness(
         return GapRecordSourceCurrentness::stale(
             format!(
                 "repo-exposure source {} is outside selected root {}; regenerate inside the selected checkout",
-                canonical_source_path.display(),
-                canonical_root.display()
+                crate::output::path::display_path(&canonical_source_path),
+                crate::output::path::display_path(&canonical_root)
             ),
             refresh_commands,
             source_kind_owned,
@@ -266,7 +266,7 @@ pub(crate) fn evaluate_gap_record_source_currentness(
             return GapRecordSourceCurrentness::not_evaluated(
                 format!(
                     "repo-exposure source {} could not be read: {error}",
-                    canonical_source_path.display()
+                    crate::output::path::display_path(&canonical_source_path)
                 ),
                 refresh_commands,
                 source_kind_owned,

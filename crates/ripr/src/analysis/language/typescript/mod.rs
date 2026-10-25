@@ -691,6 +691,9 @@ impl TypeScriptAdapter {
         // Phase 2: for each accepted changed file, classify each changed
         // line that falls inside an owner.
         let mut findings: Vec<Finding> = Vec::new();
+        // Enum-member findings carry no probe owner, but their id was minted
+        // over an `Enum::Member` identity; collision ranking needs it (#10349).
+        let mut minted_owners: std::collections::HashMap<usize, String> = Default::default();
         let mut changed_count: usize = 0;
         // Per-output-language tally (#2103 review): this adapter covers
         // typescript (.ts/.tsx/.mts/.cts) and javascript (.js/.jsx/.mjs/.cjs),
@@ -999,6 +1002,7 @@ impl TypeScriptAdapter {
                     let mut finding =
                         enum_member_finding(&changed.path, added.line, &added.text, identity);
                     finding.evidence.extend(discovery_evidence.clone());
+                    minted_owners.insert(findings.len(), identity.to_string());
                     findings.push(finding);
                 }
             }
@@ -1302,7 +1306,7 @@ impl TypeScriptAdapter {
         // owner share a content-addressed probe id (path/family/owner/
         // expression, no line number); the ordinal pass keeps them
         // distinct (mirror of the Rust path's `dedup_probe_ids`).
-        dedup_typescript_probe_ids(&mut findings);
+        dedup_typescript_probe_ids(&mut findings, &minted_owners);
         Ok(LanguageDiffResult {
             value_origins: Default::default(),
             findings,

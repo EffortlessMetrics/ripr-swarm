@@ -1,0 +1,9 @@
+diff --git a/rates/core.py b/rates/core.py
+--- a/rates/core.py
++++ b/rates/core.py
+@@ -15,4 +15,4 @@
+ 
+ 
+ def rate_e(x):
+-    return x * 3
++    return x * 3 + 2

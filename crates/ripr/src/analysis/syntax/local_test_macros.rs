@@ -90,7 +90,7 @@ pub(crate) fn expand_local_test_macros(source: &str) -> Vec<ExpandedLocalTestMac
 /// reported lines are the file's own.
 pub(crate) fn expand_local_test_macros_with(
     source: &str,
-    imported: &str,
+    imported: &super::macro_scope::ImportedMacros,
 ) -> Vec<ExpandedLocalTestMacro> {
     if imported.is_empty() {
         return expand_local_test_macros(source);
@@ -182,7 +182,7 @@ pub(crate) struct GeneratedTestPins {
 pub(crate) fn generated_test_pins(
     path: &Path,
     source: &str,
-    imported: &str,
+    imported: &super::macro_scope::ImportedMacros,
     trusted: &[&str],
 ) -> Vec<GeneratedTestPins> {
     expand_local_test_macros_with(source, imported)

@@ -1046,23 +1046,52 @@ fn first_typescript_string_literal(text: &str) -> Option<String> {
 /// Probe ids are content-addressed over (path, family, owner, normalized
 /// expression) with no line number, so two identical added lines in the
 /// same owner (a repeated `total += 1;`, duplicate `if (x > 0) {` guard,
-/// …) collide on one id. Scan findings in diff order and rewrite the
-/// 2nd+ occurrences of a colliding id to append `.2`, `.3`, … — the
-/// first occurrence keeps its ordinal-1 id, so single-line fixtures stay
-/// stable. Without this pass the packet projection's `finding.id` dedupe
+/// …) collide on one id. The 2nd+ occurrences of a colliding id get
+/// `.2`, `.3`, … — the first keeps its ordinal-1 id, so single-line
+/// fixtures stay stable. Distinct expressions that share only the
+/// eight-hex fingerprint (#8838) rank by their full payload digest instead
+/// of diff order, so each keeps the same id whichever the diff lists first.
+/// Without this pass the packet projection's `finding.id` dedupe
 /// fingerprint collapses two distinct changed lines into one, or aliases
 /// receipts for two different lines. Evidence lines captured before this
 /// pass keep the base content fingerprint — both occurrences genuinely
 /// share the same (path, family, owner, expression) content; the ordinal
 /// only disambiguates identity, matching the Rust path's behavior.
-pub(crate) fn dedup_typescript_probe_ids(findings: &mut [Finding]) {
-    use std::collections::HashMap;
-    let mut seen: HashMap<String, u32> = HashMap::new();
-    for finding in findings.iter_mut() {
-        let count = seen.entry(finding.probe.id.0.clone()).or_insert(0);
-        *count += 1;
-        if *count > 1 {
-            let suffixed = format!("{}.{}", finding.probe.id.0, count);
+pub(crate) fn dedup_typescript_probe_ids(
+    findings: &mut [Finding],
+    minted_owners: &std::collections::HashMap<usize, String>,
+) {
+    let keyed = findings
+        .iter()
+        .enumerate()
+        .map(|(index, finding)| {
+            let probe = &finding.probe;
+            // Every TypeScript producer minted its id over
+            // `normalize_expression(probe.expression)` and an owner: the
+            // probe's own, or the `Enum::Member` identity an enum-member
+            // finding was minted with (`minted_owners`, by finding index).
+            let owner = minted_owners
+                .get(&index)
+                .map(String::as_str)
+                .or_else(|| probe.owner.as_ref().map(|owner| owner.0.as_str()))
+                .unwrap_or("");
+            let expression = probes::normalize_expression(&probe.expression);
+            (
+                probe.id.0.clone(),
+                probes::collision_rank_key(&probe.id.0, owner, &expression),
+            )
+        })
+        .collect::<Vec<_>>();
+    let entries = keyed
+        .iter()
+        .map(|(base, key)| (base.as_str(), *key))
+        .collect::<Vec<_>>();
+    for (finding, ordinal) in findings
+        .iter_mut()
+        .zip(probes::collision_ordinals(&entries))
+    {
+        if ordinal > 1 {
+            let suffixed = format!("{}.{}", finding.probe.id.0, ordinal);
             finding.probe.id.0 = suffixed.clone();
             finding.id = suffixed;
         }
