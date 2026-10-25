@@ -71,7 +71,7 @@ pub(super) fn literal_patch_calls(
                     let text = line.trim();
                     text == new_line.trim() || text == old_line.trim()
                 });
-        if old_shape != new_shape || new_shape.0 == 0 || !only_on_changed_line {
+        if old_shape != new_shape || new_shape.0 != 1 || !only_on_changed_line {
             return None;
         }
         spellings.push(format!("{qualified}()"));
@@ -86,18 +86,19 @@ pub(super) fn literal_patch_calls(
 /// subtraction keep the edit visible whatever literal the patch returns;
 /// products, divisions, `max`/`min`, indexing, comparisons, branches and any
 /// other call can absorb it (`x * 0`, `x // 3600`, `max(x, 100)`).
-fn restricted_return(line: &str, qualified: &str, name: &str) -> Option<(usize, usize)> {
+fn restricted_return(line: &str, qualified: &str, name: &str) -> Option<(usize, usize, i32)> {
     let expression = line.trim().strip_prefix("return ")?;
     let expr = parse_expression(expression)?;
-    let mut counts = (0, 0);
-    restricted_counts(&expr, qualified, name, &mut counts).then_some(counts)
+    let mut counts = (0, 0, 0);
+    restricted_counts(&expr, qualified, name, 1, &mut counts).then_some(counts)
 }
 
 fn restricted_counts(
     expr: &Expr,
     qualified: &str,
     name: &str,
-    counts: &mut (usize, usize),
+    sign: i32,
+    counts: &mut (usize, usize, i32),
 ) -> bool {
     match expr {
         Expr::JoinedStr(joined) => joined.values.iter().all(|part| match part {
@@ -105,14 +106,19 @@ fn restricted_counts(
             Expr::FormattedValue(formatted) => {
                 formatted.format_spec.is_none()
                     && formatted.conversion == ast::ConversionFlag::None
-                    && restricted_counts(&formatted.value, qualified, name, counts)
+                    && restricted_counts(&formatted.value, qualified, name, sign, counts)
             }
             _ => false,
         }),
         Expr::BinOp(binop) => {
+            let right_sign = if matches!(binop.op, ast::Operator::Sub) {
+                -sign
+            } else {
+                sign
+            };
             matches!(binop.op, ast::Operator::Add | ast::Operator::Sub)
-                && restricted_counts(&binop.left, qualified, name, counts)
-                && restricted_counts(&binop.right, qualified, name, counts)
+                && restricted_counts(&binop.left, qualified, name, sign, counts)
+                && restricted_counts(&binop.right, qualified, name, right_sign, counts)
         }
         Expr::Name(_) => true,
         Expr::Constant(constant) => matches!(
@@ -122,6 +128,7 @@ fn restricted_counts(
         Expr::Call(call) => {
             if is_substituted_call(call, qualified, name) {
                 counts.0 += 1;
+                counts.2 += sign;
                 return true;
             }
             let wraps_substituted = matches!(call.func.as_ref(), Expr::Name(f) if f.id.as_str() == "int")
@@ -130,6 +137,7 @@ fn restricted_counts(
             if wraps_substituted {
                 counts.0 += 1;
                 counts.1 += 1;
+                counts.2 += sign;
             }
             wraps_substituted
         }
@@ -173,12 +181,36 @@ fn literal_patch_targets(test: &PythonTest) -> Option<Vec<String>> {
         if text.starts_with("def ") || text.starts_with("async def ") {
             continue;
         }
-        if !mentions_substitution(text) {
-            continue;
+        if mentions_substitution(text) {
+            targets.push(literal_patch_header(text, &test.imports)?);
+        } else if !is_plain_test_line(text) {
+            return None;
         }
-        targets.push(literal_patch_header(text, &test.imports)?);
     }
     Some(targets)
+}
+
+/// Any other line of the test body is an `assert ...` or `name = ...` with no
+/// way to rebind names behind the test's back: no dunder access, lambda,
+/// import, `exec`/`eval`, `globals`/`locals`/`vars` or `sys.modules`.
+fn is_plain_test_line(text: &str) -> bool {
+    if text.is_empty() || text.starts_with('#') {
+        return true;
+    }
+    const FORBIDDEN: &[&str] = &[
+        "__", "lambda", "import", "exec", "eval", "globals", "locals", "vars", "modules",
+        "getattr", "open(",
+    ];
+    let lower = text.to_ascii_lowercase();
+    if FORBIDDEN.iter().any(|word| lower.contains(word)) {
+        return false;
+    }
+    if text.starts_with("assert ") {
+        return true;
+    }
+    // `name = value`: a plain identifier on the left, not `==`.
+    text.split_once('=')
+        .is_some_and(|(left, right)| is_identifier(left.trim()) && !right.starts_with('='))
 }
 
 fn mentions_substitution(text: &str) -> bool {

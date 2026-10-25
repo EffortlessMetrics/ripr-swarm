@@ -262,12 +262,57 @@ fn a_zero_stand_in_keeps_the_limit() {
         ),
         Some(StaticLimitKind::MockedModule)
     );
+    // A sign flip is not an edit the exemption looks through at all.
     assert_eq!(
         limit(
             "    return prefix - int(time.time())",
             "    return prefix + int(time.time())",
             &clock_test(CLOCK_PATCH)
         ),
-        None
+        Some(StaticLimitKind::MockedModule)
     );
+}
+
+/// One call, same sign: `v + v` and `v - v + 2` agree at `v = 1` (the review's
+/// collision), and a sign flip can be offset by a constant.
+#[test]
+fn an_arithmetic_collision_at_the_fixed_value_keeps_the_limit() {
+    let one = clock_test("with patch(\"idioms.clock.time.time\", return_value=1):");
+    assert_eq!(
+        limit(
+            "    return time.time() - time.time() + 2",
+            "    return time.time() + time.time()",
+            &one
+        ),
+        Some(StaticLimitKind::MockedModule)
+    );
+    assert_eq!(
+        limit(
+            "    return 12 - time.time()",
+            "    return 10 + time.time()",
+            &one
+        ),
+        Some(StaticLimitKind::MockedModule)
+    );
+}
+
+/// A test line that can rebind names (`stamp.__globals__[...] = lambda: 3`)
+/// is not a plain test body.
+#[test]
+fn a_test_that_rebinds_names_keeps_the_limit() {
+    let new = "    return f\"{prefix}_{int(time.time())}\"";
+    for extra in [
+        "stamp.__globals__['stamp'] = lambda: 3",
+        "stamp.__code__ = other.__code__",
+        "globals()['stamp'] = print",
+        "helper = stamp.__wrapped__",
+    ] {
+        let test = clock_test(CLOCK_PATCH)
+            .replace("assert stamp", &format!("{extra}\n        assert stamp"));
+        assert_eq!(
+            limit(new, OLD, &test),
+            Some(StaticLimitKind::MockedModule),
+            "{extra}"
+        );
+    }
 }
