@@ -1,0 +1,11 @@
+diff --git a/shapes/noter.py b/shapes/noter.py
+--- a/shapes/noter.py
++++ b/shapes/noter.py
+@@ -4,6 +4,6 @@
+ 
+     def note(self, kind):
+         if kind == "error":
+-            self.last = "error"
++            self.last = "fault"
+         for self.last in ["settled"]:
+             pass

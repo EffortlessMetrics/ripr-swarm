@@ -1,3 +1,0 @@
-case = "shape-async-fn-block-on"
-issue = 9443
-reason = "Async fn driven by block_on is not followed (#9443)."

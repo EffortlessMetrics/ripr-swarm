@@ -752,6 +752,38 @@ fn nearest_return(owner_fn: Option<&FunctionSummary>, probe_line: usize) -> Opti
     })
 }
 
+/// Whether the value on `value_offset` is repeated by a later arm of the
+/// `} else if .. {` / `} else {` chain that follows it, line by line. An arm
+/// that returns what the first arm returns makes the choice between them
+/// unobservable for some inputs, so the first condition has no returned-value
+/// sink (#10134, the rustfmt layout of #9843). Any other line shape ends the
+/// walk without a repeat.
+fn chain_repeats_adjacent_value(body: &str, value_offset: usize) -> bool {
+    let lines = body.lines().collect::<Vec<_>>();
+    let Some(first) = lines.get(value_offset) else {
+        return false;
+    };
+    let first = first.trim().trim_end_matches(',');
+    if branch_is_diverging(first) || !looks_like_branch_tail_expression(first) {
+        return false;
+    }
+    let mut header = value_offset + 1;
+    while let Some(line) = lines.get(header) {
+        let line = line.trim();
+        if !(line.starts_with("} else") && line.ends_with('{')) {
+            return false;
+        }
+        let Some(value) = lines.get(header + 1) else {
+            return false;
+        };
+        if value.trim().trim_end_matches(',') == first {
+            return true;
+        }
+        header += 2;
+    }
+    false
+}
+
 fn next_branch_value(
     owner_fn: Option<&FunctionSummary>,
     probe_line: usize,
@@ -760,6 +792,9 @@ fn next_branch_value(
     let function = owner_fn?;
     let start_index = probe_line.saturating_sub(function.start_line);
     let adjacent_offset = start_index + 1;
+    if chain_repeats_adjacent_value(&function.body, adjacent_offset) {
+        return None;
+    }
     function
         .body
         .lines()
@@ -1718,6 +1753,44 @@ mod tests {
 
         assert_eq!(sinks.len(), 1);
         assert_eq!(sinks[0].text, "1");
+    }
+
+    #[test]
+    fn multi_line_chain_arms_that_repeat_the_first_value_leave_no_sink() {
+        for body in [
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 {\n        1\n    } else {\n        1\n    }\n}",
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 {\n        1\n    } else if x > 0 {\n        1\n    } else {\n        3\n    }\n}",
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 {\n        1\n    } else if x > 0 {\n        2\n    } else {\n        1\n    }\n}",
+        ] {
+            let owner = tail_owner(body);
+            let probe = probe(ProbeFamily::Predicate, "x > 1", 2);
+
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+
+            assert!(
+                !sinks
+                    .iter()
+                    .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
+                "`{body}` must not produce a return-value sink: {sinks:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn multi_line_chain_with_distinct_or_later_only_equal_arms_keeps_the_first_sink() {
+        for body in [
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 {\n        1\n    } else if x > 0 {\n        2\n    } else {\n        3\n    }\n}",
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 {\n        1\n    } else if x > 0 {\n        2\n    } else {\n        2\n    }\n}",
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 {\n        1\n    } else {\n        2\n    }\n}",
+        ] {
+            let owner = tail_owner(body);
+            let probe = probe(ProbeFamily::Predicate, "x > 1", 2);
+
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+
+            assert_eq!(sinks.len(), 1, "`{body}`: {sinks:?}");
+            assert_eq!(sinks[0].text, "1");
+        }
     }
 
     #[test]
