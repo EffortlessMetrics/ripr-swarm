@@ -18994,11 +18994,27 @@ tests = [
   "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::display_string_pin_refuses_other_receivers_expectations_and_traits",
   "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::display_string_pin_refuses_a_computed_or_doubled_expectation",
   "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::only_a_change_to_string_literal_text_counts_as_literal_only",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::a_helper_called_only_by_display_fmt_is_reached_by_formatting_the_type",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::a_helper_chain_entry_that_is_not_a_fmt_owner_is_not_reached_by_formatting",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::two_display_impls_for_the_entry_type_fail_closed",
+  "crates/ripr/tests/fmt_helper_entry_dispatch.rs::a_multi_line_to_string_pin_reaches_the_helper_through_display_fmt",
+  "crates/ripr/tests/fmt_helper_entry_dispatch.rs::a_struct_literal_receiver_reaches_the_helper_too",
+  "crates/ripr/tests/fmt_helper_entry_dispatch.rs::a_factory_receiver_without_a_type_annotation_stays_unrelated",
+  "crates/ripr/tests/fmt_helper_entry_dispatch.rs::formatting_another_type_or_with_the_other_trait_stays_unrelated",
+  "crates/ripr/tests/fmt_helper_entry_dispatch.rs::a_helper_with_a_second_caller_fails_closed",
+  "crates/ripr/tests/fmt_helper_entry_dispatch.rs::a_second_declaration_of_the_formatted_type_fails_closed",
+  "crates/ripr/tests/fmt_helper_entry_dispatch.rs::a_test_in_a_separate_file_reaches_the_helper_through_display_fmt",
+  "crates/ripr/tests/fmt_helper_entry_dispatch.rs::a_path_qualified_annotation_from_another_crate_stays_unrelated",
+  "crates/ripr/tests/fmt_helper_entry_dispatch.rs::a_renamed_foreign_import_named_like_the_type_stays_unrelated",
+  "crates/ripr/tests/fmt_helper_entry_dispatch.rs::a_type_shadow_in_an_out_of_line_parent_module_stays_unrelated",
+  "crates/ripr/tests/fmt_helper_entry_dispatch.rs::an_unrelated_same_named_method_call_does_not_hide_the_formatting_reach",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::a_macro_argument_hop_carries_no_formatting_reach",
   "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::fmt_owner_tail_line_reads_only_a_write_into_the_formatter_parameter",
   "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::format_tail_witness_completes_a_fmt_write_tail_and_refuses_a_rebound_write",
 ]
 fixtures = [
   "fixtures/rust-verdict-corpus/cases/idiom-display-string-pin.json",
+  "fixtures/rust-verdict-corpus/cases/spec0236-seam-boundary-via-display-impl.json",
 ]
 code = [
   "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs",
