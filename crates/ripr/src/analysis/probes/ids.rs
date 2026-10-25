@@ -61,14 +61,14 @@ fn normalize_outside_literals(
     result
 }
 
-/// Compute the 8-char hex fingerprint for a content-addressed probe id.
-/// Payload is NUL-separated: `<sanitized_path>\0<family_str>\0<owner_str>\0<normalized_expression>\0`
-fn compute_fp8(
+/// SHA-256 over the identity payload
+/// `<sanitized_path>\0<family_str>\0<owner_str>\0<normalized_expression>\0`.
+fn payload_digest(
     sanitized_path: &str,
     family_str: &str,
     owner_str: &str,
     normalized_expression: &str,
-) -> String {
+) -> [u8; 32] {
     // Normalize path separators in the owner symbol so the fingerprint is
     // platform-independent. The owner `SymbolId` embeds a file path walked
     // from the filesystem, which uses `\` on Windows and `/` elsewhere;
@@ -84,11 +84,69 @@ fn compute_fp8(
     hasher.update(b"\0");
     hasher.update(normalized_expression.as_bytes());
     hasher.update(b"\0");
-    let hash = hasher.finalize();
+    hasher.finalize().into()
+}
+
+/// Compute the 8-char hex fingerprint for a content-addressed probe id.
+fn compute_fp8(
+    sanitized_path: &str,
+    family_str: &str,
+    owner_str: &str,
+    normalized_expression: &str,
+) -> String {
+    let hash = payload_digest(sanitized_path, family_str, owner_str, normalized_expression);
     format!(
         "{:02x}{:02x}{:02x}{:02x}",
         hash[0], hash[1], hash[2], hash[3]
     )
+}
+
+/// Full-width digest of the payload a probe id fingerprints, for ranking
+/// probes that share one eight-hex id but carry different payloads (#8838).
+/// It is the digest `fp8` is a prefix of, so ranking by it does not depend on
+/// the order the diff presents the probes in. The sanitized path and family
+/// are read back from `base_id` (`<prefix>:<path>:<family>:<fp8>`; the
+/// sanitized path holds no `:`), keeping the payload identical to the one
+/// `fingerprint_probe_id` hashed; the caller passes the owner and the
+/// expression normalized the way its producer normalized it. A malformed id
+/// falls back to ranking by the whole id, which still ties by encounter order.
+pub(crate) fn collision_rank_key(
+    base_id: &str,
+    owner_str: &str,
+    normalized_expression: &str,
+) -> [u8; 32] {
+    let mut parts = base_id.rsplitn(4, ':');
+    let (_fp8, family, path, prefix) = (parts.next(), parts.next(), parts.next(), parts.next());
+    match (path, family) {
+        (Some(path), Some(family)) if prefix.is_some() => {
+            payload_digest(path, family, owner_str, normalized_expression)
+        }
+        _ => payload_digest(base_id, "", owner_str, normalized_expression),
+    }
+}
+
+/// The collision ordinal (1-based) of each probe, given its base id and rank
+/// key. Probes sharing a base id are ranked by key, then by encounter index,
+/// so distinct payloads get the same ordinals whichever order they arrive in
+/// and exact duplicates keep encounter order (#8838).
+pub(crate) fn collision_ordinals(entries: &[(&str, [u8; 32])]) -> Vec<u32> {
+    use std::collections::HashMap;
+    let mut groups: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (index, (base, _)) in entries.iter().enumerate() {
+        groups.entry(base).or_default().push(index);
+    }
+    let mut ordinals = vec![1; entries.len()];
+    for indices in groups.into_values().filter(|indices| indices.len() > 1) {
+        let mut ranked = indices
+            .into_iter()
+            .map(|index| (entries[index].1, index))
+            .collect::<Vec<_>>();
+        ranked.sort();
+        for (rank, (_, index)) in ranked.into_iter().enumerate() {
+            ordinals[index] = rank as u32 + 1;
+        }
+    }
+    ordinals
 }
 
 /// Build a content-addressed probe id.

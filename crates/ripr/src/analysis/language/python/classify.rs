@@ -25,10 +25,12 @@ use super::related_tests::{
     sort_related_candidates, verify_command_for_test,
 };
 use super::row_miss::{RowMissChange, annotate_row_misses};
-use super::sink_alignment::{CreditedAssertion, SinkAlignment, classify_sink_alignment_with_old};
+use super::sink_alignment::{
+    CreditedAssertion, SinkAlignment, classify_sink_alignment_with_old, enclosing_literal_pair,
+};
 use super::static_limits::{
-    heuristic_only_relation_limit, implicit_dunder_dispatch_limit, static_limit_for_focused_change,
-    unpinned_equality_dunder_limit,
+    heuristic_only_relation_limit, implicit_dunder_dispatch_limit, module_object_rebind_limit,
+    static_limit_for_focused_change, unpinned_equality_dunder_limit,
 };
 use super::table_rows::python_unvaried_table_operand;
 use super::term_activation::python_inactive_term_evidence;
@@ -402,6 +404,8 @@ pub(super) fn classify_change_for_owner_with_value_origins(
             &focus,
         )
     });
+    let literal_pair = owner_source
+        .and_then(|source| enclosing_literal_pair(source, line, line_text, old_line_text));
     let alignment = classify_sink_alignment_with_old(
         owner,
         line_text,
@@ -409,6 +413,7 @@ pub(super) fn classify_change_for_owner_with_value_origins(
         &related,
         all_tests,
         guard_entered,
+        literal_pair.as_ref(),
     );
     let alignment = match module_value.first() {
         Some(credit) => SinkAlignment {
@@ -440,8 +445,18 @@ pub(super) fn classify_change_for_owner_with_value_origins(
         log_evidence.as_ref(),
         &focus,
         owner,
+        owner_source.unwrap_or(""),
         &related_candidates,
     )
+    .or_else(|| {
+        module_object_rebind_limit(
+            line_text,
+            old_line_text,
+            owner,
+            &related_candidates,
+            alignment.credited.as_ref().filter(|_| alignment.observes()),
+        )
+    })
     .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, &related_candidates))
     .or_else(|| heuristic_only_relation_limit(owner, &related_candidates))
     .or_else(|| {
@@ -1339,6 +1354,7 @@ pub(super) fn classify_change_for_owner_with_value_origins(
             line_text,
             old_line_text,
             guard_entered,
+            literal_pair: literal_pair.as_ref(),
             focus: &focus,
             boundary_fact: crate::domain::input_boundary_fact(
                 &missing_discriminators,

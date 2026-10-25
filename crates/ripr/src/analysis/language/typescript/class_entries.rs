@@ -176,6 +176,7 @@ fn class_entries_for(
                 name: entry.name.clone(),
                 exported_as_default: false,
                 class_member: Some(entry.method_kind),
+                decorated: None,
             })
             .collect();
         entries.sort();

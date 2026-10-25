@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- Python verdict corpus: 7 `py-almost-*` cases on `authored-py-unittest-almost` covering RIPR-SPEC-0238 rule 12 beyond the default `assertAlmostEqual` form (explicit `places=`/`delta=`, the positional fifth-argument `delta`, a `**` spread, a non-`self` helper receiver, and the `places=None` and default controls), labelled by real pytest runs; no false verdicts and no ceiling change (#9412).

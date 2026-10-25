@@ -90,6 +90,27 @@ pub(crate) fn normalized_path(path: &Path) -> String {
     normalized
 }
 
+/// Allocation-free `normalized_path(path) == normalized` comparison for the
+/// common case: a path already spelled with `/` separators needs no `replace`
+/// allocation (`to_string_lossy` borrows for valid UTF-8), and the `./` prefix
+/// strip borrows too. Only a backslash-spelled path pays the full
+/// normalization, so the #10024 normalized-spelling collision semantics are
+/// unchanged. The changed-line classifier compares every workspace owner
+/// against each changed file, so the allocating form cost O(workspace owners
+/// x changed files) throwaway Strings per check even for a one-line diff.
+pub(crate) fn normalized_path_eq(path: &Path, normalized: &str) -> bool {
+    let lossy = path.to_string_lossy();
+    if !lossy.contains('\\') {
+        let mut candidate = lossy.as_ref();
+        while let Some(stripped) = candidate.strip_prefix("./") {
+            candidate = stripped;
+        }
+        candidate == normalized
+    } else {
+        normalized_path(path) == normalized
+    }
+}
+
 pub(crate) fn output_language_for(path: &Path) -> DomainLanguageId {
     match path.extension().and_then(|extension| extension.to_str()) {
         Some("js" | "jsx" | "mjs" | "cjs") => DomainLanguageId::JavaScript,

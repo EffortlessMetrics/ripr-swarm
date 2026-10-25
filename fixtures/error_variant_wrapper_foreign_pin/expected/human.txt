@@ -36,7 +36,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/error_variant_wrapper_foreign_pin/input --diff <cwd>/fixtures/error_variant_wrapper_foreign_pin/diff.patch --mode fast probe:src_lib.rs:error_path:edac60ec
   ripr context --root <cwd>/fixtures/error_variant_wrapper_foreign_pin/input --diff <cwd>/fixtures/error_variant_wrapper_foreign_pin/diff.patch --mode fast --at probe:src_lib.rs:error_path:edac60ec
-  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: error_variant); run `ripr repair probe:src_lib.rs:error_path:edac60ec --root <cwd>/fixtures/error_variant_wrapper_foreign_pin/input` for the full gate's answer
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: producer-owned missing discriminator fact: error_variant; follow the Next step above, then rerun `ripr check`
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

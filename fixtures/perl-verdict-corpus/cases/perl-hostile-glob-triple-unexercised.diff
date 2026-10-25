@@ -1,0 +1,13 @@
+diff --git a/lib/Hostile.pm b/lib/Hostile.pm
+index 505b49c..c5aed02 100644
+--- a/lib/Hostile.pm
++++ b/lib/Hostile.pm
+@@ -43,7 +43,7 @@ sub AUTOLOAD {
+     return $self->{$field} * 2;
+ }
+ 
+-my %MULT = (double => 2, triple => 3);
++my %MULT = (double => 2, triple => 3.0);
+ for my $op (sort keys %MULT) {
+     no strict 'refs';
+     my $by = $MULT{$op};
