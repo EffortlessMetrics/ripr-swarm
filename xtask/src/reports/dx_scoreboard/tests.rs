@@ -4546,6 +4546,24 @@ fn corpus_pins_no_rust_commits() -> Result<(), String> {
             return Err(format!("{} note must say the diff has no Rust", no_rust.id));
         }
     }
+    // The config cannot prove offline that a commit touches no Rust, so the
+    // two commits checked against upstream (serde: only the CI workflow;
+    // cargo: only the book changelog, diffed against the first parent) are
+    // pinned here too. Moving either pin is then a deliberate two-place edit
+    // that re-asks that question, not a drift this test waves through.
+    for (id, sha) in [
+        ("serde-no-rust", "576e2ef9d8b985cb9399fa3a35913ef86503bad4"),
+        ("cargo-no-rust", "523e530d77cce92813eebbf6ac009a04f2df2ac2"),
+    ] {
+        if entry(id)?.sha != sha {
+            return Err(format!(
+                "{id} moved off the commit verified to change no Rust; re-verify the diff before updating this test"
+            ));
+        }
+    }
+    if cargo_no_rust.base_sha.as_deref() != Some("04d22dbe795476cf89d1dc2599cec98e4b227bc3") {
+        return Err("cargo-no-rust base_sha must stay the verified first parent".to_string());
+    }
     // A merge commit diffed against HEAD~1 would compare with its second
     // parent, which carries Rust changes; the base must be pinned.
     let base = cargo_no_rust
