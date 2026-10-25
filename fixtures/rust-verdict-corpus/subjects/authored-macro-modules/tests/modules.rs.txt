@@ -1,0 +1,13 @@
+use macro_modules::fits_imported;
+
+#[macro_use]
+mod support;
+mod rows;
+#[path = "other/rows.rs"]
+mod other;
+
+imported_table! {
+    import_under(3, 5, true)
+    import_at(5, 5, true)
+    import_over(6, 5, false)
+}

@@ -1153,6 +1153,13 @@ The same snapshots follow corpus cache generation 1.100 to 1.101 for same-file
 (RIPR-SPEC-0117, #6925), with the same scope: generation, content commitment,
 dependent verify commitments and receipt byte hashes only.
 
+### Cross-file macro_rules! test tables classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.102 to 1.103 for
+`macro_rules!` test tables whose generator is defined in another file
+(RIPR-SPEC-0117 example 9, #6925), with the same scope: generation, content
+commitment, dependent verify commitments and receipt byte hashes only.
+
 ## Pending — boundary_gap (25)
 
 Reason:
@@ -1227,7 +1234,7 @@ hashes only.
 
 ### indirect owner call limit classified-cache generation parity
 
-The same snapshots follow corpus cache generation 1.102 to 1.103 for owners
+The same snapshots follow corpus cache generation 1.103 to 1.104 for owners
 reached without a placeable call and the `cfg_attr` test reading
 (RIPR-SPEC-0240, #9442, #9443), with the same scope: generation, content
 commitment, dependent verify commitments and receipt byte hashes only.
