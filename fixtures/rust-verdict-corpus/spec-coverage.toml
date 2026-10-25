@@ -22,7 +22,8 @@ floor = 228
 # shape, spec0186-ex06, now abstains as limited and is no longer known-false). Measured on the combined tree.
 # 146: plus the one abstention #10163 added (spec0171-ex05, cross-package wrapper now limited). Measured on the combined tree.
 # 153: plus the seven abstentions the RIPR-SPEC-0163 cases add. Measured on the combined tree.
-missed_credit_ceiling = 153
+# 152: minus the path-qualified state row (#10108), now credited. Measured on the combined tree.
+missed_credit_ceiling = 152
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
