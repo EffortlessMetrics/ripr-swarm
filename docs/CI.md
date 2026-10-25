@@ -2403,6 +2403,8 @@ and fails when:
 - a cell `proof_refs` entry has no `docs/specs/RIPR-SPEC-NNNN-*.md`;
 - a language's `adapter_compiled` is absent, not boolean, or differs from the
   selected Cargo language features (including a disabled adapter reported present).
+- a language claims another language's `required_feature`, even when swapped
+  availability flags agree with those forged assignments.
 
 It is separate from `check-capabilities`, which validates
 `metrics/capabilities.toml` against `docs/CAPABILITY_MATRIX.md` and does not read

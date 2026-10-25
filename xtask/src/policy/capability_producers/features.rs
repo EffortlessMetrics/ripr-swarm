@@ -110,10 +110,61 @@ pub(super) fn compiled_feature_violations(
             ));
             continue;
         };
+        // An independent inventory pin, aligned with LanguageId::required_feature.
+        // A new routed language needs an explicit disposition here; saved JSON
+        // cannot redefine an existing language's producer by swapping features.
+        let canonical_feature = match name {
+            "rust" => "lang-rust",
+            "typescript" | "javascript" => "lang-typescript",
+            "python" => "lang-python",
+            "perl" => "lang-perl",
+            _ => {
+                violations.push(format!(
+                    "language `{name}` has no canonical feature disposition"
+                ));
+                continue;
+            }
+        };
+        if feature != canonical_feature {
+            violations.push(format!(
+                "language `{name}` required_feature must be `{canonical_feature}`, got `{feature}`"
+            ));
+            continue;
+        }
         let expected = enabled.contains(feature);
         if language.get("adapter_compiled").and_then(Value::as_bool) != Some(expected) {
             violations.push(format!("language `{name}` adapter_compiled must be {expected} for required_feature `{feature}` in the selected build"));
         }
     }
     violations
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compiled_feature_violations;
+    use serde_json::json;
+
+    #[test]
+    fn swapped_feature_identities_fail_despite_consistent_availability_flags() {
+        let enabled = ["lang-rust".to_string()].into_iter().collect();
+        let mut registry = json!({"languages": [
+            {"language":"rust", "required_feature":"lang-rust", "adapter_compiled":true},
+            {"language":"perl", "required_feature":"lang-perl", "adapter_compiled":false}
+        ]});
+        assert_eq!(
+            compiled_feature_violations(&registry, &enabled),
+            Vec::<String>::new()
+        );
+        registry["languages"][0]["required_feature"] = json!("lang-perl");
+        registry["languages"][0]["adapter_compiled"] = json!(false);
+        registry["languages"][1]["required_feature"] = json!("lang-rust");
+        registry["languages"][1]["adapter_compiled"] = json!(true);
+        assert_eq!(
+            compiled_feature_violations(&registry, &enabled),
+            [
+                "language `rust` required_feature must be `lang-rust`, got `lang-perl`",
+                "language `perl` required_feature must be `lang-perl`, got `lang-rust`"
+            ]
+        );
+    }
 }
