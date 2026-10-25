@@ -52,6 +52,7 @@ struct Pr {
     marker_comment: bool,
     moved: bool,
     later_state: Option<&'static str>,
+    renewed: bool,
 }
 
 impl Pr {
@@ -66,6 +67,7 @@ impl Pr {
             marker_comment: false,
             moved: false,
             later_state: None,
+            renewed: false,
         }
     }
     fn sha(&self) -> String {
@@ -127,7 +129,7 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
             dir.join(format!("pull.{}.json", pr.number)),
             // `moved` models a push between the list call and the live read.
             format!(
-                r#"{{"mergeable_state":{},"head":{{"sha":"{}"}},"base":{{"ref":"main"}}}}"#,
+                r#"{{"mergeable_state":{},"head":{{"sha":"{}","repo":{{"full_name":"{}"}}}},"base":{{"ref":"main"}},"draft":{},"labels":{}}}"#,
                 if pr.state == "null" {
                     "null".to_string()
                 } else {
@@ -137,6 +139,14 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
                     format!("{:040x}", pr.number + 1000)
                 } else {
                     pr.sha()
+                },
+                pr.repo,
+                // `renewed` models the label or ready state coming back after the list call.
+                pr.draft && !pr.renewed,
+                if pr.labeled || pr.renewed {
+                    r#"[{"name":"merge-ready"}]"#
+                } else {
+                    "[]"
                 }
             ),
         )
@@ -487,6 +497,36 @@ fn only_the_actions_bots_failure_on_a_same_repo_pr_is_retired() -> Result<(), St
         (0, 0, 0),
         "{}",
         outcome.summary
+    );
+    Ok(())
+}
+
+#[test]
+fn a_request_renewed_since_the_list_call_keeps_its_conflict_failure() -> Result<(), String> {
+    let relabeled = Pr {
+        labeled: false,
+        renewed: true,
+        prior_statuses: OURS_FAILURE,
+        ..Pr::dirty(27)
+    };
+    let readied = Pr {
+        draft: true,
+        renewed: true,
+        prior_statuses: OURS_FAILURE,
+        ..Pr::dirty(28)
+    };
+    let moved = Pr {
+        labeled: false,
+        moved: true,
+        prior_statuses: OURS_FAILURE,
+        ..Pr::dirty(29)
+    };
+    let outcome = run(&[relabeled, readied, moved], "retire-renewed")?;
+    assert_eq!(
+        (outcome.successes, outcome.failures, outcome.comments),
+        (0, 0, 0),
+        "{}",
+        outcome.log
     );
     Ok(())
 }

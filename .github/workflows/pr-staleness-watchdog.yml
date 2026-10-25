@@ -142,6 +142,12 @@ jobs:
           # sweep or the notice posted earlier would sit red forever; retire it (#10136).
           retire_stale() {
             [ "$(ours_state "$2")" = "failure" ] || return 0
+            # The list snapshot is stale by now: the label or ready state can have come back
+            # (and the label-time notice posted a fresh failure). Read the PR again and retire
+            # only while this same head, in this repository, still makes no request.
+            read -r now_head now_repo now_draft now_requested <<<"$(gh api "repos/$REPOSITORY/pulls/$1" --jq '[.head.sha, (.head.repo.full_name // "-"), (.draft | tostring), ([.labels[].name | ascii_downcase] | index("merge-ready") != null | tostring)] | join(" ")')"
+            [ "${now_head:-}" = "$2" ] && [ "${now_repo:-}" = "$REPOSITORY" ] || return 0
+            [ "${now_draft:-}" = "true" ] || [ "${now_requested:-}" != "true" ] || return 0
             gh api "repos/$REPOSITORY/statuses/$2" -f state=success -f context="merge-ready conflict" -f description="merge-ready is not requested on this PR" > /dev/null || return 1
             cleared=$((cleared + 1))
             disposition="$disposition; stale conflict status retired"
