@@ -35,6 +35,7 @@ use super::source_facts::parse_module_result;
 use super::source_utils::{SourceText, is_test_file};
 use super::{PythonAssertion, PythonOwner, PythonTest, expr_full_name};
 use crate::domain::OwnerKind;
+use rayon::prelude::*;
 use rustpython_parser::ast::{self, Expr, Mod, Stmt};
 use std::path::Path;
 
@@ -101,6 +102,8 @@ pub(super) struct ForeignIndex<'a> {
 
 // Parses the foreign index has done on this thread, so a test can pin that
 // the workspace is parsed once per run and not once per changed file (#10125).
+// It counts files folded into the index on the calling thread; the parses
+// themselves run on rayon workers (#10441).
 #[cfg(test)]
 thread_local! {
     pub(super) static FOREIGN_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -122,7 +125,20 @@ impl<'a> ForeignIndex<'a> {
         let mut files = Vec::new();
         let mut references = std::collections::BTreeMap::new();
         let mut hidden_import = false;
-        for (file, source) in sources {
+        // Parsing each source dominates the index on large workspaces, so the
+        // parses run in parallel; the fold below stays sequential and in input
+        // order so word ownership and the word cap behave as before (#10441).
+        let sources: Vec<(&'a Path, &'a str)> = sources.collect();
+        let token = crate::analysis::cancellation::current_token();
+        let parsed: Vec<Option<Vec<String>>> = sources
+            .par_iter()
+            .map(|(_, source)| {
+                crate::analysis::cancellation::with_optional_token(token.as_ref(), || {
+                    assigned_attributes(source)
+                })
+            })
+            .collect();
+        for ((file, source), assigned) in sources.into_iter().zip(parsed) {
             hidden_import |= DYNAMIC_LOADERS
                 .iter()
                 .any(|loader| mentions_identifier(source, loader))
@@ -145,7 +161,6 @@ impl<'a> ForeignIndex<'a> {
             }
             #[cfg(test)]
             FOREIGN_PARSES.with(|parses| parses.set(parses.get() + 1));
-            let assigned = assigned_attributes(source);
             let dynamic = assigned.is_none()
                 || DYNAMIC_WRITERS
                     .iter()

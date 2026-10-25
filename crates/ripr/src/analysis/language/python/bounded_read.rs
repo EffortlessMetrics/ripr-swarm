@@ -8,10 +8,11 @@
 //!
 //! - a cap on the number of discovered `.py` files
 //!   ([`DEFAULT_PYTHON_MAX_WORKSPACE_FILES`], env
-//!   `RIPR_PYTHON_MAX_WORKSPACE_FILES`), defaulting to 800 to align with the
-//!   repo-mode working-set default (`RIPR_MAX_REPO_INDEX_FILES`,
-//!   `repo/discovery.rs`): one default bounds Python analysis the same way in
-//!   both modes instead of inventing a second, divergent ceiling;
+//!   `RIPR_PYTHON_MAX_WORKSPACE_FILES`), defaulting to 4000 so a Django-sized
+//!   workspace (2,937 `.py` files) is analyzed completely in diff mode
+//!   (#10441). Diff mode reads the workspace only to resolve the changed
+//!   lines, unlike the repo-mode working set (`RIPR_MAX_REPO_INDEX_FILES`,
+//!   800, `repo/discovery.rs`) that analyzes every file;
 //! - a per-file read cap ([`DEFAULT_PYTHON_MAX_FILE_READ_BYTES`], env
 //!   `RIPR_PYTHON_MAX_FILE_READ_BYTES`), mirroring the TypeScript 16 MiB knob;
 //! - an aggregate per-run byte budget
@@ -33,10 +34,14 @@ use std::path::Path;
 
 /// Env override for [`DEFAULT_PYTHON_MAX_WORKSPACE_FILES`].
 pub(crate) const PYTHON_MAX_WORKSPACE_FILES_ENV: &str = "RIPR_PYTHON_MAX_WORKSPACE_FILES";
-/// Default cap on discovered `.py` files for one diff-mode walk, aligned with
-/// the repo-mode working-set default (`repo/discovery.rs`,
-/// `RIPR_MAX_REPO_INDEX_FILES`, default 800).
-pub(crate) const DEFAULT_PYTHON_MAX_WORKSPACE_FILES: usize = 800;
+/// Default cap on discovered `.py` files for one diff-mode walk.
+///
+/// Measured on 4 cores (#10441): Django at 6de4b35a (2,937 files, 18.6 MiB)
+/// completes in about 5.5 s at 290 MiB peak RSS, where 800 left it partial.
+/// Cost grows faster than the file count past that point (a 5,855-file
+/// synthetic workspace took 13.7 s at 500 MiB), so larger workspaces keep the
+/// named `diff_scope_oversized` limitation and raise the bound explicitly.
+pub(crate) const DEFAULT_PYTHON_MAX_WORKSPACE_FILES: usize = 4000;
 /// Env override for [`DEFAULT_PYTHON_MAX_FILE_READ_BYTES`].
 pub(crate) const PYTHON_MAX_FILE_READ_BYTES_ENV: &str = "RIPR_PYTHON_MAX_FILE_READ_BYTES";
 /// Per-file read cap, mirroring `typescript/bounded_read.rs`
@@ -655,7 +660,7 @@ mod tests {
         assert_eq!(
             python_workspace_file_limit_from_env(Err(std::env::VarError::NotPresent)),
             Ok(DEFAULT_PYTHON_MAX_WORKSPACE_FILES),
-            "default must align with the repo-mode 800-file working-set default"
+            "default admits a Django-sized workspace (#10441)"
         );
         assert_eq!(
             python_workspace_file_limit_from_env(Ok(" 1200 ".to_string())),

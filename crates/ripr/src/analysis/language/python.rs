@@ -50,12 +50,18 @@ use bounded_read::{
     PYTHON_MAX_WORKSPACE_FILES_ENV, PythonDiffWalkLimits, read_workspace_sources_capped,
     truncate_workspace_files,
 };
+use rayon::prelude::*;
 use rustpython_parser::ast::Expr;
 use std::{
     collections::{BTreeMap, BTreeSet},
     ops::RangeInclusive,
     path::{Path, PathBuf},
 };
+
+/// Workspace files whose facts are extracted per parallel batch before the
+/// batch is folded, bounding how many unfolded fact sets are alive at once.
+const FACT_EXTRACTION_BATCH_FILES: usize = 256;
+
 mod approx_band;
 mod arm_activation;
 mod bool_oracle;
@@ -845,51 +851,68 @@ impl PythonAdapter {
             .iter()
             .map(|changed| normalized_path(&changed.path))
             .collect();
-        for relative in &workspace_files {
-            let Some(source) = workspace_read.sources.get(relative) else {
-                continue;
-            };
-            let facts = extract_source_facts(relative, source);
-            debug_assert!(source_fact_snapshot_observation(&facts) > 0);
-            if let Some(limitation) = parse_budget_limitation(relative, &facts)? {
-                limitations.push(limitation);
-            }
-            // #6824: a syntax error in a changed file must surface as a
-            // named producer failure, never as a silent complete zero. An
-            // unchanged file's parse failure stays out of the diff-scoped
-            // limitation set (its context loss matches the Rust twin's
-            // unchanged-file behavior).
-            if changed_paths
-                .iter()
-                .any(|changed| changed == &normalized_path(relative))
-                && let Some(limitation) = source_fact_parse_error_limitation(relative, &facts)?
-            {
-                limitations.push(limitation);
-            }
-            docstring_ranges_by_file.insert(relative.clone(), facts.docstring_line_ranges.clone());
-            import_ranges_by_file.insert(relative.clone(), facts.import_line_ranges.clone());
-            if !facts.fixtures.is_empty() {
-                fixture_defs_by_file.insert(relative.clone(), facts.fixtures.clone());
-            }
-            helper_modules_by_file.insert(relative.clone(), facts.helper_module.clone());
-            // A conftest with implicit setup, or one that only partly parsed,
-            // may assert around every test below it.
-            if facts.conftest_implicit_setup
-                || (relative.file_name().and_then(|name| name.to_str()) == Some("conftest.py")
-                    && !facts.limitations.is_empty())
-            {
-                implicit_conftests.insert(relative.clone());
-            }
-            if facts.conftest_declares_fixture_or_hook
-                || (relative.file_name().and_then(|name| name.to_str()) == Some("conftest.py")
-                    && !facts.limitations.is_empty())
-            {
-                reach_conftests.insert(relative.clone());
-            }
-            if is_test_file(relative) {
-                all_tests.extend(facts.tests);
-            } else {
-                all_owners.extend(facts.owners);
+        // Fact extraction is per-file and pure, so each bounded batch runs on
+        // the rayon workers (#10441: most of a large workspace's run) and is
+        // then folded sequentially before the next starts. Indexed collection
+        // keeps workspace order, so the fold sees exactly the sequential
+        // order, and at most one batch of unfolded facts is held at a time.
+        let token = crate::analysis::cancellation::current_token();
+        for batch in workspace_files.chunks(FACT_EXTRACTION_BATCH_FILES) {
+            let extracted: Vec<(&PathBuf, _)> = batch
+                .par_iter()
+                .filter_map(|relative| {
+                    let source = workspace_read.sources.get(relative)?;
+                    Some((
+                        relative,
+                        crate::analysis::cancellation::with_optional_token(token.as_ref(), || {
+                            extract_source_facts(relative, source)
+                        }),
+                    ))
+                })
+                .collect();
+            for (relative, facts) in extracted {
+                debug_assert!(source_fact_snapshot_observation(&facts) > 0);
+                if let Some(limitation) = parse_budget_limitation(relative, &facts)? {
+                    limitations.push(limitation);
+                }
+                // #6824: a syntax error in a changed file must surface as a
+                // named producer failure, never as a silent complete zero. An
+                // unchanged file's parse failure stays out of the diff-scoped
+                // limitation set (its context loss matches the Rust twin's
+                // unchanged-file behavior).
+                if changed_paths
+                    .iter()
+                    .any(|changed| changed == &normalized_path(relative))
+                    && let Some(limitation) = source_fact_parse_error_limitation(relative, &facts)?
+                {
+                    limitations.push(limitation);
+                }
+                docstring_ranges_by_file
+                    .insert(relative.clone(), facts.docstring_line_ranges.clone());
+                import_ranges_by_file.insert(relative.clone(), facts.import_line_ranges.clone());
+                if !facts.fixtures.is_empty() {
+                    fixture_defs_by_file.insert(relative.clone(), facts.fixtures.clone());
+                }
+                helper_modules_by_file.insert(relative.clone(), facts.helper_module.clone());
+                // A conftest with implicit setup, or one that only partly parsed,
+                // may assert around every test below it.
+                if facts.conftest_implicit_setup
+                    || (relative.file_name().and_then(|name| name.to_str()) == Some("conftest.py")
+                        && !facts.limitations.is_empty())
+                {
+                    implicit_conftests.insert(relative.clone());
+                }
+                if facts.conftest_declares_fixture_or_hook
+                    || (relative.file_name().and_then(|name| name.to_str()) == Some("conftest.py")
+                        && !facts.limitations.is_empty())
+                {
+                    reach_conftests.insert(relative.clone());
+                }
+                if is_test_file(relative) {
+                    all_tests.extend(facts.tests);
+                } else {
+                    all_owners.extend(facts.owners);
+                }
             }
         }
         fixtures::attach_fixture_defs(&mut all_tests, &fixture_defs_by_file);
