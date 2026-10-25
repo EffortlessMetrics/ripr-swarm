@@ -758,6 +758,11 @@ scope = "out"
 reason = "Rust-only out-parameter oracle credit; not a python verdict example"
 
 [[spec]]
+id = "RIPR-SPEC-0353"
+scope = "out"
+reason = "Rust-only bool truth-table infection; not a python verdict example"
+
+[[spec]]
 id = "RIPR-SPEC-0356"
 scope = "out"
 reason = "Rust uncompiled-file test withholding is proved by crates/ripr/tests/outside_target_haystack.rs; no corpus case labels it yet"

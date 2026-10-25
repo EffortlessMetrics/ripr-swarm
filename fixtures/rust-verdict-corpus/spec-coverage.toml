@@ -970,6 +970,19 @@ id = "RIPR-SPEC-0351"
 scope = "out"
 reason = "Rust out-parameter oracle credit is proved by crates/ripr/tests/out_parameter_oracle.rs; no corpus case labels it yet"
 
+# Pure bool chain infection from literal truth-table rows
+[[spec]]
+id = "RIPR-SPEC-0353"
+scope = "in"
+
+[[spec.waived]]
+example = 2
+reason = "an abstain-when-rows-cannot-separate negative; pinned by crates/ripr/tests/bool_truth_table_infection.rs, and a corpus case would need an abstain-ideal row with no catching test"
+
+[[spec.waived]]
+example = 3
+reason = "an abstain-when-another-caller-exists negative; pinned by crates/ripr/tests/bool_truth_table_infection.rs"
+
 [[spec]]
 id = "RIPR-SPEC-0356"
 scope = "out"

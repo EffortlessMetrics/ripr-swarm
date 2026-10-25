@@ -3,77 +3,12 @@ mode: fast
 root: fixtures/python_dynamic_namespace_reload/input
 config: <cwd>/fixtures/python_dynamic_namespace_reload/input/ripr.toml
 
-Summary: 2 probe(s), 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Summary: 2 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 2 of 2 finding(s) unsuppressed
 
 Changed file(s) by language: python = 2
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
   Counts: 2 changed file(s), 4 changed line(s), 2 candidate line(s), 2 probe(s), 2 finding(s)
-
-WARNING shop/route.py:7
-  id: probe:shop_route.py:python_preview:6a58f374
-
-Changed
-  after:      response.status_code = 400
-
-Probe
-  family: field_construction
-  delta:  value
-  owner:  python:shop/route.py::checkout
-  canonical gap: gap:python:shop/route.py:checkout:field_value:field_construction:response.status_code=400
-
-Language
-  language: python
-  status: preview
-  owner kind: function
-
-Static exposure
-  weakly_exposed (warning, confidence 0.40)
-
-Evidence
-  - reach yes: 1 related Python test(s) found for owner `checkout`
-  - infection yes: Changed Python field or attribute construction can alter object state: `response.status_code = 400`
-  - propagation weak: Changed Python field construction can propagate through returned or retained object state; exact runtime object flow is not resolved
-  - observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)
-  - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
-  - local flow reaches constructed field: response.status_code = 400 (line 7)
-  - related test tests/test_route.py:7 test_checkout uses strong exact value oracle: assert response.status_code == 422; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-
-Weakness
-  - A strong Python oracle reaches `checkout`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output
-  - missing discriminator response.status_code == 400: changed Python field/object value at line 7 lacks a concrete repair discriminator
-
-Python repair card (preview/advisory)
-  card version: python_repair_card.v1
-  canonical gap: gap:python:shop/route.py:checkout:field_value:field_construction:response.status_code=400
-  authority: preview_advisory_only (python/preview)
-  repair action: strengthen_existing_test
-  changed owner: checkout
-  changed behavior: field_value changed at shop/route.py:7: `response.status_code = 400`
-  current test evidence: tests/test_route.py:7 test_checkout currently has oracle_strength=strong, oracle_kind=exact_value: assert response.status_code == 422
-  missing discriminator: response.status_code == 400
-  recommended test shape: Strengthen the existing pytest response status-code assertion for `response.status_code == 400`.
-  suggested assertion: Assert the response field directly: `assert response.status_code == 400`.
-  suggested file: tests/test_route.py
-  suggested test: test_checkout
-  pytest node: tests/test_route.py::test_checkout
-  verify: python -m pytest tests/test_route.py::test_checkout (high)
-  receipt: unavailable_until_python_gap_ledger
-  receipt guidance: Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command.
-  stop conditions:
-    - Stop if imports, fixtures, or test setup cannot call the changed owner.
-    - Stop if the expected value for the missing discriminator is ambiguous.
-    - Stop if adding the test appears to require a production-code edit.
-  limits:
-    - Syntax-first Python preview evidence only.
-    - No source edits, generated tests, mutation execution, provider calls, or gate authority.
-    - Verify success alone is not a gap-closure receipt.
-
-Next step
-  Python preview: strengthen the existing related test with a field/object assertion for missing discriminator `response.status_code == 400`
-Drill in:
-  ripr explain --root <cwd>/fixtures/python_dynamic_namespace_reload/input --diff <cwd>/fixtures/python_dynamic_namespace_reload/diff.patch --mode fast probe:shop_route.py:python_preview:6a58f374
-  ripr context --root <cwd>/fixtures/python_dynamic_namespace_reload/input --diff <cwd>/fixtures/python_dynamic_namespace_reload/diff.patch --mode fast --at probe:shop_route.py:python_preview:6a58f374
 
 WARNING shop/pricing.py:5
   id: probe:shop_pricing.py:python_preview:b9038d35
@@ -116,6 +51,47 @@ Repair placement
 Drill in:
   ripr explain --root <cwd>/fixtures/python_dynamic_namespace_reload/input --diff <cwd>/fixtures/python_dynamic_namespace_reload/diff.patch --mode fast probe:shop_pricing.py:python_preview:b9038d35
   ripr context --root <cwd>/fixtures/python_dynamic_namespace_reload/input --diff <cwd>/fixtures/python_dynamic_namespace_reload/diff.patch --mode fast --at probe:shop_pricing.py:python_preview:b9038d35
+
+NOTE shop/route.py:7
+  id: probe:shop_route.py:python_preview:6a58f374
+
+Changed
+  after:      response.status_code = 400
+
+Probe
+  family: field_construction
+  delta:  value
+  owner:  python:shop/route.py::checkout
+
+Language
+  language: python
+  status: preview
+  owner kind: function
+
+Static exposure
+  static_unknown (note, confidence 0.20)
+
+Evidence
+  - reach yes: 1 related Python test(s) found for owner `checkout`
+  - infection unknown: Static limit `mocked_module` prevents a safe Python infection claim
+  - propagation unknown: Static limit `mocked_module` prevents a safe Python propagation claim
+  - observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)
+  - discriminator unknown: Static limit `mocked_module` prevents a safe Python discriminator claim
+  - related test tests/test_route.py:7 test_checkout uses strong exact value oracle: assert response.status_code == 422
+
+Weakness
+  - Static limit `mocked_module`: a related Python test reloads the module or replaces its names (`response`) by assignment, `setattr`, `__setattr__` or `delattr`; the preview adapter does not resolve which object an imported name reads afterwards
+
+Stop reasons:
+  - static_probe_unknown — ripr could not model this change well enough to classify it
+    Next: Add a test that calls the changed code and asserts an exact result.
+
+Static limitation
+  mocked_module — A mocked module replaces the real implementation, so a passing test may not observe the actual changed behavior.
+  Next: Add a test that runs the real implementation, with no mock replacing the changed module, and assert on its result.
+Drill in:
+  ripr explain --root <cwd>/fixtures/python_dynamic_namespace_reload/input --diff <cwd>/fixtures/python_dynamic_namespace_reload/diff.patch --mode fast probe:shop_route.py:python_preview:6a58f374
+  ripr context --root <cwd>/fixtures/python_dynamic_namespace_reload/input --diff <cwd>/fixtures/python_dynamic_namespace_reload/diff.patch --mode fast --at probe:shop_route.py:python_preview:6a58f374
 
 
 Note: 2 Python files analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.
