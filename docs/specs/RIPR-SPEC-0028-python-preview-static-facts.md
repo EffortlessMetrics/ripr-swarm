@@ -604,6 +604,16 @@ evidence cannot see the activating input either way: the oracle verdict stands
 and an `exposed` finding carries a `boundary_activation_unresolved` evidence
 line naming that limitation.
 
+For an adjacent `>`/`>=` or `<`/`<=` while-bound edit with an unchanged
+integer bound, a closed generator walk can resolve a rebound parameter. It
+accepts only an owner consisting of the loop, whose body is `yield name`
+followed by one unconditional `name -= 1` (descending) or `name += 1`
+(ascending). Every strong call must bind a readable integer. A near-side or
+equal input reaches the bound; a past-bound input does not (#9733).
+Step-two, conditional, early-exit, pre-loop rebinding, other statements and
+unreadable calls retain the existing unresolved boundary limitation. This is
+not general loop evaluation.
+
 Static-limit findings must fail closed. They keep any observed reachability and
 oracle facts, but their infection and propagation stages remain `unknown`, the
 finding class is `static_unknown`, a typed stop reason is emitted, and no

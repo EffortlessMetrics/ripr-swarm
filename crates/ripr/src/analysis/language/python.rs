@@ -67,6 +67,7 @@ mod deleted_lines;
 mod guard_activation;
 mod guard_credit;
 mod helper_inline;
+mod loop_walk;
 mod message_pin;
 mod module_value;
 mod wrapped_call;
@@ -1361,5 +1362,7 @@ mod row_miss_tests;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod loop_walk_tests;
 #[cfg(test)]
 mod verdict_corpus_tests;

@@ -198,6 +198,27 @@ pub(super) fn python_boundary_evidence(
         // through to the adjacent-boundary rules below and stay unproven.
         return None;
     }
+    // A literal argument normally cannot stand for a rebound parameter.
+    // The sole-yield, unit-step generator grammar is a closed exception.
+    let walk = operands.as_ref().and_then(|(left, right)| {
+        let walk = super::loop_walk::generator_walk(
+            owner_source?,
+            owner,
+            line_text,
+            old_line_text,
+            left,
+            right,
+        )?;
+        let (_, gaps) =
+            strong_owner_call_rows_with_gaps(owner, &constants, related_candidates, focus);
+        (!gaps
+            && !rows.is_empty()
+            && rows.iter().all(|row| {
+                resolve_operand(left, row, &constants)
+                    .is_some_and(|value| value.parse::<i128>().is_ok())
+            }))
+        .then_some(walk)
+    });
     if let (Some((left, right)), Some(source)) = (&operands, owner_source) {
         for operand in [left, right] {
             if owner
@@ -205,6 +226,7 @@ pub(super) fn python_boundary_evidence(
                 .iter()
                 .any(|parameter| parameter.name == *operand)
                 && name_rebound_in_owner(source, owner, operand)
+                && walk.is_none()
             {
                 // The owner rebinds the operand (a loop counter such as
                 // `start -= 1`), so the call argument does not stay the
@@ -297,9 +319,20 @@ pub(super) fn python_boundary_evidence(
                 .get(filter.iterable)
                 .cloned()
                 .unwrap_or_default(),
-            _ => resolve_operand(operand, row, &constants)
-                .into_iter()
-                .collect(),
+            _ => {
+                let mut values: Vec<_> = resolve_operand(operand, row, &constants)
+                    .into_iter()
+                    .collect();
+                if let Some(walk) = &walk
+                    && operand == walk.local
+                    && values
+                        .iter()
+                        .any(|value| value.parse::<i128>().is_ok_and(|start| walk.reaches(start)))
+                {
+                    values.push(walk.bound.clone());
+                }
+                values
+            }
         }
     };
     for row in &rows {
@@ -317,7 +350,11 @@ pub(super) fn python_boundary_evidence(
                 line: row.line,
                 text: format!(
                     "{} | {}; {}",
-                    row.text,
+                    if walk.is_some() {
+                        format!("{} (unit-step generator walk)", row.text)
+                    } else {
+                        row.text.clone()
+                    },
                     operand_provenance(&left, left_value, &constants),
                     operand_provenance(&right, right_value, &constants)
                 ),

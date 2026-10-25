@@ -3581,6 +3581,7 @@ id = "RIPR-SPEC-0028"
 name = "Python preview static facts"
 spec = "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/loop_walk_tests.rs",
   "crates/ripr/src/analysis/language/python/module_value_tests.rs::unreferenced_malformed_modules_do_not_erase_exact_credit",
   "crates/ripr/src/analysis/language/python/module_value_tests.rs::referenced_or_implicitly_loaded_malformed_modules_withhold_credit",
   "crates/ripr/src/analysis/language/python/module_value_tests.rs::generator_keyword_in_test_data_or_comments_preserves_credit",
@@ -3748,6 +3749,7 @@ fixtures = [
   "fixtures/python_mock_assert_called",
   "fixtures/python_broad_boolean_assertion",
   "fixtures/python_return_comparison_boundary",
+  "fixtures/python_while_counter_past_bound",
   "fixtures/python_return_value_shape",
   "fixtures/python_error_path_shape",
   "fixtures/python_field_assignment_shape",
@@ -3799,6 +3801,7 @@ fixtures = [
   "fixtures/python-real-repo-evals",
 ]
 code = [
+  "crates/ripr/src/analysis/language/python/loop_walk.rs",
   "xtask/src/fixture_contracts/upstream_python.rs",
   "crates/ripr/src/analysis/language/python.rs",
   "crates/ripr/src/analysis/language/python/oracles/unittest_list.rs",
