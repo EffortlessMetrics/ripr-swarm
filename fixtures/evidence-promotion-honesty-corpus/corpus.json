@@ -13541,6 +13541,48 @@
           "type": "must_not_report_clean"
         }
       ]
+    },
+    {
+      "id": "rust_const_expectation_self_computed",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_const_expectation_self_computed",
+      "vector": "module_const_expectation_computed_by_the_owner_cannot_credit_the_equality",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "rust_const_expectation_literal_control",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_const_expectation_literal_control",
+      "vector": "an_independent_literal_const_expectation_keeps_its_credit",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
     }
   ]
 }
