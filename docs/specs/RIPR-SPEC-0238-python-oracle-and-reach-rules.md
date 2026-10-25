@@ -878,7 +878,10 @@ mutant calibrates the rule; ripr reports only the static shape.
     unittest `assert*` method. The `else` and `finally` blocks
     are still read. A swallowed or dead assertion cannot notice a change, so
     it must not credit one (`py-trap-dead-branch`,
-    `py-trap-swallowed-assert`, #9691).
+    `py-trap-swallowed-assert`, #9691; the `py-unrun-*` cases add `if 0:`,
+    `if None:` and `while False:` dead arms, tuple, bare and
+    `builtins.AssertionError` handlers, and the live `else` arm, `else` and
+    `finally` blocks and `fail`-calling handler that stay credited).
 24. **A test the collector skips is activation-controlled.** A parametrize
     decorator over an empty literal table (`[]` or `()`) and an
     unconditional module-level `pytest.importorskip(...)`,
@@ -901,7 +904,11 @@ mutant calibrates the rule; ripr reports only the static shape.
     not evaluate whether any other module is installed, so `importorskip`
     of it, or with `minversion` or `reason`, still abstains
     (`py-trap-module-skipped`, `py-trap-empty-table`,
-    `py-trap-skipif-false`, `py-trap-module-loaded`, #9691).
+    `py-trap-skipif-false`, `py-trap-module-loaded`, #9691; the `py-unrun-*`
+    cases add a module `pytestmark` skip, a module-level `pytest.skip`, an
+    `importorskip` of a missing module and an empty tuple table, which
+    abstain, and `xfail(False, reason=...)` and
+    `unittest.skipUnless(True, ...)`, which stay active and credited).
 25. **A property check pins no value.** A single `==` in an `assert`
     statement is a weak relational check, as a tautology is (rule 1), when
     one side is a call and the other side is either a call that appears in
