@@ -827,8 +827,11 @@ mutant calibrates the rule; ripr reports only the static shape.
     receiver is `logging` or a module-level `name = logging.getLogger(...)`
     (a detached `logging.Logger(...)` or any other object abstains), the
     method is not `exception` (its traceback can hold the asserted text),
-    and the test never rebinds `caplog`. An assertion about unrelated text
-    keeps its verdict.
+    and the test never rebinds `caplog`. `caplog` must be pytest's own
+    fixture: the test requests it as a parameter and no `@pytest.fixture`
+    in its module or a `conftest.py` up its directory chain defines a
+    fixture of that name (including `@pytest.fixture(name="caplog")`); otherwise the reading abstains. An assertion about
+    unrelated text keeps its verdict.
     The same evaluation reads the captured records' formatted messages,
     which carry no record header: `"<text>" in caplog.messages` and
     `"<text>" in [r.message for r in caplog.records]` (or
@@ -1355,8 +1358,16 @@ and the test is `tests/test_subject.py`, which imports each owner from
   conjunct on a constant, all-weak conjuncts, an `or` chain and a `not`
   comparison scored as gaps),
   `py-pytest-shipping-threshold` and `py-unittest-fee-waiver-mixin`
-  (rule 16), `py-fixtures-report-file`, `py-unittest-transfer-notify` and
-  `py-unittest-deposit-add` (rule 17), `py-pytest-tax-self-computed`
+  (rule 16; the `py-offsets-*` cases add a `C - 1` and a `C + 1` operand
+  hit at the boundary value credited, a parametrize row at `threshold - 1`
+  credited, and inputs that miss the boundary value scored as gaps),
+  `py-fixtures-report-file`, `py-unittest-transfer-notify` and
+  `py-unittest-deposit-add` (rule 17; the `py-channels-*` cases add exact `capfd` and
+  local-after-owner `readouterr()` output, a file read back through the
+  written parameter, and an arithmetic-wrapped mock argument credited, and a
+  `capsys` read before the owner, stderr read as stdout, the other
+  parameter's file, `assert_called_with`, `assert_any_call`, an argument-free
+  or `ANY` mock assertion and an `abs(n)` rewrite scored as gaps), `py-pytest-tax-self-computed`
   (rule 18), and `py-hypothesis-passing-threshold` and
   `py-hypothesis-label-no-crash` (rule 19).
 - Planned: one `classify_change_with_old` test per acceptance example,

@@ -18,13 +18,6 @@
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
 
-# Most abstained rows whose tests do catch the change (missed credit). A
-# regression fails `verdict-corpus check`; an improvement passes with a note
-# to lower this number (not a failure, so concurrent fixes do not collide).
-# Raising it is a reviewed edit with a reason.
-# 23 -> 25 (#9416): perl-idiom-closure-counter and one more abstained row now catch the rewrite but ripr abstains (limited) rather than reporting a false gap.
-# 25 -> 27 (part 4/8): perl-hostile-autoload-field and perl-hostile-glob-double. Their tests catch the rewrite, but the changed sub is reached only through AUTOLOAD or a glob-assigned closure, so ripr abstains (limited) on purpose rather than credit a test it cannot attribute statically.
-missed_credit_ceiling = 27
 
 # Operator grid and false-credit traps (verdict_corpus_grid.rs). `cell_floor`
 # is the count of covered operator-by-truth cells (7 operators x credited,
@@ -721,17 +714,5 @@ reason = "Rust analyzer transfer rule over Rust syntax; a Perl packet case canno
 # Rust unsafe boundary probes
 [[spec]]
 id = "RIPR-SPEC-0168"
-scope = "out"
-reason = "Rust/Cargo analyzer behavior; a Perl case cannot label it"
-
-# Cargo path-dependency diff scope
-[[spec]]
-id = "RIPR-SPEC-0171"
-scope = "out"
-reason = "Rust/Cargo analyzer behavior; a Perl case cannot label it"
-
-# Cargo cross-crate dependency edges
-[[spec]]
-id = "RIPR-SPEC-0172"
 scope = "out"
 reason = "Rust/Cargo analyzer behavior; a Perl case cannot label it"

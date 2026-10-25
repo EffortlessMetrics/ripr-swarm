@@ -600,3 +600,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_related_test_name_similarity (27)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless python_related_test_name_similarity --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

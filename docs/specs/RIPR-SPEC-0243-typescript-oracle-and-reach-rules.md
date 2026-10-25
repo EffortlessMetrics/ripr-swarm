@@ -117,7 +117,7 @@ contradicting limitation. The rest is either correct but unstated
 ## Behavior
 
 Paths are relative to `crates/ripr/src/analysis/language/typescript/`.
-Paragraphs headed Rule 1 to Rule 19 mark behavior changes. Rules 1 to 8
+Paragraphs headed Rule 1 to Rule 22 mark behavior changes. Rules 1 to 8
 are numbered in reading order; rules 9 to 11 were added later. Every other statement below is current behavior and is
 normative.
 
@@ -1092,6 +1092,32 @@ decorators, which can never be `exposed` and so cannot clear a
 discriminated row. A narrow kind with these conditions is reversible
 (deleting the relation restores the old reading) and fails closed on every
 shape it does not match, which the actionability rule requires.
+
+**Rule 22. A member of a literal `require()` is a named import (#9188).**
+`const f = require("<module>").f` (also `var`, a renamed local, and the
+string-key spelling `require("<module>")["f"]`) picks one export out of a
+CommonJS module, so it records the import `const { f } = require("<module>")`
+records: source `<module>`, imported `f`, local `f` (or the rename). A call
+through the local then relates by rules 5 and 7 as the destructured form does.
+Only a plain member of a call to `require` with a string-literal argument is
+read: a call on the member (`require("./lib").make()`), an optional chain, a
+computed key that is not a string literal, a deeper member (`.a.b`), the
+`.default` member (a native CommonJS module has none) and a dynamic
+`require` argument record nothing and keep the old reading. The identity gates
+of rule 5 still apply (the specifier must resolve to the owner module, the
+imported name must be the owner's name, a shadow or a mock blocks it), and a
+member read off a function export (rule 19) is a property of the function, not
+the owner.
+
+Two bindings this rule and the destructured form share are refused (#10401).
+A test file that binds its own `require` at top level (`const require = ...`,
+`function require() {}`, also a block-level function, which hoists in sloppy
+CommonJS) is not calling Node's loader, so no `require()` call in it records an
+import; `createRequire(import.meta.url)` keeps its reading wherever its import
+sits. A
+`let` or `var` binding that the file assigns to again
+(`let s = require("./lib").s; s = other;`) may no longer hold the export, so it
+records no import. A `const` binding cannot be reassigned and is unchanged.
 
 **Rule 8. A mocked dependency on the changed line is `static_unknown`.**
 When the changed line calls a symbol imported (`imported_symbol_call`)
