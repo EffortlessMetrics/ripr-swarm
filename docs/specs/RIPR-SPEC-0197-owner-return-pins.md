@@ -2403,43 +2403,43 @@ assertions. This repair shares the existing callback without that larger migrati
 
 ## Acceptance Examples
 
-- Given a trait default `try_get_int` whose changed tail is
-  `Ok(sign_extend(self.try_get_uint(nbytes)?, nbytes))`, an
-  `impl Buf for &[u8]`, and a test importing `Buf` that binds
-  `let mut a = &[0xff, 0xff, 0xff][..];` and asserts
-  `assert_eq!(a.try_get_int(3), Ok(-1))`, when `ripr check` runs, then the
-  finding reads `exposed`.
-- Given the same owner and a test asserting only
-  `assert_eq!(short.try_get_int(4), Err(TryGetError { .. }))`, the finding
-  stays below `exposed`.
-- Given `impl Codec { fn decode(input: u32) -> u32 }` and a free
-  `fn decode`, a test asserting `assert_eq!(decode(8), 9)` does not confirm
-  a change to `Codec::decode`.
-- Given `fn check(x: u32) -> Result<u32, String> { Ok(x + 0) }` changed
-  from `Ok(x)` and a test asserting `assert!(matches!(check(5), Ok(5)))`,
-  the finding reads `exposed`; `Ok(_)`, `Ok(1..=5)`, `Ok(5) | Ok(6)` and a
-  guarded pattern stay below `exposed`.
-- Given `fn lookup(k: u32) -> Option<u32>` whose changed early
-  `return Some(1 + 2);` sits beside a `None` tail and a test asserting
-  `assert!(matches!(lookup(1), Some(x @ 3)))`, the finding reads `exposed`;
-  `assert_eq!(lookup(2), None)` alone stays below `exposed`.
-- Given `impl Gauge { fn reading() -> u32 }` in `meter` and a free
-  `fn reading` in `spare`, a `panel` integration test with
-  `use meter::Gauge;` asserting `assert_eq!(Gauge::reading(), 42)` confirms
-  a change to `Gauge::reading`; the same test through `use meter::Gauge as
-  Knob;`, `use meter::*;` or `use spare::Gauge;` does not (#6617).
-- Given `fn both_zero(x: i32, y: i32) -> bool { x == 0 && 0 == y }`
-  changed from `y == 0` and a test asserting only
-  `assert_eq!(both_zero(1, 0), false)` and `assert_eq!(both_zero(2, 0), false)`,
-  the finding stays below `exposed`: no pinned call evaluates `0 == y`.
-- Given `fn in_band(level: u8, open: bool) -> bool { open && 3 <= level }`
-  changed from `level >= 3` and a test asserting
-  `assert_eq!(in_band(level, open), want)` over the table
-  `[(3, true, true), (2, true, false), (5, false, false)]`, the finding
-  reads `exposed`: the `(3, true)` row evaluates both operands.
-- Given a trait default `next_word` and `impl Reader for Fixed` overriding
-  it, a test asserting `assert_eq!(reader.next_word(), 7)` on a `Fixed`
-  receiver does not confirm a change to the default.
+1. Given a trait default `try_get_int` whose changed tail is
+   `Ok(sign_extend(self.try_get_uint(nbytes)?, nbytes))`, an
+   `impl Buf for &[u8]`, and a test importing `Buf` that binds
+   `let mut a = &[0xff, 0xff, 0xff][..];` and asserts
+   `assert_eq!(a.try_get_int(3), Ok(-1))`, when `ripr check` runs, then the
+   finding reads `exposed`.
+2. Given the same owner and a test asserting only
+   `assert_eq!(short.try_get_int(4), Err(TryGetError { .. }))`, the finding
+   stays below `exposed`.
+3. Given `impl Codec { fn decode(input: u32) -> u32 }` and a free
+   `fn decode`, a test asserting `assert_eq!(decode(8), 9)` does not confirm
+   a change to `Codec::decode`.
+4. Given `fn check(x: u32) -> Result<u32, String> { Ok(x + 0) }` changed
+   from `Ok(x)` and a test asserting `assert!(matches!(check(5), Ok(5)))`,
+   the finding reads `exposed`; `Ok(_)`, `Ok(1..=5)`, `Ok(5) | Ok(6)` and a
+   guarded pattern stay below `exposed`.
+5. Given `fn lookup(k: u32) -> Option<u32>` whose changed early
+   `return Some(1 + 2);` sits beside a `None` tail and a test asserting
+   `assert!(matches!(lookup(1), Some(x @ 3)))`, the finding reads `exposed`;
+   `assert_eq!(lookup(2), None)` alone stays below `exposed`.
+6. Given `impl Gauge { fn reading() -> u32 }` in `meter` and a free
+   `fn reading` in `spare`, a `panel` integration test with
+   `use meter::Gauge;` asserting `assert_eq!(Gauge::reading(), 42)` confirms
+   a change to `Gauge::reading`; the same test through `use meter::Gauge as
+   Knob;`, `use meter::*;` or `use spare::Gauge;` does not (#6617).
+7. Given `fn both_zero(x: i32, y: i32) -> bool { x == 0 && 0 == y }`
+   changed from `y == 0` and a test asserting only
+   `assert_eq!(both_zero(1, 0), false)` and `assert_eq!(both_zero(2, 0), false)`,
+   the finding stays below `exposed`: no pinned call evaluates `0 == y`.
+8. Given `fn in_band(level: u8, open: bool) -> bool { open && 3 <= level }`
+   changed from `level >= 3` and a test asserting
+   `assert_eq!(in_band(level, open), want)` over the table
+   `[(3, true, true), (2, true, false), (5, false, false)]`, the finding
+   reads `exposed`: the `(3, true)` row evaluates both operands.
+9. Given a trait default `next_word` and `impl Reader for Fixed` overriding
+   it, a test asserting `assert_eq!(reader.next_word(), 7)` on a `Fixed`
+   receiver does not confirm a change to the default.
 
 ## Test Mapping
 
