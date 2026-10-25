@@ -1104,11 +1104,15 @@ pub(super) fn library_module_path_is_bound(
 /// the entry by [`library_module_path_is_bound`], the test file by an
 /// unconditional, un-remapped chain whose only `cfg` is a bare
 /// `#[cfg(test)]` on the test module's own out-of-line declaration, passing
-/// through no inline module. Fails closed (`false`) on anything else: a
-/// `#[path]` anywhere in the package, a file outside the root package's
-/// library, an inline module, glob import, `cfg`-gated `use` or item-position
-/// macro in the test file, or a path that goes through `self`/`super`/`crate`
-/// again.
+/// through no inline module. Inside the test file, each `use` item that spells
+/// the import is resolved from its own position: the inline modules around it
+/// (`#[cfg(test)] mod tests { use super::entry; }` beside the entry, #10279)
+/// extend the file's module before `self`/`super` apply, and every such item
+/// must resolve to the entry's module. Fails closed (`false`) on anything
+/// else: a `#[path]` anywhere in the package, a file outside the root
+/// package's library, a function-local spelling, glob import, `cfg`-gated
+/// `use` or item-position macro in the test file, or a path that goes through
+/// `self`/`super`/`crate` again.
 pub(super) fn unit_test_relative_import_names_entry(
     index: &RustIndex,
     test_file: &Path,
@@ -1160,15 +1164,9 @@ pub(super) fn unit_test_relative_import_names_entry(
     ) else {
         return false;
     };
-    if ups > test_module.len() {
-        return false;
-    }
-    let resolved: Vec<String> = test_module[..test_module.len() - ups]
+    if rest
         .iter()
-        .chain(rest)
-        .cloned()
-        .collect();
-    if resolved != entry_module
+        .any(|segment| matches!(segment.as_str(), "self" | "super" | "crate"))
         || !library_module_path_is_bound(index, entry, &entry_module)
         || !library_declaration_chain_reaches_file(index, test_file, true)
     {
@@ -1181,22 +1179,67 @@ pub(super) fn unit_test_relative_import_names_entry(
         return false;
     };
     let tree = parse.tree();
-    // Scope: an inline module in the test file would move `super`/`self`, a
-    // glob or a `cfg`-gated `use` may bind or unbind the name, and a macro may
-    // splice items this scan does not read.
+    // Scope: a glob or a `cfg`-gated `use` may bind or unbind the name, and a
+    // macro may splice items this scan does not read.
     if source_may_splice_items(&facts.source, true)
         || super::owner_pin::has_cfg_attr(&tree)
         || super::reveal::flattened_use_paths(&facts.source)
             .iter()
             .any(|import| import.path.ends_with('*'))
+        || tree
+            .syntax()
+            .descendants()
+            .filter_map(ast::Use::cast)
+            .any(|use_item| super::owner_pin::has_cfg_attr(&use_item))
     {
         return false;
     }
-    !tree.syntax().descendants().any(|node| {
-        ast::Module::cast(node.clone()).is_some_and(|module| module.item_list().is_some())
-            || ast::Use::cast(node)
-                .is_some_and(|use_item| super::owner_pin::has_cfg_attr(&use_item))
-    })
+    // Every `use` item that spells this import, resolved from where it sits:
+    // the inline modules enclosing it extend the file's module (`super` in
+    // `mod tests { .. }` is the file's own module), so `self`/`super` apply
+    // to that scope. An item inside a function or block, or one whose scope
+    // does not resolve to the entry's module, refuses; none found refuses.
+    let mut spellings = 0usize;
+    for use_item in tree.syntax().descendants().filter_map(ast::Use::cast) {
+        // The use tree alone: the item's own attributes are not path text.
+        let Some(use_tree) = use_item.use_tree() else {
+            return false;
+        };
+        let spells_import =
+            super::reveal::flattened_use_paths(&format!("use {};", use_tree.syntax().text()))
+                .iter()
+                .any(|flat| flat.alias.is_none() && flat.path == import_path);
+        if !spells_import {
+            continue;
+        }
+        spellings += 1;
+        let mut scope = test_module.clone();
+        let mut inline: Vec<String> = Vec::new();
+        for ancestor in use_item.syntax().ancestors().skip(1) {
+            if ast::BlockExpr::can_cast(ancestor.kind()) || ast::Fn::can_cast(ancestor.kind()) {
+                return false;
+            }
+            if let Some(module) = ast::Module::cast(ancestor) {
+                let Some(name) = ast::HasName::name(&module) else {
+                    return false;
+                };
+                inline.push(name.text().trim_start_matches("r#").to_string());
+            }
+        }
+        scope.extend(inline.into_iter().rev());
+        if ups > scope.len() {
+            return false;
+        }
+        let resolved: Vec<String> = scope[..scope.len() - ups]
+            .iter()
+            .chain(rest)
+            .cloned()
+            .collect();
+        if resolved != entry_module {
+            return false;
+        }
+    }
+    spellings > 0
 }
 
 /// Walk the declaration chain from `src/lib.rs`: each file-module segment of

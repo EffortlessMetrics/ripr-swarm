@@ -11796,6 +11796,8 @@ tests = [
   "crates/ripr/tests/crate_qualified_entry_reach.rs::a_relative_import_that_does_not_name_the_entrys_module_stays_refused",
   "crates/ripr/tests/crate_qualified_entry_reach.rs::nearer_bindings_and_scope_changes_keep_a_relative_import_refused",
   "crates/ripr/tests/crate_qualified_entry_reach.rs::conditional_remapped_and_duplicate_chains_keep_a_relative_import_refused",
+  "crates/ripr/tests/crate_qualified_entry_reach.rs::an_in_file_test_module_import_resolves_from_its_own_scope",
+  "crates/ripr/tests/crate_qualified_entry_reach.rs::an_in_file_relative_import_of_another_scope_stays_refused",
   "crates/ripr/src/analysis/facts/build.rs::tests::root_library_name_reads_lib_name_then_package_and_refuses_moved_roots",
 ]
 fixtures = [
@@ -11821,6 +11823,8 @@ fixtures = [
   "fixtures/module_reach_super_import_path_remap",
   "fixtures/module_reach_super_import_nearer_shadow",
   "fixtures/module_reach_super_import_wrong_module",
+  "fixtures/module_reach_super_import_in_file_tests",
+  "fixtures/module_reach_super_import_in_file_wrong_module",
   "fixtures/one_hop_field_projection",
   "fixtures/one_hop_field_projection_wrong_sink",
   "fixtures/one_hop_field_projection_discarded",
