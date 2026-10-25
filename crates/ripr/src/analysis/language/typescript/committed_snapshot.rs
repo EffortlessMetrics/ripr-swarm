@@ -430,11 +430,74 @@ fn preset_may_name_a_file(text: &str) -> bool {
             return true;
         };
         let name = name.split(['"', '\'']).next().unwrap_or_default();
-        name.starts_with(['.', '/'])
-            || [".js", ".cjs", ".mjs", ".json", ".ts"]
-                .iter()
-                .any(|suffix| name.ends_with(suffix))
+        !is_known_non_relocating_preset(name)
     })
+}
+
+/// `true` for the `ts-jest` presets, which set `transform` and `testMatch`
+/// and never `rootDir`, `roots` or `snapshotResolver`. Any other preset is a
+/// package or file Jest merges into the project, and this walk never reads
+/// it, so it can relocate snapshots (#10139).
+fn is_known_non_relocating_preset(name: &str) -> bool {
+    !name.contains("..")
+        && (name == "ts-jest"
+            || name
+                .strip_prefix("ts-jest/presets/")
+                .is_some_and(|rest| !rest.is_empty() && !rest.contains(['/', '.'])))
+}
+
+/// `text` with every comment replaced by spaces, newlines kept, so offsets
+/// into the result are offsets into `text`. `None` for an unterminated
+/// string or block comment.
+fn blank_comments(text: &str) -> Option<String> {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' | '\'' | '`' => {
+                out.push(ch);
+                loop {
+                    let inner = chars.next()?;
+                    out.push(inner);
+                    if inner == '\\' {
+                        out.push(chars.next()?);
+                    } else if inner == ch {
+                        break;
+                    }
+                }
+            }
+            '/' if chars.peek() == Some(&'/') => {
+                out.push(' ');
+                while let Some(next) = chars.peek().copied() {
+                    if next == '\n' {
+                        break;
+                    }
+                    out.push(' ');
+                    chars.next();
+                }
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                out.push(' ');
+                chars.next();
+                out.push(' ');
+                let mut closed = false;
+                while let Some(next) = chars.next() {
+                    if next == '*' && chars.peek() == Some(&'/') {
+                        chars.next();
+                        out.push_str("  ");
+                        closed = true;
+                        break;
+                    }
+                    out.push(if next == '\n' { '\n' } else { ' ' });
+                }
+                if !closed {
+                    return None;
+                }
+            }
+            _ => out.push(ch),
+        }
+    }
+    Some(out)
 }
 
 /// `text` with its one `projects: [ { ... }, { ... } ]` array removed, when
@@ -445,7 +508,9 @@ fn preset_may_name_a_file(text: &str) -> bool {
 /// spelling (a path or glob entry, a computed key, a member assignment, a
 /// second `projects`), so those keep delegating. A project's
 /// `snapshotResolver` is caught by `SNAPSHOT_OVERRIDES` before this runs.
-fn without_plain_inline_projects(text: &str) -> Option<String> {
+fn without_plain_inline_projects(raw: &str) -> Option<String> {
+    let blanked = blank_comments(raw)?;
+    let text = blanked.as_str();
     let mut found = text.match_indices("projects");
     let (index, matched) = found.next()?;
     if found.next().is_some() {
@@ -459,7 +524,10 @@ fn without_plain_inline_projects(text: &str) -> Option<String> {
     if preceded_by_ident {
         return None;
     }
-    let after_key = skip_trivia(text.get(index + matched.len()..)?);
+    // `"projects":` and `'projects':` are the same key as `projects:`.
+    let after_name = text.get(index + matched.len()..)?;
+    let after_name = after_name.strip_prefix(['"', '\'']).unwrap_or(after_name);
+    let after_key = skip_trivia(after_name);
     let after_colon = skip_trivia(after_key.strip_prefix(':')?);
     let array = after_colon.strip_prefix('[')?;
     let mut depth = 1usize;
@@ -528,7 +596,9 @@ fn without_plain_inline_projects(text: &str) -> Option<String> {
         return None;
     }
     let tail_start = text.len() - after_colon.len() + 1 + end + 1;
-    Some(format!("{}{}", text.get(..index)?, text.get(tail_start..)?))
+    let head = text.get(..index)?;
+    let head = head.strip_suffix(['"', '\'']).unwrap_or(head);
+    Some(format!("{head}{}", text.get(tail_start..)?))
 }
 
 /// `true` when a Jest or Vitest config names another config this walk does

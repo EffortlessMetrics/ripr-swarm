@@ -104,7 +104,9 @@ runner's entry for it can be named and is committed:
   `config.projects = ...`), since those keys delegate to config files this
   walk does not read (a Jest `projects: [...]` whose elements are all inline
   object literals with no `rootDir`, `roots`, `root`, `workspace` or
-  `projects` key delegates to nothing and is read, #10139), no `package.json` passes a config, project list or root
+  `projects` key and no `preset` other than a `ts-jest` preset delegates to
+  nothing and is read, whether the key is bare or quoted and wherever a
+  comment mentions the word, #10139), no `package.json` passes a config, project list or root
   by path (a script flag `--config`, `--config=`, `-c`, `-cx`, `--projects`,
   `--rootDir`, `--root`, `-r`, `--dir` or `--workspace`, or a `"projects"` or
   `"rootDir"` key), and each such file reads; a `<stem>.config.<ext>` whose
@@ -334,8 +336,10 @@ RIPR-SPEC-0243 ladder, including the observation guard.
    `vitest.config.ts` with `workspace`, `root` or `config.test.root = ...`:
    medium. A `jest.config.js` whose `projects` holds only inline objects
    (`projects: [{ displayName: "unit", preset: "ts-jest" }]`): strong; the
-   same array with a path, glob, identifier or spread element, or a project
-   setting `rootDir` or `roots`: medium. A `const root = process.cwd()` declaration, a Jest `roots` or
+   same array with a path, glob, identifier or spread element, a project
+   setting `rootDir` or `roots`, or a package preset
+   (`preset: "review-snapshot-preset"`, which Jest merges from a file this
+   walk never reads): medium. A `const root = process.cwd()` declaration, a Jest `roots` or
    `rootDir` option: strong. A package whose `.git` file is a submodule
    pointer (`gitdir: ../../.git/modules/app`) under a superproject whose
    `jest.config.js` sets a `snapshotResolver`: medium; the same package with a

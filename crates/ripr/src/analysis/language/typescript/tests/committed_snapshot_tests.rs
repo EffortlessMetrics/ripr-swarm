@@ -1731,6 +1731,42 @@ fn plain_inline_projects_keep_the_credit_and_every_other_spelling_refuses() -> R
             OracleStrength::Strong,
         ),
         (
+            "module.exports = { projects: [{ preset: \"ts-jest/presets/js-with-ts\" }] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { projects: [{ preset: \"review-snapshot-preset\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ preset: \"@scope/jest-preset\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ preset: \"ts-jest/../evil\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { \"projects\": [{ displayName: \"unit\" }] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { 'projects': [{ displayName: 'unit' }] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "// unit projects\nmodule.exports = { projects: [{ displayName: \"unit\" }] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { \"projects\": [\"<rootDir>/pkg\"] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "/* projects: [] */ module.exports = { projects: [\"<rootDir>/pkg\"] };",
+            OracleStrength::Medium,
+        ),
+        (
             "module.exports = { projects: [{ displayName: \"a\" }] }; // trailing",
             OracleStrength::Strong,
         ),
