@@ -540,3 +540,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_api_json_field_repair_gap (25)
+
+Reason:
+RIPR-SPEC-0238: the fixture's test now builds its client over the route's own app so the route relation stays oracle-eligible; only the related test's line number moved
+
+Command:
+`cargo xtask goldens bless python_api_json_field_repair_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
