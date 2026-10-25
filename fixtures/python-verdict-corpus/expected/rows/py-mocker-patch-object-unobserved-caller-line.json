@@ -1,0 +1,22 @@
+{
+  "case_id": "py-mocker-patch-object-unobserved-caller-line",
+  "subject_id": "authored-py-pytest-imports",
+  "origin": "authored",
+  "anchor": "shop/order.py:10",
+  "behavior_family": "output_value",
+  "test_shape": "pytest_mocker_patch_object_unread_local",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "static_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

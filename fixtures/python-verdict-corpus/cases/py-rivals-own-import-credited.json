@@ -1,0 +1,43 @@
+{
+  "case_id": "py-rivals-own-import-credited",
+  "subject_id": "authored-py-pytest-imports",
+  "diff": "cases/py-rivals-own-import-credited.diff",
+  "anchor": {
+    "file": "shop/pricing.py",
+    "line": 6
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "output_value",
+  "test_shape": "pytest_own_module_import_exact_value",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, pytest-mock 3.17.0, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return cents - tax",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_pricing.py::test_subtotal_adds_tax",
+        "equivalence_review": "not equivalent: tax is subtracted"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Control: the test imports subtotal from the module that defines it, so the edit fails its exact assertion.",
+  "labeling_observation": {
+    "ripr_commit": "b6491843",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [],
+    "excerpt_parity": "matched"
+  }
+}
