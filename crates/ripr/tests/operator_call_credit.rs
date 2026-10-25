@@ -713,6 +713,72 @@ fn a_credit_no_assertion_confirms_is_withheld_not_a_gap() -> Result<(), String> 
         [ExposureClass::StaticUnknown]
     );
 
+    // A second test that only exercises the operator is no more confirming.
+    let two_operator_tests = Case {
+        label: "two_operator_tests",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod more {
+    use super::*;
+
+    #[test]
+    fn second_operator_use() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&two_operator_tests)?,
+        [ExposureClass::StaticUnknown]
+    );
+
+    // A test that names the method decided reach itself, so the finding is
+    // judged by its own evidence, not withheld as syntax-only.
+    let one_named_call = Case {
+        label: "one_named_call",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod named {
+    use super::*;
+
+    #[test]
+    fn named_call() {
+        let sum = Money(1).add(Money(1));
+        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    let got = classes(&one_named_call)?;
+    assert!(
+        !got.contains(&ExposureClass::StaticUnknown),
+        "a named call is not syntax-only reach: {got:?}"
+    );
+
+    // A weakness with another cause is a real gap: the test pins the sum but
+    // never drives the branch the changed line sits in.
+    let branch_not_driven = Case {
+        label: "branch_not_driven",
+        signature: "type Output = Money;\n    fn add(self, other: Money) -> Money",
+        old_line: "        if self.0 > 100 { Money(self.0 + other.0) } else { Money(0) }",
+        new_line: "        if self.0 > 100 { Money(other.0 + self.0) } else { Money(0) }",
+        test_body: "assert_eq!(Money(2) + Money(3), Money(0));",
+        ..ADD
+    };
+    let got = classes(&branch_not_driven)?;
+    assert!(
+        !got.contains(&ExposureClass::StaticUnknown),
+        "an undriven branch is a gap, not an unconfirmed credit: {got:?}"
+    );
+
     // The same impl is a gap when the test never exercises the operator.
     let unexercised = Case {
         label: "self_constructor_unexercised",

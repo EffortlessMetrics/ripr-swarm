@@ -131,9 +131,12 @@ pub(in crate::analysis) fn withhold_implicit_call_gap(
     // reach that syntax alone established (operator crediting, #9567) and
     // whose observation no assertion confirmed: relating the test says the
     // owner runs, not that an assertion would notice it change, so the gap
-    // stays withheld instead of becoming a "add a test" signal (#9567).
+    // stays withheld instead of becoming a "add a test" signal (#9567). A
+    // weakness with another cause (the test never drives the changed branch)
+    // is a real gap and keeps its class.
     if finding.ripr.reach.state != StageState::Weak
         && !(matches!(kind, ImplicitCall::Syntax(_))
+            && observation_unconfirmed(finding)
             && reached_only_through_syntax(finding, owner, index))
     {
         return false;
@@ -175,6 +178,14 @@ pub(in crate::analysis) fn withhold_implicit_call_gap(
     true
 }
 
+/// Whether the finding is weak because no assertion confirmed it observes the
+/// changed expression, not because of an earlier stage. The discriminate
+/// summary carries the token the oracle step writes for that case.
+fn observation_unconfirmed(finding: &Finding) -> bool {
+    let summary = &finding.ripr.reveal.discriminate.summary;
+    summary.contains("(observation_unverified)") || summary.contains("(oracle_confirmation_mixed)")
+}
+
 /// Whether every test related to the owner by a direct call reaches it only
 /// through syntax: none of them calls `.name(` on the owner's method, so the relation
 /// came from an operator, loop or scope exit the language runs. A finding with
@@ -197,7 +208,11 @@ fn reached_only_through_syntax(
         index
             .tests()
             .iter()
-            .find(|test| test.name == related.name && test.file == related.file)
+            .find(|test| {
+                test.name == related.name
+                    && test.file == related.file
+                    && test.start_line == related.line
+            })
             .is_some_and(|test| {
                 let code = crate::analysis::extract::mask_comments_and_strings(&test.body);
                 !calls_method_named(&code, &owner.name)
