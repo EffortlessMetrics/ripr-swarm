@@ -22,6 +22,7 @@ Linked issues:
 
 - #6488
 - #9619
+- #10386
 
 Linked PRs:
 
@@ -87,7 +88,15 @@ non-test function, or in a `macro_rules!` body, counts as another caller (the
 boundary in the changed expression or an unresolved boundary input keeps the
 existing reading; a related test that never names the owner and calls no other
 related test cannot call the owner and contributes neither a run nor its table
-rows (this skipping is shared with the #7970 short-circuit rule).
+rows (this skipping is shared with the #7970 short-circuit rule). The reading
+also declines, for the predicate and the `return_value` probe alike, when any
+indexed file rebinds `assert`, `assert_eq` or `assert_ne` (a `macro_rules!`
+definition, an import, or a glob or `#[macro_use]` that may bring one in): it
+takes `assert_eq!(owner(..), want)` as a comparison by the macro's name, and a
+rebound name may compare nothing (#10386). This is a workspace-wide condition,
+separate from rule 4's reading of the call sites. It is conservative: the
+scan also records any non-std macro call whose arguments mention those names
+(`proptest! { .. }`), so one such call anywhere withholds the reading.
 
 Anything else keeps its existing reading. The rule decides that the rows reach
 and separate the mutations and that the chain is the returned value; it grants
@@ -101,7 +110,7 @@ no oracle strength, which stays the reveal stage's judgment.
 - Negatives: a single row, a test pinning only `(true, true)` and `(false,
   false)`, a loop-fed argument (`for banned in [true, false]`) with a surviving mutant that must not read `exposed`, a table-driven test, an owner with another
   caller, a comparison operand and an owner body with a leading statement
-  each keep `infection_unknown`; rows in an `#[ignore]`d test, under `if false`, in an uncalled closure, or asserted through `r == r` or `|| true` are not counted and do not read `exposed`.
+  each keep `infection_unknown`; rows in an `#[ignore]`d test, under `if false`, in an uncalled closure, or asserted through `r == r` or `|| true` are not counted and do not read `exposed`; the same three rows with `assert_eq` redefined by a `macro_rules!` that discards its operands, in the test file or in another file, keep `infection_unknown` and do not read `exposed`.
 
 ## Known Limits
 

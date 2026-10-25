@@ -914,7 +914,10 @@ mutant calibrates the rule; ripr reports only the static shape.
     literal, `n * 3`, a name bound outside a loop) still pins, and so does a
     chain (`f(f(x)) == f(x) == 1`). Only the `assert` statement is read:
     `assertEqual` and helper forms keep their strength
-    (`py-grid-returns-property`, `py-grid-arithmetic-property`, #9594).
+    (`py-grid-returns-property`, `py-grid-arithmetic-property`, #9594; the
+    `py-props-*` cases add the reversed order, a tuple loop target and a
+    loop identity scored as gaps, and a chain, a literal expected value and
+    a name bound outside the loop credited).
 
 ### Verdict ladder
 
