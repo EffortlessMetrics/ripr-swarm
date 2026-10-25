@@ -186,7 +186,7 @@ fn has_predicate_shape(text: &str) -> bool {
 /// Whether the line carries a logical `||`. An empty-parameter closure head
 /// (`unwrap_or_else(|| x)`, `thread::spawn(move || x)`) spells the same two
 /// characters but is no predicate (#10259). A binary `||` always has a left
-/// operand, so a `||` that follows `(`, `,`, `=`, `{`, `[`, `;` or the
+/// operand, so a `||` that follows `(`, `,`, `=`, `{`, `[`, `;`, `:`, `=>` or the
 /// `move` keyword can only open a closure. A line that starts with `||` is a
 /// wrapped boolean continuation (`    || other_condition`) and stays a logical or.
 fn has_logical_or(text: &str) -> bool {
@@ -194,7 +194,8 @@ fn has_logical_or(text: &str) -> bool {
     while let Some(found) = text[from..].find("||") {
         let at = from + found;
         let before = text[..at].trim_end();
-        let closure_head = before.ends_with(['(', ',', '=', '{', '[', ';'])
+        let closure_head = before.ends_with(['(', ',', '=', '{', '[', ';', ':'])
+            || before.ends_with("=>")
             || before.strip_suffix("move").is_some_and(|rest| {
                 !rest.ends_with(|c: char| c.is_alphanumeric() || c == '_' || c == '#')
             });
@@ -1147,6 +1148,8 @@ mod tests {
             "std::thread::spawn(move || work());",
             "let f = || compute();",
             "let g = [|| 1, || 2];",
+            "Some(x) => || x,",
+            "MyStruct { field: || x }",
         ];
         for text in closure_heads {
             assert!(
