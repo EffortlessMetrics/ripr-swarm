@@ -2,11 +2,15 @@
 //! This does not resolve arbitrary aliases, re-exports or qualified types.
 
 use super::{FunctionSummary, RustIndex, primitive_type_token};
-use crate::analysis::syntax::{UseBinding, name_scope_for_items, parse_clean_source_file};
+use crate::analysis::syntax::{
+    TRUSTED_MACRO_NAMES, UseBinding, name_scope_for_items, parse_clean_source_file,
+    standard_derive_names, trusted_macro_binding_sites,
+};
 use ra_ap_syntax::{
     AstNode, SyntaxKind, SyntaxNode,
     ast::{self, HasName},
 };
+use std::collections::BTreeSet;
 
 fn same_name(left: &str, right: &str) -> bool {
     left.trim_start_matches("r#") == right.trim_start_matches("r#")
@@ -118,11 +122,64 @@ fn items(scope: &SyntaxNode) -> Vec<ast::Item> {
     scope.children().filter_map(ast::Item::cast).collect()
 }
 
-fn closed_scope(scope: &SyntaxNode) -> bool {
+/// The shared macro authority supplies scoped imports/definitions, opaque
+/// macro preludes and expansion bindings; derive spelling alone proves nothing.
+fn standard_derive_binding_holds(attr: &ast::Attr) -> bool {
+    let Some(names) = standard_derive_names(attr) else {
+        return false;
+    };
+    // The macro scan deliberately leaves crate/self/super globs to its caller.
+    // This bounded type proof does not resolve names imported by those globs.
+    if enclosing_scopes(attr.syntax())
+        .iter()
+        .any(|scope| !name_scope_for_items(&items(scope)).globs.is_empty())
+    {
+        return false;
+    }
+    let Some(file) = attr.syntax().ancestors().last() else {
+        return false;
+    };
+    let source = file.text().to_string();
+    let Some(prefix) = source.get(..usize::from(attr.syntax().text_range().start())) else {
+        return false;
+    };
+    let line = prefix.matches('\n').count() + 1;
+    let trusted = TRUSTED_MACRO_NAMES
+        .iter()
+        .copied()
+        .chain(["derive"])
+        .chain(names.iter().map(String::as_str))
+        .collect::<Vec<_>>();
+    !trusted_macro_binding_sites(&source, &BTreeSet::new(), &trusted, &|_, _| false, &|_| {
+        false
+    })
+    .iter()
+    .any(|(name, site)| {
+        (name == "derive" || names.contains(name))
+            && site
+                .scope
+                .is_none_or(|(start, end)| start <= line && line <= end)
+    })
+}
+
+fn derives_have_root_context(owner: &FunctionSummary, index: &RustIndex) -> bool {
+    // File-local macro facts do not establish a prelude inherited from another
+    // source file, or a Cargo-rebound std/core root.
+    super::super::owner_pin::target_root(&owner.file, index, &Default::default()).as_ref()
+        == Some(&owner.file)
+        && ["std", "core"].iter().all(|root| {
+            index
+                .drop_in_manifests
+                .unbound_standard_root(&owner.file, root)
+        })
+}
+
+fn closed_scope(scope: &SyntaxNode, derives: bool) -> bool {
     let preserves = |attr: ast::Attr| {
         let text = attr.syntax().text().to_string();
         crate::analysis::facts::cfg_predicates::attribute_preserves_source_items(&text)
             || crate::analysis::facts::cfg_predicates::attribute_is_plain_test_gate(&text)
+            || derives && standard_derive_binding_holds(&attr)
     };
     scope.children().all(|node| {
         if let Some(attr) = ast::Attr::cast(node.clone()) {
@@ -146,8 +203,12 @@ fn closed_scope(scope: &SyntaxNode) -> bool {
 }
 
 pub(super) fn context_is_closed(owner: &FunctionSummary, index: &RustIndex) -> bool {
-    function(owner, index)
-        .is_some_and(|function| context_scopes(&function).iter().all(closed_scope))
+    let derives = derives_have_root_context(owner, index);
+    function(owner, index).is_some_and(|function| {
+        context_scopes(&function)
+            .iter()
+            .all(|scope| closed_scope(scope, derives))
+    })
 }
 
 /// A bare primitive spelling is insufficient when a type declaration,
@@ -190,7 +251,8 @@ pub(super) fn type_is_primitive(
         return false;
     }
     let scopes = enclosing_scopes(&site);
-    if scopes.iter().any(|scope| !closed_scope(scope)) {
+    let derives = derives_have_root_context(owner, index);
+    if scopes.iter().any(|scope| !closed_scope(scope, derives)) {
         return false;
     }
     let scope_items = scopes.iter().map(items).collect::<Vec<_>>();

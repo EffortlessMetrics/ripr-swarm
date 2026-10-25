@@ -3715,23 +3715,36 @@ fn attribute_emits_no_items(attr: &ast::Attr, module: &SyntaxNode, trusted: &[&s
         return trusted.contains(&"rstest");
     }
     if path == "derive" {
-        let Some(ast::Meta::TokenTreeMeta(meta)) = attr.meta() else {
-            return false;
-        };
-        return meta.token_tree().is_some_and(|tree| {
-            let text = tree.syntax().text().to_string();
-            text.trim_start_matches('(')
-                .trim_end_matches(')')
-                .split(',')
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-                .all(|name| STD_DERIVES.contains(&name))
-        });
+        return standard_derive_names(attr).is_some();
     }
     BUILTIN.contains(&path.as_str())
         || (trusted.contains(&"serial_test")
             && !path.contains("::")
             && bare_lock_bound_in_module(&path, module))
+}
+
+/// Names accepted by the existing standard-derive grammar. This recognizes
+/// syntax only: callers must separately establish the macro bindings and
+/// close any opaque item expansion before trusting these derives.
+pub(crate) fn standard_derive_names(attr: &ast::Attr) -> Option<Vec<String>> {
+    if attr.path()?.syntax().text().to_string().replace(' ', "") != "derive" {
+        return None;
+    }
+    let ast::Meta::TokenTreeMeta(meta) = attr.meta()? else {
+        return None;
+    };
+    let text = meta.token_tree()?.syntax().text().to_string();
+    let names = text
+        .trim_start_matches('(')
+        .trim_end_matches(')')
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .collect::<Vec<_>>();
+    names
+        .iter()
+        .all(|name| STD_DERIVES.contains(name))
+        .then(|| names.into_iter().map(str::to_string).collect())
 }
 
 const STD_DERIVES: &[&str] = &[

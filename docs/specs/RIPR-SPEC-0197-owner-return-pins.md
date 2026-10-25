@@ -897,8 +897,13 @@ wrong credits.
    type occurrence. A binding inside a disjoint block or unused closure cannot
    rebind that type; direct items in an applicable scope remain hoisted even
    when declared after the use. Callee returns use the callee's declaring
-   signature scope. Opaque macros
-   and attributes refuse this proof. A standard primitive import requires the
+   signature scope. Opaque macros and attributes refuse this proof. A bare
+   standard derive recognized by the shared attribute authority preserves it
+   only with established same-file target-root and standard-root identity, no
+   scoped rebinding of `derive` or its derive names, and no unresolved macro
+   prelude or glob in the attribute's enclosing scopes. Custom, qualified or
+   shadowed derives remain opaque; this does not evaluate macro expansion.
+   A standard primitive import requires the
    existing closed manifest proof for its standard root, established target-root
    context in the declaring file, and source-scope refusal of root rebinding.
    Out-of-line files cannot establish the crate-root bindings of Rust 2015
@@ -2463,6 +2468,17 @@ assertions. This repair shares the existing callback without that larger migrati
   receiver does not confirm a change to the default.
 
 ## Test Mapping
+
+- `operand_whitespace.rs`: `established_standard_derives_keep_the_missing_discriminator`
+  retains genuine primitive pins beside established standard derives;
+  `pricing_corpus_keeps_its_accepted_missing_discriminator` checks the unchanged
+  accepted pricing corpus subject and class.
+  `derive_and_attribute_expansion_cannot_hide_operator_effects` retains the
+  shadowed/custom derive, opaque attribute, item-macro and out-of-line macro
+  prelude refusals. Inputs in `tests/fixtures/operand_attributes/` also retain
+  the native Add-effect counter controls. The standard-derived primitive input
+  is compiled directly by the integration suite; native proc-macro removal
+  controls are separate engineering evidence, not claimed by the API assertions.
 
 - Closure-callback helper facts (#9981): the `closure_callback_*` controls in
   `crates/ripr/src/analysis/facts/test_helpers/tests.rs` (direct, generic

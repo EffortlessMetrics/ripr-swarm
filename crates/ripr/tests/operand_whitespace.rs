@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 const SPACED: &str = include_str!("fixtures/operand_whitespace/spaced.rs");
 const COMPACT: &str = include_str!("fixtures/operand_whitespace/compact.rs");
 const MARKER: &str = "field_pinned_equal_to_operand";
+const STANDARD_DERIVES: &str = include_str!("fixtures/operand_attributes/standard_derives.rs");
 
 mod native_spaced {
     include!("fixtures/operand_whitespace/spaced.rs");
@@ -19,6 +20,10 @@ mod native_spaced {
 
 mod native_compact {
     include!("fixtures/operand_whitespace/compact.rs");
+}
+
+mod native_derived {
+    include!("fixtures/operand_attributes/standard_derives.rs");
 }
 
 struct TempRepo(PathBuf);
@@ -54,6 +59,9 @@ fn field_finding_at(
     .map_err(|error| error.to_string())?;
     std::fs::write(repo.0.join(file), source).map_err(|error| error.to_string())?;
     for (path, text) in extra_files {
+        if let Some(parent) = repo.0.join(path).parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
         std::fs::write(repo.0.join(path), text).map_err(|error| error.to_string())?;
     }
     let changed = source
@@ -132,6 +140,9 @@ fn both_spellings_have_the_same_rust_tokens_and_native_values() {
     assert_eq!(significant_tokens(SPACED), significant_tokens(COMPACT));
     let spaced_zero = native_spaced::quote(9_000, 0);
     let compact_zero = native_compact::quote(9_000, 0);
+    let derived_zero = native_derived::quote(9_000, 0);
+    assert_eq!(derived_zero.total_cents, derived_zero.subtotal_cents);
+    assert_eq!(native_derived::quote(9_000, 499).total_cents, 9_499);
     assert_eq!(spaced_zero.subtotal_cents, 9_000);
     assert_eq!(compact_zero.subtotal_cents, 9_000);
     assert_eq!(spaced_zero.total_cents, 9_000);
@@ -481,4 +492,112 @@ fn actual_type_sites_keep_comment_offsets_and_item_hoisting() -> Result<(), Stri
     assert_binding_class(&alias, ExposureClass::Exposed)?;
     let import = alias.replace("type u64 = Shipping;", "use crate::Shipping as u64;");
     assert_binding_class(&import, ExposureClass::Exposed)
+}
+
+#[test]
+fn established_standard_derives_keep_the_missing_discriminator() -> Result<(), String> {
+    let derives = "#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]";
+    for source in [
+        STANDARD_DERIVES.to_string(),
+        format!("#[derive(Debug)]\nstruct Unrelated;\n{SPACED}"),
+        format!("fn Debug() {{}} const Clone: u64 = 0; struct Hash;\n{derives}\n{SPACED}"),
+        format!("mod disjoint {{ use core::fmt::Debug; }}\n{derives}\n{SPACED}"),
+    ] {
+        assert_binding_class(&source, ExposureClass::WeaklyExposed)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn pricing_corpus_keeps_its_accepted_missing_discriminator() -> Result<(), String> {
+    let source = include_str!(
+        "../../../fixtures/rust-verdict-corpus/subjects/authored-pricing/src/lib.rs.txt"
+    )
+    .replace(
+        "total_cents: subtotal + shipping,",
+        "total_cents: shipping + subtotal,",
+    );
+    let finding = field_finding(&source, "total_cents: shipping + subtotal")?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert!(finding.ripr.reveal.discriminate.summary.contains(MARKER));
+    Ok(())
+}
+
+#[test]
+fn derive_and_attribute_expansion_cannot_hide_operator_effects() -> Result<(), String> {
+    let custom = include_str!("fixtures/operand_attributes/custom_macro.rs");
+    let shadowed = include_str!("fixtures/operand_attributes/shadowed_standard_derive.rs");
+    let mut sources = [
+        shadowed,
+        include_str!("fixtures/operand_attributes/qualified_custom_derive.rs"),
+        include_str!("fixtures/operand_attributes/opaque_attribute.rs"),
+        include_str!("fixtures/operand_attributes/opaque_item_macro.rs"),
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect::<Vec<_>>();
+    for binding in [
+        "use custom::{Debug};",
+        "mod derives { pub use custom::Debug; } use crate::derives::{Debug, *};",
+        "#[macro_use] extern crate custom;",
+    ] {
+        sources.push(shadowed.replace("use custom::Debug;", binding));
+    }
+    sources.push(
+        shadowed
+            .replace("use custom::Debug;", "use custom::Debug as Clone;")
+            .replace("derive(Debug)", "derive(Clone)"),
+    );
+    sources.push(shadowed.replace("use custom::Debug;", "use custom::inject as derive;"));
+    for source in sources {
+        for spelling in ["subtotal + shipping", "subtotal+shipping"] {
+            let source = source.replace("subtotal + shipping", spelling);
+            let finding = field_finding_at(
+                &source,
+                &format!("total_cents: {spelling}"),
+                "src/lib.rs",
+                "2024",
+                &[
+                    (
+                        "Cargo.toml",
+                        "[package]\nname=\"attribute-control\"\nversion=\"0.0.0\"\nedition=\"2024\"\n[workspace]\n[dependencies]\ncustom={path=\"custom\"}\n",
+                    ),
+                    (
+                        "custom/Cargo.toml",
+                        "[package]\nname=\"custom\"\nversion=\"0.0.0\"\nedition=\"2024\"\n[lib]\nproc-macro=true\n[workspace]\n",
+                    ),
+                    ("custom/src/lib.rs", custom),
+                ],
+            )?;
+            assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+            assert!(!finding.ripr.reveal.discriminate.summary.contains(MARKER));
+        }
+    }
+    // A crate-root macro prelude can reach an out-of-line module even though
+    // that module has no import spelling. File-local absence cannot settle it.
+    let source = shadowed.replace("use custom::Debug;\n", "");
+    let finding = field_finding_at(
+        &source,
+        "total_cents: subtotal + shipping",
+        "src/pricing.rs",
+        "2024",
+        &[
+            (
+                "src/lib.rs",
+                "#[macro_use] extern crate custom;\npub mod pricing;\n",
+            ),
+            (
+                "Cargo.toml",
+                "[package]\nname=\"attribute-control\"\nversion=\"0.0.0\"\nedition=\"2024\"\n[workspace]\n[dependencies]\ncustom={path=\"custom\"}\n",
+            ),
+            (
+                "custom/Cargo.toml",
+                "[package]\nname=\"custom\"\nversion=\"0.0.0\"\nedition=\"2024\"\n[lib]\nproc-macro=true\n[workspace]\n",
+            ),
+            ("custom/src/lib.rs", custom),
+        ],
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(!finding.ripr.reveal.discriminate.summary.contains(MARKER));
+    Ok(())
 }
