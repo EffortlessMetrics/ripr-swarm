@@ -300,7 +300,11 @@ fn asserted_counted_mocks<'a>(
     loop {
         let before = mocks.len();
         for binding in bindings {
-            let rhs = binding.rhs.trim();
+            let mut rhs = binding.rhs.trim();
+            // `(fn)`, `((fn as any))`: grouping parentheses are not a call.
+            while let Some(inner) = rhs.strip_prefix('(').and_then(|r| r.strip_suffix(')')) {
+                rhs = inner.trim();
+            }
             if rhs.contains('(') || !binding.names.iter().any(|n| mocks.contains(n)) {
                 continue;
             }
@@ -354,6 +358,11 @@ enum Receivers<'a> {
     /// its module (`ns.withRetry(fn)`), or the locals built from the owner's
     /// class (`svc.retry(fn)`). An inline `new Cls().retry(fn)` also counts.
     Namespaces(&'a [String]),
+    /// A method owner (named by the second field): only a call through one
+    /// of these receivers is the owner, never its bare name (`retry(fn)`
+    /// beside `svc.retry(real)`) unless the test binds that name to the
+    /// method (`const retry = svc.retry.bind(svc)`).
+    Members(&'a [String], &'a str),
 }
 
 /// The class of an inline receiver whose expression ends the text: `new Cls(…)`
@@ -941,7 +950,10 @@ fn mentions_owner(statement: &str, name: &str, receivers: Receivers<'_>, skip_ke
             return false;
         }
         match prefix.trim_end().strip_suffix('.') {
-            None => !declares_method(statement, at, name.len()),
+            None => {
+                !matches!(receivers, Receivers::Members(_, method) if method == name)
+                    && !declares_method(statement, at, name.len())
+            }
             Some(receiver) => {
                 let receiver = receiver.strip_suffix('?').unwrap_or(receiver).trim_end();
                 let chain: String = receiver
@@ -954,7 +966,7 @@ fn mentions_owner(statement: &str, name: &str, receivers: Receivers<'_>, skip_ke
                     .collect();
                 match receivers {
                     Receivers::Bare => false,
-                    Receivers::Namespaces(names) => {
+                    Receivers::Namespaces(names) | Receivers::Members(names, _) => {
                         names.contains(&chain)
                             || (chain.is_empty()
                                 && inline_constructed_class(receiver)
@@ -1223,6 +1235,17 @@ fn hands_mock_to_owner(
 ) -> bool {
     let bindings = bindings(masked);
     let carriers = mock_carriers(&bindings, mock);
+    let receivers = match receivers {
+        Receivers::Members(names, method)
+            if bindings.iter().any(|binding| {
+                binding.names.contains(&method)
+                    && mentions_owner(binding.rhs, method, receivers, false)
+            }) =>
+        {
+            Receivers::Namespaces(names)
+        }
+        other => other,
+    };
     let owners = owner_names(&bindings, call_names, receivers);
     // Only a function or arrow defined in the body is known not to forward the
     // mock; a name bound from a call, a destructuring or an import is unknown.
@@ -1230,6 +1253,14 @@ fn hands_mock_to_owner(
         .iter()
         .filter(|binding| defines_a_function(binding.rhs))
         .flat_map(|binding| binding.names.iter().copied())
+        .collect();
+    // A bare call reaches a method owner only through a name bound to it.
+    let bare_owners: Vec<String> = owners
+        .iter()
+        .filter(
+            |owner| !matches!(receivers, Receivers::Members(_, method) if method == owner.as_str()),
+        )
+        .cloned()
         .collect();
     let runs_owner = |text: &str| {
         owners
@@ -1267,7 +1298,15 @@ fn hands_mock_to_owner(
             if binding && enclosing_callee(masked, at).is_none() {
                 return false;
             }
-            !use_is_inert(masked, at, name, call_names, &owners, &carriers, &locals)
+            !use_is_inert(
+                masked,
+                at,
+                name,
+                call_names,
+                &bare_owners,
+                &carriers,
+                &locals,
+            )
         })
     })
 }
@@ -1317,7 +1356,9 @@ fn counts_mock_calls(
                 workspace_root,
             )
         };
-        let receivers = if namespaces.is_empty() && !owner_is_method {
+        let receivers = if owner_is_method {
+            Receivers::Members(&namespaces, &owner.name)
+        } else if namespaces.is_empty() {
             Receivers::Bare
         } else {
             Receivers::Namespaces(&namespaces)
@@ -1687,6 +1728,38 @@ mod tests {
             "other.retry(fn, 2);",
             &["retry"],
             Receivers::Namespaces(&["ns".to_string()]),
+            "fn"
+        ));
+    }
+
+    #[test]
+    fn a_method_owner_is_called_bare_only_through_a_name_bound_to_it() {
+        let svc = ["svc".to_string()];
+        let members = Receivers::Members(&svc, "retry");
+        assert!(hands_mock_to_owner(
+            "svc.retry(fn, 2);",
+            &["retry"],
+            members,
+            "fn"
+        ));
+        // A same-named local function is not the method.
+        assert!(!hands_mock_to_owner(
+            "const retry = (f) => f();\nretry(fn);",
+            &["retry"],
+            members,
+            "fn"
+        ));
+        // A name bound to the method is.
+        assert!(hands_mock_to_owner(
+            "const retry = svc.retry.bind(svc);\nretry(fn, 2);",
+            &["retry"],
+            members,
+            "fn"
+        ));
+        assert!(hands_mock_to_owner(
+            "const go = (f) => svc.retry(f);\ngo(fn);",
+            &["retry"],
+            members,
             "fn"
         ));
     }

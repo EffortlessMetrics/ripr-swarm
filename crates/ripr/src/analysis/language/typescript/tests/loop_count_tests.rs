@@ -451,6 +451,15 @@ fn a_callback_parameter_named_like_the_mock_is_not_the_mock() -> Result<(), Stri
         "loop-callback-local",
         "  const fn = mock.fn();\n  assert.equal(await withRetry(async () => { const fn = async () => \"ok\"; return fn(); }, 3), \"ok\");\n  assert.equal(fn.mock.callCount(), 0);",
     )?;
+    // An outer call before a nested block that declares the same name is
+    // still the outer mock.
+    let label = "loop-local-outer-call";
+    let callback = "() => { fn(); { const fn = () => 0; } throw new Error(\"down\"); }";
+    let body = format!(
+        "  const fn = mock.fn();\n  await assert.rejects(withRetry({callback}, 2), /down/);\n  assert.equal(fn.mock.callCount(), 2);"
+    );
+    let finding = run(label, RETRY, OLD, NEW, &retry_test(&body))?;
+    assert_abstains(label, &finding);
     // A declaration in a nested block or function, a type annotation or a
     // loop head does not rebind the callback's own `fn`.
     for (label, callback) in [
@@ -502,6 +511,10 @@ fn a_method_owner_keeps_its_receiver_identity() -> Result<(), String> {
     let other = "  const real = mock.fn(async () => \"ok\");\n  const fn = mock.fn();\n  const other = { retry: (f: unknown, n: number) => n };\n  assert.equal(await svc.retry(real, 3), \"ok\");\n  other.retry(fn, 2);\n  assert.equal(fn.mock.callCount(), 0);";
     let finding = run("loop-method-other", SVC, OLD, NEW, &svc_test(other))?;
     assert_gap("loop-method-other", &finding);
+    // A bare local of the method's name is not the method.
+    let bare = "  const real = mock.fn(async () => \"ok\");\n  const fn = mock.fn();\n  const retry = (f: () => unknown) => f();\n  assert.equal(await svc.retry(real, 3), \"ok\");\n  retry(fn);\n  assert.equal(fn.mock.callCount(), 1);";
+    let finding = run("loop-method-bare-local", SVC, OLD, NEW, &svc_test(bare))?;
+    assert_gap("loop-method-bare-local", &finding);
     // A foreign inline constructor does not authenticate the receiver.
     let foreign = "  class Other { retry(_task: unknown, attempts: number) { return attempts; } }\n  const real = mock.fn(async () => \"ok\");\n  const fn = mock.fn();\n  assert.equal(await svc.retry(real, 3), \"ok\");\n  (new Other()).retry(fn, 2);\n  assert.equal(fn.mock.callCount(), 0);";
     let finding = run("loop-inline-foreign", SVC, OLD, NEW, &svc_test(foreign))?;
@@ -562,6 +575,16 @@ fn a_count_read_through_an_alias_or_container_of_the_mock_abstains() -> Result<(
         (
             "loop-count-alias",
             "const spy = fn;",
+            "spy.mock.callCount()",
+        ),
+        (
+            "loop-count-paren-alias",
+            "const spy = (fn);",
+            "spy.mock.callCount()",
+        ),
+        (
+            "loop-count-cast-alias",
+            "const spy = (fn as any);",
             "spy.mock.callCount()",
         ),
         (

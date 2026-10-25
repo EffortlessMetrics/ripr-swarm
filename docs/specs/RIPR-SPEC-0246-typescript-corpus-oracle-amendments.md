@@ -343,7 +343,7 @@ come from `ts_owner_call_names`, plus a local whose declaration, assignment,
 function or class mentions one (`const r = owner`, `const go = (f) =>
 owner(f)`, `function go(f) { return owner(f); }`, `class H { go(f) {...} }`).
 For methods, only receivers the test builds from the owner's class count
-(`svc.retry`, or an inline `new Svc().retry`; a foreign `(new Other()).retry` is another binding, and a class that merely declares a method named like the owner does not mention it), and a same-named local cannot shadow the property. The mock
+(`svc.retry`, or an inline `new Svc().retry`; a foreign `(new Other()).retry` is another binding, and a class that merely declares a method named like the owner does not mention it), and a same-named local cannot shadow the property (a bare `retry(fn)` is the method only when the test binds that name to it, `const retry = svc.retry.bind(svc)`). The mock
 and every local assigned from an expression that mentions it (declaration,
 assignment, destructuring, container, multi-line) are carriers, and a count
 read through a local built from plain references to the mock (`const spy =
