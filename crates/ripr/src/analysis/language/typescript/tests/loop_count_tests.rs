@@ -460,6 +460,11 @@ fn a_callback_parameter_named_like_the_mock_is_not_the_mock() -> Result<(), Stri
     );
     let finding = run(label, RETRY, OLD, NEW, &retry_test(&body))?;
     assert_abstains(label, &finding);
+    // A destructuring default reads the outer mock; it is not a binding.
+    let label = "loop-local-destructure-default";
+    let body = "  const fn = mock.fn(async () => { throw new Error(\"down\"); });\n  await assert.rejects(withRetry(async () => { const { a = fn } = {}; return a(); }, 2), /down/);\n  assert.equal(fn.mock.callCount(), 2);";
+    let finding = run(label, RETRY, OLD, NEW, &retry_test(body))?;
+    assert_abstains(label, &finding);
     // A declaration in a nested block or function, a type annotation or a
     // loop head does not rebind the callback's own `fn`.
     for (label, callback) in [

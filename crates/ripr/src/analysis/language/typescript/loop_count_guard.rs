@@ -369,7 +369,25 @@ enum Receivers<'a> {
 /// or `(new Cls(…))`. A `new` nested in the constructor arguments, or a call
 /// that merely receives a constructed value (`wrap(new Cls())`), is not it.
 fn inline_constructed_class(receiver: &str) -> Option<&str> {
-    let args_end = receiver.trim_end().strip_suffix(')')?;
+    inline_class_within(receiver, 16)
+}
+
+fn inline_class_within(receiver: &str, groups_left: usize) -> Option<&str> {
+    let groups_left = groups_left.checked_sub(1)?;
+    // `new Cls() as Alias` and `new Cls()!` are the same receiver.
+    let mut receiver = receiver.trim_end();
+    loop {
+        let trimmed = receiver.strip_suffix('!').map(str::trim_end).or_else(|| {
+            let at = receiver.rfind(" as ")?;
+            let ty = &receiver[at + 4..];
+            (!ty.contains(['(', ')'])).then(|| receiver[..at].trim_end())
+        });
+        match trimmed {
+            Some(shorter) => receiver = shorter,
+            None => break,
+        }
+    }
+    let args_end = receiver.strip_suffix(')')?;
     let mut depth = 1usize;
     let open = args_end.char_indices().rev().find_map(|(i, ch)| match ch {
         ')' => {
@@ -382,7 +400,25 @@ fn inline_constructed_class(receiver: &str) -> Option<&str> {
         }
         _ => None,
     })?;
-    let head = args_end[..open].trim_end();
+    let mut head = args_end[..open].trim_end();
+    // `new Cls<T>(…)`: the type arguments sit between the class and its `(`.
+    if head.ends_with('>') {
+        let mut depth = 0usize;
+        let lt = head.char_indices().rev().find_map(|(i, ch)| match ch {
+            '>' => {
+                depth += 1;
+                None
+            }
+            '<' => {
+                depth = depth.saturating_sub(1);
+                (depth == 0).then_some(i)
+            }
+            _ => None,
+        });
+        if let Some(lt) = lt {
+            head = head[..lt].trim_end();
+        }
+    }
     let start = head
         .char_indices()
         .rev()
@@ -407,7 +443,7 @@ fn inline_constructed_class(receiver: &str) -> Option<&str> {
     let grouping =
         lead.is_empty() || lead.ends_with(['(', ',', '=', ';', '{', '[', ':', '?', '&', '|']);
     grouping
-        .then(|| inline_constructed_class(&args_end[open + 1..]))
+        .then(|| inline_class_within(&args_end[open + 1..], groups_left))
         .flatten()
 }
 
@@ -565,8 +601,70 @@ fn parameter_scoped(text: &str, at: usize, name: &str) -> bool {
             start <= at
                 && at < end
                 && (parameter_names(params).contains(&name)
-                    || (declares_local(&text[start..end], name) && !is_test_callback(text, start)))
+                    || (declares_local(&text[start..end], name)
+                        && !is_test_callback(text, start)
+                        // A mock declared inside this callback is the counted
+                        // mock, not a shadow of one declared outside it.
+                        && first_declaration(text, name).is_none_or(|at| at < start || end <= at)))
         })
+}
+
+/// Where `name` is first declared with `const`/`let`/`var` in `text`.
+fn first_declaration(text: &str, name: &str) -> Option<usize> {
+    ["const", "let", "var"]
+        .iter()
+        .flat_map(|keyword| text.match_indices(keyword))
+        .filter(|&(at, keyword)| {
+            !text[..at].chars().next_back().is_some_and(is_word)
+                && text[at + keyword.len()..].starts_with(char::is_whitespace)
+                && binding_names(&text[at + keyword.len()..]).contains(&name)
+        })
+        .map(|(at, _)| at)
+        .min()
+}
+
+/// The names a `const`/`let`/`var` pattern binds: `a`, `{ a, b: c = d }`
+/// (`c`, `a`; defaults and keys are not bindings), `[a, b]`.
+fn binding_names(after_keyword: &str) -> Vec<&str> {
+    let pattern = after_keyword.trim_start();
+    if !pattern.starts_with(['{', '[']) {
+        let end = pattern
+            .find([':', '=', ';', ',', '\n'])
+            .unwrap_or(pattern.len());
+        return pattern[..end]
+            .split(|c: char| !is_word(c))
+            .filter(|w| !w.is_empty())
+            .collect();
+    }
+    let group = &pattern[..group_end(pattern, 0)];
+    let inner = &group[1..group.len().saturating_sub(1)];
+    let (mut depth, mut from) = (0usize, 0usize);
+    let mut names = Vec::new();
+    for (at, ch) in inner.char_indices() {
+        match ch {
+            '{' | '[' | '(' => depth += 1,
+            '}' | ']' | ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                push_binding(&mut names, &inner[from..at]);
+                from = at + 1;
+            }
+            _ => {}
+        }
+    }
+    push_binding(&mut names, &inner[from..]);
+    names
+}
+
+/// One element of a destructuring pattern: the target side of `key: target`,
+/// without its `= default`.
+fn push_binding<'a>(names: &mut Vec<&'a str>, piece: &'a str) {
+    let piece = piece.split('=').next().unwrap_or("");
+    let target = piece.rsplit(':').next().unwrap_or("");
+    names.extend(
+        target
+            .split(|c: char| !is_word(c))
+            .filter(|w| !w.is_empty()),
+    );
 }
 
 /// Whether the function `body` (parameters and block) declares `name` itself
@@ -600,18 +698,7 @@ fn declares_local(body: &str, name: &str) -> bool {
         if !starts_statement {
             continue;
         }
-        let pattern = rest[keyword.len()..].trim_start();
-        let pattern = if pattern.starts_with(['{', '[']) {
-            &pattern[..group_end(pattern, 0)]
-        } else {
-            &pattern[..pattern
-                .find([':', '=', ';', ',', '\n'])
-                .unwrap_or(pattern.len())]
-        };
-        if pattern
-            .split(|c: char| !is_word(c))
-            .any(|word| word == name)
-        {
+        if binding_names(&rest[keyword.len()..]).contains(&name) {
             return true;
         }
     }
@@ -1496,6 +1583,9 @@ mod tests {
             ("new Svc(new Map())", Some("Svc")),
             ("(new Svc(new Map()))", Some("Svc")),
             ("await (new Svc())", Some("Svc")),
+            ("new Svc<Map<string, number>>(1)", Some("Svc")),
+            ("(new Svc() as any)", Some("Svc")),
+            ("(new Svc())!", Some("Svc")),
             ("wrap(new Svc())", None),
             ("new Other(new Svc()).inner()", None),
             ("make<T>(new Svc())", None),
@@ -1762,6 +1852,35 @@ mod tests {
             members,
             "fn"
         ));
+    }
+
+    #[test]
+    fn a_mock_declared_inside_a_subtest_callback_is_the_counted_mock() {
+        let subtest = "await t.test('sub', async () => {\n  const fn = mock.fn();\n  await assert.rejects(withRetry(fn, 2), /down/);\n});";
+        assert!(hands_mock_to_owner(
+            subtest,
+            &["withRetry"],
+            Receivers::Bare,
+            "fn"
+        ));
+        // A callback that redeclares a mock declared outside it shadows it.
+        let shadow = "const fn = mock.fn();\nawait withRetry(async () => { const fn = () => 0; return fn(); }, 2);";
+        assert!(!hands_mock_to_owner(
+            shadow,
+            &["withRetry"],
+            Receivers::Bare,
+            "fn"
+        ));
+    }
+
+    #[test]
+    fn binding_names_skip_defaults_and_keys() {
+        assert_eq!(binding_names(" a = fn;"), ["a"]);
+        assert_eq!(binding_names(" { a = fn, b: c, d } = o"), ["a", "c", "d"]);
+        assert_eq!(binding_names(" [a = fn, b] = o"), ["a", "b"]);
+        assert_eq!(binding_names(" r: ReturnType<typeof fn> = x"), ["r"]);
+        let deep = format!("{}new Svc(){}", "(".repeat(5000), ")".repeat(5000));
+        assert_eq!(inline_constructed_class(&deep), None);
     }
 
     #[test]
