@@ -1767,6 +1767,18 @@ fn plain_inline_projects_keep_the_credit_and_every_other_spelling_refuses() -> R
             OracleStrength::Medium,
         ),
         (
+            "module.exports = { projects: [{ preset: \"ts-jest\" && \"./custom-preset.js\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ preset: \"ts-jest\" + \"/../../p.js\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ preset: \"ts-jest\" , displayName: \"a\" }] };",
+            OracleStrength::Strong,
+        ),
+        (
             "module.exports = { projects: [{ preset: \"review-snapshot-preset\" }] };",
             OracleStrength::Medium,
         ),

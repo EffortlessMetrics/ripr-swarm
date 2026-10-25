@@ -429,8 +429,14 @@ fn preset_may_name_a_file(text: &str) -> bool {
             // A non-literal value (`preset: base`) is not read.
             return true;
         };
-        let name = name.split(['"', '\'']).next().unwrap_or_default();
-        !is_known_non_relocating_preset(name)
+        let (name, after_name) = name.split_once(['"', '\'']).unwrap_or((name, "\""));
+        // `"ts-jest" && "./custom.js"` evaluates to the second string; only a
+        // literal that ends the property is the name Jest sees.
+        let ends_property = {
+            let after = skip_trivia(after_name);
+            after.is_empty() || after.starts_with([',', '}'])
+        };
+        !(ends_property && is_known_non_relocating_preset(name))
     })
 }
 
