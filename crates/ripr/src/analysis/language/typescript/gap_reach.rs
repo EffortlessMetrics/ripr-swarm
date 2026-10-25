@@ -31,14 +31,15 @@ const ASSET_EXTENSIONS: [&str; 9] = [
     "json", "css", "scss", "less", "svg", "png", "txt", "md", "wasm",
 ];
 
-/// Calls whose first literal argument is a module specifier.
+/// Calls whose first literal argument is a module specifier. The opening
+/// parenthesis may follow whitespace or comments (`require ('x')`).
 const SPECIFIER_CALLS: [&str; 6] = [
-    "require(",
-    "import(",
-    "mock(",
-    "doMock(",
-    "importActual(",
-    "requireActual(",
+    "require",
+    "import",
+    "mock",
+    "doMock",
+    "importActual",
+    "requireActual",
 ];
 
 /// Constructs that load modules by a pattern or a computed name.
@@ -77,13 +78,10 @@ impl<'a> GapReach<'a> {
             .into_iter()
             .flatten()
             .collect();
-        // A bundler or test-runner alias is invisible to tsconfig. Any config
-        // file mentioning one makes every bare specifier suspect, so keep the
-        // workspace-wide disclosure.
-        let bundler_alias = sources.iter().any(|(path, source)| {
-            is_config_file(path)
-                && (source.contains("alias") || source.contains("moduleNameMapper"))
-        }) || resolution_config_hides_imports(root, alias_map);
+        // A bundler, transpiler or test-runner alias is invisible to tsconfig.
+        // Any config mentioning one makes every bare specifier suspect, so keep
+        // the workspace-wide disclosure.
+        let bundler_alias = resolution_config_hides_imports(root, alias_map);
         let mut needles: Vec<String> = owner_names
             .into_iter()
             .filter(|name| !name.is_empty())
@@ -218,12 +216,15 @@ enum Follow {
 /// within a few levels of the root, since a package-level config is not loaded
 /// by the alias map.
 fn resolution_config_hides_imports(root: &Path, alias_map: Option<&TsAliasMap>) -> bool {
-    const ALWAYS: [&str; 5] = [
+    const ALWAYS: [&str; 8] = [
         "rootDirs",
         "moduleNameMapper",
         "moduleDirectories",
         "modulePaths",
-        "\"alias\"",
+        "alias",
+        "module-resolver",
+        "_moduleAliases",
+        "tsconfig-paths",
     ];
     let mut pending = vec![(root.to_path_buf(), 0usize)];
     let mut visited = 0usize;
@@ -247,7 +248,7 @@ fn resolution_config_hides_imports(root: &Path, alias_map: Option<&TsAliasMap>) 
             }
             let is_ts_config = (name.starts_with("tsconfig") || name.starts_with("jsconfig"))
                 && name.ends_with(".json");
-            if !is_ts_config && name != "package.json" {
+            if !is_ts_config && name != "package.json" && !is_tool_config(&name) {
                 continue;
             }
             visited += 1;
@@ -261,9 +262,12 @@ fn resolution_config_hides_imports(root: &Path, alias_map: Option<&TsAliasMap>) 
                 return true;
             }
             if is_ts_config {
-                let resolves = text.contains("\"paths\"")
-                    || text.contains("\"baseUrl\"")
-                    || extends_a_workspace_config(&text);
+                // `baseUrl` resolves any bare specifier into the workspace, with
+                // or without `paths`, and the alias map does not model that.
+                if text.contains("\"baseUrl\"") {
+                    return true;
+                }
+                let resolves = text.contains("\"paths\"") || extends_a_workspace_config(&text);
                 // Only the root config feeds the alias map, and only when it
                 // loaded. Anything else that remaps resolution is invisible.
                 let loaded_root = depth == 0 && alias_map.is_some_and(TsAliasMap::has_tsconfig);
@@ -287,13 +291,27 @@ fn extends_a_workspace_config(text: &str) -> bool {
     })
 }
 
-fn is_config_file(path: &str) -> bool {
-    let name = path.rsplit('/').next().unwrap_or(path);
+/// Build, transpile and test-runner configs that can alias module names.
+fn is_tool_config(name: &str) -> bool {
     [
-        "vite", "vitest", "jest", "webpack", "rollup", "tsup", "rspack", "nuxt", "next", "svelte",
+        "babel.config",
+        ".babelrc",
+        ".swcrc",
+        "vite.config",
+        "vitest.config",
+        "jest.config",
+        "webpack.config",
+        "rollup.config",
+        "rspack.config",
+        "tsup.config",
+        "nuxt.config",
+        "next.config",
+        "svelte.config",
+        "ava.config",
+        ".mocharc",
     ]
     .iter()
-    .any(|prefix| name.starts_with(prefix) && name.contains("config"))
+    .any(|prefix| name.starts_with(prefix))
 }
 
 /// `dir` joined with a relative `specifier`, with `.` and `..` resolved.
@@ -342,7 +360,7 @@ fn module_specifiers(source: &str) -> Option<Vec<String>> {
             }
             // A static `from` / `import` specifier is never a template
             // literal; this also skips prose such as "the `from`/`to` options".
-            let rest = source[after..].trim_start();
+            let rest = skip_trivia(&source[after..]);
             if rest.starts_with(['\'', '"'])
                 && let Some(literal) = quoted_literal(rest)
             {
@@ -352,16 +370,47 @@ fn module_specifiers(source: &str) -> Option<Vec<String>> {
     }
     for call in SPECIFIER_CALLS {
         for (at, _) in source.match_indices(call) {
-            let rest = source[at + call.len()..].trim_start();
-            match quoted_literal(rest) {
+            if at > 0 && is_call_name_byte(bytes[at - 1]) {
+                continue;
+            }
+            let after = at + call.len();
+            if bytes.get(after).copied().is_some_and(is_call_name_byte) {
+                continue;
+            }
+            let rest = skip_trivia(&source[after..]);
+            let Some(arguments) = rest.strip_prefix('(') else {
+                continue;
+            };
+            match quoted_literal(skip_trivia(arguments)) {
                 Some(literal) => specifiers.push(literal),
                 // A computed `import(name)` / `require(name)` reaches anything.
-                None if matches!(call, "require(" | "import(") => return None,
+                None if matches!(call, "require" | "import") => return None,
                 None => {}
             }
         }
     }
     Some(specifiers)
+}
+
+fn is_call_name_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
+}
+
+/// `text` without leading whitespace and `/* ... */` or `// ...` comments.
+fn skip_trivia(mut text: &str) -> &str {
+    loop {
+        text = text.trim_start();
+        if let Some(rest) = text.strip_prefix("/*") {
+            let Some(end) = rest.find("*/") else {
+                return "";
+            };
+            text = &rest[end + 2..];
+        } else if let Some(rest) = text.strip_prefix("//") {
+            text = rest.split_once('\n').map_or("", |(_, after)| after);
+        } else {
+            return text;
+        }
+    }
 }
 
 fn is_ident_byte(byte: u8) -> bool {
@@ -489,24 +538,37 @@ mod tests {
     }
 
     #[test]
+    fn spaced_and_commented_loader_calls_are_followed() {
+        let entries = [
+            ("test/a.test.ts", "const m = require ('../src/changed');\n"),
+            (
+                "test/b.test.ts",
+                "const m = await import /* lazy */ ('../src/changed');\n",
+            ),
+            ("test/c.test.ts", "const m = require\n(name);\n"),
+            (
+                "test/d.test.ts",
+                "import x from /* c */ '../src/changed';\n",
+            ),
+            ("src/changed.ts", "export default function tier() {}\n"),
+        ];
+        for gap in [
+            "test/a.test.ts",
+            "test/b.test.ts",
+            "test/c.test.ts",
+            "test/d.test.ts",
+        ] {
+            assert!(check(&entries, &["src/changed.ts"], &[], gap), "{gap}");
+        }
+    }
+
+    #[test]
     fn esm_emitted_extensions_resolve_to_the_typescript_source() {
         let entries = [
             ("test/a.test.ts", "import { x } from '../src/changed.js';\n"),
             ("src/changed.ts", "export const x = 1;\n"),
         ];
         assert!(check(&entries, &["src/changed.ts"], &[], "test/a.test.ts"));
-    }
-
-    #[test]
-    fn a_bundler_alias_config_disables_scoping() {
-        let entries = [
-            ("test/a.test.ts", "import vitest from 'vitest';\n"),
-            (
-                "vitest.config.ts",
-                "export default { resolve: { alias: { lib: './src' } } };\n",
-            ),
-        ];
-        assert!(check(&entries, &["src/c.ts"], &[], "test/a.test.ts"));
     }
 
     #[test]
@@ -560,6 +622,12 @@ mod tests {
                 true,
             ),
             (
+                "base-url",
+                "tsconfig.json",
+                r#"{"compilerOptions": {"baseUrl": "."}}"#,
+                true,
+            ),
+            (
                 "root-dirs",
                 "tsconfig.json",
                 r#"{"compilerOptions": {"rootDirs": ["a", "b"]}}"#,
@@ -575,6 +643,30 @@ mod tests {
                 "plain",
                 "package.json",
                 r#"{"name": "x", "scripts": {}}"#,
+                false,
+            ),
+            (
+                "vitest-alias",
+                "vitest.config.ts",
+                "export default { resolve: { alias: { lib: './src' } } };",
+                true,
+            ),
+            (
+                "babel-resolver",
+                "babel.config.js",
+                "module.exports = { plugins: [['module-resolver', { root: ['./src'] }]] };",
+                true,
+            ),
+            (
+                "babelrc",
+                ".babelrc",
+                r#"{"plugins": [["module-resolver", {"alias": {"u": "./src"}}]]}"#,
+                true,
+            ),
+            (
+                "plain-vitest",
+                "vitest.config.ts",
+                "export default { test: { globals: true } };",
                 false,
             ),
         ] {
