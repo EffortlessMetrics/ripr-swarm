@@ -797,7 +797,7 @@ fn given_an_ordinary_literal_after_an_identifier_suffix_then_it_is_never_scanned
         "x = 1 if\"\"\"\n{\nhelper(1)\n}\n\"\"\" else 2\n",
         "x = 1 if'''\n{\nhelper(1)\n}\n''' else 2\n",
         "x = a or\"\"\"\n{\nhelper(1)\n}\n\"\"\"\n",
-        "if a:\n    pass\nelif\"\"\"\n{\nhelper(1)\n}\n\"\"\":\n    pass\n",
+        "if flag:\n    pass\nelif\"\"\"\n{\nhelper(1)\n}\n\"\"\":\n    pass\n",
         "x = f\"\"\"\n{\n1 if'''\n{\nhelper(1)\n}\n''' else 2\n}\n\"\"\"\n",
         "x = f\"\"\"\n{\na or'''\n{\nhelper(1)\n}\n'''\n}\n\"\"\"\n",
         "x = 1 if\"\"\"\r\n{\r\nhelper(1)\r\n}\r\n\"\"\" else 2\r\n",
