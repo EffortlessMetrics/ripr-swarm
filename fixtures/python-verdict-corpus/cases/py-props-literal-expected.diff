@@ -1,0 +1,12 @@
+diff --git a/props/core.py b/props/core.py
+--- a/props/core.py
++++ b/props/core.py
+@@ -11,7 +11,7 @@
+ 
+ 
+ def clamp_c(x):
+-    return max(0, x)
++    return max(1, x)
+ 
+ 
+ def scale_d(a, b):

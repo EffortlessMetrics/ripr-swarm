@@ -28,6 +28,7 @@ pub(super) fn collect_fixture_defs(
     module_imports: &[PythonImport],
 ) -> Vec<PythonFixtureDef> {
     let mut defs = Vec::new();
+    let aliases = fixture_aliases(module_imports);
     for stmt in statements {
         let (name, decorators, body, range) = match stmt {
             Stmt::FunctionDef(function) => (
@@ -44,7 +45,7 @@ pub(super) fn collect_fixture_defs(
             ),
             _ => continue,
         };
-        if !is_plain_fixture(source, decorators) {
+        if !is_plain_fixture(source, decorators, &aliases) {
             // A later def of the same name replaces the fixture as the
             // module attribute pytest collects, including a renamed
             // `@pytest.fixture(name=...)` def that is not itself recorded.
@@ -52,7 +53,7 @@ pub(super) fn collect_fixture_defs(
             // A fixture renamed to `caplog` is recorded under that public
             // name so the captured-log readings see the override (#10418).
             // Other renamed fixtures stay unrecorded.
-            if renames_to_caplog(decorators) {
+            if renames_to_caplog(decorators, &aliases) {
                 defs.push(PythonFixtureDef {
                     name: "caplog".to_string(),
                     binding: name.to_string(),
@@ -74,14 +75,41 @@ pub(super) fn collect_fixture_defs(
     defs
 }
 
-/// A `fixture` / `pytest.fixture` / `pytest_asyncio.fixture` decorator that
-/// does not rename the fixture.
-fn is_plain_fixture(source: &str, decorators: &[Expr]) -> bool {
+/// Local names this file binds to pytest's fixture decorator with
+/// `from pytest import fixture as fx` (also `pytest_asyncio`), so a decorator
+/// spelled `@fx` is still a fixture (#10454).
+fn fixture_aliases(imports: &[PythonImport]) -> Vec<String> {
+    imports
+        .iter()
+        .filter(|import| {
+            import.imported == "fixture"
+                && matches!(import.source_module.as_str(), "pytest" | "pytest_asyncio")
+        })
+        // A later import that rebinds the same local name wins, so a shadowed
+        // alias is not trusted (fail closed, as before aliases were read).
+        .filter(|import| {
+            imports
+                .iter()
+                .rev()
+                .find(|other| other.alias == import.alias)
+                .is_some_and(|last| last == *import)
+        })
+        .map(|import| import.alias.clone())
+        .collect()
+}
+
+fn is_fixture_decorator_name(name: &str, aliases: &[String]) -> bool {
+    name == "fixture" || name.ends_with(".fixture") || aliases.iter().any(|alias| alias == name)
+}
+
+/// A `fixture` / `pytest.fixture` / `pytest_asyncio.fixture` decorator (or an
+/// alias imported from them) that does not rename the fixture.
+fn is_plain_fixture(source: &str, decorators: &[Expr], aliases: &[String]) -> bool {
     decorators.iter().any(|decorator| {
         let names = decorator_names(std::slice::from_ref(decorator));
         names
             .iter()
-            .any(|name| name == "fixture" || name.ends_with(".fixture"))
+            .any(|name| is_fixture_decorator_name(name, aliases))
             && !text_for_range(source, decorator.range())
                 .replace(' ', "")
                 .contains("name=")
@@ -91,14 +119,14 @@ fn is_plain_fixture(source: &str, decorators: &[Expr]) -> bool {
 /// A fixture decorator whose `name=` keyword is the literal string `caplog`.
 /// Only the parsed keyword counts: the text of `params=` or another argument
 /// that spells it is data, not a registration name.
-fn renames_to_caplog(decorators: &[Expr]) -> bool {
+fn renames_to_caplog(decorators: &[Expr], aliases: &[String]) -> bool {
     decorators.iter().any(|decorator| {
         let Expr::Call(call) = decorator else {
             return false;
         };
         let is_fixture = decorator_names(std::slice::from_ref(decorator))
             .iter()
-            .any(|name| name == "fixture" || name.ends_with(".fixture"));
+            .any(|name| is_fixture_decorator_name(name, aliases));
         is_fixture
             && call.keywords.iter().any(|keyword| {
                 keyword.arg.as_ref().is_some_and(|arg| arg == "name")
