@@ -34,7 +34,9 @@ pin is a commit whose own change touches production Rust, so the warm
 `ripr check --base HEAD~1` measures a real small edit. The `serde-no-rust` and `cargo-no-rust` entries pin commits that touch no `.rs` file
 (a CI workflow, a changelog), so a docs-or-CI edit has its own warm-check row, memory row and
 trend; `cargo-no-rust` pins its first parent as the base because its commit is a merge. Those rows are wall time, so they gate only against a same-runner baseline; the runner-independent guard is `crates/ripr/tests/no_rust_diff_reads_no_rust.rs`, which fails on any runner if a docs-only diff indexes the workspace's Rust sources (a discarded read is outside what it observes) in `instant`, `draft` or `fast` mode. Entries marked
-`heavy = true` (ripr-swarm at two sizes, cargo, `cargo-no-rust`) run only with `--include-heavy`.
+`heavy = true` (ripr-swarm at two sizes, cargo, `cargo-no-rust`, `poetry-python`) run only with `--include-heavy`.
+
+Entries may set `language` (`rust` when absent; `python`, `typescript` or `perl`), which the report carries on each repository row so a non-Rust edit is its own population. `click-python` (small) and `poetry-python` (larger) pin single-parent commits that edit Python and its test; both complete under `--mode draft`. `django` was tried and stops at the Python workspace-file cap (partial), so it would not measure a complete check. TypeScript and Perl rows follow in separate changes (#10338).
 Checkouts live under `target/ripr/dx-scoreboard/corpus/`; cloning is opt-in:
 
 ```bash

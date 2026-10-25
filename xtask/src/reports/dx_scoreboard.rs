@@ -125,6 +125,20 @@ pub(crate) struct CorpusEntry {
     pub(crate) note: String,
     #[serde(default)]
     pub(crate) heavy: bool,
+    /// Language of the pinned change; `rust` when absent. Names which
+    /// analyzer path the warm check exercises, so rows for different
+    /// languages are read as separate populations.
+    #[serde(default)]
+    pub(crate) language: Option<String>,
+}
+
+/// Languages a corpus entry may declare.
+pub(crate) const CORPUS_LANGUAGES: [&str; 4] = ["rust", "python", "typescript", "perl"];
+
+impl CorpusEntry {
+    pub(crate) fn language(&self) -> &str {
+        self.language.as_deref().unwrap_or("rust")
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -403,6 +417,7 @@ pub(crate) fn corpus_from_manifest(value: &Value) -> Result<(String, Vec<CorpusE
             base_sha: repo["base_sha"].as_str().map(str::to_string),
             note: repo["why"].as_str().unwrap_or_default().to_string(),
             heavy: repo["tier"].as_str() != Some("fast"),
+            language: repo["language"].as_str().map(str::to_string),
         });
     }
     Ok((version, corpus))
@@ -417,6 +432,14 @@ pub(crate) fn validate_corpus(corpus: &[CorpusEntry]) -> Result<(), String> {
     for entry in corpus {
         if seen.insert(entry.id.as_str(), ()).is_some() {
             return Err(format!("duplicate corpus id `{}`", entry.id));
+        }
+        if !CORPUS_LANGUAGES.contains(&entry.language()) {
+            return Err(format!(
+                "corpus `{}` names unknown language `{}`; expected one of {}",
+                entry.id,
+                entry.language(),
+                CORPUS_LANGUAGES.join(", ")
+            ));
         }
         if !full_sha(&entry.sha)
             || entry
