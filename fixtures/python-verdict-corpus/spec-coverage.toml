@@ -23,15 +23,6 @@
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
 
-# Most abstained rows whose tests do catch the change (missed credit). A
-# regression fails `verdict-corpus check`; an improvement passes with a note
-# to lower this number (not a failure, so concurrent fixes do not collide).
-# Raising it is a reviewed edit with a reason.
-
-# 31: `unnum-0028-ex3-decorator-indirection` abstains by design (RIPR-SPEC-0028
-# example 3: a decorator that may wrap the call is not credited) although its
-# test catches the change.
-missed_credit_ceiling = 26
 
 # Operator grid and false-credit traps (verdict_corpus_grid.rs). `cell_floor`
 # is the count of covered operator-by-truth cells (7 operators x credited,

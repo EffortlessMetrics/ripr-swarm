@@ -13,7 +13,7 @@ use super::admission::PythonAssertionAdmission;
 use super::owners_tests::{decorator_names, test_imports};
 use super::source_utils::{SourceText, text_for_range};
 use super::{PythonFixtureDef, PythonImport, PythonTest};
-use rustpython_parser::ast::{Expr, Ranged, Stmt};
+use rustpython_parser::ast::{Constant, Expr, Ranged, Stmt};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -48,11 +48,24 @@ pub(super) fn collect_fixture_defs(
             // A later def of the same name replaces the fixture as the
             // module attribute pytest collects, including a renamed
             // `@pytest.fixture(name=...)` def that is not itself recorded.
-            defs.retain(|def: &PythonFixtureDef| def.name != name);
+            defs.retain(|def: &PythonFixtureDef| def.binding != name);
+            // A fixture renamed to `caplog` is recorded under that public
+            // name so the captured-log readings see the override (#10418).
+            // Other renamed fixtures stay unrecorded.
+            if renames_to_caplog(decorators) {
+                defs.push(PythonFixtureDef {
+                    name: "caplog".to_string(),
+                    binding: name.to_string(),
+                    file: file.to_path_buf(),
+                    body_text: text_for_range(source, range),
+                    imports: test_imports(file, module_imports, body),
+                });
+            }
             continue;
         }
         defs.push(PythonFixtureDef {
             name: name.to_string(),
+            binding: name.to_string(),
             file: file.to_path_buf(),
             body_text: text_for_range(source, range),
             imports: test_imports(file, module_imports, body),
@@ -72,6 +85,29 @@ fn is_plain_fixture(source: &str, decorators: &[Expr]) -> bool {
             && !text_for_range(source, decorator.range())
                 .replace(' ', "")
                 .contains("name=")
+    })
+}
+
+/// A fixture decorator whose `name=` keyword is the literal string `caplog`.
+/// Only the parsed keyword counts: the text of `params=` or another argument
+/// that spells it is data, not a registration name.
+fn renames_to_caplog(decorators: &[Expr]) -> bool {
+    decorators.iter().any(|decorator| {
+        let Expr::Call(call) = decorator else {
+            return false;
+        };
+        let is_fixture = decorator_names(std::slice::from_ref(decorator))
+            .iter()
+            .any(|name| name == "fixture" || name.ends_with(".fixture"));
+        is_fixture
+            && call.keywords.iter().any(|keyword| {
+                keyword.arg.as_ref().is_some_and(|arg| arg == "name")
+                    && matches!(
+                        &keyword.value,
+                        Expr::Constant(constant)
+                            if matches!(&constant.value, Constant::Str(text) if text == "caplog")
+                    )
+            })
     })
 }
 

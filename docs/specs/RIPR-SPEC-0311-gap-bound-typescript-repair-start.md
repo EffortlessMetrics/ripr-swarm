@@ -160,8 +160,11 @@ existed with no way to begin the attempt.
   point at it; a forged gap is refused with no attempt; the before phase
   replays to exactly one attempt; a committed boundary test closes the gap
   (`weakly_exposed -> exposed`) and writes the receipt; status after a pilot
-  names the same start. Unit negatives cover the subject predicate and every
-  fail-closed lookup branch.
+  names the same start. A refused variant (tests removed, so the finding is
+  static-limited) is offered no start, its `--gap-id` start is refused as not
+  ready, and no attempt or workflow artifact is left (#10432). Unit negatives
+  cover the subject predicate, every fail-closed lookup branch and a record
+  the shared validator refuses.
 
 ## Non-Goals
 
@@ -207,7 +210,8 @@ existed with no way to begin the attempt.
   `gap_bound_receipt_requires_the_verify_closure_and_rejects_forgery`,
   `typescript_status_warning_keeps_the_no_start_claim_for_refused_variants`,
   `python_flat_layout_journey_runs_the_gap_bound_loop_from_the_printed_start`,
-  `python_status_after_pilot_names_the_gap_bound_start`.
+  `python_status_after_pilot_names_the_gap_bound_start`,
+  `python_refused_variant_is_offered_no_gap_bound_start`.
 - `crates/ripr/src/app/gap_bound_repair.rs` unit tests
   `python_gap_subjects_need_a_printable_tail` and
   `a_python_lookup_fails_closed_without_one_validated_record`,

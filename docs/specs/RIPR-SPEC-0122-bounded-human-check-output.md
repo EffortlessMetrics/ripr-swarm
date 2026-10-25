@@ -180,19 +180,23 @@ decisive stages behind a remainder count (#4324):
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
 ```
 
-The seven-line legend immediately follows the compact line, once for the selected
+The ten-line legend immediately follows the compact line, once for the selected
 digest, including an exposed finding when selected. It explains static evidence,
 not execution or test adequacy. `weak` means partial evidence across the stages,
 and `no` means evidence was not found, never that a behavior is impossible.
-The final two lines define the words the `Summary:` count line prints (probe,
+The `Summary terms` lines define the words the `Summary:` count line prints (probe,
 exposed, weak, unrevealed, no path) in the same static vocabulary (#9244 item 4);
-the `unknown` count is already defined by the `States` line (`unknown/opaque =
-analysis limited`). They claim no runtime mutation outcome.
+its last three lines also define `finding`, `unsuppressed`, the `unknown`
+bucket, `base-side` and the Counts line's `candidate line` (#9244 item 4
+leftovers). They claim no runtime mutation outcome.
 No legend renders when there is no selected digest (empty, all-suppressed,
 base-side-only, or unresolved-currentness-only findings). The legend adds a fixed
-seven lines; it does not expand the per-stage detail window. Full human and
+ten lines; it does not expand the per-stage detail window. Full human and
 machine formats retain their existing contracts. This addresses item 1 and #9244
 item 4 only; the shared class vocabulary and per-class discoverability in items 2
 and 3 are unchanged.

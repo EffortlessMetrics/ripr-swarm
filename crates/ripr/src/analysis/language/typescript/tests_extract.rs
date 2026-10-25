@@ -1627,11 +1627,19 @@ fn withhold_rebound_scope_receivers(
 ) {
     let code = blank_ranges(source, masked);
     let opaque = identifier_occurrences(&code, "eval").next().is_some() || code.contains("\\u");
-    let rebound: Vec<String> = identifier_writes(&code)
+    let rebound: std::collections::HashSet<String> = identifier_writes(&code)
         .into_iter()
         .map(|(name, _)| name)
         .chain(declared_names(&code))
         .collect();
+    let sites: std::collections::HashSet<usize> = sites.iter().copied().collect();
+    // Both verdicts depend on the file and the name alone, not on the test,
+    // so each is computed once. A file-level binding is listed on every test,
+    // and rescanning the file for it per test was cubic (#10017).
+    let mut constructor_verdicts: std::collections::HashMap<String, bool> =
+        std::collections::HashMap::new();
+    let mut name_verdicts: std::collections::HashMap<String, bool> =
+        std::collections::HashMap::new();
     for test in tests {
         for binding in &mut test.scope_bindings {
             let Some(constructor) = &binding.constructed_by else {
@@ -1640,18 +1648,27 @@ fn withhold_rebound_scope_receivers(
             let root = constructor.split('.').next().unwrap_or(constructor);
             // `Cart.prototype` anywhere (a spy or method assignment in a
             // hook) may replace the method the test calls.
-            let constructor_rebound = rebound.iter().any(|name| name == root)
-                || identifier_occurrences(&code, root).any(|at| {
-                    code[at + root.len()..]
-                        .trim_start()
-                        .strip_prefix('.')
-                        .is_some_and(|rest| rest.trim_start().starts_with("prototype"))
-                })
-                || (constructor.contains('.') && member_assigned(&code, constructor));
+            let constructor_rebound = *constructor_verdicts
+                .entry(constructor.clone())
+                .or_insert_with(|| {
+                    rebound.contains(root)
+                        || identifier_occurrences(&code, root).any(|at| {
+                            code[at + root.len()..]
+                                .trim_start()
+                                .strip_prefix('.')
+                                .is_some_and(|rest| rest.trim_start().starts_with("prototype"))
+                        })
+                        || (constructor.contains('.') && member_assigned(&code, constructor))
+                });
             if opaque
                 || constructor_rebound
-                || identifier_occurrences(&code, &binding.name)
-                    .any(|at| !sites.contains(&at) && !is_plain_read(&code, at, &binding.name))
+                || *name_verdicts
+                    .entry(binding.name.clone())
+                    .or_insert_with(|| {
+                        identifier_occurrences(&code, &binding.name).any(|at| {
+                            !sites.contains(&at) && !is_plain_read(&code, at, &binding.name)
+                        })
+                    })
             {
                 binding.constructed_by = None;
             }
@@ -4233,6 +4250,7 @@ pub(crate) fn detect_partial_test_extraction_expanded(
             extracted_starts: &extracted_starts,
             covered: covered.as_deref().unwrap_or_default(),
             admission,
+            shadowed: Vec::new(),
             gap: None,
         };
         finder.visit_statements(&ret.program.body);
@@ -4306,16 +4324,59 @@ struct UnextractedTestFinder<'a> {
     /// expansions already stand for.
     covered: &'a [std::ops::Range<usize>],
     admission: TypeScriptAdmissionContext,
+    /// Parameter names of the enclosing functions. A call through one is the
+    /// parameter's value, not a runner registration (`async function run({
+    /// test }) { await test(); }`).
+    shadowed: Vec<String>,
     gap: Option<(usize, &'static str, String)>,
 }
 
 impl UnextractedTestFinder<'_> {
+    fn callee_is_parameter(&self, callee: &Expression<'_>) -> bool {
+        callee_root_name(callee).is_some_and(|name| self.shadowed.iter().any(|s| s == name))
+    }
+
+    fn with_parameters(
+        &mut self,
+        params: &oxc_ast::ast::FormalParameters<'_>,
+        visit: impl FnOnce(&mut Self),
+    ) {
+        let depth = self.shadowed.len();
+        let rest = params
+            .rest
+            .iter()
+            .flat_map(|rest| rest.rest.argument.get_binding_identifiers());
+        self.shadowed.extend(
+            params
+                .items
+                .iter()
+                .flat_map(|param| param.pattern.get_binding_identifiers())
+                .chain(rest)
+                .map(|identifier| identifier.name.to_string()),
+        );
+        visit(self);
+        self.shadowed.truncate(depth);
+    }
+
     fn visit_statements(&mut self, statements: &[Statement<'_>]) {
+        // A declaration in this block can rebind a parameter's name to
+        // something else (`const test = runner`). Fail closed: the name no
+        // longer counts as a parameter inside this block.
+        let mut rebound = Vec::new();
+        collect_block_declared_names(statements, &mut rebound);
+        let outer = (!rebound.is_empty()).then(|| {
+            let outer = self.shadowed.clone();
+            self.shadowed.retain(|name| !rebound.contains(name));
+            outer
+        });
         for stmt in statements {
             if self.gap.is_some() {
-                return;
+                break;
             }
             self.visit_statement(stmt);
+        }
+        if let Some(outer) = outer {
+            self.shadowed = outer;
         }
     }
 
@@ -4409,7 +4470,9 @@ impl UnextractedTestFinder<'_> {
 
     fn visit_function(&mut self, func: &Function<'_>) {
         if let Some(body) = &func.body {
-            self.visit_statements(&body.statements);
+            self.with_parameters(&func.params, |finder| {
+                finder.visit_statements(&body.statements);
+            });
         }
     }
 
@@ -4434,7 +4497,9 @@ impl UnextractedTestFinder<'_> {
                 self.visit_tagged_template(tagged, statement_position);
             }
             Expression::ArrowFunctionExpression(arrow) => {
-                self.visit_statements(&arrow.body.statements);
+                self.with_parameters(&arrow.params, |finder| {
+                    finder.visit_statements(&arrow.body.statements);
+                });
             }
             Expression::FunctionExpression(func) => self.visit_function(func),
             Expression::ClassExpression(class) => self.visit_class(class),
@@ -4445,6 +4510,7 @@ impl UnextractedTestFinder<'_> {
                 // with no nested test-shaped call for `visit_call` to find.
                 if statement_position
                     && let Expression::CallExpression(call) = &await_expr.argument
+                    && !self.callee_is_parameter(&call.callee)
                     && ((call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
                         || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test))
                         && self
@@ -4563,7 +4629,7 @@ impl UnextractedTestFinder<'_> {
         if callee_is_skipped_describe(call) {
             return;
         }
-        if statement_position && self.gap.is_none() {
+        if statement_position && self.gap.is_none() && !self.callee_is_parameter(&call.callee) {
             // Tagged-template `.each`: `` test.each`table`('name', fn) `` — the
             // tagged template sits in CALLEE position, so the call's callee is
             // not an identifier/member the extractor recognizes at all; the
@@ -4695,7 +4761,9 @@ impl UnextractedTestFinder<'_> {
                 self.visit_tagged_template(tagged, false);
             }
             Argument::ArrowFunctionExpression(arrow) => {
-                self.visit_statements(&arrow.body.statements);
+                self.with_parameters(&arrow.params, |finder| {
+                    finder.visit_statements(&arrow.body.statements);
+                });
             }
             Argument::FunctionExpression(func) => self.visit_function(func),
             Argument::ClassExpression(class) => self.visit_class(class),
