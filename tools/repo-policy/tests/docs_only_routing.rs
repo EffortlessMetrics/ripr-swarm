@@ -46,6 +46,186 @@ fn shell(name: &str) -> TestResult<String> {
     Ok(script)
 }
 
+fn capability_shell() -> TestResult<String> {
+    let source = job("docs-gate")?;
+    let marker = "      - name: Capability registry checks (SUPPORT_TIERS.md, preview guide or spec change)\n";
+    assert_eq!(source.matches(marker).count(), 1);
+    let (_, tail) = source.split_once(marker).ok_or("capability step")?;
+    let step = tail.split("\n      - ").next().ok_or("step body")?;
+    for binding in [
+        "          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}",
+        "          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}",
+    ] {
+        assert_eq!(step.lines().filter(|line| *line == binding).count(), 1);
+    }
+    let (_, body) = step.split_once("        run: |\n").ok_or("step shell")?;
+    let script = body
+        .lines()
+        .map(|line| line.strip_prefix("          ").ok_or("shell indentation"))
+        .collect::<Result<Vec<_>, _>>()?
+        .join("\n");
+    assert!(!script.trim().is_empty());
+    Ok(script)
+}
+
+const CAPABILITY_CALLS: &str = "xtask capability-docs --check\nxtask check-capability-producers\n";
+
+fn capability_calls(
+    fixture: &Fixture,
+    script: &str,
+    base: &str,
+    head: &str,
+    cargo_exit: &str,
+) -> TestResult<(Output, String)> {
+    let calls = fixture.root.join(".git/capability-calls");
+    fs::write(&calls, "")?;
+    // Retain the production selector and command order, but record Cargo argv:
+    // this is applicability evidence, not execution of either Rust gate.
+    let script = format!(
+        "cargo() {{ printf '%s\\n' \"$*\" >> .git/capability-calls; return \"$CARGO_EXIT\"; }}\n{script}"
+    );
+    let output = fixture.run(
+        &script,
+        &[
+            ("BASE_SHA", base),
+            ("HEAD_SHA", head),
+            ("CARGO_EXIT", cargo_exit),
+        ],
+        None,
+    )?;
+    let calls = fs::read_to_string(calls)?;
+    Ok((output, calls))
+}
+
+#[test]
+fn capability_selector_runs_both_checks_for_docs_only_add_edit_delete() -> TestResult {
+    let script = capability_shell()?;
+    let detector = shell("detect-docs-only")?;
+    for path in [
+        "docs/status/SUPPORT_TIERS.md",
+        "docs/LANGUAGE_ADAPTER_PREVIEW.md",
+        "docs/specs/RIPR-SPEC-9999-selector.md",
+        "docs/specs/nested/café with spaces.md",
+    ] {
+        let fixture = Fixture::new()?;
+        let mut base = fixture.git(&["rev-parse", "HEAD"])?;
+        for content in [Some("added\n"), Some("edited\n"), None] {
+            match content {
+                Some(text) => fixture.write(path, text)?,
+                None => fs::remove_file(fixture.root.join(path))?,
+            }
+            let head = fixture.commit()?;
+            assert!(fixture.detect(&detector, "pull_request", &base, &head, None)?);
+            let (output, calls) = capability_calls(&fixture, &script, &base, &head, "0")?;
+            assert!(output.status.success(), "{path:?}: {output:?}");
+            assert_eq!(calls, CAPABILITY_CALLS, "{path:?}, {content:?}");
+            base = head;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn capability_selector_rejects_unrelated_and_hostile_path_records() -> TestResult {
+    let script = capability_shell()?;
+    for path in [
+        "README.md",
+        "docs/other.md",
+        "docs/status/SUPPORT_TIERS.md.bak",
+        "docs/LANGUAGE_ADAPTER_PREVIEW.md.backup",
+        "docs/specs-neighbor/ordinary.md",
+        "other/docs/specs/ordinary.md",
+        "docs/status/support_tiers.md",
+        "other/café.md",
+        "other/quote\".md",
+        "other/tab\tname.md",
+        "other/slash\\name.md",
+        "other/line\ndocs/specs/forged.md",
+    ] {
+        let fixture = Fixture::new()?;
+        let base = fixture.git(&["rev-parse", "HEAD"])?;
+        fixture.write(path, "unrelated\n")?;
+        let head = fixture.commit()?;
+        let (output, calls) = capability_calls(&fixture, &script, &base, &head, "0")?;
+        assert!(output.status.success(), "{path:?}: {output:?}");
+        assert!(calls.is_empty(), "unrelated {path:?} selected: {calls}");
+    }
+    Ok(())
+}
+
+#[test]
+fn capability_selector_quote_path_pin_has_a_discriminating_unicode_control() -> TestResult {
+    let fixture = Fixture::new()?;
+    fixture.git(&["config", "core.quotePath", "true"])?;
+    let base = fixture.git(&["rev-parse", "HEAD"])?;
+    fixture.write("docs/specs/café.md", "unicode\n")?;
+    let head = fixture.commit()?;
+    let script = capability_shell()?;
+    let (output, calls) = capability_calls(&fixture, &script, &base, &head, "0")?;
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(calls, CAPABILITY_CALLS);
+    assert_eq!(script.matches("core.quotePath=false").count(), 1);
+    let mutant = script.replace("core.quotePath=false", "core.quotePath=true");
+    let (output, calls) = capability_calls(&fixture, &mutant, &base, &head, "0")?;
+    assert!(output.status.success(), "{output:?}");
+    assert!(
+        calls.is_empty(),
+        "wrong quotePath must lose the Unicode path"
+    );
+    Ok(())
+}
+
+#[test]
+fn capability_selector_preserves_diff_and_selected_command_failures() -> TestResult {
+    let fixture = Fixture::new()?;
+    let base = fixture.git(&["rev-parse", "HEAD"])?;
+    fixture.write("docs/status/SUPPORT_TIERS.md", "selected\n")?;
+    let head = fixture.commit()?;
+    let script = capability_shell()?;
+    let (output, calls) = capability_calls(&fixture, &script, "missing", &head, "0")?;
+    assert!(
+        !output.status.success(),
+        "invalid diff cannot silently skip"
+    );
+    assert!(calls.is_empty());
+    let (output, calls) = capability_calls(&fixture, &script, &base, &head, "23")?;
+    assert_eq!(output.status.code(), Some(23), "{output:?}");
+    assert_eq!(calls, "xtask capability-docs --check\n");
+    Ok(())
+}
+
+#[test]
+fn capability_selector_selects_quoted_spec_paths() -> TestResult {
+    let script = capability_shell()?;
+    let mut missed = Vec::new();
+    for path in ["docs/specs/quoted\".md", "docs/specs/line\nbreak.md"] {
+        let fixture = Fixture::new()?;
+        let base = fixture.git(&["rev-parse", "HEAD"])?;
+        fixture.write(path, "relevant spec path\n")?;
+        let head = fixture.commit()?;
+        assert!(fixture.detect(
+            &shell("detect-docs-only")?,
+            "pull_request",
+            &base,
+            &head,
+            None
+        )?);
+        let (output, calls) = capability_calls(&fixture, &script, &base, &head, "0")?;
+        assert!(output.status.success(), "{output:?}");
+        if calls != CAPABILITY_CALLS {
+            missed.push(format!("{path:?}: calls={calls:?}"));
+        }
+    }
+    // Keep the contract red rather than pinning the observed false-negative
+    // as desired behavior. #10065 owns disposition; this proof does not rewrite
+    // the workflow to manufacture a passing check.
+    assert!(
+        missed.is_empty(),
+        "quoted relevant paths skipped: {missed:?}"
+    );
+    Ok(())
+}
+
 struct Fixture {
     root: PathBuf,
 }
