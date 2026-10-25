@@ -180,7 +180,30 @@ fn has_predicate_shape(text: &str) -> bool {
         || text.contains(" == ")
         || text.contains(" != ")
         || text.contains("&&")
-        || text.contains("||")
+        || has_logical_or(text)
+}
+
+/// Whether the line carries a logical `||`. An empty-parameter closure head
+/// (`unwrap_or_else(|| x)`, `thread::spawn(move || x)`) spells the same two
+/// characters but is no predicate (#10259). A binary `||` always has a left
+/// operand, so a `||` that follows `(`, `,`, `=`, `{`, `[`, `;`, `=>`, the
+/// `move` keyword or the start of the line can only open a closure.
+fn has_logical_or(text: &str) -> bool {
+    let mut from = 0;
+    while let Some(found) = text[from..].find("||") {
+        let at = from + found;
+        let before = text[..at].trim_end();
+        let closure_head = before.is_empty()
+            || before.ends_with(['(', ',', '=', '{', '[', ';'])
+            || before
+                .strip_suffix("move")
+                .is_some_and(|rest| !rest.ends_with(|c: char| c.is_alphanumeric() || c == '_'));
+        if !closure_head {
+            return true;
+        }
+        from = at + 2;
+    }
+    false
 }
 
 fn has_return_shape(text: &str) -> bool {
@@ -1109,6 +1132,39 @@ mod tests {
                 families.contains(&expected),
                 "{text} did not classify as {}",
                 expected.as_str()
+            );
+        }
+    }
+
+    /// #10259: an empty-parameter closure head spells `||` but is no logical
+    /// or, so a default combinator rewrite is not a predicate. A real `||`
+    /// (it has a left operand) still reads as one.
+    #[test]
+    fn empty_closure_head_is_not_a_predicate() {
+        let closure_heads = [
+            "let end = sku.find('-').unwrap_or_else(|| sku.len());",
+            "let n = opt.map_or_else(|| 0, |v| v + 1);",
+            "std::thread::spawn(move || work());",
+            "let f = || compute();",
+            "let g = [|| 1, || 2];",
+        ];
+        for text in closure_heads {
+            assert!(
+                !classify_changed_line(text).contains(&ProbeFamily::Predicate),
+                "{text} read as a predicate"
+            );
+        }
+        let real_ors = [
+            "let ok = a || b;",
+            "if a || b { }",
+            "let ok = f(x) || g(y);",
+            "let ok = x.is_some() || (|| true)();",
+            "let ok = a == b || move_count > 0;",
+        ];
+        for text in real_ors {
+            assert!(
+                classify_changed_line(text).contains(&ProbeFamily::Predicate),
+                "{text} lost its predicate family"
             );
         }
     }

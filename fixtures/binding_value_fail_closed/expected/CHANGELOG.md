@@ -409,3 +409,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — binding_value_fail_closed (30)
+
+Reason:
+RIPR-SPEC-0158: an empty closure head || (map_or_else(|| 1, ...)) no longer reads as a logical or (#10259), so the let initializer is not its own predicate probe and the finding retargets to the end == start comparison like the map_or variants; still infection_unknown with an unresolved boundary operand and no exact value.
+
+Command:
+`cargo xtask goldens bless binding_value_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
