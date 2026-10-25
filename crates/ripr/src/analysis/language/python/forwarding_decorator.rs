@@ -65,14 +65,17 @@ pub(super) fn is_forwarding_decorator(
     forwards_unchanged(definition, owner_source, plain_functools)
 }
 
-/// Whether any decorator line in the file spells `@name(...)`. File-wide on
-/// purpose: a lexical, fail-closed screen that costs only credit.
+/// Whether any decorator line in the file mentions `decorator` other than as
+/// the whole bare expression `@name` (so `@name(...)`, `@(name)(...)`,
+/// `@name.attr` and `@wrap(name)` all count). File-wide and lexical on
+/// purpose: it is fail-closed and costs only credit.
 fn decorated_by_call(source: &str, decorator: &str) -> bool {
     source.lines().any(|line| {
-        line.trim_start()
-            .strip_prefix('@')
-            .and_then(|rest| rest.trim_start().strip_prefix(decorator))
-            .is_some_and(|after| after.trim_start().starts_with('('))
+        let Some(expression) = line.trim_start().strip_prefix('@') else {
+            return false;
+        };
+        let expression = expression.split('#').next().unwrap_or("").trim();
+        expression != decorator && mentions(expression, decorator)
     })
 }
 
@@ -95,6 +98,9 @@ fn forwards_unchanged(
         return false;
     }
     let function = parameter.def.arg.as_str();
+    if function.is_empty() {
+        return false;
+    }
     let mut body: Vec<&Stmt> = definition.body.iter().collect();
     if matches!(
         body.first(),
@@ -130,6 +136,11 @@ fn inner_forwards(
         return false;
     };
     let kwarg = args.kwarg.as_ref().map(|arg| arg.arg.as_str());
+    // A wrapper name or parameter spelled like the wrapped function shadows it,
+    // so `fn(*args)` would not reach the decorated owner.
+    if inner.name.as_str() == function || vararg == function || kwarg == Some(function) {
+        return false;
+    }
     // `functools.wraps(fn)` only copies metadata; any other decorator may
     // replace the call.
     let wraps_ok = match inner.decorator_list.as_slice() {
@@ -365,5 +376,34 @@ mod tests {
         let mut method = owner();
         method.class_path = "C".to_string();
         assert!(!is_forwarding_decorator("logged", &method, LOGGED));
+    }
+
+    #[test]
+    fn grouped_or_wrapped_decorator_calls_do_not_forward() {
+        for spelling in [
+            "@(logged)(1)",
+            "@logged.attr",
+            "@wrap(logged)",
+            "@ logged (1)",
+        ] {
+            let source = format!("{LOGGED}\n\n{spelling}\ndef double(x):\n    return x\n");
+            assert!(!forwarding(&source), "{spelling}");
+        }
+        let commented = format!("{LOGGED}\n\n@logged  # note\ndef double(x):\n    return x\n");
+        assert!(forwarding(&commented));
+    }
+
+    #[test]
+    fn wrapper_shadowing_the_wrapped_function_does_not_forward() {
+        let nested = "import functools\n\n\ndef logged(fn):\n    def fn(*args):\n        return fn(*args)\n\n    return fn\n";
+        assert!(!forwarding(nested));
+        let star = LOGGED
+            .replace("inner(*args)", "inner(*fn)")
+            .replace("fn(*args)", "fn(*fn)");
+        assert!(!forwarding(&star));
+        let double_star = LOGGED
+            .replace("inner(*args)", "inner(*args, **fn)")
+            .replace("fn(*args)", "fn(*args, **fn)");
+        assert!(!forwarding(&double_star));
     }
 }
