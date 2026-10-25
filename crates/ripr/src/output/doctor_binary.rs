@@ -34,9 +34,38 @@ pub(crate) struct DoctorBinaryIdentity {
     pub(crate) path_ripr_is_running_executable: Option<bool>,
     /// Advisory findings; they never fail doctor.
     pub(crate) warnings: Vec<String>,
+    /// Project config files that launch `ripr` by bare name while no `ripr`
+    /// is on PATH (#10347). Not serialized: the same fact is the entry in
+    /// `warnings`, which JSON and the default human screen both render.
+    #[serde(skip)]
+    pub(crate) missing_path_dependents: Vec<String>,
 }
 
 impl DoctorBinaryIdentity {
+    /// Record project configs that launch `ripr` by name (#10347). Only a
+    /// missing PATH `ripr` makes them unlaunchable, so any other state leaves
+    /// the identity unchanged.
+    pub(crate) fn with_path_dependents(mut self, dependents: Vec<String>) -> Self {
+        if self.path_ripr.is_none() && !dependents.is_empty() {
+            self.warnings.push(format!(
+                "`ripr` is not on PATH, but {} start it by name, so those editor or agent \
+                 integrations cannot launch it; install ripr or put its directory on PATH",
+                dependents.join(", ")
+            ));
+            self.missing_path_dependents = dependents;
+        }
+        self
+    }
+
+    /// The warning the human screen spells as a `~` advisory line: only the
+    /// missing-PATH-with-dependent-config case, because it is a repair signal.
+    pub(crate) fn compact_path_advisory(&self) -> Option<&str> {
+        if self.missing_path_dependents.is_empty() {
+            return None;
+        }
+        self.warnings.last().map(String::as_str)
+    }
+
     /// Human doctor lines: identity first, then any warnings.
     pub(crate) fn human_lines(&self) -> Vec<String> {
         self.human_lines_for_host(cfg!(windows))
@@ -72,13 +101,47 @@ impl DoctorBinaryIdentity {
 }
 
 /// Probe the running binary and the process PATH.
-pub(crate) fn probe_binary_identity() -> DoctorBinaryIdentity {
+pub(crate) fn probe_binary_identity(root: &Path) -> DoctorBinaryIdentity {
     let path_var = std::env::var_os("PATH").unwrap_or_default();
     let names = ripr_executable_names(std::env::var_os("PATHEXT").as_deref());
     evaluate_binary_identity(
         std::env::current_exe().ok(),
         first_on_path(&path_var, &names),
     )
+    .with_path_dependents(ripr_config_dependents(root))
+}
+
+/// Project MCP/LSP configs that may launch the server by name.
+const RIPR_LAUNCH_CONFIGS: [&str; 3] = [".mcp.json", ".vscode/mcp.json", ".cursor/mcp.json"];
+
+/// The configs under `root` with a `"command"` that is the bare name `ripr`
+/// (a path-qualified command does not depend on PATH). Unreadable or
+/// malformed files are not dependents.
+fn ripr_config_dependents(root: &Path) -> Vec<String> {
+    RIPR_LAUNCH_CONFIGS
+        .iter()
+        .filter(|name| {
+            std::fs::read_to_string(root.join(name))
+                .ok()
+                .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+                .is_some_and(|value| launches_ripr_by_name(&value))
+        })
+        .map(|name| (*name).to_string())
+        .collect()
+}
+
+fn launches_ripr_by_name(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(map) => map.iter().any(|(key, child)| {
+            (key == "command"
+                && child
+                    .as_str()
+                    .is_some_and(|command| matches!(command, "ripr" | "ripr.exe")))
+                || launches_ripr_by_name(child)
+        }),
+        serde_json::Value::Array(items) => items.iter().any(launches_ripr_by_name),
+        _ => false,
+    }
 }
 
 fn evaluate_binary_identity(
@@ -151,6 +214,7 @@ fn evaluate_binary_identity(
         path_ripr_is_cargo_build_output,
         path_ripr_is_running_executable,
         warnings,
+        missing_path_dependents: Vec::new(),
     }
 }
 
@@ -241,6 +305,7 @@ mod tests {
             path_ripr_is_cargo_build_output: true,
             path_ripr_is_running_executable: Some(true),
             warnings: Vec::new(),
+            missing_path_dependents: Vec::new(),
         };
         assert_eq!(
             identity.human_lines_for_host(true),
@@ -465,6 +530,94 @@ mod tests {
             let found = first_on_path(&path, &ripr_executable_names(None));
             if found.as_deref() != Some(runnable.as_path()) {
                 return Err(format!("expected {}, found {found:?}", runnable.display()));
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    #[test]
+    fn missing_path_ripr_with_launching_config_warns_advisory_only() -> Result<(), String> {
+        let root = temp_dir("config-missing-path")?;
+        let result = (|| -> Result<(), String> {
+            std::fs::write(
+                root.join(".mcp.json"),
+                r#"{"mcpServers":{"ripr":{"command":"ripr","args":["mcp","--stdio"]}}}"#,
+            )
+            .map_err(|error| error.to_string())?;
+            let dependents = ripr_config_dependents(&root);
+            if dependents != vec![".mcp.json".to_string()] {
+                return Err(format!("expected .mcp.json dependent: {dependents:?}"));
+            }
+            let identity = evaluate_binary_identity(None, None).with_path_dependents(dependents);
+            let advisory = identity
+                .compact_path_advisory()
+                .ok_or("missing PATH ripr with a launching config must warn")?;
+            if !advisory.contains("not on PATH") || !advisory.contains(".mcp.json") {
+                return Err(format!("warning must name PATH and the config: {advisory}"));
+            }
+            if identity.warnings.len() != 1 {
+                return Err(format!("expected one warning: {:?}", identity.warnings));
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    #[test]
+    fn launching_config_with_ripr_on_path_stays_quiet() -> Result<(), String> {
+        let root = temp_dir("config-ripr-present")?;
+        let bin = root.join("bin");
+        let result = (|| -> Result<(), String> {
+            std::fs::create_dir_all(&bin).map_err(|error| error.to_string())?;
+            let installed = executable(&bin)?;
+            std::fs::write(
+                root.join(".mcp.json"),
+                r#"{"mcpServers":{"r":{"command":"ripr"}}}"#,
+            )
+            .map_err(|error| error.to_string())?;
+            let dependents = ripr_config_dependents(&root);
+            if dependents.is_empty() {
+                return Err("fixture config must be detected as a dependent".into());
+            }
+            let found = first_on_path(
+                &std::env::join_paths([&bin]).map_err(|error| error.to_string())?,
+                &ripr_executable_names(None),
+            );
+            let identity =
+                evaluate_binary_identity(Some(installed), found).with_path_dependents(dependents);
+            if identity.compact_path_advisory().is_some() || !identity.warnings.is_empty() {
+                return Err(format!("ripr on PATH must be quiet: {identity:?}"));
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    #[test]
+    fn missing_path_ripr_without_launching_config_stays_quiet() -> Result<(), String> {
+        let root = temp_dir("config-absent")?;
+        let result = (|| -> Result<(), String> {
+            // No config, a path-qualified command, another server, and
+            // malformed JSON all fail to depend on a PATH `ripr`.
+            std::fs::write(
+                root.join(".mcp.json"),
+                r#"{"mcpServers":{"a":{"command":"/opt/bin/ripr"},"b":{"command":"other"}}}"#,
+            )
+            .map_err(|error| error.to_string())?;
+            std::fs::create_dir_all(root.join(".vscode")).map_err(|error| error.to_string())?;
+            std::fs::write(root.join(".vscode/mcp.json"), "{ not json")
+                .map_err(|error| error.to_string())?;
+            let dependents = ripr_config_dependents(&root);
+            if !dependents.is_empty() {
+                return Err(format!("no config launches bare ripr: {dependents:?}"));
+            }
+            let identity = evaluate_binary_identity(None, None).with_path_dependents(dependents);
+            if identity.compact_path_advisory().is_some() || !identity.warnings.is_empty() {
+                return Err(format!("no dependent config must be quiet: {identity:?}"));
             }
             Ok(())
         })();
