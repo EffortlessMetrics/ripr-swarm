@@ -2,6 +2,7 @@
 //! This gate deliberately withholds unread imports and macro-supplied methods;
 //! it does not attempt general Rust method resolution.
 
+use crate::analysis::classify::owner_pin::item_nesting_with_impl;
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::rust_index::{FunctionSummary, RustIndex};
 use crate::analysis::syntax::parse_clean_source_file;
@@ -62,12 +63,7 @@ fn closed_scope(
     source: &str,
     safe_super: Option<&[String]>,
 ) -> Option<Vec<String>> {
-    let scope = super::super::super::item_nesting_with_impl(
-        source,
-        &function.name,
-        function.start_line,
-        true,
-    )?;
+    let scope = item_nesting_with_impl(source, &function.name, function.start_line, true)?;
     let parse = parse_clean_source_file(source)?;
     let unread = parse.tree().syntax().descendants().any(|node| {
         let is_use = ast::Use::can_cast(node.kind());
