@@ -148,7 +148,6 @@ mod tests {
             owner: None,
         });
         finding.activation.observed_values.push(ValueFact {
-            file: None,
             line: 12,
             text: "discounted_total(50, 100)".to_string(),
             value: "amount = 50".to_string(),
@@ -1094,6 +1093,7 @@ mod tests {
     #[test]
     fn render_adds_presentation_text_finding_alignment_when_supported() -> Result<(), String> {
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -1204,6 +1204,7 @@ mod tests {
             role: crate::domain::RelatedTestRole::Contributing,
         };
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -1346,6 +1347,7 @@ mod tests {
             role: crate::domain::RelatedTestRole::Contributing,
         };
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -1552,7 +1554,6 @@ mod tests {
     fn finding_json_formats_observed_value_context_labels() {
         let mut finding = unknown_finding();
         finding.activation.observed_values.push(ValueFact {
-            file: None,
             line: 33,
             text: "assert_eq!(actual, expected)".to_string(),
             value: "actual = 10".to_string(),
@@ -2264,6 +2265,7 @@ mod tests {
 
     fn sample_output(base: Option<String>) -> CheckOutput {
         CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -2395,7 +2397,6 @@ mod tests {
         let mut finding = unknown_finding();
         finding.activation.observed_values = (0..500)
             .map(|i| ValueFact {
-                file: None,
                 line: 42,
                 text: long_text.clone(),
                 value: format!("arg_{i} = {i}"),
@@ -2404,6 +2405,7 @@ mod tests {
             .collect();
 
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -2462,7 +2464,6 @@ mod tests {
         let mut finding = unknown_finding();
         finding.activation.observed_values = (1..=5_000)
             .map(|line| ValueFact {
-                file: None,
                 line,
                 text: format!("assert!(rendered.contains(\"field_{line}\"));"),
                 value: format!("\"field_{line}\""),
@@ -2507,7 +2508,6 @@ mod tests {
     fn json_omits_observed_values_total_when_nothing_is_dropped() {
         let mut finding = unknown_finding();
         finding.activation.observed_values = vec![ValueFact {
-            file: None,
             line: 12,
             text: "assert_eq!(discounted_total(50, 100), 50);".to_string(),
             value: "amount = 50".to_string(),
@@ -2522,6 +2522,7 @@ mod tests {
 
     fn single_finding_output(finding: Finding) -> CheckOutput {
         CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -2551,6 +2552,7 @@ mod tests {
         // When no_scope_provided=true the JSON output must include the
         // scope_disclosures additive field with scope_status=no_scope_provided.
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -2616,6 +2618,7 @@ mod tests {
         // When no_scope_provided=false (scope was provided) the scope_disclosures
         // field must be absent — this is a real analyzed-empty result.
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -2657,6 +2660,7 @@ mod tests {
         // string must recommend `ripr pilot --root .` and NOT --mode fast.
         // --mode is a speed tier; pilot is the whole-repository route.
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),

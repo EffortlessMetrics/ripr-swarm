@@ -18160,6 +18160,7 @@ mod class_entry_tests;
 mod committed_snapshot_tests;
 mod commonjs_default_function_tests;
 mod commonjs_export_tests;
+mod comparison_edit_tests;
 mod custom_matcher_tests;
 mod default_object_member_tests;
 mod directory_specifier_tests;
