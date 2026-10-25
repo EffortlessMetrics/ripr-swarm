@@ -1044,12 +1044,28 @@ fn fixture_receiver_literal_pin_reads_helper_data() -> Result<(), String> {
     for (label, body) in [
         ("direct", "        assert_eq!(fixture().total(), 42);"),
         ("reversed", "        assert_eq!(42, fixture().total());"),
+        ("raw module", "        assert_eq!(fixture().total(), 42);"),
         (
             "bound",
             "        let cart = fixture();\n        assert_eq!(cart.total(), 42);",
         ),
     ] {
-        let findings = findings_on(&cart_source(body), &cart_edit(), 6)?;
+        let source = if label == "raw module" {
+            format!("mod r#owner {{\n{}\n}}", cart_source(body))
+        } else {
+            cart_source(body)
+        };
+        let line = source
+            .lines()
+            .position(|line| line.contains("self.items.iter()"))
+            .ok_or_else(|| "missing fixture tail".to_string())?
+            + 1;
+        let edit = diff(
+            line,
+            "        self.items.iter().map(|(_, p)| p).sum()",
+            "        self.items.iter().map(|(_, price)| price).sum()",
+        );
+        let findings = findings_on(&source, &edit, line)?;
         assert!(
             findings
                 .iter()
@@ -1304,6 +1320,13 @@ fn fixture_receiver_credit_requires_readable_carried_data() -> Result<(), String
     let data = "vec![(\"a\".to_string(), 30), (\"b\".to_string(), 12)]";
     for (label, source) in [
         ("empty field", direct.replace(data, "vec![]")),
+        ("raw module associated iter macros", format!("mod r#owner {{\n{direct}\nmacro_rules! declare_iter {{ () => {{ fn iter(&self) -> std::slice::Iter<'_, (String, u32)>; }} }}\nmacro_rules! implement_iter {{ () => {{ fn iter(&self) -> std::slice::Iter<'_, (String, u32)> {{ self.as_slice()[0..0].iter() }} }} }}\ntrait EmptyIter {{ declare_iter!(); }}\nimpl EmptyIter for Vec<(String, u32)> {{ implement_iter!(); }}\n}}")),
+        ("raw receiver iter name", format!("{direct}\ntrait EmptyIter {{ fn r#iter(&self) -> std::slice::Iter<'_, (String, u32)>; }}\nimpl EmptyIter for Vec<(String, u32)> {{ fn r#iter(&self) -> std::slice::Iter<'_, (String, u32)> {{ self.as_slice()[0..0].iter() }} }}")),
+        ("custom String conversion", format!("{direct}\ntrait ToString {{ fn to_string(&self) -> String; }}\nimpl ToString for str {{ fn to_string(&self) -> String {{ std::process::exit(0) }} }}")),
+        ("raw String conversion", format!("{direct}\ntrait ToString {{ fn r#to_string(&self) -> String; }}\nimpl ToString for str {{ fn r#to_string(&self) -> String {{ std::process::exit(0) }} }}")),
+        ("helper-local conversion macros", direct.replace("    use super::*;", "    use super::*;\n    macro_rules! declare_string { () => { fn to_string(&self) -> String; } }\n    macro_rules! implement_string { () => { fn to_string(&self) -> String { std::process::exit(0) } } }\n    trait ToString { declare_string!(); }\n    impl ToString for str { implement_string!(); }")),
+        ("helper-local foreign trait", direct.replace("    use super::*;", "    use super::*;\n    use external::StringTools;")),
+        ("callable fixture parameter", direct.replace("fn total_is_pinned()", "fn total_is_pinned(fixture: fn() -> Cart)")),
         (
             "associated macros can replace iter",
             format!(

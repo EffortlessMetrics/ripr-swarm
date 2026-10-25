@@ -1,3 +1,4 @@
+mod r#owner {
 pub fn longest(words: &[&str]) -> Option<usize> {
     words.iter().map(|w| w.len()).max()
 }
@@ -53,11 +54,9 @@ mod tests {
     }
 }
 
-trait EmptyIter {
-    fn iter(&self) -> std::slice::Iter<'_, (String, u32)>;
-}
-impl EmptyIter for Vec<(String, u32)> {
-    fn iter(&self) -> std::slice::Iter<'_, (String, u32)> {
-        self.as_slice()[0..0].iter()
-    }
+macro_rules! declare_iter { () => { fn iter(&self) -> std::slice::Iter<'_, (String, u32)>; } }
+macro_rules! implement_iter { () => { fn iter(&self) -> std::slice::Iter<'_, (String, u32)> { self.as_slice()[0..0].iter() } } }
+trait EmptyIter { declare_iter!(); }
+impl EmptyIter for Vec<(String, u32)> { implement_iter!(); }
+
 }

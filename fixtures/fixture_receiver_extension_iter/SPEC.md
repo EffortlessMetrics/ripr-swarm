@@ -5,7 +5,8 @@ Spec: RIPR-SPEC-0240
 ## Given
 
 A helper returns two literal cart items. A local extension trait on the standard
-Vec supplies `iter()` and returns an empty slice iterator before deref can reach
+Vec, emitted through associated trait/impl macros inside raw module `r#owner`,
+supplies `iter()` and returns an empty slice iterator before deref can reach
 the ordinary slice method. The exact assertion pins the total to zero.
 
 ## When

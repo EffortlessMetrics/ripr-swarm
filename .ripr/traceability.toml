@@ -17764,6 +17764,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/analysis/classify/owner_pin/fixture_receiver.rs",
+  "crates/ripr/src/analysis/classify/owner_pin/fixture_receiver/dispatch.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/classify/gap_admission.rs",
   "crates/ripr/src/analysis/classify/pinned_shape.rs",

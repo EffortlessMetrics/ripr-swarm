@@ -420,13 +420,17 @@ non-ignored related test matches one of these shapes:
   in the test's own file and module returns only that record literal, with a
   nonempty `vec!` of literal tuples (strings use literal `.to_string()`).
   Each numeric component must be literal. Pipeline dispatch also fails closed
-  for indexed receiver methods named `iter`, `map` or `sum`, an indexed
+  for indexed receiver methods named `iter`, `map`, `sum` or `to_string`, an indexed
   `no_implicit_prelude` declaration, or imports, extern crates and item macro
   invocations (including trait/impl associated items) in the owner module
-  or its same-file ancestors. This can withhold
+  or its same-file ancestors. Module and method raw identifiers use the same
+  normalized identity. Helper construction also requires a closed scope in
+  the owner's file; only exact `use super::*` from a helper directly inside
+  the already-closed owner module is accepted. Other helper imports and
+  item/associated macros remain unread. This can withhold
   unrelated imports or methods; general method resolution is not claimed.
   Declaration attributes come from the indexed declaration facts, not the
-  function-body substring. The test contains only the eager
+  function-body substring. The test has no parameters and contains only the eager
   assertion and its optional immutable fixture binding. Existing assertion
   execution, macro binding, receiver/type/import identity and plain-drop gates
   still apply. Only a pin credited through these gates can supply the

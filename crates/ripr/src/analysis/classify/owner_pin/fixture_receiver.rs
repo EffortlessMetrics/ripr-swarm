@@ -7,6 +7,8 @@
 //! Neither helper return types alone nor literal data in a different field
 //! establish that the changed closure runs.
 
+mod dispatch;
+
 use super::{CallShape, OwnerPinSyntax, collapse_whitespace, is_plain_identifier};
 use crate::analysis::facts::FunctionContainer;
 use crate::analysis::rust_index::{FunctionSummary, OracleFact, RustIndex, TestSummary};
@@ -21,6 +23,7 @@ pub(super) struct FixtureReceiver {
     field: String,
     tuple_types: Vec<String>,
     projected: usize,
+    dispatch: dispatch::FixtureDispatch,
 }
 
 impl FixtureReceiver {
@@ -32,10 +35,7 @@ impl FixtureReceiver {
         let FunctionContainer::Inherent { self_ty } = &owner.item.container else {
             return None;
         };
-        if !is_plain_identifier(self_ty)
-            || super::declared_return_type(&owner.body)? != "u32"
-            || !pipeline_dispatch_is_closed(owner, index)
-        {
+        if !is_plain_identifier(self_ty) || super::declared_return_type(&owner.body)? != "u32" {
             return None;
         }
         let function = function(&owner.body)?;
@@ -150,11 +150,13 @@ impl FixtureReceiver {
         {
             return None;
         }
+        let dispatch = dispatch::FixtureDispatch::establish(owner, index)?;
         Some(Self {
             type_name: self_ty.clone(),
             field,
             tuple_types,
             projected,
+            dispatch,
         })
     }
 
@@ -185,6 +187,10 @@ impl FixtureReceiver {
         }
         let receiver = call_expr.receiver()?;
         let test_fn = function(&test.body)?;
+        let parameters = test_fn.param_list()?;
+        if parameters.params().next().is_some() || parameters.self_param().is_some() {
+            return None;
+        }
         let block = test_fn.body()?;
         // Only an eager top-level assertion, optionally preceded by its one
         // immutable fixture binding. No later write, alias or local helper
@@ -245,6 +251,7 @@ impl FixtureReceiver {
             || helper.item.container != FunctionContainer::Free
             || !helper.attrs.is_empty()
             || !helper.impl_attrs.is_empty()
+            || !self.dispatch.admits_helper(helper, index)
         {
             return None;
         }
@@ -390,57 +397,5 @@ fn source_declares_type(source: &str, name: &str) -> bool {
             .or_else(|| ast::TypeAlias::cast(node.clone()).and_then(|item| item.name()))
             .or_else(|| ast::Trait::cast(node).and_then(|item| item.name()));
         named.is_some_and(|declared| declared.text() == name)
-    })
-}
-
-/// A Vec reaches slice::iter through deref, so a workspace extension trait
-/// can take that call before the standard method. Imported traits and item
-/// macros can supply unread implementations too. This bounded admission
-/// requires the ordinary implicit prelude and no such competing surface;
-/// it does not attempt general Rust method resolution.
-fn pipeline_dispatch_is_closed(owner: &FunctionSummary, index: &RustIndex) -> bool {
-    if !owner.attrs.is_empty()
-        || !owner.impl_attrs.is_empty()
-        || index.functions().iter().any(|function| {
-            function.item.has_self_param && matches!(function.name.as_str(), "iter" | "map" | "sum")
-        })
-        || index.files().values().any(|facts| {
-            crate::analysis::extract::mask_comments_and_strings(&facts.source)
-                .contains("no_implicit_prelude")
-        })
-    {
-        return false;
-    }
-    let Some(facts) = index.files().get(&owner.file) else {
-        return false;
-    };
-    let source = &facts.source;
-    let Some(scope) = super::item_nesting_with_impl(source, &owner.name, owner.start_line, true)
-    else {
-        return false;
-    };
-    let Some(parse) = parse_clean_source_file(source) else {
-        return false;
-    };
-    !parse.tree().syntax().descendants().any(|node| {
-        if !(ast::Use::can_cast(node.kind())
-            || ast::ExternCrate::can_cast(node.kind())
-            || ast::MacroCall::can_cast(node.kind()))
-            || !node.parent().is_some_and(|parent| {
-                ast::ItemList::can_cast(parent.kind())
-                    || ast::SourceFile::can_cast(parent.kind())
-                    || ast::MacroCall::can_cast(node.kind())
-                        && ast::AssocItemList::can_cast(parent.kind())
-            })
-        {
-            return false;
-        }
-        let mut modules: Vec<_> = node
-            .ancestors()
-            .filter_map(ast::Module::cast)
-            .filter_map(|module| module.name().map(|name| name.text().to_string()))
-            .collect();
-        modules.reverse();
-        scope.modules.starts_with(&modules)
     })
 }

@@ -10,7 +10,7 @@
       "tier": "pure",
       "source_fixture": "fixtures/fixture_receiver_extension_iter",
       "probe_family": "return_value",
-      "vector": "extension_iterator_discards_literal_fixture_data_before_projection",
+      "vector": "raw_module_associated_extension_iterator_discards_literal_fixture_data_before_projection",
       "assertions": [
         { "type": "must_not_report_clean" },
         { "type": "expected_finding_count", "count": 1 },
