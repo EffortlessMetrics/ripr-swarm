@@ -2500,13 +2500,18 @@ pub(crate) struct FileFactCacheStats {
     pub(crate) store_failures_dropped: usize,
 }
 
-/// Pipeline stage at which a file-fact store failed. Assigned at the exact
-/// `?` site inside `store_file_facts`, never parsed back out of a message.
+/// Pipeline stage at which a cache store failed. The first three are assigned
+/// at the exact `?` site inside `store_file_facts`, never parsed back out of a
+/// message. The last two name the other best-effort store families whose
+/// failures were previously only a stderr sentence (#9633): they carry the
+/// family as the stage because those stores report one opaque reason.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FileFactStoreStage {
     CreateDir,
     Encode,
     Write,
+    ClassifiedSeamStore,
+    CorpusFingerprintStore,
 }
 
 impl FileFactStoreStage {
@@ -2515,9 +2520,17 @@ impl FileFactStoreStage {
             FileFactStoreStage::CreateDir => "create_dir",
             FileFactStoreStage::Encode => "encode",
             FileFactStoreStage::Write => "write",
+            FileFactStoreStage::ClassifiedSeamStore => "classified_seam_store",
+            FileFactStoreStage::CorpusFingerprintStore => "corpus_fingerprint_store",
         }
     }
 }
+
+/// Row identity for a classified-seam store failure: the cache family
+/// directory (relative to the cache root), never an absolute path.
+pub(crate) const CLASSIFIED_SEAM_STORE_FAILURE_PATH: &str = "repo-seam-facts";
+/// Row identity for a corpus-fingerprint store failure.
+pub(crate) const CORPUS_FINGERPRINT_STORE_FAILURE_PATH: &str = "repo-corpus-fingerprint";
 
 /// Typed file-fact store failure. Renders as the bare message so every
 /// existing `?` and `format!("{err}")` call site keeps working through the
@@ -2745,6 +2758,15 @@ impl RepoFileFactCache {
         let bytes = match std::fs::read(&path) {
             Ok(bytes) => bytes,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return CacheLoad::Miss,
+            // A path component that is a file is a missing entry, not a
+            // corrupt one: nothing was read, and the store that follows fails
+            // for the same reason and is reported once as a store failure
+            // row. Counting it here too made one cause two anonymous
+            // counters (#9633, audit F-C4-4). Windows already reports this
+            // as `NotFound`.
+            Err(err) if err.kind() == std::io::ErrorKind::NotADirectory => {
+                return CacheLoad::Miss;
+            }
             Err(err) => {
                 return corrupt_entry(&path, format!("read failed: {err}"));
             }
@@ -8719,6 +8741,35 @@ mod tests {
         Ok(())
     }
 
+    /// #9633 (audit F-C4-4): a file where the entry directory should be is a
+    /// missing entry for the read, not corrupt data; the failed write is the
+    /// one reported store failure.
+    #[test]
+    fn read_through_file_component_is_miss_and_write_is_the_store_failure() -> Result<(), String> {
+        let dir = isolated_dir("read-through-file");
+        ignore_remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|err| format!("fixture setup failed: {err}"))?;
+        let blocker = dir.join("blocker");
+        std::fs::write(&blocker, b"not a directory")
+            .map_err(|err| format!("fixture setup failed: {err}"))?;
+        let cache = RepoFileFactCache::at_dir(blocker.join("entries"));
+        let key = RepoFileFactCacheKey::new(Path::new("src/lib.rs"), b"fn main() {}");
+        match cache.load_file_facts(&key) {
+            CacheLoad::Miss => {}
+            CacheLoad::CorruptIgnored { reason } => {
+                return Err(format!("read through a file counted as corrupt: {reason}"));
+            }
+            CacheLoad::Hit(_) => return Err("unexpected hit".to_string()),
+        }
+        let error = match cache.store_file_facts(&key, &FileFacts::default()) {
+            Ok(()) => return Err("store under a file path should fail".to_string()),
+            Err(error) => error,
+        };
+        assert_eq!(error.stage, FileFactStoreStage::CreateDir);
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
     #[test]
     fn store_failure_rows_bound_overflow_with_count() {
         let mut stats = FileFactCacheStats::default();
@@ -8746,6 +8797,14 @@ mod tests {
         assert_eq!(FileFactStoreStage::CreateDir.as_str(), "create_dir");
         assert_eq!(FileFactStoreStage::Encode.as_str(), "encode");
         assert_eq!(FileFactStoreStage::Write.as_str(), "write");
+        assert_eq!(
+            FileFactStoreStage::ClassifiedSeamStore.as_str(),
+            "classified_seam_store"
+        );
+        assert_eq!(
+            FileFactStoreStage::CorpusFingerprintStore.as_str(),
+            "corpus_fingerprint_store"
+        );
     }
 
     #[test]

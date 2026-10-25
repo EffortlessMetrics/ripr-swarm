@@ -12,16 +12,16 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 220
+floor = 219
 
 # Most abstained rows whose tests do catch the change (missed credit). A
 # regression fails `verdict-corpus check`; an improvement passes with a note
 # to lower this number (not a failure, so concurrent fixes do not collide).
 # Raising it is a reviewed edit with a reason.
-# 146 = 144 on main + 2 new measured rows (spec0096-named-binding-used,
-# spec0048-label-rendered-observed) whose initializer-call and const shapes
-# abstain today; analyzer fix tracked in #9871.
-missed_credit_ceiling = 146
+# 147 = 145 on main (its 144 baseline plus the one abstention #10143 added) + 2 new
+# measured rows (spec0096-named-binding-used, spec0048-label-rendered-observed)
+# whose initializer-call and const shapes abstain today; analyzer fix tracked in #9871.
+missed_credit_ceiling = 147
 
 # Coverage axes beyond spec examples (`axes` on a case). Each axis names a
 # side of the Rust language or test ecosystem the corpus is held to cover;
@@ -286,6 +286,11 @@ id = "RIPR-SPEC-0185"
 scope = "out"
 reason = "CLI, command or receipt contract, not an analyzer verdict"
 
+# Same-test pairing for boundary-class probes
+[[spec]]
+id = "RIPR-SPEC-0186"
+scope = "in"
+
 # Rich command metadata projected into human help and inventories
 [[spec]]
 id = "RIPR-SPEC-0187"
@@ -339,6 +344,11 @@ reason = "agent repair-loop surface, not an analyzer verdict"
 id = "RIPR-SPEC-0196"
 scope = "out"
 reason = "evaluation or report tooling over ripr's output; no Rust edit with runtime mutant truth to label"
+
+# Owner-return pins through calls that name the owner
+[[spec]]
+id = "RIPR-SPEC-0197"
+scope = "in"
 
 # RepairCard projection through standard LSP
 [[spec]]
@@ -855,16 +865,6 @@ reason = "graph `limited`/`unavailable` fallback is disclosure of the #2971 filt
 [[spec]]
 id = "RIPR-SPEC-0175"
 scope = "in"
-
-# Same-test pairing for boundary-class probes
-[[unmeasured]]
-id = "RIPR-SPEC-0186"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
-
-# Owner-return pins through calls that name the owner
-[[unmeasured]]
-id = "RIPR-SPEC-0197"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
 
 # Labeled Rust verdict corpus
 [[unmeasured]]
