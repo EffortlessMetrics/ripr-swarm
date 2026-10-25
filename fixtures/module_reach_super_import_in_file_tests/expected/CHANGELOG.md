@@ -27,7 +27,7 @@ Updated:
 ## Pending — module_reach_super_import_in_file_tests (3)
 
 Reason:
-RIPR-SPEC-0240: output wording only; #10291 added this fixture after #10382 reworded the not-ready repair-route line, so main's golden carried the old wording (no class change)
+RIPR-SPEC-0122: #10382 repair-route-not-ready wording regeneration; the expected file predates the wording owner and main inherited a formatting-only drift unrelated to any in-flight lane
 
 Command:
 `cargo xtask goldens bless module_reach_super_import_in_file_tests --reason "..."`
